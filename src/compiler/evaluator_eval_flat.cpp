@@ -2986,265 +2986,9 @@ ast::NodeId Evaluator::data_to_flat(const types::EvalValue& data, aura::ast::Fla
             auto fn_idx = as_string_idx(car_data);
             auto fn_name = string_at_or(fn_idx);
 
-            // Quote: (quote expr)
-            if (fn_name == "quote" && is_pair(cdr_data)) {
-                auto qp = as_pair_idx(cdr_data);
-                auto quoted = pairs_[qp].car;
-                auto quoted_node = data_to_flat(quoted, flat, pool, depth + 1);
-                if (quoted_node != ast::NULL_NODE)
-                    return flat.add_quote(quoted_node);
-                return flat.add_literal(0); // fallback
-            }
-
-            // Quasiquote: (quasiquote expr)
-            if (fn_name == "quasiquote" && is_pair(cdr_data)) {
-                auto qp = as_pair_idx(cdr_data);
-                auto quoted = pairs_[qp].car;
-                return data_to_flat(quoted, flat, pool, depth + 1);
-            }
-
-            // Unquote: (unquote expr) — just convert the inner expression
-            if (fn_name == "unquote" && is_pair(cdr_data)) {
-                auto qp = as_pair_idx(cdr_data);
-                auto inner = pairs_[qp].car;
-                return data_to_flat(inner, flat, pool, depth + 1);
-            }
-
-            // Define-type: (define-type (type-name params...) (ctor1 ctor2 ...))
-            if (fn_name == "define-type") {
-                if (is_pair(cdr_data)) {
-                    auto np = as_pair_idx(cdr_data);
-                    auto type_name_data = pairs_[np].car;
-                    auto ctor_rest = pairs_[np].cdr;
-
-                    aura::ast::SymId type_name_val = 0;
-                    std::vector<aura::ast::SymId> params;
-                    std::vector<ast::NodeId> ctors;
-
-                    if (is_pair(type_name_data)) {
-                        auto tnp = as_pair_idx(type_name_data);
-                        if (is_string(pairs_[tnp].car)) {
-                            auto ti = as_string_idx(pairs_[tnp].car);
-                            auto ts = string_at_or(ti);
-                            type_name_val = pool.intern(ts);
-                            auto rest = pairs_[tnp].cdr;
-                            while (is_pair(rest)) {
-                                auto rp = as_pair_idx(rest);
-                                if (is_string(pairs_[rp].car)) {
-                                    auto pi = as_string_idx(pairs_[rp].car);
-                                    auto ps = string_at_or(pi);
-                                    params.push_back(pool.intern(ps));
-                                }
-                                rest = pairs_[rp].cdr;
-                            }
-                        }
-                    } else if (is_string(type_name_data)) {
-                        auto ti = as_string_idx(type_name_data);
-                        auto ts = string_at_or(ti);
-                        type_name_val = pool.intern(ts);
-                    }
-
-                    if (type_name_val != 0) {
-                        auto cur = ctor_rest;
-                        while (is_pair(cur)) {
-                            auto cp = as_pair_idx(cur);
-                            auto ctor_form = pairs_[cp].car;
-                            cur = pairs_[cp].cdr;
-
-                            if (is_pair(ctor_form)) {
-                                auto ctor_pair = as_pair_idx(ctor_form);
-                                auto ctor_car = pairs_[ctor_pair].car;
-                                // Handle (quote Name) format
-                                if (is_string(ctor_car)) {
-                                    auto ci = as_string_idx(ctor_car);
-                                    auto cs = string_at_or(ci);
-                                    if (cs == "quote" && is_pair(pairs_[ctor_pair].cdr)) {
-                                        // (quote Some) — extract "Some" from cdr
-                                        auto qcdr = as_pair_idx(pairs_[ctor_pair].cdr);
-                                        auto name_val = pairs_[qcdr].car;
-                                        if (is_string(name_val)) {
-                                            auto ni = as_string_idx(name_val);
-                                            auto ns = string_at_or(ni);
-                                            auto ctor_var = flat.add_variable(pool.intern(ns));
-                                            ctors.push_back(flat.add_quote(ctor_var));
-                                        }
-                                    }
-                                } else {
-                                    // Direct ctor descriptor — store as-is
-                                    auto ctor_node = data_to_flat(ctor_form, flat, pool, depth + 1);
-                                    if (ctor_node != ast::NULL_NODE)
-                                        ctors.push_back(ctor_node);
-                                }
-                            }
-                        }
-                        return flat.add_define_type(type_name_val, params, ctors);
-                    }
-                }
-                return ast::NULL_NODE;
-            }
-
-            // Begin: (begin ...)
-            if (fn_name == "begin") {
-                std::vector<ast::NodeId> exprs;
-                auto cur = cdr_data;
-                while (is_pair(cur)) {
-                    auto cp = as_pair_idx(cur);
-                    auto e = data_to_flat(pairs_[cp].car, flat, pool, depth + 1);
-                    if (e != ast::NULL_NODE)
-                        exprs.push_back(e);
-                    cur = pairs_[cp].cdr;
-                }
-                return flat.add_begin(exprs);
-            }
-
-            // If: (if cond then else)
-            if (fn_name == "if") {
-                ast::NodeId cond_node = ast::NULL_NODE, then_node = ast::NULL_NODE,
-                            else_node = ast::NULL_NODE;
-                if (is_pair(cdr_data)) {
-                    auto cp = as_pair_idx(cdr_data);
-                    cond_node = data_to_flat(pairs_[cp].car, flat, pool, depth + 1);
-                    auto rest = pairs_[cp].cdr;
-                    if (is_pair(rest)) {
-                        auto tp = as_pair_idx(rest);
-                        then_node = data_to_flat(pairs_[tp].car, flat, pool, depth + 1);
-                        auto erest = pairs_[tp].cdr;
-                        if (is_pair(erest)) {
-                            auto ep = as_pair_idx(erest);
-                            else_node = data_to_flat(pairs_[ep].car, flat, pool, depth + 1);
-                        }
-                    }
-                }
-                if (cond_node != ast::NULL_NODE && then_node != ast::NULL_NODE &&
-                    else_node != ast::NULL_NODE)
-                    return flat.add_if(cond_node, then_node, else_node);
-                if (cond_node != ast::NULL_NODE && then_node != ast::NULL_NODE)
-                    return flat.add_if(cond_node, then_node, flat.add_literal(0));
-                return cond_node != ast::NULL_NODE ? cond_node : flat.add_literal(0);
-            }
-
-            // Lambda: (lambda (args) body)
-            if (fn_name == "lambda") {
-                if (is_pair(cdr_data)) {
-                    auto params_pair = as_pair_idx(cdr_data);
-                    auto params_data = pairs_[params_pair].car;
-                    auto body_rest = pairs_[params_pair].cdr;
-
-                    std::vector<ast::SymId> params;
-                    auto args_data = params_data;
-                    while (is_pair(args_data)) {
-                        auto ap = as_pair_idx(args_data);
-                        auto arg = pairs_[ap].car;
-                        if (is_string(arg)) {
-                            auto aidx = as_string_idx(arg);
-                            auto astr = string_at_or(aidx);
-                            params.push_back(pool.intern(astr));
-                        }
-                        args_data = pairs_[ap].cdr;
-                    }
-
-                    ast::NodeId body_node = ast::NULL_NODE;
-                    if (is_pair(body_rest)) {
-                        auto bp = as_pair_idx(body_rest);
-                        body_node = data_to_flat(pairs_[bp].car, flat, pool, depth + 1);
-                    }
-                    if (body_node == ast::NULL_NODE)
-                        body_node = flat.add_literal(0);
-                    return flat.add_lambda(params, body_node);
-                }
-                return ast::NULL_NODE;
-            }
-
-            // Define: (define name value)
-            if (fn_name == "define") {
-                if (is_pair(cdr_data)) {
-                    auto np = as_pair_idx(cdr_data);
-                    auto name_data = pairs_[np].car;
-                    auto val_rest = pairs_[np].cdr;
-
-                    if (is_string(name_data) && is_pair(val_rest)) {
-                        auto ni = as_string_idx(name_data);
-                        auto ns = string_at_or(ni);
-                        auto vp = as_pair_idx(val_rest);
-                        auto val_node = data_to_flat(pairs_[vp].car, flat, pool, depth + 1);
-                        return flat.add_define(pool.intern(ns), val_node);
-                    }
-                }
-                return ast::NULL_NODE;
-            }
-
-            // Issue #150 Phase 1: performance-region / evolution-region
-            // wrappers. The forms are:
-            //   (performance-region (define f ...))
-            //   (performance-region (lambda (x) ...))
-            //   (evolution-region (define g ...))
-            //   (evolution-region (lambda (x) ...))
-            // The wrapper is transparent — the inner form is
-            // processed normally — but it records a side-table
-            // mapping the resulting function's name to the
-            // specified region. The lowering pass (FlatFnBuilder
-            // in lowering_impl.cpp) reads this side-table to set
-            // IRFunction::region accordingly.
-            //
-            // If the inner form is not a define/lambda, the
-            // wrapper is silently a no-op (the inner form is
-            // processed; the region tag is discarded). This
-            // matches the user's mental model: "annotate this
-            // form with a region hint" — the hint is only useful
-            // for define/lambda; for other forms it's ignored.
-            if (fn_name == "performance-region" || fn_name == "evolution-region") {
-                if (is_pair(cdr_data)) {
-                    auto rp = as_pair_idx(cdr_data);
-                    auto inner_node = data_to_flat(pairs_[rp].car, flat, pool, depth + 1);
-                    if (inner_node == ast::NULL_NODE)
-                        return ast::NULL_NODE;
-                    // The inner form should be a Define or Lambda.
-                    // If it's a Define, get the name and record
-                    // (name -> region) in the side-table.
-                    if (flat.get(inner_node).tag == ast::NodeTag::Define) {
-                        auto sym = flat.get(inner_node).sym_id;
-                        if (sym != ast::INVALID_SYM) {
-                            auto region = (fn_name == "performance-region")
-                                              ? std::uint8_t{1} /*Performance*/
-                                              : std::uint8_t{2} /*Evolution*/;
-                            flat.set_function_region(sym, region);
-                        }
-                    } else if (flat.get(inner_node).tag == ast::NodeTag::Lambda) {
-                        // Lambdas are anonymous — use the
-                        // overload-tagged setter for lambdas.
-                        auto region = (fn_name == "performance-region")
-                                          ? std::uint8_t{1} /*Performance*/
-                                          : std::uint8_t{2} /*Evolution*/;
-                        flat.set_function_region_lambda(inner_node, region);
-                    }
-                    return inner_node;
-                }
-                return ast::NULL_NODE;
-            }
-
-            // Set!: (set! name value)
-            if (fn_name == "set!") {
-                if (is_pair(cdr_data)) {
-                    auto np = as_pair_idx(cdr_data);
-                    auto name_val = pairs_[np].car;
-                    auto val_rest = pairs_[np].cdr;
-                    if (is_string(name_val) && is_pair(val_rest)) {
-                        auto ni = as_string_idx(name_val);
-                        auto ns = string_at_or(ni);
-                        auto vp = as_pair_idx(val_rest);
-                        auto val_node = data_to_flat(pairs_[vp].car, flat, pool, depth + 1);
-                        return flat.add_set(pool.intern(ns), val_node);
-                    }
-                }
-                return ast::NULL_NODE;
-            }
-
-            // Let: (let ((x val)) body)
-            if (fn_name == "let") {
-                // For data_to_flat, let is just a call node
-                // (let ((x val)) body) is sugar and should already be expanded
-                // Just treat as a general call
-            }
+            if (auto named =
+                    data_to_flat_named_form(flat, pool, depth, fn_name, car_data, cdr_data))
+                return *named;
         }
 
         // General function call: build Call(node func, [args...])
@@ -3435,553 +3179,12 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
         auto fn_idx = types::as_string_idx(car_val);
         auto fn_name = string_at_or(fn_idx);
 
-        // ── if: (if cond then else) ──
-        if (fn_name == "if") {
-            if (types::is_pair(cdr_val)) {
-                auto cond_pair = types::as_pair_idx(cdr_val);
-                auto cond_val = pairs_[cond_pair].car;
-                auto rest = pairs_[cond_pair].cdr;
-                auto cond_result = eval_data_as_code(cond_val, env, flat, pool);
-                if (!cond_result)
-                    return cond_result;
-                if (types::is_pair(rest)) {
-                    auto then_pair = types::as_pair_idx(rest);
-                    auto then_val = pairs_[then_pair].car;
-                    auto else_rest = pairs_[then_pair].cdr;
-                    if (aura::compiler::pure::is_truthy(*cond_result)) {
-                        auto r = eval_data_as_code(then_val, env, flat, pool);
-                        return r;
-                    } else {
-                        // Evaluate else branch
-                        if (types::is_pair(else_rest)) {
-                            auto else_pair = types::as_pair_idx(else_rest);
-                            auto else_val = pairs_[else_pair].car;
-                            return eval_data_as_code(else_val, env, flat, pool);
-                        }
-                        return types::make_unspecified(); // #4502 step 4: no else
-                    }
-                }
-            }
-            return make_void();
-        }
-
-        // ── when: (when cond body...) — like (if cond (begin body...) (void))
-        if (fn_name == "when" || fn_name == "unless") {
-            if (types::is_pair(cdr_val)) {
-                auto cond_pair = types::as_pair_idx(cdr_val);
-                auto cond_val = pairs_[cond_pair].car;
-                auto body_rest = pairs_[cond_pair].cdr;
-                auto cond_result = eval_data_as_code(cond_val, env, flat, pool);
-                if (!cond_result)
-                    return cond_result;
-                // Issue #4619: an error value as the test is not a truth
-                // value — it propagates, the same way an IfExpr test does
-                // (Issue #4493).
-                if (is_error(*cond_result))
-                    return cond_result;
-                // unless runs the body on a false test (was treated like when).
-                if (aura::compiler::pure::is_truthy(*cond_result) == (fn_name == "when")) {
-                    // Evaluate body expressions sequentially
-                    EvalResult last = make_void();
-                    TwPinResult pin_last(last);
-                    while (types::is_pair(body_rest)) {
-                        auto bp = types::as_pair_idx(body_rest);
-                        last = eval_data_as_code(pairs_[bp].car, env, flat, pool);
-                        if (!last)
-                            return last;
-                        // Issue #4619: an error value in a body form leaves
-                        // the body the way begin lets it leave (#2570) — it
-                        // is not a value the body may drop.
-                        if (is_error(*last))
-                            return last;
-                        body_rest = pairs_[bp].cdr;
-                    }
-                    return last;
-                }
-            }
-            return types::make_unspecified(); // #4502 step 4: when/unless miss
-        }
-
-        // ── lambda: (lambda (params) body) ──
-        // Needs flat/pool to create an AST closure
-        if (fn_name == "lambda") {
-            if (!flat || !pool) {
-                // Without flat/pool, we can't create closures — return as-is
-                return make_void();
-            }
-            if (types::is_pair(cdr_val)) {
-                auto params_pair = types::as_pair_idx(cdr_val);
-                auto params_data = pairs_[params_pair].car; // (arg1 arg2 ...)
-                auto body_rest = pairs_[params_pair].cdr;   // (body ...)
-
-                // Extract param names
-                std::vector<ast::SymId> param_syms;
-                auto args_data = params_data;
-                while (types::is_pair(args_data)) {
-                    auto ap = types::as_pair_idx(args_data);
-                    auto arg_data = pairs_[ap].car;
-                    if (types::is_string(arg_data)) {
-                        auto aidx = types::as_string_idx(arg_data);
-                        auto astr = string_at_or(aidx);
-                        param_syms.push_back(pool->intern(astr));
-                    }
-                    args_data = pairs_[ap].cdr;
-                }
-
-                // Extract and convert body data to FlatAST
-                ast::NodeId body_node = ast::NULL_NODE;
-                if (types::is_pair(body_rest)) {
-                    auto bp = types::as_pair_idx(body_rest);
-                    auto body_data = pairs_[bp].car;
-                    body_node = data_to_flat(body_data, *flat, *pool);
-                }
-                if (body_node == ast::NULL_NODE)
-                    body_node = flat->add_literal(0);
-
-                // Create lambda node and closure
-                auto lambda_id = flat->add_lambda(param_syms, body_node);
-                auto cid = next_id();
-                // Allocate closure body in temp arena during task context,
-                // otherwise in persistent arena (module functions, while loops).
-                auto* target_arena = (temp_arena_ && in_task_context_) ? temp_arena_ : arena_;
-                if (!target_arena) {
-                    return make_void();
-                }
-                auto cl_alloc = target_arena->allocator();
-                auto* cl_flat = target_arena->create_with_cover<aura::ast::FlatAST>(
-                    nullptr, "eval-flat-closure-body-transient", cl_alloc);
-                // Issue #3180: closure body is transient (lives inside temp_arena
-                // or the persistent arena; densify observes the pool+flat as
-                // owned roots via wire_general_object_create_pair_or_required_fail).
-                // Declare EXEMPT cover here so the implicit intermediate bump
-                // at allocate_raw_impl does not bump the uncovered metric.
-                if (cl_flat && aura::core::lifetime::general_object_pin_required_active()) {
-                    // Issue #3180: in_render_hotpath() guard already enforced
-                    // inside maybe_note_allocate_intermediate_ (the single
-                    // funnel); no need to duplicate at the call site.
-                    target_arena->note_intermediate_create_with_cover_(
-                        cl_flat, nullptr, "eval-flat-closure-body-transient");
-                }
-                // Issue #334: keep the closure's body symids in the SAME
-                // pool as the macro's `pool` and the env's bindings. If
-                // we use a fresh cl_pool for the cloned body, the body's
-                // Variable symids and the env's symids are in different
-                // pools, so Env::lookup_by_symid (the fast path) misses
-                // and the body's lambda params are reported as unbound.
-                // Using the macro's pool here aligns the body's Variables
-                // with the env's bindings at lookup time.
-                auto* cl_pool = pool;
-                auto cloned_body =
-                    clone_macro_body(*cl_flat, *cl_pool, *flat, *pool, body_node, nullptr,
-                                     /*name_map=*/nullptr,
-                                     /*cloned_marker=*/aura::ast::SyntaxMarker::User);
-                // Issue #230 #2 follow-up: undo the Quote-wrap on set!
-                // targets. The Quote-wrap was added to give symbol-
-                // generating macros access to the literal arg value,
-                // but it broke set! semantics for normal macros. The
-                // pass walks the body, finds `(set! <target> <value>)`
-                // calls, and replaces the <target> Quote with the
-                // inner Variable. This is safe to run on every
-                // macro body — bodies that don't use set! have no
-                // set! calls, so the pass is a no-op for them.
-                // unwrap_set_quotes removed (Quote-wrap reverted)
-                cl_flat->root = cloned_body;
-                // P0: register captured for SoA, no legacy env pointer in Closure.
-                EnvId cap_id = alloc_env_frame_from_env(env);
-                note_tw_closure_owner(cid); // Issue #4428
-                {
-                    std::unique_lock<std::shared_mutex> wlock(
-                        closures_shards_[closures_shard_index(cid)].mu);
-                    bump_closures_apply_epoch(); // Issue #3832
-                    Closure cl{"", {}, cl_flat, cl_pool, cloned_body, cap_id, false, target_arena};
-                    // Issue #1365: stamp bridge_epoch at construction
-                    stamp_closure_bridge_epoch(cl);
-                    // Store param SymIds directly (Issue #145: SoA migration).
-                    for (auto ps : param_syms)
-                        cl.params.push_back(ps);
-                    closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
-                }
-                note_tw_closure_alloc();
-                // Issue #2676: extend closures_mtx_ critical section to cover
-                // the make_closure read (P0 multi-fiber race: another fiber
-                // could mutate closures_ between the write block end and the
-                // make_closure read). Re-acquire as shared_lock to allow
-                // concurrent readers (closure materialization is read-only
-                // here, no need for unique exclusion post-write).
-                {
-                    std::shared_lock<std::shared_mutex> rlock(
-                        closures_shards_[closures_shard_index(cid)].mu);
-                    return make_closure(cid);
-                }
-            }
-            return make_void();
-        }
-
-        // ── begin: (begin expr1 expr2 ...) ──
-        if (fn_name == "begin") {
-            auto current = cdr_val;
-            EvalResult last = make_void();
-            TwPinResult pin_last(last);
-            while (types::is_pair(current)) {
-                auto elem_pair = types::as_pair_idx(current);
-                last = eval_data_as_code(pairs_[elem_pair].car, env, flat, pool);
-                if (!last)
-                    return last;
-                current = pairs_[elem_pair].cdr;
-            }
-            return last;
-        }
-
-        // ── quote: (quote expr) ──
-        if (fn_name == "quote") {
-            if (types::is_pair(cdr_val)) {
-                auto quote_pair = types::as_pair_idx(cdr_val);
-                return pairs_[quote_pair].car; // Return the quoted value as-is
-            }
-            return make_void();
-        }
-
-        // ── define: (define name value) or (define (name args) body) ──
-        if (fn_name == "define") {
-            if (types::is_pair(cdr_val)) {
-                auto name_pair = types::as_pair_idx(cdr_val);
-                auto name_val = ident_text_value(pairs_[name_pair].car);
-                auto val_rest = pairs_[name_pair].cdr;
-
-                // (define name value)
-                if (types::is_string(name_val) && types::is_pair(val_rest)) {
-                    auto val_pair = types::as_pair_idx(val_rest);
-                    auto val = eval_data_as_code(pairs_[val_pair].car, env, flat, pool);
-                    if (val) {
-                        auto name_idx = types::as_string_idx(name_val);
-                        auto name_str = string_at_or(name_idx);
-                        auto ci = alloc_cell(make_void());
-                        const_cast<Env&>(env).bind(name_str, make_cell(ci));
-                        store_cell_value(ci, *val);
-                        return *val;
-                    }
-                    return val;
-                }
-
-                // (define (name args...) body) — function shorthand
-                if (types::is_pair(name_val) && types::is_pair(val_rest) && flat && pool) {
-                    auto fn_pair = types::as_pair_idx(name_val);
-                    // Issue #4727: the shorthand name inside quoted data is an
-                    // interned symbol, so project it to identifier text like
-                    // the form head / let / set! above. Without this the
-                    // is_string gate below misses and the define is dropped.
-                    auto fn_name_data = ident_text_value(pairs_[fn_pair].car);
-                    auto fn_args_data = pairs_[fn_pair].cdr;
-
-                    if (types::is_string(fn_name_data)) {
-                        // Issue #4421: shorthand define add_lambda's a
-                        // closure with no mark_dirty and no proof update.
-                        // Refuse before the node is installed; a depth==0
-                        // pending window has nothing to roll back.
-                        if (production_eval_flat_commit_readiness_refuse(
-                                static_cast<CompilerMetrics*>(compiler_metrics_)))
-                            return eval_flat_commit_readiness_refused();
-                        auto ni = types::as_string_idx(fn_name_data);
-                        auto fn_str = string_at_or(ni);
-
-                        // Extract param names from (arg1 arg2 ...)
-                        std::vector<ast::SymId> param_syms;
-                        auto args_data = fn_args_data;
-                        while (types::is_pair(args_data)) {
-                            auto ap = types::as_pair_idx(args_data);
-                            // Issue #4727: parameter atoms are symbols too.
-                            auto arg_data = ident_text_value(pairs_[ap].car);
-                            if (types::is_string(arg_data)) {
-                                auto aidx = types::as_string_idx(arg_data);
-                                auto astr = string_at_or(aidx);
-                                param_syms.push_back(pool->intern(astr));
-                            }
-                            args_data = pairs_[ap].cdr;
-                        }
-
-                        // Extract and convert body data
-                        ast::NodeId body_node = ast::NULL_NODE;
-                        if (types::is_pair(val_rest)) {
-                            auto bp = types::as_pair_idx(val_rest);
-                            auto body_data = pairs_[bp].car;
-                            body_node = data_to_flat(body_data, *flat, *pool);
-                        }
-                        if (body_node == ast::NULL_NODE)
-                            body_node = flat->add_literal(0);
-
-                        // Create lambda node and closure
-                        auto lambda_id = flat->add_lambda(param_syms, body_node);
-                        auto cid = next_id();
-                        auto* target = (temp_arena_ && in_task_context_) ? temp_arena_ : arena_;
-                        auto* copied_env = copy_env(env, target);
-                        Closure cl;
-                        // Issue #1365: stamp first so unstamped closures cannot bypass safety
-                        stamp_closure_bridge_epoch(cl);
-                        for (auto ps : param_syms) {
-                            cl.params.push_back(ps); // Issue #145: SymId, not string
-                        }
-                        cl.name = fn_str;
-                        cl.flat = flat;
-                        cl.pool = pool;
-                        cl.body_id = body_node;
-                        // Issue #4859: keep the (eval ...) program that owns
-                        // flat / pool alive with this closure.
-                        cl.program = eval_program_for_pool(pool);
-                        // P0: legacy cl.env removed. Always register in env_frames_
-                        // for SoA (GC-safe, no pointer). env_id is now the only handle.
-                        cl.env_id = alloc_env_frame_from_env(*copied_env);
-                        cl.owner_arena = target;
-                        note_tw_closure_owner(cid); // Issue #4428
-                        {
-                            std::unique_lock<std::shared_mutex> wlock(
-                                closures_shards_[closures_shard_index(cid)].mu);
-                            bump_closures_apply_epoch(); // Issue #3832
-                            closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
-                        }
-                        note_tw_closure_alloc();
-
-                        // Bind in env
-                        auto ci = alloc_cell(make_void());
-                        const_cast<Env&>(env).bind(fn_str, make_cell(ci));
-                        // Issue #2676: shared_lock to serialize with closures_ write
-                        // (P0 multi-fiber race — see block above).
-                        {
-                            std::shared_lock<std::shared_mutex> rlock(
-                                closures_shards_[closures_shard_index(cid)].mu);
-                            cells_[ci] = make_closure(cid);
-                            return make_closure(cid);
-                        }
-                    }
-                }
-            }
-            return make_void();
-        }
-
-        // ── set!: (set! name value) ──
-        if (fn_name == "set!") {
-            if (types::is_pair(cdr_val)) {
-                auto name_pair = types::as_pair_idx(cdr_val);
-                auto name_val = ident_text_value(pairs_[name_pair].car);
-                auto val_rest = pairs_[name_pair].cdr;
-                if (types::is_string(name_val) && types::is_pair(val_rest)) {
-                    auto val = eval_data_as_code(pairs_[types::as_pair_idx(val_rest)].car, env,
-                                                 flat, pool);
-                    if (val) {
-                        auto name_idx = types::as_string_idx(name_val);
-                        auto name_str = string_at_or(name_idx);
-                        auto cell_idx = const_cast<Env&>(env).lookup_cell_index(name_str);
-                        if (cell_idx && *cell_idx < cells_.size()) {
-                            store_cell_value(*cell_idx, *val);
-                            return *val;
-                        }
-                    }
-                }
-            }
-            return make_void();
-        }
-
-        // ── let: (let ((x val)) body) ──
-        if (fn_name == "let") {
-            if (types::is_pair(cdr_val)) {
-                auto bindings_val = pairs_[types::as_pair_idx(cdr_val)].car;
-                auto body_rest = pairs_[types::as_pair_idx(cdr_val)].cdr;
-                // Collect bindings
-                std::vector<std::pair<std::string, EvalValue>> bindings;
-                auto current = bindings_val;
-                while (types::is_pair(current)) {
-                    auto binding_pair = pairs_[types::as_pair_idx(current)].car;
-                    if (types::is_pair(binding_pair)) {
-                        auto name_val =
-                            ident_text_value(pairs_[types::as_pair_idx(binding_pair)].car);
-                        auto val_expr = pairs_[types::as_pair_idx(binding_pair)].cdr;
-                        if (types::is_string(name_val) && types::is_pair(val_expr)) {
-                            auto name_idx = types::as_string_idx(name_val);
-                            auto name_str = string_at_or(name_idx);
-                            auto val = eval_data_as_code(pairs_[types::as_pair_idx(val_expr)].car,
-                                                         env, flat, pool);
-                            if (!val)
-                                return val;
-                            bindings.emplace_back(name_str, *val);
-                        }
-                    }
-                    current = pairs_[types::as_pair_idx(current)].cdr;
-                }
-                // Create new env and bind
-                Env new_env(&env);
-                new_env.set_primitives(&primitives_);
-
-                for (auto& [n, v] : bindings)
-                    new_env.bind(n, v);
-                // Evaluate body in new env
-                auto body_current = body_rest;
-                EvalResult last = make_void();
-                TwPinResult pin_last(last);
-                while (types::is_pair(body_current)) {
-                    auto elem_pair = types::as_pair_idx(body_current);
-                    last = eval_data_as_code(pairs_[elem_pair].car, new_env, flat, pool);
-                    if (!last)
-                        return last;
-                    body_current = pairs_[elem_pair].cdr;
-                }
-                return last;
-            }
-            return make_void();
-        }
-
-        // ── General function call ──
-        // Look up the function in the environment or primitives.
-        // #223 follow-up: skip primitive lookup when fn_name is
-        // empty (e.g. when fn_idx was out of bounds at line 17542).
-        // Without this guard, env.lookup_primitive("") triggers
-        // the pre (!n.empty()) contract on Primitives::lookup.
-        // The environment lookup below (lookup_by_intern) handles
-        // missing names gracefully via nullopt.
-        std::optional<PrimFn> prim;
-        if (!fn_name.empty()) {
-            prim = env.lookup_primitive(fn_name);
-        }
-        if (prim) {
-            std::vector<EvalValue> args;
-            TwPinMany pin_args(args);
-            auto current = cdr_val;
-            while (types::is_pair(current)) {
-                auto arg_pair = types::as_pair_idx(current);
-                auto arg_val = eval_data_as_code(pairs_[arg_pair].car, env, flat, pool);
-                if (!arg_val)
-                    return arg_val;
-                args.push_back(*arg_val);
-                current = pairs_[arg_pair].cdr;
-            }
-            // Issue #441 / #1357: call count + optional render latency.
-            // Issue #4690: a closure-form while parks its thunk's diagnostic.
-            return finish_prim_call(
-                fn_name, invoke_prim_with_telemetry(fn_name, [&]() { return (*prim)(args); }));
-        }
-
-        // Issue #158: macro expansion in eval_data_as_code. The
-        // cons-chain result of a legacy `defmacro` body is
-        // re-evaluated here. If the head of the list is itself a
-        // macro (e.g., the qq-built form `(bar ,x)` in a macro
-        // body where `bar` is also a macro), the system needs to
-        // detect this and trigger the macro path. Before this
-        // fix, eval_data_as_code only checked env + primitives,
-        // so `bar` (which lives in `macros_`, not env) was never
-        // expanded — the cons chain produced the list `(bar <x>)`
-        // but `bar` was just a symbol at re-eval time.
-        if (macros_.count(fn_name)) {
-            // Issue #4390: this arm does not read md.hygienic / md.preserved.
-            // Refuse before the tail-env template eval when MacroSelfEvo
-            // is not granted. A granted hygienic clone still stamps
-            // MacroIntroduced in clone_macro_body.
-            if (auto denied = legacy_eval_macro_self_evo_deny())
-                return std::unexpected(*denied);
-            auto macro_it = macros_.find(fn_name);
-            auto& md = macro_it->second;
-            bool is_rest = md.dotted;
-            // Rest params on legacy macros via eval_data_as_code
-            // are not yet supported (same limitation as the main
-            // eval_flat path). Fall through to a no-op return if
-            // the macro has a dotted rest param.
-            if (is_rest) {
-                return make_void();
-            }
-            // Collect args (already data — no ast_to_data needed).
-            std::vector<EvalValue> cargs;
-            auto current = cdr_val;
-            while (types::is_pair(current)) {
-                auto arg_pair = types::as_pair_idx(current);
-                cargs.push_back(pairs_[arg_pair].car);
-                current = pairs_[arg_pair].cdr;
-            }
-            // Build tail env with regular params bound.
-            Env tail_env(&env);
-            tail_env.set_primitives(&primitives_);
-
-            if (md.pool)
-                tail_env.set_pool(md.pool);
-            for (std::size_t i = 0; i < md.params.size() && i < cargs.size(); ++i) {
-                tail_env.bind(md.params[i], std::move(cargs[i]));
-            }
-            // Evaluate macro body (quasiquote-expanded template)
-            // → produces data (a list).
-            auto template_result =
-                eval_flat(*md.flat, md.pool ? *md.pool : *current_pool(), md.body_id, tail_env);
-            if (!template_result)
-                return template_result;
-            TwPinResult pin_template(template_result);
-            // Re-evaluate the data as code. The recursive call
-            // here is what enables macro composition: the inner
-            // macro's expansion is re-evaluated, which may itself
-            // contain another macro call.
-            return eval_data_as_code(*template_result, env, flat, pool);
-        }
-
-        // Look up in environment. Phase 2.5.0: route through
-        // lookup_by_intern (SymId-first). canonical_pool() is
-        // the long-lived workspace pool; env.pool_ is the
-        // fallback for closures that captured a non-canonical
-        // pool. Observable behavior matches env.lookup(name).
-        auto env_val = env.lookup_by_intern(fn_name, canonical_pool());
-        if (env_val) {
-            auto fn_val = *env_val;
-            // Dereference cells — needed when lookup returned cell sentinel (cells_ not set on env)
-            if (types::is_cell(fn_val)) {
-                auto ci = types::as_cell_id(fn_val);
-                if (ci < cells_.size())
-                    fn_val = cells_[ci];
-            }
-            if (types::is_closure(fn_val)) {
-                auto cid = types::as_closure_id(fn_val);
-                auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
-                if (it != closures_shards_[closures_shard_index(cid)].map.end()) {
-                    // Issue #3021: no bare apply of freed/tombstone.
-                    if (!closure_apply_use_site_ok(it->second))
-                        return std::unexpected(
-                            Diagnostic{ErrorKind::InvalidClosure,
-                                       "eval_data_as_code: freed/tombstoned closure"});
-                    auto& cl = it->second;
-                    // Issue #4421: this arm eval_flats the body without
-                    // apply_closure. The value-fallback below already
-                    // refuses; a named re-entry must too, before the body.
-                    if (production_eval_flat_commit_readiness_refuse(
-                            static_cast<CompilerMetrics*>(compiler_metrics_)))
-                        return eval_flat_commit_readiness_refused();
-                    // Evaluate args and apply
-                    std::vector<EvalValue> cargs;
-                    TwPinMany pin_cargs(cargs);
-                    auto current = cdr_val;
-                    while (types::is_pair(current)) {
-                        auto arg_pair = types::as_pair_idx(current);
-                        auto arg_val = eval_data_as_code(pairs_[arg_pair].car, env, flat, pool);
-                        if (!arg_val)
-                            return arg_val;
-                        cargs.push_back(*arg_val);
-                        current = pairs_[arg_pair].cdr;
-                    }
-                    // Create tail env and apply
-                    Env tail_env = materialize_call_env(cl);
-                    tail_env.set_primitives(&primitives_);
-
-                    // Issue #145: set the pool so bind_symid can mirror
-                    if (cl.pool)
-                        tail_env.set_pool(cl.pool);
-                    // Issue #4467: do not enter the body on a wrong arity.
-                    if (user_arity_mismatch(cl.params.size(), cl.dotted, cargs.size())) {
-                        const std::string who = cl.name.empty() ? fn_name : cl.name;
-                        return std::unexpected(Diagnostic{
-                            ErrorKind::ArityMismatch,
-                            user_arity_message(who, cl.params.size(), cl.dotted, cargs.size()),
-                            aura::diag::SourceLocation{1, 1, 0}});
-                    }
-                    for (std::size_t i = 0; i < cargs.size() && i < cl.params.size(); ++i)
-                        tail_env.bind_symid(cl.params[i], std::move(cargs[i]));
-                    if (cl.body_id != aura::ast::NULL_NODE && cl.flat)
-                        return eval_flat(*cl.flat, cl.pool ? *cl.pool : *current_pool(), cl.body_id,
-                                         tail_env);
-                    return make_void();
-                }
-            }
-        }
+        if (auto spec = eval_data_forms_control(data, env, flat, pool, car_val, cdr_val, fn_name))
+            return *spec;
+        if (auto spec = eval_data_forms_bind(data, env, flat, pool, car_val, cdr_val, fn_name))
+            return *spec;
+        if (auto spec = eval_data_forms_apply(data, env, flat, pool, car_val, cdr_val, fn_name))
+            return *spec;
     }
 
     // Not a string function name — evaluate car and cdr, apply
@@ -5218,6 +4421,14 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
             aura::diag::ErrorKind::InternalError,
             "batch :replace-pattern: no matches found (or all parse-failed)"});
 
+    return apply_replace_pattern_matches(flat, matches, pattern_str, repl_template, summary, a,
+                                         end_id);
+}
+
+EvalResult Evaluator::apply_replace_pattern_matches(
+    aura::ast::FlatAST& flat, std::vector<aura::ast::FlatAST::StableNodeRef>& matches,
+    const std::string& pattern_str, const std::string& repl_template, const std::string& summary,
+    std::span<const types::EvalValue> a, aura::ast::NodeId end_id) {
     // Reverse parent-edge helper (lockless mirror of parent_child_index_if_attached).
     auto parent_child_index_if_attached =
         [](const aura::ast::FlatAST& f,
@@ -6932,6 +6143,5771 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
     return result;
 }
 
+Evaluator::FlatStep Evaluator::eval_flat_on_linear_move(EvalFlatCursor& cur,
+                                                        const aura::ast::NodeView& v,
+                                                        const Env& eval_env) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    // Issue #1539: after reading the value, mark the source
+    // binding as Moved so linear_post_mutate_enforce can
+    // intercept subsequent use-after-move.
+    if (v.children.empty())
+        return FlatStep::ret(EvalResult(make_void()));
+    const auto inner = v.child(0);
+    auto result = eval_flat(*f, *p, inner, eval_env);
+    if (!result) [[unlikely]]
+        return FlatStep::ret(result);
+    if (inner != aura::ast::NULL_NODE && inner < f->size() &&
+        f->get(inner).tag == aura::ast::NodeTag::Variable) {
+        (void)mark_linear_binding_moved(const_cast<Env&>(eval_env), f->get(inner).sym_id);
+    }
+    return FlatStep::ret(result);
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_macrodef(EvalFlatCursor& cur,
+                                                     const aura::ast::NodeView& v,
+                                                     const Env& eval_env) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    // Issue #4350-family: own the name bytes (the registration
+    // path interns into the pool).
+    std::string name(p->resolve(v.sym_id));
+    std::vector<std::string> param_names;
+    for (auto pn : v.params)
+        param_names.push_back(std::string(p->resolve(pn)));
+    auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+    if (body_id == aura::ast::NULL_NODE)
+        return FlatStep::ret(EvalResult(make_void()));
+
+    // ── Warn: unused macro parameters ──────────────────────────
+    // Scan the body for variable references and compare with params.
+    {
+        // Collect all variable names referenced in the macro body
+        std::unordered_set<std::string> used_vars;
+        auto collect_vars = [&](this const auto& self, aura::ast::NodeId nid) -> void {
+            if (nid == aura::ast::NULL_NODE || nid >= f->size())
+                return;
+            auto nv = f->get(nid);
+            if (nv.tag == aura::ast::NodeTag::Variable && nv.sym_id != aura::ast::INVALID_SYM) {
+                used_vars.insert(std::string(p->resolve(nv.sym_id)));
+            }
+            for (auto c : nv.children)
+                self(c);
+        };
+        collect_vars(body_id);
+
+        int used_count = 0;
+        for (auto& pn : param_names) {
+            if (used_vars.count(pn) == 0) {
+                std::println(std::cerr, "warning: macro '{}': parameter '{}' never used",
+                             std::string(name), pn);
+            } else {
+                ++used_count;
+            }
+        }
+        if (used_count == 0) {
+            std::println(std::cerr, "warning: macro '{}': body does not reference any parameter",
+                         std::string(name));
+        }
+    }
+
+    // Store macro definition with proper dotted flag
+    // Issue #120: dotted is bit 0, hygienic is bit 1 of
+    // int_val_ (encoded by add_macrodef in parser_impl.cpp).
+    bool is_dotted = (v.int_value & 1) != 0;
+    bool is_hygienic = (v.int_value & 2) != 0;
+    // Issue #230 #2: bit 2 of int_val_ flags the
+    // `define-hygienic-macro*` (preserved-params) variant.
+    bool is_preserved = (v.int_value & 4) != 0;
+    // Issue #4859: a macro is a GLOBAL registry entry — it
+    // outlives the eval call that registered it — so it keeps
+    // the (eval ...) program that owns f / p alive.
+    macros_epoch_4894_.fetch_add(1, std::memory_order_acq_rel); // Issue #4894
+    macros_[std::string(name)] =
+        MacroDef{std::move(param_names),  is_dotted, is_hygienic, is_preserved, f, p, body_id,
+                 eval_program_for_pool(p)};
+    note_macro_def_4901(std::string(name)); // Issue #4901
+    macros_epoch_4894_.fetch_add(1, std::memory_order_acq_rel);
+    return FlatStep::ret(EvalResult(make_void()));
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_typeannotation(EvalFlatCursor& cur,
+                                                           const aura::ast::NodeView& v,
+                                                           const Env& eval_env) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (v.children.empty())
+        return FlatStep::ret(EvalResult(make_void()));
+    auto annot_id = current_id;
+    auto child_result = eval_flat(*f, *p, v.child(0), eval_env);
+    if (!child_result)
+        return FlatStep::ret(child_result);
+    // 3-arg form (: name Type val): bind the result in eval_env
+    if (v.int_value != 0) {
+        auto var_name = p->resolve(static_cast<aura::ast::SymId>(v.int_value));
+        if (!var_name.empty()) {
+            auto& me = const_cast<Env&>(eval_env);
+
+            auto ci = alloc_cell(*child_result);
+            if (types::is_void(*child_result))
+                note_cell_nil_assigned(ci); // Issue #4789
+            me.bind(std::string(var_name), make_cell(ci));
+        }
+    }
+    // Runtime type check: compare value type against annotation
+    if (type_registry_ && annot_id < f->size()) {
+        auto expected_type_id = f->type_id(annot_id);
+        if (expected_type_id != 0) {
+            auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+            auto expected_tag = treg.tag_of(aura::core::TypeId{expected_type_id, 1});
+            auto actual_tag = runtime_type_tag(*child_result);
+            if (actual_tag != expected_tag && actual_tag != aura::core::TypeTag::DYNAMIC) {
+                auto& val = *child_result;
+                // Attempt coercion at runtime
+                bool coerced = coerce_value(val, actual_tag, expected_tag, string_heap_);
+                if (!coerced) {
+                    std::string expected_name(
+                        treg.format_type(aura::core::TypeId{expected_type_id, 1}));
+                    std::string actual_name = type_tag_name(actual_tag);
+                    std::println(std::cerr, "type warning: expected {}, got {}\n", expected_name,
+                                 actual_name);
+                }
+            }
+        }
+    }
+    return FlatStep::ret(child_result);
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_quote(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                                  const Env& eval_env) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (v.children.empty())
+        return FlatStep::ret(EvalResult(make_void()));
+    // Issue #1137: quoted empty list is often LiteralInt(0) in the AST
+    // (parser uses 0 as the empty-list sentinel). Map that to void so
+    // (equal? 0 '()) / (eq? 0 '()) can distinguish fixnum 0 from nil.
+    {
+        auto qv = f->get(v.child(0));
+        if (qv.tag == aura::ast::NodeTag::LiteralInt && qv.int_value == 0 &&
+            qv.marker != aura::ast::SyntaxMarker::BoolLiteral)
+            return FlatStep::ret(EvalResult(make_void()));
+    }
+    // Issue #4727: quoted data materializes identifier atoms
+    // as interned symbols (datum context).
+    return FlatStep::ret(EvalResult(ast_to_data(*f, *p, v.child(0), /*datum=*/true)));
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_set(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                                const Env& eval_env) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    // Issue #4350-family: own the name bytes — the value eval
+    // interns into the pool (buf_ growth frees the view's
+    // storage) and the name is used after (lookup_cell_index).
+    std::string name(p->resolve(v.sym_id));
+    auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+    auto val = eval_flat(*f, *p, val_id, eval_env);
+    if (!val)
+        return FlatStep::ret(val);
+    // Issue #4715 AC2: an open overlay owns the write. A set!
+    // of a top-level binding is captured as a private cell (the
+    // shared cell is never overwritten in place); a local
+    // (parameter / let) target keeps the ordinary path below.
+    if (primitives_detail::t_fiber_cow_overlay_depth != 0 &&
+        primitives_detail::fiber_cow_overlay_capture_set(*this, name, *val, eval_env))
+        return FlatStep::ret(*val);
+    // Use stable index instead of pointer (cells_ may reallocate)
+    auto cell_idx = eval_env.lookup_cell_index(std::string(name));
+    if (cell_idx) {
+        if (*cell_idx < cells_.size())
+            store_cell_value(*cell_idx, *val);
+        return FlatStep::ret(*val);
+    }
+    // Fallback 1: direct binding in current env
+    for (auto& b : const_cast<Env&>(eval_env).bindings()) {
+        if (b.first == name) {
+            b.second = *val;
+            return FlatStep::ret(*val);
+        }
+    }
+    // Fallback 2: scan parent envs for direct (non-cell) bindings
+    {
+        const Env* e = eval_env.parent();
+        while (e) {
+            for (auto& b : const_cast<Env&>(*e).bindings()) {
+                if (b.first == name) {
+                    b.second = *val;
+                    return FlatStep::ret(*val);
+                }
+            }
+            e = e->parent();
+        }
+    }
+    // Issue #4122: materialize stores the let cell in
+    // bindings_symid_ (string bindings_ often empty).
+    // lookup reads that symid entry, including a non-cell
+    // copy. set! must write the same entry.
+    if (auto* pool = const_cast<aura::ast::StringPool*>(eval_env.pool())) {
+        const auto sid = pool->intern(name);
+        auto write_syms = [&](Env& e) -> bool {
+            auto& syms = e.bindings_symid_mut();
+            for (auto it = syms.rbegin(); it != syms.rend(); ++it) {
+                if (it->first != sid)
+                    continue;
+                if (is_cell(it->second)) {
+                    const auto ci = as_cell_id(it->second);
+                    if (ci < cells_.size())
+                        store_cell_value(ci, *val);
+                } else {
+                    it->second = *val;
+                }
+                return true;
+            }
+            return false;
+        };
+        if (write_syms(const_cast<Env&>(eval_env)))
+            return FlatStep::ret(*val);
+        for (auto* e = const_cast<Env*>(eval_env.parent()); e; e = const_cast<Env*>(e->parent())) {
+            if (write_syms(*e))
+                return FlatStep::ret(*val);
+        }
+    }
+    // Same SoA parent chain Env::lookup reads. A behind
+    // named-let capture keeps the cell here after set-car!
+    // bumps defuse. Write that entry, cell or value.
+    if (auto* owner = eval_env.owner()) {
+        const auto sid = eval_env.pool()
+                             ? const_cast<aura::ast::StringPool*>(eval_env.pool())->intern(name)
+                             : aura::ast::INVALID_SYM;
+        auto write_frame = [&](EnvFrame& fr) -> bool {
+            for (auto& b : fr.bindings_) {
+                if (b.first != name)
+                    continue;
+                if (is_cell(b.second)) {
+                    const auto ci = as_cell_id(b.second);
+                    if (ci < cells_.size())
+                        store_cell_value(ci, *val);
+                } else {
+                    b.second = *val;
+                }
+                return true;
+            }
+            if (sid != aura::ast::INVALID_SYM) {
+                for (auto it = fr.bindings_symid_.rbegin(); it != fr.bindings_symid_.rend(); ++it) {
+                    if (it->first != sid)
+                        continue;
+                    if (is_cell(it->second)) {
+                        const auto ci = as_cell_id(it->second);
+                        if (ci < cells_.size())
+                            store_cell_value(ci, *val);
+                    } else {
+                        it->second = *val;
+                    }
+                    return true;
+                }
+            }
+            return false;
+        };
+        EnvId cur = eval_env.parent_id();
+        for (std::size_t hops = 0; cur != NULL_ENV_ID && hops < 64; ++hops) {
+            // Issue #4529: the chain can be stale post-truncate
+            // (restore_panic_checkpoint shrank env_frames_ while
+            // this env was parked) — the unchecked env_frame_mut
+            // accessor asserts past size. Skip the stale tail.
+            if (static_cast<std::size_t>(cur) >= owner->env_frames_size())
+                break;
+            std::unique_lock<std::shared_mutex> wlock(
+                owner->env_frame_shard_mu(Evaluator::env_frame_shard_index(cur)));
+            EnvFrame& fr = owner->env_frame_mut(cur);
+            if (write_frame(fr))
+                return FlatStep::ret(*val);
+            // Issue #4734: drop the shard lock before the top_
+            // consult (shard -> bindings is the inverse of the
+            // bindings -> shard order env-frame writers take).
+            const EnvId next_frame = fr.parent_id;
+            const bool at_root_frame = (cur == 0);
+            wlock.unlock();
+            if (at_root_frame) {
+                // Issue #4717: shared top env read.
+                auto top_bind_guard = owner->top_env().lock_bindings_shared();
+                for (auto& b : owner->top_env().bindings()) {
+                    if (b.first != name)
+                        continue;
+                    if (is_cell(b.second)) {
+                        const auto ci = as_cell_id(b.second);
+                        if (ci < cells_.size())
+                            store_cell_value(ci, *val);
+                    } else {
+                        b.second = *val;
+                    }
+                    return FlatStep::ret(*val);
+                }
+            }
+            cur = next_frame;
+        }
+    }
+    // Issue #4374: display and newline are primitives, not
+    // cells. set! of a name that was never bound is not an
+    // unbound variable. Leave the primitive in place — a new
+    // cell would be updated in place by a later eval define.
+    if (eval_env.lookup_primitive(name))
+        return FlatStep::ret(*val);
+    // Suggest closest bound variables
+    {
+        std::vector<std::string> candidates;
+        {
+            const Env* e = &eval_env;
+            while (e) {
+                for (auto& b : const_cast<Env&>(*e).bindings())
+                    candidates.push_back(b.first);
+                e = e->parent();
+            }
+        }
+        auto best = closest_match(name, candidates);
+        // Issue #79: source location from the offending node.
+        Diagnostic d(ErrorKind::UnboundVariable, "set!: " + std::string(name),
+                     aura::diag::SourceLocation{v.line, v.col, diag_fid_4916(f)}, current_id);
+        if (!best.empty())
+            d.with_suggestion("did you mean '" + best + "'?");
+        return FlatStep::ret(std::unexpected(std::move(d)));
+    }
+    return FlatStep::ret(std::unexpected(
+        Diagnostic{ErrorKind::UnboundVariable, "set!: " + std::string(name),
+                   aura::diag::SourceLocation{v.line, v.col, diag_fid_4916(f)}, current_id}));
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_export(EvalFlatCursor& cur,
+                                                   const aura::ast::NodeView& v,
+                                                   const Env& eval_env) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    // (export sym ...) — record module API during loading
+    // No runtime effect; children are Variable nodes
+    if (!current_export_set_) {
+        current_export_set_ = std::make_unique<std::unordered_set<std::string>>();
+    }
+    for (auto cid : v.children) {
+        auto cv = f->get(cid);
+        if (cv.tag == aura::ast::NodeTag::Variable) {
+            current_export_set_->insert(std::string(p->resolve(cv.sym_id)));
+        }
+    }
+    return FlatStep::ret(types::make_void());
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_definemodule(EvalFlatCursor& cur,
+                                                         const aura::ast::NodeView& v,
+                                                         const Env& eval_env) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    // (define-module (Name :T ...) body...)
+    // Store module template and bind Name to functor
+    auto mod_name = std::string(p->resolve(v.sym_id));
+    ModuleTemplate mt;
+
+    // Extract type parameter names from AST params metadata
+    // (type params = all params minus cap params)
+    auto num_cap_params = f->cap_require_count(v.id);
+    std::size_t num_type_params = (num_cap_params > 0 && v.params.size() >= num_cap_params)
+                                      ? v.params.size() - num_cap_params
+                                      : v.params.size();
+    for (std::size_t i = 0; i < num_type_params; ++i) {
+        auto pid = f->param_at(v.id, i);
+        mt.type_param_names.push_back(std::string(p->resolve(pid)));
+    }
+    if (num_cap_params > 0) {
+        // cap params are at the end of the param list
+        for (std::size_t i = 0; i < num_cap_params; ++i) {
+            auto pid = f->param_at(v.id, v.params.size() - num_cap_params + i);
+            mt.cap_param_names.push_back(std::string(p->resolve(pid)));
+        }
+    }
+
+    // Serialize body expressions to source strings (for cross-eval instantiation)
+    // Build a node-to-source serializer using the current FlatAST
+    std::function<std::string(aura::ast::NodeId)> node_source;
+    node_source = [&](aura::ast::NodeId nid) -> std::string {
+        if (nid >= f->size() || nid == aura::ast::NULL_NODE)
+            return "";
+        auto nv = f->get(nid);
+        switch (nv.tag) {
+            case aura::ast::NodeTag::LiteralInt:
+                return std::to_string(nv.int_value);
+            case aura::ast::NodeTag::LiteralFloat:
+                return std::to_string(nv.float_value);
+            case aura::ast::NodeTag::LiteralString:
+                return "\"" + std::string(p->resolve(nv.sym_id)) + "\"";
+            case aura::ast::NodeTag::Variable:
+                return std::string(p->resolve(nv.sym_id));
+            case aura::ast::NodeTag::Quote: {
+                if (nv.children.empty())
+                    return "'()";
+                return "'" + node_source(nv.child(0));
+            }
+            case aura::ast::NodeTag::Lambda: {
+                std::string s = "(lambda (";
+                for (std::size_t pi = 0; pi < nv.params.size(); ++pi) {
+                    if (pi > 0)
+                        s += " ";
+                    s += std::string(p->resolve(nv.params[pi]));
+                }
+                s += ")";
+                if (!nv.children.empty())
+                    s += " " + node_source(nv.child(0));
+                return s + ")";
+            }
+            case aura::ast::NodeTag::Define: {
+                std::string s = "(define";
+                if (!nv.children.empty()) {
+                    auto val_nv = f->get(nv.child(0));
+                    if (val_nv.tag == aura::ast::NodeTag::Lambda) {
+                        // Shorthand: (define (name params...) body...)
+                        s += " (" + std::string(p->resolve(nv.sym_id));
+                        for (std::size_t pi = 0; pi < val_nv.params.size(); ++pi) {
+                            s += " ";
+                            s += std::string(p->resolve(val_nv.params[pi]));
+                        }
+                        s += ")";
+                        if (!val_nv.children.empty())
+                            s += " " + node_source(val_nv.child(0));
+                    } else {
+                        s += " " + std::string(p->resolve(nv.sym_id));
+                        s += " " + node_source(nv.child(0));
+                    }
+                }
+                return s + ")";
+            }
+            case aura::ast::NodeTag::Export: {
+                std::string s = "(export";
+                for (auto eid : nv.children) {
+                    auto ev = f->get(eid);
+                    if (ev.tag == aura::ast::NodeTag::Variable)
+                        s += " " + std::string(p->resolve(ev.sym_id));
+                }
+                return s + ")";
+            }
+            case aura::ast::NodeTag::Call: {
+                std::string s = "(";
+                for (std::size_t ci = 0; ci < nv.children.size(); ++ci) {
+                    if (ci > 0)
+                        s += " ";
+                    s += node_source(nv.child(ci));
+                }
+                return s + ")";
+            }
+            default:
+                return "()";
+        }
+    };
+
+    // Serialize each body expression
+    std::string body_src;
+    for (auto cid : v.children) {
+        auto sexpr = node_source(cid);
+        if (!sexpr.empty()) {
+            if (!body_src.empty())
+                body_src += "\n";
+            body_src += sexpr;
+        }
+    }
+    mt.body_source = std::move(body_src);
+
+    // Scan body for `:require` directives
+    // Format: ((:require FileRead FileWrite) ...) or ((:require FileRead) ...)
+    for (auto cid : v.children) {
+        auto cv = f->get(cid);
+        if (cv.tag == aura::ast::NodeTag::Call && cv.children.size() > 0) {
+            auto callee_node = f->get(cv.child(0));
+            if (callee_node.tag == aura::ast::NodeTag::Variable ||
+                callee_node.tag == aura::ast::NodeTag::Quote) {
+                aura::ast::SymId sym = (callee_node.tag == aura::ast::NodeTag::Variable)
+                                           ? callee_node.sym_id
+                                           : aura::ast::INVALID_SYM;
+                std::string_view callee_name =
+                    (sym != aura::ast::INVALID_SYM) ? p->resolve(sym) : std::string_view();
+                // Check for :require or require keyword
+                if (callee_name == ":require" || callee_name == ":require-all") {
+                    // Extract required capability names from remaining children
+                    for (std::size_t ai = 1; ai < cv.children.size(); ++ai) {
+                        auto arg_node = f->get(cv.child(ai));
+                        if (arg_node.tag == aura::ast::NodeTag::Variable) {
+                            auto cap_name = std::string(p->resolve(arg_node.sym_id));
+                            // Skip duplicates
+                            bool dup = false;
+                            for (auto& r : mt.cap_require) {
+                                if (r == cap_name) {
+                                    dup = true;
+                                    break;
+                                }
+                            }
+                            if (!dup)
+                                mt.cap_require.push_back(cap_name);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    module_templates_[mod_name] = std::move(mt);
+
+    // Bind Name in the current env (as a cell with functor marker)
+    Env& me = const_cast<Env&>(eval_env);
+
+    auto ci = alloc_cell(make_void());
+    auto sidx = push_string_heap("%functor");
+    me.bind(mod_name, make_cell(ci));
+    cells_[ci] = make_string(sidx);
+    return FlatStep::ret(make_string(sidx));
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_define(EvalFlatCursor& cur,
+                                                   const aura::ast::NodeView& v,
+                                                   const Env& eval_env) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    // Own the name bytes. set_pool below interns into this
+    // pool and can grow buf_, freeing the view from resolve
+    // (ASAN heap-use-after-free on typed_mutate define).
+    std::string name(p->resolve(v.sym_id));
+    auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+    Env& me = const_cast<Env&>(eval_env);
+    // Issue #1482 restore: pool so bind dual-writes bindings_symid_
+    // (closure capture PRIMARY) + string mirror for set!/lookup.
+    if (p)
+        me.set_pool(p);
+
+    // Check if already bound as a cell — update existing cell to maintain
+    // sequential define chains across multiple eval calls
+    // Use lookup_binding to get the raw cell sentinel (not dereferenced value)
+    auto existing = eval_env.lookup_binding(std::string(name));
+    if (!existing && v.sym_id != aura::ast::INVALID_SYM) {
+        // SymId path: re-define after capture/materialize may only
+        // have the cell on bindings_symid_.
+        // Issue #2868: only trust SymId equality when the env is
+        // already keyed by *this* AST pool (set_pool re-keys on
+        // change). Cross-pool integer match reused another
+        // define's cell without binding the new name.
+        // Issue #4817: lookup_by_symid walks the
+        // legacy parent_ chain with this raw SymId, so a
+        // parent keyed by another pool (top_ under a module
+        // env from a require that runs after the main file's
+        // first define) collides too: the module's first
+        // define stored into the main file's first top-level
+        // cell and never bound its own name (the #4547 test
+        // pad). Only trust the SymId hit when every parent
+        // shares this pool.
+        bool chain_same_pool = eval_env.pool() == p;
+        for (const Env* up = eval_env.parent(); chain_same_pool && up != nullptr; up = up->parent())
+            chain_same_pool = up->pool() == p;
+        if (chain_same_pool) {
+            if (auto by_sym = eval_env.lookup_by_symid(v.sym_id); by_sym && is_cell(*by_sym))
+                existing = by_sym;
+        }
+    }
+    // Issue #2872: only commit the cell after RHS succeeds.
+    // Re-define: leave prior cell untouched on failure.
+    if (existing && is_cell(*existing)) {
+        auto ci = as_cell_id(*existing);
+        auto vv = eval_flat(*f, *p, val_id, eval_env);
+        if (!vv)
+            return FlatStep::ret(vv);
+        // Issue #4715 AC2: a define / rebind of a TOP-LEVEL
+        // binding inside a body with an open overlay must not
+        // overwrite the shared cell in place - the value lands
+        // in the overlay's private cell (one thread_local load
+        // when no overlay is open, then the original path).
+        if (!primitives_detail::fiber_cow_overlay_capture_define_cell(
+                *this, name, *vv, static_cast<std::uint64_t>(ci)))
+            store_cell_value(ci, *vv);
+        // Issue #3681: name the closure so set-body can
+        // must-deopt this view after the define is dirtied.
+        if (is_closure(*vv)) {
+            name_live_closure(as_closure_id(*vv), name);
+            // Issue #4779: retire the generation before the
+            // one this re-define superseded.
+            if (&eval_env == &top_)
+                retire_superseded_define_closure(name, as_closure_id(*vv));
+        }
+        return FlatStep::ret(*vv);
+    }
+
+    // Issue #2872: Lambda RHS needs a pre-bound cell so
+    // `(define f (lambda () f))` / `(define (f) …)` capture
+    // the name for self-reference. Non-lambda RHS must NOT
+    // pre-bind: a failed RHS (recursion depth, etc.) used to
+    // leave `name` bound to void — later forms read `()` or
+    // a stale alias, and multi-define chains looked wiped.
+    const bool rhs_is_lambda = val_id != aura::ast::NULL_NODE && val_id < f->size() &&
+                               f->get(val_id).tag == aura::ast::NodeTag::Lambda;
+
+    if (!rhs_is_lambda) {
+        // Eval first; bind only on success.
+        auto vv = (val_id == aura::ast::NULL_NODE) ? EvalResult(make_void())
+                                                   : eval_flat(*f, *p, val_id, eval_env);
+        if (!vv)
+            return FlatStep::ret(vv);
+        // Issue #4546: the RHS can re-key this env to another
+        // pool (set-code / eval-current walking a workspace).
+        // bind_symid mirrors the name through pool_, so re-key
+        // back to this define's pool first.
+        if (p)
+            me.set_pool(p);
+        // Issue #4715 AC2 deliberately does NOT capture a
+        // brand-new define here: a file-mode top-level define
+        // must stay bound in the shared env (capturing it would
+        // unbind the name the moment the overlay is dropped).
+        // A private NEW binding is the workspace / EDSL face
+        // (fiber:overlay-define + bind_define_value_in_env).
+        auto ci = alloc_cell(*vv);
+        if (types::is_void(*vv))
+            note_cell_nil_assigned(ci); // Issue #4789
+        if (v.sym_id != aura::ast::INVALID_SYM)
+            me.bind_symid(v.sym_id, make_cell(ci));
+        else
+            me.bind(std::string(name), make_cell(ci));
+        if (is_closure(*vv)) {
+            name_live_closure(as_closure_id(*vv), name);
+            // Issue #4779: retire the generation before the
+            // one this re-define superseded.
+            if (&eval_env == &top_)
+                retire_superseded_define_closure(name, as_closure_id(*vv));
+        }
+        return FlatStep::ret(*vv);
+    }
+
+    // Lambda: pre-bind void cell, eval, commit or roll back.
+    auto ci = alloc_cell(make_void());
+    if (v.sym_id != aura::ast::INVALID_SYM)
+        me.bind_symid(v.sym_id, make_cell(ci));
+    else
+        me.bind(std::string(name), make_cell(ci));
+    auto vv = eval_flat(*f, *p, val_id, eval_env);
+    if (!vv) {
+        // Issue #4546: unbind by this define's SymId only
+        // under its own pool.
+        if (p)
+            me.set_pool(p);
+        // Roll back so name is unbound (not void cell).
+        if (v.sym_id != aura::ast::INVALID_SYM)
+            me.unbind_local_symid(v.sym_id);
+        me.unbind_local(std::string(name));
+        return FlatStep::ret(vv);
+    }
+    store_cell_value(ci, *vv);
+    // Issue #3681: name the closure so set-body can
+    // must-deopt this view after the define is dirtied.
+    if (is_closure(*vv)) {
+        name_live_closure(as_closure_id(*vv), name);
+        // Issue #4779: retire the generation before the one
+        // this re-define superseded.
+        if (&eval_env == &top_)
+            retire_superseded_define_closure(name, as_closure_id(*vv));
+    }
+    return FlatStep::ret(*vv);
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_definetype(EvalFlatCursor& cur,
+                                                       const aura::ast::NodeView& v,
+                                                       const Env& eval_env) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    // (define-type (Name params...) (Ctor fields...) ...)
+    // Bind each constructor by evaluating an Aura lambda:
+    //   (define <Ctor> (lambda args (cons 'Ctor args)))
+    // This avoids C++ complexity and works with existing pair infrastructure.
+    auto type_name = p->resolve(v.sym_id);
+    Env& me = const_cast<Env&>(eval_env);
+
+
+    for (auto cid : v.children) {
+        if (cid >= f->size())
+            continue;
+        auto cv = f->get(cid);
+        if (cv.tag != aura::ast::NodeTag::Quote || cv.children.empty())
+            continue;
+        auto quoted = cv.child(0);
+        if (quoted >= f->size())
+            continue;
+        auto qv = f->get(quoted);
+        // Constructor data is now (cons 'ctor-name (cons 'ft1 (cons 'ft2 ...)))
+        // Extract the constructor name from the head of the list
+        std::string ctor_name;
+        aura::ast::NodeId current = quoted;
+        auto cur_v = f->get(current);
+        if (cur_v.tag == aura::ast::NodeTag::Pair) {
+            auto car_id = cur_v.child(0);
+            if (car_id < f->size()) {
+                auto car_v = f->get(car_id);
+                if (car_v.tag == aura::ast::NodeTag::Variable)
+                    ctor_name = std::string(p->resolve(car_v.sym_id));
+            }
+        }
+        if (ctor_name.empty())
+            continue;
+
+        // Register constructor as a primitive that creates tagged lists:
+        // (Ctor arg1 arg2 ...) → (cons 'Ctor (cons arg1 (cons arg2 ...)))
+        auto tag_slot = push_string_heap(ctor_name);
+        auto tag_str = make_string(tag_slot);
+
+        // Count fields to determine if zero-arg constructor
+        int field_count = 0;
+        {
+            aura::ast::NodeId fields_node = quoted;
+            auto fv = f->get(fields_node);
+            if (fv.tag == aura::ast::NodeTag::Pair && fv.children.size() >= 2)
+                fields_node = fv.child(1);
+            while (fields_node < f->size()) {
+                auto fnv = f->get(fields_node);
+                if (fnv.tag != aura::ast::NodeTag::Pair || fnv.children.empty())
+                    break;
+                field_count++;
+                if (fnv.children.size() >= 2)
+                    fields_node = fnv.child(1);
+                else
+                    break;
+            }
+        }
+        if (field_count == 0) {
+            me.bind(ctor_name, make_adt_zero_arg_ctor(tag_str));
+        } else {
+            register_adt_ctor(ctor_name, tag_str, field_count);
+        }
+    }
+    return FlatStep::ret(EvalResult(make_void()));
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_let_letrec(EvalFlatCursor& cur,
+                                                       const aura::ast::NodeView& v,
+                                                       const Env& eval_env) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    bool rec = (v.tag == aura::ast::NodeTag::LetRec);
+    // Issue #4350-family: own the name bytes — the init eval
+    // and binds intern into the pool, which can grow buf_ and
+    // free the storage this view points at.
+    std::string name(p->resolve(v.sym_id));
+    auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+    auto body_id = v.children.size() < 2 ? aura::ast::NULL_NODE : v.child(1);
+    if (rec) {
+        // For letrec, the init value is evaluated in the new env (with cell
+        // binding).
+        // Issue #2871: pin parent when it lives in tail_env (TCO call frame
+        // holding free vars such as named-let outer `n`) so emplace does not
+        // destroy the parent while child.parent_ still points at it.
+        cur.pin_if_current_in_tail();
+        const Env& letrec_parent = *current_env;
+        tail_env.emplace(&letrec_parent);
+        tail_env->set_primitives(&primitives_);
+        // Issue #1482 restore: pool is required so bind_symid (and
+        // bind-with-pool) populate bindings_symid_ — the PRIMARY array
+        // copied by alloc_env_frame_from_env into the lambda capture.
+        // Without it, recursive names (e.g. fact in letrec fact) only
+        // land in string bindings_ and are dropped at capture time,
+        // yielding "unbound variable: fact" on recursive apply
+        // (gradual fact_5 / suite letrec).
+        if (p)
+            tail_env->set_pool(p);
+
+        // Issue #232 fix: register parent in env_frames_
+        // (always, not just when parent_id_ is NULL), then
+        // set tail_env's parent_id_ to parent's id. The
+        // materialized call env can then walk the SoA chain
+        // via lookup()'s parent_id_ fallback (added in #232
+        // commit 6e73ef2). The fix below is needed because
+        // even when parent.parent_id_ is non-NULL (e.g., a
+        // materialized call env has parent_id_ = top_'s id),
+        // the SoA walk needs to find the BINDINGS (e.g., 'n'
+        // from a let*), which live in the parent but NOT in top_.
+        // Registering the parent in env_frames_ makes those
+        // bindings visible to the SoA walk.
+        //
+        // Idempotency: skip if parent is already a frame
+        // (this would require tracking which envs are frames;
+        // for now, we always register, which is wasteful but
+        // correct).
+        // Issue #4595: this registration (and the repoint
+        // of top_.parent_id() at the frozen copy of top_'s
+        // bindings) is load-bearing for the steal /
+        // panic-checkpoint / reclaim graph — removing it
+        // crashed the chaos release blocker (steal-snapshot
+        // hard-fail, resume-fence surplus, invalid free).
+        // The shadow bug it causes — a lambda created in
+        // top_ captures an EMPTY live-safe frame parented
+        // here (#4350/#4474) and its free-var walk stopped
+        // at the stale copy, so a later top-level
+        // let/define rebind of an existing name resolved to
+        // the global cell frozen at named-let time — is
+        // fixed lookup-side in Env::lookup /
+        // lookup_cell_ptr / lookup_cell_index: live-safe
+        // EMPTY captures consult the LIVE top_ before their
+        // SoA walk (host-thread only; see #4595).
+        if (letrec_parent.parent_id() == NULL_ENV_ID) {
+            EnvId eval_id = alloc_env_frame_from_env(letrec_parent);
+            const_cast<Env&>(letrec_parent).set_parent_id(eval_id);
+        } else {
+            // parent already has a parent_id_ (probably the
+            // top env). The SoA walk starts at this parent_id_
+            // which is top_ — but top_ doesn't have the let*'s
+            // bindings. Register parent as a NEW frame in
+            // env_frames_ (at the next index) and update its
+            // parent_id_ to the new id. The old parent_id_ is
+            // preserved on the parent's OWN frame.
+            EnvId new_id = alloc_env_frame_from_env(letrec_parent);
+            const_cast<Env&>(letrec_parent).set_parent_id(new_id);
+        }
+        tail_env->set_parent_id(letrec_parent.parent_id());
+
+        auto ci = alloc_cell(make_void());
+        // SymId primary (captured by alloc_env_frame_from_env) +
+        // string mirror via bind_symid when pool_ is set. Parity
+        // with the Let path below.
+        if (v.sym_id != aura::ast::INVALID_SYM)
+            tail_env->bind_symid(v.sym_id, make_cell(ci));
+        else
+            tail_env->bind(std::string(name), make_cell(ci));
+        // Evaluate value in *tail_env (has cell binding for self-reference)
+        auto vv = eval_flat(*f, *p, val_id, *tail_env);
+        if (!vv)
+            return FlatStep::ret(vv);
+        // Issue #4586: an error value is not a binding. The
+        // body must not run.
+        if (is_error(*vv))
+            return FlatStep::ret(vv);
+        store_cell_value(ci, *vv);
+        // Body evaluated in *tail_env (recursive refs need the child env).
+        // Issue #2871: TCO into body — named-let desugars to
+        // (letrec ((name lambda)) (name inits)); the call that
+        // drives the loop must not nest a new eval_flat frame.
+        if (body_id != aura::ast::NULL_NODE) {
+            current_env = &*tail_env;
+            current_id = body_id;
+            return FlatStep::cont();
+        }
+        return FlatStep::ret(make_void());
+    } else {
+        // Issue #4359: (let () body) carries no binding. The
+        // body runs in this env; a define there is not a let
+        // variable.
+        if (v.sym_id == aura::ast::INVALID_SYM) {
+            if (body_id != aura::ast::NULL_NODE) {
+                current_id = body_id;
+                return FlatStep::cont();
+            }
+            return FlatStep::ret(make_void());
+        }
+        // For let, bind directly to current eval_env (like define) to avoid
+        // creating a stack-local child env whose parent_ pointer becomes
+        // dangling when captured by a closure (bug: closure capture copies
+        // the env but parent_ still points to the original stack env).
+        auto vv = eval_flat(*f, *p, val_id, eval_env);
+        if (!vv)
+            return FlatStep::ret(vv);
+        // Issue #4586: same as the letrec arm. A callback
+        // error in the init aborts before the body.
+        if (is_error(*vv))
+            return FlatStep::ret(vv);
+
+        // ── Match exhaustiveness check (tree-walker path) ──
+        // At runtime we don't have static type info, so we resolve the
+        // target ADT by finding which ADT in the registry contains the
+        // first used constructor (e.g. `Cons` -> `List`). Bare-identifier
+        // candidates are only counted as used if they are real ctors of
+        // that ADT (so a variable binding doesn't false-positive).
+        if (!rec && type_registry_ && f->has_match_info(current_id)) {
+            auto* minfo = f->get_match_info(current_id);
+            if (minfo && !minfo->has_wildcard &&
+                (!minfo->used_constructors.empty() || !minfo->candidate_constructors.empty())) {
+                auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+                // Find the target ADT by scanning for the first used_ctor
+                // or candidate_ctor (bare-id patterns).
+                const std::vector<std::string>* target_ctors = nullptr;
+                aura::core::TypeId target_tid{};
+                auto find_adt_for = [&](aura::ast::SymId sid) -> bool {
+                    auto cname = std::string(p->resolve(sid));
+                    for (std::size_t ti = 0; ti < treg.size(); ++ti) {
+                        auto tid = aura::core::TypeId{static_cast<std::uint32_t>(ti), 1};
+                        auto* c = treg.get_adt_constructors(tid);
+                        if (!c)
+                            continue;
+                        if (std::find(c->begin(), c->end(), cname) != c->end()) {
+                            target_ctors = c;
+                            target_tid = tid;
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+                for (auto sid : minfo->used_constructors) {
+                    if (find_adt_for(sid))
+                        break;
+                }
+                if (!target_ctors) {
+                    for (auto sid : minfo->candidate_constructors) {
+                        if (find_adt_for(sid))
+                            break;
+                    }
+                }
+                if (target_ctors) {
+                    // Build effective used set
+                    std::vector<std::string> used_eff;
+                    used_eff.reserve(minfo->used_constructors.size() +
+                                     minfo->candidate_constructors.size());
+                    for (auto sid : minfo->used_constructors)
+                        used_eff.push_back(std::string(p->resolve(sid)));
+                    for (auto sid : minfo->candidate_constructors) {
+                        auto cname = std::string(p->resolve(sid));
+                        if (std::find(target_ctors->begin(), target_ctors->end(), cname) !=
+                            target_ctors->end())
+                            used_eff.push_back(std::move(cname));
+                    }
+                    bool match_non_exhaustive = false;
+                    for (auto& expected_ctor : *target_ctors) {
+                        if (std::find(used_eff.begin(), used_eff.end(), expected_ctor) ==
+                            used_eff.end()) {
+                            // Issue #3559: bump fail counter on every
+                            // non-exhaustive match (observe-only under
+                            // Soft; Production/Full additionally sets
+                            // the hard-reject face below).
+                            aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                                .adt_exhaustiveness_fail_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                            match_non_exhaustive = true;
+                            std::println(std::cerr,
+                                         "match warning: unhandled constructor '{}' in {}",
+                                         expected_ctor, treg.name_of(target_tid));
+                        }
+                    }
+                    // Issue #3559: production/Full hard-reject
+                    // non-exhaustive match after variant mutate.
+                    // Soft / Sampled / audit-only fall through to the
+                    // observe-only path (counter bumped above, no reject).
+                    if (match_non_exhaustive &&
+                        aura::compiler::typed_audit::production_hard_face_active()) {
+                        aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                            .adt_exhaustiveness_hard_reject_face.store(1,
+                                                                       std::memory_order_release);
+                        return FlatStep::ret(EvalResult{}); // force reject; no Dynamic fallback
+                    }
+                }
+            }
+        }
+
+        // Issue #1539: stamp Owned when init is Linear e.
+        // State lives on Env.bindings_linear_ownership_state_ and is
+        // copied into EnvFrame by alloc_env_frame_from_env (closure capture).
+        std::uint8_t lin_state = linear_rt::Untracked;
+        if (val_id != aura::ast::NULL_NODE && val_id < f->size() &&
+            f->get(val_id).tag == aura::ast::NodeTag::Linear) {
+            lin_state = linear_rt::Owned;
+        }
+        // Issue #4599: an uncaptured non-set! let binds the value.
+        // A cell mint is what made (g 1) scale with define count.
+        // Letrec stays a cell (self-reference, #232 / #4595).
+        const std::uint8_t bind_kind = let_bind_kind_cached(*f, current_id, v.sym_id, body_id);
+        const bool needs_cell = lin_state != linear_rt::Untracked || bind_kind != 1;
+        // Issue #4618: the in-place bind below writes into the
+        // LIVE top_ for a top-level let. A lambda created in
+        // the body then captures top_ as the #4350 empty
+        // live-safe frame and resolves the name through the
+        // live top_, while a second define's same-named let
+        // appends a new cell. Both closures then share
+        // whichever cell is newest: set! writes that cell
+        // while a closure that captured earlier keeps its own
+        // read path (or the reverse), so a counter and a
+        // neg?-style predicate built from the same let shape
+        // interfere. A cell-binding top-level let gets its own
+        // child env, parented at a registered copy of top_, so
+        // each define owns its cell (normal capture, no
+        // live-top consult). A plain value bind has no
+        // captured cell, so it keeps the in-place fast path.
+        Env* bind_env = const_cast<Env*>(&eval_env);
+        const bool scoped_child = needs_cell && current_env == &top_;
+        if (scoped_child) {
+            cur.pin_if_current_in_tail();
+            const Env& let_parent = *current_env;
+            const EnvId pid = let_parent.parent_id() != NULL_ENV_ID
+                                  ? let_parent.parent_id()
+                                  : alloc_env_frame_from_env(let_parent);
+            tail_env.emplace(&let_parent);
+            bind_env = &*tail_env;
+            bind_env->set_primitives(&primitives_);
+            bind_env->set_owner(this);
+            bind_env->set_parent_id(pid);
+        }
+        Env& me = *bind_env;
+        me.set_pool(p);
+        // bind_symid_with_linear_state mirrors into string bindings_
+        // when pool_ is set. Do NOT also call bind() — that would
+        // dual-write a second Untracked entry and shadow Owned
+        // linear state for (let ((x (Linear ...))) ...).
+        if (!needs_cell) {
+            me.bind_symid_with_linear_state(v.sym_id, std::move(*vv), lin_state);
+        } else {
+            auto ci = alloc_cell(*vv);
+            if (types::is_void(*vv))
+                note_cell_nil_assigned(ci); // Issue #4789
+            me.bind_symid_with_linear_state(v.sym_id, make_cell(ci), lin_state);
+        }
+        // Issue #2871: TCO into let body (tail position).
+        if (body_id != aura::ast::NULL_NODE) {
+            if (scoped_child)
+                current_env = bind_env;
+            current_id = body_id;
+            return FlatStep::cont();
+        }
+        return FlatStep::ret(make_void());
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_ifexpr_lambda(EvalFlatCursor& cur,
+                                                          const aura::ast::NodeView& v,
+                                                          const Env& eval_env) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    // Capture params from FlatAST directly. Issue #145:
+    // store as SymId (SoA) — the apply_closure path now
+    // does integer-compare parameter binding instead of
+    // string-compare.
+    auto pspan = v.params;
+    std::vector<aura::ast::SymId> params;
+    params.reserve(pspan.size());
+    for (auto pid : pspan)
+        params.push_back(pid);
+    bool dotted = v.int_value != 0;
+    auto* target = (temp_arena_ && in_task_context_) ? temp_arena_ : arena_;
+    auto cid = next_id();
+    auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
+    // P0: legacy env pointer removed. Register captured env in SoA for this
+    // closure.
+    // Issue #4350 / #4474: a closure created directly in top_
+    // captures an EMPTY frame parented at top_'s root frame
+    // instead of a copy of every top-level binding. Free
+    // variables resolve through the live top_ consult at the
+    // root of the SoA walk (Env::lookup / lookup_cell_*), which
+    // already held the same cells. Copying made K top-level
+    // procedure defines cost K^2 frame bindings: every lookup
+    // miss (each primitive call) scanned the copy, and the
+    // file-mode reclaim mark walked all K copies per window.
+    // Linear-tracked top_ bindings (#1539) keep the exact copy.
+    auto top_capture_is_live_safe = [&]() -> bool {
+        if (current_env != &top_ || top_.cap_snapshot())
+            return false;
+        // Issue #4679: O(bindings) per Lambda made W top-level
+        // defines O(W^2) per eval-current. With no linear state
+        // ever written every binding is Untracked (#4683 flag).
+        if (!linear_rt::state_ever_written())
+            return true;
+        for (auto st : top_.bindings_linear_ownership_state())
+            if (st != linear_rt::Untracked)
+                return false;
+        return true;
+    };
+    EnvId cap_id = NULL_ENV_ID;
+    if (top_capture_is_live_safe()) {
+        const EnvId root = top_.parent_id();
+        cap_id = alloc_env_frame(root);
+        if (cap_id != NULL_ENV_ID) {
+            std::unique_lock<std::shared_mutex> fwlock(
+                env_frame_shards_[env_frame_shard_index(cap_id)].mu);
+            EnvFrame& cfr = env_frames_[cap_id];
+            cfr.pool_ = top_.pool();
+            cfr.set_owner(this);
+            cfr.version_ = defuse_version_.load(std::memory_order_acquire);
+            // Issue #4373: mark the frame so a consumer that
+            // unbinds names from top_ (the (eval …)
+            // primitive's RestoreTopPool dropping let-nested
+            // internal defines) can rehome closures created
+            // in its window to a real copy first — the empty
+            // capture resolves those names through the LIVE
+            // top_ consult, so the drop would unbind them out
+            // from under the returned closure.
+            cfr.live_safe_top_ = true;
+            std::scoped_lock<std::mutex> snap_lock(cap_snap_mtx_);
+            cap_snap_cache_.erase(cap_id);
+        }
+    }
+    // Issue #4474: closures created in the body of a module
+    // being loaded (letrec: every define's cell is pre-bound
+    // before any RHS runs) all capture the SAME bindings.
+    // Share one capture frame instead of K identical copies
+    // (K^2 bindings for K procedure defines, all walked by
+    // the file-mode reclaim mark). Reuse requires identical
+    // content (pool, parent, every (name, value) pair), so
+    // the shared frame is exactly the copy this closure
+    // would have built; any define in between makes a new one.
+    if (cap_id == NULL_ENV_ID && current_env == require_inject_env_ &&
+        !current_env->cap_snapshot()) {
+        struct ModuleCaptureShare {
+            const Evaluator* ev = nullptr;
+            const Env* env = nullptr;
+            std::uint64_t gen = 0;
+            EnvId id = NULL_ENV_ID;
+        };
+        thread_local ModuleCaptureShare share;
+        bool linear_free = true;
+        if (linear_rt::state_ever_written())
+            for (auto st : current_env->bindings_linear_ownership_state())
+                if (st != linear_rt::Untracked) {
+                    linear_free = false;
+                    break;
+                }
+        if (linear_free) {
+            const Env& ce = *current_env;
+            const auto pid = ce.parent_id();
+            if (share.ev == this && share.env == current_env && share.gen == env_generation_ &&
+                share.id != NULL_ENV_ID && static_cast<std::size_t>(share.id) < env_frames_size()) {
+                std::shared_lock<std::shared_mutex> frlock(
+                    env_frame_shards_[env_frame_shard_index(share.id)].mu);
+                const EnvFrame& sfr = env_frames_[share.id];
+                auto bss = ce.bindings_symid();
+                auto bs = ce.bindings();
+                if (sfr.version_ != INVALID_VERSION && sfr.parent_id == pid &&
+                    sfr.pool_ == ce.pool() && std::ranges::equal(sfr.bindings_symid_, bss) &&
+                    std::ranges::equal(sfr.bindings_, bs))
+                    cap_id = share.id;
+            }
+            if (cap_id == NULL_ENV_ID) {
+                cap_id = alloc_env_frame_from_env(ce);
+                share = {this, current_env, env_generation_, cap_id};
+            }
+        }
+    }
+    if (cap_id == NULL_ENV_ID)
+        cap_id = alloc_env_frame_from_env(*current_env);
+    note_tw_closure_owner(cid); // Issue #4428
+    // Issue #4859: when f / p belong to an (eval ...) program,
+    // keep that program alive for as long as this closure
+    // lives — Closure::flat / Closure::pool are raw pointers
+    // into it. Null for an arena-owned body. Resolved BEFORE
+    // the shard lock (the registry lock is never taken under
+    // a closures-shard lock in the other direction).
+    auto eval_program_owner = eval_program_for_pool(p);
+    {
+        std::unique_lock<std::shared_mutex> wlock(closures_shards_[closures_shard_index(cid)].mu);
+        bump_closures_apply_epoch(); // Issue #3832
+        Closure cl{"", std::move(params), f, p, body_id, cap_id, dotted, target};
+        cl.program = eval_program_owner;
+        // Issue #1365: stamp bridge_epoch at construction
+        stamp_closure_bridge_epoch(cl);
+        closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
+    }
+    note_tw_closure_alloc();
+    // Issue #2676: shared_lock to serialize with closures_ write
+    // (P0 multi-fiber race — see block above).
+    {
+        std::shared_lock<std::shared_mutex> rlock(closures_shards_[closures_shard_index(cid)].mu);
+        // Do NOT cache closure values — the closure captures the current env and a
+        // cached closure would reuse the same env on subsequent evaluations (wrong
+        // when the same Lambda node is evaluated with different captured
+        // variables).
+        return FlatStep::ret(make_closure(cid));
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_variable(EvalFlatCursor& cur,
+                                                     const aura::ast::NodeView& v,
+                                                     const Env& eval_env) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    // Issue #4599 phase 3: same-pool SymId chain read for a Variable
+    // visit — integer compares instead of the pool resolve, per-frame
+    // interns, and string-keyed index probes of Env::lookup. Raw
+    // parent_ hops first, then the SoA parent_id_ walk (per-hop shard
+    // lock, same-pool frames only, reverse scan — shadowing parity).
+    // Every hop re-checks pool identity + mirror alignment and the walk
+    // DECLINES (nullopt) at a root frame: live top_ bindings are
+    // cross-pool by contract, so those answers stay on the string walk.
+    // A decline is "not answered", never "unbound" — the caller falls
+    // back to the exact resolve + Env::lookup path. set!s and new
+    // shadowing binds are honored live (per-visit walk).
+    auto chain_read_var = [&](const Env& start,
+                              aura::ast::SymId sym) -> std::optional<types::EvalValue> {
+        constexpr std::size_t kMaxChainHops = 1024; // Env::lookup MAX_ENV_DEPTH parity
+        // Issue #4595: a live-safe EMPTY capture (a lambda created
+        // directly in top_ — #4350/#4474) has no local bindings of its
+        // own; its authoritative answer is the LIVE top_ consult in
+        // Env::lookup. Walking the SoA parent chain here instead hits
+        // the letrec #232 registration frame — a frozen copy of top_
+        // taken at named-let time — and answers with the stale global
+        // cell (the #4595 repro read x=0 instead of the later let's 42,
+        // and set! then split from the read). Decline on the capture's
+        // live_safe_top marker (copied into the snapshot) so the exact
+        // Env::lookup path runs the live top_ consult.
+        {
+            const auto& cs = start.cap_snapshot();
+            const bool live_safe_empty =
+                cs ? cs->live_safe_top
+                   : (start.parent_id() != NULL_ENV_ID && start.bindings().empty());
+            if (live_safe_empty)
+                return std::nullopt;
+            // Locals of this env (params / let binds) win over the
+            // closure's capture — Env::lookup checks them first.
+            if (start.pool() == p && start.binding_mirrors_aligned()) {
+                if (auto loc = start.local_symid_last(sym))
+                    return loc;
+            }
+            // Issue #4595 follow-up (#4618): the capture snapshot is
+            // CLOSER than the SoA chain, which starts at the capture
+            // frame's PARENT. A top-level let cell binds in its own
+            // child env (#4618), so a closure created in that body
+            // captured the shadowing cell — while the chain still leads
+            // to the letrec #232 frozen copy of top_ and answers the
+            // stale global (AC3 read 0 instead of 42). Answer the
+            // snapshot by NAME first — the same pool-independent order
+            // Env::lookup uses. A miss on every level keeps the walk:
+            // the chain content is then all that is left.
+            if (cs) {
+                const std::string_view nm = p->resolve(sym);
+                if (!nm.empty()) {
+                    for (const CapSnapshot* s = cs.get(); s; s = s->parent.get()) {
+                        auto it = s->name_index_.find(nm);
+                        if (it == s->name_index_.end())
+                            continue;
+                        return s->bindings_[it->second].second;
+                    }
+                }
+            }
+        }
+        const Env* e = &start;
+        for (std::size_t hops = 0; e != nullptr && hops < kMaxChainHops; ++hops) {
+            if (e->pool() != p || !e->binding_mirrors_aligned())
+                return std::nullopt;
+            if (auto loc = e->local_symid_last(sym))
+                return loc;
+            if (const Env* nxt = e->parent()) {
+                e = nxt;
+                continue;
+            }
+            break;
+        }
+        // SoA parent_id_ walk (Env::lookup 2b's SymId arm). Same pool
+        // per frame; a frame whose string/symid array lengths diverge
+        // is declined (the string side could hold shadowing names this
+        // walk cannot see). Root frame 0 consults live top_ by NAME —
+        // decline there (cross-pool SymIds).
+        if (start.parent_id() == NULL_ENV_ID)
+            return std::nullopt;
+        EnvId cur = start.parent_id();
+        for (std::size_t hops = 0; cur != NULL_ENV_ID && hops < kMaxChainHops; ++hops) {
+            std::shared_lock<std::shared_mutex> hop_rlock(
+                env_frame_shard_mu(env_frame_shard_index(cur)));
+            if (static_cast<std::size_t>(cur) >= env_frames_size())
+                return std::nullopt;
+            const EnvFrame& pfr = env_frame(cur);
+            if (!pfr.bindings_.empty() && pfr.bindings_.size() != pfr.bindings_symid_.size())
+                return std::nullopt;
+            if (pfr.pool_ == p && !pfr.bindings_symid_.empty()) {
+                for (auto it = pfr.bindings_symid_.rbegin(); it != pfr.bindings_symid_.rend();
+                     ++it) {
+                    if (it->first == sym) {
+                        if (is_cell(it->second)) {
+                            const auto ci = as_cell_id(it->second);
+                            if (ci < cells_.size())
+                                return cells_[ci];
+                        }
+                        return it->second;
+                    }
+                }
+            }
+            if (cur == static_cast<EnvId>(0))
+                return std::nullopt;
+            cur = pfr.parent_id;
+        }
+        return std::nullopt;
+    };
+    // Issue #4599 phase 3: host-thread same-pool fast read.
+    // A chain hit answers without the pool resolve, the
+    // per-frame interns, and the string-keyed index probes
+    // of Env::lookup. A hit through a live (non-void) cell
+    // is exact (same value the string walk reads); a void
+    // cell needs the name for the prim-reexport face, so it
+    // falls through. Keyword faces are unreachable here:
+    // the walk consults only frame bindings, and the keyword
+    // intern path below still owns every ':'-leading name
+    // the chain missed.
+    // Issue #4715 AC2: skip the same-pool chain read while an
+    // overlay is open on this thread, so the overlay (and not
+    // the pre-overlay cell) answers the read.
+    if (aura::serve::g_current_fiber == nullptr &&
+        primitives_detail::t_fiber_cow_overlay_depth == 0 && v.sym_id != aura::ast::INVALID_SYM &&
+        eval_env.pool() == p && eval_env.binding_mirrors_aligned()) {
+        auto cval = chain_read_var(eval_env, v.sym_id);
+        if (cval) {
+            if (!is_cell(*cval)) {
+                remember_resolved_var(current_id, v.sym_id, eval_env, *cval);
+                return FlatStep::ret(EvalResult(*cval));
+            }
+            const auto ci = as_cell_id(*cval);
+            // Issue #4789: a cell that explicitly holds '()
+            // is a value, not an uninitialized placeholder.
+            if (ci < cells_.size() && (!is_void(cells_[ci]) || cell_nil_assigned(ci))) {
+                remember_resolved_var(current_id, v.sym_id, eval_env, *cval);
+                return FlatStep::ret(EvalResult(cells_[ci]));
+            }
+            // void cell / OOB: the prim-reexport decision
+            // needs the name — take the full slow path.
+        }
+    }
+    // Issue #4731: the scan + append below are serialized on
+    // keyword_table_mtx_ (concurrent fiber bodies intern into
+    // this Evaluator-global table; unsynchronized push_back
+    // reallocated it under another body's move-ctor: ASan UAF).
+    // Issue #3401: keyword O(1) intern. std::string
+    // construction + keyword_table_.push_back happen only
+    // on the first encounter of a unique :foo literal.
+    // Issue #3457: lookup by v.sym_id (dense).
+    // The leading ':' is preserved in keyword_table_[kidx]
+    // for backward compatibility with existing readers.
+    std::string_view name = p->resolve(v.sym_id);
+    if (!name.empty() && name[0] == ':') {
+        {
+            types::EvalValue cached{};
+            if (keyword_intern_by_sym_.lookup(v.sym_id, cached))
+                return FlatStep::ret(cached);
+        }
+        // keyword_table_ is Evaluator-global: primitives may
+        // have pushed the same name. Reuse that index so
+        // (eq? fr :no-workspace) is identity. SymId cache
+        // avoids the scan on hits.
+        std::scoped_lock kw_lock(keyword_table_mtx_);
+        for (std::size_t ki = 0; ki < keyword_table_.size(); ++ki) {
+            if (keyword_table_[ki] == name) {
+                auto val = make_keyword(static_cast<std::uint64_t>(ki));
+                keyword_intern_by_sym_.set(v.sym_id, val);
+                return FlatStep::ret(val);
+            }
+        }
+        auto kidx = static_cast<std::uint64_t>(keyword_table_.size());
+        keyword_table_.push_back(std::string(name));
+        auto val = make_keyword(kidx);
+        keyword_intern_by_sym_.set(v.sym_id, val);
+        return FlatStep::ret(val);
+    }
+    // Issue #3401: name is std::string_view (no std::string
+    // construction); Env::lookup already takes string_view.
+    auto val = eval_env.lookup(name);
+    if (val) {
+        // Pre-deref binding: a cell id, not the cell's value.
+        remember_resolved_var(current_id, v.sym_id, eval_env, *val);
+        // Issue #229 Cycle 1 fix: dereference cell
+        // sentinel. The Define case binds the name to
+        // a cell (make_cell(ci)) for re-def support;
+        // ordinary lookups (Variable here, call sites
+        // elsewhere) should auto-deref the cell to
+        // the underlying value. Without this, simple
+        // `(define x 10) (display x)` shows
+        // `<cell[0]>` instead of `10`.
+        //
+        // Issue #2570 follow-up / std/math: multi-define
+        // (letrec) pre-allocates void cells before RHS
+        // eval. `(define ceil ceil)` would re-bind the
+        // local void cell to itself. If the cell is still
+        // void, prefer a same-named first-class primitive
+        // (prim re-export); otherwise return void (bound
+        // but uninitialized — do not report unbound).
+        if (is_cell(*val)) {
+            auto ci = as_cell_id(*val);
+            if (ci < cells_.size() && !is_void(cells_[ci]))
+                return FlatStep::ret(cells_[ci]);
+            // Issue #4789: '() stored by let/letrec/define/
+            // set! is the binding's value - never replace it
+            // with a same-named primitive.
+            if (ci < cells_.size() && cell_nil_assigned(ci))
+                return FlatStep::ret(cells_[ci]);
+            std::string var_name(name);
+            auto slot = primitives_.slot_for_name(var_name);
+            if (slot != std::numeric_limits<std::size_t>::max())
+                return FlatStep::ret(make_primitive(slot));
+            if (auto ctor = adt_runtime_.find_ctor(var_name))
+                return FlatStep::ret(make_primitive(*ctor));
+            return FlatStep::ret(make_void());
+        }
+        return FlatStep::ret(*val);
+    }
+    std::string var_name(name);
+    if (var_name.empty()) {
+        var_name = std::format("<sym:{}>", v.sym_id);
+    }
+    // First-class primitive / ADT ctor when name is unbound
+    // (Env::lookup steps 3–4; call-position also has prim path).
+    {
+        auto slot = primitives_.slot_for_name(var_name);
+        if (slot != std::numeric_limits<std::size_t>::max()) {
+            auto pv = make_primitive(slot);
+            remember_resolved_var(current_id, v.sym_id, eval_env, pv);
+            return FlatStep::ret(pv);
+        }
+        if (auto ctor = adt_runtime_.find_ctor(var_name))
+            return FlatStep::ret(make_primitive(*ctor));
+    }
+    std::vector<std::string> candidates;
+    {
+        const Env* e = &eval_env;
+        while (e) {
+            for (auto& b : const_cast<Env&>(*e).bindings())
+                candidates.push_back(b.first);
+            e = e->parent();
+        }
+    }
+    auto best = closest_match(var_name, candidates);
+    // Issue #4796: stdlib-only name → actionable hint first.
+    const auto std_hint = stdlib_only_unbound_hint(var_name);
+    // Issue #79: source location from the offending node so the
+    // error report includes line:col instead of just node[id:N].
+    Diagnostic d(ErrorKind::UnboundVariable, std::move(var_name),
+                 aura::diag::SourceLocation{v.line, v.col, diag_fid_4916(f)}, current_id);
+    if (!std_hint.empty())
+        d.with_suggestion(std::string(std_hint));
+    else if (!best.empty())
+        d.with_suggestion("did you mean '" + best + "'?");
+    return FlatStep::ret(std::unexpected(std::move(d)));
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_literalint_literalfloat_literalstring(
+    EvalFlatCursor& cur, const aura::ast::NodeView& v, const Env& eval_env) {
+    auto& p = cur.p;
+    auto& current_id = cur.current_id;
+    switch (v.tag) {
+        case aura::ast::NodeTag::LiteralInt:
+            // #t/#f have BoolLiteral marker — convert to Bool at runtime
+            if (v.marker == aura::ast::SyntaxMarker::BoolLiteral)
+                return FlatStep::ret(make_bool(v.int_value != 0));
+            // Issue #4635 follow-up: `()` is the empty list, not fixnum 0.
+            if (v.marker == aura::ast::SyntaxMarker::EmptyList)
+                return FlatStep::ret(make_void());
+            return FlatStep::ret(make_int_or_promote(v.int_value));
+        case aura::ast::NodeTag::LiteralFloat: {
+            // Issue #4524: intern the boxed literal per node
+            // (bit-exact). Re-evaluating a float literal per loop
+            // iteration allocated a fresh float-pool box every
+            // time; the constant step of a named-let loop drove
+            // half the interpreter's boxed-double churn (#4503).
+            // Bit-pattern validation keeps mutate/tweak-literal
+            // edits on the re-make path instead of serving a
+            // stale box.
+            if (const auto* e = float_intern_by_node_.get(static_cast<std::uint32_t>(current_id),
+                                                          v.float_value))
+                return FlatStep::ret(*e);
+            auto val = make_float(v.float_value);
+            float_intern_by_node_.set(static_cast<std::uint32_t>(current_id), v.float_value, val);
+            return FlatStep::ret(val);
+        }
+        case aura::ast::NodeTag::LiteralString:
+            break;
+        default:
+            return FlatStep::fall();
+    }
+    // Issue #3401: happy-path string intern. std::string
+    // construction + push_string_heap (#4543) on first use only.
+    // Issue #3457: lookup by v.sym_id (dense), not hashed
+    // string_view into the pool.
+    {
+        types::EvalValue cached{};
+        if (string_intern_by_sym_.lookup(v.sym_id, cached))
+            return FlatStep::ret(cached);
+    }
+    std::string_view raw_sv = p->resolve(v.sym_id);
+    // Issue #4455: quoted symbols (≤6) live in short_str_cache_.
+    // Assigning a fresh heap index here moved the next
+    // (quote sym) off the slot bound earlier, so eq? became #f
+    // after a same-text string literal. Reuse the quote slot.
+    // emplace does not replace a key a quote already owns.
+    // #4717: shared map; same recursive lock as the mint path.
+    std::scoped_lock short_cache_lock(alloc_storage_lock_);
+    if (raw_sv.size() <= 6) {
+        if (auto it = short_str_cache_.find(raw_sv); it != short_str_cache_.end()) {
+            string_intern_by_sym_.set(v.sym_id, it->second);
+            return FlatStep::ret(it->second);
+        }
+    }
+    std::string raw(raw_sv);
+    auto sid = push_string_heap(std::move(raw));
+    auto val = make_string(sid);
+    string_intern_by_sym_.set(v.sym_id, val);
+    if (raw_sv.size() <= 6)
+        short_str_cache_.emplace(std::string(raw_sv), val);
+    return FlatStep::ret(val);
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_prim_value(EvalFlatCursor& cur,
+                                                       const aura::ast::NodeView& v,
+                                                       const Env& eval_env, const EvalResult& fn) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (is_primitive(*fn)) {
+        auto slot = as_primitive_slot(*fn);
+        if (slot < primitives_.slot_count()) {
+            auto prim = eval_env.lookup_primitive(primitives_.name_for_slot(slot));
+            // Issue #4232: the env-level primitive table is caller-wired
+            // after materialize_call_env (#145 Phase 2.3 contract —
+            // "primitives_/cells_/pool_ are NOT set here ... the caller
+            // wires them"). Helper eval envs built without that wiring
+            // (serve-async Soft worldline select, soft_worldline_pick) made
+            // this lookup return nullopt and the call degrade to
+            // "cannot call: car / did you forget to define 'car'?" even
+            // though the Variable fallback above had just resolved the
+            // name from THIS full registry (slot_for_name). Fall back to
+            // the same registry slot the prim value was manufactured
+            // from: bare prim names stay callable in any eval env
+            // regardless of env-table wiring. User shadowing is
+            // unaffected — this handler only runs on a prim VALUE, and
+            // the #2873 fast path still prefers env bindings ahead of it.
+            if (!prim)
+                prim = primitives_.slot_lookup_fast(slot);
+            if (prim) {
+                std::vector<EvalValue> args;
+                TwPinMany pin_args(args);
+                for (std::size_t i = 1; i < v.children.size(); ++i) {
+                    auto ar = eval_flat(*f, *p, v.child(i), eval_env);
+                    if (!ar)
+                        return FlatStep::ret(ar);
+                    args.push_back(*ar);
+                }
+                // Issue #441 / #1357: call count + render latency.
+                // Null-owner fallback — see Variable primitive path above.
+                Evaluator* prim_owner = eval_env.owner() != nullptr ? eval_env.owner() : this;
+                const auto& pname = primitives_.name_for_slot(slot);
+                // Issue #4690: a primitive value `while`.
+                return FlatStep::ret(
+                    finish_prim_call(pname, prim_owner->invoke_prim_with_telemetry(
+                                                pname, [&]() { return (*prim)(args); })));
+            }
+        }
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_functor(EvalFlatCursor& cur,
+                                                    const aura::ast::NodeView& v,
+                                                    const Env& eval_env, const EvalResult& fn,
+                                                    const aura::ast::NodeView& callee) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (is_string(*fn) && as_string_idx(*fn) < string_heap_.size() &&
+        string_at(as_string_idx(*fn)) == "%functor") {
+        auto callee_v = f->get(v.child(0));
+        if (callee_v.tag == aura::ast::NodeTag::Variable) {
+            auto tpl_name = std::string(p->resolve(callee_v.sym_id));
+            auto tpl_it = module_templates_.find(tpl_name);
+            if (tpl_it != module_templates_.end()) {
+                // 构建缓存 key: "template|arg1|arg2|..."
+                std::string cache_key = tpl_name;
+                for (std::size_t ki = 1; ki < v.children.size(); ++ki) {
+                    auto kv = f->get(v.child(ki));
+                    cache_key += "|";
+                    if (kv.tag == aura::ast::NodeTag::Variable)
+                        cache_key += std::string(p->resolve(kv.sym_id));
+                    else
+                        cache_key += "#" + std::to_string(v.child(ki));
+                }
+                auto cache_it = functor_instance_cache_.find(cache_key);
+                if (cache_it != functor_instance_cache_.end()) {
+                    return FlatStep::ret(types::make_module(cache_it->second));
+                }
+
+                // 使用 ModuleTemplate 中缓存的参数名（避免跨 FlatAST 扫描）
+                auto& param_names = tpl_it->second.type_param_names;
+
+                // 创建隔离环境
+                Env mod_env(&eval_env);
+                mod_env.set_primitives(&primitives_);
+
+
+                // 绑定类型参数到环境（按原始参数名）
+                for (std::size_t ai = 1; ai < v.children.size(); ++ai) {
+                    auto arg_v = f->get(v.child(ai));
+                    std::string pname = (ai - 1 < param_names.size())
+                                            ? param_names[ai - 1]
+                                            : (":T" + std::to_string(ai - 1));
+                    if (arg_v.tag == aura::ast::NodeTag::Variable) {
+                        // 类型参数：存为字符串（类型名）
+                        auto type_name = std::string(p->resolve(arg_v.sym_id));
+                        auto sidx = push_string_heap(type_name);
+                        mod_env.bind(pname, make_string(sidx));
+                    } else {
+                        // 值参数：正常 eval
+                        auto ar = eval_flat(*f, *p, v.child(ai), eval_env);
+                        if (!ar)
+                            return FlatStep::ret(ar);
+                        mod_env.bind(pname, *ar);
+                    }
+                }
+
+                // Capability requirement check
+                if (!tpl_it->second.cap_require.empty()) {
+                    // Find the capability argument
+                    // Capability params are stored at the end of param_names
+                    std::string provided_caps_str;
+                    for (std::size_t ai = 1; ai < v.children.size(); ++ai) {
+                        auto arg_v = f->get(v.child(ai));
+                        std::string pname =
+                            (ai - 1 < param_names.size()) ? param_names[ai - 1] : "";
+                        // Check if this param is a cap param
+                        bool is_cap_param = false;
+                        for (auto& cp : tpl_it->second.cap_param_names) {
+                            if (cp == pname) {
+                                is_cap_param = true;
+                                break;
+                            }
+                        }
+                        if (is_cap_param) {
+                            if (arg_v.tag == aura::ast::NodeTag::Variable) {
+                                provided_caps_str = std::string(p->resolve(arg_v.sym_id));
+                            } else if (arg_v.tag == aura::ast::NodeTag::LiteralString) {
+                                provided_caps_str = "";
+                            }
+                        }
+                    }
+                    // Check if provided caps satisfy requirements
+                    // Simple string matching: "FileReadWrite" contains "FileRead"
+                    // and "FileWrite"
+                    std::vector<std::string> missing;
+                    for (auto& req : tpl_it->second.cap_require) {
+                        bool found = false;
+                        if (provided_caps_str.find(req) != std::string::npos)
+                            found = true;
+                        // Also check for "*" wildcard
+                        if (provided_caps_str == "*")
+                            found = true;
+                        if (!found) [[unlikely]]
+                            missing.push_back(req);
+                    }
+                    if (!missing.empty()) {
+                        std::string err = "functor " + tpl_name + ": missing capabilities: ";
+                        for (std::size_t mi = 0; mi < missing.size(); ++mi) {
+                            if (mi > 0)
+                                err += ", ";
+                            err += missing[mi];
+                        }
+                        auto es = push_string_heap(err);
+                        auto ev =
+                            primitives_detail::push_error_cause(error_values_, make_string(es));
+                        return FlatStep::ret(make_error(ev));
+                    }
+                }
+
+                // Eval body by re-parsing the serialized source
+                EvalResult last = make_void();
+                TwPinResult pin_last(last);
+                auto& body_src = tpl_it->second.body_source;
+                if (!body_src.empty()) {
+                    // Parse body as a begin block so all expressions become
+                    // children
+                    std::string wrapped = "(begin " + body_src + ")";
+                    aura::ast::ASTArena body_arena;
+                    auto body_alloc = body_arena.allocator();
+                    aura::ast::StringPool body_pool(body_alloc);
+                    aura::ast::FlatAST body_flat(body_alloc);
+                    auto body_pr = aura::parser::parse_to_flat(wrapped, body_flat, body_pool);
+                    if (body_pr.success && body_pr.root != aura::ast::NULL_NODE) {
+                        body_flat.root = body_pr.root;
+                        auto body_v = body_flat.get(body_flat.root);
+                        if (body_v.tag == aura::ast::NodeTag::Begin) {
+                            for (auto nid : body_v.children) {
+                                auto br = eval_flat(body_flat, body_pool, nid, mod_env);
+                                if (!br)
+                                    return FlatStep::ret(br);
+                                last = *br;
+                            }
+                        } else {
+                            auto br = eval_flat(body_flat, body_pool, body_flat.root, mod_env);
+                            if (!br)
+                                return FlatStep::ret(br);
+                            last = *br;
+                        }
+                    }
+                }
+                // 实例化后生成 .aura-type 签名
+                // Extract export names from the body source
+                std::vector<std::string> export_names;
+                {
+                    std::string scan_wrapped = "(begin " + body_src + ")";
+                    aura::ast::ASTArena scan_arena;
+                    auto scan_alloc = scan_arena.allocator();
+                    aura::ast::StringPool scan_pool(scan_alloc);
+                    aura::ast::FlatAST scan_flat(scan_alloc);
+                    auto scan_pr = aura::parser::parse_to_flat(scan_wrapped, scan_flat, scan_pool);
+                    if (scan_pr.success && scan_pr.root != aura::ast::NULL_NODE) {
+                        scan_flat.root = scan_pr.root;
+                        auto scan_v = scan_flat.get(scan_flat.root);
+                        auto scan_children =
+                            (scan_v.tag == aura::ast::NodeTag::Begin)
+                                ? scan_v.children
+                                : std::span<const aura::ast::NodeId>(&scan_flat.root, 1);
+                        for (auto nid : scan_children) {
+                            auto nv = scan_flat.get(nid);
+                            if (nv.tag == aura::ast::NodeTag::Export) {
+                                for (auto eid : nv.children) {
+                                    auto ev = scan_flat.get(eid);
+                                    if (ev.tag == aura::ast::NodeTag::Variable)
+                                        export_names.push_back(
+                                            std::string(scan_pool.resolve(ev.sym_id)));
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!export_names.empty()) {
+                    // 对实例化后的 body 做类型推断，生成实际签名
+                    // Parse body source, type-check via TypeChecker, register
+                    // signatures
+                    aura::core::TypeRegistry tc_reg;
+                    aura::compiler::TypeChecker functor_tc(tc_reg);
+                    aura::diag::DiagnosticCollector tc_diag;
+
+                    std::string tc_wrapped = "(begin " + body_src + ")";
+                    aura::ast::ASTArena tc_arena;
+                    auto tc_alloc = tc_arena.allocator();
+                    aura::ast::StringPool tc_pool(tc_alloc);
+                    aura::ast::FlatAST tc_flat(tc_alloc);
+                    auto tc_pr = aura::parser::parse_to_flat(tc_wrapped, tc_flat, tc_pool);
+                    aura::ast::NodeId tc_root = tc_pr.root;
+                    if (tc_pr.success && tc_root != aura::ast::NULL_NODE) {
+                        tc_flat.root = tc_root;
+                        // Type-check the whole body to populate func types
+                        functor_tc.infer_flat(tc_flat, tc_pool, tc_root, tc_diag);
+
+                        // Scan body for export functions and extract their types
+                        for (auto& en : export_names) {
+                            std::string sig_key = cache_key + "/" + en;
+                            if (declared_type_sigs_.find(sig_key) != declared_type_sigs_.end())
+                                continue;
+
+                            // Find the Define node for this export
+                            bool found = false;
+                            std::string type_str = "Any|Any";
+                            for (aura::ast::NodeId nid = 0; nid < tc_flat.size(); ++nid) {
+                                auto nv = tc_flat.get(nid);
+                                if (nv.tag == aura::ast::NodeTag::Define &&
+                                    nv.sym_id != aura::ast::INVALID_SYM &&
+                                    std::string(tc_pool.resolve(nv.sym_id)) == en &&
+                                    !nv.children.empty()) {
+                                    // Re-infer the value expression to get its type
+                                    auto val_type = functor_tc.infer_flat(tc_flat, tc_pool,
+                                                                          nv.child(0), tc_diag);
+                                    if (val_type.valid() && val_type.index > 0) {
+                                        // Format as type signature
+                                        auto fmt = tc_reg.format_type(val_type);
+                                        if (!fmt.empty()) {
+                                            // Convert from '->' to '|' format for
+                                            // declared_type_sigs_
+                                            auto pipe_pos = fmt.find(" -> ");
+                                            if (pipe_pos != std::string::npos) {
+                                                auto params = fmt.substr(0, pipe_pos);
+                                                auto ret = fmt.substr(pipe_pos + 4);
+                                                type_str = params + "|" + ret;
+                                            } else {
+                                                type_str = "|" + fmt;
+                                            }
+                                        }
+                                    }
+                                    found = true;
+                                    break;
+                                }
+                            }
+
+                            declared_type_sigs_[sig_key] = {.type_str = type_str,
+                                                            .module_file = "%functor:" + tpl_name,
+                                                            .resolved = found};
+                        }
+                    } else {
+                        // Fallback: Any|Any (shouldn't happen since body was parsed
+                        // earlier)
+                        for (auto& en : export_names) {
+                            std::string sig_key = cache_key + "/" + en;
+                            if (declared_type_sigs_.find(sig_key) == declared_type_sigs_.end()) {
+                                declared_type_sigs_[sig_key] = {.type_str = "Any|Any",
+                                                                .module_file =
+                                                                    "%functor:" + tpl_name,
+                                                                .resolved = false};
+                            }
+                        }
+                    }
+                }
+
+                return eval_flat_publish_functor_instance(cache_key, mod_env);
+            }
+        }
+        return FlatStep::ret(make_void());
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_closure(EvalFlatCursor& cur,
+                                                    const aura::ast::NodeView& v,
+                                                    const Env& eval_env, const EvalResult& fn,
+                                                    const aura::ast::NodeView& callee) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (is_closure(*fn)) {
+        auto cid = as_closure_id(*fn);
+        // Check for foreign function (Issue #4532: the FFI
+        // namespace bit; see apply_closure).
+        if (types::is_ffi_closure_id(cid)) {
+            // Dispatch FFI through apply_closure
+            // (Issue #252: apply_closure increments
+            // closure_calls_total + closure_ffi_calls
+            // for the FFI branch — no double-count
+            // here because eval_flat's FFI inline path
+            // delegates the counter bumps to it.)
+            std::size_t named_count = 0;
+            std::vector<EvalValue> cargs;
+            TwPinMany pin_cargs(cargs);
+            for (std::size_t i = 0; i + 1 < v.children.size(); ++i) {
+                auto ar = eval_flat(*f, *p, v.child(i + 1), eval_env);
+                if (!ar)
+                    return FlatStep::ret(ar);
+                cargs.push_back(*ar);
+            }
+            auto result = apply_closure(cid, cargs);
+            if (result)
+                return FlatStep::ret(*result);
+            // Issue #4690: the foreign call's body raised.
+            // Do not replace that diagnostic with InvalidClosure.
+            if (auto diag = take_pending_apply_diagnostic())
+                return FlatStep::ret(std::unexpected(std::move(*diag)));
+            if (auto msg = take_pending_user_arity()) {
+                if (callee.tag == aura::ast::NodeTag::Variable)
+                    prefer_user_arity_call_name(*msg, p->resolve(callee.sym_id));
+                const auto line = v.line == 0 ? 1u : v.line;
+                const auto col = v.col == 0 ? 1u : v.col;
+                return FlatStep::ret(std::unexpected(Diagnostic{
+                    ErrorKind::ArityMismatch, std::move(*msg),
+                    aura::diag::SourceLocation{line, col, diag_fid_4916(f)}, current_id}));
+            }
+            return FlatStep::ret(std::unexpected(
+                Diagnostic{ErrorKind::InvalidClosure, "eval_flat: foreign call failed"}));
+        }
+        // Issue #3688: TW TCO inlines the body without
+        // apply_closure — refuse here so persist-reject
+        // cannot eval_flat a half-green Define.
+        if (production_eval_flat_commit_readiness_refuse(
+                static_cast<CompilerMetrics*>(compiler_metrics_)))
+            return FlatStep::ret(eval_flat_commit_readiness_refused());
+        // Issue #252: eval_flat's inline TW closure
+        // call path does NOT go through apply_closure
+        // (it inlines the body for TCO). Bump the
+        // total + TW counter here so the snapshot is
+        // consistent with apply_closure's other
+        // entry points.
+        if (compiler_metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
+            m->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
+            m->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
+        }
+        TwCallMeta cl;
+        bool tw_closure = false;
+        {
+            std::shared_lock<std::shared_mutex> rlock(
+                closures_shards_[closures_shard_index(cid)].mu);
+            auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
+            if (it != closures_shards_[closures_shard_index(cid)].map.end()) {
+                // Issue #3021: no bare TCO apply of
+                // freed/tombstoned slots (scan_skip_freed
+                // semantics). Stale-but-live still
+                // inlines; force-drop uses apply_closure.
+                if (!closure_apply_use_site_ok(it->second)) {
+                    return FlatStep::ret(std::unexpected(Diagnostic{
+                        ErrorKind::InvalidClosure, "eval_flat: freed/tombstoned closure"}));
+                }
+                cl.assign(it->second);
+                tw_closure = true;
+            }
+        }
+        if (!tw_closure) {
+            // IR-produced closure (e.g. lambda arg to cached define).
+            std::vector<EvalValue> cargs;
+            TwPinMany pin_cargs(cargs);
+            for (std::size_t i = 1; i < v.children.size(); ++i) {
+                auto ar = eval_flat(*f, *p, v.child(i), eval_env);
+                if (!ar)
+                    return FlatStep::ret(ar);
+                if (is_error(*ar))
+                    return FlatStep::ret(ar);
+                cargs.push_back(*ar);
+            }
+            auto bridged = apply_closure(cid, cargs);
+            if (bridged)
+                return FlatStep::ret(*bridged);
+            // Issue #4690: an unbound name inside the bridge
+            // body is not an invalid closure.
+            if (auto diag = take_pending_apply_diagnostic())
+                return FlatStep::ret(std::unexpected(std::move(*diag)));
+            if (auto msg = take_pending_user_arity()) {
+                // The IR define bridge drops call_closure's
+                // diagnostic. The parked text says "lambda"
+                // when the function was lowered unnamed.
+                if (callee.tag == aura::ast::NodeTag::Variable)
+                    prefer_user_arity_call_name(*msg, p->resolve(callee.sym_id));
+                const auto line = v.line == 0 ? 1u : v.line;
+                const auto col = v.col == 0 ? 1u : v.col;
+                return FlatStep::ret(std::unexpected(Diagnostic{
+                    ErrorKind::ArityMismatch, std::move(*msg),
+                    aura::diag::SourceLocation{line, col, diag_fid_4916(f)}, current_id}));
+            }
+            return FlatStep::ret(std::unexpected(
+                Diagnostic{ErrorKind::InvalidClosure, "eval_flat: invalid closure"}));
+        }
+        // Evaluate ALL args before overwriting tail_env.
+        // Issue #3915: dotted rest used to eval after
+        // materialize_call_env, which destroys the TCO
+        // caller Env `eval_env` aliases (round-once's
+        // `body` became unbound at agent:closed-loop-once).
+        std::size_t named_count =
+            cl.dotted && !cl.params.empty() ? cl.params.size() - 1 : cl.params.size();
+        // Issue #4467: every argument is evaluated first.
+        // A fixed-arity call with the wrong count is an error
+        // at this call, before the body runs.
+        // Issue #4599 follow-up: stack buffers for small calls.
+        TwSmallArgs provided;
+        if (v.children.size() > 1)
+            provided.reserve(v.children.size() - 1);
+        for (std::size_t i = 1; i < v.children.size(); ++i) {
+            // Issue #4524: arm float-local for each named
+            // parameter position — the argument node about
+            // to be bound to a loop accumulator slot.
+            FloatLocalArmGuard fl_arm{i - 1 < named_count ? v.child(i) : aura::ast::NULL_NODE};
+            auto ar = eval_flat(*f, *p, v.child(i), eval_env);
+            if (!ar)
+                return FlatStep::ret(ar);
+            if (is_error(*ar))
+                return FlatStep::ret(ar);
+            provided.push_back(std::move(*ar));
+        }
+        if (user_arity_mismatch(cl.params.size(), cl.dotted, provided.size())) {
+            std::string arity_name = cl.name;
+            if (arity_name.empty() && callee.tag == aura::ast::NodeTag::Variable)
+                arity_name = std::string(p->resolve(callee.sym_id));
+            const auto line = v.line == 0 ? 1u : v.line;
+            const auto col = v.col == 0 ? 1u : v.col;
+            return FlatStep::ret(std::unexpected(Diagnostic{
+                ErrorKind::ArityMismatch,
+                user_arity_message(arity_name, cl.params.size(), cl.dotted, provided.size()),
+                aura::diag::SourceLocation{line, col, diag_fid_4916(f)}, current_id}));
+        }
+        // Issue #4682 (6b): opt-in native tier (exact; the
+        // hook returns nullopt unless the native body ran
+        // to a fixnum/bool result under its guards).
+        if (tw_tier_hook_4682_ && !cl.dotted && !cl.must_deopt_before_next_call &&
+            !cl.name.empty()) {
+            if (auto tr = tw_tier_hook_4682_(
+                    tw_tier_ctx_4682_, *fn, cl.name, cl.flat, cl.body_id, cl.lifetime_version,
+                    std::span<const EvalValue>(provided.data(), provided.size())))
+                return FlatStep::ret(*tr);
+        }
+        // Issue #4599 follow-up: a non-dotted call uses the
+        // evaluated argument buffer directly — the second
+        // TwSmallArgs + pin pair was a pure copy.
+        TwSmallArgs cargs_buf;
+        std::span<EvalValue> cargs;
+        if (!cl.dotted) {
+            cargs = std::span<EvalValue>(provided.data(), named_count);
+        }
+        TwSmallArgs rest_args;
+        if (cl.dotted) {
+            cargs_buf.reserve(named_count);
+            for (std::size_t i = 0; i < named_count && i < provided.size(); ++i)
+                cargs_buf.push_back(std::move(provided[i]));
+            cargs = std::span<EvalValue>(cargs_buf.data(), cargs_buf.size());
+            if (!cl.params.empty()) {
+                for (std::size_t i = named_count; i < provided.size(); ++i)
+                    rest_args.push_back(std::move(provided[i]));
+            }
+        }
+        // Issue #4568: note the caller target, then the
+        // callee lattice, before bind_symid moves cargs.
+        // TLS holds the row across the TCO continue.
+        {
+            const auto nnote =
+                std::min(cargs.size(), static_cast<std::size_t>(feedback::kMaxUserArgs));
+            feedback_enter_call(cid, cl.name, cargs.data(), static_cast<std::uint32_t>(nnote));
+        }
+        // Issue #4599: self-TCO reuses the frame. Pointers are
+        // compared before any overwrite. A moved frame (pin)
+        // cleared the stamp, so a dangling pointer is not read.
+        bool reused = false;
+        if (tco.live && !cl.dotted && tail_env.has_value() && current_env == &*tail_env &&
+            current_env == tco.env && tco.cid == cid && cargs.size() == tco.n &&
+            tco.n == named_count && tco.n <= 8 && cl.bridge_epoch == tco.bridge &&
+            defuse_version_.load(std::memory_order_acquire) == tco.defuse &&
+            env_generation_ == tco.env_gen && named_count <= cl.params.size()) {
+            bool syms_ok = true;
+            for (std::uint32_t i = 0; i < tco.n; ++i) {
+                if (cl.params[i] != tco.syms[i]) {
+                    syms_ok = false;
+                    break;
+                }
+            }
+            if (syms_ok) {
+                reused = tail_env->overwrite_param_slots(
+                    std::span<const aura::ast::SymId>(tco.syms, tco.n),
+                    std::span<const types::EvalValue>(cargs.data(), cargs.size()));
+            }
+        }
+        if (!reused) {
+            // Drop the stamp before materialize re-enters eval.
+            tco.live = false;
+            tail_env = materialize_call_env(cl.to_closure());
+            tail_env->set_primitives(&primitives_);
+
+            // Issue #145: set the pool so bind_symid can mirror
+            if (cl.pool)
+                tail_env->set_pool(cl.pool);
+            for (std::size_t i = 0; i < cargs.size(); ++i) {
+                tail_env->bind_symid(cl.params[i], std::move(cargs[i]));
+            }
+            if (cl.dotted && !cl.params.empty()) {
+                // Issue #4733: the hot dotted-call spine used
+                // a raw unlocked push_back; two bodies could
+                // land on the same index (wrong rest list) or
+                // race the vector growth. mint_pair locks the
+                // size+append.
+                types::EvalValue rest = make_void();
+                for (std::size_t i = rest_args.size(); i > 0; --i) {
+                    const auto pid = mint_pair(rest_args[i - 1], rest, /*check_quota=*/false);
+                    rest = make_pair(pid);
+                }
+                tail_env->bind_symid(cl.params.back(), rest);
+            }
+            bool can_stamp = !cl.dotted && named_count <= 8 && cargs.size() == named_count &&
+                             tail_env->bindings_symid().size() == named_count &&
+                             named_count <= cl.params.size();
+            if (can_stamp) {
+                const auto bs = tail_env->bindings_symid();
+                const auto lin = tail_env->bindings_linear_ownership_state();
+                for (std::size_t i = 0; i < named_count; ++i) {
+                    if (bs[i].first != cl.params[i] ||
+                        (i < lin.size() && lin[i] != linear_rt::Untracked)) {
+                        can_stamp = false;
+                        break;
+                    }
+                }
+            }
+            if (can_stamp) {
+                tco.live = true;
+                tco.cid = cid;
+                tco.env = &*tail_env;
+                tco.n = static_cast<std::uint32_t>(named_count);
+                tco.bridge = cl.bridge_epoch;
+                tco.defuse = defuse_version_.load(std::memory_order_acquire);
+                tco.env_gen = env_generation_;
+                for (std::size_t i = 0; i < named_count; ++i)
+                    tco.syms[i] = cl.params[i];
+            }
+        }
+        // Issue #2871: true TCO for TW closure calls.
+        // Previously `return eval_flat(body)` grew C stack per
+        // hop; named-let (letrec→lambda) never hit IR TCOPass
+        // and failed at MAX_C_STACK_DEPTH (~700). Self-rec
+        // define paths often lower to IR (PendingCall) and
+        // appeared TCO-safe while named-let did not.
+        if (cl.body_id != aura::ast::NULL_NODE && cl.flat) {
+            f = cl.flat;
+            if (cl.pool)
+                p = cl.pool;
+            current_env = &*tail_env;
+            current_id = cl.body_id;
+            return FlatStep::cont();
+        }
+        return FlatStep::ret(make_void());
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_primitive(EvalFlatCursor& cur,
+                                                      const aura::ast::NodeView& v,
+                                                      const Env& eval_env,
+                                                      const aura::ast::NodeView& callee,
+                                                      aura::ast::NodeId callee_id) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (callee.tag == aura::ast::NodeTag::Variable) {
+        // Issue #4599: a body-pool frame binding for this name
+        // answers Env::lookup before the prim table can
+        // (shadowing ⇒ prim stays nullopt either way). SymIds
+        // are pool-local: the frame pool must be the call-site
+        // pool and the string mirror aligned for the SymId hit
+        // to agree with the name probe. top_ is excluded — its
+        // ids are cross-pool. A prim-VALUED local keeps the
+        // string prelude: the name may be a prim-table name,
+        // and today's path then invokes the prim with the
+        // try-face error handling the value-apply fallback
+        // lacks.
+        std::optional<types::EvalValue> callee_local;
+        if (callee.sym_id != aura::ast::INVALID_SYM && eval_env.pool() == p && &eval_env != &top_ &&
+            eval_env.binding_mirrors_aligned())
+            callee_local = eval_env.local_symid_last(callee.sym_id);
+        const bool callee_locally_bound = callee_local.has_value() && !is_primitive(*callee_local);
+        std::optional<PrimFn> prim;
+        std::string cname;
+        bool known_not_prim = false;
+        if (!callee_locally_bound) {
+            // Issue #4599: per-node decision cache (host
+            // only). A stored CallNoPrim skips the resolve +
+            // string probes; a stored Prim slot reconstructs
+            // the prim without them. Guards mirror the other
+            // entries: sym, top generation, capture snapshot.
+            if (aura::serve::g_current_fiber == nullptr &&
+                callee.sym_id != aura::ast::INVALID_SYM && eval_env.binding_mirrors_aligned()) {
+                const auto cc_uid = static_cast<std::uint32_t>(current_id);
+                if (cc_uid < name_res_by_node().size()) {
+                    const auto& cc = name_res_by_node()[cc_uid];
+                    if (cc.sym == callee.sym_id && cc.top_gen == top_bind_gen_ &&
+                        cc.cap == eval_env.cap_snapshot().get()) {
+                        if (cc.kind == NameResEntry::Kind::Prim &&
+                            cc.aux < primitives_.slot_count()) {
+                            cname = primitives_.name_for_slot(cc.aux);
+                            prim = primitives_.slot_lookup_fast(cc.aux);
+                        } else if (cc.kind == NameResEntry::Kind::CallNoPrim) {
+                            known_not_prim = true;
+                        }
+                    }
+                }
+            }
+            if (!prim && !known_not_prim) {
+                // #223 follow-up: skip primitive lookup when
+                // cname is empty (e.g. when sym_id was out of
+                // bounds at the resolve() call). The
+                // environment lookup below handles missing
+                // names gracefully via nullopt.
+                std::optional<types::EvalValue> bound;
+                cname = std::string(p->resolve(callee.sym_id));
+                if (!cname.empty()) {
+                    bound = eval_env.lookup(cname);
+                    // PrimitiveRef ⇒ unbound prim name (lookup fallback)
+                    // or explicit prim value — use fast path.
+                    // Cell / closure / other ⇒ user shadow — skip prim.
+                    if (!bound || is_primitive(*bound))
+                        prim = eval_env.lookup_primitive(cname);
+                }
+                // Issue #4599: record the not-a-prim decision
+                // for the next visit. remember_call_no_prim
+                // refuses prim-table names and top SymId
+                // collisions.
+                if (!prim) {
+                    remember_call_no_prim(current_id, callee.sym_id, eval_env, bound, cname);
+                }
+            }
+        }
+        if (prim) {
+            std::vector<EvalValue> args;
+            TwPinMany pin_args(args);
+            for (std::size_t i = 1; i < v.children.size(); ++i) {
+                auto ar = eval_flat(*f, *p, v.child(i), eval_env);
+                if (!ar)
+                    return FlatStep::ret(ar);
+                // Propagate error values through normal eval
+                // Note: is_string check prevents accidental collision
+                // where make_string(idx) with odd idx matches is_ref/RefError
+                // encoding
+                // Issue #4456: display must print a primitive error
+                // (float vector-ref index) and return void, so a
+                // later form in the same begin still runs.
+                // EXCEPT inside a try body: there the error-valued
+                // argument must propagate so the catch fires
+                // ((try (display (car ())) …) in the regression
+                // net must print the handler's value).
+                // Issue #4596: error? observes the value, in or
+                // out of try. Other prims still propagate.
+                if (is_error(*ar) && !is_string(*ar) && cname != "error?" &&
+                    (cname != "display" || try_body_depth_ctx() > 0))
+                    return FlatStep::ret(ar);
+                args.push_back(*ar);
+            }
+            // Issue #441 / #1357: call count + render latency telemetry.
+            // Fall back to `this` when Env::owner_ is null (e.g. stack
+            // Envs / module-inject paths that never set_owner). Calling
+            // through a null owner SIGSEGVs in bump_primitive_call_count
+            // (si_addr=0x730) — suite/poly_mutation_soundness + suite/gc
+            // after (require ... all:). Mirrors materialize_call_env /
+            // IR bridge set_owner pattern.
+            Evaluator* prim_owner = eval_env.owner() != nullptr ? eval_env.owner() : this;
+            // Issue #4599: record the call so the next iteration
+            // skips get(). remember_prim_call refuses a local
+            // shadow, so `(let ((+ ...)))` stays off the cache.
+            const std::size_t slot = primitives_.slot_for_name(cname);
+            if (cname != "if" && cname != "and" && cname != "or" &&
+                slot < primitives_.slot_count() && slot <= 0xffffffffu && v.children.size() <= 8) {
+                remember_prim_call(current_id, callee_id, callee.sym_id,
+                                   static_cast<std::uint32_t>(slot), eval_env, v.children);
+            }
+            const bool slot_here = prim_owner == this && slot < primitives_.slot_count();
+            // Issue #4524: interpreter float-local fast path.
+            // At an armed TCO backedge argument position, a
+            // 2-operand + - * with a float operand computes
+            // the raw double directly — fixnum-first
+            // single-branch classification (#2259/#4524 hot
+            // tests), same seed and operation order as
+            // arithmetic_sum/sub/mul_pure (bit-exact) — and
+            // materializes one fresh immutable box at the
+            // env-boundary rebox. Everything else falls
+            // through to the generic primitive below:
+            // both-fixnum results allocate nothing through
+            // make_int, and overflow / non-number semantics
+            // stay exactly on the generic path.
+            if (v.children.size() == 3 && g_float_local_arm.matches(current_id) &&
+                (cname == "+" || cname == "-" || cname == "*")) {
+                const EvalValue& x = args[0];
+                const EvalValue& y = args[1];
+                const bool xi = is_int(x); // fixnum-first (#4524)
+                const bool yi = is_int(y);
+                const bool xf = !xi && is_float(x);
+                const bool yf = !yi && is_float(y);
+                if ((xi || xf) && (yi || yf) && (xf || yf)) {
+                    const double dx = xf ? as_float(x) : static_cast<double>(as_int(x));
+                    const double dy = yf ? as_float(y) : static_cast<double>(as_int(y));
+                    double r = 0.0;
+                    if (cname[0] == '+') {
+                        r = 0.0 + dx; // sum_pure seed: (0.0 + x) + y
+                        r = r + dy;
+                    } else if (cname[0] == '*') {
+                        r = 1.0 * dx; // mul_pure seed: (1.0 * x) * y
+                        r = r * dy;
+                    } else {
+                        r = dx - dy; // sub_pure: r = x; r -= y
+                    }
+                    if (slot_here)
+                        return FlatStep::ret(prim_owner->invoke_prim_with_telemetry_at(
+                            cname, slot, [&]() { return make_float(r); }));
+                    return FlatStep::ret(prim_owner->invoke_prim_with_telemetry(
+                        cname, [&]() { return make_float(r); }));
+                }
+            }
+            // Issue #4690: closure-form while parks the thunk diagnostic.
+            auto prim_result = [&]() {
+                if (slot_here)
+                    return prim_owner->invoke_prim_with_telemetry_at(
+                        cname, slot, [&]() { return (*prim)(args); });
+                return prim_owner->invoke_prim_with_telemetry(cname,
+                                                              [&]() { return (*prim)(args); });
+            }();
+            // Issue #4855: remember the form that produced an
+            // error value so the located diagnostic points at
+            // the failing form, not the outermost call. The
+            // FIRST producer wins (the innermost form).
+            if (is_error(prim_result) && !is_string(prim_result)) {
+                const auto line = v.line == 0 ? 1u : v.line;
+                const auto col = v.col == 0 ? 1u : v.col;
+                // The cause store is THIS evaluator's
+                // (primitives_ writes into error_values_), so
+                // the location table is this one too.
+                note_error_location(prim_result,
+                                    aura::diag::SourceLocation{line, col, diag_fid_4916(f)});
+            }
+            return FlatStep::ret(finish_prim_call(cname, prim_result));
+        }
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_and_or(EvalFlatCursor& cur,
+                                                   const aura::ast::NodeView& v,
+                                                   const Env& eval_env,
+                                                   const aura::ast::NodeView& callee) {
+    // and/or: short-circuit evaluation (not eager arg eval)
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (callee.tag == aura::ast::NodeTag::Variable) {
+        // Issue #4599: set when the per-node cache already
+        // vouches the callee is not and/or — the resolve and
+        // the name compares below are skipped.
+        bool sc_known_not = false;
+        // Issue #4599: cached short-circuit shape — the hot
+        // visit skips the pool resolve + std::string entirely.
+        // The entry carries no env guards (see
+        // remember_short_circuit); child validity is re-checked
+        // against the live flat size.
+        if (aura::serve::g_current_fiber == nullptr && callee.sym_id != aura::ast::INVALID_SYM) {
+            const auto sc_uid = static_cast<std::uint32_t>(current_id);
+            if (sc_uid < name_res_by_node().size()) {
+                const auto& sc = name_res_by_node()[sc_uid];
+                if (sc.kind == NameResEntry::Kind::CallNoPrim && sc.sym == callee.sym_id &&
+                    sc.top_gen == top_bind_gen_ && sc.cap == eval_env.cap_snapshot().get()) {
+                    // Issue #4599: the stored not-a-prim
+                    // decision also vouches "not and/or" —
+                    // skip this block's pool resolve; the prim
+                    // prelude below consults the same entry.
+                    sc_known_not = true;
+                } else if (sc.kind == NameResEntry::Kind::ShortCircuit && sc.sym == callee.sym_id &&
+                           sc.nchild >= 1) {
+                    bool sc_ok = true;
+                    for (std::uint8_t sci = 0; sci < sc.nchild; ++sci) {
+                        if (sc.child[sci] >= f->size()) {
+                            sc_ok = false;
+                            break;
+                        }
+                    }
+                    if (sc_ok) {
+                        const bool sc_and = sc.aux != 0;
+                        // ShortCircuit branch
+                        for (std::uint8_t sci = 0; sci + 1 < sc.nchild; ++sci) {
+                            auto ar = eval_flat(*f, *p, sc.child[sci], eval_env);
+                            if (!ar)
+                                return FlatStep::ret(ar);
+                            // Issue #4735: an error value in a
+                            // non-last clause is not a truth
+                            // value — it leaves and/or the way a
+                            // leading error leaves begin (#2570),
+                            // so try/catch sees it.
+                            if (is_error(*ar) && !is_string(*ar))
+                                return FlatStep::ret(ar);
+                            if (sc_and ? !is_truthy(*ar) : is_truthy(*ar))
+                                return FlatStep::ret(*ar);
+                        }
+                        current_id = sc.child[sc.nchild - 1];
+                        return FlatStep::cont();
+                    }
+                }
+            }
+        }
+        // Issue #4599: a cached CallNoPrim decision for
+        // this node answers the and/or question — no resolve.
+        if (!sc_known_not) {
+            auto cname = std::string(p->resolve(callee.sym_id));
+            if (cname == "and" && v.children.size() >= 2) {
+                // Issue #4599: record the clause ids so the next
+                // visit resolves nothing.
+                if (aura::serve::g_current_fiber == nullptr)
+                    remember_short_circuit(current_id, callee.sym_id, true, v.children.subspan(1));
+                // Issue #4454: short-circuit the prefix, tail-call
+                // the last clause. (and) with no args does not
+                // enter (children.size() < 2).
+                for (std::size_t ci = 1; ci + 1 < v.children.size(); ++ci) {
+                    auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
+                    if (!ar)
+                        return FlatStep::ret(ar);
+                    // Issue #4735: a primitive type error is an
+                    // error VALUE; truthiness must not swallow
+                    // it in a non-last clause (the last clause
+                    // is tail-called and already propagates).
+                    if (is_error(*ar) && !is_string(*ar))
+                        return FlatStep::ret(ar);
+                    if (!is_truthy(*ar))
+                        return FlatStep::ret(*ar);
+                }
+                current_id = v.child(v.children.size() - 1);
+                return FlatStep::cont();
+            }
+            if (cname == "or" && v.children.size() >= 2) {
+                // Issue #4599: same clause caching as `and`.
+                if (aura::serve::g_current_fiber == nullptr)
+                    remember_short_circuit(current_id, callee.sym_id, false, v.children.subspan(1));
+                // Issue #4454: same tail-call for the last clause.
+                for (std::size_t ci = 1; ci + 1 < v.children.size(); ++ci) {
+                    auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
+                    if (!ar)
+                        return FlatStep::ret(ar);
+                    // Issue #4735: same error-value face as the
+                    // and prefix loop — an error is not a
+                    // short-circuit value.
+                    if (is_error(*ar) && !is_string(*ar))
+                        return FlatStep::ret(ar);
+                    if (is_truthy(*ar))
+                        return FlatStep::ret(*ar);
+                }
+                current_id = v.child(v.children.size() - 1);
+                return FlatStep::cont();
+            }
+        }
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_try(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                                const Env& eval_env, const std::string& cname,
+                                                const aura::ast::NodeView& callee) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (cname == "try" && v.children.size() >= 2) {
+        auto body_id = v.child(1);
+        // Issue #4456 vs try-catch contract: mark the body
+        // so display's arg-error consumption is suspended
+        // here — the error must reach this try's catch.
+        ++try_body_depth_ctx();
+        struct TryBodyScope : ::aura::core::NoCopy {
+            int& d;
+            ~TryBodyScope() { --d; }
+        } try_body_scope{{}, try_body_depth_ctx()};
+        // Issue #4838: the try body must NOT arm the
+        // file-diag rewrite. Under a closure/fiber body
+        // no outer eval has armed a root, so the first
+        // nested eval used to stringify the raised value
+        // into "L:C: type error: ..." before this catch
+        // could bind it. Keep the Error value (symbol /
+        // hash / message cause) for the handler.
+        auto result = eval_flat(*f, *p, body_id, eval_env,
+                                /*allow_file_diag_arm=*/false);
+        if (result && !is_error(*result)) {
+            // Body succeeded — return result as-is
+            return FlatStep::ret(result);
+        }
+        // Body failed: either error value (is_error) or unexpected
+        // Diagnostic (unbound / arity / …). Issue #2567: bind a
+        // *first-class* payload so (catch (e) … e …) works.
+        // RefError values short-circuit as Call args (is_error
+        // propagation), so bind the cause string / Diagnostic
+        // message — usable with display, string?, list, cons.
+        if (v.children.size() < 3)
+            return FlatStep::ret(result); // no catch — propagate as-is
+        EvalValue err_val;
+        if (result && is_error(*result) && !is_string(*result)) {
+            // Prefer the stored cause (often a string from (error …)).
+            const auto eidx = as_error_idx(*result);
+            if (eidx < error_values_.size())
+                err_val = error_values_[eidx];
+            else
+                err_val = *result;
+        } else if (result) {
+            err_val = *result; // non-error truthy failure edge
+        } else {
+            // unexpected Diagnostic → string message (first-class)
+            auto sidx = push_string_heap(result.error().format());
+            err_val = make_string(sidx);
+        }
+        for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
+            auto catch_id = v.child(ci);
+            auto cv = f->get(catch_id);
+            if (cv.tag == aura::ast::NodeTag::Call) {
+                auto catch_fn = f->get(cv.child(0));
+                if (catch_fn.tag == aura::ast::NodeTag::Variable &&
+                    std::string(p->resolve(catch_fn.sym_id)) == "catch") {
+                    // Issue #4594: (catch EXPR) has no binder. Evaluate
+                    // EXPR in the enclosing env. (catch (var) handler)
+                    // and (catch var handler) stay at size >= 3.
+                    if (cv.children.size() == 2)
+                        return FlatStep::ret(eval_flat(*f, *p, cv.child(1), eval_env,
+                                                       /*allow_file_diag_arm=*/false));
+                    // (catch (var) handler) — child[0]=catch, child[1]=(var),
+                    // child[2]=handler
+                    // Also accept (catch var handler) bare Variable binding.
+                    if (cv.children.size() < 3)
+                        return FlatStep::cont();
+                    auto var_form = f->get(cv.child(1));
+                    std::string var_name;
+                    if (var_form.tag == aura::ast::NodeTag::Call && var_form.children.size() >= 1) {
+                        // (var) form — Call with Variable callee
+                        auto var_node = f->get(var_form.child(0));
+                        if (var_node.tag == aura::ast::NodeTag::Variable)
+                            var_name = std::string(p->resolve(var_node.sym_id));
+                    } else if (var_form.tag == aura::ast::NodeTag::Variable) {
+                        // bare var form: (catch e handler)
+                        var_name = std::string(p->resolve(var_form.sym_id));
+                    }
+                    auto handler_id = cv.child(2);
+                    // Bind error value to var and evaluate handler
+                    Env catch_env(&eval_env);
+                    catch_env.set_primitives(&primitives_);
+                    catch_env.set_owner(this);
+                    if (p)
+                        catch_env.set_pool(p);
+                    // Issue #2567: always bind when we have a name
+                    // (Diagnostic failures previously skipped bind).
+                    if (!var_name.empty())
+                        catch_env.bind(var_name, err_val);
+                    // Issue #4838: a handler that raises
+                    // again keeps that value for the
+                    // joiner (fiber.rethrow-in-handler).
+                    return FlatStep::ret(eval_flat(*f, *p, handler_id, catch_env,
+                                                   /*allow_file_diag_arm=*/false));
+                }
+            }
+        }
+        // No matching catch — propagate original failure
+        return FlatStep::ret(result);
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_while(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                                  const Env& eval_env, const std::string& cname,
+                                                  const aura::ast::NodeView& callee) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (cname == "while" && v.children.size() >= 3) {
+        // Check if args are Lambda nodes (EDSL while with closures)
+        // In that case, fall through to primitive dispatch instead
+        auto c1_node = v.child(1) < f->size() ? f->get(v.child(1)) : v;
+        auto c2_node = v.child(2) < f->size() ? f->get(v.child(2)) : v;
+        if (c1_node.tag != aura::ast::NodeTag::Lambda &&
+            c2_node.tag != aura::ast::NodeTag::Lambda) {
+            // Issue #2571: education-mode warning — agents copy
+            // nested-for patterns using (define counter 0) inside
+            // the while body. Prefer outer (define x 0) + (set! x 0)
+            // each iteration. (define) rebinds/reassigns the cell
+            // when already bound, but multi-define + set! previously
+            // could freeze counters; warn once per process.
+            {
+                static std::atomic<bool> warned_define_in_while{false};
+                if (!warned_define_in_while.load(std::memory_order_relaxed)) {
+                    std::function<bool(aura::ast::NodeId)> has_define =
+                        [&](aura::ast::NodeId nid) -> bool {
+                        if (nid == aura::ast::NULL_NODE || nid >= f->size())
+                            return false;
+                        auto nv = f->get(nid);
+                        if (nv.tag == aura::ast::NodeTag::Define)
+                            return true;
+                        for (auto c : nv.children)
+                            if (has_define(c))
+                                return true;
+                        return false;
+                    };
+                    // Issue #4466: a define in a later body form
+                    // still warns. The single-body begin still hits.
+                    bool found_define = false;
+                    for (std::size_t bi = 2; bi < v.children.size() && !found_define; ++bi)
+                        found_define = has_define(v.child(bi));
+                    if (found_define && !warned_define_in_while.exchange(true)) {
+                        std::println(std::cerr, "warning: (define …) inside (while …) body "
+                                                "(Issue #2571). Loop counters should usually be "
+                                                "outer-define + (set! name …) each iteration; "
+                                                "inner define is easy to misread as "
+                                                "per-iteration init from other languages.");
+                    }
+                }
+            }
+            while (true) {
+                // Issue #4568: back-edge budget. Cooled
+                // rows leave a TLS flag check.
+                feedback::note_loop_edge();
+                auto cond_result = eval_flat(*f, *p, v.child(1), eval_env);
+                if (!cond_result)
+                    return FlatStep::ret(cond_result);
+                // Issue #4619: an error value as the test is
+                // not a truth value — it leaves the loop the
+                // way begin lets an error leave (#2570).
+                // Treating it as true ran the loop forever.
+                if (is_error(*cond_result))
+                    return FlatStep::ret(cond_result);
+                if (!is_truthy(*cond_result))
+                    break;
+                // Issue #4466: implicit begin. An unexpected
+                // diagnostic still aborts. Issue #4619: an
+                // error value does too — it is not a body
+                // result the loop may drop.
+                for (std::size_t bi = 2; bi < v.children.size(); ++bi) {
+                    auto body_result = eval_flat(*f, *p, v.child(bi), eval_env);
+                    if (!body_result)
+                        return FlatStep::ret(body_result);
+                    if (is_error(*body_result))
+                        return FlatStep::ret(body_result);
+                }
+            }
+            return FlatStep::ret(make_void());
+        }
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_check_capability(EvalFlatCursor& cur,
+                                                             const aura::ast::NodeView& v,
+                                                             const Env& eval_env,
+                                                             const std::string& cname) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (cname == "check-capability" && v.children.size() >= 2) {
+        auto arg_result = eval_flat(*f, *p, v.child(1), eval_env);
+        if (!arg_result)
+            return FlatStep::ret(arg_result);
+        std::string cap_name;
+        if (is_string(*arg_result)) {
+            auto sidx = as_string_idx(*arg_result);
+            if (sidx < string_heap_.size())
+                cap_name = string_at(sidx);
+        }
+        auto val = eval_env.lookup("%cap:" + cap_name);
+        return FlatStep::ret(val.has_value() ? make_bool(true) : make_bool(false));
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_with_capability(EvalFlatCursor& cur,
+                                                            const aura::ast::NodeView& v,
+                                                            const Env& eval_env,
+                                                            const std::string& cname) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (cname == "with-capability" && v.children.size() >= 2) {
+        auto cap_id = v.child(1);
+        auto cap_result = eval_flat(*f, *p, cap_id, eval_env);
+        if (!cap_result)
+            return FlatStep::ret(cap_result);
+        // Extract capability name(s)
+        std::vector<std::string> caps;
+        if (is_string(*cap_result)) {
+            auto sidx = as_string_idx(*cap_result);
+            if (sidx < string_heap_.size())
+                caps.push_back(string_at(sidx));
+        } else if (is_pair(*cap_result)) {
+            auto cidx = as_pair_idx(*cap_result);
+            while (cidx < pairs_.size()) {
+                auto& pr = pairs_[cidx];
+                if (is_string(pr.car)) {
+                    auto sidx2 = as_string_idx(pr.car);
+                    if (sidx2 < string_heap_.size())
+                        caps.push_back(string_at(sidx2));
+                }
+                break;
+            }
+        }
+        // Create child env with %cap:name bindings
+        tail_env.emplace(&eval_env);
+        tail_env->set_primitives(&primitives_);
+
+        for (auto& cap : caps)
+            tail_env->bind("%cap:" + cap, make_bool(true));
+        // Push to capability_stack_ for capability-stack readout.
+        // Issue #4058: lexical scope only — never an
+        // authorization oracle (has_capability does not
+        // scan this stack).
+        capability_stack_.push_back(caps);
+        // Evaluate body in child env
+        EvalResult last = make_void();
+        TwPinResult pin_last(last);
+        for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
+            last = eval_flat(*f, *p, v.child(ci), *tail_env);
+            if (!last) {
+                capability_stack_.pop_back();
+                return FlatStep::ret(last);
+            }
+        }
+        capability_stack_.pop_back();
+        return FlatStep::ret(last);
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_evolution_region(EvalFlatCursor& cur,
+                                                             const aura::ast::NodeView& v,
+                                                             const Env& eval_env,
+                                                             const std::string& cname) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (cname == "evolution-region" && v.children.size() >= 2) {
+        EvalResult last = make_void();
+        TwPinResult pin_last(last);
+        for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
+            last = eval_flat(*f, *p, v.child(ci), eval_env);
+            if (!last)
+                return FlatStep::ret(last);
+        }
+        return FlatStep::ret(last);
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_performance_region(EvalFlatCursor& cur,
+                                                               const aura::ast::NodeView& v,
+                                                               const Env& eval_env,
+                                                               const std::string& cname) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (cname == "performance-region" && v.children.size() >= 2) {
+        EvalResult last = make_void();
+        TwPinResult pin_last(last);
+        for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
+            last = eval_flat(*f, *p, v.child(ci), eval_env);
+            if (!last)
+                return FlatStep::ret(last);
+        }
+        return FlatStep::ret(last);
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_with_arena(EvalFlatCursor& cur,
+                                                       const aura::ast::NodeView& v,
+                                                       const Env& eval_env,
+                                                       const std::string& cname) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (cname == "with-arena" && v.children.size() >= 1) {
+        std::size_t body_start = 1;
+        if (v.children.size() >= 2) {
+            auto first_id = v.child(1);
+            auto first_v = f->get(first_id);
+            if (first_v.tag == ast::NodeTag::Call && first_v.children.size() >= 1)
+                body_start = 2;
+        }
+        tl_arena_push(&g_tl_arena);
+        EvalResult last_result = make_void();
+        for (std::size_t ci = body_start; ci < v.children.size(); ++ci) {
+            last_result = eval_flat(*f, *p, v.child(ci), eval_env);
+            if (!last_result)
+                return FlatStep::ret(last_result);
+        }
+        // Issue #3771: TLS-arena PairSlot must not escape via
+        // std::malloc. Intern into Evaluator pairs_ (same heap
+        // as cons / densify-tracked pair storage) before
+        // tl_arena_pop. Soft/Off: same path, no second allocator.
+        if (last_result && is_pair(*last_result)) {
+            auto idx = as_pair_idx(*last_result);
+            if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
+                auto* slot = g_pair_slots[idx];
+                auto arena_end = g_tl_arena.base + g_tl_arena.offset;
+                auto ptr = static_cast<std::uint8_t*>(static_cast<void*>(slot));
+                if (g_tl_arena.base && ptr >= g_tl_arena.base && ptr < arena_end) {
+                    // Snapshot car/cdr before pop invalidates slot.
+                    // Same densify path as cons: pairs_ under
+                    // alloc_storage_lock_ (no std::malloc / g_pair_slots).
+                    const auto car_v = types::EvalValue{slot->car};
+                    const auto cdr_v = types::EvalValue{slot->cdr};
+                    std::scoped_lock lock(alloc_storage_lock_);
+                    const auto new_id = pairs_.size();
+                    pairs_.push_back({car_v, cdr_v});
+                    *last_result = make_pair(new_id);
+                }
+            }
+        }
+        tl_arena_pop(&g_tl_arena);
+        return FlatStep::ret(last_result);
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_unless(EvalFlatCursor& cur,
+                                                   const aura::ast::NodeView& v,
+                                                   const Env& eval_env, const std::string& cname) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (cname == "unless" && v.children.size() >= 2) {
+        auto cond_id = v.child(1);
+        auto cond_result = eval_flat(*f, *p, cond_id, eval_env);
+        if (!cond_result)
+            return FlatStep::ret(cond_result);
+        // Issue #4619: an error value as the test is not a
+        // false test — it propagates, the same way an
+        // IfExpr test does (Issue #4493).
+        if (is_error(*cond_result))
+            return FlatStep::ret(cond_result);
+        // Issue #4454: tail-call the last body form.
+        if (is_truthy(*cond_result) || v.children.size() < 3)
+            return FlatStep::ret(types::make_unspecified()); // #4502 step 4
+        for (std::size_t ci = 2; ci + 1 < v.children.size(); ++ci) {
+            auto step = eval_flat(*f, *p, v.child(ci), eval_env);
+            if (!step)
+                return FlatStep::ret(step);
+            // Issue #4619: an error value in a body form
+            // leaves the body the way begin lets it leave
+            // (#2570) — it is not a value the body may drop.
+            if (is_error(*step))
+                return FlatStep::ret(step);
+        }
+        current_id = v.child(v.children.size() - 1);
+        return FlatStep::cont();
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_when(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                                 const Env& eval_env, const std::string& cname) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (cname == "when" && v.children.size() >= 2) {
+        auto cond_id = v.child(1);
+        auto cond_result = eval_flat(*f, *p, cond_id, eval_env);
+        if (!cond_result)
+            return FlatStep::ret(cond_result);
+        // Issue #4619: an error value as the test is not a
+        // true test — it propagates, the same way an
+        // IfExpr test does (Issue #4493).
+        if (is_error(*cond_result))
+            return FlatStep::ret(cond_result);
+        // (when cond) and a falsy cond are void. Issue #4454:
+        // non-tail body forms stay recursive; the last form
+        // is tail position (same continue as IfExpr).
+        if (!is_truthy(*cond_result) || v.children.size() < 3)
+            return FlatStep::ret(types::make_unspecified()); // #4502 step 4
+        for (std::size_t ci = 2; ci + 1 < v.children.size(); ++ci) {
+            auto step = eval_flat(*f, *p, v.child(ci), eval_env);
+            if (!step)
+                return FlatStep::ret(step);
+            // Issue #4619: an error value in a body form
+            // leaves the body the way begin lets it leave
+            // (#2570) — it is not a value the body may drop.
+            if (is_error(*step))
+                return FlatStep::ret(step);
+        }
+        current_id = v.child(v.children.size() - 1);
+        return FlatStep::cont();
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_require(EvalFlatCursor& cur,
+                                                    const aura::ast::NodeView& v,
+                                                    const Env& eval_env,
+                                                    const aura::ast::NodeView& callee) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (callee.tag == aura::ast::NodeTag::Variable) {
+        auto cname = std::string(p->resolve(callee.sym_id));
+        if (cname == "require" && v.children.size() > 1) {
+            // Issue #4575: file mode already denied this require.
+            // Replay the diagnostic; do not run the gate again.
+            if (auto pending = take_pending_require_diag())
+                return FlatStep::ret(std::unexpected(std::move(*pending)));
+            auto surface = [&](Diagnostic d) -> EvalResult {
+                if (require_failure_is_diagnostic_)
+                    stash_pre_exec_require_diag(d);
+                return std::unexpected(std::move(d));
+            };
+            // Collect module names and check for all: flag
+            // (require mod1 mod2 ... all:) — all: applies to ALL modules
+            std::vector<std::string> mod_names;
+            bool use_prefix = true;
+            for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
+                auto arg_v = f->get(v.child(ci));
+                if (arg_v.tag == aura::ast::NodeTag::Variable) {
+                    auto arg_name = std::string(p->resolve(arg_v.sym_id));
+                    if (arg_name == "all:") {
+                        use_prefix = false;
+                    } else {
+                        mod_names.push_back(arg_name);
+                    }
+                } else if (arg_v.tag == aura::ast::NodeTag::LiteralString) {
+                    mod_names.push_back(std::string(p->resolve(arg_v.sym_id)));
+                }
+            }
+
+            // Load all modules in sequence
+            if (!arena_)
+                return FlatStep::ret(make_void());
+            EvalResult last = make_void();
+            TwPinResult pin_last(last);
+            for (auto& mod_path : mod_names) {
+                // Derive prefix from module name (last path component)
+                std::string prefix;
+                if (use_prefix) {
+                    auto slash = mod_path.rfind('/');
+                    auto base =
+                        (slash == std::string::npos) ? mod_path : mod_path.substr(slash + 1);
+                    prefix = base + ":";
+                }
+
+                // Build (import "path" "prefix:") or (import "path")
+                std::string import_expr;
+                if (prefix.empty()) {
+                    import_expr = std::string("(import \"") + mod_path + "\")";
+                } else {
+                    import_expr = std::string("(import \"") + mod_path + "\" \"" + prefix + "\")";
+                }
+
+                // Use temp_arena_ so (gc-temp) reclaims the
+                // parse state for each (require ...) call.
+                auto alloc = temp_arena_->allocator();
+                auto* ipool = temp_arena_->create_with_cover<aura::ast::StringPool>(
+                    nullptr, "require-import-parse-transient", alloc);
+                auto* iflat = temp_arena_->create_with_cover<aura::ast::FlatAST>(
+                    nullptr, "require-import-parse-transient", alloc);
+                // Issue #3180: require-import parse state is transient (lives
+                // only inside this call; gc-temp reclaims). Declare EXEMPT
+                // cover so the implicit intermediate bump does not bump
+                // the uncovered metric under production required.
+                if (ipool) {
+                    temp_arena_->note_intermediate_create_with_cover_(
+                        ipool, nullptr, "require-import-parse-transient");
+                }
+                if (iflat) {
+                    temp_arena_->note_intermediate_create_with_cover_(
+                        iflat, nullptr, "require-import-parse-transient");
+                }
+                // Issue #2363: GeneralObjectPin adopt (site 3/7) — require import.
+                aura::core::lifetime::GeneralObjectPin ipool_pin;
+                aura::core::lifetime::GeneralObjectPin iflat_pin;
+                // Issue #2840: production required-mode fail-closed.
+                if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
+                        ipool_pin, iflat_pin, static_cast<void*>(ipool),
+                        static_cast<void*>(iflat))) {
+                    return FlatStep::ret(surface(Diagnostic{
+                        ErrorKind::InternalError, "import: GeneralObjectPin required under "
+                                                  "production (#2840)"}));
+                }
+                auto pr = aura::parser::parse_to_flat(import_expr, *iflat, *ipool);
+                if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+                    return FlatStep::ret(
+                        surface(Diagnostic{ErrorKind::ParseError, "require: internal error"}));
+                }
+                iflat->root = pr.root;
+                // Pre-expand macros so import primitive is recognized
+                auto expanded_root = aura::compiler::macro_expand_all(*iflat, *ipool, iflat->root);
+                // Issue #4078: do not eval a refused half-expand.
+                if (aura_hygiene_expand_deny_blocks_eval()) {
+                    const char* why = aura_macro_hygiene_last_limit_reason_string();
+                    return FlatStep::ret(surface(macro_limit_diag_4876(why, "hygiene-pass-limit")));
+                }
+                // Issue #3457: this import is a fresh pool. SymId
+                // intern is pool-local; clear around the eval so
+                // the path is not a cached non-string.
+                struct RequireSymReset {
+                    Evaluator* ev;
+                    explicit RequireSymReset(Evaluator* e) noexcept
+                        : ev(e) {
+                        ev->clear_sym_intern();
+                    }
+                    ~RequireSymReset() noexcept { ev->clear_sym_intern(); }
+                    RequireSymReset(const RequireSymReset&) = delete;
+                    RequireSymReset& operator=(const RequireSymReset&) = delete;
+                    RequireSymReset(RequireSymReset&&) = delete;
+                    RequireSymReset& operator=(RequireSymReset&&) = delete;
+                } require_sym_reset(this);
+                last = eval_flat(*iflat, *ipool, expanded_root, eval_env);
+                if (!last) {
+                    // Issue #4460: file mode needs a source
+                    // location so the oneshot runner resumes.
+                    Diagnostic d = last.error();
+                    if (require_failure_is_diagnostic_ && !d.location.valid()) {
+                        d.location = aura::diag::SourceLocation{
+                            v.line == 0 ? 1u : v.line, v.col == 0 ? 1u : v.col, diag_fid_4916(f)};
+                        d.node_id = current_id;
+                    }
+                    return FlatStep::ret(surface(std::move(d)));
+                }
+                // Issue #4460: import turns a void load into an
+                // error value. File mode reports that once, at
+                // this require. Flag off keeps the value (#2570).
+                if (require_failure_is_diagnostic_ && is_error(*last) && !is_string(*last)) {
+                    std::string why;
+                    const auto eidx = as_error_idx(*last);
+                    if (eidx < error_values_.size() && is_string(error_values_[eidx])) {
+                        // Issue #4691: file-mode require copies
+                        // the cause. Gate before the bytes.
+                        const auto si =
+                            static_cast<std::size_t>(as_string_idx(error_values_[eidx]));
+                        if (!inrange_string_tenant_allows(si, /*required_effects=*/0, "file-mode"))
+                            why = "file-mode: cross-tenant string slot read "
+                                  "denied (#4505)";
+                        else
+                            why = copy_string_heap_at(si);
+                    }
+                    if (!last_module_load_failure_.empty() &&
+                        (why.empty() || why.find(last_module_load_failure_) == std::string::npos)) {
+                        why = last_module_load_failure_;
+                    }
+                    // Issue #4817: a resolve miss is not a
+                    // deny. pre_exec_requires runs a require ahead of
+                    // the forms before it, so a module those forms
+                    // write (write-file, then require) is not there
+                    // yet. Stashing the miss made the in-order load
+                    // replay it (#4575 replay, armed for --load by
+                    // #4750); unstashed, the require runs again in
+                    // program order and a real miss still fails there.
+                    const bool resolve_miss =
+                        last_module_load_failure_.starts_with("cannot resolve '");
+                    last_module_load_failure_.clear();
+                    if (why.empty())
+                        why = "module load failed";
+                    std::string msg = "require: " + why;
+                    if (!mod_path.empty() && msg.find(mod_path) == std::string::npos)
+                        msg = "require \"" + mod_path + "\": " + why;
+                    const auto line = v.line == 0 ? 1u : v.line;
+                    const auto col = v.col == 0 ? 1u : v.col;
+                    // Issue #4918: a module that cannot be
+                    // found / loaded is the program's problem,
+                    // not an interpreter bug.
+                    Diagnostic d{ErrorKind::ModuleError, std::move(msg),
+                                 aura::diag::SourceLocation{line, col, diag_fid_4916(f)},
+                                 current_id};
+                    if (resolve_miss)
+                        return FlatStep::ret(std::unexpected(std::move(d)));
+                    return FlatStep::ret(surface(std::move(d)));
+                }
+            }
+            return FlatStep::ret(last);
+        }
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep
+Evaluator::eval_flat_on_macro_hygienic(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                       const Env& eval_env, const std::string& cname, MacroDef& md,
+                                       bool is_rest, const aura::ast::NodeView& callee) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (md.hygienic) {
+        // Issue #4894: reuse this call site's earlier
+        // expansion. A macro registered by an earlier
+        // form is not in this flat's static expand
+        // pass, so every call cloned the body, inner-
+        // expanded it and restamped the WHOLE flat —
+        // which grew per call: O(N^2) for N calls.
+        // Issue #4902: the memo is safe on the
+        // production (sandbox-active) face too. The
+        // per-call MacroSelfEvo consult moves to the
+        // memo-hit arm below, so a grant/deny is
+        // still re-checked on every call; only the
+        // clone + full-flat restamp is reused.
+        constexpr bool memo_ok_4894 = true;
+        const auto memo_epoch_4894 = macros_epoch_4894_.load(std::memory_order_acquire);
+        if (memo_ok_4894) {
+            aura::ast::NodeId memo_hit = aura::ast::NULL_NODE;
+            {
+                std::scoped_lock memo_lk(hyg_call_memo_mtx_4894_);
+                auto fit = hyg_call_memo_4894_.find(f);
+                if (fit != hyg_call_memo_4894_.end()) {
+                    auto cit = fit->second.find(current_id);
+                    if (cit != fit->second.end()) {
+                        const auto& m = cit->second;
+                        if (m.epoch == memo_epoch_4894 && m.md_flat == md.flat &&
+                            m.body_id == md.body_id && f->size() >= m.flat_size &&
+                            f->is_live_node(m.expanded) && f->is_macro_introduced(m.expanded) &&
+                            std::equal(m.children.begin(), m.children.end(), v.children.begin(),
+                                       v.children.end()))
+                            memo_hit = m.expanded;
+                        else
+                            fit->second.erase(cit);
+                    }
+                }
+            }
+            if (memo_hit != aura::ast::NULL_NODE) {
+                // Issue #4902: clone_macro_body's
+                // depth-0 MacroSelfEvo gate is what a
+                // non-memoized call pays for. Keep the
+                // per-call consult here so a revoked or
+                // missing grant still denies; only the
+                // expansion work is reused.
+                if (aura::core::sandbox::is_sandbox_active()) {
+                    if (auto denied = legacy_eval_macro_self_evo_deny())
+                        return FlatStep::ret(std::unexpected(*denied));
+                }
+                auto memo_result = eval_flat(*f, *p, memo_hit, eval_env);
+                if (!memo_result)
+                    return FlatStep::ret(memo_result);
+                return FlatStep::ret(eval_data_as_code(*memo_result, eval_env, f, p));
+            }
+        }
+        // Issue #146 follow-up: build the subst
+        // map via the pure helper. Local
+        // materialization of v.children into a
+        // vector (one alloc per macro call) keeps
+        // the call site short.
+        std::vector<aura::ast::NodeId> call_args(v.children.begin(), v.children.end());
+        auto subst = aura::compiler::pure::compute_macro_subst_pure(md.params, call_args,
+                                                                    /*dotted=*/is_rest);
+        // Issue #3817: ExpandCheckpointGuard is inside
+        // clone_macro_body, so rest add_*/stamp before
+        // clone sits outside size0. Snapshot FlatAST
+        // size here; on NULL clone under production,
+        // truncate_to rewinds MacroIntroduced rest
+        // orphans. Soft/Off keeps historical half-write.
+        std::size_t rest_spine_ckpt = 0;
+        bool rest_spine_pending = false;
+        if (is_rest && !md.params.empty()) {
+            rest_spine_ckpt = f->size();
+            rest_spine_pending = true;
+            const std::size_t regular_count = md.params.size() - 1;
+            std::vector<aura::ast::NodeId> remaining;
+            for (std::size_t ai = regular_count + 1; ai < call_args.size(); ++ai)
+                remaining.push_back(call_args[ai]);
+            // Rest list as (list a1 a2 …) — evaluated
+            // when the expanded body runs (same
+            // runtime shape as non-hygienic rest list).
+            auto list_var = f->add_variable(p->intern("list"));
+            auto list_call = f->add_call(list_var, remaining);
+            // Issue #3153: stamp the freshly allocated
+            // (list a1 a2 ...) spine with
+            // kMacroExpansion dirty + MacroIntroduced
+            // marker + provenance + schema_cache.
+            // macro_expand_all / expand_inner_macros
+            // already stamp; eval_flat hot path was
+            // dropping the marker, so is_macro_introduced
+            // stayed false on rest nodes and
+            // mutate:replace-subtree / rebind gates
+            // could not reject them. Single shared
+            // helper now (exported from
+            // aura.compiler.macro_expansion).
+            stamp_rest_param_hygiene(*f, *md.flat, md.body_id, list_call);
+            subst[md.params.back()] = list_call;
+        }
+        // Issue #4101: clone_ckpt is the size before the
+        // rest spine and the clone, same as reexpand_call.
+        // An inner deny truncates this range so the caller
+        // flat does not keep the MacroIntroduced clone
+        // (half-expanded body is not evaluated).
+        const auto clone_ckpt = rest_spine_pending ? rest_spine_ckpt : f->size();
+        // Clone the macro body with substitution +
+        // name_map. The cloned tree is in the
+        // *current* FlatAST (we use the target's
+        // flat = f, source = md.flat). name_map is
+        // empty initially; clone_macro_body
+        // populates it as it gensym's
+        // template-introduced bindings.
+        std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            rename_map;
+        auto* src_pool = md.pool ? md.pool : p;
+        auto expanded =
+            clone_macro_body(*f, *p, *md.flat, *src_pool, md.body_id, &subst, &rename_map,
+                             /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced,
+                             rest_spine_pending ? rest_spine_ckpt : static_cast<std::size_t>(-1));
+        if (expanded == aura::ast::NULL_NODE) {
+            // Issue #3817: production rewind pre-clone
+            // MacroIntroduced rest spine. #4101:
+            // clone_ckpt is that size when the spine
+            // is pending, else the size before the
+            // clone. Soft/Off keeps the half-write.
+            if (aura::core::sandbox::is_sandbox_active()) {
+                if (rest_spine_pending)
+                    f->truncate_to(rest_spine_ckpt);
+                else
+                    f->truncate_to(clone_ckpt);
+                if (macro_exp::inner_expand_production_limit_deny_all()) {
+                    // Module read, not the extern "C"
+                    // string: light-link tests
+                    // interpose a weak stub that
+                    // returns empty (#4101).
+                    const char* why = macro_exp::hygiene_last_limit_reason_string();
+                    return FlatStep::ret(
+                        std::unexpected(macro_limit_diag_4876(why, "hygiene-depth-limit")));
+                }
+            }
+            return FlatStep::ret(make_void());
+        }
+        // Issue #230 #2 follow-up: undo the Quote-wrap
+        // on set! targets. Same rationale as the
+        // lambda case in eval_data_as_code — the
+        // Quote-wrap helps symbol-generating macros
+        // but breaks set! semantics.
+        // unwrap_set_quotes removed (Quote-wrap reverted)
+        // Issue #121: recursively expand any nested
+        // macro calls in the cloned body using the
+        // runtime `macros_` registry. The cloned body
+        // lives in the calling flat (`*f`), but other
+        // macros (m1, m2, ...) were defined in earlier
+        // forms with their own flates — so the static
+        // `macro_expand_all` (which scans the flat)
+        // wouldn't see them. We walk the cloned tree
+        // and, for each Call whose callee is in
+        // `macros_`, recursively expand it. Bounded by
+        // a depth limit (10) to prevent infinite loops
+        // (e.g., macro X calls macro X).
+        // Issue #4649: the expand's entry root — the
+        // caller-owned slot it may have rewritten
+        // is restored before the deny truncate.
+        const auto expand_entry = expanded;
+        expanded = expand_inner_macros(f, p, expanded, /*depth=*/0,
+                                       /*max_depth=*/10, as_expansion_registry(macros_));
+        // Issue #3684 / #4101: production refuses to eval a
+        // half-expanded body. deny_all covers depth/pass/
+        // steal/cap/gensym and same-flat/name-map/
+        // concurrent-top-level (8/9/10). Truncate the
+        // rest spine and the clone; do not restamp and
+        // do not eval_flat the clone. The deny site
+        // already stamped last_limit_reason. Soft/Off
+        // keeps the historical expand-then-eval
+        // (one sandbox load, no truncate).
+        if (aura::core::sandbox::is_sandbox_active() &&
+            macro_exp::inner_expand_production_limit_deny_all()) {
+            // Issue #4649: truncate_to is not the
+            // only undo — a caller-owned slot
+            // BELOW clone_ckpt that the expand
+            // rewrote keeps a tail id (dead after
+            // the truncate). Restore it first.
+            restore_caller_slot_before_truncate(*f, expand_entry, clone_ckpt);
+            f->truncate_to(clone_ckpt);
+            // Same module read as the NULL arm —
+            // the extern "C" string is a weak stub
+            // under light-link (#4101).
+            const char* why = macro_exp::hygiene_last_limit_reason_string();
+            return FlatStep::ret(
+                std::unexpected(macro_limit_diag_4876(why, "hygiene-depth-limit")));
+        }
+        // Issue #2019: full restamp for all live nodes after
+        // structural splice + MacroIntroduced-only parent/dirty fix.
+        f->restamp_all_node_generations();
+        (void)f->restamp_macro_introduced_generations();
+        // Issue #2096: per-cloned-subtree restamp on the
+        // expanded body so the freshly introduced MacroIntroduced
+        // closure gets a subtree-local gen+parent+dirty repair
+        // (no AST-wide scan, pairs with the zero-arg sweep).
+        if (expanded != aura::ast::NULL_NODE)
+            (void)f->restamp_macro_introduced_subtree(expanded);
+        // Issue #4894: remember this call site's
+        // expansion (bounded; cleared when full).
+        if (memo_ok_4894 && expanded != aura::ast::NULL_NODE && f->is_macro_introduced(expanded)) {
+            std::scoped_lock memo_lk(hyg_call_memo_mtx_4894_);
+            if (hyg_call_memo_4894_.size() >= 64 && !hyg_call_memo_4894_.contains(f))
+                hyg_call_memo_4894_.clear();
+            auto& sites = hyg_call_memo_4894_[f];
+            if (sites.size() >= 4096)
+                sites.clear();
+            sites.insert_or_assign(
+                current_id,
+                HygienicCallMemo4894{
+                    memo_epoch_4894, md.flat, md.body_id, expanded, f->size(),
+                    std::vector<aura::ast::NodeId>(v.children.begin(), v.children.end())});
+        }
+        // Evaluate the cloned + inner-expanded
+        // body. eval_flat returns a runtime
+        // value (a list for cons-chain qq
+        // bodies). The list needs to be
+        // re-evaluated as code so the
+        // inner macro's result is invoked
+        // (e.g., `(bar ,x)` returns
+        // `(* x 2)`, which then evaluates
+        // as a call to `*`). This mirrors
+        // the legacy defmacro path's
+        // eval_data_as_code re-evaluation
+        // and is what enables macro
+        // composition in the hygienic
+        // case (Issue #158).
+        auto hygienic_result = eval_flat(*f, *p, expanded, eval_env);
+        if (!hygienic_result)
+            return FlatStep::ret(hygienic_result);
+        return FlatStep::ret(eval_data_as_code(*hygienic_result, eval_env, f, p));
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep
+Evaluator::eval_flat_on_macro_preserved(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                        const Env& eval_env, const std::string& cname, MacroDef& md,
+                                        bool is_rest, const aura::ast::NodeView& callee) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (md.preserved) {
+        // Issue #4390: no template eval and no
+        // data_to_flat without MacroSelfEvo.
+        if (auto denied = legacy_eval_macro_self_evo_deny())
+            return FlatStep::ret(std::unexpected(*denied));
+        if (is_rest) {
+            // Rest params on preserved
+            // macros are not yet supported
+            // — fall through to a "no
+            // expansion" return.
+            return FlatStep::ret(make_void());
+        }
+        // Bind macro args as data in tail_env
+        std::size_t regular_count = md.params.size();
+        tail_env.emplace(&eval_env);
+        tail_env->set_primitives(&primitives_);
+        for (std::size_t i = 0; i < regular_count && i + 1 < v.children.size(); ++i) {
+            tail_env->bind(md.params[i], ast_to_data(*f, *p, v.child(i + 1)));
+        }
+        // Issue #334: use md.pool if set (the
+        // macro was defined in a different
+        // workspace), else use the current pool
+        // p. The body's Variables look up by
+        // string name in tail_env, so pool
+        // alignment doesn't matter for the
+        // Variable case (it just needs a valid
+        // pool to resolve symids into strings).
+        auto* mb_pool = md.pool ? md.pool : p;
+        auto* mb_flat = md.pool ? md.flat : f;
+        auto template_result = eval_flat(*mb_flat, *mb_pool, md.body_id, *tail_env);
+        if (!template_result)
+            return FlatStep::ret(template_result);
+        // Issue #334 (Cycle 1): convert the
+        // macro body data to FlatAST via
+        // data_to_flat. eval_data_as_code
+        // (the legacy path used here before)
+        // treats strings as literal values,
+        // so Variable references in the body
+        // become string values rather than
+        // runtime lookups — meaning
+        // symbol-generating macros that
+        // splice field names into the lambda
+        // body get the field-name strings
+        // baked into the vector instead of
+        // the call args. data_to_flat
+        // converts each string to a Variable
+        // AST node (add_variable), so the
+        // resulting lambda body has proper
+        // Variable refs that look up in the
+        // lambda's call env at call time.
+        auto ast_root = data_to_flat(*template_result, *f, *p, /*depth=*/0);
+        if (ast_root == aura::ast::NULL_NODE)
+            return FlatStep::ret(std::unexpected(
+                aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                       "data_to_flat returned NULL for env-binding macro body"}));
+        return FlatStep::ret(eval_flat(*f, *p, ast_root, eval_env));
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_inline_lambda(EvalFlatCursor& cur,
+                                                          const aura::ast::NodeView& v,
+                                                          const Env& eval_env,
+                                                          const aura::ast::NodeView& callee) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (callee.tag == aura::ast::NodeTag::Lambda) {
+        // Issue #3688: workspace lambda Apply — same face as IR.
+        if (production_eval_flat_commit_readiness_refuse(
+                static_cast<CompilerMetrics*>(compiler_metrics_)))
+            return FlatStep::ret(eval_flat_commit_readiness_refused());
+        auto pspan = callee.params;
+        bool dotted = callee.int_value != 0;
+        std::size_t named_count = dotted && !pspan.empty() ? pspan.size() - 1 : pspan.size();
+        // Evaluate named + rest args before emplace.
+        // Issue #3915: rest eval after emplace dangled the
+        // TCO caller Env (same class as TW closure TCO).
+        // Issue #4467: evaluate every provided argument, then
+        // reject a wrong fixed arity at this call. Extras used
+        // to be dropped; a missing parameter stayed unbound.
+        std::vector<EvalValue> provided;
+        TwPinMany pin_provided(provided);
+        if (v.children.size() > 1)
+            provided.reserve(v.children.size() - 1);
+        for (std::size_t i = 1; i < v.children.size(); ++i) {
+            // Issue #4524: arm float-local for each named
+            // parameter position — the argument node about
+            // to be bound to a loop accumulator slot.
+            const std::size_t fl_named =
+                dotted ? (pspan.empty() ? 0 : pspan.size() - 1) : pspan.size();
+            FloatLocalArmGuard fl_arm{i - 1 < fl_named ? v.child(i) : aura::ast::NULL_NODE};
+            auto ar = eval_flat(*f, *p, v.child(i), eval_env);
+            if (!ar)
+                return FlatStep::ret(ar);
+            provided.push_back(std::move(*ar));
+        }
+        if (user_arity_mismatch(pspan.size(), dotted, provided.size())) {
+            const auto line = v.line == 0 ? 1u : v.line;
+            const auto col = v.col == 0 ? 1u : v.col;
+            return FlatStep::ret(std::unexpected(
+                Diagnostic{ErrorKind::ArityMismatch,
+                           user_arity_message("lambda", pspan.size(), dotted, provided.size()),
+                           aura::diag::SourceLocation{line, col, diag_fid_4916(f)}, current_id}));
+        }
+        std::vector<EvalValue> iargs;
+        TwPinMany pin_iargs(iargs);
+        iargs.reserve(named_count);
+        for (std::size_t i = 0; i < named_count && i < provided.size(); ++i)
+            iargs.push_back(std::move(provided[i]));
+        std::vector<EvalValue> rest_args;
+        TwPinMany pin_rest(rest_args);
+        if (dotted && !pspan.empty()) {
+            for (std::size_t i = named_count; i < provided.size(); ++i)
+                rest_args.push_back(std::move(provided[i]));
+        }
+        // Issue #2871: pin parent if it lives in tail_env before emplace.
+        cur.pin_if_current_in_tail();
+        tail_env.emplace(current_env);
+        tail_env->set_primitives(&primitives_);
+        // Issue #4701: the inline-lambda call frame MUST carry the
+        // pool before the parameter binds. Without pool_ a bind
+        // lands ONLY in the legacy string array (bindings_); the
+        // SymId array (bindings_symid_, the PRIMARY array) stays
+        // empty. The capture frame built later by
+        // alloc_env_frame_from_env is then dual-path desynced
+        // (bindings_.size() != bindings_symid_.size()), the
+        // dual-path gate hard-fails at materialize_call_env and
+        // drops the captured bindings, and a body closure that
+        // captures the parameter reports "unbound variable: j"
+        // for ((lambda (j) (lambda () j)) 3). Same shape as the
+        // #1482 restore in the letrec path below.
+        if (p)
+            tail_env->set_pool(p);
+        for (std::size_t i = 0; i < iargs.size(); ++i) {
+            tail_env->bind_symid(pspan[i], std::move(iargs[i]));
+        }
+        if (dotted && !pspan.empty()) {
+            // Issue #4733: same locked mint as the apply_closure
+            // rest spine (per-call list must stay per-fiber).
+            types::EvalValue rest = make_void();
+            for (std::size_t i = rest_args.size(); i > 0; --i) {
+                const auto pid = mint_pair(rest_args[i - 1], rest, /*check_quota=*/false);
+                rest = make_pair(pid);
+            }
+            tail_env->bind_symid(pspan.back(), rest);
+        }
+        auto body_id = callee.children.empty() ? aura::ast::NULL_NODE : callee.child(0);
+        // Issue #2871: true TCO — stay in this eval_flat frame
+        // (named-let / inline lambda tail calls must not grow C stack).
+        if (body_id != aura::ast::NULL_NODE) {
+            current_env = &*tail_env;
+            current_id = body_id;
+            return FlatStep::cont();
+        }
+        return FlatStep::ret(make_void());
+    }
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_cannot_call(EvalFlatCursor& cur,
+                                                        const aura::ast::NodeView& v,
+                                                        const Env& eval_env,
+                                                        const aura::ast::NodeView& callee,
+                                                        const EvalResult& fn) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    auto callee_name = std::string(p->resolve(callee.sym_id));
+    // Issue #4478: a non-Variable callee (literal / computed
+    // value) has no symbol to resolve — describe the evaluated
+    // value so the diagnostic is not "cannot call: ".
+    if (callee.tag != aura::ast::NodeTag::Variable) {
+        if (is_int(*fn))
+            callee_name = std::to_string(as_int(*fn));
+        else if (is_float(*fn))
+            callee_name = std::to_string(as_float(*fn));
+        else if (is_string(*fn))
+            callee_name = "\"" + string_at(as_string_idx(*fn)) + "\"";
+        else
+            callee_name = "value";
+    }
+    // Build diagnostic with appropriate suggestion (no self-move)
+    std::string suggestion;
+    if (callee_name.size() > 3 && callee_name.substr(callee_name.size() - 3) == "-fn")
+        suggestion = "if using c-func: (c-func -1 \"" +
+                     callee_name.substr(0, callee_name.size() - 3) + "\" \"(String) -> Int\")";
+    else if (callee.tag == aura::ast::NodeTag::Variable)
+        suggestion = "did you forget to define '" + callee_name + "'?";
+    return FlatStep::ret(std::unexpected(
+        // Issue #4478: the type error must carry the call
+        // site. An unlocated "cannot call" made the oneshot
+        // file runner fall back to a full re-run of every
+        // earlier top-level form (side effects ran twice).
+        Diagnostic{ErrorKind::TypeError, "cannot call: " + callee_name,
+                   aura::diag::SourceLocation{v.line == 0 ? 1u : v.line, v.col == 0 ? 1u : v.col,
+                                              diag_fid_4916(f)},
+                   current_id}
+            .with_suggestion(std::move(suggestion))));
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep
+Evaluator::eval_flat_on_macro_legacy(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                     const Env& eval_env, const std::string& cname, MacroDef& md,
+                                     bool is_rest, const aura::ast::NodeView& callee) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    // Issue #4390: legacy defmacro double-eval. Refuse
+    // before the template runs, so a source-named
+    // binding in the template is not evaluated.
+    if (auto denied = legacy_eval_macro_self_evo_deny())
+        return FlatStep::ret(std::unexpected(*denied));
+    // Convert AST args to data (NOT evaluate — macros receive syntax)
+    // Bind regular params first (all but the last)
+    std::size_t regular_count = is_rest ? md.params.size() - 1 : md.params.size();
+    // Issue #4759: a private env for the macro parameters. In a
+    // tail position eval_env IS *macro_env_4759, so emplacing tail_env
+    // here made the new env its own parent and set! in the
+    // expansion walked that cycle forever.
+    std::optional<Env> macro_env_4759;
+    macro_env_4759.emplace(&eval_env);
+    macro_env_4759->set_primitives(&primitives_);
+    // Issue #4775: see LegacyMacroFrame4775.
+    auto legacy_macro_arg_4775 = [&](aura::ast::NodeId arg) -> EvalValue {
+        if (!t_legacy_macro_frames_4775.empty()) {
+            auto an = f->get(arg);
+            if (an.tag == aura::ast::NodeTag::Variable) {
+                const auto& fr = t_legacy_macro_frames_4775.back();
+                auto nm = std::string(p->resolve(an.sym_id));
+                if (fr.env && fr.params && std::ranges::find(*fr.params, nm) != fr.params->end()) {
+                    auto outer = fr.env->lookup(nm);
+                    auto here = eval_env.lookup(nm);
+                    if (outer && here && *outer == *here)
+                        return *outer;
+                }
+            }
+        }
+        return ast_to_data(*f, *p, arg, /*datum=*/true);
+    };
+
+
+    for (std::size_t i = 0; i < regular_count && i + 1 < v.children.size(); ++i) {
+        // Issue #4759: macro arguments are syntax data — identifiers
+        // are symbols, string literals stay strings — so the
+        // printed expansion re-reads as the same code.
+        macro_env_4759->bind(md.params[i], legacy_macro_arg_4775(v.child(i + 1)));
+    }
+
+    // Rest param: collect remaining args as a list
+    if (is_rest) {
+        auto& rest_name = md.params.back();
+        EvalValue rest_list = make_void();
+        for (std::size_t i = v.children.size() - 1; i >= regular_count + 1; --i) {
+            auto item = legacy_macro_arg_4775(v.child(i)); // #4759/#4775
+            // Issue #4733: locked size+append (a fiber
+            // body may build macro rest spines too).
+            const auto pid = mint_pair(item, rest_list, /*check_quota=*/false);
+            rest_list = make_pair(pid);
+        }
+        macro_env_4759->bind(rest_name, std::move(rest_list));
+    }
+    // Issue #4759: expand once per call site and run the
+    // expansion as real code. eval_data_as_code's mini
+    // interpreter returned symbol atoms unevaluated
+    // (`(list 'display v)` printed the name, `(my-inc! z)`
+    // added a symbol) and knows only a few special forms.
+    // The expansion is printed with datum->string (symbols
+    // bare, strings quoted) and parsed into this flat. The
+    // site key carries the printed argument data, so a
+    // mutated call site re-expands. A template that
+    // datum->string cannot print (a spliced closure) or
+    // that does not parse keeps the historical
+    // eval_data_as_code path (#334 note below).
+    auto legacy_macro_print_datum_4759 = [&](const EvalValue& d, std::string& out) {
+        auto prim = macro_env_4759->lookup_primitive("datum->string");
+        if (!prim)
+            return false;
+        std::array<EvalValue, 1> pargs{d};
+        auto r = (*prim)(std::span<const EvalValue>(pargs));
+        if (!is_string(r))
+            return false;
+        out = std::string(string_at_or(as_string_idx(r)));
+        return true;
+    };
+    // A define in the expansion re-keys top_ onto the
+    // expansion's pool (#4373); restore the caller's.
+    auto legacy_macro_run_4759 = [&](const LegacyMacroSite4759& site) -> EvalResult {
+        // Issue #4421 / #3688: the expansion is parsed into
+        // its own flat and evaluated as real code, so a
+        // shorthand `define` in the template arrives as a
+        // Define node - not the eval_data_as_code branch
+        // that refuses. A refused commit window must not
+        // install that binding either: refuse before the
+        // expansion runs, with the same TypeError IR and
+        // eval_flat use.
+        if (production_eval_flat_commit_readiness_refuse(
+                static_cast<CompilerMetrics*>(compiler_metrics_)))
+            return eval_flat_commit_readiness_refused();
+        auto saved_pool = top_env().pool();
+        auto r = eval_flat(*site.flat, *site.pool, site.root, eval_env);
+        if (saved_pool && top_env().pool() != saved_pool)
+            top_env().set_pool(saved_pool);
+        return r;
+    };
+    std::string site_key_4759;
+    {
+        std::string args_text;
+        bool printable = true;
+        for (std::size_t i = 0; printable && i < md.params.size(); ++i) {
+            auto bound = macro_env_4759->lookup(md.params[i]);
+            std::string one;
+            printable = bound && legacy_macro_print_datum_4759(*bound, one);
+            args_text += one;
+            args_text += '\x1f';
+        }
+        if (printable)
+            site_key_4759 = std::format("{}|{}|{}|{}|{}|{}", static_cast<const void*>(this),
+                                        static_cast<const void*>(f), current_id,
+                                        static_cast<const void*>(md.flat), md.body_id, args_text);
+    }
+    if (!site_key_4759.empty()) {
+        if (auto hit = legacy_macro_site_lookup_4759(site_key_4759))
+            return FlatStep::ret(legacy_macro_run_4759(*hit));
+    }
+    // Evaluate macro body (quasiquote-expanded template) → produces data
+    auto template_result = [&] {
+        LegacyMacroFrameGuard4775 frame_4775(&*macro_env_4759, &md.params);
+        return eval_flat(*md.flat, md.pool ? *md.pool : *p, md.body_id, *macro_env_4759);
+    }();
+    if (!template_result)
+        return FlatStep::ret(template_result);
+    TwPinResult pin_template_4759(template_result);
+    if (!site_key_4759.empty()) {
+        std::string text;
+        if (legacy_macro_print_datum_4759(*template_result, text)) {
+            auto fu = std::make_unique<aura::ast::FlatAST>();
+            auto pu = std::make_unique<aura::ast::StringPool>();
+            auto pr = aura::parser::parse_to_flat(text, *fu, *pu);
+            if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                fu->root = pr.root;
+                LegacyMacroSite4759 site;
+                site.root = pr.root;
+                site.flat = std::shared_ptr<aura::ast::FlatAST>(fu.release());
+                site.pool = std::shared_ptr<aura::ast::StringPool>(pu.release());
+                // Over the cap: still fine — `site` holds the
+                // flat for this call; closures it makes are
+                // kept alive by an intentional leak below.
+                if (!legacy_macro_site_store_4759(site_key_4759, site)) {
+                    static ::aura::core::immortal<std::vector<LegacyMacroSite4759>> overflow_4759;
+                    static std::mutex overflow_mtx_4759;
+                    std::scoped_lock lk(overflow_mtx_4759);
+                    overflow_4759->push_back(site);
+                }
+                return FlatStep::ret(legacy_macro_run_4759(site));
+            }
+        }
+    }
+    // Issue #334 (deferred): the simpler
+    // data_to_flat path was tried here and
+    // reverted — it can't work because the
+    // first eval_flat (line above) already
+    // fails when the macro body references
+    // lambda-local Variables (e.g. `args` of a
+    // generated `(lambda (args) ...)`) that
+    // aren't bound in tail_env at expansion
+    // time. The proper fix for #1/#2
+    // (define-struct) is the env-binding path
+    // (issue 334), not a refactor of the
+    // defmacro expansion here.
+    return FlatStep::ret(eval_data_as_code(*template_result, eval_env, f, p));
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_begin(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                                  const Env& eval_env) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    auto count = v.children.size();
+    if (count == 0)
+        return FlatStep::ret(EvalResult(make_void()));
+
+    // Issue #4465: file-mode root only. A primitive error that
+    // escapes a direct child is a located diagnostic, so the
+    // oneshot runner reports it and resumes later forms.
+    // Issue #2570: abort begin on first-class error for every
+    // other begin, so a module load does not continue.
+    const bool file_root =
+        require_failure_is_diagnostic_ && file_diag_root_flat() == f && file_diag_root_id() == v.id;
+    // Multiple defines at the *head* of a body → letrec semantics
+    // (mutual recursion + private free-var capture). Issue #2740 /
+    // #2739: if any define appears *after* a non-define expression
+    // (vector-set! / fill / side effects), do NOT lift those defines
+    // — Agent denseness writes "mutate then define flag" and letrec
+    // init sees pre-mutation zeros while later reads look correct
+    // (silent false denseness). Sequential eval when define-after-expr.
+    //
+    // Issue #2766: module prologue forms — (export …) and
+    // (require …)/(import …) — must NOT count as "body expr"
+    // for define_after_expr. require-before-export previously
+    // forced sequential multi-define; export filtering then
+    // stripped private cells (*cell*, agent-register) that
+    // closures free-ref, yielding unbound-at-call. Prologue
+    // is declarative load order, not Agent denseness mutate.
+    auto is_module_prologue = [&](const aura::ast::NodeView& nv) -> bool {
+        if (nv.tag == aura::ast::NodeTag::Export)
+            return true;
+        if (nv.tag != aura::ast::NodeTag::Call || nv.children.empty())
+            return false;
+        auto head = f->get(nv.child(0));
+        if (head.tag != aura::ast::NodeTag::Variable)
+            return false;
+        auto hn = p->resolve(head.sym_id);
+        return hn == "require" || hn == "import";
+    };
+    std::vector<std::pair<std::string, aura::ast::NodeId>> letrec_defs;
+    // Issue #4818: source position of each letrec_defs entry,
+    // so a deferred Phase 0 require runs back in source order.
+    std::vector<std::size_t> letrec_idx;
+    bool has_multiple_defs = false;
+    bool define_after_expr = false;
+    int define_count = 0;
+    bool saw_non_define = false;
+    // Find last non-NULL child (NULL_NODE holes may exist from mutate:move-node)
+    aura::ast::NodeId last_expr = aura::ast::NULL_NODE;
+    for (std::size_t si = count; si > 0; --si) {
+        auto cid = v.child(si - 1);
+        if (cid != aura::ast::NULL_NODE) {
+            last_expr = cid;
+            break;
+        }
+    }
+    if (last_expr == aura::ast::NULL_NODE)
+        return FlatStep::ret(EvalResult(make_void()));
+    for (std::size_t i = 0; i < count; ++i) {
+        auto cid = v.child(i);
+        if (cid == aura::ast::NULL_NODE)
+            return FlatStep::cont();
+        // Issue #4679: Define children read SoA columns; a
+        // full NodeView per top-level form was O(W) assembly.
+        if (f->tag(cid) == aura::ast::NodeTag::Define) {
+            define_count++;
+            if (define_count > 1)
+                has_multiple_defs = true;
+            if (saw_non_define)
+                define_after_expr = true;
+            const auto dch = f->children(cid);
+            letrec_defs.push_back({std::string(p->resolve(f->sym_id(cid))),
+                                   dch.empty() ? aura::ast::NULL_NODE : dch[0]});
+            letrec_idx.push_back(i);
+        } else if (!is_module_prologue(f->get(cid))) {
+            // Real body expr (not export/require/import).
+            saw_non_define = true;
+        }
+    }
+
+    // Skip NULL_NODE children (left by mutate:move-node / mutate:remove-node)
+    std::size_t effective_count = 0;
+    for (std::size_t ci = 0; ci < count; ++ci) {
+        if (v.child(ci) != aura::ast::NULL_NODE)
+            effective_count++;
+    }
+    if (effective_count < count) {
+        // Recount defines / define-after-expr on live children only.
+        // Issue #2766: same prologue skip as the primary scan.
+        has_multiple_defs = false;
+        define_after_expr = false;
+        define_count = 0;
+        saw_non_define = false;
+        letrec_defs.clear();
+        letrec_idx.clear();
+        for (std::size_t ci = 0; ci < count; ++ci) {
+            auto cid = v.child(ci);
+            if (cid == aura::ast::NULL_NODE)
+                return FlatStep::cont();
+            // Issue #4679: Define children read SoA columns; a
+            // full NodeView per top-level form was O(W) assembly.
+            if (f->tag(cid) == aura::ast::NodeTag::Define) {
+                define_count++;
+                if (define_count > 1)
+                    has_multiple_defs = true;
+                if (saw_non_define)
+                    define_after_expr = true;
+                const auto dch = f->children(cid);
+                letrec_defs.push_back({std::string(p->resolve(f->sym_id(cid))),
+                                       dch.empty() ? aura::ast::NULL_NODE : dch[0]});
+                letrec_idx.push_back(ci);
+            } else if (!is_module_prologue(f->get(cid))) {
+                saw_non_define = true;
+            }
+        }
+    }
+
+    if (has_multiple_defs && !define_after_expr) {
+        // Issue #2766 Phase 0: module prologue first so
+        // (require …)/(import …) inject bindings before
+        // lambda free-var capture, and (export …) records
+        // the API set. Independent of textual order among
+        // prologue forms and defines.
+        //
+        // Issue #4818: hoisting is for bindings that already
+        // exist. A require whose module path does not resolve
+        // yet (the file is written by an earlier form of this
+        // body: write-file in a define RHS or a body expr)
+        // gains nothing from running first. Such a resolve
+        // miss is deferred, not reported: the require runs
+        // again at its source position, after the forms
+        // before it, and a real miss still fails there. Any
+        // other failure (deny, parse error) stops here as before.
+        std::vector<std::pair<std::size_t, aura::ast::NodeId>> deferred_requires;
+        auto phase0_resolve_miss = [&](aura::ast::NodeId cid, const EvalResult& r) -> bool {
+            if (r && !(is_error(*r) && !is_string(*r)))
+                return false;
+            const auto nv = f->get(cid);
+            if (nv.tag != aura::ast::NodeTag::Call)
+                return false;
+            const std::string& why = r ? last_module_load_failure_ : r.error().message;
+            constexpr std::string_view kMiss = "cannot resolve '";
+            for (std::size_t ci = 1; ci < nv.children.size(); ++ci) {
+                auto av = f->get(nv.child(ci));
+                if (av.tag != aura::ast::NodeTag::LiteralString &&
+                    av.tag != aura::ast::NodeTag::Variable)
+                    continue;
+                auto name = std::string(p->resolve(av.sym_id));
+                if (name == "all:" || name.empty())
+                    continue;
+                if (why.find(std::string(kMiss) + name) != std::string::npos)
+                    return true;
+            }
+            return false;
+        };
+        for (std::size_t i = 0; i < count; ++i) {
+            auto cid = v.child(i);
+            if (cid == aura::ast::NULL_NODE)
+                return FlatStep::cont();
+            const auto ctag = f->tag(cid);
+            if (ctag != aura::ast::NodeTag::Export && ctag != aura::ast::NodeTag::Call)
+                return FlatStep::cont();
+            if (!is_module_prologue(f->get(cid)))
+                return FlatStep::cont();
+            last_module_load_failure_.clear();
+            auto raw = eval_flat(*f, *p, cid, eval_env);
+            if (ctag == aura::ast::NodeTag::Call && phase0_resolve_miss(cid, raw)) {
+                last_module_load_failure_.clear();
+                deferred_requires.push_back({i, cid});
+                return FlatStep::cont();
+            }
+            auto r = finish_begin_child(std::move(raw), cid, file_root, f);
+            if (!r || (is_error(*r) && !is_string(*r)))
+                return FlatStep::ret(r);
+        }
+        {
+            auto step = eval_flat_on_begin_letrec(cur, v, eval_env, deferred_requires, letrec_defs,
+                                                  letrec_idx, file_root, last_expr, count);
+            if (step.kind == FlatStep::Kind::Cont)
+                return FlatStep::cont();
+            if (step.kind == FlatStep::Kind::Ret)
+                return FlatStep::ret(std::move(*step.value));
+        }
+    }
+
+    // Single define (or no defines) — sequential evaluation
+    for (std::size_t i = 0; i < count - 1; ++i) {
+        auto cid = v.child(i);
+        if (cid == aura::ast::NULL_NODE)
+            return FlatStep::cont();
+        auto r = finish_begin_child(eval_flat(*f, *p, cid, eval_env), cid, file_root, f);
+        if (!r || (is_error(*r) && !is_string(*r)))
+            return FlatStep::ret(r);
+    }
+    // Find last non-NULL child
+    current_id = aura::ast::NULL_NODE;
+    for (std::size_t i = count; i > 0; --i) {
+        auto cid = v.child(i - 1);
+        if (cid != aura::ast::NULL_NODE) {
+            current_id = cid;
+            break;
+        }
+    }
+    if (current_id == aura::ast::NULL_NODE)
+        return FlatStep::ret(EvalResult(make_void()));
+    // Issue #2570: a non-file begin still tail-calls, and an
+    // error value from that form aborts the caller. Issue
+    // #4465: the file root reports it at this form instead.
+    if (file_root)
+        return FlatStep::ret(
+            finish_begin_child(eval_flat(*f, *p, current_id, eval_env), current_id, file_root, f));
+    return FlatStep::cont(); // TCO: last expression in begin
+
+    return FlatStep::fall();
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_call(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                                 const Env& eval_env) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    if (v.children.empty())
+        return FlatStep::ret(EvalResult(make_void()));
+    auto callee_id = v.child(0);
+    auto callee = f->get(callee_id);
+    // Inline lambda (arg evals are recursive; body is tail)
+    {
+        auto step = eval_flat_on_inline_lambda(cur, v, eval_env, callee);
+        if (step.kind == FlatStep::Kind::Cont)
+            return FlatStep::cont();
+        if (step.kind == FlatStep::Kind::Ret)
+            return FlatStep::ret(std::move(*step.value));
+    }
+    // Macro expansion: evaluate args, bind in env, evaluate body (produces template
+    // data), then re-evaluate the data as code
+    // Issue #4599 follow-up: an empty registry cannot match.
+    // Every call used to pay a pool resolve + std::string +
+    // hash-table probe here before the prim/closure paths.
+    if (callee.tag == aura::ast::NodeTag::Variable && !macros_.empty()) {
+        auto cname = std::string(p->resolve(callee.sym_id));
+        auto macro_it = macros_.find(cname);
+        if (macro_it != macros_.end()) {
+            // Issue #4901: a procedure defined by an earlier
+            // form keeps the definition in effect when that
+            // form finished (force-soa evaluates one form at
+            // a time, so the static pass never saw it).
+            auto md_pin_4901 = pinned_macro_def_4901(cname, f, macro_it->second);
+            auto& md = md_pin_4901 ? *md_pin_4901 : macro_it->second;
+            bool is_rest = md.dotted;
+            // Issue #4834: a macro call is fixed-arity unless
+            // the macro declares a trailing rest parameter.
+            // Extra arguments used to be dropped silently and
+            // a missing one surfaced as "unbound variable:
+            // <formal>" pointing INSIDE the macro body, which
+            // hid the caller's mistake. Reject at the call site
+            // for hygienic and legacy macros alike.
+            const std::size_t provided_args = v.children.empty() ? 0 : v.children.size() - 1;
+            const std::size_t regular_params =
+                is_rest ? (md.params.empty() ? 0 : md.params.size() - 1) : md.params.size();
+            if (is_rest ? provided_args < regular_params : provided_args != regular_params) {
+                std::string expected = std::to_string(regular_params);
+                if (is_rest)
+                    expected += "+";
+                const auto arity_line = v.line == 0 ? 1u : v.line;
+                const auto arity_col = v.col == 0 ? 1u : v.col;
+                const bool singular = regular_params == 1 && !is_rest;
+                return FlatStep::ret(std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::ArityMismatch,
+                    "macro " + cname + ": expected " + expected + " argument" +
+                        (singular ? "" : "s") + ", got " + std::to_string(provided_args),
+                    aura::diag::SourceLocation{arity_line, arity_col, diag_fid_4916(f)},
+                    current_id}));
+            }
+
+            // Issue #334: env-binding path for
+            // `define-hygienic-macro*` (md.preserved).
+            // The macro args are bound in a child env
+            // (name → ast_to_data), and the body is
+            // evaluated in that env. This makes the
+            // body's Variable refs resolve to the
+            // literal arg values directly — the same
+            // behavior as the legacy `defmacro` path.
+            // Used by symbol-generating macros like
+            // define-struct where `name` should
+            // resolve to the literal symbol and
+            // `fields` to the literal field list.
+            {
+                auto step =
+                    eval_flat_on_macro_preserved(cur, v, eval_env, cname, md, is_rest, callee);
+                if (step.kind == FlatStep::Kind::Cont)
+                    return FlatStep::cont();
+                if (step.kind == FlatStep::Kind::Ret)
+                    return FlatStep::ret(std::move(*step.value));
+            }
+
+            // Issue #120: hygienic macros use clone_macro_body
+            // with a name_map (single-eval AST substitution +
+            // automatic gensym for template-introduced
+            // bindings). Non-hygienic macros keep the legacy
+            // double-eval path for backward compatibility.
+            //
+            // Issue #2018: hygienic rest params — build a
+            // (list remaining...) AST for the rest binding
+            // and put it in subst so free uses of the rest
+            // identifier expand to the rest-arg list. Nested
+            // dotted lambdas inside the body get `__rest_`
+            // gensym via clone_macro_body pre-scan.
+            {
+                auto step =
+                    eval_flat_on_macro_hygienic(cur, v, eval_env, cname, md, is_rest, callee);
+                if (step.kind == FlatStep::Kind::Cont)
+                    return FlatStep::cont();
+                if (step.kind == FlatStep::Kind::Ret)
+                    return FlatStep::ret(std::move(*step.value));
+            }
+
+            {
+                auto step = eval_flat_on_macro_legacy(cur, v, eval_env, cname, md, is_rest, callee);
+                if (step.kind == FlatStep::Kind::Cont)
+                    return FlatStep::cont();
+                if (step.kind == FlatStep::Kind::Ret)
+                    return FlatStep::ret(std::move(*step.value));
+            }
+        }
+    }
+    // Built-in require: (require mod-name) — symbol, not string
+    // Phase 4: prefix by default. (require std/list) → (import "std/list" "list:")
+    //          (require std/list all:) → (import "std/list")  (backward compat)
+    {
+        auto step = eval_flat_on_require(cur, v, eval_env, callee);
+        if (step.kind == FlatStep::Kind::Cont)
+            return FlatStep::cont();
+        if (step.kind == FlatStep::Kind::Ret)
+            return FlatStep::ret(std::move(*step.value));
+    }
+    // try/catch: (try body (catch (var) handler))
+    // body is evaluated; if it returns an error, handler is evaluated with var
+    // bound
+    if (callee.tag == aura::ast::NodeTag::Variable) {
+        auto cname = std::string(p->resolve(callee.sym_id));
+        // when: (when cond body...) — evaluate body only if cond is truthy
+        {
+            auto step = eval_flat_on_when(cur, v, eval_env, cname);
+            if (step.kind == FlatStep::Kind::Cont)
+                return FlatStep::cont();
+            if (step.kind == FlatStep::Kind::Ret)
+                return FlatStep::ret(std::move(*step.value));
+        }
+        // unless: (unless cond body...) — body only if cond is falsy
+        {
+            auto step = eval_flat_on_unless(cur, v, eval_env, cname);
+            if (step.kind == FlatStep::Kind::Cont)
+                return FlatStep::cont();
+            if (step.kind == FlatStep::Kind::Ret)
+                return FlatStep::ret(std::move(*step.value));
+        }
+        // with-arena: (with-arena (size) body...)
+        {
+            auto step = eval_flat_on_with_arena(cur, v, eval_env, cname);
+            if (step.kind == FlatStep::Kind::Cont)
+                return FlatStep::cont();
+            if (step.kind == FlatStep::Kind::Ret)
+                return FlatStep::ret(std::move(*step.value));
+        }
+        // performance-region: (performance-region body...)
+        {
+            auto step = eval_flat_on_performance_region(cur, v, eval_env, cname);
+            if (step.kind == FlatStep::Kind::Cont)
+                return FlatStep::cont();
+            if (step.kind == FlatStep::Kind::Ret)
+                return FlatStep::ret(std::move(*step.value));
+        }
+        // evolution-region: (evolution-region body...)
+        {
+            auto step = eval_flat_on_evolution_region(cur, v, eval_env, cname);
+            if (step.kind == FlatStep::Kind::Cont)
+                return FlatStep::cont();
+            if (step.kind == FlatStep::Kind::Ret)
+                return FlatStep::ret(std::move(*step.value));
+        }
+        // with-capability: (with-capability cap-name body...)
+        // Bind capabilities as special variables in the environment.
+        {
+            auto step = eval_flat_on_with_capability(cur, v, eval_env, cname);
+            if (step.kind == FlatStep::Kind::Cont)
+                return FlatStep::cont();
+            if (step.kind == FlatStep::Kind::Ret)
+                return FlatStep::ret(std::move(*step.value));
+        }
+        // check-capability: (check-capability "Name") — look up %cap:Name binding
+        {
+            auto step = eval_flat_on_check_capability(cur, v, eval_env, cname);
+            if (step.kind == FlatStep::Kind::Cont)
+                return FlatStep::cont();
+            if (step.kind == FlatStep::Kind::Ret)
+                return FlatStep::ret(std::move(*step.value));
+        }
+
+        // while: (while cond body ...) — re-evaluate cond, then every
+        // body form in order (Issue #4466). Repeat.
+        {
+            auto step = eval_flat_on_while(cur, v, eval_env, cname, callee);
+            if (step.kind == FlatStep::Kind::Cont)
+                return FlatStep::cont();
+            if (step.kind == FlatStep::Kind::Ret)
+                return FlatStep::ret(std::move(*step.value));
+        }
+
+        {
+            auto step = eval_flat_on_try(cur, v, eval_env, cname, callee);
+            if (step.kind == FlatStep::Kind::Cont)
+                return FlatStep::cont();
+            if (step.kind == FlatStep::Kind::Ret)
+                return FlatStep::ret(std::move(*step.value));
+        }
+    }
+
+    {
+        auto step = eval_flat_on_and_or(cur, v, eval_env, callee);
+        if (step.kind == FlatStep::Kind::Cont)
+            return FlatStep::cont();
+        if (step.kind == FlatStep::Kind::Ret)
+            return FlatStep::ret(std::move(*step.value));
+    }
+
+    // Primitive call (all arg evals are recursive).
+    // Issue #2873: only take the prim fast-path when the name is
+    // not shadowed by an env binding. Env::lookup returns a
+    // PrimitiveRef for bare prim names (fallback) and cells/
+    // closures for user bindings — so `(let take …)` / named-let
+    // loop names that collide with list prims (take/drop/map/…)
+    // must fall through to the closure TCO path, not invoke the
+    // prim. Multi-frame load-sim patterns used `let take` and
+    // silently returned empty instead of iterating.
+    {
+        auto step = eval_flat_on_primitive(cur, v, eval_env, callee, callee_id);
+        if (step.kind == FlatStep::Kind::Cont)
+            return FlatStep::cont();
+        if (step.kind == FlatStep::Kind::Ret)
+            return FlatStep::ret(std::move(*step.value));
+    }
+    // Closure call (eval func + arg evals are recursive; body is tail)
+    auto fn = eval_flat(*f, *p, callee_id, eval_env);
+    if (!fn)
+        return FlatStep::ret(fn);
+    TwPinResult pin_fn(fn);
+    {
+        auto step = eval_flat_on_closure(cur, v, eval_env, fn, callee);
+        if (step.kind == FlatStep::Kind::Cont)
+            return FlatStep::cont();
+        if (step.kind == FlatStep::Kind::Ret)
+            return FlatStep::ret(std::move(*step.value));
+    }
+    // Functor instantiation: callee is a %functor marker
+    {
+        auto step = eval_flat_on_functor(cur, v, eval_env, fn, callee);
+        if (step.kind == FlatStep::Kind::Cont)
+            return FlatStep::cont();
+        if (step.kind == FlatStep::Kind::Ret)
+            return FlatStep::ret(std::move(*step.value));
+    }
+
+    // Primitive value call: callee is a PrimitiveRef (passed as value, not a
+    // Variable node)
+    {
+        auto step = eval_flat_on_prim_value(cur, v, eval_env, fn);
+        if (step.kind == FlatStep::Kind::Cont)
+            return FlatStep::cont();
+        if (step.kind == FlatStep::Kind::Ret)
+            return FlatStep::ret(std::move(*step.value));
+    }
+    {
+        auto step = eval_flat_on_cannot_call(cur, v, eval_env, callee, fn);
+        if (step.kind == FlatStep::Kind::Cont)
+            return FlatStep::cont();
+        if (step.kind == FlatStep::Kind::Ret)
+            return FlatStep::ret(std::move(*step.value));
+    }
+    return FlatStep::fall();
+}
+
+EvalResult Evaluator::finish_begin_child(EvalResult r, aura::ast::NodeId form, bool file_root,
+                                         aura::ast::FlatAST* flat) {
+    if (r && file_root && is_error(*r) && !is_string(*r))
+        r = file_mode_escaped_primitive(*this, *r, *flat, form);
+    // Issue #4471: resume after this top-level form. The diagnostic
+    // location can be an earlier define body.
+    if (file_root && !r) {
+        const auto nv = flat->get(form);
+        if (nv.line > 0)
+            set_file_resume_form(aura::diag::SourceLocation{nv.line, nv.col == 0 ? 1u : nv.col, 0});
+    }
+    return r;
+}
+
+void Evaluator::eval_flat_sample_memory() {
+    // ── Memory pressure auto-governance sampling (P1) ─────────
+    // Every sample_every_ calls to eval_flat, recompute pressure
+    // and (if policy allows) auto-trigger gc-module for the top arena.
+    // Outside the hot path for typical evals (default 1-in-1000).
+    // Issue #991: thread_local counters (shared Evaluator, multi-worker).
+    thread_local std::size_t t_sample_counter = 0;
+    thread_local std::size_t t_last_auto_gc_eval_depth = 0;
+    thread_local std::string t_last_warn_level;
+    if (++t_sample_counter >= memory_policy_.sample_every) {
+        t_sample_counter = 0;
+        sample_counter_.store(t_sample_counter, std::memory_order_relaxed);
+        // Snapshot arena state. Inline rather than refactoring into
+        // a shared helper to avoid std::function capture-lifetime issues.
+        struct Snap {
+            std::string name;
+            double used;
+            double cap;
+            int pct;
+        };
+        std::vector<Snap> snaps;
+        double total_used = 0.0, total_cap = 0.0;
+        if (arena_) {
+            auto s = arena_->stats();
+            double u = static_cast<double>(s.used) / 1048576.0;
+            double c = static_cast<double>(s.capacity) / 1048576.0;
+            snaps.push_back({"main", u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
+            total_used += u;
+            total_cap += c;
+        }
+        if (arena_group_) {
+            for (auto& [full_name, stats] : arena_group_->module_stats()) {
+                auto slash = full_name.rfind('/');
+                auto short_name =
+                    slash == std::string::npos ? full_name : full_name.substr(slash + 1);
+                double u = static_cast<double>(stats.used) / 1048576.0;
+                double c = static_cast<double>(stats.capacity) / 1048576.0;
+                snaps.push_back({short_name, u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
+                total_used += u;
+                total_cap += c;
+            }
+        }
+        int overall = total_cap > 0 ? static_cast<int>(total_used / total_cap * 100.0) : 0;
+        std::string level = "low";
+        if (overall >= 95)
+            level = "critical";
+        else if (overall >= 80)
+            level = "high";
+        else if (overall >= 60)
+            level = "medium";
+
+        // Log warning on level transitions (avoid spam — only log when
+        // the level string changes from the last warned one).
+        if (level != t_last_warn_level && (level == "high" || level == "critical")) {
+            std::println(std::cerr,
+                         "[memory-pressure] WARNING: level={} overall-pct={} total-used={:.1f}MB",
+                         level, overall, total_used);
+            t_last_warn_level = level;
+        } else if (level == "low" || level == "medium") {
+            t_last_warn_level = level;
+        }
+
+        // Auto-gc: only at critical AND policy enabled AND cooldown elapsed.
+        if (memory_policy_.auto_gc && level == "critical" &&
+            eval_depth_ctx() - t_last_auto_gc_eval_depth > memory_policy_.cooldown_evals) {
+            // Find top arena (highest used-pct, then largest used, then name asc).
+            std::string top_name;
+            int top_pct = 0;
+            double top_used = 0.0;
+            for (auto& s : snaps) {
+                if (s.pct > top_pct || (s.pct == top_pct && s.used > top_used) ||
+                    (s.pct == top_pct && s.used == top_used && s.name < top_name)) {
+                    top_name = s.name;
+                    top_pct = s.pct;
+                    top_used = s.used;
+                }
+            }
+            if (!top_name.empty()) {
+                std::println(std::cerr, "[memory-pressure] AUTO-GC: freeing arena '{}' ({}% full)",
+                             top_name, top_pct);
+                gc_module(top_name);
+                t_last_auto_gc_eval_depth = eval_depth_ctx();
+                last_auto_gc_eval_depth_ctx() = eval_depth_ctx();
+            }
+        }
+    }
+}
+
+std::optional<EvalResult> Evaluator::eval_flat_prepare_visit(EvalFlatCursor& cur,
+                                                             std::uint16_t& body_gen,
+                                                             aura::ast::FlatAST*& body_gen_flat,
+                                                             const Env& eval_env,
+                                                             aura::ast::NodeView& out) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    // Issue #4459: between opcodes, after the poll. Nested bodies
+    // see outer envs via g_tw_frames, so the go loop under display
+    // reclaims the previous iteration's closure.
+    // Issue #4713: safepoint before the reclaim consult. A collector
+    // on another thread parks this body here (one atomic load when no
+    // epoch is in flight); this back-edge is what lets the reclaim run
+    // with several fibers running at once.
+    tw_stw_safepoint();
+    if (tw_reclaim_due())
+        maybe_reclaim_tw_unreachable();
+    // Issue #4717 (P5): read-mostly publish. This pair is the
+    // per-eval "current source" hint; a store per node visit made all
+    // bodies write one shared cache line on every node, so every
+    // fiber's copy of that line was invalidated by every other fiber
+    // (the store is an exclusive grab even when the value is
+    // unchanged). Re-stamp only when the line does not already hold
+    // this body's pointers: the post-condition ("after this point the
+    // hint is f/p unless another body races") is unchanged, but the
+    // steady state leaves the line shared-clean and the per-node cost
+    // is two relaxed loads off a line that stays in S.
+    if (current_flat_.load(std::memory_order_relaxed) != f)
+        current_flat_.store(f, std::memory_order_relaxed);
+    if (current_pool_.load(std::memory_order_relaxed) != p)
+        current_pool_.store(p, std::memory_order_relaxed);
+    // Issue #3457: SymId intern is pool-local. TCO / nested
+    // eval / a fresh CompilerService::eval snippet swap `p`.
+    bind_sym_intern_pool(p);
+    // Issue #4524: float literal intern is flat-scoped (node ids).
+    bind_float_intern_flat(f);
+    if (current_id == aura::ast::NULL_NODE)
+        return EvalResult(make_void());
+    // Issue #273: catch stale NodeIds before tree-walker field access.
+    // Softened to runtime Diagnostic so a COW/swap-workspace boundary
+    // that leaves current_id with node_gen_[id] != generation_ returns
+    // a friendly InternalError instead of aborting the test binary.
+    // Callers that need the debug assertion can use f->is_valid() +
+    // f->is_live_node() checks at higher layers.
+    // Issue #3523 / #3388: is_valid(NodeId) is observe-only (no
+    // write-up). Macro expand bumps generation_ and restamps
+    // MacroIntroduced only; residual live slots lag. Eval of the
+    // current tree is the layout face — refresh live current_id
+    // then re-check. Free-list tombstones stay InternalError.
+    //
+    // Issue #4717 (P5): the observe-only predicate
+    // (id in range && node_gen_[id] == generation_) is answered from a
+    // loop-local generation snapshot so the interpreter does not pay
+    // is_valid()'s shared-line counter RMW on every node visit. The
+    // snapshot can only ACCEPT a slot whose generation equals the
+    // snapshot generation while the workspace generation still equals
+    // it, i.e. exactly what is_valid() would accept; any mismatch —
+    // TCO re-point of f, a mid-body restamp, a generation bump, a
+    // recycled slot (node_gen_ == 0) or an out-of-range id — falls
+    // into the exact oracle below, which keeps the #3523 restamp and
+    // the #4349 StaleWorkspace refusal byte-for-byte.
+    if (f != body_gen_flat) {
+        body_gen_flat = f;
+        body_gen = f->generation();
+    }
+    const auto live_gen = f->generation();
+    if (live_gen != body_gen || current_id >= f->size() ||
+        f->node_gen_for(current_id) != live_gen) {
+        if (!f->is_valid(current_id)) {
+            if (f->is_live_node(current_id))
+                f->restamp_node_generation(current_id);
+            if (!f->is_valid(current_id)) {
+                // Issue #4349: ast:restore over a post-mutate snapshot
+                // leaves env closures holding node ids that are dead in
+                // the restored flat. That is a documented, recoverable
+                // workspace face — not an internal error. Tell the caller
+                // how to re-bind.
+                return std::unexpected(Diagnostic{
+                    ErrorKind::StaleWorkspace, "stale node id (gen mismatch): the workspace "
+                                               "changed under compiled definitions (ast:restore) "
+                                               "— run (eval-current) to re-bind, then retry"});
+            }
+        }
+        // Re-validate the snapshot against whatever the slow path
+        // just settled (restamp_node_generation writes node_gen_ from
+        // the live generation).
+        body_gen_flat = f;
+        body_gen = f->generation();
+    }
+    if (current_id >= f->size())
+        return std::unexpected(Diagnostic{ErrorKind::InternalError, "invalid node id"});
+    // Issue #4599: ints, locals, and cached prim calls skip FlatAST::get.
+    // nullopt falls through. An engaged error is returned as-is.
+    if (auto hot = try_eval_flat_hot(*f, *p, current_id, eval_env))
+        return *hot;
+    // Issue #4682: clean cached non-leaf nodes return before
+    // FlatAST::get assembles a NodeView (child PCV + field copies).
+    // eval-current re-walks every top-level form of a W-define
+    // workspace; each clean Define paid a full NodeView assemble
+    // only to hit the cache below. Same predicate, SoA columns.
+    {
+        const auto t0 = f->tag(current_id);
+        if (t0 != aura::ast::NodeTag::LiteralInt && t0 != aura::ast::NodeTag::LiteralFloat &&
+            t0 != aura::ast::NodeTag::LiteralString && t0 != aura::ast::NodeTag::Variable &&
+            !f->is_dirty(current_id)) {
+            auto cached = f->get_cached_value(current_id);
+            if (cached != aura::ast::FlatAST::kNotCached)
+                return EvalResult(EvalValue(cached));
+        }
+    }
+    auto v = f->get(current_id);
+
+    // Incremental eval: if node is clean and has a cached result, reuse it.
+    // Skip leaf literals (LiteralInt, LiteralFloat, LiteralString) because
+    // they're always fast and the cache lookup overhead is not worth it.
+    if (v.tag != aura::ast::NodeTag::LiteralInt && v.tag != aura::ast::NodeTag::LiteralFloat &&
+        v.tag != aura::ast::NodeTag::LiteralString && v.tag != aura::ast::NodeTag::Variable &&
+        !f->is_dirty(current_id)) {
+        auto cached = f->get_cached_value(current_id);
+        if (cached != aura::ast::FlatAST::kNotCached) {
+            return EvalResult(EvalValue(cached));
+        }
+    }
+
+    out = v;
+    return std::nullopt;
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_begin_letrec(
+    EvalFlatCursor& cur, const aura::ast::NodeView& v, const Env& eval_env,
+    std::vector<std::pair<std::size_t, aura::ast::NodeId>>& deferred_requires,
+    std::vector<std::pair<std::string, aura::ast::NodeId>>& letrec_defs,
+    std::vector<std::size_t>& letrec_idx, bool file_root, aura::ast::NodeId last_expr,
+    std::size_t count) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_env = cur.current_env;
+    auto& current_id = cur.current_id;
+    auto& tail_env = cur.tail_env;
+    auto& tco_pinned = cur.tco_pinned;
+    auto& tco = cur.tco;
+    auto is_module_prologue = [&](const aura::ast::NodeView& nv) -> bool {
+        if (nv.tag == aura::ast::NodeTag::Export)
+            return true;
+        if (nv.tag != aura::ast::NodeTag::Call || nv.children.empty())
+            return false;
+        auto head = f->get(nv.child(0));
+        if (head.tag != aura::ast::NodeTag::Variable)
+            return false;
+        auto hn = p->resolve(head.sym_id);
+        return hn == "require" || hn == "import";
+    };
+    // Issue #4818: run deferred requires whose source
+    // position is before `upto`, in source order.
+    std::size_t deferred_next = 0;
+    auto run_deferred_before = [&](std::size_t upto) -> EvalResult {
+        while (deferred_next < deferred_requires.size() &&
+               deferred_requires[deferred_next].first < upto) {
+            auto dcid = deferred_requires[deferred_next++].second;
+            auto r = finish_begin_child(eval_flat(*f, *p, dcid, eval_env), dcid, file_root, f);
+            if (!r || (is_error(*r) && !is_string(*r)))
+                return r;
+        }
+        return EvalResult(make_void());
+    };
+    // Phase 1: pre-allocate cells for all defines
+    // This ensures all function names are visible to each other
+    // (and module private free-vars survive export filtering:
+    // closures capture a snapshot via alloc_env_frame_from_env
+    // that includes sibling cells, not only parent_id).
+    std::vector<std::size_t> cell_ids;
+    {
+        auto& mutable_env = const_cast<Env&>(eval_env);
+        // Issue #1482 restore: pool so multi-define cells land on
+        // bindings_symid_ and survive lambda capture (nested
+        // recursive helpers like seen? in std/ast-viz).
+        if (p)
+            mutable_env.set_pool(p);
+
+        // #4679: index last local cell per name once (was an
+        // O(W*bindings) scan).
+        constexpr std::size_t kLetrecIndexMin = 16;
+        const bool use_index = letrec_defs.size() >= kLetrecIndexMin;
+        std::unordered_map<std::string, std::size_t> last_cell;
+        if (use_index) {
+            const auto& bs = mutable_env.bindings();
+            last_cell.reserve(bs.size() + letrec_defs.size());
+            for (const auto& b : bs) {
+                if (is_cell(b.second))
+                    last_cell[b.first] = as_cell_id(b.second);
+            }
+        }
+        cell_ids.reserve(letrec_defs.size());
+        for (auto& d : letrec_defs) {
+            // Issue #2571: re-entering a multi-define begin
+            // inside (while …) must reuse an existing cell
+            // for the same name. Fresh bind() stacks a new
+            // cell; if set! resolved the oldest cell, loop
+            // counters froze. Prefer update-in-place.
+            //
+            // Issue #2868: use *local string* binding only —
+            // not full lookup_cell_index (parent / SymId
+            // paths). Cross-pool SymId equality could treat
+            // a new name as an existing foreign cell and
+            // skip bind() → first multi-define leaf unbound
+            // from module frames; set_pool re-keys SymIds
+            // but local string match is the correct policy
+            // for "same name re-entry" here.
+            std::optional<std::size_t> existing_ci;
+            if (use_index) {
+                if (auto it = last_cell.find(d.first); it != last_cell.end())
+                    existing_ci = it->second;
+            } else {
+                for (auto it = mutable_env.bindings().rbegin(); it != mutable_env.bindings().rend();
+                     ++it) {
+                    if (it->first == d.first && is_cell(it->second)) {
+                        existing_ci = as_cell_id(it->second);
+                        break;
+                    }
+                }
+            }
+            if (existing_ci) {
+                cell_ids.push_back(*existing_ci);
+                continue;
+            }
+            auto ci = alloc_cell(make_void());
+            mutable_env.bind(d.first, make_cell(ci));
+            if (use_index)
+                last_cell[d.first] = ci;
+            cell_ids.push_back(ci);
+        }
+    }
+    // Phase 2: evaluate values and set cells.
+    // Issue #2579 / #2581: two-pass so (1) Lambdas install
+    // first for mutual recursion + private free-var
+    // capture snapshots (std/orchestrator orch-yield-safe),
+    // (2) non-Lambda values (define g (f)) see callables.
+    //
+    // Issue #4354: that lambda-first pass overwrites a
+    // reused cell before an earlier bare alias is
+    // evaluated. `(define *f-base* f)` then
+    // `(define (f x) …)` in a loaded file (one begin of
+    // defines) made *f-base* call the new f. Snapshot
+    // each lambda cell before the overwrite. A bare
+    // variable alias with no earlier lambda of that name
+    // in this group keeps the snapshot — the value the
+    // name had when the alias form was reached.
+    std::vector<EvalValue> pre_lambda_cell(letrec_defs.size());
+    TwPinMany pin_pre_lambda(pre_lambda_cell);
+    std::vector<char> lambda_def(letrec_defs.size(), 0);
+    for (std::size_t i = 0; i < letrec_defs.size(); ++i) {
+        auto rhs = letrec_defs[i].second;
+        if (rhs == aura::ast::NULL_NODE)
+            return FlatStep::cont();
+        if (f->tag(rhs) != aura::ast::NodeTag::Lambda)
+            return FlatStep::cont();
+        lambda_def[i] = 1;
+        if (cell_ids[i] < cells_.size())
+            pre_lambda_cell[i] = cells_[cell_ids[i]];
+    }
+    // Pure sequential multi-define broke module private
+    // free-vars when a non-Lambda (*agents*) forced that
+    // path — export filtering then stripped parent env.
+    // Issue #2872: on RHS failure, unbind every name in this
+    // multi-define batch whose cell is still void (failed
+    // name + not-yet-evaluated siblings). Successfully
+    // committed cells keep their bindings.
+    auto rollback_still_void_defs = [&]() {
+        auto& mutable_env = const_cast<Env&>(eval_env);
+        for (std::size_t i = 0; i < cell_ids.size() && i < letrec_defs.size(); ++i) {
+            auto ci = cell_ids[i];
+            if (ci < cells_.size() && is_void(cells_[ci])) {
+                mutable_env.unbind_local(letrec_defs[i].first);
+                if (p) {
+                    auto s = const_cast<aura::ast::StringPool*>(p)->intern(letrec_defs[i].first);
+                    mutable_env.unbind_local_symid(s);
+                }
+            }
+        }
+    };
+    for (std::size_t i = 0; i < letrec_defs.size(); ++i) {
+        auto& d = letrec_defs[i];
+        if (d.second == aura::ast::NULL_NODE)
+            return FlatStep::cont();
+        if (f->tag(d.second) != aura::ast::NodeTag::Lambda)
+            return FlatStep::cont();
+        // Issue #4679: a clean top-level lambda whose cell
+        // still holds the closure built from this very node
+        // is reused instead of re-allocating a closure + env
+        // frame per define per eval-current (O(W) closures).
+        // Rebinds dirty their own subtree (and cascaded
+        // callers), so those still rebuild.
+
+        if (&eval_env == &top_ && !f->has_dirty_subtree(d.second) && cell_ids[i] < cells_.size() &&
+            is_closure(cells_[cell_ids[i]])) {
+            const auto rcid = as_closure_id(cells_[cell_ids[i]]);
+            const auto dch = f->children(d.second);
+            const auto want_body = dch.empty() ? aura::ast::NULL_NODE : dch[0];
+            bool reuse = false;
+            if (!types::is_ffi_closure_id(rcid)) {
+                auto& sh = closures_shards_[closures_shard_index(rcid)];
+                std::shared_lock<std::shared_mutex> rl(sh.mu);
+                auto it = sh.map.find(rcid);
+                if (it != sh.map.end()) {
+                    const auto& cl = it->second;
+                    reuse = cl.flat == f && cl.body_id == want_body &&
+                            cl.lifetime_valid_for_views() && !cl.must_deopt_before_next_call &&
+                            cl.linear_state == 0;
+                }
+            }
+            if (reuse) {
+                ++closure_reuse_4679_count_;
+                return FlatStep::cont();
+            }
+        }
+        auto val = eval_flat(*f, *p, d.second, eval_env);
+        if (!val) {
+            rollback_still_void_defs();
+            return FlatStep::ret(val);
+        }
+        cells_[cell_ids[i]] = *val;
+    }
+    for (std::size_t i = 0; i < letrec_defs.size(); ++i) {
+        auto& d = letrec_defs[i];
+        if (d.second == aura::ast::NULL_NODE)
+            return FlatStep::cont();
+        if (f->tag(d.second) == aura::ast::NodeTag::Lambda)
+            return FlatStep::cont();
+        // Issue #4818: a deferred require written before
+        // this define runs before its value.
+        if (auto dr = run_deferred_before(letrec_idx[i]);
+            !dr || (is_error(*dr) && !is_string(*dr))) {
+            rollback_still_void_defs();
+            return FlatStep::ret(dr);
+        }
+        // Issue #4354: bare alias written before the
+        // lambda redefinition captures the pre-group value.
+        if (p && f->tag(d.second) == aura::ast::NodeTag::Variable) {
+            auto vname = std::string(p->resolve(f->sym_id(d.second)));
+            bool earlier_lambda = false;
+            bool later_lambda = false;
+            EvalValue snap = make_void();
+            for (std::size_t j = 0; j < letrec_defs.size(); ++j) {
+                if (!lambda_def[j] || letrec_defs[j].first != vname)
+                    return FlatStep::cont();
+                if (j < i) {
+                    earlier_lambda = true;
+                } else if (j > i) {
+                    later_lambda = true;
+                    snap = pre_lambda_cell[j];
+                }
+            }
+            if (later_lambda && !earlier_lambda) {
+                cells_[cell_ids[i]] = snap;
+                return FlatStep::cont();
+            }
+        }
+        auto val = eval_flat(*f, *p, d.second, eval_env);
+        if (!val) {
+            rollback_still_void_defs();
+            return FlatStep::ret(val);
+        }
+        // Issue #4909: an error VALUE (a closure call that
+        // returned one, e.g. `(define r (f 5))` with
+        // `(car z)` in f) was stored in the cell and the
+        // file ran on with rc=0 — the sequential face
+        // already reports it. File root only: the error
+        // becomes the located diagnostic for this define.
+        if (file_root && is_error(*val) && !is_string(*val)) {
+            rollback_still_void_defs();
+            return FlatStep::ret(
+                finish_begin_child(std::move(val), v.child(letrec_idx[i]), file_root, f));
+        }
+        cells_[cell_ids[i]] = *val;
+    }
+    // Phase 3: remaining non-define / non-prologue exprs
+    // (require/export already ran in Phase 0).
+    for (std::size_t i = 0; i < count - 1; ++i) {
+        auto cid = v.child(i);
+        if (cid == aura::ast::NULL_NODE)
+            return FlatStep::cont();
+        if (f->tag(cid) == aura::ast::NodeTag::Define)
+            return FlatStep::cont();
+        if (is_module_prologue(f->get(cid))) {
+            // #2766 Phase 0 already ran it, unless it was
+            // deferred (#4818): run it here, in order.
+            if (auto dr = run_deferred_before(i + 1); !dr || (is_error(*dr) && !is_string(*dr)))
+                return FlatStep::ret(dr);
+            return FlatStep::cont();
+        }
+        if (auto dr = run_deferred_before(i); !dr || (is_error(*dr) && !is_string(*dr)))
+            return FlatStep::ret(dr);
+        auto r = finish_begin_child(eval_flat(*f, *p, cid, eval_env), cid, file_root, f);
+        if (!r || (is_error(*r) && !is_string(*r)))
+            return FlatStep::ret(r);
+    }
+    // Issue #4818: deferred requires written before the
+    // last form (e.g. after only lambda defines) run now;
+    // a deferred last form runs as the tail form below.
+    {
+        std::size_t last_idx = count - 1;
+        while (last_idx > 0 && v.child(last_idx) != last_expr)
+            --last_idx;
+        if (auto dr = run_deferred_before(last_idx); !dr || (is_error(*dr) && !is_string(*dr)))
+            return FlatStep::ret(dr);
+    }
+    // TCO: last expression (if last is prologue, re-run is
+    // idempotent for export; require cache-hits).
+    // Issue #4465: file root evals the last form so an
+    // escaped error is reported at that form, not lost
+    // to the tail call.
+    if (file_root)
+        return FlatStep::ret(
+            finish_begin_child(eval_flat(*f, *p, last_expr, eval_env), last_expr, file_root, f));
+    current_id = last_expr;
+    return FlatStep::cont();
+
+    return FlatStep::fall();
+}
+
+std::optional<ast::NodeId> Evaluator::data_to_flat_named_form(aura::ast::FlatAST& flat,
+                                                              aura::ast::StringPool& pool,
+                                                              int depth, const std::string& fn_name,
+                                                              const types::EvalValue& car_data,
+                                                              const types::EvalValue& cdr_data) {
+    using namespace types;
+    // Quote: (quote expr)
+    if (fn_name == "quote" && is_pair(cdr_data)) {
+        auto qp = as_pair_idx(cdr_data);
+        auto quoted = pairs_[qp].car;
+        auto quoted_node = data_to_flat(quoted, flat, pool, depth + 1);
+        if (quoted_node != ast::NULL_NODE)
+            return flat.add_quote(quoted_node);
+        return flat.add_literal(0); // fallback
+    }
+
+    // Quasiquote: (quasiquote expr)
+    if (fn_name == "quasiquote" && is_pair(cdr_data)) {
+        auto qp = as_pair_idx(cdr_data);
+        auto quoted = pairs_[qp].car;
+        return data_to_flat(quoted, flat, pool, depth + 1);
+    }
+
+    // Unquote: (unquote expr) — just convert the inner expression
+    if (fn_name == "unquote" && is_pair(cdr_data)) {
+        auto qp = as_pair_idx(cdr_data);
+        auto inner = pairs_[qp].car;
+        return data_to_flat(inner, flat, pool, depth + 1);
+    }
+
+    // Define-type: (define-type (type-name params...) (ctor1 ctor2 ...))
+    if (fn_name == "define-type") {
+        if (is_pair(cdr_data)) {
+            auto np = as_pair_idx(cdr_data);
+            auto type_name_data = pairs_[np].car;
+            auto ctor_rest = pairs_[np].cdr;
+
+            aura::ast::SymId type_name_val = 0;
+            std::vector<aura::ast::SymId> params;
+            std::vector<ast::NodeId> ctors;
+
+            if (is_pair(type_name_data)) {
+                auto tnp = as_pair_idx(type_name_data);
+                if (is_string(pairs_[tnp].car)) {
+                    auto ti = as_string_idx(pairs_[tnp].car);
+                    auto ts = string_at_or(ti);
+                    type_name_val = pool.intern(ts);
+                    auto rest = pairs_[tnp].cdr;
+                    while (is_pair(rest)) {
+                        auto rp = as_pair_idx(rest);
+                        if (is_string(pairs_[rp].car)) {
+                            auto pi = as_string_idx(pairs_[rp].car);
+                            auto ps = string_at_or(pi);
+                            params.push_back(pool.intern(ps));
+                        }
+                        rest = pairs_[rp].cdr;
+                    }
+                }
+            } else if (is_string(type_name_data)) {
+                auto ti = as_string_idx(type_name_data);
+                auto ts = string_at_or(ti);
+                type_name_val = pool.intern(ts);
+            }
+
+            if (type_name_val != 0) {
+                auto cur = ctor_rest;
+                while (is_pair(cur)) {
+                    auto cp = as_pair_idx(cur);
+                    auto ctor_form = pairs_[cp].car;
+                    cur = pairs_[cp].cdr;
+
+                    if (is_pair(ctor_form)) {
+                        auto ctor_pair = as_pair_idx(ctor_form);
+                        auto ctor_car = pairs_[ctor_pair].car;
+                        // Handle (quote Name) format
+                        if (is_string(ctor_car)) {
+                            auto ci = as_string_idx(ctor_car);
+                            auto cs = string_at_or(ci);
+                            if (cs == "quote" && is_pair(pairs_[ctor_pair].cdr)) {
+                                // (quote Some) — extract "Some" from cdr
+                                auto qcdr = as_pair_idx(pairs_[ctor_pair].cdr);
+                                auto name_val = pairs_[qcdr].car;
+                                if (is_string(name_val)) {
+                                    auto ni = as_string_idx(name_val);
+                                    auto ns = string_at_or(ni);
+                                    auto ctor_var = flat.add_variable(pool.intern(ns));
+                                    ctors.push_back(flat.add_quote(ctor_var));
+                                }
+                            }
+                        } else {
+                            // Direct ctor descriptor — store as-is
+                            auto ctor_node = data_to_flat(ctor_form, flat, pool, depth + 1);
+                            if (ctor_node != ast::NULL_NODE)
+                                ctors.push_back(ctor_node);
+                        }
+                    }
+                }
+                return flat.add_define_type(type_name_val, params, ctors);
+            }
+        }
+        return ast::NULL_NODE;
+    }
+
+    // Begin: (begin ...)
+    if (fn_name == "begin") {
+        std::vector<ast::NodeId> exprs;
+        auto cur = cdr_data;
+        while (is_pair(cur)) {
+            auto cp = as_pair_idx(cur);
+            auto e = data_to_flat(pairs_[cp].car, flat, pool, depth + 1);
+            if (e != ast::NULL_NODE)
+                exprs.push_back(e);
+            cur = pairs_[cp].cdr;
+        }
+        return flat.add_begin(exprs);
+    }
+
+    // If: (if cond then else)
+    if (fn_name == "if") {
+        ast::NodeId cond_node = ast::NULL_NODE, then_node = ast::NULL_NODE,
+                    else_node = ast::NULL_NODE;
+        if (is_pair(cdr_data)) {
+            auto cp = as_pair_idx(cdr_data);
+            cond_node = data_to_flat(pairs_[cp].car, flat, pool, depth + 1);
+            auto rest = pairs_[cp].cdr;
+            if (is_pair(rest)) {
+                auto tp = as_pair_idx(rest);
+                then_node = data_to_flat(pairs_[tp].car, flat, pool, depth + 1);
+                auto erest = pairs_[tp].cdr;
+                if (is_pair(erest)) {
+                    auto ep = as_pair_idx(erest);
+                    else_node = data_to_flat(pairs_[ep].car, flat, pool, depth + 1);
+                }
+            }
+        }
+        if (cond_node != ast::NULL_NODE && then_node != ast::NULL_NODE &&
+            else_node != ast::NULL_NODE)
+            return flat.add_if(cond_node, then_node, else_node);
+        if (cond_node != ast::NULL_NODE && then_node != ast::NULL_NODE)
+            return flat.add_if(cond_node, then_node, flat.add_literal(0));
+        return cond_node != ast::NULL_NODE ? cond_node : flat.add_literal(0);
+    }
+
+    // Lambda: (lambda (args) body)
+    if (fn_name == "lambda") {
+        if (is_pair(cdr_data)) {
+            auto params_pair = as_pair_idx(cdr_data);
+            auto params_data = pairs_[params_pair].car;
+            auto body_rest = pairs_[params_pair].cdr;
+
+            std::vector<ast::SymId> params;
+            auto args_data = params_data;
+            while (is_pair(args_data)) {
+                auto ap = as_pair_idx(args_data);
+                auto arg = pairs_[ap].car;
+                if (is_string(arg)) {
+                    auto aidx = as_string_idx(arg);
+                    auto astr = string_at_or(aidx);
+                    params.push_back(pool.intern(astr));
+                }
+                args_data = pairs_[ap].cdr;
+            }
+
+            ast::NodeId body_node = ast::NULL_NODE;
+            if (is_pair(body_rest)) {
+                auto bp = as_pair_idx(body_rest);
+                body_node = data_to_flat(pairs_[bp].car, flat, pool, depth + 1);
+            }
+            if (body_node == ast::NULL_NODE)
+                body_node = flat.add_literal(0);
+            return flat.add_lambda(params, body_node);
+        }
+        return ast::NULL_NODE;
+    }
+
+    // Define: (define name value)
+    if (fn_name == "define") {
+        if (is_pair(cdr_data)) {
+            auto np = as_pair_idx(cdr_data);
+            auto name_data = pairs_[np].car;
+            auto val_rest = pairs_[np].cdr;
+
+            if (is_string(name_data) && is_pair(val_rest)) {
+                auto ni = as_string_idx(name_data);
+                auto ns = string_at_or(ni);
+                auto vp = as_pair_idx(val_rest);
+                auto val_node = data_to_flat(pairs_[vp].car, flat, pool, depth + 1);
+                return flat.add_define(pool.intern(ns), val_node);
+            }
+        }
+        return ast::NULL_NODE;
+    }
+
+    // Issue #150 Phase 1: performance-region / evolution-region
+    // wrappers. The forms are:
+    //   (performance-region (define f ...))
+    //   (performance-region (lambda (x) ...))
+    //   (evolution-region (define g ...))
+    //   (evolution-region (lambda (x) ...))
+    // The wrapper is transparent — the inner form is
+    // processed normally — but it records a side-table
+    // mapping the resulting function's name to the
+    // specified region. The lowering pass (FlatFnBuilder
+    // in lowering_impl.cpp) reads this side-table to set
+    // IRFunction::region accordingly.
+    //
+    // If the inner form is not a define/lambda, the
+    // wrapper is silently a no-op (the inner form is
+    // processed; the region tag is discarded). This
+    // matches the user's mental model: "annotate this
+    // form with a region hint" — the hint is only useful
+    // for define/lambda; for other forms it's ignored.
+    if (fn_name == "performance-region" || fn_name == "evolution-region") {
+        if (is_pair(cdr_data)) {
+            auto rp = as_pair_idx(cdr_data);
+            auto inner_node = data_to_flat(pairs_[rp].car, flat, pool, depth + 1);
+            if (inner_node == ast::NULL_NODE)
+                return ast::NULL_NODE;
+            // The inner form should be a Define or Lambda.
+            // If it's a Define, get the name and record
+            // (name -> region) in the side-table.
+            if (flat.get(inner_node).tag == ast::NodeTag::Define) {
+                auto sym = flat.get(inner_node).sym_id;
+                if (sym != ast::INVALID_SYM) {
+                    auto region = (fn_name == "performance-region") ? std::uint8_t{1}
+                                                                    /*Performance*/
+                                                                    : std::uint8_t{2} /*Evolution*/;
+                    flat.set_function_region(sym, region);
+                }
+            } else if (flat.get(inner_node).tag == ast::NodeTag::Lambda) {
+                // Lambdas are anonymous — use the
+                // overload-tagged setter for lambdas.
+                auto region = (fn_name == "performance-region") ? std::uint8_t{1} /*Performance*/
+                                                                : std::uint8_t{2} /*Evolution*/;
+                flat.set_function_region_lambda(inner_node, region);
+            }
+            return inner_node;
+        }
+        return ast::NULL_NODE;
+    }
+
+    // Set!: (set! name value)
+    if (fn_name == "set!") {
+        if (is_pair(cdr_data)) {
+            auto np = as_pair_idx(cdr_data);
+            auto name_val = pairs_[np].car;
+            auto val_rest = pairs_[np].cdr;
+            if (is_string(name_val) && is_pair(val_rest)) {
+                auto ni = as_string_idx(name_val);
+                auto ns = string_at_or(ni);
+                auto vp = as_pair_idx(val_rest);
+                auto val_node = data_to_flat(pairs_[vp].car, flat, pool, depth + 1);
+                return flat.add_set(pool.intern(ns), val_node);
+            }
+        }
+        return ast::NULL_NODE;
+    }
+
+    // Let: (let ((x val)) body)
+    if (fn_name == "let") {
+        // For data_to_flat, let is just a call node
+        // (let ((x val)) body) is sugar and should already be expanded
+        // Just treat as a general call
+    }
+
+    return std::nullopt;
+}
+
+std::optional<EvalResult>
+Evaluator::eval_data_forms_control(const types::EvalValue& data, const Env& env, ast::FlatAST* flat,
+                                   ast::StringPool* pool, const types::EvalValue& car_val,
+                                   const types::EvalValue& cdr_val, const std::string& fn_name) {
+    // ── if: (if cond then else) ──
+    if (fn_name == "if") {
+        if (types::is_pair(cdr_val)) {
+            auto cond_pair = types::as_pair_idx(cdr_val);
+            auto cond_val = pairs_[cond_pair].car;
+            auto rest = pairs_[cond_pair].cdr;
+            auto cond_result = eval_data_as_code(cond_val, env, flat, pool);
+            if (!cond_result)
+                return cond_result;
+            if (types::is_pair(rest)) {
+                auto then_pair = types::as_pair_idx(rest);
+                auto then_val = pairs_[then_pair].car;
+                auto else_rest = pairs_[then_pair].cdr;
+                if (aura::compiler::pure::is_truthy(*cond_result)) {
+                    auto r = eval_data_as_code(then_val, env, flat, pool);
+                    return r;
+                } else {
+                    // Evaluate else branch
+                    if (types::is_pair(else_rest)) {
+                        auto else_pair = types::as_pair_idx(else_rest);
+                        auto else_val = pairs_[else_pair].car;
+                        return eval_data_as_code(else_val, env, flat, pool);
+                    }
+                    return types::make_unspecified(); // #4502 step 4: no else
+                }
+            }
+        }
+        return make_void();
+    }
+
+    // ── when: (when cond body...) — like (if cond (begin body...) (void))
+    if (fn_name == "when" || fn_name == "unless") {
+        if (types::is_pair(cdr_val)) {
+            auto cond_pair = types::as_pair_idx(cdr_val);
+            auto cond_val = pairs_[cond_pair].car;
+            auto body_rest = pairs_[cond_pair].cdr;
+            auto cond_result = eval_data_as_code(cond_val, env, flat, pool);
+            if (!cond_result)
+                return cond_result;
+            // Issue #4619: an error value as the test is not a truth
+            // value — it propagates, the same way an IfExpr test does
+            // (Issue #4493).
+            if (is_error(*cond_result))
+                return cond_result;
+            // unless runs the body on a false test (was treated like when).
+            if (aura::compiler::pure::is_truthy(*cond_result) == (fn_name == "when")) {
+                // Evaluate body expressions sequentially
+                EvalResult last = make_void();
+                TwPinResult pin_last(last);
+                while (types::is_pair(body_rest)) {
+                    auto bp = types::as_pair_idx(body_rest);
+                    last = eval_data_as_code(pairs_[bp].car, env, flat, pool);
+                    if (!last)
+                        return last;
+                    // Issue #4619: an error value in a body form leaves
+                    // the body the way begin lets it leave (#2570) — it
+                    // is not a value the body may drop.
+                    if (is_error(*last))
+                        return last;
+                    body_rest = pairs_[bp].cdr;
+                }
+                return last;
+            }
+        }
+        return types::make_unspecified(); // #4502 step 4: when/unless miss
+    }
+
+    // ── lambda: (lambda (params) body) ──
+    // Needs flat/pool to create an AST closure
+    if (fn_name == "lambda") {
+        if (!flat || !pool) {
+            // Without flat/pool, we can't create closures — return as-is
+            return make_void();
+        }
+        if (types::is_pair(cdr_val)) {
+            auto params_pair = types::as_pair_idx(cdr_val);
+            auto params_data = pairs_[params_pair].car; // (arg1 arg2 ...)
+            auto body_rest = pairs_[params_pair].cdr;   // (body ...)
+
+            // Extract param names
+            std::vector<ast::SymId> param_syms;
+            auto args_data = params_data;
+            while (types::is_pair(args_data)) {
+                auto ap = types::as_pair_idx(args_data);
+                auto arg_data = pairs_[ap].car;
+                if (types::is_string(arg_data)) {
+                    auto aidx = types::as_string_idx(arg_data);
+                    auto astr = string_at_or(aidx);
+                    param_syms.push_back(pool->intern(astr));
+                }
+                args_data = pairs_[ap].cdr;
+            }
+
+            // Extract and convert body data to FlatAST
+            ast::NodeId body_node = ast::NULL_NODE;
+            if (types::is_pair(body_rest)) {
+                auto bp = types::as_pair_idx(body_rest);
+                auto body_data = pairs_[bp].car;
+                body_node = data_to_flat(body_data, *flat, *pool);
+            }
+            if (body_node == ast::NULL_NODE)
+                body_node = flat->add_literal(0);
+
+            // Create lambda node and closure
+            auto lambda_id = flat->add_lambda(param_syms, body_node);
+            auto cid = next_id();
+            // Allocate closure body in temp arena during task context,
+            // otherwise in persistent arena (module functions, while loops).
+            auto* target_arena = (temp_arena_ && in_task_context_) ? temp_arena_ : arena_;
+            if (!target_arena) {
+                return make_void();
+            }
+            auto cl_alloc = target_arena->allocator();
+            auto* cl_flat = target_arena->create_with_cover<aura::ast::FlatAST>(
+                nullptr, "eval-flat-closure-body-transient", cl_alloc);
+            // Issue #3180: closure body is transient (lives inside temp_arena
+            // or the persistent arena; densify observes the pool+flat as
+            // owned roots via wire_general_object_create_pair_or_required_fail).
+            // Declare EXEMPT cover here so the implicit intermediate bump
+            // at allocate_raw_impl does not bump the uncovered metric.
+            if (cl_flat && aura::core::lifetime::general_object_pin_required_active()) {
+                // Issue #3180: in_render_hotpath() guard already enforced
+                // inside maybe_note_allocate_intermediate_ (the single
+                // funnel); no need to duplicate at the call site.
+                target_arena->note_intermediate_create_with_cover_(
+                    cl_flat, nullptr, "eval-flat-closure-body-transient");
+            }
+            // Issue #334: keep the closure's body symids in the SAME
+            // pool as the macro's `pool` and the env's bindings. If
+            // we use a fresh cl_pool for the cloned body, the body's
+            // Variable symids and the env's symids are in different
+            // pools, so Env::lookup_by_symid (the fast path) misses
+            // and the body's lambda params are reported as unbound.
+            // Using the macro's pool here aligns the body's Variables
+            // with the env's bindings at lookup time.
+            auto* cl_pool = pool;
+            auto cloned_body =
+                clone_macro_body(*cl_flat, *cl_pool, *flat, *pool, body_node, nullptr,
+                                 /*name_map=*/nullptr,
+                                 /*cloned_marker=*/aura::ast::SyntaxMarker::User);
+            // Issue #230 #2 follow-up: undo the Quote-wrap on set!
+            // targets. The Quote-wrap was added to give symbol-
+            // generating macros access to the literal arg value,
+            // but it broke set! semantics for normal macros. The
+            // pass walks the body, finds `(set! <target> <value>)`
+            // calls, and replaces the <target> Quote with the
+            // inner Variable. This is safe to run on every
+            // macro body — bodies that don't use set! have no
+            // set! calls, so the pass is a no-op for them.
+            // unwrap_set_quotes removed (Quote-wrap reverted)
+            cl_flat->root = cloned_body;
+            // P0: register captured for SoA, no legacy env pointer in Closure.
+            EnvId cap_id = alloc_env_frame_from_env(env);
+            note_tw_closure_owner(cid); // Issue #4428
+            {
+                std::unique_lock<std::shared_mutex> wlock(
+                    closures_shards_[closures_shard_index(cid)].mu);
+                bump_closures_apply_epoch(); // Issue #3832
+                Closure cl{"", {}, cl_flat, cl_pool, cloned_body, cap_id, false, target_arena};
+                // Issue #1365: stamp bridge_epoch at construction
+                stamp_closure_bridge_epoch(cl);
+                // Store param SymIds directly (Issue #145: SoA migration).
+                for (auto ps : param_syms)
+                    cl.params.push_back(ps);
+                closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
+            }
+            note_tw_closure_alloc();
+            // Issue #2676: extend closures_mtx_ critical section to cover
+            // the make_closure read (P0 multi-fiber race: another fiber
+            // could mutate closures_ between the write block end and the
+            // make_closure read). Re-acquire as shared_lock to allow
+            // concurrent readers (closure materialization is read-only
+            // here, no need for unique exclusion post-write).
+            {
+                std::shared_lock<std::shared_mutex> rlock(
+                    closures_shards_[closures_shard_index(cid)].mu);
+                return make_closure(cid);
+            }
+        }
+        return make_void();
+    }
+
+    // ── begin: (begin expr1 expr2 ...) ──
+    if (fn_name == "begin") {
+        auto current = cdr_val;
+        EvalResult last = make_void();
+        TwPinResult pin_last(last);
+        while (types::is_pair(current)) {
+            auto elem_pair = types::as_pair_idx(current);
+            last = eval_data_as_code(pairs_[elem_pair].car, env, flat, pool);
+            if (!last)
+                return last;
+            current = pairs_[elem_pair].cdr;
+        }
+        return last;
+    }
+
+    // ── quote: (quote expr) ──
+    if (fn_name == "quote") {
+        if (types::is_pair(cdr_val)) {
+            auto quote_pair = types::as_pair_idx(cdr_val);
+            return pairs_[quote_pair].car; // Return the quoted value as-is
+        }
+        return make_void();
+    }
+
+
+    return std::nullopt;
+}
+
+std::optional<EvalResult>
+Evaluator::eval_data_forms_bind(const types::EvalValue& data, const Env& env, ast::FlatAST* flat,
+                                ast::StringPool* pool, const types::EvalValue& car_val,
+                                const types::EvalValue& cdr_val, const std::string& fn_name) {
+    // Issue #4727: same symbol→string projection as eval_data_as_code.
+    auto ident_text_value = [&](const EvalValue& atom) -> EvalValue {
+        if (!types::is_symbol(atom))
+            return atom;
+        const auto sidx = types::as_symbol_idx(atom);
+        if (sidx >= symbol_table_.size())
+            return atom;
+        return types::make_string(
+            static_cast<std::uint64_t>(push_string_heap(symbol_table_[sidx])));
+    };
+    // ── define: (define name value) or (define (name args) body) ──
+    if (fn_name == "define") {
+        if (types::is_pair(cdr_val)) {
+            auto name_pair = types::as_pair_idx(cdr_val);
+            auto name_val = ident_text_value(pairs_[name_pair].car);
+            auto val_rest = pairs_[name_pair].cdr;
+
+            // (define name value)
+            if (types::is_string(name_val) && types::is_pair(val_rest)) {
+                auto val_pair = types::as_pair_idx(val_rest);
+                auto val = eval_data_as_code(pairs_[val_pair].car, env, flat, pool);
+                if (val) {
+                    auto name_idx = types::as_string_idx(name_val);
+                    auto name_str = string_at_or(name_idx);
+                    auto ci = alloc_cell(make_void());
+                    const_cast<Env&>(env).bind(name_str, make_cell(ci));
+                    store_cell_value(ci, *val);
+                    return *val;
+                }
+                return val;
+            }
+
+            // (define (name args...) body) — function shorthand
+            if (types::is_pair(name_val) && types::is_pair(val_rest) && flat && pool) {
+                auto fn_pair = types::as_pair_idx(name_val);
+                // Issue #4727: the shorthand name inside quoted data is an
+                // interned symbol, so project it to identifier text like
+                // the form head / let / set! above. Without this the
+                // is_string gate below misses and the define is dropped.
+                auto fn_name_data = ident_text_value(pairs_[fn_pair].car);
+                auto fn_args_data = pairs_[fn_pair].cdr;
+
+                if (types::is_string(fn_name_data)) {
+                    // Issue #4421: shorthand define add_lambda's a
+                    // closure with no mark_dirty and no proof update.
+                    // Refuse before the node is installed; a depth==0
+                    // pending window has nothing to roll back.
+                    if (production_eval_flat_commit_readiness_refuse(
+                            static_cast<CompilerMetrics*>(compiler_metrics_)))
+                        return eval_flat_commit_readiness_refused();
+                    auto ni = types::as_string_idx(fn_name_data);
+                    auto fn_str = string_at_or(ni);
+
+                    // Extract param names from (arg1 arg2 ...)
+                    std::vector<ast::SymId> param_syms;
+                    auto args_data = fn_args_data;
+                    while (types::is_pair(args_data)) {
+                        auto ap = types::as_pair_idx(args_data);
+                        // Issue #4727: parameter atoms are symbols too.
+                        auto arg_data = ident_text_value(pairs_[ap].car);
+                        if (types::is_string(arg_data)) {
+                            auto aidx = types::as_string_idx(arg_data);
+                            auto astr = string_at_or(aidx);
+                            param_syms.push_back(pool->intern(astr));
+                        }
+                        args_data = pairs_[ap].cdr;
+                    }
+
+                    // Extract and convert body data
+                    ast::NodeId body_node = ast::NULL_NODE;
+                    if (types::is_pair(val_rest)) {
+                        auto bp = types::as_pair_idx(val_rest);
+                        auto body_data = pairs_[bp].car;
+                        body_node = data_to_flat(body_data, *flat, *pool);
+                    }
+                    if (body_node == ast::NULL_NODE)
+                        body_node = flat->add_literal(0);
+
+                    // Create lambda node and closure
+                    auto lambda_id = flat->add_lambda(param_syms, body_node);
+                    auto cid = next_id();
+                    auto* target = (temp_arena_ && in_task_context_) ? temp_arena_ : arena_;
+                    auto* copied_env = copy_env(env, target);
+                    Closure cl;
+                    // Issue #1365: stamp first so unstamped closures cannot bypass safety
+                    stamp_closure_bridge_epoch(cl);
+                    for (auto ps : param_syms) {
+                        cl.params.push_back(ps); // Issue #145: SymId, not string
+                    }
+                    cl.name = fn_str;
+                    cl.flat = flat;
+                    cl.pool = pool;
+                    cl.body_id = body_node;
+                    // Issue #4859: keep the (eval ...) program that owns
+                    // flat / pool alive with this closure.
+                    cl.program = eval_program_for_pool(pool);
+                    // P0: legacy cl.env removed. Always register in env_frames_
+                    // for SoA (GC-safe, no pointer). env_id is now the only handle.
+                    cl.env_id = alloc_env_frame_from_env(*copied_env);
+                    cl.owner_arena = target;
+                    note_tw_closure_owner(cid); // Issue #4428
+                    {
+                        std::unique_lock<std::shared_mutex> wlock(
+                            closures_shards_[closures_shard_index(cid)].mu);
+                        bump_closures_apply_epoch(); // Issue #3832
+                        closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
+                    }
+                    note_tw_closure_alloc();
+
+                    // Bind in env
+                    auto ci = alloc_cell(make_void());
+                    const_cast<Env&>(env).bind(fn_str, make_cell(ci));
+                    // Issue #2676: shared_lock to serialize with closures_ write
+                    // (P0 multi-fiber race — see block above).
+                    {
+                        std::shared_lock<std::shared_mutex> rlock(
+                            closures_shards_[closures_shard_index(cid)].mu);
+                        cells_[ci] = make_closure(cid);
+                        return make_closure(cid);
+                    }
+                }
+            }
+        }
+        return make_void();
+    }
+
+    // ── set!: (set! name value) ──
+    if (fn_name == "set!") {
+        if (types::is_pair(cdr_val)) {
+            auto name_pair = types::as_pair_idx(cdr_val);
+            auto name_val = ident_text_value(pairs_[name_pair].car);
+            auto val_rest = pairs_[name_pair].cdr;
+            if (types::is_string(name_val) && types::is_pair(val_rest)) {
+                auto val =
+                    eval_data_as_code(pairs_[types::as_pair_idx(val_rest)].car, env, flat, pool);
+                if (val) {
+                    auto name_idx = types::as_string_idx(name_val);
+                    auto name_str = string_at_or(name_idx);
+                    auto cell_idx = const_cast<Env&>(env).lookup_cell_index(name_str);
+                    if (cell_idx && *cell_idx < cells_.size()) {
+                        store_cell_value(*cell_idx, *val);
+                        return *val;
+                    }
+                }
+            }
+        }
+        return make_void();
+    }
+
+    // ── let: (let ((x val)) body) ──
+    if (fn_name == "let") {
+        if (types::is_pair(cdr_val)) {
+            auto bindings_val = pairs_[types::as_pair_idx(cdr_val)].car;
+            auto body_rest = pairs_[types::as_pair_idx(cdr_val)].cdr;
+            // Collect bindings
+            std::vector<std::pair<std::string, EvalValue>> bindings;
+            auto current = bindings_val;
+            while (types::is_pair(current)) {
+                auto binding_pair = pairs_[types::as_pair_idx(current)].car;
+                if (types::is_pair(binding_pair)) {
+                    auto name_val = ident_text_value(pairs_[types::as_pair_idx(binding_pair)].car);
+                    auto val_expr = pairs_[types::as_pair_idx(binding_pair)].cdr;
+                    if (types::is_string(name_val) && types::is_pair(val_expr)) {
+                        auto name_idx = types::as_string_idx(name_val);
+                        auto name_str = string_at_or(name_idx);
+                        auto val = eval_data_as_code(pairs_[types::as_pair_idx(val_expr)].car, env,
+                                                     flat, pool);
+                        if (!val)
+                            return val;
+                        bindings.emplace_back(name_str, *val);
+                    }
+                }
+                current = pairs_[types::as_pair_idx(current)].cdr;
+            }
+            // Create new env and bind
+            Env new_env(&env);
+            new_env.set_primitives(&primitives_);
+
+            for (auto& [n, v] : bindings)
+                new_env.bind(n, v);
+            // Evaluate body in new env
+            auto body_current = body_rest;
+            EvalResult last = make_void();
+            TwPinResult pin_last(last);
+            while (types::is_pair(body_current)) {
+                auto elem_pair = types::as_pair_idx(body_current);
+                last = eval_data_as_code(pairs_[elem_pair].car, new_env, flat, pool);
+                if (!last)
+                    return last;
+                body_current = pairs_[elem_pair].cdr;
+            }
+            return last;
+        }
+        return make_void();
+    }
+
+
+    return std::nullopt;
+}
+
+std::optional<EvalResult>
+Evaluator::eval_data_forms_apply(const types::EvalValue& data, const Env& env, ast::FlatAST* flat,
+                                 ast::StringPool* pool, const types::EvalValue& car_val,
+                                 const types::EvalValue& cdr_val, const std::string& fn_name) {
+    // ── General function call ──
+    // Look up the function in the environment or primitives.
+    // #223 follow-up: skip primitive lookup when fn_name is
+    // empty (e.g. when fn_idx was out of bounds at line 17542).
+    // Without this guard, env.lookup_primitive("") triggers
+    // the pre (!n.empty()) contract on Primitives::lookup.
+    // The environment lookup below (lookup_by_intern) handles
+    // missing names gracefully via nullopt.
+    std::optional<PrimFn> prim;
+    if (!fn_name.empty()) {
+        prim = env.lookup_primitive(fn_name);
+    }
+    if (prim) {
+        std::vector<EvalValue> args;
+        TwPinMany pin_args(args);
+        auto current = cdr_val;
+        while (types::is_pair(current)) {
+            auto arg_pair = types::as_pair_idx(current);
+            auto arg_val = eval_data_as_code(pairs_[arg_pair].car, env, flat, pool);
+            if (!arg_val)
+                return arg_val;
+            args.push_back(*arg_val);
+            current = pairs_[arg_pair].cdr;
+        }
+        // Issue #441 / #1357: call count + optional render latency.
+        // Issue #4690: a closure-form while parks its thunk's diagnostic.
+        return finish_prim_call(
+            fn_name, invoke_prim_with_telemetry(fn_name, [&]() { return (*prim)(args); }));
+    }
+
+    // Issue #158: macro expansion in eval_data_as_code. The
+    // cons-chain result of a legacy `defmacro` body is
+    // re-evaluated here. If the head of the list is itself a
+    // macro (e.g., the qq-built form `(bar ,x)` in a macro
+    // body where `bar` is also a macro), the system needs to
+    // detect this and trigger the macro path. Before this
+    // fix, eval_data_as_code only checked env + primitives,
+    // so `bar` (which lives in `macros_`, not env) was never
+    // expanded — the cons chain produced the list `(bar <x>)`
+    // but `bar` was just a symbol at re-eval time.
+    if (macros_.count(fn_name)) {
+        // Issue #4390: this arm does not read md.hygienic / md.preserved.
+        // Refuse before the tail-env template eval when MacroSelfEvo
+        // is not granted. A granted hygienic clone still stamps
+        // MacroIntroduced in clone_macro_body.
+        if (auto denied = legacy_eval_macro_self_evo_deny())
+            return std::unexpected(*denied);
+        auto macro_it = macros_.find(fn_name);
+        auto& md = macro_it->second;
+        bool is_rest = md.dotted;
+        // Rest params on legacy macros via eval_data_as_code
+        // are not yet supported (same limitation as the main
+        // eval_flat path). Fall through to a no-op return if
+        // the macro has a dotted rest param.
+        if (is_rest) {
+            return make_void();
+        }
+        // Collect args (already data — no ast_to_data needed).
+        std::vector<EvalValue> cargs;
+        auto current = cdr_val;
+        while (types::is_pair(current)) {
+            auto arg_pair = types::as_pair_idx(current);
+            cargs.push_back(pairs_[arg_pair].car);
+            current = pairs_[arg_pair].cdr;
+        }
+        // Build tail env with regular params bound.
+        Env tail_env(&env);
+        tail_env.set_primitives(&primitives_);
+
+        if (md.pool)
+            tail_env.set_pool(md.pool);
+        for (std::size_t i = 0; i < md.params.size() && i < cargs.size(); ++i) {
+            tail_env.bind(md.params[i], std::move(cargs[i]));
+        }
+        // Evaluate macro body (quasiquote-expanded template)
+        // → produces data (a list).
+        auto template_result =
+            eval_flat(*md.flat, md.pool ? *md.pool : *current_pool(), md.body_id, tail_env);
+        if (!template_result)
+            return template_result;
+        TwPinResult pin_template(template_result);
+        // Re-evaluate the data as code. The recursive call
+        // here is what enables macro composition: the inner
+        // macro's expansion is re-evaluated, which may itself
+        // contain another macro call.
+        return eval_data_as_code(*template_result, env, flat, pool);
+    }
+
+    // Look up in environment. Phase 2.5.0: route through
+    // lookup_by_intern (SymId-first). canonical_pool() is
+    // the long-lived workspace pool; env.pool_ is the
+    // fallback for closures that captured a non-canonical
+    // pool. Observable behavior matches env.lookup(name).
+    auto env_val = env.lookup_by_intern(fn_name, canonical_pool());
+    if (env_val) {
+        auto fn_val = *env_val;
+        // Dereference cells — needed when lookup returned cell sentinel (cells_ not set on env)
+        if (types::is_cell(fn_val)) {
+            auto ci = types::as_cell_id(fn_val);
+            if (ci < cells_.size())
+                fn_val = cells_[ci];
+        }
+        if (types::is_closure(fn_val)) {
+            auto cid = types::as_closure_id(fn_val);
+            auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
+            if (it != closures_shards_[closures_shard_index(cid)].map.end()) {
+                // Issue #3021: no bare apply of freed/tombstone.
+                if (!closure_apply_use_site_ok(it->second))
+                    return std::unexpected(Diagnostic{
+                        ErrorKind::InvalidClosure, "eval_data_as_code: freed/tombstoned closure"});
+                auto& cl = it->second;
+                // Issue #4421: this arm eval_flats the body without
+                // apply_closure. The value-fallback below already
+                // refuses; a named re-entry must too, before the body.
+                if (production_eval_flat_commit_readiness_refuse(
+                        static_cast<CompilerMetrics*>(compiler_metrics_)))
+                    return eval_flat_commit_readiness_refused();
+                // Evaluate args and apply
+                std::vector<EvalValue> cargs;
+                TwPinMany pin_cargs(cargs);
+                auto current = cdr_val;
+                while (types::is_pair(current)) {
+                    auto arg_pair = types::as_pair_idx(current);
+                    auto arg_val = eval_data_as_code(pairs_[arg_pair].car, env, flat, pool);
+                    if (!arg_val)
+                        return arg_val;
+                    cargs.push_back(*arg_val);
+                    current = pairs_[arg_pair].cdr;
+                }
+                // Create tail env and apply
+                Env tail_env = materialize_call_env(cl);
+                tail_env.set_primitives(&primitives_);
+
+                // Issue #145: set the pool so bind_symid can mirror
+                if (cl.pool)
+                    tail_env.set_pool(cl.pool);
+                // Issue #4467: do not enter the body on a wrong arity.
+                if (user_arity_mismatch(cl.params.size(), cl.dotted, cargs.size())) {
+                    const std::string who = cl.name.empty() ? fn_name : cl.name;
+                    return std::unexpected(Diagnostic{
+                        ErrorKind::ArityMismatch,
+                        user_arity_message(who, cl.params.size(), cl.dotted, cargs.size()),
+                        aura::diag::SourceLocation{1, 1, 0}});
+                }
+                for (std::size_t i = 0; i < cargs.size() && i < cl.params.size(); ++i)
+                    tail_env.bind_symid(cl.params[i], std::move(cargs[i]));
+                if (cl.body_id != aura::ast::NULL_NODE && cl.flat)
+                    return eval_flat(*cl.flat, cl.pool ? *cl.pool : *current_pool(), cl.body_id,
+                                     tail_env);
+                return make_void();
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+
+Evaluator::FlatStep Evaluator::eval_flat_publish_functor_instance(const std::string& cache_key,
+                                                                  Env& mod_env) {
+    // 缓存实例化结果 — per-instance arena so the
+    // Env and any closures it owns can be freed later
+    // via gc_module(cache_key).
+    auto& inst_arena = arena_group_->module_arena(cache_key);
+    // Issue #3443: cached Env* survives Phase-5 Moving —
+    // lasting void** slot in modules_, not EXEMPT
+    // (EXEMPT is only legal when would_move==false).
+    if (aura::ast::moving_compact_feature_enabled()) {
+        // Issue #4386: deque element, not &modules_.back().
+        // Do not hold module_mtx_ across create_with_cover,
+        // and do not hold the deque lock across module_mtx_.
+        void** env_slot = nullptr;
+        {
+            std::scoped_lock<std::mutex> cover_lock(module_create_cover_mu_);
+            module_create_covers_.push_back(nullptr);
+            env_slot = &module_create_covers_.back();
+        }
+        auto* cached_env = inst_arena.create_with_cover<Env>(env_slot, nullptr, mod_env);
+        if (cached_env) {
+            inst_arena.note_intermediate_create_with_cover_(cached_env, env_slot, nullptr);
+        }
+        void* created = nullptr;
+        {
+            std::scoped_lock<std::mutex> cover_lock(module_create_cover_mu_);
+            created = env_slot ? *env_slot : nullptr;
+        }
+        std::size_t mod_idx = 0;
+        {
+            std::unique_lock<std::shared_mutex> mod_lock(module_mtx_);
+            std::scoped_lock<std::mutex> rewrite_lock(densify_rewrite_mu_);
+            created = densify_rewrite_lookup_locked_(created);
+            mod_idx = modules_.size();
+            modules_.push_back(static_cast<Env*>(created));
+            module_cache_[cache_key] = mod_idx;
+            module_arena_ptrs_[cache_key] = &inst_arena;
+            module_names_.push_back(cache_key);
+            functor_instance_cache_[cache_key] = mod_idx;
+        }
+        {
+            std::scoped_lock<std::mutex> cover_lock(module_create_cover_mu_);
+            if (env_slot)
+                *env_slot = created;
+        }
+        return FlatStep::ret(types::make_module(mod_idx));
+    }
+    auto mod_idx = modules_.size();
+    modules_.push_back(nullptr);
+    void** env_slot = aura::core::moving_pointer_slot(modules_.back());
+    auto* cached_env = inst_arena.create_with_cover<Env>(env_slot, nullptr, mod_env);
+    if (cached_env) {
+        inst_arena.note_intermediate_create_with_cover_(cached_env, env_slot, nullptr);
+    }
+    module_cache_[cache_key] = mod_idx;
+    module_arena_ptrs_[cache_key] = &inst_arena;
+    module_names_.push_back(cache_key);
+    functor_instance_cache_[cache_key] = mod_idx;
+    return FlatStep::ret(types::make_module(mod_idx));
+}
+
+void Evaluator::EvalFlatCursor::pin_if_current_in_tail() {
+    // Issue #2871: an Env that is still a raw parent_ must outlive the
+    // tail_env emplace that would otherwise move it out from under the child.
+    if (tail_env.has_value() && current_env == &*tail_env) {
+        if (tco.live && tco.env == &*tail_env)
+            tco.live = false;
+        tco_pinned.push_back(std::make_unique<Env>(std::move(*tail_env)));
+        tail_env.reset();
+        current_env = tco_pinned.back().get();
+    }
+}
+
+Evaluator::FlatStep Evaluator::eval_flat_on_if(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                               const Env& eval_env) {
+    auto& f = cur.f;
+    auto& p = cur.p;
+    auto& current_id = cur.current_id;
+    if (v.children.size() < 2)
+        return FlatStep::ret(EvalResult(make_void()));
+    auto c = eval_flat(*f, *p, v.child(0), eval_env);
+    if (!c)
+        return FlatStep::ret(std::move(c));
+    // Issue #4493: an error value as the test (e.g. (< i #f))
+    // propagates — it is not a true test.
+    if (is_error(*c))
+        return FlatStep::ret(std::move(c));
+    if (v.children.size() == 2 || (v.children.size() >= 3 && v.child(2) == aura::ast::NULL_NODE)) {
+        // (if cond then) — conditionally execute then-branch
+        if (is_truthy(*c)) {
+            current_id = v.child(1);
+            return FlatStep::cont();
+        }
+        // Condition false, no else: the unspecified value
+        // (#4502 step 4), not '(). Same answer as the IR path.
+        return FlatStep::ret(types::make_unspecified());
+    }
+    current_id = is_truthy(*c) ? v.child(1) : v.child(2);
+    return FlatStep::cont(); // TCO: branch
+}
+
 // Issue #4454: noinline so this ~12KB frame stays out of eval_flat.
 __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAST& flat,
                                                                aura::ast::StringPool& pool,
@@ -6975,110 +11951,14 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
         // pin only when we are about to emplace a child of *current_env
         // while current_env lives inside tail_env.
         std::vector<std::unique_ptr<Env>> tco_pinned;
-        auto pin_if_current_in_tail = [&]() {
-            if (tail_env.has_value() && current_env == &*tail_env) {
-                // Issue #4599: the stamp addresses this optional. After the
-                // move, the next emplace reuses the storage.
-                if (tco.live && tco.env == &*tail_env)
-                    tco.live = false;
-                tco_pinned.push_back(std::make_unique<Env>(std::move(*tail_env)));
-                tail_env.reset();
-                current_env = tco_pinned.back().get();
-            }
-        };
+        EvalFlatCursor cursor{f, p, current_env, current_id, tail_env, tco_pinned, tco};
+        auto pin_if_current_in_tail = [&]() { cursor.pin_if_current_in_tail(); };
 
         // Issue #4454: C-stack depth is checked in the eval_flat wrapper
         // before this frame is allocated. Do not count again here.
         // eval_depth_ below is a different signal (auto-gc sampling).
 
-        // ── Memory pressure auto-governance sampling (P1) ─────────
-        // Every sample_every_ calls to eval_flat, recompute pressure
-        // and (if policy allows) auto-trigger gc-module for the top arena.
-        // Outside the hot path for typical evals (default 1-in-1000).
-        // Issue #991: thread_local counters (shared Evaluator, multi-worker).
-        thread_local std::size_t t_sample_counter = 0;
-        thread_local std::size_t t_last_auto_gc_eval_depth = 0;
-        thread_local std::string t_last_warn_level;
-        if (++t_sample_counter >= memory_policy_.sample_every) {
-            t_sample_counter = 0;
-            sample_counter_.store(t_sample_counter, std::memory_order_relaxed);
-            // Snapshot arena state. Inline rather than refactoring into
-            // a shared helper to avoid std::function capture-lifetime issues.
-            struct Snap {
-                std::string name;
-                double used;
-                double cap;
-                int pct;
-            };
-            std::vector<Snap> snaps;
-            double total_used = 0.0, total_cap = 0.0;
-            if (arena_) {
-                auto s = arena_->stats();
-                double u = static_cast<double>(s.used) / 1048576.0;
-                double c = static_cast<double>(s.capacity) / 1048576.0;
-                snaps.push_back({"main", u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
-                total_used += u;
-                total_cap += c;
-            }
-            if (arena_group_) {
-                for (auto& [full_name, stats] : arena_group_->module_stats()) {
-                    auto slash = full_name.rfind('/');
-                    auto short_name =
-                        slash == std::string::npos ? full_name : full_name.substr(slash + 1);
-                    double u = static_cast<double>(stats.used) / 1048576.0;
-                    double c = static_cast<double>(stats.capacity) / 1048576.0;
-                    snaps.push_back(
-                        {short_name, u, c, c > 0 ? static_cast<int>(u / c * 100.0) : 0});
-                    total_used += u;
-                    total_cap += c;
-                }
-            }
-            int overall = total_cap > 0 ? static_cast<int>(total_used / total_cap * 100.0) : 0;
-            std::string level = "low";
-            if (overall >= 95)
-                level = "critical";
-            else if (overall >= 80)
-                level = "high";
-            else if (overall >= 60)
-                level = "medium";
-
-            // Log warning on level transitions (avoid spam — only log when
-            // the level string changes from the last warned one).
-            if (level != t_last_warn_level && (level == "high" || level == "critical")) {
-                std::println(
-                    std::cerr,
-                    "[memory-pressure] WARNING: level={} overall-pct={} total-used={:.1f}MB", level,
-                    overall, total_used);
-                t_last_warn_level = level;
-            } else if (level == "low" || level == "medium") {
-                t_last_warn_level = level;
-            }
-
-            // Auto-gc: only at critical AND policy enabled AND cooldown elapsed.
-            if (memory_policy_.auto_gc && level == "critical" &&
-                eval_depth_ctx() - t_last_auto_gc_eval_depth > memory_policy_.cooldown_evals) {
-                // Find top arena (highest used-pct, then largest used, then name asc).
-                std::string top_name;
-                int top_pct = 0;
-                double top_used = 0.0;
-                for (auto& s : snaps) {
-                    if (s.pct > top_pct || (s.pct == top_pct && s.used > top_used) ||
-                        (s.pct == top_pct && s.used == top_used && s.name < top_name)) {
-                        top_name = s.name;
-                        top_pct = s.pct;
-                        top_used = s.used;
-                    }
-                }
-                if (!top_name.empty()) {
-                    std::println(std::cerr,
-                                 "[memory-pressure] AUTO-GC: freeing arena '{}' ({}% full)",
-                                 top_name, top_pct);
-                    gc_module(top_name);
-                    t_last_auto_gc_eval_depth = eval_depth_ctx();
-                    last_auto_gc_eval_depth_ctx() = eval_depth_ctx();
-                }
-            }
-        }
+        eval_flat_sample_memory();
 
         struct TwFrameReg {
             TwFrameReg(const Env** c, std::optional<Env>* t, std::vector<std::unique_ptr<Env>>* p) {
@@ -7101,4312 +11981,165 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
             TwFrameReg& operator=(TwFrameReg&&) = delete;
         } tw_frame_reg(&current_env, &tail_env, &tco_pinned);
 
-        // Issue #4599 phase 3: same-pool SymId chain read for a Variable
-        // visit — integer compares instead of the pool resolve, per-frame
-        // interns, and string-keyed index probes of Env::lookup. Raw
-        // parent_ hops first, then the SoA parent_id_ walk (per-hop shard
-        // lock, same-pool frames only, reverse scan — shadowing parity).
-        // Every hop re-checks pool identity + mirror alignment and the walk
-        // DECLINES (nullopt) at a root frame: live top_ bindings are
-        // cross-pool by contract, so those answers stay on the string walk.
-        // A decline is "not answered", never "unbound" — the caller falls
-        // back to the exact resolve + Env::lookup path. set!s and new
-        // shadowing binds are honored live (per-visit walk).
-        auto chain_read_var = [&](const Env& start,
-                                  aura::ast::SymId sym) -> std::optional<types::EvalValue> {
-            constexpr std::size_t kMaxChainHops = 1024; // Env::lookup MAX_ENV_DEPTH parity
-            // Issue #4595: a live-safe EMPTY capture (a lambda created
-            // directly in top_ — #4350/#4474) has no local bindings of its
-            // own; its authoritative answer is the LIVE top_ consult in
-            // Env::lookup. Walking the SoA parent chain here instead hits
-            // the letrec #232 registration frame — a frozen copy of top_
-            // taken at named-let time — and answers with the stale global
-            // cell (the #4595 repro read x=0 instead of the later let's 42,
-            // and set! then split from the read). Decline on the capture's
-            // live_safe_top marker (copied into the snapshot) so the exact
-            // Env::lookup path runs the live top_ consult.
-            {
-                const auto& cs = start.cap_snapshot();
-                const bool live_safe_empty =
-                    cs ? cs->live_safe_top
-                       : (start.parent_id() != NULL_ENV_ID && start.bindings().empty());
-                if (live_safe_empty)
-                    return std::nullopt;
-                // Locals of this env (params / let binds) win over the
-                // closure's capture — Env::lookup checks them first.
-                if (start.pool() == p && start.binding_mirrors_aligned()) {
-                    if (auto loc = start.local_symid_last(sym))
-                        return loc;
-                }
-                // Issue #4595 follow-up (#4618): the capture snapshot is
-                // CLOSER than the SoA chain, which starts at the capture
-                // frame's PARENT. A top-level let cell binds in its own
-                // child env (#4618), so a closure created in that body
-                // captured the shadowing cell — while the chain still leads
-                // to the letrec #232 frozen copy of top_ and answers the
-                // stale global (AC3 read 0 instead of 42). Answer the
-                // snapshot by NAME first — the same pool-independent order
-                // Env::lookup uses. A miss on every level keeps the walk:
-                // the chain content is then all that is left.
-                if (cs) {
-                    const std::string_view nm = p->resolve(sym);
-                    if (!nm.empty()) {
-                        for (const CapSnapshot* s = cs.get(); s; s = s->parent.get()) {
-                            auto it = s->name_index_.find(nm);
-                            if (it == s->name_index_.end())
-                                continue;
-                            return s->bindings_[it->second].second;
-                        }
-                    }
-                }
-            }
-            const Env* e = &start;
-            for (std::size_t hops = 0; e != nullptr && hops < kMaxChainHops; ++hops) {
-                if (e->pool() != p || !e->binding_mirrors_aligned())
-                    return std::nullopt;
-                if (auto loc = e->local_symid_last(sym))
-                    return loc;
-                if (const Env* nxt = e->parent()) {
-                    e = nxt;
-                    continue;
-                }
-                break;
-            }
-            // SoA parent_id_ walk (Env::lookup 2b's SymId arm). Same pool
-            // per frame; a frame whose string/symid array lengths diverge
-            // is declined (the string side could hold shadowing names this
-            // walk cannot see). Root frame 0 consults live top_ by NAME —
-            // decline there (cross-pool SymIds).
-            if (start.parent_id() == NULL_ENV_ID)
-                return std::nullopt;
-            EnvId cur = start.parent_id();
-            for (std::size_t hops = 0; cur != NULL_ENV_ID && hops < kMaxChainHops; ++hops) {
-                std::shared_lock<std::shared_mutex> hop_rlock(
-                    env_frame_shard_mu(env_frame_shard_index(cur)));
-                if (static_cast<std::size_t>(cur) >= env_frames_size())
-                    return std::nullopt;
-                const EnvFrame& pfr = env_frame(cur);
-                if (!pfr.bindings_.empty() && pfr.bindings_.size() != pfr.bindings_symid_.size())
-                    return std::nullopt;
-                if (pfr.pool_ == p && !pfr.bindings_symid_.empty()) {
-                    for (auto it = pfr.bindings_symid_.rbegin(); it != pfr.bindings_symid_.rend();
-                         ++it) {
-                        if (it->first == sym) {
-                            if (is_cell(it->second)) {
-                                const auto ci = as_cell_id(it->second);
-                                if (ci < cells_.size())
-                                    return cells_[ci];
-                            }
-                            return it->second;
-                        }
-                    }
-                }
-                if (cur == static_cast<EnvId>(0))
-                    return std::nullopt;
-                cur = pfr.parent_id;
-            }
-            return std::nullopt;
-        };
 
         while (true) {
             EVAL_FLAT_HOLD_BUDGET_POLL();
-            // Issue #4459: between opcodes, after the poll. Nested bodies
-            // see outer envs via g_tw_frames, so the go loop under display
-            // reclaims the previous iteration's closure.
-            // Issue #4713: safepoint before the reclaim consult. A collector
-            // on another thread parks this body here (one atomic load when no
-            // epoch is in flight); this back-edge is what lets the reclaim run
-            // with several fibers running at once.
-            tw_stw_safepoint();
-            if (tw_reclaim_due())
-                maybe_reclaim_tw_unreachable();
-            // Issue #4717 (P5): read-mostly publish. This pair is the
-            // per-eval "current source" hint; a store per node visit made all
-            // bodies write one shared cache line on every node, so every
-            // fiber's copy of that line was invalidated by every other fiber
-            // (the store is an exclusive grab even when the value is
-            // unchanged). Re-stamp only when the line does not already hold
-            // this body's pointers: the post-condition ("after this point the
-            // hint is f/p unless another body races") is unchanged, but the
-            // steady state leaves the line shared-clean and the per-node cost
-            // is two relaxed loads off a line that stays in S.
-            if (current_flat_.load(std::memory_order_relaxed) != f)
-                current_flat_.store(f, std::memory_order_relaxed);
-            if (current_pool_.load(std::memory_order_relaxed) != p)
-                current_pool_.store(p, std::memory_order_relaxed);
-            // Issue #3457: SymId intern is pool-local. TCO / nested
-            // eval / a fresh CompilerService::eval snippet swap `p`.
-            bind_sym_intern_pool(p);
-            // Issue #4524: float literal intern is flat-scoped (node ids).
-            bind_float_intern_flat(f);
-            // Save the eval environment before any tail_env.emplace could corrupt current_env
             const Env& eval_env = *current_env;
-            if (current_id == aura::ast::NULL_NODE)
-                return EvalResult(make_void());
-            // Issue #273: catch stale NodeIds before tree-walker field access.
-            // Softened to runtime Diagnostic so a COW/swap-workspace boundary
-            // that leaves current_id with node_gen_[id] != generation_ returns
-            // a friendly InternalError instead of aborting the test binary.
-            // Callers that need the debug assertion can use f->is_valid() +
-            // f->is_live_node() checks at higher layers.
-            // Issue #3523 / #3388: is_valid(NodeId) is observe-only (no
-            // write-up). Macro expand bumps generation_ and restamps
-            // MacroIntroduced only; residual live slots lag. Eval of the
-            // current tree is the layout face — refresh live current_id
-            // then re-check. Free-list tombstones stay InternalError.
-            //
-            // Issue #4717 (P5): the observe-only predicate
-            // (id in range && node_gen_[id] == generation_) is answered from a
-            // loop-local generation snapshot so the interpreter does not pay
-            // is_valid()'s shared-line counter RMW on every node visit. The
-            // snapshot can only ACCEPT a slot whose generation equals the
-            // snapshot generation while the workspace generation still equals
-            // it, i.e. exactly what is_valid() would accept; any mismatch —
-            // TCO re-point of f, a mid-body restamp, a generation bump, a
-            // recycled slot (node_gen_ == 0) or an out-of-range id — falls
-            // into the exact oracle below, which keeps the #3523 restamp and
-            // the #4349 StaleWorkspace refusal byte-for-byte.
-            if (f != body_gen_flat) {
-                body_gen_flat = f;
-                body_gen = f->generation();
-            }
-            const auto live_gen = f->generation();
-            if (live_gen != body_gen || current_id >= f->size() ||
-                f->node_gen_for(current_id) != live_gen) {
-                if (!f->is_valid(current_id)) {
-                    if (f->is_live_node(current_id))
-                        f->restamp_node_generation(current_id);
-                    if (!f->is_valid(current_id)) {
-                        // Issue #4349: ast:restore over a post-mutate snapshot
-                        // leaves env closures holding node ids that are dead in
-                        // the restored flat. That is a documented, recoverable
-                        // workspace face — not an internal error. Tell the caller
-                        // how to re-bind.
-                        return std::unexpected(
-                            Diagnostic{ErrorKind::StaleWorkspace,
-                                       "stale node id (gen mismatch): the workspace "
-                                       "changed under compiled definitions (ast:restore) "
-                                       "— run (eval-current) to re-bind, then retry"});
-                    }
-                }
-                // Re-validate the snapshot against whatever the slow path
-                // just settled (restamp_node_generation writes node_gen_ from
-                // the live generation).
-                body_gen_flat = f;
-                body_gen = f->generation();
-            }
-            if (current_id >= f->size())
-                return std::unexpected(Diagnostic{ErrorKind::InternalError, "invalid node id"});
-            // Issue #4599: ints, locals, and cached prim calls skip FlatAST::get.
-            // nullopt falls through. An engaged error is returned as-is.
-            if (auto hot = try_eval_flat_hot(*f, *p, current_id, eval_env))
-                return *hot;
-            // Issue #4682: clean cached non-leaf nodes return before
-            // FlatAST::get assembles a NodeView (child PCV + field copies).
-            // eval-current re-walks every top-level form of a W-define
-            // workspace; each clean Define paid a full NodeView assemble
-            // only to hit the cache below. Same predicate, SoA columns.
-            {
-                const auto t0 = f->tag(current_id);
-                if (t0 != aura::ast::NodeTag::LiteralInt &&
-                    t0 != aura::ast::NodeTag::LiteralFloat &&
-                    t0 != aura::ast::NodeTag::LiteralString && t0 != aura::ast::NodeTag::Variable &&
-                    !f->is_dirty(current_id)) {
-                    auto cached = f->get_cached_value(current_id);
-                    if (cached != aura::ast::FlatAST::kNotCached)
-                        return EvalResult(EvalValue(cached));
-                }
-            }
-            auto v = f->get(current_id);
-
-            // Incremental eval: if node is clean and has a cached result, reuse it.
-            // Skip leaf literals (LiteralInt, LiteralFloat, LiteralString) because
-            // they're always fast and the cache lookup overhead is not worth it.
-            if (v.tag != aura::ast::NodeTag::LiteralInt &&
-                v.tag != aura::ast::NodeTag::LiteralFloat &&
-                v.tag != aura::ast::NodeTag::LiteralString &&
-                v.tag != aura::ast::NodeTag::Variable && !f->is_dirty(current_id)) {
-                auto cached = f->get_cached_value(current_id);
-                if (cached != aura::ast::FlatAST::kNotCached) {
-                    return EvalResult(EvalValue(cached));
-                }
-            }
+            aura::ast::NodeView v;
+            if (auto early = eval_flat_prepare_visit(cursor, body_gen, body_gen_flat, eval_env, v))
+                return std::move(*early);
 
             switch (v.tag) {
                 case aura::ast::NodeTag::LiteralInt:
-                    // #t/#f have BoolLiteral marker — convert to Bool at runtime
-                    if (v.marker == aura::ast::SyntaxMarker::BoolLiteral)
-                        return make_bool(v.int_value != 0);
-                    // Issue #4635 follow-up: `()` is the empty list, not fixnum 0.
-                    if (v.marker == aura::ast::SyntaxMarker::EmptyList)
-                        return make_void();
-                    return make_int_or_promote(v.int_value);
-                case aura::ast::NodeTag::LiteralFloat: {
-                    // Issue #4524: intern the boxed literal per node
-                    // (bit-exact). Re-evaluating a float literal per loop
-                    // iteration allocated a fresh float-pool box every
-                    // time; the constant step of a named-let loop drove
-                    // half the interpreter's boxed-double churn (#4503).
-                    // Bit-pattern validation keeps mutate/tweak-literal
-                    // edits on the re-make path instead of serving a
-                    // stale box.
-                    if (const auto* e = float_intern_by_node_.get(
-                            static_cast<std::uint32_t>(current_id), v.float_value))
-                        return *e;
-                    auto val = make_float(v.float_value);
-                    float_intern_by_node_.set(static_cast<std::uint32_t>(current_id), v.float_value,
-                                              val);
-                    return val;
-                }
+                case aura::ast::NodeTag::LiteralFloat:
                 case aura::ast::NodeTag::LiteralString: {
-                    // Issue #3401: happy-path string intern. std::string
-                    // construction + push_string_heap (#4543) on first use only.
-                    // Issue #3457: lookup by v.sym_id (dense), not hashed
-                    // string_view into the pool.
-                    {
-                        types::EvalValue cached{};
-                        if (string_intern_by_sym_.lookup(v.sym_id, cached))
-                            return cached;
-                    }
-                    std::string_view raw_sv = p->resolve(v.sym_id);
-                    // Issue #4455: quoted symbols (≤6) live in short_str_cache_.
-                    // Assigning a fresh heap index here moved the next
-                    // (quote sym) off the slot bound earlier, so eq? became #f
-                    // after a same-text string literal. Reuse the quote slot.
-                    // emplace does not replace a key a quote already owns.
-                    // #4717: shared map; same recursive lock as the mint path.
-                    std::scoped_lock short_cache_lock(alloc_storage_lock_);
-                    if (raw_sv.size() <= 6) {
-                        if (auto it = short_str_cache_.find(raw_sv); it != short_str_cache_.end()) {
-                            string_intern_by_sym_.set(v.sym_id, it->second);
-                            return it->second;
-                        }
-                    }
-                    std::string raw(raw_sv);
-                    auto sid = push_string_heap(std::move(raw));
-                    auto val = make_string(sid);
-                    string_intern_by_sym_.set(v.sym_id, val);
-                    if (raw_sv.size() <= 6)
-                        short_str_cache_.emplace(std::string(raw_sv), val);
-                    return val;
+                    auto step =
+                        eval_flat_on_literalint_literalfloat_literalstring(cursor, v, eval_env);
+                    if (step.kind == FlatStep::Kind::Cont)
+                        continue;
+                    if (step.kind == FlatStep::Kind::Ret)
+                        return std::move(*step.value);
+                    break;
                 }
                 case aura::ast::NodeTag::Variable: {
-                    // Issue #4599 phase 3: host-thread same-pool fast read.
-                    // A chain hit answers without the pool resolve, the
-                    // per-frame interns, and the string-keyed index probes
-                    // of Env::lookup. A hit through a live (non-void) cell
-                    // is exact (same value the string walk reads); a void
-                    // cell needs the name for the prim-reexport face, so it
-                    // falls through. Keyword faces are unreachable here:
-                    // the walk consults only frame bindings, and the keyword
-                    // intern path below still owns every ':'-leading name
-                    // the chain missed.
-                    // Issue #4715 AC2: skip the same-pool chain read while an
-                    // overlay is open on this thread, so the overlay (and not
-                    // the pre-overlay cell) answers the read.
-                    if (aura::serve::g_current_fiber == nullptr &&
-                        primitives_detail::t_fiber_cow_overlay_depth == 0 &&
-                        v.sym_id != aura::ast::INVALID_SYM && eval_env.pool() == p &&
-                        eval_env.binding_mirrors_aligned()) {
-                        auto cval = chain_read_var(eval_env, v.sym_id);
-                        if (cval) {
-                            if (!is_cell(*cval)) {
-                                remember_resolved_var(current_id, v.sym_id, eval_env, *cval);
-                                return EvalResult(*cval);
-                            }
-                            const auto ci = as_cell_id(*cval);
-                            // Issue #4789: a cell that explicitly holds '()
-                            // is a value, not an uninitialized placeholder.
-                            if (ci < cells_.size() &&
-                                (!is_void(cells_[ci]) || cell_nil_assigned(ci))) {
-                                remember_resolved_var(current_id, v.sym_id, eval_env, *cval);
-                                return EvalResult(cells_[ci]);
-                            }
-                            // void cell / OOB: the prim-reexport decision
-                            // needs the name — take the full slow path.
-                        }
-                    }
-                    // Issue #4731: the scan + append below are serialized on
-                    // keyword_table_mtx_ (concurrent fiber bodies intern into
-                    // this Evaluator-global table; unsynchronized push_back
-                    // reallocated it under another body's move-ctor: ASan UAF).
-                    // Issue #3401: keyword O(1) intern. std::string
-                    // construction + keyword_table_.push_back happen only
-                    // on the first encounter of a unique :foo literal.
-                    // Issue #3457: lookup by v.sym_id (dense).
-                    // The leading ':' is preserved in keyword_table_[kidx]
-                    // for backward compatibility with existing readers.
-                    std::string_view name = p->resolve(v.sym_id);
-                    if (!name.empty() && name[0] == ':') {
-                        {
-                            types::EvalValue cached{};
-                            if (keyword_intern_by_sym_.lookup(v.sym_id, cached))
-                                return cached;
-                        }
-                        // keyword_table_ is Evaluator-global: primitives may
-                        // have pushed the same name. Reuse that index so
-                        // (eq? fr :no-workspace) is identity. SymId cache
-                        // avoids the scan on hits.
-                        std::scoped_lock kw_lock(keyword_table_mtx_);
-                        for (std::size_t ki = 0; ki < keyword_table_.size(); ++ki) {
-                            if (keyword_table_[ki] == name) {
-                                auto val = make_keyword(static_cast<std::uint64_t>(ki));
-                                keyword_intern_by_sym_.set(v.sym_id, val);
-                                return val;
-                            }
-                        }
-                        auto kidx = static_cast<std::uint64_t>(keyword_table_.size());
-                        keyword_table_.push_back(std::string(name));
-                        auto val = make_keyword(kidx);
-                        keyword_intern_by_sym_.set(v.sym_id, val);
-                        return val;
-                    }
-                    // Issue #3401: name is std::string_view (no std::string
-                    // construction); Env::lookup already takes string_view.
-                    auto val = eval_env.lookup(name);
-                    if (val) {
-                        // Pre-deref binding: a cell id, not the cell's value.
-                        remember_resolved_var(current_id, v.sym_id, eval_env, *val);
-                        // Issue #229 Cycle 1 fix: dereference cell
-                        // sentinel. The Define case binds the name to
-                        // a cell (make_cell(ci)) for re-def support;
-                        // ordinary lookups (Variable here, call sites
-                        // elsewhere) should auto-deref the cell to
-                        // the underlying value. Without this, simple
-                        // `(define x 10) (display x)` shows
-                        // `<cell[0]>` instead of `10`.
-                        //
-                        // Issue #2570 follow-up / std/math: multi-define
-                        // (letrec) pre-allocates void cells before RHS
-                        // eval. `(define ceil ceil)` would re-bind the
-                        // local void cell to itself. If the cell is still
-                        // void, prefer a same-named first-class primitive
-                        // (prim re-export); otherwise return void (bound
-                        // but uninitialized — do not report unbound).
-                        if (is_cell(*val)) {
-                            auto ci = as_cell_id(*val);
-                            if (ci < cells_.size() && !is_void(cells_[ci]))
-                                return cells_[ci];
-                            // Issue #4789: '() stored by let/letrec/define/
-                            // set! is the binding's value - never replace it
-                            // with a same-named primitive.
-                            if (ci < cells_.size() && cell_nil_assigned(ci))
-                                return cells_[ci];
-                            std::string var_name(name);
-                            auto slot = primitives_.slot_for_name(var_name);
-                            if (slot != std::numeric_limits<std::size_t>::max())
-                                return make_primitive(slot);
-                            if (auto ctor = adt_runtime_.find_ctor(var_name))
-                                return make_primitive(*ctor);
-                            return make_void();
-                        }
-                        return *val;
-                    }
-                    std::string var_name(name);
-                    if (var_name.empty()) {
-                        var_name = std::format("<sym:{}>", v.sym_id);
-                    }
-                    // First-class primitive / ADT ctor when name is unbound
-                    // (Env::lookup steps 3–4; call-position also has prim path).
                     {
-                        auto slot = primitives_.slot_for_name(var_name);
-                        if (slot != std::numeric_limits<std::size_t>::max()) {
-                            auto pv = make_primitive(slot);
-                            remember_resolved_var(current_id, v.sym_id, eval_env, pv);
-                            return pv;
-                        }
-                        if (auto ctor = adt_runtime_.find_ctor(var_name))
-                            return make_primitive(*ctor);
+                        auto step = eval_flat_on_variable(cursor, v, eval_env);
+                        if (step.kind == FlatStep::Kind::Cont)
+                            continue;
+                        if (step.kind == FlatStep::Kind::Ret)
+                            return std::move(*step.value);
+                        break;
                     }
-                    std::vector<std::string> candidates;
-                    {
-                        const Env* e = &eval_env;
-                        while (e) {
-                            for (auto& b : const_cast<Env&>(*e).bindings())
-                                candidates.push_back(b.first);
-                            e = e->parent();
-                        }
-                    }
-                    auto best = closest_match(var_name, candidates);
-                    // Issue #4796: stdlib-only name → actionable hint first.
-                    const auto std_hint = stdlib_only_unbound_hint(var_name);
-                    // Issue #79: source location from the offending node so the
-                    // error report includes line:col instead of just node[id:N].
-                    Diagnostic d(ErrorKind::UnboundVariable, std::move(var_name),
-                                 aura::diag::SourceLocation{v.line, v.col, diag_fid_4916(f)},
-                                 current_id);
-                    if (!std_hint.empty())
-                        d.with_suggestion(std::string(std_hint));
-                    else if (!best.empty())
-                        d.with_suggestion("did you mean '" + best + "'?");
-                    return std::unexpected(std::move(d));
                 }
                 case aura::ast::NodeTag::Call: {
-                    if (v.children.empty())
-                        return EvalResult(make_void());
-                    auto callee_id = v.child(0);
-                    auto callee = f->get(callee_id);
-                    // Inline lambda (arg evals are recursive; body is tail)
-                    if (callee.tag == aura::ast::NodeTag::Lambda) {
-                        // Issue #3688: workspace lambda Apply — same face as IR.
-                        if (production_eval_flat_commit_readiness_refuse(
-                                static_cast<CompilerMetrics*>(compiler_metrics_)))
-                            return eval_flat_commit_readiness_refused();
-                        auto pspan = callee.params;
-                        bool dotted = callee.int_value != 0;
-                        std::size_t named_count =
-                            dotted && !pspan.empty() ? pspan.size() - 1 : pspan.size();
-                        // Evaluate named + rest args before emplace.
-                        // Issue #3915: rest eval after emplace dangled the
-                        // TCO caller Env (same class as TW closure TCO).
-                        // Issue #4467: evaluate every provided argument, then
-                        // reject a wrong fixed arity at this call. Extras used
-                        // to be dropped; a missing parameter stayed unbound.
-                        std::vector<EvalValue> provided;
-                        TwPinMany pin_provided(provided);
-                        if (v.children.size() > 1)
-                            provided.reserve(v.children.size() - 1);
-                        for (std::size_t i = 1; i < v.children.size(); ++i) {
-                            // Issue #4524: arm float-local for each named
-                            // parameter position — the argument node about
-                            // to be bound to a loop accumulator slot.
-                            const std::size_t fl_named =
-                                dotted ? (pspan.empty() ? 0 : pspan.size() - 1) : pspan.size();
-                            FloatLocalArmGuard fl_arm{i - 1 < fl_named ? v.child(i)
-                                                                       : aura::ast::NULL_NODE};
-                            auto ar = eval_flat(*f, *p, v.child(i), eval_env);
-                            if (!ar)
-                                return ar;
-                            provided.push_back(std::move(*ar));
-                        }
-                        if (user_arity_mismatch(pspan.size(), dotted, provided.size())) {
-                            const auto line = v.line == 0 ? 1u : v.line;
-                            const auto col = v.col == 0 ? 1u : v.col;
-                            return std::unexpected(Diagnostic{
-                                ErrorKind::ArityMismatch,
-                                user_arity_message("lambda", pspan.size(), dotted, provided.size()),
-                                aura::diag::SourceLocation{line, col, diag_fid_4916(f)},
-                                current_id});
-                        }
-                        std::vector<EvalValue> iargs;
-                        TwPinMany pin_iargs(iargs);
-                        iargs.reserve(named_count);
-                        for (std::size_t i = 0; i < named_count && i < provided.size(); ++i)
-                            iargs.push_back(std::move(provided[i]));
-                        std::vector<EvalValue> rest_args;
-                        TwPinMany pin_rest(rest_args);
-                        if (dotted && !pspan.empty()) {
-                            for (std::size_t i = named_count; i < provided.size(); ++i)
-                                rest_args.push_back(std::move(provided[i]));
-                        }
-                        // Issue #2871: pin parent if it lives in tail_env before emplace.
-                        pin_if_current_in_tail();
-                        tail_env.emplace(current_env);
-                        tail_env->set_primitives(&primitives_);
-                        // Issue #4701: the inline-lambda call frame MUST carry the
-                        // pool before the parameter binds. Without pool_ a bind
-                        // lands ONLY in the legacy string array (bindings_); the
-                        // SymId array (bindings_symid_, the PRIMARY array) stays
-                        // empty. The capture frame built later by
-                        // alloc_env_frame_from_env is then dual-path desynced
-                        // (bindings_.size() != bindings_symid_.size()), the
-                        // dual-path gate hard-fails at materialize_call_env and
-                        // drops the captured bindings, and a body closure that
-                        // captures the parameter reports "unbound variable: j"
-                        // for ((lambda (j) (lambda () j)) 3). Same shape as the
-                        // #1482 restore in the letrec path below.
-                        if (p)
-                            tail_env->set_pool(p);
-                        for (std::size_t i = 0; i < iargs.size(); ++i) {
-                            tail_env->bind_symid(pspan[i], std::move(iargs[i]));
-                        }
-                        if (dotted && !pspan.empty()) {
-                            // Issue #4733: same locked mint as the apply_closure
-                            // rest spine (per-call list must stay per-fiber).
-                            types::EvalValue rest = make_void();
-                            for (std::size_t i = rest_args.size(); i > 0; --i) {
-                                const auto pid =
-                                    mint_pair(rest_args[i - 1], rest, /*check_quota=*/false);
-                                rest = make_pair(pid);
-                            }
-                            tail_env->bind_symid(pspan.back(), rest);
-                        }
-                        auto body_id =
-                            callee.children.empty() ? aura::ast::NULL_NODE : callee.child(0);
-                        // Issue #2871: true TCO — stay in this eval_flat frame
-                        // (named-let / inline lambda tail calls must not grow C stack).
-                        if (body_id != aura::ast::NULL_NODE) {
-                            current_env = &*tail_env;
-                            current_id = body_id;
+                    {
+                        auto step = eval_flat_on_call(cursor, v, eval_env);
+                        if (step.kind == FlatStep::Kind::Cont)
                             continue;
-                        }
-                        return make_void();
+                        if (step.kind == FlatStep::Kind::Ret)
+                            return std::move(*step.value);
+                        break;
                     }
-                    // Macro expansion: evaluate args, bind in env, evaluate body (produces template
-                    // data), then re-evaluate the data as code
-                    // Issue #4599 follow-up: an empty registry cannot match.
-                    // Every call used to pay a pool resolve + std::string +
-                    // hash-table probe here before the prim/closure paths.
-                    if (callee.tag == aura::ast::NodeTag::Variable && !macros_.empty()) {
-                        auto cname = std::string(p->resolve(callee.sym_id));
-                        auto macro_it = macros_.find(cname);
-                        if (macro_it != macros_.end()) {
-                            // Issue #4901: a procedure defined by an earlier
-                            // form keeps the definition in effect when that
-                            // form finished (force-soa evaluates one form at
-                            // a time, so the static pass never saw it).
-                            auto md_pin_4901 = pinned_macro_def_4901(cname, f, macro_it->second);
-                            auto& md = md_pin_4901 ? *md_pin_4901 : macro_it->second;
-                            bool is_rest = md.dotted;
-                            // Issue #4834: a macro call is fixed-arity unless
-                            // the macro declares a trailing rest parameter.
-                            // Extra arguments used to be dropped silently and
-                            // a missing one surfaced as "unbound variable:
-                            // <formal>" pointing INSIDE the macro body, which
-                            // hid the caller's mistake. Reject at the call site
-                            // for hygienic and legacy macros alike.
-                            const std::size_t provided_args =
-                                v.children.empty() ? 0 : v.children.size() - 1;
-                            const std::size_t regular_params =
-                                is_rest ? (md.params.empty() ? 0 : md.params.size() - 1)
-                                        : md.params.size();
-                            if (is_rest ? provided_args < regular_params
-                                        : provided_args != regular_params) {
-                                std::string expected = std::to_string(regular_params);
-                                if (is_rest)
-                                    expected += "+";
-                                const auto arity_line = v.line == 0 ? 1u : v.line;
-                                const auto arity_col = v.col == 0 ? 1u : v.col;
-                                const bool singular = regular_params == 1 && !is_rest;
-                                return std::unexpected(aura::diag::Diagnostic{
-                                    aura::diag::ErrorKind::ArityMismatch,
-                                    "macro " + cname + ": expected " + expected + " argument" +
-                                        (singular ? "" : "s") + ", got " +
-                                        std::to_string(provided_args),
-                                    aura::diag::SourceLocation{arity_line, arity_col,
-                                                               diag_fid_4916(f)},
-                                    current_id});
-                            }
-
-                            // Issue #334: env-binding path for
-                            // `define-hygienic-macro*` (md.preserved).
-                            // The macro args are bound in a child env
-                            // (name → ast_to_data), and the body is
-                            // evaluated in that env. This makes the
-                            // body's Variable refs resolve to the
-                            // literal arg values directly — the same
-                            // behavior as the legacy `defmacro` path.
-                            // Used by symbol-generating macros like
-                            // define-struct where `name` should
-                            // resolve to the literal symbol and
-                            // `fields` to the literal field list.
-                            if (md.preserved) {
-                                // Issue #4390: no template eval and no
-                                // data_to_flat without MacroSelfEvo.
-                                if (auto denied = legacy_eval_macro_self_evo_deny())
-                                    return std::unexpected(*denied);
-                                if (is_rest) {
-                                    // Rest params on preserved
-                                    // macros are not yet supported
-                                    // — fall through to a "no
-                                    // expansion" return.
-                                    return make_void();
-                                }
-                                // Bind macro args as data in tail_env
-                                std::size_t regular_count = md.params.size();
-                                tail_env.emplace(&eval_env);
-                                tail_env->set_primitives(&primitives_);
-                                for (std::size_t i = 0;
-                                     i < regular_count && i + 1 < v.children.size(); ++i) {
-                                    tail_env->bind(md.params[i],
-                                                   ast_to_data(*f, *p, v.child(i + 1)));
-                                }
-                                // Issue #334: use md.pool if set (the
-                                // macro was defined in a different
-                                // workspace), else use the current pool
-                                // p. The body's Variables look up by
-                                // string name in tail_env, so pool
-                                // alignment doesn't matter for the
-                                // Variable case (it just needs a valid
-                                // pool to resolve symids into strings).
-                                auto* mb_pool = md.pool ? md.pool : p;
-                                auto* mb_flat = md.pool ? md.flat : f;
-                                auto template_result =
-                                    eval_flat(*mb_flat, *mb_pool, md.body_id, *tail_env);
-                                if (!template_result)
-                                    return template_result;
-                                // Issue #334 (Cycle 1): convert the
-                                // macro body data to FlatAST via
-                                // data_to_flat. eval_data_as_code
-                                // (the legacy path used here before)
-                                // treats strings as literal values,
-                                // so Variable references in the body
-                                // become string values rather than
-                                // runtime lookups — meaning
-                                // symbol-generating macros that
-                                // splice field names into the lambda
-                                // body get the field-name strings
-                                // baked into the vector instead of
-                                // the call args. data_to_flat
-                                // converts each string to a Variable
-                                // AST node (add_variable), so the
-                                // resulting lambda body has proper
-                                // Variable refs that look up in the
-                                // lambda's call env at call time.
-                                auto ast_root = data_to_flat(*template_result, *f, *p, /*depth=*/0);
-                                if (ast_root == aura::ast::NULL_NODE)
-                                    return std::unexpected(aura::diag::Diagnostic{
-                                        aura::diag::ErrorKind::InternalError,
-                                        "data_to_flat returned NULL for env-binding macro body"});
-                                return eval_flat(*f, *p, ast_root, eval_env);
-                            }
-
-                            // Issue #120: hygienic macros use clone_macro_body
-                            // with a name_map (single-eval AST substitution +
-                            // automatic gensym for template-introduced
-                            // bindings). Non-hygienic macros keep the legacy
-                            // double-eval path for backward compatibility.
-                            //
-                            // Issue #2018: hygienic rest params — build a
-                            // (list remaining...) AST for the rest binding
-                            // and put it in subst so free uses of the rest
-                            // identifier expand to the rest-arg list. Nested
-                            // dotted lambdas inside the body get `__rest_`
-                            // gensym via clone_macro_body pre-scan.
-                            if (md.hygienic) {
-                                // Issue #4894: reuse this call site's earlier
-                                // expansion. A macro registered by an earlier
-                                // form is not in this flat's static expand
-                                // pass, so every call cloned the body, inner-
-                                // expanded it and restamped the WHOLE flat —
-                                // which grew per call: O(N^2) for N calls.
-                                // Issue #4902: the memo is safe on the
-                                // production (sandbox-active) face too. The
-                                // per-call MacroSelfEvo consult moves to the
-                                // memo-hit arm below, so a grant/deny is
-                                // still re-checked on every call; only the
-                                // clone + full-flat restamp is reused.
-                                constexpr bool memo_ok_4894 = true;
-                                const auto memo_epoch_4894 =
-                                    macros_epoch_4894_.load(std::memory_order_acquire);
-                                if (memo_ok_4894) {
-                                    aura::ast::NodeId memo_hit = aura::ast::NULL_NODE;
-                                    {
-                                        std::scoped_lock memo_lk(hyg_call_memo_mtx_4894_);
-                                        auto fit = hyg_call_memo_4894_.find(f);
-                                        if (fit != hyg_call_memo_4894_.end()) {
-                                            auto cit = fit->second.find(current_id);
-                                            if (cit != fit->second.end()) {
-                                                const auto& m = cit->second;
-                                                if (m.epoch == memo_epoch_4894 &&
-                                                    m.md_flat == md.flat &&
-                                                    m.body_id == md.body_id &&
-                                                    f->size() >= m.flat_size &&
-                                                    f->is_live_node(m.expanded) &&
-                                                    f->is_macro_introduced(m.expanded) &&
-                                                    std::equal(m.children.begin(), m.children.end(),
-                                                               v.children.begin(),
-                                                               v.children.end()))
-                                                    memo_hit = m.expanded;
-                                                else
-                                                    fit->second.erase(cit);
-                                            }
-                                        }
-                                    }
-                                    if (memo_hit != aura::ast::NULL_NODE) {
-                                        // Issue #4902: clone_macro_body's
-                                        // depth-0 MacroSelfEvo gate is what a
-                                        // non-memoized call pays for. Keep the
-                                        // per-call consult here so a revoked or
-                                        // missing grant still denies; only the
-                                        // expansion work is reused.
-                                        if (aura::core::sandbox::is_sandbox_active()) {
-                                            if (auto denied = legacy_eval_macro_self_evo_deny())
-                                                return std::unexpected(*denied);
-                                        }
-                                        auto memo_result = eval_flat(*f, *p, memo_hit, eval_env);
-                                        if (!memo_result)
-                                            return memo_result;
-                                        return eval_data_as_code(*memo_result, eval_env, f, p);
-                                    }
-                                }
-                                // Issue #146 follow-up: build the subst
-                                // map via the pure helper. Local
-                                // materialization of v.children into a
-                                // vector (one alloc per macro call) keeps
-                                // the call site short.
-                                std::vector<aura::ast::NodeId> call_args(v.children.begin(),
-                                                                         v.children.end());
-                                auto subst = aura::compiler::pure::compute_macro_subst_pure(
-                                    md.params, call_args, /*dotted=*/is_rest);
-                                // Issue #3817: ExpandCheckpointGuard is inside
-                                // clone_macro_body, so rest add_*/stamp before
-                                // clone sits outside size0. Snapshot FlatAST
-                                // size here; on NULL clone under production,
-                                // truncate_to rewinds MacroIntroduced rest
-                                // orphans. Soft/Off keeps historical half-write.
-                                std::size_t rest_spine_ckpt = 0;
-                                bool rest_spine_pending = false;
-                                if (is_rest && !md.params.empty()) {
-                                    rest_spine_ckpt = f->size();
-                                    rest_spine_pending = true;
-                                    const std::size_t regular_count = md.params.size() - 1;
-                                    std::vector<aura::ast::NodeId> remaining;
-                                    for (std::size_t ai = regular_count + 1; ai < call_args.size();
-                                         ++ai)
-                                        remaining.push_back(call_args[ai]);
-                                    // Rest list as (list a1 a2 …) — evaluated
-                                    // when the expanded body runs (same
-                                    // runtime shape as non-hygienic rest list).
-                                    auto list_var = f->add_variable(p->intern("list"));
-                                    auto list_call = f->add_call(list_var, remaining);
-                                    // Issue #3153: stamp the freshly allocated
-                                    // (list a1 a2 ...) spine with
-                                    // kMacroExpansion dirty + MacroIntroduced
-                                    // marker + provenance + schema_cache.
-                                    // macro_expand_all / expand_inner_macros
-                                    // already stamp; eval_flat hot path was
-                                    // dropping the marker, so is_macro_introduced
-                                    // stayed false on rest nodes and
-                                    // mutate:replace-subtree / rebind gates
-                                    // could not reject them. Single shared
-                                    // helper now (exported from
-                                    // aura.compiler.macro_expansion).
-                                    stamp_rest_param_hygiene(*f, *md.flat, md.body_id, list_call);
-                                    subst[md.params.back()] = list_call;
-                                }
-                                // Issue #4101: clone_ckpt is the size before the
-                                // rest spine and the clone, same as reexpand_call.
-                                // An inner deny truncates this range so the caller
-                                // flat does not keep the MacroIntroduced clone
-                                // (half-expanded body is not evaluated).
-                                const auto clone_ckpt =
-                                    rest_spine_pending ? rest_spine_ckpt : f->size();
-                                // Clone the macro body with substitution +
-                                // name_map. The cloned tree is in the
-                                // *current* FlatAST (we use the target's
-                                // flat = f, source = md.flat). name_map is
-                                // empty initially; clone_macro_body
-                                // populates it as it gensym's
-                                // template-introduced bindings.
-                                std::unordered_map<std::string, std::string,
-                                                   aura::core::TransparentStringHash,
-                                                   std::equal_to<>>
-                                    rename_map;
-                                auto* src_pool = md.pool ? md.pool : p;
-                                auto expanded = clone_macro_body(
-                                    *f, *p, *md.flat, *src_pool, md.body_id, &subst, &rename_map,
-                                    /*cloned_marker=*/aura::ast::SyntaxMarker::MacroIntroduced,
-                                    rest_spine_pending ? rest_spine_ckpt
-                                                       : static_cast<std::size_t>(-1));
-                                if (expanded == aura::ast::NULL_NODE) {
-                                    // Issue #3817: production rewind pre-clone
-                                    // MacroIntroduced rest spine. #4101:
-                                    // clone_ckpt is that size when the spine
-                                    // is pending, else the size before the
-                                    // clone. Soft/Off keeps the half-write.
-                                    if (aura::core::sandbox::is_sandbox_active()) {
-                                        if (rest_spine_pending)
-                                            f->truncate_to(rest_spine_ckpt);
-                                        else
-                                            f->truncate_to(clone_ckpt);
-                                        if (macro_exp::inner_expand_production_limit_deny_all()) {
-                                            // Module read, not the extern "C"
-                                            // string: light-link tests
-                                            // interpose a weak stub that
-                                            // returns empty (#4101).
-                                            const char* why =
-                                                macro_exp::hygiene_last_limit_reason_string();
-                                            return std::unexpected(
-                                                macro_limit_diag_4876(why, "hygiene-depth-limit"));
-                                        }
-                                    }
-                                    return make_void();
-                                }
-                                // Issue #230 #2 follow-up: undo the Quote-wrap
-                                // on set! targets. Same rationale as the
-                                // lambda case in eval_data_as_code — the
-                                // Quote-wrap helps symbol-generating macros
-                                // but breaks set! semantics.
-                                // unwrap_set_quotes removed (Quote-wrap reverted)
-                                // Issue #121: recursively expand any nested
-                                // macro calls in the cloned body using the
-                                // runtime `macros_` registry. The cloned body
-                                // lives in the calling flat (`*f`), but other
-                                // macros (m1, m2, ...) were defined in earlier
-                                // forms with their own flates — so the static
-                                // `macro_expand_all` (which scans the flat)
-                                // wouldn't see them. We walk the cloned tree
-                                // and, for each Call whose callee is in
-                                // `macros_`, recursively expand it. Bounded by
-                                // a depth limit (10) to prevent infinite loops
-                                // (e.g., macro X calls macro X).
-                                // Issue #4649: the expand's entry root — the
-                                // caller-owned slot it may have rewritten
-                                // is restored before the deny truncate.
-                                const auto expand_entry = expanded;
-                                expanded = expand_inner_macros(f, p, expanded, /*depth=*/0,
-                                                               /*max_depth=*/10,
-                                                               as_expansion_registry(macros_));
-                                // Issue #3684 / #4101: production refuses to eval a
-                                // half-expanded body. deny_all covers depth/pass/
-                                // steal/cap/gensym and same-flat/name-map/
-                                // concurrent-top-level (8/9/10). Truncate the
-                                // rest spine and the clone; do not restamp and
-                                // do not eval_flat the clone. The deny site
-                                // already stamped last_limit_reason. Soft/Off
-                                // keeps the historical expand-then-eval
-                                // (one sandbox load, no truncate).
-                                if (aura::core::sandbox::is_sandbox_active() &&
-                                    macro_exp::inner_expand_production_limit_deny_all()) {
-                                    // Issue #4649: truncate_to is not the
-                                    // only undo — a caller-owned slot
-                                    // BELOW clone_ckpt that the expand
-                                    // rewrote keeps a tail id (dead after
-                                    // the truncate). Restore it first.
-                                    restore_caller_slot_before_truncate(*f, expand_entry,
-                                                                        clone_ckpt);
-                                    f->truncate_to(clone_ckpt);
-                                    // Same module read as the NULL arm —
-                                    // the extern "C" string is a weak stub
-                                    // under light-link (#4101).
-                                    const char* why = macro_exp::hygiene_last_limit_reason_string();
-                                    return std::unexpected(
-                                        macro_limit_diag_4876(why, "hygiene-depth-limit"));
-                                }
-                                // Issue #2019: full restamp for all live nodes after
-                                // structural splice + MacroIntroduced-only parent/dirty fix.
-                                f->restamp_all_node_generations();
-                                (void)f->restamp_macro_introduced_generations();
-                                // Issue #2096: per-cloned-subtree restamp on the
-                                // expanded body so the freshly introduced MacroIntroduced
-                                // closure gets a subtree-local gen+parent+dirty repair
-                                // (no AST-wide scan, pairs with the zero-arg sweep).
-                                if (expanded != aura::ast::NULL_NODE)
-                                    (void)f->restamp_macro_introduced_subtree(expanded);
-                                // Issue #4894: remember this call site's
-                                // expansion (bounded; cleared when full).
-                                if (memo_ok_4894 && expanded != aura::ast::NULL_NODE &&
-                                    f->is_macro_introduced(expanded)) {
-                                    std::scoped_lock memo_lk(hyg_call_memo_mtx_4894_);
-                                    if (hyg_call_memo_4894_.size() >= 64 &&
-                                        !hyg_call_memo_4894_.contains(f))
-                                        hyg_call_memo_4894_.clear();
-                                    auto& sites = hyg_call_memo_4894_[f];
-                                    if (sites.size() >= 4096)
-                                        sites.clear();
-                                    sites.insert_or_assign(
-                                        current_id, HygienicCallMemo4894{
-                                                        memo_epoch_4894, md.flat, md.body_id,
-                                                        expanded, f->size(),
-                                                        std::vector<aura::ast::NodeId>(
-                                                            v.children.begin(), v.children.end())});
-                                }
-                                // Evaluate the cloned + inner-expanded
-                                // body. eval_flat returns a runtime
-                                // value (a list for cons-chain qq
-                                // bodies). The list needs to be
-                                // re-evaluated as code so the
-                                // inner macro's result is invoked
-                                // (e.g., `(bar ,x)` returns
-                                // `(* x 2)`, which then evaluates
-                                // as a call to `*`). This mirrors
-                                // the legacy defmacro path's
-                                // eval_data_as_code re-evaluation
-                                // and is what enables macro
-                                // composition in the hygienic
-                                // case (Issue #158).
-                                auto hygienic_result = eval_flat(*f, *p, expanded, eval_env);
-                                if (!hygienic_result)
-                                    return hygienic_result;
-                                return eval_data_as_code(*hygienic_result, eval_env, f, p);
-                            }
-
-                            // Issue #4390: legacy defmacro double-eval. Refuse
-                            // before the template runs, so a source-named
-                            // binding in the template is not evaluated.
-                            if (auto denied = legacy_eval_macro_self_evo_deny())
-                                return std::unexpected(*denied);
-                            // Convert AST args to data (NOT evaluate — macros receive syntax)
-                            // Bind regular params first (all but the last)
-                            std::size_t regular_count =
-                                is_rest ? md.params.size() - 1 : md.params.size();
-                            // Issue #4759: a private env for the macro parameters. In a
-                            // tail position eval_env IS *macro_env_4759, so emplacing tail_env
-                            // here made the new env its own parent and set! in the
-                            // expansion walked that cycle forever.
-                            std::optional<Env> macro_env_4759;
-                            macro_env_4759.emplace(&eval_env);
-                            macro_env_4759->set_primitives(&primitives_);
-                            // Issue #4775: see LegacyMacroFrame4775.
-                            auto legacy_macro_arg_4775 = [&](aura::ast::NodeId arg) -> EvalValue {
-                                if (!t_legacy_macro_frames_4775.empty()) {
-                                    auto an = f->get(arg);
-                                    if (an.tag == aura::ast::NodeTag::Variable) {
-                                        const auto& fr = t_legacy_macro_frames_4775.back();
-                                        auto nm = std::string(p->resolve(an.sym_id));
-                                        if (fr.env && fr.params &&
-                                            std::ranges::find(*fr.params, nm) != fr.params->end()) {
-                                            auto outer = fr.env->lookup(nm);
-                                            auto here = eval_env.lookup(nm);
-                                            if (outer && here && *outer == *here)
-                                                return *outer;
-                                        }
-                                    }
-                                }
-                                return ast_to_data(*f, *p, arg, /*datum=*/true);
-                            };
-
-
-                            for (std::size_t i = 0; i < regular_count && i + 1 < v.children.size();
-                                 ++i) {
-                                // Issue #4759: macro arguments are syntax data — identifiers
-                                // are symbols, string literals stay strings — so the
-                                // printed expansion re-reads as the same code.
-                                macro_env_4759->bind(md.params[i],
-                                                     legacy_macro_arg_4775(v.child(i + 1)));
-                            }
-
-                            // Rest param: collect remaining args as a list
-                            if (is_rest) {
-                                auto& rest_name = md.params.back();
-                                EvalValue rest_list = make_void();
-                                for (std::size_t i = v.children.size() - 1; i >= regular_count + 1;
-                                     --i) {
-                                    auto item = legacy_macro_arg_4775(v.child(i)); // #4759/#4775
-                                    // Issue #4733: locked size+append (a fiber
-                                    // body may build macro rest spines too).
-                                    const auto pid =
-                                        mint_pair(item, rest_list, /*check_quota=*/false);
-                                    rest_list = make_pair(pid);
-                                }
-                                macro_env_4759->bind(rest_name, std::move(rest_list));
-                            }
-                            // Issue #4759: expand once per call site and run the
-                            // expansion as real code. eval_data_as_code's mini
-                            // interpreter returned symbol atoms unevaluated
-                            // (`(list 'display v)` printed the name, `(my-inc! z)`
-                            // added a symbol) and knows only a few special forms.
-                            // The expansion is printed with datum->string (symbols
-                            // bare, strings quoted) and parsed into this flat. The
-                            // site key carries the printed argument data, so a
-                            // mutated call site re-expands. A template that
-                            // datum->string cannot print (a spliced closure) or
-                            // that does not parse keeps the historical
-                            // eval_data_as_code path (#334 note below).
-                            auto legacy_macro_print_datum_4759 = [&](const EvalValue& d,
-                                                                     std::string& out) {
-                                auto prim = macro_env_4759->lookup_primitive("datum->string");
-                                if (!prim)
-                                    return false;
-                                std::array<EvalValue, 1> pargs{d};
-                                auto r = (*prim)(std::span<const EvalValue>(pargs));
-                                if (!is_string(r))
-                                    return false;
-                                out = std::string(string_at_or(as_string_idx(r)));
-                                return true;
-                            };
-                            // A define in the expansion re-keys top_ onto the
-                            // expansion's pool (#4373); restore the caller's.
-                            auto legacy_macro_run_4759 =
-                                [&](const LegacyMacroSite4759& site) -> EvalResult {
-                                // Issue #4421 / #3688: the expansion is parsed into
-                                // its own flat and evaluated as real code, so a
-                                // shorthand `define` in the template arrives as a
-                                // Define node - not the eval_data_as_code branch
-                                // that refuses. A refused commit window must not
-                                // install that binding either: refuse before the
-                                // expansion runs, with the same TypeError IR and
-                                // eval_flat use.
-                                if (production_eval_flat_commit_readiness_refuse(
-                                        static_cast<CompilerMetrics*>(compiler_metrics_)))
-                                    return eval_flat_commit_readiness_refused();
-                                auto saved_pool = top_env().pool();
-                                auto r = eval_flat(*site.flat, *site.pool, site.root, eval_env);
-                                if (saved_pool && top_env().pool() != saved_pool)
-                                    top_env().set_pool(saved_pool);
-                                return r;
-                            };
-                            std::string site_key_4759;
-                            {
-                                std::string args_text;
-                                bool printable = true;
-                                for (std::size_t i = 0; printable && i < md.params.size(); ++i) {
-                                    auto bound = macro_env_4759->lookup(md.params[i]);
-                                    std::string one;
-                                    printable = bound && legacy_macro_print_datum_4759(*bound, one);
-                                    args_text += one;
-                                    args_text += '\x1f';
-                                }
-                                if (printable)
-                                    site_key_4759 = std::format(
-                                        "{}|{}|{}|{}|{}|{}", static_cast<const void*>(this),
-                                        static_cast<const void*>(f), current_id,
-                                        static_cast<const void*>(md.flat), md.body_id, args_text);
-                            }
-                            if (!site_key_4759.empty()) {
-                                if (auto hit = legacy_macro_site_lookup_4759(site_key_4759))
-                                    return legacy_macro_run_4759(*hit);
-                            }
-                            // Evaluate macro body (quasiquote-expanded template) → produces data
-                            auto template_result = [&] {
-                                LegacyMacroFrameGuard4775 frame_4775(&*macro_env_4759, &md.params);
-                                return eval_flat(*md.flat, md.pool ? *md.pool : *p, md.body_id,
-                                                 *macro_env_4759);
-                            }();
-                            if (!template_result)
-                                return template_result;
-                            TwPinResult pin_template_4759(template_result);
-                            if (!site_key_4759.empty()) {
-                                std::string text;
-                                if (legacy_macro_print_datum_4759(*template_result, text)) {
-                                    auto fu = std::make_unique<aura::ast::FlatAST>();
-                                    auto pu = std::make_unique<aura::ast::StringPool>();
-                                    auto pr = aura::parser::parse_to_flat(text, *fu, *pu);
-                                    if (pr.success && pr.root != aura::ast::NULL_NODE) {
-                                        fu->root = pr.root;
-                                        LegacyMacroSite4759 site;
-                                        site.root = pr.root;
-                                        site.flat =
-                                            std::shared_ptr<aura::ast::FlatAST>(fu.release());
-                                        site.pool =
-                                            std::shared_ptr<aura::ast::StringPool>(pu.release());
-                                        // Over the cap: still fine — `site` holds the
-                                        // flat for this call; closures it makes are
-                                        // kept alive by an intentional leak below.
-                                        if (!legacy_macro_site_store_4759(site_key_4759, site)) {
-                                            static ::aura::core::immortal<
-                                                std::vector<LegacyMacroSite4759>>
-                                                overflow_4759;
-                                            static std::mutex overflow_mtx_4759;
-                                            std::scoped_lock lk(overflow_mtx_4759);
-                                            overflow_4759->push_back(site);
-                                        }
-                                        return legacy_macro_run_4759(site);
-                                    }
-                                }
-                            }
-                            // Issue #334 (deferred): the simpler
-                            // data_to_flat path was tried here and
-                            // reverted — it can't work because the
-                            // first eval_flat (line above) already
-                            // fails when the macro body references
-                            // lambda-local Variables (e.g. `args` of a
-                            // generated `(lambda (args) ...)`) that
-                            // aren't bound in tail_env at expansion
-                            // time. The proper fix for #1/#2
-                            // (define-struct) is the env-binding path
-                            // (issue 334), not a refactor of the
-                            // defmacro expansion here.
-                            return eval_data_as_code(*template_result, eval_env, f, p);
-                        }
-                    }
-                    // Built-in require: (require mod-name) — symbol, not string
-                    // Phase 4: prefix by default. (require std/list) → (import "std/list" "list:")
-                    //          (require std/list all:) → (import "std/list")  (backward compat)
-                    if (callee.tag == aura::ast::NodeTag::Variable) {
-                        auto cname = std::string(p->resolve(callee.sym_id));
-                        if (cname == "require" && v.children.size() > 1) {
-                            // Issue #4575: file mode already denied this require.
-                            // Replay the diagnostic; do not run the gate again.
-                            if (auto pending = take_pending_require_diag())
-                                return std::unexpected(std::move(*pending));
-                            auto surface = [&](Diagnostic d) -> EvalResult {
-                                if (require_failure_is_diagnostic_)
-                                    stash_pre_exec_require_diag(d);
-                                return std::unexpected(std::move(d));
-                            };
-                            // Collect module names and check for all: flag
-                            // (require mod1 mod2 ... all:) — all: applies to ALL modules
-                            std::vector<std::string> mod_names;
-                            bool use_prefix = true;
-                            for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
-                                auto arg_v = f->get(v.child(ci));
-                                if (arg_v.tag == aura::ast::NodeTag::Variable) {
-                                    auto arg_name = std::string(p->resolve(arg_v.sym_id));
-                                    if (arg_name == "all:") {
-                                        use_prefix = false;
-                                    } else {
-                                        mod_names.push_back(arg_name);
-                                    }
-                                } else if (arg_v.tag == aura::ast::NodeTag::LiteralString) {
-                                    mod_names.push_back(std::string(p->resolve(arg_v.sym_id)));
-                                }
-                            }
-
-                            // Load all modules in sequence
-                            if (!arena_)
-                                return make_void();
-                            EvalResult last = make_void();
-                            TwPinResult pin_last(last);
-                            for (auto& mod_path : mod_names) {
-                                // Derive prefix from module name (last path component)
-                                std::string prefix;
-                                if (use_prefix) {
-                                    auto slash = mod_path.rfind('/');
-                                    auto base = (slash == std::string::npos)
-                                                    ? mod_path
-                                                    : mod_path.substr(slash + 1);
-                                    prefix = base + ":";
-                                }
-
-                                // Build (import "path" "prefix:") or (import "path")
-                                std::string import_expr;
-                                if (prefix.empty()) {
-                                    import_expr = std::string("(import \"") + mod_path + "\")";
-                                } else {
-                                    import_expr = std::string("(import \"") + mod_path + "\" \"" +
-                                                  prefix + "\")";
-                                }
-
-                                // Use temp_arena_ so (gc-temp) reclaims the
-                                // parse state for each (require ...) call.
-                                auto alloc = temp_arena_->allocator();
-                                auto* ipool = temp_arena_->create_with_cover<aura::ast::StringPool>(
-                                    nullptr, "require-import-parse-transient", alloc);
-                                auto* iflat = temp_arena_->create_with_cover<aura::ast::FlatAST>(
-                                    nullptr, "require-import-parse-transient", alloc);
-                                // Issue #3180: require-import parse state is transient (lives
-                                // only inside this call; gc-temp reclaims). Declare EXEMPT
-                                // cover so the implicit intermediate bump does not bump
-                                // the uncovered metric under production required.
-                                if (ipool) {
-                                    temp_arena_->note_intermediate_create_with_cover_(
-                                        ipool, nullptr, "require-import-parse-transient");
-                                }
-                                if (iflat) {
-                                    temp_arena_->note_intermediate_create_with_cover_(
-                                        iflat, nullptr, "require-import-parse-transient");
-                                }
-                                // Issue #2363: GeneralObjectPin adopt (site 3/7) — require import.
-                                aura::core::lifetime::GeneralObjectPin ipool_pin;
-                                aura::core::lifetime::GeneralObjectPin iflat_pin;
-                                // Issue #2840: production required-mode fail-closed.
-                                if (!aura::core::lifetime::
-                                        wire_general_object_create_pair_or_required_fail(
-                                            ipool_pin, iflat_pin, static_cast<void*>(ipool),
-                                            static_cast<void*>(iflat))) {
-                                    return surface(
-                                        Diagnostic{ErrorKind::InternalError,
-                                                   "import: GeneralObjectPin required under "
-                                                   "production (#2840)"});
-                                }
-                                auto pr = aura::parser::parse_to_flat(import_expr, *iflat, *ipool);
-                                if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-                                    return surface(Diagnostic{ErrorKind::ParseError,
-                                                              "require: internal error"});
-                                }
-                                iflat->root = pr.root;
-                                // Pre-expand macros so import primitive is recognized
-                                auto expanded_root =
-                                    aura::compiler::macro_expand_all(*iflat, *ipool, iflat->root);
-                                // Issue #4078: do not eval a refused half-expand.
-                                if (aura_hygiene_expand_deny_blocks_eval()) {
-                                    const char* why = aura_macro_hygiene_last_limit_reason_string();
-                                    return surface(
-                                        macro_limit_diag_4876(why, "hygiene-pass-limit"));
-                                }
-                                // Issue #3457: this import is a fresh pool. SymId
-                                // intern is pool-local; clear around the eval so
-                                // the path is not a cached non-string.
-                                struct RequireSymReset {
-                                    Evaluator* ev;
-                                    explicit RequireSymReset(Evaluator* e) noexcept
-                                        : ev(e) {
-                                        ev->clear_sym_intern();
-                                    }
-                                    ~RequireSymReset() noexcept { ev->clear_sym_intern(); }
-                                    RequireSymReset(const RequireSymReset&) = delete;
-                                    RequireSymReset& operator=(const RequireSymReset&) = delete;
-                                    RequireSymReset(RequireSymReset&&) = delete;
-                                    RequireSymReset& operator=(RequireSymReset&&) = delete;
-                                } require_sym_reset(this);
-                                last = eval_flat(*iflat, *ipool, expanded_root, eval_env);
-                                if (!last) {
-                                    // Issue #4460: file mode needs a source
-                                    // location so the oneshot runner resumes.
-                                    Diagnostic d = last.error();
-                                    if (require_failure_is_diagnostic_ && !d.location.valid()) {
-                                        d.location = aura::diag::SourceLocation{
-                                            v.line == 0 ? 1u : v.line, v.col == 0 ? 1u : v.col,
-                                            diag_fid_4916(f)};
-                                        d.node_id = current_id;
-                                    }
-                                    return surface(std::move(d));
-                                }
-                                // Issue #4460: import turns a void load into an
-                                // error value. File mode reports that once, at
-                                // this require. Flag off keeps the value (#2570).
-                                if (require_failure_is_diagnostic_ && is_error(*last) &&
-                                    !is_string(*last)) {
-                                    std::string why;
-                                    const auto eidx = as_error_idx(*last);
-                                    if (eidx < error_values_.size() &&
-                                        is_string(error_values_[eidx])) {
-                                        // Issue #4691: file-mode require copies
-                                        // the cause. Gate before the bytes.
-                                        const auto si = static_cast<std::size_t>(
-                                            as_string_idx(error_values_[eidx]));
-                                        if (!inrange_string_tenant_allows(
-                                                si, /*required_effects=*/0, "file-mode"))
-                                            why = "file-mode: cross-tenant string slot read "
-                                                  "denied (#4505)";
-                                        else
-                                            why = copy_string_heap_at(si);
-                                    }
-                                    if (!last_module_load_failure_.empty() &&
-                                        (why.empty() || why.find(last_module_load_failure_) ==
-                                                            std::string::npos)) {
-                                        why = last_module_load_failure_;
-                                    }
-                                    // Issue #4817: a resolve miss is not a
-                                    // deny. pre_exec_requires runs a require ahead of
-                                    // the forms before it, so a module those forms
-                                    // write (write-file, then require) is not there
-                                    // yet. Stashing the miss made the in-order load
-                                    // replay it (#4575 replay, armed for --load by
-                                    // #4750); unstashed, the require runs again in
-                                    // program order and a real miss still fails there.
-                                    const bool resolve_miss =
-                                        last_module_load_failure_.starts_with("cannot resolve '");
-                                    last_module_load_failure_.clear();
-                                    if (why.empty())
-                                        why = "module load failed";
-                                    std::string msg = "require: " + why;
-                                    if (!mod_path.empty() &&
-                                        msg.find(mod_path) == std::string::npos)
-                                        msg = "require \"" + mod_path + "\": " + why;
-                                    const auto line = v.line == 0 ? 1u : v.line;
-                                    const auto col = v.col == 0 ? 1u : v.col;
-                                    // Issue #4918: a module that cannot be
-                                    // found / loaded is the program's problem,
-                                    // not an interpreter bug.
-                                    Diagnostic d{
-                                        ErrorKind::ModuleError, std::move(msg),
-                                        aura::diag::SourceLocation{line, col, diag_fid_4916(f)},
-                                        current_id};
-                                    if (resolve_miss)
-                                        return std::unexpected(std::move(d));
-                                    return surface(std::move(d));
-                                }
-                            }
-                            return last;
-                        }
-                    }
-                    // try/catch: (try body (catch (var) handler))
-                    // body is evaluated; if it returns an error, handler is evaluated with var
-                    // bound
-                    if (callee.tag == aura::ast::NodeTag::Variable) {
-                        auto cname = std::string(p->resolve(callee.sym_id));
-                        // when: (when cond body...) — evaluate body only if cond is truthy
-                        if (cname == "when" && v.children.size() >= 2) {
-                            auto cond_id = v.child(1);
-                            auto cond_result = eval_flat(*f, *p, cond_id, eval_env);
-                            if (!cond_result)
-                                return cond_result;
-                            // Issue #4619: an error value as the test is not a
-                            // true test — it propagates, the same way an
-                            // IfExpr test does (Issue #4493).
-                            if (is_error(*cond_result))
-                                return cond_result;
-                            // (when cond) and a falsy cond are void. Issue #4454:
-                            // non-tail body forms stay recursive; the last form
-                            // is tail position (same continue as IfExpr).
-                            if (!is_truthy(*cond_result) || v.children.size() < 3)
-                                return types::make_unspecified(); // #4502 step 4
-                            for (std::size_t ci = 2; ci + 1 < v.children.size(); ++ci) {
-                                auto step = eval_flat(*f, *p, v.child(ci), eval_env);
-                                if (!step)
-                                    return step;
-                                // Issue #4619: an error value in a body form
-                                // leaves the body the way begin lets it leave
-                                // (#2570) — it is not a value the body may drop.
-                                if (is_error(*step))
-                                    return step;
-                            }
-                            current_id = v.child(v.children.size() - 1);
-                            continue;
-                        }
-                        // unless: (unless cond body...) — body only if cond is falsy
-                        if (cname == "unless" && v.children.size() >= 2) {
-                            auto cond_id = v.child(1);
-                            auto cond_result = eval_flat(*f, *p, cond_id, eval_env);
-                            if (!cond_result)
-                                return cond_result;
-                            // Issue #4619: an error value as the test is not a
-                            // false test — it propagates, the same way an
-                            // IfExpr test does (Issue #4493).
-                            if (is_error(*cond_result))
-                                return cond_result;
-                            // Issue #4454: tail-call the last body form.
-                            if (is_truthy(*cond_result) || v.children.size() < 3)
-                                return types::make_unspecified(); // #4502 step 4
-                            for (std::size_t ci = 2; ci + 1 < v.children.size(); ++ci) {
-                                auto step = eval_flat(*f, *p, v.child(ci), eval_env);
-                                if (!step)
-                                    return step;
-                                // Issue #4619: an error value in a body form
-                                // leaves the body the way begin lets it leave
-                                // (#2570) — it is not a value the body may drop.
-                                if (is_error(*step))
-                                    return step;
-                            }
-                            current_id = v.child(v.children.size() - 1);
-                            continue;
-                        }
-                        // with-arena: (with-arena (size) body...)
-                        if (cname == "with-arena" && v.children.size() >= 1) {
-                            std::size_t body_start = 1;
-                            if (v.children.size() >= 2) {
-                                auto first_id = v.child(1);
-                                auto first_v = f->get(first_id);
-                                if (first_v.tag == ast::NodeTag::Call &&
-                                    first_v.children.size() >= 1)
-                                    body_start = 2;
-                            }
-                            tl_arena_push(&g_tl_arena);
-                            EvalResult last_result = make_void();
-                            for (std::size_t ci = body_start; ci < v.children.size(); ++ci) {
-                                last_result = eval_flat(*f, *p, v.child(ci), eval_env);
-                                if (!last_result)
-                                    return last_result;
-                            }
-                            // Issue #3771: TLS-arena PairSlot must not escape via
-                            // std::malloc. Intern into Evaluator pairs_ (same heap
-                            // as cons / densify-tracked pair storage) before
-                            // tl_arena_pop. Soft/Off: same path, no second allocator.
-                            if (last_result && is_pair(*last_result)) {
-                                auto idx = as_pair_idx(*last_result);
-                                if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
-                                    auto* slot = g_pair_slots[idx];
-                                    auto arena_end = g_tl_arena.base + g_tl_arena.offset;
-                                    auto ptr = static_cast<std::uint8_t*>(static_cast<void*>(slot));
-                                    if (g_tl_arena.base && ptr >= g_tl_arena.base &&
-                                        ptr < arena_end) {
-                                        // Snapshot car/cdr before pop invalidates slot.
-                                        // Same densify path as cons: pairs_ under
-                                        // alloc_storage_lock_ (no std::malloc / g_pair_slots).
-                                        const auto car_v = types::EvalValue{slot->car};
-                                        const auto cdr_v = types::EvalValue{slot->cdr};
-                                        std::scoped_lock lock(alloc_storage_lock_);
-                                        const auto new_id = pairs_.size();
-                                        pairs_.push_back({car_v, cdr_v});
-                                        *last_result = make_pair(new_id);
-                                    }
-                                }
-                            }
-                            tl_arena_pop(&g_tl_arena);
-                            return last_result;
-                        }
-                        // performance-region: (performance-region body...)
-                        if (cname == "performance-region" && v.children.size() >= 2) {
-                            EvalResult last = make_void();
-                            TwPinResult pin_last(last);
-                            for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
-                                last = eval_flat(*f, *p, v.child(ci), eval_env);
-                                if (!last)
-                                    return last;
-                            }
-                            return last;
-                        }
-                        // evolution-region: (evolution-region body...)
-                        if (cname == "evolution-region" && v.children.size() >= 2) {
-                            EvalResult last = make_void();
-                            TwPinResult pin_last(last);
-                            for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
-                                last = eval_flat(*f, *p, v.child(ci), eval_env);
-                                if (!last)
-                                    return last;
-                            }
-                            return last;
-                        }
-                        // with-capability: (with-capability cap-name body...)
-                        // Bind capabilities as special variables in the environment.
-                        if (cname == "with-capability" && v.children.size() >= 2) {
-                            auto cap_id = v.child(1);
-                            auto cap_result = eval_flat(*f, *p, cap_id, eval_env);
-                            if (!cap_result)
-                                return cap_result;
-                            // Extract capability name(s)
-                            std::vector<std::string> caps;
-                            if (is_string(*cap_result)) {
-                                auto sidx = as_string_idx(*cap_result);
-                                if (sidx < string_heap_.size())
-                                    caps.push_back(string_at(sidx));
-                            } else if (is_pair(*cap_result)) {
-                                auto cidx = as_pair_idx(*cap_result);
-                                while (cidx < pairs_.size()) {
-                                    auto& pr = pairs_[cidx];
-                                    if (is_string(pr.car)) {
-                                        auto sidx2 = as_string_idx(pr.car);
-                                        if (sidx2 < string_heap_.size())
-                                            caps.push_back(string_at(sidx2));
-                                    }
-                                    break;
-                                }
-                            }
-                            // Create child env with %cap:name bindings
-                            tail_env.emplace(&eval_env);
-                            tail_env->set_primitives(&primitives_);
-
-                            for (auto& cap : caps)
-                                tail_env->bind("%cap:" + cap, make_bool(true));
-                            // Push to capability_stack_ for capability-stack readout.
-                            // Issue #4058: lexical scope only — never an
-                            // authorization oracle (has_capability does not
-                            // scan this stack).
-                            capability_stack_.push_back(caps);
-                            // Evaluate body in child env
-                            EvalResult last = make_void();
-                            TwPinResult pin_last(last);
-                            for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
-                                last = eval_flat(*f, *p, v.child(ci), *tail_env);
-                                if (!last) {
-                                    capability_stack_.pop_back();
-                                    return last;
-                                }
-                            }
-                            capability_stack_.pop_back();
-                            return last;
-                        }
-                        // check-capability: (check-capability "Name") — look up %cap:Name binding
-                        if (cname == "check-capability" && v.children.size() >= 2) {
-                            auto arg_result = eval_flat(*f, *p, v.child(1), eval_env);
-                            if (!arg_result)
-                                return arg_result;
-                            std::string cap_name;
-                            if (is_string(*arg_result)) {
-                                auto sidx = as_string_idx(*arg_result);
-                                if (sidx < string_heap_.size())
-                                    cap_name = string_at(sidx);
-                            }
-                            auto val = eval_env.lookup("%cap:" + cap_name);
-                            return val.has_value() ? make_bool(true) : make_bool(false);
-                        }
-
-                        // while: (while cond body ...) — re-evaluate cond, then every
-                        // body form in order (Issue #4466). Repeat.
-                        if (cname == "while" && v.children.size() >= 3) {
-                            // Check if args are Lambda nodes (EDSL while with closures)
-                            // In that case, fall through to primitive dispatch instead
-                            auto c1_node = v.child(1) < f->size() ? f->get(v.child(1)) : v;
-                            auto c2_node = v.child(2) < f->size() ? f->get(v.child(2)) : v;
-                            if (c1_node.tag != aura::ast::NodeTag::Lambda &&
-                                c2_node.tag != aura::ast::NodeTag::Lambda) {
-                                // Issue #2571: education-mode warning — agents copy
-                                // nested-for patterns using (define counter 0) inside
-                                // the while body. Prefer outer (define x 0) + (set! x 0)
-                                // each iteration. (define) rebinds/reassigns the cell
-                                // when already bound, but multi-define + set! previously
-                                // could freeze counters; warn once per process.
-                                {
-                                    static std::atomic<bool> warned_define_in_while{false};
-                                    if (!warned_define_in_while.load(std::memory_order_relaxed)) {
-                                        std::function<bool(aura::ast::NodeId)> has_define =
-                                            [&](aura::ast::NodeId nid) -> bool {
-                                            if (nid == aura::ast::NULL_NODE || nid >= f->size())
-                                                return false;
-                                            auto nv = f->get(nid);
-                                            if (nv.tag == aura::ast::NodeTag::Define)
-                                                return true;
-                                            for (auto c : nv.children)
-                                                if (has_define(c))
-                                                    return true;
-                                            return false;
-                                        };
-                                        // Issue #4466: a define in a later body form
-                                        // still warns. The single-body begin still hits.
-                                        bool found_define = false;
-                                        for (std::size_t bi = 2;
-                                             bi < v.children.size() && !found_define; ++bi)
-                                            found_define = has_define(v.child(bi));
-                                        if (found_define &&
-                                            !warned_define_in_while.exchange(true)) {
-                                            std::println(
-                                                std::cerr,
-                                                "warning: (define …) inside (while …) body "
-                                                "(Issue #2571). Loop counters should usually be "
-                                                "outer-define + (set! name …) each iteration; "
-                                                "inner define is easy to misread as "
-                                                "per-iteration init from other languages.");
-                                        }
-                                    }
-                                }
-                                while (true) {
-                                    // Issue #4568: back-edge budget. Cooled
-                                    // rows leave a TLS flag check.
-                                    feedback::note_loop_edge();
-                                    auto cond_result = eval_flat(*f, *p, v.child(1), eval_env);
-                                    if (!cond_result)
-                                        return cond_result;
-                                    // Issue #4619: an error value as the test is
-                                    // not a truth value — it leaves the loop the
-                                    // way begin lets an error leave (#2570).
-                                    // Treating it as true ran the loop forever.
-                                    if (is_error(*cond_result))
-                                        return cond_result;
-                                    if (!is_truthy(*cond_result))
-                                        break;
-                                    // Issue #4466: implicit begin. An unexpected
-                                    // diagnostic still aborts. Issue #4619: an
-                                    // error value does too — it is not a body
-                                    // result the loop may drop.
-                                    for (std::size_t bi = 2; bi < v.children.size(); ++bi) {
-                                        auto body_result = eval_flat(*f, *p, v.child(bi), eval_env);
-                                        if (!body_result)
-                                            return body_result;
-                                        if (is_error(*body_result))
-                                            return body_result;
-                                    }
-                                }
-                                return make_void();
-                            }
-                        }
-
-                        if (cname == "try" && v.children.size() >= 2) {
-                            auto body_id = v.child(1);
-                            // Issue #4456 vs try-catch contract: mark the body
-                            // so display's arg-error consumption is suspended
-                            // here — the error must reach this try's catch.
-                            ++try_body_depth_ctx();
-                            struct TryBodyScope : ::aura::core::NoCopy {
-                                int& d;
-                                ~TryBodyScope() { --d; }
-                            } try_body_scope{{}, try_body_depth_ctx()};
-                            // Issue #4838: the try body must NOT arm the
-                            // file-diag rewrite. Under a closure/fiber body
-                            // no outer eval has armed a root, so the first
-                            // nested eval used to stringify the raised value
-                            // into "L:C: type error: ..." before this catch
-                            // could bind it. Keep the Error value (symbol /
-                            // hash / message cause) for the handler.
-                            auto result = eval_flat(*f, *p, body_id, eval_env,
-                                                    /*allow_file_diag_arm=*/false);
-                            if (result && !is_error(*result)) {
-                                // Body succeeded — return result as-is
-                                return result;
-                            }
-                            // Body failed: either error value (is_error) or unexpected
-                            // Diagnostic (unbound / arity / …). Issue #2567: bind a
-                            // *first-class* payload so (catch (e) … e …) works.
-                            // RefError values short-circuit as Call args (is_error
-                            // propagation), so bind the cause string / Diagnostic
-                            // message — usable with display, string?, list, cons.
-                            if (v.children.size() < 3)
-                                return result; // no catch — propagate as-is
-                            EvalValue err_val;
-                            if (result && is_error(*result) && !is_string(*result)) {
-                                // Prefer the stored cause (often a string from (error …)).
-                                const auto eidx = as_error_idx(*result);
-                                if (eidx < error_values_.size())
-                                    err_val = error_values_[eidx];
-                                else
-                                    err_val = *result;
-                            } else if (result) {
-                                err_val = *result; // non-error truthy failure edge
-                            } else {
-                                // unexpected Diagnostic → string message (first-class)
-                                auto sidx = push_string_heap(result.error().format());
-                                err_val = make_string(sidx);
-                            }
-                            for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
-                                auto catch_id = v.child(ci);
-                                auto cv = f->get(catch_id);
-                                if (cv.tag == aura::ast::NodeTag::Call) {
-                                    auto catch_fn = f->get(cv.child(0));
-                                    if (catch_fn.tag == aura::ast::NodeTag::Variable &&
-                                        std::string(p->resolve(catch_fn.sym_id)) == "catch") {
-                                        // Issue #4594: (catch EXPR) has no binder. Evaluate
-                                        // EXPR in the enclosing env. (catch (var) handler)
-                                        // and (catch var handler) stay at size >= 3.
-                                        if (cv.children.size() == 2)
-                                            return eval_flat(*f, *p, cv.child(1), eval_env,
-                                                             /*allow_file_diag_arm=*/false);
-                                        // (catch (var) handler) — child[0]=catch, child[1]=(var),
-                                        // child[2]=handler
-                                        // Also accept (catch var handler) bare Variable binding.
-                                        if (cv.children.size() < 3)
-                                            continue;
-                                        auto var_form = f->get(cv.child(1));
-                                        std::string var_name;
-                                        if (var_form.tag == aura::ast::NodeTag::Call &&
-                                            var_form.children.size() >= 1) {
-                                            // (var) form — Call with Variable callee
-                                            auto var_node = f->get(var_form.child(0));
-                                            if (var_node.tag == aura::ast::NodeTag::Variable)
-                                                var_name = std::string(p->resolve(var_node.sym_id));
-                                        } else if (var_form.tag == aura::ast::NodeTag::Variable) {
-                                            // bare var form: (catch e handler)
-                                            var_name = std::string(p->resolve(var_form.sym_id));
-                                        }
-                                        auto handler_id = cv.child(2);
-                                        // Bind error value to var and evaluate handler
-                                        Env catch_env(&eval_env);
-                                        catch_env.set_primitives(&primitives_);
-                                        catch_env.set_owner(this);
-                                        if (p)
-                                            catch_env.set_pool(p);
-                                        // Issue #2567: always bind when we have a name
-                                        // (Diagnostic failures previously skipped bind).
-                                        if (!var_name.empty())
-                                            catch_env.bind(var_name, err_val);
-                                        // Issue #4838: a handler that raises
-                                        // again keeps that value for the
-                                        // joiner (fiber.rethrow-in-handler).
-                                        return eval_flat(*f, *p, handler_id, catch_env,
-                                                         /*allow_file_diag_arm=*/false);
-                                    }
-                                }
-                            }
-                            // No matching catch — propagate original failure
-                            return result;
-                        }
-                    }
-
-                    // and/or: short-circuit evaluation (not eager arg eval)
-                    if (callee.tag == aura::ast::NodeTag::Variable) {
-                        // Issue #4599: set when the per-node cache already
-                        // vouches the callee is not and/or — the resolve and
-                        // the name compares below are skipped.
-                        bool sc_known_not = false;
-                        // Issue #4599: cached short-circuit shape — the hot
-                        // visit skips the pool resolve + std::string entirely.
-                        // The entry carries no env guards (see
-                        // remember_short_circuit); child validity is re-checked
-                        // against the live flat size.
-                        if (aura::serve::g_current_fiber == nullptr &&
-                            callee.sym_id != aura::ast::INVALID_SYM) {
-                            const auto sc_uid = static_cast<std::uint32_t>(current_id);
-                            if (sc_uid < name_res_by_node().size()) {
-                                const auto& sc = name_res_by_node()[sc_uid];
-                                if (sc.kind == NameResEntry::Kind::CallNoPrim &&
-                                    sc.sym == callee.sym_id && sc.top_gen == top_bind_gen_ &&
-                                    sc.cap == eval_env.cap_snapshot().get()) {
-                                    // Issue #4599: the stored not-a-prim
-                                    // decision also vouches "not and/or" —
-                                    // skip this block's pool resolve; the prim
-                                    // prelude below consults the same entry.
-                                    sc_known_not = true;
-                                } else if (sc.kind == NameResEntry::Kind::ShortCircuit &&
-                                           sc.sym == callee.sym_id && sc.nchild >= 1) {
-                                    bool sc_ok = true;
-                                    for (std::uint8_t sci = 0; sci < sc.nchild; ++sci) {
-                                        if (sc.child[sci] >= f->size()) {
-                                            sc_ok = false;
-                                            break;
-                                        }
-                                    }
-                                    if (sc_ok) {
-                                        const bool sc_and = sc.aux != 0;
-                                        // ShortCircuit branch
-                                        for (std::uint8_t sci = 0; sci + 1 < sc.nchild; ++sci) {
-                                            auto ar = eval_flat(*f, *p, sc.child[sci], eval_env);
-                                            if (!ar)
-                                                return ar;
-                                            // Issue #4735: an error value in a
-                                            // non-last clause is not a truth
-                                            // value — it leaves and/or the way a
-                                            // leading error leaves begin (#2570),
-                                            // so try/catch sees it.
-                                            if (is_error(*ar) && !is_string(*ar))
-                                                return ar;
-                                            if (sc_and ? !is_truthy(*ar) : is_truthy(*ar))
-                                                return *ar;
-                                        }
-                                        current_id = sc.child[sc.nchild - 1];
-                                        continue;
-                                    }
-                                }
-                            }
-                        }
-                        // Issue #4599: a cached CallNoPrim decision for
-                        // this node answers the and/or question — no resolve.
-                        if (!sc_known_not) {
-                            auto cname = std::string(p->resolve(callee.sym_id));
-                            if (cname == "and" && v.children.size() >= 2) {
-                                // Issue #4599: record the clause ids so the next
-                                // visit resolves nothing.
-                                if (aura::serve::g_current_fiber == nullptr)
-                                    remember_short_circuit(current_id, callee.sym_id, true,
-                                                           v.children.subspan(1));
-                                // Issue #4454: short-circuit the prefix, tail-call
-                                // the last clause. (and) with no args does not
-                                // enter (children.size() < 2).
-                                for (std::size_t ci = 1; ci + 1 < v.children.size(); ++ci) {
-                                    auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
-                                    if (!ar)
-                                        return ar;
-                                    // Issue #4735: a primitive type error is an
-                                    // error VALUE; truthiness must not swallow
-                                    // it in a non-last clause (the last clause
-                                    // is tail-called and already propagates).
-                                    if (is_error(*ar) && !is_string(*ar))
-                                        return ar;
-                                    if (!is_truthy(*ar))
-                                        return *ar;
-                                }
-                                current_id = v.child(v.children.size() - 1);
-                                continue;
-                            }
-                            if (cname == "or" && v.children.size() >= 2) {
-                                // Issue #4599: same clause caching as `and`.
-                                if (aura::serve::g_current_fiber == nullptr)
-                                    remember_short_circuit(current_id, callee.sym_id, false,
-                                                           v.children.subspan(1));
-                                // Issue #4454: same tail-call for the last clause.
-                                for (std::size_t ci = 1; ci + 1 < v.children.size(); ++ci) {
-                                    auto ar = eval_flat(*f, *p, v.child(ci), eval_env);
-                                    if (!ar)
-                                        return ar;
-                                    // Issue #4735: same error-value face as the
-                                    // and prefix loop — an error is not a
-                                    // short-circuit value.
-                                    if (is_error(*ar) && !is_string(*ar))
-                                        return ar;
-                                    if (is_truthy(*ar))
-                                        return *ar;
-                                }
-                                current_id = v.child(v.children.size() - 1);
-                                continue;
-                            }
-                        }
-                    }
-
-                    // Primitive call (all arg evals are recursive).
-                    // Issue #2873: only take the prim fast-path when the name is
-                    // not shadowed by an env binding. Env::lookup returns a
-                    // PrimitiveRef for bare prim names (fallback) and cells/
-                    // closures for user bindings — so `(let take …)` / named-let
-                    // loop names that collide with list prims (take/drop/map/…)
-                    // must fall through to the closure TCO path, not invoke the
-                    // prim. Multi-frame load-sim patterns used `let take` and
-                    // silently returned empty instead of iterating.
-                    if (callee.tag == aura::ast::NodeTag::Variable) {
-                        // Issue #4599: a body-pool frame binding for this name
-                        // answers Env::lookup before the prim table can
-                        // (shadowing ⇒ prim stays nullopt either way). SymIds
-                        // are pool-local: the frame pool must be the call-site
-                        // pool and the string mirror aligned for the SymId hit
-                        // to agree with the name probe. top_ is excluded — its
-                        // ids are cross-pool. A prim-VALUED local keeps the
-                        // string prelude: the name may be a prim-table name,
-                        // and today's path then invokes the prim with the
-                        // try-face error handling the value-apply fallback
-                        // lacks.
-                        std::optional<types::EvalValue> callee_local;
-                        if (callee.sym_id != aura::ast::INVALID_SYM && eval_env.pool() == p &&
-                            &eval_env != &top_ && eval_env.binding_mirrors_aligned())
-                            callee_local = eval_env.local_symid_last(callee.sym_id);
-                        const bool callee_locally_bound =
-                            callee_local.has_value() && !is_primitive(*callee_local);
-                        std::optional<PrimFn> prim;
-                        std::string cname;
-                        bool known_not_prim = false;
-                        if (!callee_locally_bound) {
-                            // Issue #4599: per-node decision cache (host
-                            // only). A stored CallNoPrim skips the resolve +
-                            // string probes; a stored Prim slot reconstructs
-                            // the prim without them. Guards mirror the other
-                            // entries: sym, top generation, capture snapshot.
-                            if (aura::serve::g_current_fiber == nullptr &&
-                                callee.sym_id != aura::ast::INVALID_SYM &&
-                                eval_env.binding_mirrors_aligned()) {
-                                const auto cc_uid = static_cast<std::uint32_t>(current_id);
-                                if (cc_uid < name_res_by_node().size()) {
-                                    const auto& cc = name_res_by_node()[cc_uid];
-                                    if (cc.sym == callee.sym_id && cc.top_gen == top_bind_gen_ &&
-                                        cc.cap == eval_env.cap_snapshot().get()) {
-                                        if (cc.kind == NameResEntry::Kind::Prim &&
-                                            cc.aux < primitives_.slot_count()) {
-                                            cname = primitives_.name_for_slot(cc.aux);
-                                            prim = primitives_.slot_lookup_fast(cc.aux);
-                                        } else if (cc.kind == NameResEntry::Kind::CallNoPrim) {
-                                            known_not_prim = true;
-                                        }
-                                    }
-                                }
-                            }
-                            if (!prim && !known_not_prim) {
-                                // #223 follow-up: skip primitive lookup when
-                                // cname is empty (e.g. when sym_id was out of
-                                // bounds at the resolve() call). The
-                                // environment lookup below handles missing
-                                // names gracefully via nullopt.
-                                std::optional<types::EvalValue> bound;
-                                cname = std::string(p->resolve(callee.sym_id));
-                                if (!cname.empty()) {
-                                    bound = eval_env.lookup(cname);
-                                    // PrimitiveRef ⇒ unbound prim name (lookup fallback)
-                                    // or explicit prim value — use fast path.
-                                    // Cell / closure / other ⇒ user shadow — skip prim.
-                                    if (!bound || is_primitive(*bound))
-                                        prim = eval_env.lookup_primitive(cname);
-                                }
-                                // Issue #4599: record the not-a-prim decision
-                                // for the next visit. remember_call_no_prim
-                                // refuses prim-table names and top SymId
-                                // collisions.
-                                if (!prim) {
-                                    remember_call_no_prim(current_id, callee.sym_id, eval_env,
-                                                          bound, cname);
-                                }
-                            }
-                        }
-                        if (prim) {
-                            std::vector<EvalValue> args;
-                            TwPinMany pin_args(args);
-                            for (std::size_t i = 1; i < v.children.size(); ++i) {
-                                auto ar = eval_flat(*f, *p, v.child(i), eval_env);
-                                if (!ar)
-                                    return ar;
-                                // Propagate error values through normal eval
-                                // Note: is_string check prevents accidental collision
-                                // where make_string(idx) with odd idx matches is_ref/RefError
-                                // encoding
-                                // Issue #4456: display must print a primitive error
-                                // (float vector-ref index) and return void, so a
-                                // later form in the same begin still runs.
-                                // EXCEPT inside a try body: there the error-valued
-                                // argument must propagate so the catch fires
-                                // ((try (display (car ())) …) in the regression
-                                // net must print the handler's value).
-                                // Issue #4596: error? observes the value, in or
-                                // out of try. Other prims still propagate.
-                                if (is_error(*ar) && !is_string(*ar) && cname != "error?" &&
-                                    (cname != "display" || try_body_depth_ctx() > 0))
-                                    return ar;
-                                args.push_back(*ar);
-                            }
-                            // Issue #441 / #1357: call count + render latency telemetry.
-                            // Fall back to `this` when Env::owner_ is null (e.g. stack
-                            // Envs / module-inject paths that never set_owner). Calling
-                            // through a null owner SIGSEGVs in bump_primitive_call_count
-                            // (si_addr=0x730) — suite/poly_mutation_soundness + suite/gc
-                            // after (require ... all:). Mirrors materialize_call_env /
-                            // IR bridge set_owner pattern.
-                            Evaluator* prim_owner =
-                                eval_env.owner() != nullptr ? eval_env.owner() : this;
-                            // Issue #4599: record the call so the next iteration
-                            // skips get(). remember_prim_call refuses a local
-                            // shadow, so `(let ((+ ...)))` stays off the cache.
-                            const std::size_t slot = primitives_.slot_for_name(cname);
-                            if (cname != "if" && cname != "and" && cname != "or" &&
-                                slot < primitives_.slot_count() && slot <= 0xffffffffu &&
-                                v.children.size() <= 8) {
-                                remember_prim_call(current_id, callee_id, callee.sym_id,
-                                                   static_cast<std::uint32_t>(slot), eval_env,
-                                                   v.children);
-                            }
-                            const bool slot_here =
-                                prim_owner == this && slot < primitives_.slot_count();
-                            // Issue #4524: interpreter float-local fast path.
-                            // At an armed TCO backedge argument position, a
-                            // 2-operand + - * with a float operand computes
-                            // the raw double directly — fixnum-first
-                            // single-branch classification (#2259/#4524 hot
-                            // tests), same seed and operation order as
-                            // arithmetic_sum/sub/mul_pure (bit-exact) — and
-                            // materializes one fresh immutable box at the
-                            // env-boundary rebox. Everything else falls
-                            // through to the generic primitive below:
-                            // both-fixnum results allocate nothing through
-                            // make_int, and overflow / non-number semantics
-                            // stay exactly on the generic path.
-                            if (v.children.size() == 3 && g_float_local_arm.matches(current_id) &&
-                                (cname == "+" || cname == "-" || cname == "*")) {
-                                const EvalValue& x = args[0];
-                                const EvalValue& y = args[1];
-                                const bool xi = is_int(x); // fixnum-first (#4524)
-                                const bool yi = is_int(y);
-                                const bool xf = !xi && is_float(x);
-                                const bool yf = !yi && is_float(y);
-                                if ((xi || xf) && (yi || yf) && (xf || yf)) {
-                                    const double dx =
-                                        xf ? as_float(x) : static_cast<double>(as_int(x));
-                                    const double dy =
-                                        yf ? as_float(y) : static_cast<double>(as_int(y));
-                                    double r = 0.0;
-                                    if (cname[0] == '+') {
-                                        r = 0.0 + dx; // sum_pure seed: (0.0 + x) + y
-                                        r = r + dy;
-                                    } else if (cname[0] == '*') {
-                                        r = 1.0 * dx; // mul_pure seed: (1.0 * x) * y
-                                        r = r * dy;
-                                    } else {
-                                        r = dx - dy; // sub_pure: r = x; r -= y
-                                    }
-                                    if (slot_here)
-                                        return prim_owner->invoke_prim_with_telemetry_at(
-                                            cname, slot, [&]() { return make_float(r); });
-                                    return prim_owner->invoke_prim_with_telemetry(
-                                        cname, [&]() { return make_float(r); });
-                                }
-                            }
-                            // Issue #4690: closure-form while parks the thunk diagnostic.
-                            auto prim_result = [&]() {
-                                if (slot_here)
-                                    return prim_owner->invoke_prim_with_telemetry_at(
-                                        cname, slot, [&]() { return (*prim)(args); });
-                                return prim_owner->invoke_prim_with_telemetry(
-                                    cname, [&]() { return (*prim)(args); });
-                            }();
-                            // Issue #4855: remember the form that produced an
-                            // error value so the located diagnostic points at
-                            // the failing form, not the outermost call. The
-                            // FIRST producer wins (the innermost form).
-                            if (is_error(prim_result) && !is_string(prim_result)) {
-                                const auto line = v.line == 0 ? 1u : v.line;
-                                const auto col = v.col == 0 ? 1u : v.col;
-                                // The cause store is THIS evaluator's
-                                // (primitives_ writes into error_values_), so
-                                // the location table is this one too.
-                                note_error_location(prim_result, aura::diag::SourceLocation{
-                                                                     line, col, diag_fid_4916(f)});
-                            }
-                            return finish_prim_call(cname, prim_result);
-                        }
-                    }
-                    // Closure call (eval func + arg evals are recursive; body is tail)
-                    auto fn = eval_flat(*f, *p, callee_id, eval_env);
-                    if (!fn)
-                        return fn;
-                    TwPinResult pin_fn(fn);
-                    if (is_closure(*fn)) {
-                        auto cid = as_closure_id(*fn);
-                        // Check for foreign function (Issue #4532: the FFI
-                        // namespace bit; see apply_closure).
-                        if (types::is_ffi_closure_id(cid)) {
-                            // Dispatch FFI through apply_closure
-                            // (Issue #252: apply_closure increments
-                            // closure_calls_total + closure_ffi_calls
-                            // for the FFI branch — no double-count
-                            // here because eval_flat's FFI inline path
-                            // delegates the counter bumps to it.)
-                            std::size_t named_count = 0;
-                            std::vector<EvalValue> cargs;
-                            TwPinMany pin_cargs(cargs);
-                            for (std::size_t i = 0; i + 1 < v.children.size(); ++i) {
-                                auto ar = eval_flat(*f, *p, v.child(i + 1), eval_env);
-                                if (!ar)
-                                    return ar;
-                                cargs.push_back(*ar);
-                            }
-                            auto result = apply_closure(cid, cargs);
-                            if (result)
-                                return *result;
-                            // Issue #4690: the foreign call's body raised.
-                            // Do not replace that diagnostic with InvalidClosure.
-                            if (auto diag = take_pending_apply_diagnostic())
-                                return std::unexpected(std::move(*diag));
-                            if (auto msg = take_pending_user_arity()) {
-                                if (callee.tag == aura::ast::NodeTag::Variable)
-                                    prefer_user_arity_call_name(*msg, p->resolve(callee.sym_id));
-                                const auto line = v.line == 0 ? 1u : v.line;
-                                const auto col = v.col == 0 ? 1u : v.col;
-                                return std::unexpected(Diagnostic{
-                                    ErrorKind::ArityMismatch, std::move(*msg),
-                                    aura::diag::SourceLocation{line, col, diag_fid_4916(f)},
-                                    current_id});
-                            }
-                            return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
-                                                              "eval_flat: foreign call failed"});
-                        }
-                        // Issue #3688: TW TCO inlines the body without
-                        // apply_closure — refuse here so persist-reject
-                        // cannot eval_flat a half-green Define.
-                        if (production_eval_flat_commit_readiness_refuse(
-                                static_cast<CompilerMetrics*>(compiler_metrics_)))
-                            return eval_flat_commit_readiness_refused();
-                        // Issue #252: eval_flat's inline TW closure
-                        // call path does NOT go through apply_closure
-                        // (it inlines the body for TCO). Bump the
-                        // total + TW counter here so the snapshot is
-                        // consistent with apply_closure's other
-                        // entry points.
-                        if (compiler_metrics_) {
-                            auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
-                            m->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
-                            m->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
-                        }
-                        TwCallMeta cl;
-                        bool tw_closure = false;
-                        {
-                            std::shared_lock<std::shared_mutex> rlock(
-                                closures_shards_[closures_shard_index(cid)].mu);
-                            auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
-                            if (it != closures_shards_[closures_shard_index(cid)].map.end()) {
-                                // Issue #3021: no bare TCO apply of
-                                // freed/tombstoned slots (scan_skip_freed
-                                // semantics). Stale-but-live still
-                                // inlines; force-drop uses apply_closure.
-                                if (!closure_apply_use_site_ok(it->second)) {
-                                    return std::unexpected(
-                                        Diagnostic{ErrorKind::InvalidClosure,
-                                                   "eval_flat: freed/tombstoned closure"});
-                                }
-                                cl.assign(it->second);
-                                tw_closure = true;
-                            }
-                        }
-                        if (!tw_closure) {
-                            // IR-produced closure (e.g. lambda arg to cached define).
-                            std::vector<EvalValue> cargs;
-                            TwPinMany pin_cargs(cargs);
-                            for (std::size_t i = 1; i < v.children.size(); ++i) {
-                                auto ar = eval_flat(*f, *p, v.child(i), eval_env);
-                                if (!ar)
-                                    return ar;
-                                if (is_error(*ar))
-                                    return ar;
-                                cargs.push_back(*ar);
-                            }
-                            auto bridged = apply_closure(cid, cargs);
-                            if (bridged)
-                                return *bridged;
-                            // Issue #4690: an unbound name inside the bridge
-                            // body is not an invalid closure.
-                            if (auto diag = take_pending_apply_diagnostic())
-                                return std::unexpected(std::move(*diag));
-                            if (auto msg = take_pending_user_arity()) {
-                                // The IR define bridge drops call_closure's
-                                // diagnostic. The parked text says "lambda"
-                                // when the function was lowered unnamed.
-                                if (callee.tag == aura::ast::NodeTag::Variable)
-                                    prefer_user_arity_call_name(*msg, p->resolve(callee.sym_id));
-                                const auto line = v.line == 0 ? 1u : v.line;
-                                const auto col = v.col == 0 ? 1u : v.col;
-                                return std::unexpected(Diagnostic{
-                                    ErrorKind::ArityMismatch, std::move(*msg),
-                                    aura::diag::SourceLocation{line, col, diag_fid_4916(f)},
-                                    current_id});
-                            }
-                            return std::unexpected(Diagnostic{ErrorKind::InvalidClosure,
-                                                              "eval_flat: invalid closure"});
-                        }
-                        // Evaluate ALL args before overwriting tail_env.
-                        // Issue #3915: dotted rest used to eval after
-                        // materialize_call_env, which destroys the TCO
-                        // caller Env `eval_env` aliases (round-once's
-                        // `body` became unbound at agent:closed-loop-once).
-                        std::size_t named_count = cl.dotted && !cl.params.empty()
-                                                      ? cl.params.size() - 1
-                                                      : cl.params.size();
-                        // Issue #4467: every argument is evaluated first.
-                        // A fixed-arity call with the wrong count is an error
-                        // at this call, before the body runs.
-                        // Issue #4599 follow-up: stack buffers for small calls.
-                        TwSmallArgs provided;
-                        if (v.children.size() > 1)
-                            provided.reserve(v.children.size() - 1);
-                        for (std::size_t i = 1; i < v.children.size(); ++i) {
-                            // Issue #4524: arm float-local for each named
-                            // parameter position — the argument node about
-                            // to be bound to a loop accumulator slot.
-                            FloatLocalArmGuard fl_arm{i - 1 < named_count ? v.child(i)
-                                                                          : aura::ast::NULL_NODE};
-                            auto ar = eval_flat(*f, *p, v.child(i), eval_env);
-                            if (!ar)
-                                return ar;
-                            if (is_error(*ar))
-                                return ar;
-                            provided.push_back(std::move(*ar));
-                        }
-                        if (user_arity_mismatch(cl.params.size(), cl.dotted, provided.size())) {
-                            std::string arity_name = cl.name;
-                            if (arity_name.empty() && callee.tag == aura::ast::NodeTag::Variable)
-                                arity_name = std::string(p->resolve(callee.sym_id));
-                            const auto line = v.line == 0 ? 1u : v.line;
-                            const auto col = v.col == 0 ? 1u : v.col;
-                            return std::unexpected(
-                                Diagnostic{ErrorKind::ArityMismatch,
-                                           user_arity_message(arity_name, cl.params.size(),
-                                                              cl.dotted, provided.size()),
-                                           aura::diag::SourceLocation{line, col, diag_fid_4916(f)},
-                                           current_id});
-                        }
-                        // Issue #4682 (6b): opt-in native tier (exact; the
-                        // hook returns nullopt unless the native body ran
-                        // to a fixnum/bool result under its guards).
-                        if (tw_tier_hook_4682_ && !cl.dotted && !cl.must_deopt_before_next_call &&
-                            !cl.name.empty()) {
-                            if (auto tr = tw_tier_hook_4682_(
-                                    tw_tier_ctx_4682_, *fn, cl.name, cl.flat, cl.body_id,
-                                    cl.lifetime_version,
-                                    std::span<const EvalValue>(provided.data(), provided.size())))
-                                return *tr;
-                        }
-                        // Issue #4599 follow-up: a non-dotted call uses the
-                        // evaluated argument buffer directly — the second
-                        // TwSmallArgs + pin pair was a pure copy.
-                        TwSmallArgs cargs_buf;
-                        std::span<EvalValue> cargs;
-                        if (!cl.dotted) {
-                            cargs = std::span<EvalValue>(provided.data(), named_count);
-                        }
-                        TwSmallArgs rest_args;
-                        if (cl.dotted) {
-                            cargs_buf.reserve(named_count);
-                            for (std::size_t i = 0; i < named_count && i < provided.size(); ++i)
-                                cargs_buf.push_back(std::move(provided[i]));
-                            cargs = std::span<EvalValue>(cargs_buf.data(), cargs_buf.size());
-                            if (!cl.params.empty()) {
-                                for (std::size_t i = named_count; i < provided.size(); ++i)
-                                    rest_args.push_back(std::move(provided[i]));
-                            }
-                        }
-                        // Issue #4568: note the caller target, then the
-                        // callee lattice, before bind_symid moves cargs.
-                        // TLS holds the row across the TCO continue.
-                        {
-                            const auto nnote = std::min(
-                                cargs.size(), static_cast<std::size_t>(feedback::kMaxUserArgs));
-                            feedback_enter_call(cid, cl.name, cargs.data(),
-                                                static_cast<std::uint32_t>(nnote));
-                        }
-                        // Issue #4599: self-TCO reuses the frame. Pointers are
-                        // compared before any overwrite. A moved frame (pin)
-                        // cleared the stamp, so a dangling pointer is not read.
-                        bool reused = false;
-                        if (tco.live && !cl.dotted && tail_env.has_value() &&
-                            current_env == &*tail_env && current_env == tco.env && tco.cid == cid &&
-                            cargs.size() == tco.n && tco.n == named_count && tco.n <= 8 &&
-                            cl.bridge_epoch == tco.bridge &&
-                            defuse_version_.load(std::memory_order_acquire) == tco.defuse &&
-                            env_generation_ == tco.env_gen && named_count <= cl.params.size()) {
-                            bool syms_ok = true;
-                            for (std::uint32_t i = 0; i < tco.n; ++i) {
-                                if (cl.params[i] != tco.syms[i]) {
-                                    syms_ok = false;
-                                    break;
-                                }
-                            }
-                            if (syms_ok) {
-                                reused = tail_env->overwrite_param_slots(
-                                    std::span<const aura::ast::SymId>(tco.syms, tco.n),
-                                    std::span<const types::EvalValue>(cargs.data(), cargs.size()));
-                            }
-                        }
-                        if (!reused) {
-                            // Drop the stamp before materialize re-enters eval.
-                            tco.live = false;
-                            tail_env = materialize_call_env(cl.to_closure());
-                            tail_env->set_primitives(&primitives_);
-
-                            // Issue #145: set the pool so bind_symid can mirror
-                            if (cl.pool)
-                                tail_env->set_pool(cl.pool);
-                            for (std::size_t i = 0; i < cargs.size(); ++i) {
-                                tail_env->bind_symid(cl.params[i], std::move(cargs[i]));
-                            }
-                            if (cl.dotted && !cl.params.empty()) {
-                                // Issue #4733: the hot dotted-call spine used
-                                // a raw unlocked push_back; two bodies could
-                                // land on the same index (wrong rest list) or
-                                // race the vector growth. mint_pair locks the
-                                // size+append.
-                                types::EvalValue rest = make_void();
-                                for (std::size_t i = rest_args.size(); i > 0; --i) {
-                                    const auto pid =
-                                        mint_pair(rest_args[i - 1], rest, /*check_quota=*/false);
-                                    rest = make_pair(pid);
-                                }
-                                tail_env->bind_symid(cl.params.back(), rest);
-                            }
-                            bool can_stamp = !cl.dotted && named_count <= 8 &&
-                                             cargs.size() == named_count &&
-                                             tail_env->bindings_symid().size() == named_count &&
-                                             named_count <= cl.params.size();
-                            if (can_stamp) {
-                                const auto bs = tail_env->bindings_symid();
-                                const auto lin = tail_env->bindings_linear_ownership_state();
-                                for (std::size_t i = 0; i < named_count; ++i) {
-                                    if (bs[i].first != cl.params[i] ||
-                                        (i < lin.size() && lin[i] != linear_rt::Untracked)) {
-                                        can_stamp = false;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (can_stamp) {
-                                tco.live = true;
-                                tco.cid = cid;
-                                tco.env = &*tail_env;
-                                tco.n = static_cast<std::uint32_t>(named_count);
-                                tco.bridge = cl.bridge_epoch;
-                                tco.defuse = defuse_version_.load(std::memory_order_acquire);
-                                tco.env_gen = env_generation_;
-                                for (std::size_t i = 0; i < named_count; ++i)
-                                    tco.syms[i] = cl.params[i];
-                            }
-                        }
-                        // Issue #2871: true TCO for TW closure calls.
-                        // Previously `return eval_flat(body)` grew C stack per
-                        // hop; named-let (letrec→lambda) never hit IR TCOPass
-                        // and failed at MAX_C_STACK_DEPTH (~700). Self-rec
-                        // define paths often lower to IR (PendingCall) and
-                        // appeared TCO-safe while named-let did not.
-                        if (cl.body_id != aura::ast::NULL_NODE && cl.flat) {
-                            f = cl.flat;
-                            if (cl.pool)
-                                p = cl.pool;
-                            current_env = &*tail_env;
-                            current_id = cl.body_id;
-                            continue;
-                        }
-                        return make_void();
-                    }
-                    // Functor instantiation: callee is a %functor marker
-                    if (is_string(*fn) && as_string_idx(*fn) < string_heap_.size() &&
-                        string_at(as_string_idx(*fn)) == "%functor") {
-                        auto callee_v = f->get(v.child(0));
-                        if (callee_v.tag == aura::ast::NodeTag::Variable) {
-                            auto tpl_name = std::string(p->resolve(callee_v.sym_id));
-                            auto tpl_it = module_templates_.find(tpl_name);
-                            if (tpl_it != module_templates_.end()) {
-                                // 构建缓存 key: "template|arg1|arg2|..."
-                                std::string cache_key = tpl_name;
-                                for (std::size_t ki = 1; ki < v.children.size(); ++ki) {
-                                    auto kv = f->get(v.child(ki));
-                                    cache_key += "|";
-                                    if (kv.tag == aura::ast::NodeTag::Variable)
-                                        cache_key += std::string(p->resolve(kv.sym_id));
-                                    else
-                                        cache_key += "#" + std::to_string(v.child(ki));
-                                }
-                                auto cache_it = functor_instance_cache_.find(cache_key);
-                                if (cache_it != functor_instance_cache_.end()) {
-                                    return types::make_module(cache_it->second);
-                                }
-
-                                // 使用 ModuleTemplate 中缓存的参数名（避免跨 FlatAST 扫描）
-                                auto& param_names = tpl_it->second.type_param_names;
-
-                                // 创建隔离环境
-                                Env mod_env(&eval_env);
-                                mod_env.set_primitives(&primitives_);
-
-
-                                // 绑定类型参数到环境（按原始参数名）
-                                for (std::size_t ai = 1; ai < v.children.size(); ++ai) {
-                                    auto arg_v = f->get(v.child(ai));
-                                    std::string pname = (ai - 1 < param_names.size())
-                                                            ? param_names[ai - 1]
-                                                            : (":T" + std::to_string(ai - 1));
-                                    if (arg_v.tag == aura::ast::NodeTag::Variable) {
-                                        // 类型参数：存为字符串（类型名）
-                                        auto type_name = std::string(p->resolve(arg_v.sym_id));
-                                        auto sidx = push_string_heap(type_name);
-                                        mod_env.bind(pname, make_string(sidx));
-                                    } else {
-                                        // 值参数：正常 eval
-                                        auto ar = eval_flat(*f, *p, v.child(ai), eval_env);
-                                        if (!ar)
-                                            return ar;
-                                        mod_env.bind(pname, *ar);
-                                    }
-                                }
-
-                                // Capability requirement check
-                                if (!tpl_it->second.cap_require.empty()) {
-                                    // Find the capability argument
-                                    // Capability params are stored at the end of param_names
-                                    std::string provided_caps_str;
-                                    for (std::size_t ai = 1; ai < v.children.size(); ++ai) {
-                                        auto arg_v = f->get(v.child(ai));
-                                        std::string pname = (ai - 1 < param_names.size())
-                                                                ? param_names[ai - 1]
-                                                                : "";
-                                        // Check if this param is a cap param
-                                        bool is_cap_param = false;
-                                        for (auto& cp : tpl_it->second.cap_param_names) {
-                                            if (cp == pname) {
-                                                is_cap_param = true;
-                                                break;
-                                            }
-                                        }
-                                        if (is_cap_param) {
-                                            if (arg_v.tag == aura::ast::NodeTag::Variable) {
-                                                provided_caps_str =
-                                                    std::string(p->resolve(arg_v.sym_id));
-                                            } else if (arg_v.tag ==
-                                                       aura::ast::NodeTag::LiteralString) {
-                                                provided_caps_str = "";
-                                            }
-                                        }
-                                    }
-                                    // Check if provided caps satisfy requirements
-                                    // Simple string matching: "FileReadWrite" contains "FileRead"
-                                    // and "FileWrite"
-                                    std::vector<std::string> missing;
-                                    for (auto& req : tpl_it->second.cap_require) {
-                                        bool found = false;
-                                        if (provided_caps_str.find(req) != std::string::npos)
-                                            found = true;
-                                        // Also check for "*" wildcard
-                                        if (provided_caps_str == "*")
-                                            found = true;
-                                        if (!found) [[unlikely]]
-                                            missing.push_back(req);
-                                    }
-                                    if (!missing.empty()) {
-                                        std::string err =
-                                            "functor " + tpl_name + ": missing capabilities: ";
-                                        for (std::size_t mi = 0; mi < missing.size(); ++mi) {
-                                            if (mi > 0)
-                                                err += ", ";
-                                            err += missing[mi];
-                                        }
-                                        auto es = push_string_heap(err);
-                                        auto ev = primitives_detail::push_error_cause(
-                                            error_values_, make_string(es));
-                                        return make_error(ev);
-                                    }
-                                }
-
-                                // Eval body by re-parsing the serialized source
-                                EvalResult last = make_void();
-                                TwPinResult pin_last(last);
-                                auto& body_src = tpl_it->second.body_source;
-                                if (!body_src.empty()) {
-                                    // Parse body as a begin block so all expressions become
-                                    // children
-                                    std::string wrapped = "(begin " + body_src + ")";
-                                    aura::ast::ASTArena body_arena;
-                                    auto body_alloc = body_arena.allocator();
-                                    aura::ast::StringPool body_pool(body_alloc);
-                                    aura::ast::FlatAST body_flat(body_alloc);
-                                    auto body_pr =
-                                        aura::parser::parse_to_flat(wrapped, body_flat, body_pool);
-                                    if (body_pr.success && body_pr.root != aura::ast::NULL_NODE) {
-                                        body_flat.root = body_pr.root;
-                                        auto body_v = body_flat.get(body_flat.root);
-                                        if (body_v.tag == aura::ast::NodeTag::Begin) {
-                                            for (auto nid : body_v.children) {
-                                                auto br =
-                                                    eval_flat(body_flat, body_pool, nid, mod_env);
-                                                if (!br)
-                                                    return br;
-                                                last = *br;
-                                            }
-                                        } else {
-                                            auto br = eval_flat(body_flat, body_pool,
-                                                                body_flat.root, mod_env);
-                                            if (!br)
-                                                return br;
-                                            last = *br;
-                                        }
-                                    }
-                                }
-                                // 实例化后生成 .aura-type 签名
-                                // Extract export names from the body source
-                                std::vector<std::string> export_names;
-                                {
-                                    std::string scan_wrapped = "(begin " + body_src + ")";
-                                    aura::ast::ASTArena scan_arena;
-                                    auto scan_alloc = scan_arena.allocator();
-                                    aura::ast::StringPool scan_pool(scan_alloc);
-                                    aura::ast::FlatAST scan_flat(scan_alloc);
-                                    auto scan_pr = aura::parser::parse_to_flat(
-                                        scan_wrapped, scan_flat, scan_pool);
-                                    if (scan_pr.success && scan_pr.root != aura::ast::NULL_NODE) {
-                                        scan_flat.root = scan_pr.root;
-                                        auto scan_v = scan_flat.get(scan_flat.root);
-                                        auto scan_children =
-                                            (scan_v.tag == aura::ast::NodeTag::Begin)
-                                                ? scan_v.children
-                                                : std::span<const aura::ast::NodeId>(
-                                                      &scan_flat.root, 1);
-                                        for (auto nid : scan_children) {
-                                            auto nv = scan_flat.get(nid);
-                                            if (nv.tag == aura::ast::NodeTag::Export) {
-                                                for (auto eid : nv.children) {
-                                                    auto ev = scan_flat.get(eid);
-                                                    if (ev.tag == aura::ast::NodeTag::Variable)
-                                                        export_names.push_back(std::string(
-                                                            scan_pool.resolve(ev.sym_id)));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                if (!export_names.empty()) {
-                                    // 对实例化后的 body 做类型推断，生成实际签名
-                                    // Parse body source, type-check via TypeChecker, register
-                                    // signatures
-                                    aura::core::TypeRegistry tc_reg;
-                                    aura::compiler::TypeChecker functor_tc(tc_reg);
-                                    aura::diag::DiagnosticCollector tc_diag;
-
-                                    std::string tc_wrapped = "(begin " + body_src + ")";
-                                    aura::ast::ASTArena tc_arena;
-                                    auto tc_alloc = tc_arena.allocator();
-                                    aura::ast::StringPool tc_pool(tc_alloc);
-                                    aura::ast::FlatAST tc_flat(tc_alloc);
-                                    auto tc_pr =
-                                        aura::parser::parse_to_flat(tc_wrapped, tc_flat, tc_pool);
-                                    aura::ast::NodeId tc_root = tc_pr.root;
-                                    if (tc_pr.success && tc_root != aura::ast::NULL_NODE) {
-                                        tc_flat.root = tc_root;
-                                        // Type-check the whole body to populate func types
-                                        functor_tc.infer_flat(tc_flat, tc_pool, tc_root, tc_diag);
-
-                                        // Scan body for export functions and extract their types
-                                        for (auto& en : export_names) {
-                                            std::string sig_key = cache_key + "/" + en;
-                                            if (declared_type_sigs_.find(sig_key) !=
-                                                declared_type_sigs_.end())
-                                                continue;
-
-                                            // Find the Define node for this export
-                                            bool found = false;
-                                            std::string type_str = "Any|Any";
-                                            for (aura::ast::NodeId nid = 0; nid < tc_flat.size();
-                                                 ++nid) {
-                                                auto nv = tc_flat.get(nid);
-                                                if (nv.tag == aura::ast::NodeTag::Define &&
-                                                    nv.sym_id != aura::ast::INVALID_SYM &&
-                                                    std::string(tc_pool.resolve(nv.sym_id)) == en &&
-                                                    !nv.children.empty()) {
-                                                    // Re-infer the value expression to get its type
-                                                    auto val_type = functor_tc.infer_flat(
-                                                        tc_flat, tc_pool, nv.child(0), tc_diag);
-                                                    if (val_type.valid() && val_type.index > 0) {
-                                                        // Format as type signature
-                                                        auto fmt = tc_reg.format_type(val_type);
-                                                        if (!fmt.empty()) {
-                                                            // Convert from '->' to '|' format for
-                                                            // declared_type_sigs_
-                                                            auto pipe_pos = fmt.find(" -> ");
-                                                            if (pipe_pos != std::string::npos) {
-                                                                auto params =
-                                                                    fmt.substr(0, pipe_pos);
-                                                                auto ret = fmt.substr(pipe_pos + 4);
-                                                                type_str = params + "|" + ret;
-                                                            } else {
-                                                                type_str = "|" + fmt;
-                                                            }
-                                                        }
-                                                    }
-                                                    found = true;
-                                                    break;
-                                                }
-                                            }
-
-                                            declared_type_sigs_[sig_key] = {
-                                                .type_str = type_str,
-                                                .module_file = "%functor:" + tpl_name,
-                                                .resolved = found};
-                                        }
-                                    } else {
-                                        // Fallback: Any|Any (shouldn't happen since body was parsed
-                                        // earlier)
-                                        for (auto& en : export_names) {
-                                            std::string sig_key = cache_key + "/" + en;
-                                            if (declared_type_sigs_.find(sig_key) ==
-                                                declared_type_sigs_.end()) {
-                                                declared_type_sigs_[sig_key] = {
-                                                    .type_str = "Any|Any",
-                                                    .module_file = "%functor:" + tpl_name,
-                                                    .resolved = false};
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // 缓存实例化结果 — per-instance arena so the
-                                // Env and any closures it owns can be freed later
-                                // via gc_module(cache_key).
-                                auto& inst_arena = arena_group_->module_arena(cache_key);
-                                // Issue #3443: cached Env* survives Phase-5 Moving —
-                                // lasting void** slot in modules_, not EXEMPT
-                                // (EXEMPT is only legal when would_move==false).
-                                if (aura::ast::moving_compact_feature_enabled()) {
-                                    // Issue #4386: deque element, not &modules_.back().
-                                    // Do not hold module_mtx_ across create_with_cover,
-                                    // and do not hold the deque lock across module_mtx_.
-                                    void** env_slot = nullptr;
-                                    {
-                                        std::scoped_lock<std::mutex> cover_lock(
-                                            module_create_cover_mu_);
-                                        module_create_covers_.push_back(nullptr);
-                                        env_slot = &module_create_covers_.back();
-                                    }
-                                    auto* cached_env = inst_arena.create_with_cover<Env>(
-                                        env_slot, nullptr, mod_env);
-                                    if (cached_env) {
-                                        inst_arena.note_intermediate_create_with_cover_(
-                                            cached_env, env_slot, nullptr);
-                                    }
-                                    void* created = nullptr;
-                                    {
-                                        std::scoped_lock<std::mutex> cover_lock(
-                                            module_create_cover_mu_);
-                                        created = env_slot ? *env_slot : nullptr;
-                                    }
-                                    std::size_t mod_idx = 0;
-                                    {
-                                        std::unique_lock<std::shared_mutex> mod_lock(module_mtx_);
-                                        std::scoped_lock<std::mutex> rewrite_lock(
-                                            densify_rewrite_mu_);
-                                        created = densify_rewrite_lookup_locked_(created);
-                                        mod_idx = modules_.size();
-                                        modules_.push_back(static_cast<Env*>(created));
-                                        module_cache_[cache_key] = mod_idx;
-                                        module_arena_ptrs_[cache_key] = &inst_arena;
-                                        module_names_.push_back(cache_key);
-                                        functor_instance_cache_[cache_key] = mod_idx;
-                                    }
-                                    {
-                                        std::scoped_lock<std::mutex> cover_lock(
-                                            module_create_cover_mu_);
-                                        if (env_slot)
-                                            *env_slot = created;
-                                    }
-                                    return types::make_module(mod_idx);
-                                }
-                                auto mod_idx = modules_.size();
-                                modules_.push_back(nullptr);
-                                void** env_slot = aura::core::moving_pointer_slot(modules_.back());
-                                auto* cached_env =
-                                    inst_arena.create_with_cover<Env>(env_slot, nullptr, mod_env);
-                                if (cached_env) {
-                                    inst_arena.note_intermediate_create_with_cover_(
-                                        cached_env, env_slot, nullptr);
-                                }
-                                module_cache_[cache_key] = mod_idx;
-                                module_arena_ptrs_[cache_key] = &inst_arena;
-                                module_names_.push_back(cache_key);
-                                functor_instance_cache_[cache_key] = mod_idx;
-                                return types::make_module(mod_idx);
-                            }
-                        }
-                        return make_void();
-                    }
-
-                    // Primitive value call: callee is a PrimitiveRef (passed as value, not a
-                    // Variable node)
-                    if (is_primitive(*fn)) {
-                        auto slot = as_primitive_slot(*fn);
-                        if (slot < primitives_.slot_count()) {
-                            auto prim = eval_env.lookup_primitive(primitives_.name_for_slot(slot));
-                            // Issue #4232: the env-level primitive table is caller-wired
-                            // after materialize_call_env (#145 Phase 2.3 contract —
-                            // "primitives_/cells_/pool_ are NOT set here ... the caller
-                            // wires them"). Helper eval envs built without that wiring
-                            // (serve-async Soft worldline select, soft_worldline_pick) made
-                            // this lookup return nullopt and the call degrade to
-                            // "cannot call: car / did you forget to define 'car'?" even
-                            // though the Variable fallback above had just resolved the
-                            // name from THIS full registry (slot_for_name). Fall back to
-                            // the same registry slot the prim value was manufactured
-                            // from: bare prim names stay callable in any eval env
-                            // regardless of env-table wiring. User shadowing is
-                            // unaffected — this handler only runs on a prim VALUE, and
-                            // the #2873 fast path still prefers env bindings ahead of it.
-                            if (!prim)
-                                prim = primitives_.slot_lookup_fast(slot);
-                            if (prim) {
-                                std::vector<EvalValue> args;
-                                TwPinMany pin_args(args);
-                                for (std::size_t i = 1; i < v.children.size(); ++i) {
-                                    auto ar = eval_flat(*f, *p, v.child(i), eval_env);
-                                    if (!ar)
-                                        return ar;
-                                    args.push_back(*ar);
-                                }
-                                // Issue #441 / #1357: call count + render latency.
-                                // Null-owner fallback — see Variable primitive path above.
-                                Evaluator* prim_owner =
-                                    eval_env.owner() != nullptr ? eval_env.owner() : this;
-                                const auto& pname = primitives_.name_for_slot(slot);
-                                // Issue #4690: a primitive value `while`.
-                                return finish_prim_call(
-                                    pname, prim_owner->invoke_prim_with_telemetry(
-                                               pname, [&]() { return (*prim)(args); }));
-                            }
-                        }
-                    }
-                    auto callee_name = std::string(p->resolve(callee.sym_id));
-                    // Issue #4478: a non-Variable callee (literal / computed
-                    // value) has no symbol to resolve — describe the evaluated
-                    // value so the diagnostic is not "cannot call: ".
-                    if (callee.tag != aura::ast::NodeTag::Variable) {
-                        if (is_int(*fn))
-                            callee_name = std::to_string(as_int(*fn));
-                        else if (is_float(*fn))
-                            callee_name = std::to_string(as_float(*fn));
-                        else if (is_string(*fn))
-                            callee_name = "\"" + string_at(as_string_idx(*fn)) + "\"";
-                        else
-                            callee_name = "value";
-                    }
-                    // Build diagnostic with appropriate suggestion (no self-move)
-                    std::string suggestion;
-                    if (callee_name.size() > 3 &&
-                        callee_name.substr(callee_name.size() - 3) == "-fn")
-                        suggestion = "if using c-func: (c-func -1 \"" +
-                                     callee_name.substr(0, callee_name.size() - 3) +
-                                     "\" \"(String) -> Int\")";
-                    else if (callee.tag == aura::ast::NodeTag::Variable)
-                        suggestion = "did you forget to define '" + callee_name + "'?";
-                    return std::unexpected(
-                        // Issue #4478: the type error must carry the call
-                        // site. An unlocated "cannot call" made the oneshot
-                        // file runner fall back to a full re-run of every
-                        // earlier top-level form (side effects ran twice).
-                        Diagnostic{ErrorKind::TypeError, "cannot call: " + callee_name,
-                                   aura::diag::SourceLocation{v.line == 0 ? 1u : v.line,
-                                                              v.col == 0 ? 1u : v.col,
-                                                              diag_fid_4916(f)},
-                                   current_id}
-                            .with_suggestion(std::move(suggestion)));
                 }
                 case aura::ast::NodeTag::IfExpr: {
-                    if (v.children.size() < 2)
-                        return EvalResult(make_void());
-                    auto c = eval_flat(*f, *p, v.child(0), eval_env);
-                    if (!c)
-                        return c;
-                    // Issue #4493: an error value as the test (e.g. (< i #f))
-                    // propagates — it is not a true test.
-                    if (is_error(*c))
-                        return c;
-                    if (v.children.size() == 2 ||
-                        (v.children.size() >= 3 && v.child(2) == aura::ast::NULL_NODE)) {
-                        // (if cond then) — conditionally execute then-branch
-                        if (is_truthy(*c)) {
-                            current_id = v.child(1);
-                            continue;
-                        }
-                        // Condition false, no else: the unspecified value
-                        // (#4502 step 4), not '(). Same answer as the IR path.
-                        return types::make_unspecified();
-                    }
-                    current_id = is_truthy(*c) ? v.child(1) : v.child(2);
-                    continue; // TCO: branch
+                    auto step = eval_flat_on_if(cursor, v, eval_env);
+                    if (step.kind == FlatStep::Kind::Cont)
+                        continue;
+                    if (step.kind == FlatStep::Kind::Ret)
+                        return std::move(*step.value);
+                    break;
                 }
                 case aura::ast::NodeTag::Lambda: {
-                    // Capture params from FlatAST directly. Issue #145:
-                    // store as SymId (SoA) — the apply_closure path now
-                    // does integer-compare parameter binding instead of
-                    // string-compare.
-                    auto pspan = v.params;
-                    std::vector<aura::ast::SymId> params;
-                    params.reserve(pspan.size());
-                    for (auto pid : pspan)
-                        params.push_back(pid);
-                    bool dotted = v.int_value != 0;
-                    auto* target = (temp_arena_ && in_task_context_) ? temp_arena_ : arena_;
-                    auto cid = next_id();
-                    auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-                    // P0: legacy env pointer removed. Register captured env in SoA for this
-                    // closure.
-                    // Issue #4350 / #4474: a closure created directly in top_
-                    // captures an EMPTY frame parented at top_'s root frame
-                    // instead of a copy of every top-level binding. Free
-                    // variables resolve through the live top_ consult at the
-                    // root of the SoA walk (Env::lookup / lookup_cell_*), which
-                    // already held the same cells. Copying made K top-level
-                    // procedure defines cost K^2 frame bindings: every lookup
-                    // miss (each primitive call) scanned the copy, and the
-                    // file-mode reclaim mark walked all K copies per window.
-                    // Linear-tracked top_ bindings (#1539) keep the exact copy.
-                    auto top_capture_is_live_safe = [&]() -> bool {
-                        if (current_env != &top_ || top_.cap_snapshot())
-                            return false;
-                        // Issue #4679: O(bindings) per Lambda made W top-level
-                        // defines O(W^2) per eval-current. With no linear state
-                        // ever written every binding is Untracked (#4683 flag).
-                        if (!linear_rt::state_ever_written())
-                            return true;
-                        for (auto st : top_.bindings_linear_ownership_state())
-                            if (st != linear_rt::Untracked)
-                                return false;
-                        return true;
-                    };
-                    EnvId cap_id = NULL_ENV_ID;
-                    if (top_capture_is_live_safe()) {
-                        const EnvId root = top_.parent_id();
-                        cap_id = alloc_env_frame(root);
-                        if (cap_id != NULL_ENV_ID) {
-                            std::unique_lock<std::shared_mutex> fwlock(
-                                env_frame_shards_[env_frame_shard_index(cap_id)].mu);
-                            EnvFrame& cfr = env_frames_[cap_id];
-                            cfr.pool_ = top_.pool();
-                            cfr.set_owner(this);
-                            cfr.version_ = defuse_version_.load(std::memory_order_acquire);
-                            // Issue #4373: mark the frame so a consumer that
-                            // unbinds names from top_ (the (eval …)
-                            // primitive's RestoreTopPool dropping let-nested
-                            // internal defines) can rehome closures created
-                            // in its window to a real copy first — the empty
-                            // capture resolves those names through the LIVE
-                            // top_ consult, so the drop would unbind them out
-                            // from under the returned closure.
-                            cfr.live_safe_top_ = true;
-                            std::scoped_lock<std::mutex> snap_lock(cap_snap_mtx_);
-                            cap_snap_cache_.erase(cap_id);
-                        }
-                    }
-                    // Issue #4474: closures created in the body of a module
-                    // being loaded (letrec: every define's cell is pre-bound
-                    // before any RHS runs) all capture the SAME bindings.
-                    // Share one capture frame instead of K identical copies
-                    // (K^2 bindings for K procedure defines, all walked by
-                    // the file-mode reclaim mark). Reuse requires identical
-                    // content (pool, parent, every (name, value) pair), so
-                    // the shared frame is exactly the copy this closure
-                    // would have built; any define in between makes a new one.
-                    if (cap_id == NULL_ENV_ID && current_env == require_inject_env_ &&
-                        !current_env->cap_snapshot()) {
-                        struct ModuleCaptureShare {
-                            const Evaluator* ev = nullptr;
-                            const Env* env = nullptr;
-                            std::uint64_t gen = 0;
-                            EnvId id = NULL_ENV_ID;
-                        };
-                        thread_local ModuleCaptureShare share;
-                        bool linear_free = true;
-                        if (linear_rt::state_ever_written())
-                            for (auto st : current_env->bindings_linear_ownership_state())
-                                if (st != linear_rt::Untracked) {
-                                    linear_free = false;
-                                    break;
-                                }
-                        if (linear_free) {
-                            const Env& ce = *current_env;
-                            const auto pid = ce.parent_id();
-                            if (share.ev == this && share.env == current_env &&
-                                share.gen == env_generation_ && share.id != NULL_ENV_ID &&
-                                static_cast<std::size_t>(share.id) < env_frames_size()) {
-                                std::shared_lock<std::shared_mutex> frlock(
-                                    env_frame_shards_[env_frame_shard_index(share.id)].mu);
-                                const EnvFrame& sfr = env_frames_[share.id];
-                                auto bss = ce.bindings_symid();
-                                auto bs = ce.bindings();
-                                if (sfr.version_ != INVALID_VERSION && sfr.parent_id == pid &&
-                                    sfr.pool_ == ce.pool() &&
-                                    std::ranges::equal(sfr.bindings_symid_, bss) &&
-                                    std::ranges::equal(sfr.bindings_, bs))
-                                    cap_id = share.id;
-                            }
-                            if (cap_id == NULL_ENV_ID) {
-                                cap_id = alloc_env_frame_from_env(ce);
-                                share = {this, current_env, env_generation_, cap_id};
-                            }
-                        }
-                    }
-                    if (cap_id == NULL_ENV_ID)
-                        cap_id = alloc_env_frame_from_env(*current_env);
-                    note_tw_closure_owner(cid); // Issue #4428
-                    // Issue #4859: when f / p belong to an (eval ...) program,
-                    // keep that program alive for as long as this closure
-                    // lives — Closure::flat / Closure::pool are raw pointers
-                    // into it. Null for an arena-owned body. Resolved BEFORE
-                    // the shard lock (the registry lock is never taken under
-                    // a closures-shard lock in the other direction).
-                    auto eval_program_owner = eval_program_for_pool(p);
                     {
-                        std::unique_lock<std::shared_mutex> wlock(
-                            closures_shards_[closures_shard_index(cid)].mu);
-                        bump_closures_apply_epoch(); // Issue #3832
-                        Closure cl{"", std::move(params), f, p, body_id, cap_id, dotted, target};
-                        cl.program = eval_program_owner;
-                        // Issue #1365: stamp bridge_epoch at construction
-                        stamp_closure_bridge_epoch(cl);
-                        closures_shards_[closures_shard_index(cid)].map[cid] = std::move(cl);
-                    }
-                    note_tw_closure_alloc();
-                    // Issue #2676: shared_lock to serialize with closures_ write
-                    // (P0 multi-fiber race — see block above).
-                    {
-                        std::shared_lock<std::shared_mutex> rlock(
-                            closures_shards_[closures_shard_index(cid)].mu);
-                        // Do NOT cache closure values — the closure captures the current env and a
-                        // cached closure would reuse the same env on subsequent evaluations (wrong
-                        // when the same Lambda node is evaluated with different captured
-                        // variables).
-                        return make_closure(cid);
+                        auto step = eval_flat_on_ifexpr_lambda(cursor, v, eval_env);
+                        if (step.kind == FlatStep::Kind::Cont)
+                            continue;
+                        if (step.kind == FlatStep::Kind::Ret)
+                            return std::move(*step.value);
+                        break;
                     }
                 }
                 case aura::ast::NodeTag::Let:
                 case aura::ast::NodeTag::LetRec: {
-                    bool rec = (v.tag == aura::ast::NodeTag::LetRec);
-                    // Issue #4350-family: own the name bytes — the init eval
-                    // and binds intern into the pool, which can grow buf_ and
-                    // free the storage this view points at.
-                    std::string name(p->resolve(v.sym_id));
-                    auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-                    auto body_id = v.children.size() < 2 ? aura::ast::NULL_NODE : v.child(1);
-                    if (rec) {
-                        // For letrec, the init value is evaluated in the new env (with cell
-                        // binding).
-                        // Issue #2871: pin parent when it lives in tail_env (TCO call frame
-                        // holding free vars such as named-let outer `n`) so emplace does not
-                        // destroy the parent while child.parent_ still points at it.
-                        pin_if_current_in_tail();
-                        const Env& letrec_parent = *current_env;
-                        tail_env.emplace(&letrec_parent);
-                        tail_env->set_primitives(&primitives_);
-                        // Issue #1482 restore: pool is required so bind_symid (and
-                        // bind-with-pool) populate bindings_symid_ — the PRIMARY array
-                        // copied by alloc_env_frame_from_env into the lambda capture.
-                        // Without it, recursive names (e.g. fact in letrec fact) only
-                        // land in string bindings_ and are dropped at capture time,
-                        // yielding "unbound variable: fact" on recursive apply
-                        // (gradual fact_5 / suite letrec).
-                        if (p)
-                            tail_env->set_pool(p);
-
-                        // Issue #232 fix: register parent in env_frames_
-                        // (always, not just when parent_id_ is NULL), then
-                        // set tail_env's parent_id_ to parent's id. The
-                        // materialized call env can then walk the SoA chain
-                        // via lookup()'s parent_id_ fallback (added in #232
-                        // commit 6e73ef2). The fix below is needed because
-                        // even when parent.parent_id_ is non-NULL (e.g., a
-                        // materialized call env has parent_id_ = top_'s id),
-                        // the SoA walk needs to find the BINDINGS (e.g., 'n'
-                        // from a let*), which live in the parent but NOT in top_.
-                        // Registering the parent in env_frames_ makes those
-                        // bindings visible to the SoA walk.
-                        //
-                        // Idempotency: skip if parent is already a frame
-                        // (this would require tracking which envs are frames;
-                        // for now, we always register, which is wasteful but
-                        // correct).
-                        // Issue #4595: this registration (and the repoint
-                        // of top_.parent_id() at the frozen copy of top_'s
-                        // bindings) is load-bearing for the steal /
-                        // panic-checkpoint / reclaim graph — removing it
-                        // crashed the chaos release blocker (steal-snapshot
-                        // hard-fail, resume-fence surplus, invalid free).
-                        // The shadow bug it causes — a lambda created in
-                        // top_ captures an EMPTY live-safe frame parented
-                        // here (#4350/#4474) and its free-var walk stopped
-                        // at the stale copy, so a later top-level
-                        // let/define rebind of an existing name resolved to
-                        // the global cell frozen at named-let time — is
-                        // fixed lookup-side in Env::lookup /
-                        // lookup_cell_ptr / lookup_cell_index: live-safe
-                        // EMPTY captures consult the LIVE top_ before their
-                        // SoA walk (host-thread only; see #4595).
-                        if (letrec_parent.parent_id() == NULL_ENV_ID) {
-                            EnvId eval_id = alloc_env_frame_from_env(letrec_parent);
-                            const_cast<Env&>(letrec_parent).set_parent_id(eval_id);
-                        } else {
-                            // parent already has a parent_id_ (probably the
-                            // top env). The SoA walk starts at this parent_id_
-                            // which is top_ — but top_ doesn't have the let*'s
-                            // bindings. Register parent as a NEW frame in
-                            // env_frames_ (at the next index) and update its
-                            // parent_id_ to the new id. The old parent_id_ is
-                            // preserved on the parent's OWN frame.
-                            EnvId new_id = alloc_env_frame_from_env(letrec_parent);
-                            const_cast<Env&>(letrec_parent).set_parent_id(new_id);
-                        }
-                        tail_env->set_parent_id(letrec_parent.parent_id());
-
-                        auto ci = alloc_cell(make_void());
-                        // SymId primary (captured by alloc_env_frame_from_env) +
-                        // string mirror via bind_symid when pool_ is set. Parity
-                        // with the Let path below.
-                        if (v.sym_id != aura::ast::INVALID_SYM)
-                            tail_env->bind_symid(v.sym_id, make_cell(ci));
-                        else
-                            tail_env->bind(std::string(name), make_cell(ci));
-                        // Evaluate value in *tail_env (has cell binding for self-reference)
-                        auto vv = eval_flat(*f, *p, val_id, *tail_env);
-                        if (!vv)
-                            return vv;
-                        // Issue #4586: an error value is not a binding. The
-                        // body must not run.
-                        if (is_error(*vv))
-                            return vv;
-                        store_cell_value(ci, *vv);
-                        // Body evaluated in *tail_env (recursive refs need the child env).
-                        // Issue #2871: TCO into body — named-let desugars to
-                        // (letrec ((name lambda)) (name inits)); the call that
-                        // drives the loop must not nest a new eval_flat frame.
-                        if (body_id != aura::ast::NULL_NODE) {
-                            current_env = &*tail_env;
-                            current_id = body_id;
+                    {
+                        auto step = eval_flat_on_let_letrec(cursor, v, eval_env);
+                        if (step.kind == FlatStep::Kind::Cont)
                             continue;
-                        }
-                        return make_void();
-                    } else {
-                        // Issue #4359: (let () body) carries no binding. The
-                        // body runs in this env; a define there is not a let
-                        // variable.
-                        if (v.sym_id == aura::ast::INVALID_SYM) {
-                            if (body_id != aura::ast::NULL_NODE) {
-                                current_id = body_id;
-                                continue;
-                            }
-                            return make_void();
-                        }
-                        // For let, bind directly to current eval_env (like define) to avoid
-                        // creating a stack-local child env whose parent_ pointer becomes
-                        // dangling when captured by a closure (bug: closure capture copies
-                        // the env but parent_ still points to the original stack env).
-                        auto vv = eval_flat(*f, *p, val_id, eval_env);
-                        if (!vv)
-                            return vv;
-                        // Issue #4586: same as the letrec arm. A callback
-                        // error in the init aborts before the body.
-                        if (is_error(*vv))
-                            return vv;
-
-                        // ── Match exhaustiveness check (tree-walker path) ──
-                        // At runtime we don't have static type info, so we resolve the
-                        // target ADT by finding which ADT in the registry contains the
-                        // first used constructor (e.g. `Cons` -> `List`). Bare-identifier
-                        // candidates are only counted as used if they are real ctors of
-                        // that ADT (so a variable binding doesn't false-positive).
-                        if (!rec && type_registry_ && f->has_match_info(current_id)) {
-                            auto* minfo = f->get_match_info(current_id);
-                            if (minfo && !minfo->has_wildcard &&
-                                (!minfo->used_constructors.empty() ||
-                                 !minfo->candidate_constructors.empty())) {
-                                auto& treg =
-                                    *static_cast<aura::core::TypeRegistry*>(type_registry_);
-                                // Find the target ADT by scanning for the first used_ctor
-                                // or candidate_ctor (bare-id patterns).
-                                const std::vector<std::string>* target_ctors = nullptr;
-                                aura::core::TypeId target_tid{};
-                                auto find_adt_for = [&](aura::ast::SymId sid) -> bool {
-                                    auto cname = std::string(p->resolve(sid));
-                                    for (std::size_t ti = 0; ti < treg.size(); ++ti) {
-                                        auto tid =
-                                            aura::core::TypeId{static_cast<std::uint32_t>(ti), 1};
-                                        auto* c = treg.get_adt_constructors(tid);
-                                        if (!c)
-                                            continue;
-                                        if (std::find(c->begin(), c->end(), cname) != c->end()) {
-                                            target_ctors = c;
-                                            target_tid = tid;
-                                            return true;
-                                        }
-                                    }
-                                    return false;
-                                };
-                                for (auto sid : minfo->used_constructors) {
-                                    if (find_adt_for(sid))
-                                        break;
-                                }
-                                if (!target_ctors) {
-                                    for (auto sid : minfo->candidate_constructors) {
-                                        if (find_adt_for(sid))
-                                            break;
-                                    }
-                                }
-                                if (target_ctors) {
-                                    // Build effective used set
-                                    std::vector<std::string> used_eff;
-                                    used_eff.reserve(minfo->used_constructors.size() +
-                                                     minfo->candidate_constructors.size());
-                                    for (auto sid : minfo->used_constructors)
-                                        used_eff.push_back(std::string(p->resolve(sid)));
-                                    for (auto sid : minfo->candidate_constructors) {
-                                        auto cname = std::string(p->resolve(sid));
-                                        if (std::find(target_ctors->begin(), target_ctors->end(),
-                                                      cname) != target_ctors->end())
-                                            used_eff.push_back(std::move(cname));
-                                    }
-                                    bool match_non_exhaustive = false;
-                                    for (auto& expected_ctor : *target_ctors) {
-                                        if (std::find(used_eff.begin(), used_eff.end(),
-                                                      expected_ctor) == used_eff.end()) {
-                                            // Issue #3559: bump fail counter on every
-                                            // non-exhaustive match (observe-only under
-                                            // Soft; Production/Full additionally sets
-                                            // the hard-reject face below).
-                                            aura::compiler::typed_audit::
-                                                g_typed_mutation_audit_counters
-                                                    .adt_exhaustiveness_fail_total.fetch_add(
-                                                        1, std::memory_order_relaxed);
-                                            match_non_exhaustive = true;
-                                            std::println(
-                                                std::cerr,
-                                                "match warning: unhandled constructor '{}' in {}",
-                                                expected_ctor, treg.name_of(target_tid));
-                                        }
-                                    }
-                                    // Issue #3559: production/Full hard-reject
-                                    // non-exhaustive match after variant mutate.
-                                    // Soft / Sampled / audit-only fall through to the
-                                    // observe-only path (counter bumped above, no reject).
-                                    if (match_non_exhaustive && aura::compiler::typed_audit::
-                                                                    production_hard_face_active()) {
-                                        aura::compiler::typed_audit::g_typed_mutation_audit_counters
-                                            .adt_exhaustiveness_hard_reject_face.store(
-                                                1, std::memory_order_release);
-                                        return {}; // force reject; no Dynamic fallback
-                                    }
-                                }
-                            }
-                        }
-
-                        // Issue #1539: stamp Owned when init is Linear e.
-                        // State lives on Env.bindings_linear_ownership_state_ and is
-                        // copied into EnvFrame by alloc_env_frame_from_env (closure capture).
-                        std::uint8_t lin_state = linear_rt::Untracked;
-                        if (val_id != aura::ast::NULL_NODE && val_id < f->size() &&
-                            f->get(val_id).tag == aura::ast::NodeTag::Linear) {
-                            lin_state = linear_rt::Owned;
-                        }
-                        // Issue #4599: an uncaptured non-set! let binds the value.
-                        // A cell mint is what made (g 1) scale with define count.
-                        // Letrec stays a cell (self-reference, #232 / #4595).
-                        const std::uint8_t bind_kind =
-                            let_bind_kind_cached(*f, current_id, v.sym_id, body_id);
-                        const bool needs_cell = lin_state != linear_rt::Untracked || bind_kind != 1;
-                        // Issue #4618: the in-place bind below writes into the
-                        // LIVE top_ for a top-level let. A lambda created in
-                        // the body then captures top_ as the #4350 empty
-                        // live-safe frame and resolves the name through the
-                        // live top_, while a second define's same-named let
-                        // appends a new cell. Both closures then share
-                        // whichever cell is newest: set! writes that cell
-                        // while a closure that captured earlier keeps its own
-                        // read path (or the reverse), so a counter and a
-                        // neg?-style predicate built from the same let shape
-                        // interfere. A cell-binding top-level let gets its own
-                        // child env, parented at a registered copy of top_, so
-                        // each define owns its cell (normal capture, no
-                        // live-top consult). A plain value bind has no
-                        // captured cell, so it keeps the in-place fast path.
-                        Env* bind_env = const_cast<Env*>(&eval_env);
-                        const bool scoped_child = needs_cell && current_env == &top_;
-                        if (scoped_child) {
-                            pin_if_current_in_tail();
-                            const Env& let_parent = *current_env;
-                            const EnvId pid = let_parent.parent_id() != NULL_ENV_ID
-                                                  ? let_parent.parent_id()
-                                                  : alloc_env_frame_from_env(let_parent);
-                            tail_env.emplace(&let_parent);
-                            bind_env = &*tail_env;
-                            bind_env->set_primitives(&primitives_);
-                            bind_env->set_owner(this);
-                            bind_env->set_parent_id(pid);
-                        }
-                        Env& me = *bind_env;
-                        me.set_pool(p);
-                        // bind_symid_with_linear_state mirrors into string bindings_
-                        // when pool_ is set. Do NOT also call bind() — that would
-                        // dual-write a second Untracked entry and shadow Owned
-                        // linear state for (let ((x (Linear ...))) ...).
-                        if (!needs_cell) {
-                            me.bind_symid_with_linear_state(v.sym_id, std::move(*vv), lin_state);
-                        } else {
-                            auto ci = alloc_cell(*vv);
-                            if (types::is_void(*vv))
-                                note_cell_nil_assigned(ci); // Issue #4789
-                            me.bind_symid_with_linear_state(v.sym_id, make_cell(ci), lin_state);
-                        }
-                        // Issue #2871: TCO into let body (tail position).
-                        if (body_id != aura::ast::NULL_NODE) {
-                            if (scoped_child)
-                                current_env = bind_env;
-                            current_id = body_id;
-                            continue;
-                        }
-                        return make_void();
+                        if (step.kind == FlatStep::Kind::Ret)
+                            return std::move(*step.value);
+                        break;
                     }
                 }
                 case aura::ast::NodeTag::DefineType: {
-                    // (define-type (Name params...) (Ctor fields...) ...)
-                    // Bind each constructor by evaluating an Aura lambda:
-                    //   (define <Ctor> (lambda args (cons 'Ctor args)))
-                    // This avoids C++ complexity and works with existing pair infrastructure.
-                    auto type_name = p->resolve(v.sym_id);
-                    Env& me = const_cast<Env&>(eval_env);
-
-
-                    for (auto cid : v.children) {
-                        if (cid >= f->size())
+                    {
+                        auto step = eval_flat_on_definetype(cursor, v, eval_env);
+                        if (step.kind == FlatStep::Kind::Cont)
                             continue;
-                        auto cv = f->get(cid);
-                        if (cv.tag != aura::ast::NodeTag::Quote || cv.children.empty())
-                            continue;
-                        auto quoted = cv.child(0);
-                        if (quoted >= f->size())
-                            continue;
-                        auto qv = f->get(quoted);
-                        // Constructor data is now (cons 'ctor-name (cons 'ft1 (cons 'ft2 ...)))
-                        // Extract the constructor name from the head of the list
-                        std::string ctor_name;
-                        aura::ast::NodeId current = quoted;
-                        auto cur_v = f->get(current);
-                        if (cur_v.tag == aura::ast::NodeTag::Pair) {
-                            auto car_id = cur_v.child(0);
-                            if (car_id < f->size()) {
-                                auto car_v = f->get(car_id);
-                                if (car_v.tag == aura::ast::NodeTag::Variable)
-                                    ctor_name = std::string(p->resolve(car_v.sym_id));
-                            }
-                        }
-                        if (ctor_name.empty())
-                            continue;
-
-                        // Register constructor as a primitive that creates tagged lists:
-                        // (Ctor arg1 arg2 ...) → (cons 'Ctor (cons arg1 (cons arg2 ...)))
-                        auto tag_slot = push_string_heap(ctor_name);
-                        auto tag_str = make_string(tag_slot);
-
-                        // Count fields to determine if zero-arg constructor
-                        int field_count = 0;
-                        {
-                            aura::ast::NodeId fields_node = quoted;
-                            auto fv = f->get(fields_node);
-                            if (fv.tag == aura::ast::NodeTag::Pair && fv.children.size() >= 2)
-                                fields_node = fv.child(1);
-                            while (fields_node < f->size()) {
-                                auto fnv = f->get(fields_node);
-                                if (fnv.tag != aura::ast::NodeTag::Pair || fnv.children.empty())
-                                    break;
-                                field_count++;
-                                if (fnv.children.size() >= 2)
-                                    fields_node = fnv.child(1);
-                                else
-                                    break;
-                            }
-                        }
-                        if (field_count == 0) {
-                            me.bind(ctor_name, make_adt_zero_arg_ctor(tag_str));
-                        } else {
-                            register_adt_ctor(ctor_name, tag_str, field_count);
-                        }
+                        if (step.kind == FlatStep::Kind::Ret)
+                            return std::move(*step.value);
+                        break;
                     }
-                    return EvalResult(make_void());
                 }
 
                 case aura::ast::NodeTag::Define: {
-                    // Own the name bytes. set_pool below interns into this
-                    // pool and can grow buf_, freeing the view from resolve
-                    // (ASAN heap-use-after-free on typed_mutate define).
-                    std::string name(p->resolve(v.sym_id));
-                    auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-                    Env& me = const_cast<Env&>(eval_env);
-                    // Issue #1482 restore: pool so bind dual-writes bindings_symid_
-                    // (closure capture PRIMARY) + string mirror for set!/lookup.
-                    if (p)
-                        me.set_pool(p);
-
-                    // Check if already bound as a cell — update existing cell to maintain
-                    // sequential define chains across multiple eval calls
-                    // Use lookup_binding to get the raw cell sentinel (not dereferenced value)
-                    auto existing = eval_env.lookup_binding(std::string(name));
-                    if (!existing && v.sym_id != aura::ast::INVALID_SYM) {
-                        // SymId path: re-define after capture/materialize may only
-                        // have the cell on bindings_symid_.
-                        // Issue #2868: only trust SymId equality when the env is
-                        // already keyed by *this* AST pool (set_pool re-keys on
-                        // change). Cross-pool integer match reused another
-                        // define's cell without binding the new name.
-                        // Issue #4817: lookup_by_symid walks the
-                        // legacy parent_ chain with this raw SymId, so a
-                        // parent keyed by another pool (top_ under a module
-                        // env from a require that runs after the main file's
-                        // first define) collides too: the module's first
-                        // define stored into the main file's first top-level
-                        // cell and never bound its own name (the #4547 test
-                        // pad). Only trust the SymId hit when every parent
-                        // shares this pool.
-                        bool chain_same_pool = eval_env.pool() == p;
-                        for (const Env* up = eval_env.parent(); chain_same_pool && up != nullptr;
-                             up = up->parent())
-                            chain_same_pool = up->pool() == p;
-                        if (chain_same_pool) {
-                            if (auto by_sym = eval_env.lookup_by_symid(v.sym_id);
-                                by_sym && is_cell(*by_sym))
-                                existing = by_sym;
-                        }
+                    {
+                        auto step = eval_flat_on_define(cursor, v, eval_env);
+                        if (step.kind == FlatStep::Kind::Cont)
+                            continue;
+                        if (step.kind == FlatStep::Kind::Ret)
+                            return std::move(*step.value);
+                        break;
                     }
-                    // Issue #2872: only commit the cell after RHS succeeds.
-                    // Re-define: leave prior cell untouched on failure.
-                    if (existing && is_cell(*existing)) {
-                        auto ci = as_cell_id(*existing);
-                        auto vv = eval_flat(*f, *p, val_id, eval_env);
-                        if (!vv)
-                            return vv;
-                        // Issue #4715 AC2: a define / rebind of a TOP-LEVEL
-                        // binding inside a body with an open overlay must not
-                        // overwrite the shared cell in place - the value lands
-                        // in the overlay's private cell (one thread_local load
-                        // when no overlay is open, then the original path).
-                        if (!primitives_detail::fiber_cow_overlay_capture_define_cell(
-                                *this, name, *vv, static_cast<std::uint64_t>(ci)))
-                            store_cell_value(ci, *vv);
-                        // Issue #3681: name the closure so set-body can
-                        // must-deopt this view after the define is dirtied.
-                        if (is_closure(*vv)) {
-                            name_live_closure(as_closure_id(*vv), name);
-                            // Issue #4779: retire the generation before the
-                            // one this re-define superseded.
-                            if (&eval_env == &top_)
-                                retire_superseded_define_closure(name, as_closure_id(*vv));
-                        }
-                        return *vv;
-                    }
-
-                    // Issue #2872: Lambda RHS needs a pre-bound cell so
-                    // `(define f (lambda () f))` / `(define (f) …)` capture
-                    // the name for self-reference. Non-lambda RHS must NOT
-                    // pre-bind: a failed RHS (recursion depth, etc.) used to
-                    // leave `name` bound to void — later forms read `()` or
-                    // a stale alias, and multi-define chains looked wiped.
-                    const bool rhs_is_lambda = val_id != aura::ast::NULL_NODE &&
-                                               val_id < f->size() &&
-                                               f->get(val_id).tag == aura::ast::NodeTag::Lambda;
-
-                    if (!rhs_is_lambda) {
-                        // Eval first; bind only on success.
-                        auto vv = (val_id == aura::ast::NULL_NODE)
-                                      ? EvalResult(make_void())
-                                      : eval_flat(*f, *p, val_id, eval_env);
-                        if (!vv)
-                            return vv;
-                        // Issue #4546: the RHS can re-key this env to another
-                        // pool (set-code / eval-current walking a workspace).
-                        // bind_symid mirrors the name through pool_, so re-key
-                        // back to this define's pool first.
-                        if (p)
-                            me.set_pool(p);
-                        // Issue #4715 AC2 deliberately does NOT capture a
-                        // brand-new define here: a file-mode top-level define
-                        // must stay bound in the shared env (capturing it would
-                        // unbind the name the moment the overlay is dropped).
-                        // A private NEW binding is the workspace / EDSL face
-                        // (fiber:overlay-define + bind_define_value_in_env).
-                        auto ci = alloc_cell(*vv);
-                        if (types::is_void(*vv))
-                            note_cell_nil_assigned(ci); // Issue #4789
-                        if (v.sym_id != aura::ast::INVALID_SYM)
-                            me.bind_symid(v.sym_id, make_cell(ci));
-                        else
-                            me.bind(std::string(name), make_cell(ci));
-                        if (is_closure(*vv)) {
-                            name_live_closure(as_closure_id(*vv), name);
-                            // Issue #4779: retire the generation before the
-                            // one this re-define superseded.
-                            if (&eval_env == &top_)
-                                retire_superseded_define_closure(name, as_closure_id(*vv));
-                        }
-                        return *vv;
-                    }
-
-                    // Lambda: pre-bind void cell, eval, commit or roll back.
-                    auto ci = alloc_cell(make_void());
-                    if (v.sym_id != aura::ast::INVALID_SYM)
-                        me.bind_symid(v.sym_id, make_cell(ci));
-                    else
-                        me.bind(std::string(name), make_cell(ci));
-                    auto vv = eval_flat(*f, *p, val_id, eval_env);
-                    if (!vv) {
-                        // Issue #4546: unbind by this define's SymId only
-                        // under its own pool.
-                        if (p)
-                            me.set_pool(p);
-                        // Roll back so name is unbound (not void cell).
-                        if (v.sym_id != aura::ast::INVALID_SYM)
-                            me.unbind_local_symid(v.sym_id);
-                        me.unbind_local(std::string(name));
-                        return vv;
-                    }
-                    store_cell_value(ci, *vv);
-                    // Issue #3681: name the closure so set-body can
-                    // must-deopt this view after the define is dirtied.
-                    if (is_closure(*vv)) {
-                        name_live_closure(as_closure_id(*vv), name);
-                        // Issue #4779: retire the generation before the one
-                        // this re-define superseded.
-                        if (&eval_env == &top_)
-                            retire_superseded_define_closure(name, as_closure_id(*vv));
-                    }
-                    return *vv;
                 }
                 case aura::ast::NodeTag::Begin: {
-                    auto count = v.children.size();
-                    if (count == 0)
-                        return EvalResult(make_void());
-
-                    // Issue #4465: file-mode root only. A primitive error that
-                    // escapes a direct child is a located diagnostic, so the
-                    // oneshot runner reports it and resumes later forms.
-                    // Issue #2570: abort begin on first-class error for every
-                    // other begin, so a module load does not continue.
-                    const bool file_root = require_failure_is_diagnostic_ &&
-                                           file_diag_root_flat() == f &&
-                                           file_diag_root_id() == v.id;
-                    auto finish_child = [&](EvalResult r, aura::ast::NodeId form) -> EvalResult {
-                        if (r && file_root && is_error(*r) && !is_string(*r))
-                            r = file_mode_escaped_primitive(*this, *r, *f, form);
-                        // Issue #4471: resume after this top-level form. The
-                        // diagnostic location can be an earlier define body.
-                        if (file_root && !r) {
-                            const auto nv = f->get(form);
-                            if (nv.line > 0)
-                                set_file_resume_form(aura::diag::SourceLocation{
-                                    nv.line, nv.col == 0 ? 1u : nv.col, 0});
-                        }
-                        return r;
-                    };
-
-                    // Multiple defines at the *head* of a body → letrec semantics
-                    // (mutual recursion + private free-var capture). Issue #2740 /
-                    // #2739: if any define appears *after* a non-define expression
-                    // (vector-set! / fill / side effects), do NOT lift those defines
-                    // — Agent denseness writes "mutate then define flag" and letrec
-                    // init sees pre-mutation zeros while later reads look correct
-                    // (silent false denseness). Sequential eval when define-after-expr.
-                    //
-                    // Issue #2766: module prologue forms — (export …) and
-                    // (require …)/(import …) — must NOT count as "body expr"
-                    // for define_after_expr. require-before-export previously
-                    // forced sequential multi-define; export filtering then
-                    // stripped private cells (*cell*, agent-register) that
-                    // closures free-ref, yielding unbound-at-call. Prologue
-                    // is declarative load order, not Agent denseness mutate.
-                    auto is_module_prologue = [&](const aura::ast::NodeView& nv) -> bool {
-                        if (nv.tag == aura::ast::NodeTag::Export)
-                            return true;
-                        if (nv.tag != aura::ast::NodeTag::Call || nv.children.empty())
-                            return false;
-                        auto head = f->get(nv.child(0));
-                        if (head.tag != aura::ast::NodeTag::Variable)
-                            return false;
-                        auto hn = p->resolve(head.sym_id);
-                        return hn == "require" || hn == "import";
-                    };
-                    std::vector<std::pair<std::string, aura::ast::NodeId>> letrec_defs;
-                    // Issue #4818: source position of each letrec_defs entry,
-                    // so a deferred Phase 0 require runs back in source order.
-                    std::vector<std::size_t> letrec_idx;
-                    bool has_multiple_defs = false;
-                    bool define_after_expr = false;
-                    int define_count = 0;
-                    bool saw_non_define = false;
-                    // Find last non-NULL child (NULL_NODE holes may exist from mutate:move-node)
-                    aura::ast::NodeId last_expr = aura::ast::NULL_NODE;
-                    for (std::size_t si = count; si > 0; --si) {
-                        auto cid = v.child(si - 1);
-                        if (cid != aura::ast::NULL_NODE) {
-                            last_expr = cid;
-                            break;
-                        }
-                    }
-                    if (last_expr == aura::ast::NULL_NODE)
-                        return EvalResult(make_void());
-                    for (std::size_t i = 0; i < count; ++i) {
-                        auto cid = v.child(i);
-                        if (cid == aura::ast::NULL_NODE)
+                    {
+                        auto step = eval_flat_on_begin(cursor, v, eval_env);
+                        if (step.kind == FlatStep::Kind::Cont)
                             continue;
-                        // Issue #4679: Define children read SoA columns; a
-                        // full NodeView per top-level form was O(W) assembly.
-                        if (f->tag(cid) == aura::ast::NodeTag::Define) {
-                            define_count++;
-                            if (define_count > 1)
-                                has_multiple_defs = true;
-                            if (saw_non_define)
-                                define_after_expr = true;
-                            const auto dch = f->children(cid);
-                            letrec_defs.push_back({std::string(p->resolve(f->sym_id(cid))),
-                                                   dch.empty() ? aura::ast::NULL_NODE : dch[0]});
-                            letrec_idx.push_back(i);
-                        } else if (!is_module_prologue(f->get(cid))) {
-                            // Real body expr (not export/require/import).
-                            saw_non_define = true;
-                        }
+                        if (step.kind == FlatStep::Kind::Ret)
+                            return std::move(*step.value);
+                        break;
                     }
-
-                    // Skip NULL_NODE children (left by mutate:move-node / mutate:remove-node)
-                    std::size_t effective_count = 0;
-                    for (std::size_t ci = 0; ci < count; ++ci) {
-                        if (v.child(ci) != aura::ast::NULL_NODE)
-                            effective_count++;
-                    }
-                    if (effective_count < count) {
-                        // Recount defines / define-after-expr on live children only.
-                        // Issue #2766: same prologue skip as the primary scan.
-                        has_multiple_defs = false;
-                        define_after_expr = false;
-                        define_count = 0;
-                        saw_non_define = false;
-                        letrec_defs.clear();
-                        letrec_idx.clear();
-                        for (std::size_t ci = 0; ci < count; ++ci) {
-                            auto cid = v.child(ci);
-                            if (cid == aura::ast::NULL_NODE)
-                                continue;
-                            // Issue #4679: Define children read SoA columns; a
-                            // full NodeView per top-level form was O(W) assembly.
-                            if (f->tag(cid) == aura::ast::NodeTag::Define) {
-                                define_count++;
-                                if (define_count > 1)
-                                    has_multiple_defs = true;
-                                if (saw_non_define)
-                                    define_after_expr = true;
-                                const auto dch = f->children(cid);
-                                letrec_defs.push_back(
-                                    {std::string(p->resolve(f->sym_id(cid))),
-                                     dch.empty() ? aura::ast::NULL_NODE : dch[0]});
-                                letrec_idx.push_back(ci);
-                            } else if (!is_module_prologue(f->get(cid))) {
-                                saw_non_define = true;
-                            }
-                        }
-                    }
-
-                    if (has_multiple_defs && !define_after_expr) {
-                        // Issue #2766 Phase 0: module prologue first so
-                        // (require …)/(import …) inject bindings before
-                        // lambda free-var capture, and (export …) records
-                        // the API set. Independent of textual order among
-                        // prologue forms and defines.
-                        //
-                        // Issue #4818: hoisting is for bindings that already
-                        // exist. A require whose module path does not resolve
-                        // yet (the file is written by an earlier form of this
-                        // body: write-file in a define RHS or a body expr)
-                        // gains nothing from running first. Such a resolve
-                        // miss is deferred, not reported: the require runs
-                        // again at its source position, after the forms
-                        // before it, and a real miss still fails there. Any
-                        // other failure (deny, parse error) stops here as before.
-                        std::vector<std::pair<std::size_t, aura::ast::NodeId>> deferred_requires;
-                        auto phase0_resolve_miss = [&](aura::ast::NodeId cid,
-                                                       const EvalResult& r) -> bool {
-                            if (r && !(is_error(*r) && !is_string(*r)))
-                                return false;
-                            const auto nv = f->get(cid);
-                            if (nv.tag != aura::ast::NodeTag::Call)
-                                return false;
-                            const std::string& why =
-                                r ? last_module_load_failure_ : r.error().message;
-                            constexpr std::string_view kMiss = "cannot resolve '";
-                            for (std::size_t ci = 1; ci < nv.children.size(); ++ci) {
-                                auto av = f->get(nv.child(ci));
-                                if (av.tag != aura::ast::NodeTag::LiteralString &&
-                                    av.tag != aura::ast::NodeTag::Variable)
-                                    continue;
-                                auto name = std::string(p->resolve(av.sym_id));
-                                if (name == "all:" || name.empty())
-                                    continue;
-                                if (why.find(std::string(kMiss) + name) != std::string::npos)
-                                    return true;
-                            }
-                            return false;
-                        };
-                        for (std::size_t i = 0; i < count; ++i) {
-                            auto cid = v.child(i);
-                            if (cid == aura::ast::NULL_NODE)
-                                continue;
-                            const auto ctag = f->tag(cid);
-                            if (ctag != aura::ast::NodeTag::Export &&
-                                ctag != aura::ast::NodeTag::Call)
-                                continue;
-                            if (!is_module_prologue(f->get(cid)))
-                                continue;
-                            last_module_load_failure_.clear();
-                            auto raw = eval_flat(*f, *p, cid, eval_env);
-                            if (ctag == aura::ast::NodeTag::Call && phase0_resolve_miss(cid, raw)) {
-                                last_module_load_failure_.clear();
-                                deferred_requires.push_back({i, cid});
-                                continue;
-                            }
-                            auto r = finish_child(std::move(raw), cid);
-                            if (!r || (is_error(*r) && !is_string(*r)))
-                                return r;
-                        }
-                        // Issue #4818: run deferred requires whose source
-                        // position is before `upto`, in source order.
-                        std::size_t deferred_next = 0;
-                        auto run_deferred_before = [&](std::size_t upto) -> EvalResult {
-                            while (deferred_next < deferred_requires.size() &&
-                                   deferred_requires[deferred_next].first < upto) {
-                                auto dcid = deferred_requires[deferred_next++].second;
-                                auto r = finish_child(eval_flat(*f, *p, dcid, eval_env), dcid);
-                                if (!r || (is_error(*r) && !is_string(*r)))
-                                    return r;
-                            }
-                            return EvalResult(make_void());
-                        };
-                        // Phase 1: pre-allocate cells for all defines
-                        // This ensures all function names are visible to each other
-                        // (and module private free-vars survive export filtering:
-                        // closures capture a snapshot via alloc_env_frame_from_env
-                        // that includes sibling cells, not only parent_id).
-                        std::vector<std::size_t> cell_ids;
-                        {
-                            auto& mutable_env = const_cast<Env&>(eval_env);
-                            // Issue #1482 restore: pool so multi-define cells land on
-                            // bindings_symid_ and survive lambda capture (nested
-                            // recursive helpers like seen? in std/ast-viz).
-                            if (p)
-                                mutable_env.set_pool(p);
-
-                            // #4679: index last local cell per name once (was an
-                            // O(W*bindings) scan).
-                            constexpr std::size_t kLetrecIndexMin = 16;
-                            const bool use_index = letrec_defs.size() >= kLetrecIndexMin;
-                            std::unordered_map<std::string, std::size_t> last_cell;
-                            if (use_index) {
-                                const auto& bs = mutable_env.bindings();
-                                last_cell.reserve(bs.size() + letrec_defs.size());
-                                for (const auto& b : bs) {
-                                    if (is_cell(b.second))
-                                        last_cell[b.first] = as_cell_id(b.second);
-                                }
-                            }
-                            cell_ids.reserve(letrec_defs.size());
-                            for (auto& d : letrec_defs) {
-                                // Issue #2571: re-entering a multi-define begin
-                                // inside (while …) must reuse an existing cell
-                                // for the same name. Fresh bind() stacks a new
-                                // cell; if set! resolved the oldest cell, loop
-                                // counters froze. Prefer update-in-place.
-                                //
-                                // Issue #2868: use *local string* binding only —
-                                // not full lookup_cell_index (parent / SymId
-                                // paths). Cross-pool SymId equality could treat
-                                // a new name as an existing foreign cell and
-                                // skip bind() → first multi-define leaf unbound
-                                // from module frames; set_pool re-keys SymIds
-                                // but local string match is the correct policy
-                                // for "same name re-entry" here.
-                                std::optional<std::size_t> existing_ci;
-                                if (use_index) {
-                                    if (auto it = last_cell.find(d.first); it != last_cell.end())
-                                        existing_ci = it->second;
-                                } else {
-                                    for (auto it = mutable_env.bindings().rbegin();
-                                         it != mutable_env.bindings().rend(); ++it) {
-                                        if (it->first == d.first && is_cell(it->second)) {
-                                            existing_ci = as_cell_id(it->second);
-                                            break;
-                                        }
-                                    }
-                                }
-                                if (existing_ci) {
-                                    cell_ids.push_back(*existing_ci);
-                                    continue;
-                                }
-                                auto ci = alloc_cell(make_void());
-                                mutable_env.bind(d.first, make_cell(ci));
-                                if (use_index)
-                                    last_cell[d.first] = ci;
-                                cell_ids.push_back(ci);
-                            }
-                        }
-                        // Phase 2: evaluate values and set cells.
-                        // Issue #2579 / #2581: two-pass so (1) Lambdas install
-                        // first for mutual recursion + private free-var
-                        // capture snapshots (std/orchestrator orch-yield-safe),
-                        // (2) non-Lambda values (define g (f)) see callables.
-                        //
-                        // Issue #4354: that lambda-first pass overwrites a
-                        // reused cell before an earlier bare alias is
-                        // evaluated. `(define *f-base* f)` then
-                        // `(define (f x) …)` in a loaded file (one begin of
-                        // defines) made *f-base* call the new f. Snapshot
-                        // each lambda cell before the overwrite. A bare
-                        // variable alias with no earlier lambda of that name
-                        // in this group keeps the snapshot — the value the
-                        // name had when the alias form was reached.
-                        std::vector<EvalValue> pre_lambda_cell(letrec_defs.size());
-                        TwPinMany pin_pre_lambda(pre_lambda_cell);
-                        std::vector<char> lambda_def(letrec_defs.size(), 0);
-                        for (std::size_t i = 0; i < letrec_defs.size(); ++i) {
-                            auto rhs = letrec_defs[i].second;
-                            if (rhs == aura::ast::NULL_NODE)
-                                continue;
-                            if (f->tag(rhs) != aura::ast::NodeTag::Lambda)
-                                continue;
-                            lambda_def[i] = 1;
-                            if (cell_ids[i] < cells_.size())
-                                pre_lambda_cell[i] = cells_[cell_ids[i]];
-                        }
-                        // Pure sequential multi-define broke module private
-                        // free-vars when a non-Lambda (*agents*) forced that
-                        // path — export filtering then stripped parent env.
-                        // Issue #2872: on RHS failure, unbind every name in this
-                        // multi-define batch whose cell is still void (failed
-                        // name + not-yet-evaluated siblings). Successfully
-                        // committed cells keep their bindings.
-                        auto rollback_still_void_defs = [&]() {
-                            auto& mutable_env = const_cast<Env&>(eval_env);
-                            for (std::size_t i = 0; i < cell_ids.size() && i < letrec_defs.size();
-                                 ++i) {
-                                auto ci = cell_ids[i];
-                                if (ci < cells_.size() && is_void(cells_[ci])) {
-                                    mutable_env.unbind_local(letrec_defs[i].first);
-                                    if (p) {
-                                        auto s = const_cast<aura::ast::StringPool*>(p)->intern(
-                                            letrec_defs[i].first);
-                                        mutable_env.unbind_local_symid(s);
-                                    }
-                                }
-                            }
-                        };
-                        for (std::size_t i = 0; i < letrec_defs.size(); ++i) {
-                            auto& d = letrec_defs[i];
-                            if (d.second == aura::ast::NULL_NODE)
-                                continue;
-                            if (f->tag(d.second) != aura::ast::NodeTag::Lambda)
-                                continue;
-                            // Issue #4679: a clean top-level lambda whose cell
-                            // still holds the closure built from this very node
-                            // is reused instead of re-allocating a closure + env
-                            // frame per define per eval-current (O(W) closures).
-                            // Rebinds dirty their own subtree (and cascaded
-                            // callers), so those still rebuild.
-
-                            if (&eval_env == &top_ && !f->has_dirty_subtree(d.second) &&
-                                cell_ids[i] < cells_.size() && is_closure(cells_[cell_ids[i]])) {
-                                const auto rcid = as_closure_id(cells_[cell_ids[i]]);
-                                const auto dch = f->children(d.second);
-                                const auto want_body = dch.empty() ? aura::ast::NULL_NODE : dch[0];
-                                bool reuse = false;
-                                if (!types::is_ffi_closure_id(rcid)) {
-                                    auto& sh = closures_shards_[closures_shard_index(rcid)];
-                                    std::shared_lock<std::shared_mutex> rl(sh.mu);
-                                    auto it = sh.map.find(rcid);
-                                    if (it != sh.map.end()) {
-                                        const auto& cl = it->second;
-                                        reuse = cl.flat == f && cl.body_id == want_body &&
-                                                cl.lifetime_valid_for_views() &&
-                                                !cl.must_deopt_before_next_call &&
-                                                cl.linear_state == 0;
-                                    }
-                                }
-                                if (reuse) {
-                                    ++closure_reuse_4679_count_;
-                                    continue;
-                                }
-                            }
-                            auto val = eval_flat(*f, *p, d.second, eval_env);
-                            if (!val) {
-                                rollback_still_void_defs();
-                                return val;
-                            }
-                            cells_[cell_ids[i]] = *val;
-                        }
-                        for (std::size_t i = 0; i < letrec_defs.size(); ++i) {
-                            auto& d = letrec_defs[i];
-                            if (d.second == aura::ast::NULL_NODE)
-                                continue;
-                            if (f->tag(d.second) == aura::ast::NodeTag::Lambda)
-                                continue;
-                            // Issue #4818: a deferred require written before
-                            // this define runs before its value.
-                            if (auto dr = run_deferred_before(letrec_idx[i]);
-                                !dr || (is_error(*dr) && !is_string(*dr))) {
-                                rollback_still_void_defs();
-                                return dr;
-                            }
-                            // Issue #4354: bare alias written before the
-                            // lambda redefinition captures the pre-group value.
-                            if (p && f->tag(d.second) == aura::ast::NodeTag::Variable) {
-                                auto vname = std::string(p->resolve(f->sym_id(d.second)));
-                                bool earlier_lambda = false;
-                                bool later_lambda = false;
-                                EvalValue snap = make_void();
-                                for (std::size_t j = 0; j < letrec_defs.size(); ++j) {
-                                    if (!lambda_def[j] || letrec_defs[j].first != vname)
-                                        continue;
-                                    if (j < i) {
-                                        earlier_lambda = true;
-                                    } else if (j > i) {
-                                        later_lambda = true;
-                                        snap = pre_lambda_cell[j];
-                                    }
-                                }
-                                if (later_lambda && !earlier_lambda) {
-                                    cells_[cell_ids[i]] = snap;
-                                    continue;
-                                }
-                            }
-                            auto val = eval_flat(*f, *p, d.second, eval_env);
-                            if (!val) {
-                                rollback_still_void_defs();
-                                return val;
-                            }
-                            // Issue #4909: an error VALUE (a closure call that
-                            // returned one, e.g. `(define r (f 5))` with
-                            // `(car z)` in f) was stored in the cell and the
-                            // file ran on with rc=0 — the sequential face
-                            // already reports it. File root only: the error
-                            // becomes the located diagnostic for this define.
-                            if (file_root && is_error(*val) && !is_string(*val)) {
-                                rollback_still_void_defs();
-                                return finish_child(std::move(val), v.child(letrec_idx[i]));
-                            }
-                            cells_[cell_ids[i]] = *val;
-                        }
-                        // Phase 3: remaining non-define / non-prologue exprs
-                        // (require/export already ran in Phase 0).
-                        for (std::size_t i = 0; i < count - 1; ++i) {
-                            auto cid = v.child(i);
-                            if (cid == aura::ast::NULL_NODE)
-                                continue;
-                            if (f->tag(cid) == aura::ast::NodeTag::Define)
-                                continue;
-                            if (is_module_prologue(f->get(cid))) {
-                                // #2766 Phase 0 already ran it, unless it was
-                                // deferred (#4818): run it here, in order.
-                                if (auto dr = run_deferred_before(i + 1);
-                                    !dr || (is_error(*dr) && !is_string(*dr)))
-                                    return dr;
-                                continue;
-                            }
-                            if (auto dr = run_deferred_before(i);
-                                !dr || (is_error(*dr) && !is_string(*dr)))
-                                return dr;
-                            auto r = finish_child(eval_flat(*f, *p, cid, eval_env), cid);
-                            if (!r || (is_error(*r) && !is_string(*r)))
-                                return r;
-                        }
-                        // Issue #4818: deferred requires written before the
-                        // last form (e.g. after only lambda defines) run now;
-                        // a deferred last form runs as the tail form below.
-                        {
-                            std::size_t last_idx = count - 1;
-                            while (last_idx > 0 && v.child(last_idx) != last_expr)
-                                --last_idx;
-                            if (auto dr = run_deferred_before(last_idx);
-                                !dr || (is_error(*dr) && !is_string(*dr)))
-                                return dr;
-                        }
-                        // TCO: last expression (if last is prologue, re-run is
-                        // idempotent for export; require cache-hits).
-                        // Issue #4465: file root evals the last form so an
-                        // escaped error is reported at that form, not lost
-                        // to the tail call.
-                        if (file_root)
-                            return finish_child(eval_flat(*f, *p, last_expr, eval_env), last_expr);
-                        current_id = last_expr;
-                        continue;
-                    }
-
-                    // Single define (or no defines) — sequential evaluation
-                    for (std::size_t i = 0; i < count - 1; ++i) {
-                        auto cid = v.child(i);
-                        if (cid == aura::ast::NULL_NODE)
-                            continue;
-                        auto r = finish_child(eval_flat(*f, *p, cid, eval_env), cid);
-                        if (!r || (is_error(*r) && !is_string(*r)))
-                            return r;
-                    }
-                    // Find last non-NULL child
-                    current_id = aura::ast::NULL_NODE;
-                    for (std::size_t i = count; i > 0; --i) {
-                        auto cid = v.child(i - 1);
-                        if (cid != aura::ast::NULL_NODE) {
-                            current_id = cid;
-                            break;
-                        }
-                    }
-                    if (current_id == aura::ast::NULL_NODE)
-                        return EvalResult(make_void());
-                    // Issue #2570: a non-file begin still tail-calls, and an
-                    // error value from that form aborts the caller. Issue
-                    // #4465: the file root reports it at this form instead.
-                    if (file_root)
-                        return finish_child(eval_flat(*f, *p, current_id, eval_env), current_id);
-                    continue; // TCO: last expression in begin
                 }
                 case aura::ast::NodeTag::DefineModule: {
-                    // (define-module (Name :T ...) body...)
-                    // Store module template and bind Name to functor
-                    auto mod_name = std::string(p->resolve(v.sym_id));
-                    ModuleTemplate mt;
-
-                    // Extract type parameter names from AST params metadata
-                    // (type params = all params minus cap params)
-                    auto num_cap_params = f->cap_require_count(v.id);
-                    std::size_t num_type_params =
-                        (num_cap_params > 0 && v.params.size() >= num_cap_params)
-                            ? v.params.size() - num_cap_params
-                            : v.params.size();
-                    for (std::size_t i = 0; i < num_type_params; ++i) {
-                        auto pid = f->param_at(v.id, i);
-                        mt.type_param_names.push_back(std::string(p->resolve(pid)));
+                    {
+                        auto step = eval_flat_on_definemodule(cursor, v, eval_env);
+                        if (step.kind == FlatStep::Kind::Cont)
+                            continue;
+                        if (step.kind == FlatStep::Kind::Ret)
+                            return std::move(*step.value);
+                        break;
                     }
-                    if (num_cap_params > 0) {
-                        // cap params are at the end of the param list
-                        for (std::size_t i = 0; i < num_cap_params; ++i) {
-                            auto pid = f->param_at(v.id, v.params.size() - num_cap_params + i);
-                            mt.cap_param_names.push_back(std::string(p->resolve(pid)));
-                        }
-                    }
-
-                    // Serialize body expressions to source strings (for cross-eval instantiation)
-                    // Build a node-to-source serializer using the current FlatAST
-                    std::function<std::string(aura::ast::NodeId)> node_source;
-                    node_source = [&](aura::ast::NodeId nid) -> std::string {
-                        if (nid >= f->size() || nid == aura::ast::NULL_NODE)
-                            return "";
-                        auto nv = f->get(nid);
-                        switch (nv.tag) {
-                            case aura::ast::NodeTag::LiteralInt:
-                                return std::to_string(nv.int_value);
-                            case aura::ast::NodeTag::LiteralFloat:
-                                return std::to_string(nv.float_value);
-                            case aura::ast::NodeTag::LiteralString:
-                                return "\"" + std::string(p->resolve(nv.sym_id)) + "\"";
-                            case aura::ast::NodeTag::Variable:
-                                return std::string(p->resolve(nv.sym_id));
-                            case aura::ast::NodeTag::Quote: {
-                                if (nv.children.empty())
-                                    return "'()";
-                                return "'" + node_source(nv.child(0));
-                            }
-                            case aura::ast::NodeTag::Lambda: {
-                                std::string s = "(lambda (";
-                                for (std::size_t pi = 0; pi < nv.params.size(); ++pi) {
-                                    if (pi > 0)
-                                        s += " ";
-                                    s += std::string(p->resolve(nv.params[pi]));
-                                }
-                                s += ")";
-                                if (!nv.children.empty())
-                                    s += " " + node_source(nv.child(0));
-                                return s + ")";
-                            }
-                            case aura::ast::NodeTag::Define: {
-                                std::string s = "(define";
-                                if (!nv.children.empty()) {
-                                    auto val_nv = f->get(nv.child(0));
-                                    if (val_nv.tag == aura::ast::NodeTag::Lambda) {
-                                        // Shorthand: (define (name params...) body...)
-                                        s += " (" + std::string(p->resolve(nv.sym_id));
-                                        for (std::size_t pi = 0; pi < val_nv.params.size(); ++pi) {
-                                            s += " ";
-                                            s += std::string(p->resolve(val_nv.params[pi]));
-                                        }
-                                        s += ")";
-                                        if (!val_nv.children.empty())
-                                            s += " " + node_source(val_nv.child(0));
-                                    } else {
-                                        s += " " + std::string(p->resolve(nv.sym_id));
-                                        s += " " + node_source(nv.child(0));
-                                    }
-                                }
-                                return s + ")";
-                            }
-                            case aura::ast::NodeTag::Export: {
-                                std::string s = "(export";
-                                for (auto eid : nv.children) {
-                                    auto ev = f->get(eid);
-                                    if (ev.tag == aura::ast::NodeTag::Variable)
-                                        s += " " + std::string(p->resolve(ev.sym_id));
-                                }
-                                return s + ")";
-                            }
-                            case aura::ast::NodeTag::Call: {
-                                std::string s = "(";
-                                for (std::size_t ci = 0; ci < nv.children.size(); ++ci) {
-                                    if (ci > 0)
-                                        s += " ";
-                                    s += node_source(nv.child(ci));
-                                }
-                                return s + ")";
-                            }
-                            default:
-                                return "()";
-                        }
-                    };
-
-                    // Serialize each body expression
-                    std::string body_src;
-                    for (auto cid : v.children) {
-                        auto sexpr = node_source(cid);
-                        if (!sexpr.empty()) {
-                            if (!body_src.empty())
-                                body_src += "\n";
-                            body_src += sexpr;
-                        }
-                    }
-                    mt.body_source = std::move(body_src);
-
-                    // Scan body for `:require` directives
-                    // Format: ((:require FileRead FileWrite) ...) or ((:require FileRead) ...)
-                    for (auto cid : v.children) {
-                        auto cv = f->get(cid);
-                        if (cv.tag == aura::ast::NodeTag::Call && cv.children.size() > 0) {
-                            auto callee_node = f->get(cv.child(0));
-                            if (callee_node.tag == aura::ast::NodeTag::Variable ||
-                                callee_node.tag == aura::ast::NodeTag::Quote) {
-                                aura::ast::SymId sym =
-                                    (callee_node.tag == aura::ast::NodeTag::Variable)
-                                        ? callee_node.sym_id
-                                        : aura::ast::INVALID_SYM;
-                                std::string_view callee_name = (sym != aura::ast::INVALID_SYM)
-                                                                   ? p->resolve(sym)
-                                                                   : std::string_view();
-                                // Check for :require or require keyword
-                                if (callee_name == ":require" || callee_name == ":require-all") {
-                                    // Extract required capability names from remaining children
-                                    for (std::size_t ai = 1; ai < cv.children.size(); ++ai) {
-                                        auto arg_node = f->get(cv.child(ai));
-                                        if (arg_node.tag == aura::ast::NodeTag::Variable) {
-                                            auto cap_name =
-                                                std::string(p->resolve(arg_node.sym_id));
-                                            // Skip duplicates
-                                            bool dup = false;
-                                            for (auto& r : mt.cap_require) {
-                                                if (r == cap_name) {
-                                                    dup = true;
-                                                    break;
-                                                }
-                                            }
-                                            if (!dup)
-                                                mt.cap_require.push_back(cap_name);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    module_templates_[mod_name] = std::move(mt);
-
-                    // Bind Name in the current env (as a cell with functor marker)
-                    Env& me = const_cast<Env&>(eval_env);
-
-                    auto ci = alloc_cell(make_void());
-                    auto sidx = push_string_heap("%functor");
-                    me.bind(mod_name, make_cell(ci));
-                    cells_[ci] = make_string(sidx);
-                    return make_string(sidx);
                 }
                 case aura::ast::NodeTag::Export: {
-                    // (export sym ...) — record module API during loading
-                    // No runtime effect; children are Variable nodes
-                    if (!current_export_set_) {
-                        current_export_set_ = std::make_unique<std::unordered_set<std::string>>();
+                    {
+                        auto step = eval_flat_on_export(cursor, v, eval_env);
+                        if (step.kind == FlatStep::Kind::Cont)
+                            continue;
+                        if (step.kind == FlatStep::Kind::Ret)
+                            return std::move(*step.value);
+                        break;
                     }
-                    for (auto cid : v.children) {
-                        auto cv = f->get(cid);
-                        if (cv.tag == aura::ast::NodeTag::Variable) {
-                            current_export_set_->insert(std::string(p->resolve(cv.sym_id)));
-                        }
-                    }
-                    return types::make_void();
                 }
                 case aura::ast::NodeTag::Set: {
-                    // Issue #4350-family: own the name bytes — the value eval
-                    // interns into the pool (buf_ growth frees the view's
-                    // storage) and the name is used after (lookup_cell_index).
-                    std::string name(p->resolve(v.sym_id));
-                    auto val_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-                    auto val = eval_flat(*f, *p, val_id, eval_env);
-                    if (!val)
-                        return val;
-                    // Issue #4715 AC2: an open overlay owns the write. A set!
-                    // of a top-level binding is captured as a private cell (the
-                    // shared cell is never overwritten in place); a local
-                    // (parameter / let) target keeps the ordinary path below.
-                    if (primitives_detail::t_fiber_cow_overlay_depth != 0 &&
-                        primitives_detail::fiber_cow_overlay_capture_set(*this, name, *val,
-                                                                         eval_env))
-                        return *val;
-                    // Use stable index instead of pointer (cells_ may reallocate)
-                    auto cell_idx = eval_env.lookup_cell_index(std::string(name));
-                    if (cell_idx) {
-                        if (*cell_idx < cells_.size())
-                            store_cell_value(*cell_idx, *val);
-                        return *val;
-                    }
-                    // Fallback 1: direct binding in current env
-                    for (auto& b : const_cast<Env&>(eval_env).bindings()) {
-                        if (b.first == name) {
-                            b.second = *val;
-                            return *val;
-                        }
-                    }
-                    // Fallback 2: scan parent envs for direct (non-cell) bindings
                     {
-                        const Env* e = eval_env.parent();
-                        while (e) {
-                            for (auto& b : const_cast<Env&>(*e).bindings()) {
-                                if (b.first == name) {
-                                    b.second = *val;
-                                    return *val;
-                                }
-                            }
-                            e = e->parent();
-                        }
+                        auto step = eval_flat_on_set(cursor, v, eval_env);
+                        if (step.kind == FlatStep::Kind::Cont)
+                            continue;
+                        if (step.kind == FlatStep::Kind::Ret)
+                            return std::move(*step.value);
+                        break;
                     }
-                    // Issue #4122: materialize stores the let cell in
-                    // bindings_symid_ (string bindings_ often empty).
-                    // lookup reads that symid entry, including a non-cell
-                    // copy. set! must write the same entry.
-                    if (auto* pool = const_cast<aura::ast::StringPool*>(eval_env.pool())) {
-                        const auto sid = pool->intern(name);
-                        auto write_syms = [&](Env& e) -> bool {
-                            auto& syms = e.bindings_symid_mut();
-                            for (auto it = syms.rbegin(); it != syms.rend(); ++it) {
-                                if (it->first != sid)
-                                    continue;
-                                if (is_cell(it->second)) {
-                                    const auto ci = as_cell_id(it->second);
-                                    if (ci < cells_.size())
-                                        store_cell_value(ci, *val);
-                                } else {
-                                    it->second = *val;
-                                }
-                                return true;
-                            }
-                            return false;
-                        };
-                        if (write_syms(const_cast<Env&>(eval_env)))
-                            return *val;
-                        for (auto* e = const_cast<Env*>(eval_env.parent()); e;
-                             e = const_cast<Env*>(e->parent())) {
-                            if (write_syms(*e))
-                                return *val;
-                        }
-                    }
-                    // Same SoA parent chain Env::lookup reads. A behind
-                    // named-let capture keeps the cell here after set-car!
-                    // bumps defuse. Write that entry, cell or value.
-                    if (auto* owner = eval_env.owner()) {
-                        const auto sid =
-                            eval_env.pool()
-                                ? const_cast<aura::ast::StringPool*>(eval_env.pool())->intern(name)
-                                : aura::ast::INVALID_SYM;
-                        auto write_frame = [&](EnvFrame& fr) -> bool {
-                            for (auto& b : fr.bindings_) {
-                                if (b.first != name)
-                                    continue;
-                                if (is_cell(b.second)) {
-                                    const auto ci = as_cell_id(b.second);
-                                    if (ci < cells_.size())
-                                        store_cell_value(ci, *val);
-                                } else {
-                                    b.second = *val;
-                                }
-                                return true;
-                            }
-                            if (sid != aura::ast::INVALID_SYM) {
-                                for (auto it = fr.bindings_symid_.rbegin();
-                                     it != fr.bindings_symid_.rend(); ++it) {
-                                    if (it->first != sid)
-                                        continue;
-                                    if (is_cell(it->second)) {
-                                        const auto ci = as_cell_id(it->second);
-                                        if (ci < cells_.size())
-                                            store_cell_value(ci, *val);
-                                    } else {
-                                        it->second = *val;
-                                    }
-                                    return true;
-                                }
-                            }
-                            return false;
-                        };
-                        EnvId cur = eval_env.parent_id();
-                        for (std::size_t hops = 0; cur != NULL_ENV_ID && hops < 64; ++hops) {
-                            // Issue #4529: the chain can be stale post-truncate
-                            // (restore_panic_checkpoint shrank env_frames_ while
-                            // this env was parked) — the unchecked env_frame_mut
-                            // accessor asserts past size. Skip the stale tail.
-                            if (static_cast<std::size_t>(cur) >= owner->env_frames_size())
-                                break;
-                            std::unique_lock<std::shared_mutex> wlock(
-                                owner->env_frame_shard_mu(Evaluator::env_frame_shard_index(cur)));
-                            EnvFrame& fr = owner->env_frame_mut(cur);
-                            if (write_frame(fr))
-                                return *val;
-                            // Issue #4734: drop the shard lock before the top_
-                            // consult (shard -> bindings is the inverse of the
-                            // bindings -> shard order env-frame writers take).
-                            const EnvId next_frame = fr.parent_id;
-                            const bool at_root_frame = (cur == 0);
-                            wlock.unlock();
-                            if (at_root_frame) {
-                                // Issue #4717: shared top env read.
-                                auto top_bind_guard = owner->top_env().lock_bindings_shared();
-                                for (auto& b : owner->top_env().bindings()) {
-                                    if (b.first != name)
-                                        continue;
-                                    if (is_cell(b.second)) {
-                                        const auto ci = as_cell_id(b.second);
-                                        if (ci < cells_.size())
-                                            store_cell_value(ci, *val);
-                                    } else {
-                                        b.second = *val;
-                                    }
-                                    return *val;
-                                }
-                            }
-                            cur = next_frame;
-                        }
-                    }
-                    // Issue #4374: display and newline are primitives, not
-                    // cells. set! of a name that was never bound is not an
-                    // unbound variable. Leave the primitive in place — a new
-                    // cell would be updated in place by a later eval define.
-                    if (eval_env.lookup_primitive(name))
-                        return *val;
-                    // Suggest closest bound variables
-                    {
-                        std::vector<std::string> candidates;
-                        {
-                            const Env* e = &eval_env;
-                            while (e) {
-                                for (auto& b : const_cast<Env&>(*e).bindings())
-                                    candidates.push_back(b.first);
-                                e = e->parent();
-                            }
-                        }
-                        auto best = closest_match(name, candidates);
-                        // Issue #79: source location from the offending node.
-                        Diagnostic d(ErrorKind::UnboundVariable, "set!: " + std::string(name),
-                                     aura::diag::SourceLocation{v.line, v.col, diag_fid_4916(f)},
-                                     current_id);
-                        if (!best.empty())
-                            d.with_suggestion("did you mean '" + best + "'?");
-                        return std::unexpected(std::move(d));
-                    }
-                    return std::unexpected(Diagnostic{
-                        ErrorKind::UnboundVariable, "set!: " + std::string(name),
-                        aura::diag::SourceLocation{v.line, v.col, diag_fid_4916(f)}, current_id});
                 }
                 case aura::ast::NodeTag::Quote: {
-                    if (v.children.empty())
-                        return EvalResult(make_void());
-                    // Issue #1137: quoted empty list is often LiteralInt(0) in the AST
-                    // (parser uses 0 as the empty-list sentinel). Map that to void so
-                    // (equal? 0 '()) / (eq? 0 '()) can distinguish fixnum 0 from nil.
                     {
-                        auto qv = f->get(v.child(0));
-                        if (qv.tag == aura::ast::NodeTag::LiteralInt && qv.int_value == 0 &&
-                            qv.marker != aura::ast::SyntaxMarker::BoolLiteral)
-                            return EvalResult(make_void());
+                        auto step = eval_flat_on_quote(cursor, v, eval_env);
+                        if (step.kind == FlatStep::Kind::Cont)
+                            continue;
+                        if (step.kind == FlatStep::Kind::Ret)
+                            return std::move(*step.value);
+                        break;
                     }
-                    // Issue #4727: quoted data materializes identifier atoms
-                    // as interned symbols (datum context).
-                    return EvalResult(ast_to_data(*f, *p, v.child(0), /*datum=*/true));
                 }
                 case aura::ast::NodeTag::TypeAnnotation: {
-                    if (v.children.empty())
-                        return EvalResult(make_void());
-                    auto annot_id = current_id;
-                    auto child_result = eval_flat(*f, *p, v.child(0), eval_env);
-                    if (!child_result)
-                        return child_result;
-                    // 3-arg form (: name Type val): bind the result in eval_env
-                    if (v.int_value != 0) {
-                        auto var_name = p->resolve(static_cast<aura::ast::SymId>(v.int_value));
-                        if (!var_name.empty()) {
-                            auto& me = const_cast<Env&>(eval_env);
-
-                            auto ci = alloc_cell(*child_result);
-                            if (types::is_void(*child_result))
-                                note_cell_nil_assigned(ci); // Issue #4789
-                            me.bind(std::string(var_name), make_cell(ci));
-                        }
+                    {
+                        auto step = eval_flat_on_typeannotation(cursor, v, eval_env);
+                        if (step.kind == FlatStep::Kind::Cont)
+                            continue;
+                        if (step.kind == FlatStep::Kind::Ret)
+                            return std::move(*step.value);
+                        break;
                     }
-                    // Runtime type check: compare value type against annotation
-                    if (type_registry_ && annot_id < f->size()) {
-                        auto expected_type_id = f->type_id(annot_id);
-                        if (expected_type_id != 0) {
-                            auto& treg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
-                            auto expected_tag =
-                                treg.tag_of(aura::core::TypeId{expected_type_id, 1});
-                            auto actual_tag = runtime_type_tag(*child_result);
-                            if (actual_tag != expected_tag &&
-                                actual_tag != aura::core::TypeTag::DYNAMIC) {
-                                auto& val = *child_result;
-                                // Attempt coercion at runtime
-                                bool coerced =
-                                    coerce_value(val, actual_tag, expected_tag, string_heap_);
-                                if (!coerced) {
-                                    std::string expected_name(
-                                        treg.format_type(aura::core::TypeId{expected_type_id, 1}));
-                                    std::string actual_name = type_tag_name(actual_tag);
-                                    std::println(std::cerr, "type warning: expected {}, got {}\n",
-                                                 expected_name, actual_name);
-                                }
-                            }
-                        }
-                    }
-                    return child_result;
                 }
                 case aura::ast::NodeTag::MacroDef: {
-                    // Issue #4350-family: own the name bytes (the registration
-                    // path interns into the pool).
-                    std::string name(p->resolve(v.sym_id));
-                    std::vector<std::string> param_names;
-                    for (auto pn : v.params)
-                        param_names.push_back(std::string(p->resolve(pn)));
-                    auto body_id = v.children.empty() ? aura::ast::NULL_NODE : v.child(0);
-                    if (body_id == aura::ast::NULL_NODE)
-                        return EvalResult(make_void());
-
-                    // ── Warn: unused macro parameters ──────────────────────────
-                    // Scan the body for variable references and compare with params.
                     {
-                        // Collect all variable names referenced in the macro body
-                        std::unordered_set<std::string> used_vars;
-                        auto collect_vars = [&](this const auto& self,
-                                                aura::ast::NodeId nid) -> void {
-                            if (nid == aura::ast::NULL_NODE || nid >= f->size())
-                                return;
-                            auto nv = f->get(nid);
-                            if (nv.tag == aura::ast::NodeTag::Variable &&
-                                nv.sym_id != aura::ast::INVALID_SYM) {
-                                used_vars.insert(std::string(p->resolve(nv.sym_id)));
-                            }
-                            for (auto c : nv.children)
-                                self(c);
-                        };
-                        collect_vars(body_id);
-
-                        int used_count = 0;
-                        for (auto& pn : param_names) {
-                            if (used_vars.count(pn) == 0) {
-                                std::println(std::cerr,
-                                             "warning: macro '{}': parameter '{}' never used",
-                                             std::string(name), pn);
-                            } else {
-                                ++used_count;
-                            }
-                        }
-                        if (used_count == 0) {
-                            std::println(
-                                std::cerr,
-                                "warning: macro '{}': body does not reference any parameter",
-                                std::string(name));
-                        }
+                        auto step = eval_flat_on_macrodef(cursor, v, eval_env);
+                        if (step.kind == FlatStep::Kind::Cont)
+                            continue;
+                        if (step.kind == FlatStep::Kind::Ret)
+                            return std::move(*step.value);
+                        break;
                     }
-
-                    // Store macro definition with proper dotted flag
-                    // Issue #120: dotted is bit 0, hygienic is bit 1 of
-                    // int_val_ (encoded by add_macrodef in parser_impl.cpp).
-                    bool is_dotted = (v.int_value & 1) != 0;
-                    bool is_hygienic = (v.int_value & 2) != 0;
-                    // Issue #230 #2: bit 2 of int_val_ flags the
-                    // `define-hygienic-macro*` (preserved-params) variant.
-                    bool is_preserved = (v.int_value & 4) != 0;
-                    // Issue #4859: a macro is a GLOBAL registry entry — it
-                    // outlives the eval call that registered it — so it keeps
-                    // the (eval ...) program that owns f / p alive.
-                    macros_epoch_4894_.fetch_add(1, std::memory_order_acq_rel); // Issue #4894
-                    macros_[std::string(name)] = MacroDef{std::move(param_names),
-                                                          is_dotted,
-                                                          is_hygienic,
-                                                          is_preserved,
-                                                          f,
-                                                          p,
-                                                          body_id,
-                                                          eval_program_for_pool(p)};
-                    note_macro_def_4901(std::string(name)); // Issue #4901
-                    macros_epoch_4894_.fetch_add(1, std::memory_order_acq_rel);
-                    return EvalResult(make_void());
                 }
                 case aura::ast::NodeTag::Linear: {
                     // Issue #1539: Linear e evaluates the payload; binding
@@ -11416,21 +12149,14 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     return eval_flat(*f, *p, v.child(0), eval_env);
                 }
                 case aura::ast::NodeTag::Move: {
-                    // Issue #1539: after reading the value, mark the source
-                    // binding as Moved so linear_post_mutate_enforce can
-                    // intercept subsequent use-after-move.
-                    if (v.children.empty())
-                        return EvalResult(make_void());
-                    const auto inner = v.child(0);
-                    auto result = eval_flat(*f, *p, inner, eval_env);
-                    if (!result) [[unlikely]]
-                        return result;
-                    if (inner != aura::ast::NULL_NODE && inner < f->size() &&
-                        f->get(inner).tag == aura::ast::NodeTag::Variable) {
-                        (void)mark_linear_binding_moved(const_cast<Env&>(eval_env),
-                                                        f->get(inner).sym_id);
+                    {
+                        auto step = eval_flat_on_linear_move(cursor, v, eval_env);
+                        if (step.kind == FlatStep::Kind::Cont)
+                            continue;
+                        if (step.kind == FlatStep::Kind::Ret)
+                            return std::move(*step.value);
+                        break;
                     }
-                    return result;
                 }
                 case aura::ast::NodeTag::Borrow:
                 case aura::ast::NodeTag::MutBorrow:

@@ -6633,6 +6633,161 @@ public:
     }
 
 private:
+    // Tree-walker step. Cont restarts eval_flat_body's TCO loop; Ret leaves
+    // the body; Fall means this arm did not handle the node. The optional
+    // result is inline — no heap and no virtual call.
+    struct FlatStep {
+        enum class Kind : std::uint8_t { Fall, Cont, Ret };
+        Kind kind = Kind::Fall;
+        std::optional<EvalResult> value;
+        static FlatStep fall() noexcept { return {}; }
+        static FlatStep cont() noexcept {
+            FlatStep s;
+            s.kind = Kind::Cont;
+            return s;
+        }
+        template <class T> static FlatStep ret(T&& v) {
+            FlatStep s;
+            s.kind = Kind::Ret;
+            s.value.emplace(std::forward<T>(v));
+            return s;
+        }
+    };
+    // References into eval_flat_body's frame. The pointees (current_env,
+    // tail_env, tco_pinned) stay there so TwFrameReg's addresses do not move.
+    struct EvalFlatCursor {
+        aura::ast::FlatAST*& f;
+        aura::ast::StringPool*& p;
+        const Env*& current_env;
+        aura::ast::NodeId& current_id;
+        std::optional<Env>& tail_env;
+        std::vector<std::unique_ptr<Env>>& tco_pinned;
+        aura::core::fiber_ctx::Context::TcoReuseState& tco;
+        void pin_if_current_in_tail();
+    };
+    [[nodiscard]] FlatStep eval_flat_on_if(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                           const Env& eval_env);
+    // Once per eval_flat_body entry. thread_local sample counters stay here.
+    [[nodiscard]] FlatStep eval_flat_on_begin_letrec(
+        EvalFlatCursor& cur, const aura::ast::NodeView& v, const Env& eval_env,
+        std::vector<std::pair<std::size_t, aura::ast::NodeId>>& deferred_requires,
+        std::vector<std::pair<std::string, aura::ast::NodeId>>& letrec_defs,
+        std::vector<std::size_t>& letrec_idx, bool file_root, aura::ast::NodeId last_expr,
+        std::size_t count);
+    void eval_flat_sample_memory();
+    // File-root begin: turn a primitive error into a located diagnostic and
+    // remember where a oneshot runner should resume.
+    [[nodiscard]] EvalResult finish_begin_child(EvalResult r, aura::ast::NodeId form,
+                                                bool file_root, aura::ast::FlatAST* flat);
+    // Per-node admission before the opcode switch. nullopt means `out` is the
+    // node to dispatch; an engaged result leaves eval_flat_body.
+    [[nodiscard]] std::optional<EvalResult>
+    eval_flat_prepare_visit(EvalFlatCursor& cur, std::uint16_t& body_gen,
+                            aura::ast::FlatAST*& body_gen_flat, const Env& eval_env,
+                            aura::ast::NodeView& out);
+    [[nodiscard]] FlatStep eval_flat_on_begin(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                              const Env& eval_env);
+    [[nodiscard]] FlatStep eval_flat_on_call(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                             const Env& eval_env);
+    [[nodiscard]] FlatStep
+    eval_flat_on_cannot_call(EvalFlatCursor& cur, const aura::ast::NodeView& v, const Env& eval_env,
+                             const aura::ast::NodeView& callee, const EvalResult& fn);
+    [[nodiscard]] FlatStep eval_flat_on_macro_legacy(EvalFlatCursor& cur,
+                                                     const aura::ast::NodeView& v,
+                                                     const Env& eval_env, const std::string& cname,
+                                                     MacroDef& md, bool is_rest,
+                                                     const aura::ast::NodeView& callee);
+    [[nodiscard]] FlatStep eval_flat_on_prim_value(EvalFlatCursor& cur,
+                                                   const aura::ast::NodeView& v,
+                                                   const Env& eval_env, const EvalResult& fn);
+    [[nodiscard]] FlatStep eval_flat_on_functor(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                                const Env& eval_env, const EvalResult& fn,
+                                                const aura::ast::NodeView& callee);
+    [[nodiscard]] FlatStep eval_flat_on_closure(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                                const Env& eval_env, const EvalResult& fn,
+                                                const aura::ast::NodeView& callee);
+    [[nodiscard]] FlatStep eval_flat_on_primitive(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                                  const Env& eval_env,
+                                                  const aura::ast::NodeView& callee,
+                                                  aura::ast::NodeId callee_id);
+    [[nodiscard]] FlatStep eval_flat_on_and_or(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                               const Env& eval_env,
+                                               const aura::ast::NodeView& callee);
+    [[nodiscard]] FlatStep eval_flat_on_try(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                            const Env& eval_env, const std::string& cname,
+                                            const aura::ast::NodeView& callee);
+    [[nodiscard]] FlatStep eval_flat_on_while(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                              const Env& eval_env, const std::string& cname,
+                                              const aura::ast::NodeView& callee);
+    [[nodiscard]] FlatStep eval_flat_on_check_capability(EvalFlatCursor& cur,
+                                                         const aura::ast::NodeView& v,
+                                                         const Env& eval_env,
+                                                         const std::string& cname);
+    [[nodiscard]] FlatStep eval_flat_on_with_capability(EvalFlatCursor& cur,
+                                                        const aura::ast::NodeView& v,
+                                                        const Env& eval_env,
+                                                        const std::string& cname);
+    [[nodiscard]] FlatStep eval_flat_on_evolution_region(EvalFlatCursor& cur,
+                                                         const aura::ast::NodeView& v,
+                                                         const Env& eval_env,
+                                                         const std::string& cname);
+    [[nodiscard]] FlatStep eval_flat_on_performance_region(EvalFlatCursor& cur,
+                                                           const aura::ast::NodeView& v,
+                                                           const Env& eval_env,
+                                                           const std::string& cname);
+    [[nodiscard]] FlatStep eval_flat_on_with_arena(EvalFlatCursor& cur,
+                                                   const aura::ast::NodeView& v,
+                                                   const Env& eval_env, const std::string& cname);
+    [[nodiscard]] FlatStep eval_flat_on_unless(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                               const Env& eval_env, const std::string& cname);
+    [[nodiscard]] FlatStep eval_flat_on_when(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                             const Env& eval_env, const std::string& cname);
+    [[nodiscard]] FlatStep eval_flat_on_require(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                                const Env& eval_env,
+                                                const aura::ast::NodeView& callee);
+    [[nodiscard]] FlatStep
+    eval_flat_on_macro_hygienic(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                const Env& eval_env, const std::string& cname, MacroDef& md,
+                                bool is_rest, const aura::ast::NodeView& callee);
+    [[nodiscard]] FlatStep
+    eval_flat_on_macro_preserved(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                 const Env& eval_env, const std::string& cname, MacroDef& md,
+                                 bool is_rest, const aura::ast::NodeView& callee);
+    [[nodiscard]] FlatStep eval_flat_on_inline_lambda(EvalFlatCursor& cur,
+                                                      const aura::ast::NodeView& v,
+                                                      const Env& eval_env,
+                                                      const aura::ast::NodeView& callee);
+    [[nodiscard]] FlatStep eval_flat_on_linear_move(EvalFlatCursor& cur,
+                                                    const aura::ast::NodeView& v,
+                                                    const Env& eval_env);
+    [[nodiscard]] FlatStep eval_flat_on_macrodef(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                                 const Env& eval_env);
+    [[nodiscard]] FlatStep eval_flat_on_typeannotation(EvalFlatCursor& cur,
+                                                       const aura::ast::NodeView& v,
+                                                       const Env& eval_env);
+    [[nodiscard]] FlatStep eval_flat_on_quote(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                              const Env& eval_env);
+    [[nodiscard]] FlatStep eval_flat_on_set(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                            const Env& eval_env);
+    [[nodiscard]] FlatStep eval_flat_on_export(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                               const Env& eval_env);
+    [[nodiscard]] FlatStep eval_flat_on_definemodule(EvalFlatCursor& cur,
+                                                     const aura::ast::NodeView& v,
+                                                     const Env& eval_env);
+    [[nodiscard]] FlatStep eval_flat_on_define(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                               const Env& eval_env);
+    [[nodiscard]] FlatStep
+    eval_flat_on_definetype(EvalFlatCursor& cur, const aura::ast::NodeView& v, const Env& eval_env);
+    [[nodiscard]] FlatStep
+    eval_flat_on_let_letrec(EvalFlatCursor& cur, const aura::ast::NodeView& v, const Env& eval_env);
+    [[nodiscard]] FlatStep eval_flat_on_ifexpr_lambda(EvalFlatCursor& cur,
+                                                      const aura::ast::NodeView& v,
+                                                      const Env& eval_env);
+    [[nodiscard]] FlatStep eval_flat_on_variable(EvalFlatCursor& cur, const aura::ast::NodeView& v,
+                                                 const Env& eval_env);
+    [[nodiscard]] FlatStep eval_flat_on_literalint_literalfloat_literalstring(
+        EvalFlatCursor& cur, const aura::ast::NodeView& v, const Env& eval_env);
+
     ClosureId next_id() { return next_id_.fetch_add(1, std::memory_order_relaxed); }
     [[nodiscard]] std::size_t alloc_cell(const types::EvalValue& v) {
         // Issue #1397: push_back + size read MUST be atomic so the
@@ -6728,6 +6883,28 @@ private:
     [[nodiscard]] EvalResult eval_data_as_code(const types::EvalValue& data, const Env& env,
                                                aura::ast::FlatAST* flat = nullptr,
                                                aura::ast::StringPool* pool = nullptr);
+    [[nodiscard]] std::optional<ast::NodeId>
+    data_to_flat_named_form(aura::ast::FlatAST& flat, aura::ast::StringPool& pool, int depth,
+                            const std::string& fn_name, const types::EvalValue& car_data,
+                            const types::EvalValue& cdr_data);
+    [[nodiscard]] std::optional<EvalResult>
+    eval_data_forms_control(const types::EvalValue& data, const Env& env, ast::FlatAST* flat,
+                            ast::StringPool* pool, const types::EvalValue& car_val,
+                            const types::EvalValue& cdr_val, const std::string& fn_name);
+    [[nodiscard]] std::optional<EvalResult>
+    eval_data_forms_bind(const types::EvalValue& data, const Env& env, ast::FlatAST* flat,
+                         ast::StringPool* pool, const types::EvalValue& car_val,
+                         const types::EvalValue& cdr_val, const std::string& fn_name);
+    [[nodiscard]] std::optional<EvalResult>
+    eval_data_forms_apply(const types::EvalValue& data, const Env& env, ast::FlatAST* flat,
+                          ast::StringPool* pool, const types::EvalValue& car_val,
+                          const types::EvalValue& cdr_val, const std::string& fn_name);
+    [[nodiscard]] EvalResult apply_replace_pattern_matches(
+        aura::ast::FlatAST& flat, std::vector<aura::ast::FlatAST::StableNodeRef>& matches,
+        const std::string& pattern_str, const std::string& repl_template,
+        const std::string& summary, std::span<const types::EvalValue> a, aura::ast::NodeId end_id);
+    [[nodiscard]] FlatStep eval_flat_publish_functor_instance(const std::string& cache_key,
+                                                              Env& mod_env);
     Env* copy_env(const Env& env, ast::ASTArena* target = nullptr)
         pre(target != nullptr); // arena_ is private; impl also asserts via contract_assert
     void init_pair_primitives();
