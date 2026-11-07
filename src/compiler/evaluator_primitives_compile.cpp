@@ -91,7 +91,7 @@ using types::make_void;
 // (bool #f for most dirty! paths; make_int(-1) for compact/subtree/defuse).
 
 // Issue #1896 alias: dirty-bit mutators default on_fail = #f.
-template <typename F> EvalValue run_compile_dirty_under_guard(Evaluator& ev, F&& body) {
+template <std::invocable F> EvalValue run_compile_dirty_under_guard(Evaluator& ev, F&& body) {
     return run_under_mutation_guard(ev, std::forward<F>(body), make_bool(false));
 }
 

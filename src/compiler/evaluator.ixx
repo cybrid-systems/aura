@@ -10619,7 +10619,7 @@ public:
     // (AdmissionRejected: …). Appended to the naked-mutate error so the
     // refusal is not reported without its cause.
     std::string heap_guard_reject_reason_;
-    template <typename Call>
+    template <std::invocable Call>
     inline types::EvalValue invoke_prim_with_telemetry_at(std::string_view name, std::size_t slot,
                                                           Call&& call) {
         bump_primitive_call_count();
@@ -10791,7 +10791,7 @@ public:
 
     // Issue #4599: name entry. Unknown and empty names still call() and still
     // bump the primitive counter. Hot call sites pass a cached slot to _at.
-    template <typename Call>
+    template <std::invocable Call>
     inline types::EvalValue invoke_prim_with_telemetry(std::string_view name, Call&& call) {
         const std::size_t slot =
             name.empty() ? static_cast<std::size_t>(-1) : primitives_.slot_for_name(name);
@@ -19327,7 +19327,7 @@ public:
         // inside add_mutate bodies (throws previously left ok=true).
         // Returns true if fn completed without throwing.
         // Template must stay in the interface (module BMI).
-        template <typename F>
+        template <std::invocable F>
         [[nodiscard]] bool run_or_rollback(F&& fn, std::string* err_out = nullptr) {
             if (inert_) {
                 if (err_out)
