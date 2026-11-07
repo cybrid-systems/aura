@@ -405,4 +405,13 @@ struct RegSplitParts {
     static void register_stats_alias_primitives(Evaluator& ev, MetricsFn metrics);
     template <typename MetricsFn>
     static void register_production_sweep_d_primitives(Evaluator& ev, MetricsFn metrics);
+    // Issue #5033: agent / synthesize / strategy registration parts (defined in
+    // evaluator_primitives_agent.cpp). Each part is one responsibility group;
+    // the capability-gated add wrapper stays with the orchestrator.
+    template <typename AddFn>
+    static void register_agent_loop_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_strategy_controller_primitives(Evaluator& ev, AddFn& add);
+    template <typename AddFn>
+    static void register_strategy_evolution_stats_primitives(Evaluator& ev, AddFn& add);
 };

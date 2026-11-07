@@ -758,7 +758,15 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     return fn(a);
                 }});
     };
+    // Issue #5033: registration order is the original single-function order.
+    RegSplitParts::register_agent_loop_primitives(ev, add);
+    RegSplitParts::register_strategy_controller_primitives(ev, add);
+    RegSplitParts::register_strategy_evolution_stats_primitives(ev, add);
+}
 
+// Issue #5033: agent loop surface (agent:running? / agent:tick).
+template <typename AddFn>
+void RegSplitParts::register_agent_loop_primitives(Evaluator& ev, AddFn& add) {
     // Issue #2627: auto-evolve-* convenience prims removed; agent:tick keeps loop state.
 
     // ── Issues #1327 Phase 1: agent service bridge (single entry points) ──
@@ -846,7 +854,11 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return run_once(as_closure_id(a[0]), as_closure_id(a[1]));
         return make_int(0);
     });
+}
 
+// Issue #5033: strategy evolution controller surface (#444).
+template <typename AddFn>
+void RegSplitParts::register_strategy_controller_primitives(Evaluator& ev, AddFn& add) {
 #if AURA_ENABLE_STRATEGY
     // ── Issue #444: strategy evolution controller ────────
     //
@@ -953,7 +965,11 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         return make_bool(true);
     });
 #endif // AURA_ENABLE_STRATEGY
+}
 
+// Issue #5033: query:strategy-evolution-stats pheromone counters (#444).
+template <typename AddFn>
+void RegSplitParts::register_strategy_evolution_stats_primitives(Evaluator& ev, AddFn& add) {
     // (query:strategy-evolution-stats) — Issue #444:
     // hash variant of the strategy pheromone counters.
     // 7 fields:
@@ -1045,6 +1061,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return build_hash(kv);
         });
 }
+
 
 void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
                                     std::function<void()> destroy_defuse_index) {
