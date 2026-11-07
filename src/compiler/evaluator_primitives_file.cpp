@@ -69,31 +69,109 @@ using types::make_void;
 void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #3174: read-file / write-file stay on the core boot list.
     // file-*/directory-list/shell/command-* defer until std/io or std/process.
+    // Issue #5033: registration order is the original single-function order.
+    RegSplitParts::register_file_read_primitives(add, ev);
+    RegSplitParts::register_file_write_primitives(add, ev);
+    RegSplitParts::register_file_probe_primitives(add, ev);
+    RegSplitParts::register_file_entry_primitives(add, ev);
+    RegSplitParts::register_exec_primitives(add, ev);
+    RegSplitParts::register_directory_list_primitive(add, ev);
+}
 
-    const auto deny_io = [&ev](std::string_view cap, std::string_view msg) -> EvalValue {
-        if (!ev.sandbox_mode() || ev.has_capability(cap) ||
-            ev.has_capability(aura::compiler::security::kCapIo) ||
-            ev.has_capability(aura::compiler::security::kCapWildcard))
-            return make_void();
-        ev.bump_capability_denial();
-        return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
-                                    ev.primitive_error_counter_ptr());
-    };
-    const auto deny_exec = [&ev](std::string_view msg) -> EvalValue {
-        if (!ev.sandbox_mode() || ev.has_capability(aura::compiler::security::kCapExec) ||
-            ev.has_capability(aura::compiler::security::kCapWildcard))
-            return make_void();
-        ev.bump_capability_denial();
-        return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
-                                    ev.primitive_error_counter_ptr());
-    };
+// Issue #5033: the file-IO capability policy shared by the parts below.
+// The primitives outlive registration, so these are static helpers taking
+// the Evaluator by reference (never a captured sibling closure).
+EvalValue RegSplitParts::file_deny_io(Evaluator& ev, std::string_view cap, std::string_view msg) {
+    if (!ev.sandbox_mode() || ev.has_capability(cap) ||
+        ev.has_capability(aura::compiler::security::kCapIo) ||
+        ev.has_capability(aura::compiler::security::kCapWildcard))
+        return make_void();
+    ev.bump_capability_denial();
+    return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+                                ev.primitive_error_counter_ptr());
+}
 
-    add("read", [&ev, deny_io](const auto&) {
+EvalValue RegSplitParts::file_deny_exec(Evaluator& ev, std::string_view msg) {
+    if (!ev.sandbox_mode() || ev.has_capability(aura::compiler::security::kCapExec) ||
+        ev.has_capability(aura::compiler::security::kCapWildcard))
+        return make_void();
+    ev.bump_capability_denial();
+    return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+                                ev.primitive_error_counter_ptr());
+}
+
+// Helper: check path is a regular file (skip directories). Uses lstat so
+// symlink targets are not followed for the type check (#1171 TOCTOU family).
+bool RegSplitParts::file_is_regular(const std::string& path) {
+    struct stat st;
+    return ::lstat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+}
+
+// Issue #1163/#1164/#1165/#2487: shared path_is_denied policy
+// (security_capabilities.h) — used by read/write/file-* and sys-open.
+bool RegSplitParts::file_path_is_denied(std::string_view path) {
+    return aura::compiler::security::path_is_denied(path);
+}
+
+// Issue #4917: every write-file failure is an error value naming the
+// path and the reason ("io error: write-file /x/y: ENOENT: directory
+// does not exist"). It used to be (), indistinguishable from success.
+EvalValue RegSplitParts::file_io_fail(Evaluator& ev, std::string_view op, std::string_view path,
+                                      std::string_view why) {
+    std::string msg(op);
+    if (!path.empty()) {
+        msg += ' ';
+        msg += path;
+    }
+    msg += ": ";
+    msg += why;
+    auto err = make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+                                    ev.primitive_error_counter_ptr());
+    ev.mark_error_kind(err, Evaluator::kErrorMarkIo);
+    return err;
+}
+
+std::string RegSplitParts::file_errno_reason(int e) {
+    switch (e) {
+        case ENOENT:
+            return "ENOENT: directory does not exist";
+        case EACCES:
+            return "EACCES: permission denied";
+        case ELOOP:
+            return "ELOOP: refusing to follow a symlink";
+        case EISDIR:
+            return "EISDIR: is a directory";
+        case ENOTDIR:
+            return "ENOTDIR: a path component is not a directory";
+        case ENOSPC:
+            return "ENOSPC: no space left on device";
+        case EROFS:
+            return "EROFS: read-only file system";
+        default:
+            return std::format("errno {}: {}", e, std::strerror(e));
+    }
+}
+
+// Issue #4912: `--grant write:out/` / the ci preset scope Write to
+// directories. void = in scope (or no scope); else the refusal value.
+EvalValue RegSplitParts::file_deny_write_scope(Evaluator& ev, std::string_view op,
+                                               std::string_view path, std::string_view resolved) {
+    if (aura::compiler::security::path_in_write_scope(resolved))
+        return make_void();
+    ev.bump_capability_denial();
+    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                aura::compiler::security::write_scope_deny_reason(op, path),
+                                ev.primitive_error_counter_ptr());
+}
+
+// Issue #5033: read / read-file — stdin and file content ingestion.
+void RegSplitParts::register_file_read_primitives(PrimRegistrar add, Evaluator& ev) {
+    add("read", [&ev](const auto&) {
         // Issue #4504: shared-process stdin is a host io-read channel (same
         // class as /proc/self/cmdline, #2478). Fence BEFORE getline so a
         // denied read consumes nothing from stdin.
-        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
-                                  "capability denied: io-read required");
+        if (auto denied = file_deny_io(ev, aura::compiler::security::kCapIoRead,
+                                       "capability denied: io-read required");
             is_error(denied))
             return denied;
         std::string line;
@@ -103,22 +181,9 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         auto id = ev.string_heap_.mint(std::move(line));
         return make_string(id);
     });
-
-    // Helper: check path is a regular file (skip directories). Uses lstat so
-    // symlink targets are not followed for the type check (#1171 TOCTOU family).
-    auto is_regular = [](const std::string& path) -> bool {
-        struct stat st;
-        return ::lstat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
-    };
-    // Issue #1163/#1164/#1165/#2487: shared path_is_denied policy
-    // (security_capabilities.h) — used by read/write/file-* and sys-open.
-    auto path_is_denied = [](std::string_view path) -> bool {
-        return aura::compiler::security::path_is_denied(path);
-    };
-
-    add("read-file", [&ev, is_regular, path_is_denied, deny_io](const auto& a) {
-        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
-                                  "capability denied: io-read required");
+    add("read-file", [&ev](const auto& a) {
+        if (auto denied = file_deny_io(ev, aura::compiler::security::kCapIoRead,
+                                       "capability denied: io-read required");
             is_error(denied))
             return denied;
         if (a.empty() || !is_string(a[0]))
@@ -129,7 +194,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         auto& path = ev.mutable_string_at(idx);
         // Issue #1163/#1171: deny sensitive paths; open with O_NOFOLLOW to
         // collapse lstat+open TOCTOU (symlink swap between check and open).
-        if (path_is_denied(path))
+        if (file_path_is_denied(path))
             return make_void();
         // Issue #3835: Restricted+MT / Strict → resolve under tenant root;
         // cross-tenant / escape → deny + IsolationDeny SE (mirror #3802 write-file).
@@ -156,61 +221,13 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         auto id = ev.string_heap_.mint(std::move(content));
         return make_string(id);
     });
+}
 
-    // Issue #4917: every write-file failure is an error value naming the
-    // path and the reason ("io error: write-file /x/y: ENOENT: directory
-    // does not exist"). It used to be (), indistinguishable from success.
-    const auto io_fail = [&ev](std::string_view op, std::string_view path,
-                               std::string_view why) -> EvalValue {
-        std::string msg(op);
-        if (!path.empty()) {
-            msg += ' ';
-            msg += path;
-        }
-        msg += ": ";
-        msg += why;
-        auto err = make_primitive_error(ev.string_heap_, ev.error_values_, msg,
-                                        ev.primitive_error_counter_ptr());
-        ev.mark_error_kind(err, Evaluator::kErrorMarkIo);
-        return err;
-    };
-    const auto errno_reason = [](int e) -> std::string {
-        switch (e) {
-            case ENOENT:
-                return "ENOENT: directory does not exist";
-            case EACCES:
-                return "EACCES: permission denied";
-            case ELOOP:
-                return "ELOOP: refusing to follow a symlink";
-            case EISDIR:
-                return "EISDIR: is a directory";
-            case ENOTDIR:
-                return "ENOTDIR: a path component is not a directory";
-            case ENOSPC:
-                return "ENOSPC: no space left on device";
-            case EROFS:
-                return "EROFS: read-only file system";
-            default:
-                return std::format("errno {}: {}", e, std::strerror(e));
-        }
-    };
-
-    // Issue #4912: `--grant write:out/` / the ci preset scope Write to
-    // directories. void = in scope (or no scope); else the refusal value.
-    const auto deny_write_scope = [&ev](std::string_view op, std::string_view path,
-                                        std::string_view resolved) -> EvalValue {
-        if (aura::compiler::security::path_in_write_scope(resolved))
-            return make_void();
-        ev.bump_capability_denial();
-        return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                    aura::compiler::security::write_scope_deny_reason(op, path),
-                                    ev.primitive_error_counter_ptr());
-    };
-
+// Issue #5033: write-file / make-directory — Write-gated host output.
+void RegSplitParts::register_file_write_primitives(PrimRegistrar add, Evaluator& ev) {
     // AURA_SIDE_EFFECT_PRIM — write-file requires Write effect (#2057).
     // Returns 1 on success (documented in lib/std/INDEX.aura).
-    add("write-file", [&ev, path_is_denied, deny_io, io_fail, errno_reason,
-                       deny_write_scope](std::span<const EvalValue> a) {
+    add("write-file", [&ev](std::span<const EvalValue> a) {
         using aura::compiler::security::kEffectWrite;
         if (!ev.require_effect(kEffectWrite, "write-file")) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
@@ -218,25 +235,26 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                                             kEffectWrite, ev.capability_tenant_id(), "write-file"),
                                         ev.primitive_error_counter_ptr());
         }
-        if (auto denied = deny_io(aura::compiler::security::kCapIoWrite,
-                                  "capability denied: io-write required");
+        if (auto denied = file_deny_io(ev, aura::compiler::security::kCapIoWrite,
+                                       "capability denied: io-write required");
             is_error(denied))
             return denied;
         if (a.size() < 2 || !is_string(a[0]))
-            return io_fail("write-file", "", "expected (write-file path-string content)");
+            return file_io_fail(ev, "write-file", "", "expected (write-file path-string content)");
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
-            return io_fail("write-file", "", "invalid path string");
+            return file_io_fail(ev, "write-file", "", "invalid path string");
         auto& path = ev.mutable_string_at(idx);
         // Issue #1163: refuse /proc/self/mem and other process-memory paths.
-        if (path_is_denied(path))
-            return io_fail("write-file", path, "denied: protected path");
+        if (file_path_is_denied(path))
+            return file_io_fail(ev, "write-file", path, "denied: protected path");
         // Issue #3802: Restricted+MT / Strict → resolve under tenant root;
         // cross-tenant / escape → deny + IsolationDeny SE, zero write.
         std::string resolved_path;
         if (!ev.check_tenant_host_path(path, resolved_path, "write-file"))
-            return io_fail("write-file", path, "denied: tenant path");
-        if (auto denied = deny_write_scope("write-file", path, resolved_path); is_error(denied))
+            return file_io_fail(ev, "write-file", path, "denied: tenant path");
+        if (auto denied = file_deny_write_scope(ev, "write-file", path, resolved_path);
+            is_error(denied))
             return denied;
         const std::string& use_path = resolved_path;
         std::string content;
@@ -247,24 +265,24 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                 // principal's stamped string. In-range before the bytes
                 // reach the host buffer; deny leaves the file untouched.
                 if (!ev.inrange_string_tenant_allows(cidx, kEffectWrite, "write-file"))
-                    return io_fail("write-file", path, "denied: tenant string");
+                    return file_io_fail(ev, "write-file", path, "denied: tenant string");
                 content = ev.string_at(cidx);
             }
         } else if (is_int(a[1])) {
             content = std::to_string(as_int(a[1]));
         } else {
-            return io_fail("write-file", path, "content must be a string or integer");
+            return file_io_fail(ev, "write-file", path, "content must be a string or integer");
         }
         // O_NOFOLLOW | O_CREAT | O_WRONLY — no symlink follow to sensitive targets.
         // Issue #3802: use_path is tenant-rooted under Restricted+MT / Strict.
         int fd =
             ::open(use_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
         if (fd < 0)
-            return io_fail("write-file", path, errno_reason(errno));
+            return file_io_fail(ev, "write-file", path, file_errno_reason(errno));
         struct stat st{};
         if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
             ::close(fd);
-            return io_fail("write-file", path, "not a regular file");
+            return file_io_fail(ev, "write-file", path, "not a regular file");
         }
         const char* p = content.data();
         std::size_t left = content.size();
@@ -275,21 +293,19 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
             if (n <= 0) {
                 const int e = n < 0 ? errno : EIO;
                 ::close(fd);
-                return io_fail("write-file", path, errno_reason(e));
+                return file_io_fail(ev, "write-file", path, file_errno_reason(e));
             }
             p += n;
             left -= static_cast<std::size_t>(n);
         }
         if (::close(fd) != 0)
-            return io_fail("write-file", path, errno_reason(errno));
+            return file_io_fail(ev, "write-file", path, file_errno_reason(errno));
         return make_int(1);
     });
-
     // Issue #4917: create an output directory without a shell. Same
     // Write gate and path policy as write-file; creates parents (mkdir -p).
     // 1 when the directory exists afterwards, else an io error value.
-    add("make-directory", [&ev, path_is_denied, deny_io, io_fail, errno_reason,
-                           deny_write_scope](std::span<const EvalValue> a) {
+    add("make-directory", [&ev](std::span<const EvalValue> a) {
         using aura::compiler::security::kEffectWrite;
         if (!ev.require_effect(kEffectWrite, "make-directory")) {
             return make_primitive_error(
@@ -298,24 +314,25 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                     kEffectWrite, ev.capability_tenant_id(), "make-directory"),
                 ev.primitive_error_counter_ptr());
         }
-        if (auto denied = deny_io(aura::compiler::security::kCapIoWrite,
-                                  "capability denied: io-write required");
+        if (auto denied = file_deny_io(ev, aura::compiler::security::kCapIoWrite,
+                                       "capability denied: io-write required");
             is_error(denied))
             return denied;
         if (a.empty() || !is_string(a[0]))
-            return io_fail("make-directory", "", "expected (make-directory path-string)");
+            return file_io_fail(ev, "make-directory", "", "expected (make-directory path-string)");
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
-            return io_fail("make-directory", "", "invalid path string");
+            return file_io_fail(ev, "make-directory", "", "invalid path string");
         auto& path = ev.mutable_string_at(idx);
         if (path.empty())
-            return io_fail("make-directory", "", "empty path");
-        if (path_is_denied(path))
-            return io_fail("make-directory", path, "denied: protected path");
+            return file_io_fail(ev, "make-directory", "", "empty path");
+        if (file_path_is_denied(path))
+            return file_io_fail(ev, "make-directory", path, "denied: protected path");
         std::string resolved;
         if (!ev.check_tenant_host_path(path, resolved, "make-directory"))
-            return io_fail("make-directory", path, "denied: tenant path");
-        if (auto denied = deny_write_scope("make-directory", path, resolved); is_error(denied))
+            return file_io_fail(ev, "make-directory", path, "denied: tenant path");
+        if (auto denied = file_deny_write_scope(ev, "make-directory", path, resolved);
+            is_error(denied))
             return denied;
         // mkdir -p, one component at a time; never follow a symlink as the
         // final component (lstat check after each step).
@@ -326,14 +343,14 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                 slash == std::string::npos ? resolved : resolved.substr(0, slash);
             if (!part.empty() && part != "." && part != "..") {
                 if (::mkdir(part.c_str(), 0755) != 0 && errno != EEXIST)
-                    return io_fail("make-directory", path, errno_reason(errno));
+                    return file_io_fail(ev, "make-directory", path, file_errno_reason(errno));
                 struct stat st{};
                 if (::lstat(part.c_str(), &st) != 0)
-                    return io_fail("make-directory", path, errno_reason(errno));
+                    return file_io_fail(ev, "make-directory", path, file_errno_reason(errno));
                 if (!S_ISDIR(st.st_mode))
-                    return io_fail("make-directory", path,
-                                   S_ISLNK(st.st_mode) ? errno_reason(ELOOP)
-                                                       : errno_reason(ENOTDIR));
+                    return file_io_fail(ev, "make-directory", path,
+                                        S_ISLNK(st.st_mode) ? file_errno_reason(ELOOP)
+                                                            : file_errno_reason(ENOTDIR));
             }
             if (slash == std::string::npos)
                 break;
@@ -341,12 +358,15 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return make_int(1);
     });
+}
 
+// Issue #5033: command-line / file-exists? — host recon probes.
+void RegSplitParts::register_file_probe_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #2478: require io-read — /proc/self/cmdline can leak secrets
     // (API keys, DSNs) from process argv. Same gate as file-exists? recon.
-    ev.defer_std_host_prim("command-line", [&ev, deny_io](const auto&) -> EvalValue {
-        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
-                                  "capability denied: io-read required");
+    ev.defer_std_host_prim("command-line", [&ev](const auto&) -> EvalValue {
+        if (auto denied = file_deny_io(ev, aura::compiler::security::kCapIoRead,
+                                       "capability denied: io-read required");
             is_error(denied))
             return denied;
         // Returns list of command-line argument strings, NOT including argv[0].
@@ -370,36 +390,36 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return result;
     });
+    ev.defer_std_host_prim("file-exists?", [&ev](std::span<const EvalValue> a) {
+        // Issue #1172: require io-read for existence probes (recon).
+        if (auto denied = file_deny_io(ev, aura::compiler::security::kCapIoRead,
+                                       "capability denied: io-read required");
+            is_error(denied))
+            return denied;
+        if (a.empty() || !is_string(a[0]))
+            return make_bool(false);
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_bool(false);
+        auto& path = ev.mutable_string_at(idx);
+        if (file_path_is_denied(path))
+            return make_bool(false);
+        // Issue #3835: Restricted+MT / Strict tenant root (mirror
+        // write-file).
+        std::string resolved;
+        if (!ev.check_tenant_host_path(path, resolved, "file-exists?"))
+            return make_bool(false);
+        struct stat st;
+        // Issue #4919: a predicate — #t / #f, as std/fs documents.
+        return make_bool(::lstat(resolved.c_str(), &st) == 0);
+    });
+}
 
-    ev.defer_std_host_prim("file-exists?",
-                           [&ev, path_is_denied, deny_io](std::span<const EvalValue> a) {
-                               // Issue #1172: require io-read for existence probes (recon).
-                               if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
-                                                         "capability denied: io-read required");
-                                   is_error(denied))
-                                   return denied;
-                               if (a.empty() || !is_string(a[0]))
-                                   return make_bool(false);
-                               auto idx = as_string_idx(a[0]);
-                               if (idx >= ev.string_heap_.size())
-                                   return make_bool(false);
-                               auto& path = ev.mutable_string_at(idx);
-                               if (path_is_denied(path))
-                                   return make_bool(false);
-                               // Issue #3835: Restricted+MT / Strict tenant root (mirror
-                               // write-file).
-                               std::string resolved;
-                               if (!ev.check_tenant_host_path(path, resolved, "file-exists?"))
-                                   return make_bool(false);
-                               struct stat st;
-                               // Issue #4919: a predicate — #t / #f, as std/fs documents.
-                               return make_bool(::lstat(resolved.c_str(), &st) == 0);
-                           });
-
-    ev.defer_std_host_prim("file-copy", [&ev, is_regular, path_is_denied, deny_io,
-                                         deny_write_scope](const auto& a) {
-        if (auto denied = deny_io(aura::compiler::security::kCapIoWrite,
-                                  "capability denied: io-write required");
+// Issue #5033: file-copy / file-delete / file-size — one-path entry operations.
+void RegSplitParts::register_file_entry_primitives(PrimRegistrar add, Evaluator& ev) {
+    ev.defer_std_host_prim("file-copy", [&ev](const auto& a) {
+        if (auto denied = file_deny_io(ev, aura::compiler::security::kCapIoWrite,
+                                       "capability denied: io-write required");
             is_error(denied))
             return denied;
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
@@ -410,16 +430,17 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         auto& src_path = ev.mutable_string_at(sidx);
         auto& dst_path = ev.mutable_string_at(didx);
         // Issue #1165: validate both source and destination paths.
-        if (path_is_denied(src_path) || path_is_denied(dst_path))
+        if (file_path_is_denied(src_path) || file_path_is_denied(dst_path))
             return make_void();
         // Issue #3802: both ends under caller tenant root (Restricted+MT / Strict).
         std::string src_resolved, dst_resolved;
         if (!ev.check_tenant_host_path(src_path, src_resolved, "file-copy") ||
             !ev.check_tenant_host_path(dst_path, dst_resolved, "file-copy"))
             return make_void();
-        if (auto denied = deny_write_scope("file-copy", dst_path, dst_resolved); is_error(denied))
+        if (auto denied = file_deny_write_scope(ev, "file-copy", dst_path, dst_resolved);
+            is_error(denied))
             return denied;
-        if (!is_regular(src_resolved))
+        if (!file_is_regular(src_resolved))
             return make_void();
         int sfd = ::open(src_resolved.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
         if (sfd < 0)
@@ -439,11 +460,9 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         ::close(dfd);
         return make_int(1);
     });
-
-    ev.defer_std_host_prim("file-delete", [&ev, path_is_denied, deny_io,
-                                           deny_write_scope](std::span<const EvalValue> a) {
-        if (auto denied = deny_io(aura::compiler::security::kCapIoWrite,
-                                  "capability denied: io-write required");
+    ev.defer_std_host_prim("file-delete", [&ev](std::span<const EvalValue> a) {
+        if (auto denied = file_deny_io(ev, aura::compiler::security::kCapIoWrite,
+                                       "capability denied: io-write required");
             is_error(denied))
             return denied;
         if (a.empty() || !is_string(a[0]))
@@ -455,13 +474,14 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         // Issue #1164: deny sensitive paths; refuse directories (no rmdir
         // cascade); use unlinkat AT_FDCWD without following final symlink
         // where possible.
-        if (path_is_denied(path))
+        if (file_path_is_denied(path))
             return make_int(0);
         // Issue #3802: Restricted+MT / Strict tenant root.
         std::string resolved;
         if (!ev.check_tenant_host_path(path, resolved, "file-delete"))
             return make_int(0);
-        if (auto denied = deny_write_scope("file-delete", path, resolved); is_error(denied))
+        if (auto denied = file_deny_write_scope(ev, "file-delete", path, resolved);
+            is_error(denied))
             return denied;
         struct stat st{};
         if (::lstat(resolved.c_str(), &st) != 0)
@@ -470,11 +490,10 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_int(0); // directories require explicit rmdir API
         return make_int(::unlink(resolved.c_str()) == 0 ? 1 : 0);
     });
-
-    ev.defer_std_host_prim("file-size", [&ev, is_regular, path_is_denied, deny_io](const auto& a) {
+    ev.defer_std_host_prim("file-size", [&ev](const auto& a) {
         // Issue #1173: require io-read for size probes.
-        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
-                                  "capability denied: io-read required");
+        if (auto denied = file_deny_io(ev, aura::compiler::security::kCapIoRead,
+                                       "capability denied: io-read required");
             is_error(denied))
             return denied;
         if (a.empty() || !is_string(a[0]))
@@ -483,21 +502,24 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         if (idx >= ev.string_heap_.size())
             return make_int(0);
         auto& path = ev.mutable_string_at(idx);
-        if (path_is_denied(path))
+        if (file_path_is_denied(path))
             return make_int(0);
         // Issue #3835: Restricted+MT / Strict tenant root (mirror write-file).
         std::string resolved;
         if (!ev.check_tenant_host_path(path, resolved, "file-size"))
             return make_int(0);
-        if (!is_regular(resolved))
+        if (!file_is_regular(resolved))
             return make_int(0);
         struct stat st{};
         if (::lstat(resolved.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
             return make_int(0);
         return make_int(static_cast<std::int64_t>(st.st_size));
     });
+}
 
-    ev.defer_std_host_prim("shell", [&ev, deny_exec](std::span<const EvalValue> a) -> EvalValue {
+// Issue #5033: shell / command-output — Exec-gated child processes.
+void RegSplitParts::register_exec_primitives(PrimRegistrar add, Evaluator& ev) {
+    ev.defer_std_host_prim("shell", [&ev](std::span<const EvalValue> a) -> EvalValue {
         // Issue #3836: force shell through require_effect(Exec) so Restricted
         // sandbox runs fiber-principal / isolation / live-mid (git-commit #2072
         // sibling). String-cap deny_exec Soft/Off (!sandbox_mode()) short-circuit
@@ -509,7 +531,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
                                             kEffectExec, ev.capability_tenant_id(), "shell"),
                                         ev.primitive_error_counter_ptr());
         }
-        if (auto denied = deny_exec("capability denied: exec required"); is_error(denied))
+        if (auto denied = file_deny_exec(ev, "capability denied: exec required"); is_error(denied))
             return denied;
         if (a.empty() || !is_string(a[0]))
             return make_int(-1);
@@ -580,144 +602,143 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
             ::close(jail_sv[0]);
         return make_int(-1);
     });
-
-    ev.defer_std_host_prim(
-        "command-output", [&ev, deny_exec](std::span<const EvalValue> a) -> EvalValue {
-            // Issue #3836: require_effect(Exec) before popen — same dual-track
-            // close as shell (string-cap alone skipped isolation / live mid).
-            using aura::compiler::security::kEffectExec;
-            if (!ev.require_effect(kEffectExec, "command-output")) {
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
-                    aura::compiler::security::format_deny_reason(
-                        kEffectExec, ev.capability_tenant_id(), "command-output"),
-                    ev.primitive_error_counter_ptr());
-            }
-            if (auto denied = deny_exec("capability denied: exec required"); is_error(denied))
-                return denied;
-            if (a.empty() || !is_string(a[0]))
-                return make_void();
-            auto idx = as_string_idx(a[0]);
-            if (idx >= ev.string_heap_.size())
-                return make_void();
-            // Issue #4559: same data fence as shell — in-range before the
-            // command bytes reach argv.
-            if (!ev.inrange_string_tenant_allows(idx, kEffectExec, "command-output"))
-                return make_void();
-            auto& cmd = ev.mutable_string_at(idx);
-            // Issue #4233: Restricted+MT / Strict tenant FS jail — same
-            // fence as shell above (IsolationDeny tenant-path-escape, zero
-            // exec). popen gives no pre-exec hook for the child chdir, so
-            // capture runs through the shared fork+pipe pattern (#473
-            // sibling) and the child is jailed under the caller's tenant
-            // root before execl; stdout capture + trailing-newline trim
-            // stay contract.
-            std::string jail_root;
-            if (!ev.check_tenant_exec_jail(cmd, jail_root, "command-output"))
-                return make_void();
-            int pfd[2];
-            if (::pipe(pfd) != 0)
-                return make_void();
-            int jail_sv[2] = {-1, -1};
-            if (!jail_root.empty() &&
-                ::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, jail_sv) != 0) {
-                ::close(pfd[0]);
-                ::close(pfd[1]);
-                return make_void();
-            }
-            std::string result;
-            pid_t pid = ::fork();
-            if (pid < 0) {
-                ::close(pfd[0]);
-                ::close(pfd[1]);
-                if (jail_sv[0] >= 0)
-                    ::close(jail_sv[0]);
-                if (jail_sv[1] >= 0)
-                    ::close(jail_sv[1]);
-                return make_void();
-            }
-            if (pid == 0) {
-                if (jail_sv[0] >= 0)
-                    ::close(jail_sv[0]);
-                // Issue #4233: jail cwd before exec — surviving relative-only
-                // commands resolve inside the tenant root.
-                if (!jail_root.empty() && ::chdir(jail_root.c_str()) != 0)
-                    ::_exit(127);
-                ::close(pfd[0]);
-                ::dup2(pfd[1], STDOUT_FILENO);
-                ::close(pfd[1]);
-                // Issue #4413: Landlock + stat emulation after the stdout pipe.
-                if (!jail_root.empty() && !::aura::compiler::security::apply_tenant_exec_fs_jail(
-                                              jail_root.c_str(), jail_sv[1]))
-                    ::_exit(127);
-                // Issue #4643: the capture pipe stays on stdout; stdin and
-                // stderr go to /dev/null. The jail does not revoke an fd the
-                // child already holds, so a scanner-clean `cat` read the
-                // host stdin and the child wrote the host stderr — the
-                // shared host stdio of every other tenant.
-                if (!jail_root.empty() &&
-                    !::aura::compiler::security::null_child_stdio_keep_stdout())
-                    ::_exit(127);
-                ::execl("/bin/sh", "sh", "-c", cmd.c_str(), static_cast<char*>(nullptr));
-                ::_exit(127);
-            }
+    ev.defer_std_host_prim("command-output", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        // Issue #3836: require_effect(Exec) before popen — same dual-track
+        // close as shell (string-cap alone skipped isolation / live mid).
+        using aura::compiler::security::kEffectExec;
+        if (!ev.require_effect(kEffectExec, "command-output")) {
+            return make_primitive_error(
+                ev.string_heap_, ev.error_values_,
+                aura::compiler::security::format_deny_reason(kEffectExec, ev.capability_tenant_id(),
+                                                             "command-output"),
+                ev.primitive_error_counter_ptr());
+        }
+        if (auto denied = file_deny_exec(ev, "capability denied: exec required"); is_error(denied))
+            return denied;
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_void();
+        // Issue #4559: same data fence as shell — in-range before the
+        // command bytes reach argv.
+        if (!ev.inrange_string_tenant_allows(idx, kEffectExec, "command-output"))
+            return make_void();
+        auto& cmd = ev.mutable_string_at(idx);
+        // Issue #4233: Restricted+MT / Strict tenant FS jail — same
+        // fence as shell above (IsolationDeny tenant-path-escape, zero
+        // exec). popen gives no pre-exec hook for the child chdir, so
+        // capture runs through the shared fork+pipe pattern (#473
+        // sibling) and the child is jailed under the caller's tenant
+        // root before execl; stdout capture + trailing-newline trim
+        // stay contract.
+        std::string jail_root;
+        if (!ev.check_tenant_exec_jail(cmd, jail_root, "command-output"))
+            return make_void();
+        int pfd[2];
+        if (::pipe(pfd) != 0)
+            return make_void();
+        int jail_sv[2] = {-1, -1};
+        if (!jail_root.empty() &&
+            ::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, jail_sv) != 0) {
+            ::close(pfd[0]);
             ::close(pfd[1]);
+            return make_void();
+        }
+        std::string result;
+        pid_t pid = ::fork();
+        if (pid < 0) {
+            ::close(pfd[0]);
+            ::close(pfd[1]);
+            if (jail_sv[0] >= 0)
+                ::close(jail_sv[0]);
             if (jail_sv[1] >= 0)
                 ::close(jail_sv[1]);
-            if (!jail_root.empty()) {
-                (void)::aura::compiler::security::tenant_exec_jail_reap(pid, jail_sv[0], pfd[0],
-                                                                        &result, jail_root.c_str());
-            } else {
-                std::array<char, 4096> buf;
-                for (ssize_t n; (n = ::read(pfd[0], buf.data(), buf.size())) > 0;)
-                    result.append(buf.data(), static_cast<std::size_t>(n));
-                ::close(pfd[0]);
-                int status = 0;
-                ::waitpid(pid, &status, 0);
-            }
-            if (!result.empty() && result.back() == '\n')
-                result.pop_back();
-            auto sid = ev.string_heap_.mint(std::move(result));
-            return make_string(sid);
-        });
+            return make_void();
+        }
+        if (pid == 0) {
+            if (jail_sv[0] >= 0)
+                ::close(jail_sv[0]);
+            // Issue #4233: jail cwd before exec — surviving relative-only
+            // commands resolve inside the tenant root.
+            if (!jail_root.empty() && ::chdir(jail_root.c_str()) != 0)
+                ::_exit(127);
+            ::close(pfd[0]);
+            ::dup2(pfd[1], STDOUT_FILENO);
+            ::close(pfd[1]);
+            // Issue #4413: Landlock + stat emulation after the stdout pipe.
+            if (!jail_root.empty() && !::aura::compiler::security::apply_tenant_exec_fs_jail(
+                                          jail_root.c_str(), jail_sv[1]))
+                ::_exit(127);
+            // Issue #4643: the capture pipe stays on stdout; stdin and
+            // stderr go to /dev/null. The jail does not revoke an fd the
+            // child already holds, so a scanner-clean `cat` read the
+            // host stdin and the child wrote the host stderr — the
+            // shared host stdio of every other tenant.
+            if (!jail_root.empty() && !::aura::compiler::security::null_child_stdio_keep_stdout())
+                ::_exit(127);
+            ::execl("/bin/sh", "sh", "-c", cmd.c_str(), static_cast<char*>(nullptr));
+            ::_exit(127);
+        }
+        ::close(pfd[1]);
+        if (jail_sv[1] >= 0)
+            ::close(jail_sv[1]);
+        if (!jail_root.empty()) {
+            (void)::aura::compiler::security::tenant_exec_jail_reap(pid, jail_sv[0], pfd[0],
+                                                                    &result, jail_root.c_str());
+        } else {
+            std::array<char, 4096> buf;
+            for (ssize_t n; (n = ::read(pfd[0], buf.data(), buf.size())) > 0;)
+                result.append(buf.data(), static_cast<std::size_t>(n));
+            ::close(pfd[0]);
+            int status = 0;
+            ::waitpid(pid, &status, 0);
+        }
+        if (!result.empty() && result.back() == '\n')
+            result.pop_back();
+        auto sid = ev.string_heap_.mint(std::move(result));
+        return make_string(sid);
+    });
+}
 
-    ev.defer_std_host_prim("directory-list",
-                           [&ev, path_is_denied, deny_io](std::span<const EvalValue> a) {
-                               // Issue #1162: directory listing is io-read (info disclosure).
-                               if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
-                                                         "capability denied: io-read required");
-                                   is_error(denied))
-                                   return denied;
-                               if (a.empty() || !is_string(a[0]))
-                                   return make_void();
-                               auto idx = as_string_idx(a[0]);
-                               if (idx >= ev.string_heap_.size())
-                                   return make_void();
-                               auto& dir_path = ev.mutable_string_at(idx);
-                               if (path_is_denied(dir_path))
-                                   return make_void();
-                               // Issue #3835: Restricted+MT / Strict tenant root (mirror
-                               // write-file).
-                               std::string resolved;
-                               if (!ev.check_tenant_host_path(dir_path, resolved, "directory-list"))
-                                   return make_void();
-                               EvalValue result = make_void();
-                               auto dir = opendir(resolved.c_str());
-                               if (!dir)
-                                   return make_void();
-                               struct dirent* entry;
-                               while ((entry = readdir(dir)) != nullptr) {
-                                   std::string name(entry->d_name);
-                                   if (name == "." || name == "..")
-                                       continue;
-                                   auto sid = ev.string_heap_.mint(name);
-                                   auto pid = ev.pairs_.size();
-                                   ev.pairs_.push_back({make_string(sid), result});
-                                   result = make_pair(pid);
-                               }
-                               closedir(dir);
-                               return result;
-                           });
+// Issue #5033: directory-list — io-read directory enumeration.
+void RegSplitParts::register_directory_list_primitive(PrimRegistrar add, Evaluator& ev) {
+    ev.defer_std_host_prim("directory-list", [&ev](std::span<const EvalValue> a) {
+        // Issue #1162: directory listing is io-read (info disclosure).
+        if (auto denied = file_deny_io(ev, aura::compiler::security::kCapIoRead,
+                                       "capability denied: io-read required");
+            is_error(denied))
+            return denied;
+        if (a.empty() || !is_string(a[0]))
+            return make_void();
+        auto idx = as_string_idx(a[0]);
+        if (idx >= ev.string_heap_.size())
+            return make_void();
+        auto& dir_path = ev.mutable_string_at(idx);
+        if (file_path_is_denied(dir_path))
+            return make_void();
+        // Issue #3835: Restricted+MT / Strict tenant root (mirror
+        // write-file).
+        std::string resolved;
+        if (!ev.check_tenant_host_path(dir_path, resolved, "directory-list"))
+            return make_void();
+        EvalValue result = make_void();
+        auto dir = opendir(resolved.c_str());
+        if (!dir)
+            return make_void();
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            std::string name(entry->d_name);
+            if (name == "." || name == "..")
+                continue;
+            auto sid = ev.string_heap_.mint(name);
+            auto pid = ev.pairs_.size();
+            ev.pairs_.push_back({make_string(sid), result});
+            result = make_pair(pid);
+        }
+        closedir(dir);
+        return result;
+    });
 }
 
 } // namespace aura::compiler::primitives_detail

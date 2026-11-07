@@ -73,9 +73,13 @@ def main() -> int:
     must("3836 AC3", "AC2/AC3 Soft test cite", test)
     must("!ev.sandbox_mode()", "AC2 deny_exec Soft short-circuit", filep)
     must("deny_exec", "AC2 deny_exec retained", filep)
-    # Soft contract: deny_exec still short-circuits when !sandbox_mode
+    # Soft contract: deny_exec still short-circuits when !sandbox_mode.
+    # Issue #5033: the gate is a shared static helper (file_deny_exec) instead
+    # of a lambda captured by each registration, so accept either shape.
     if not re.search(
-        r"const auto deny_exec = \[&ev\][\s\S]{0,400}?!ev\.sandbox_mode\(\)",
+        r"(?:const auto deny_exec = \[&ev\]"
+        r"|EvalValue RegSplitParts::file_deny_exec\(Evaluator& ev,)"
+        r"[\s\S]{0,400}?!ev\.sandbox_mode\(\)",
         filep,
     ):
         fails.append("AC2: deny_exec missing !sandbox_mode() short-circuit")
