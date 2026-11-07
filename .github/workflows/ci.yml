@@ -44,6 +44,17 @@
 #   - (2026-09) deployment-health reuses build-test aura artifact
 #   - (2026-11, #4819) issue farm → issue-farm matrix (4 shards ‖
 #     build-test); build-test was ~85m of issue ninja on one runner
+#   - (2026-11) aura executable is built once in aura-bin, in parallel
+#     with the shards. Shards still compile aura_test_objects + their
+#     slice (different module flags; a prerequisite job would add that
+#     compile to the wall). Measured shard 4 on run 42066633273:
+#     aura 11m, test objects ~20m, slice ~16m, tests ~3m.
+#   - (2026-11) ubsan-smoke and reproducible-build start with the other
+#     main jobs. They do not consume a gate artifact.
+#   - (2026-11) heavy compile jobs use vars.AURA_HEAVY_RUNNER when that
+#     repo/org variable is a real larger-runner label. Unset stays
+#     ubuntu-latest. A label that was never created queues forever.
+#     Sanitizer link pool stays 1 (#2636 deadlock, not a RAM cap).
 #
 # Branch protection: require both `gate` and `build-test` (not only one).
 #
@@ -387,7 +398,7 @@ jobs:
     # is aura + test_ir + test_concurrent + cheap/medium suites (~35m).
     # Default 360m hid hung binaries; 75m is headroom, not the budget.
     timeout-minutes: 75
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.AURA_HEAVY_RUNNER || 'ubuntu-latest' }}
     container:
       image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
     steps:
@@ -500,10 +511,69 @@ jobs:
         AURA_CI_STRICT_BENCH: "1"
       run: python3 build.py bench --strict --runs 3
 
+  # One aura executable for every issue shard. Runs beside the farm,
+  # not in front of it: shards compile for longer than this job, then
+  # install build/aura before tests. Some issue tests spawn that binary.
+  aura-bin:
+    name: aura-bin
+    needs: [changes]
+    if: >-
+      github.event_name == 'push' ||
+      needs.changes.outputs.issue_matrix == 'true'
+    timeout-minutes: 45
+    runs-on: ${{ vars.AURA_HEAVY_RUNNER || 'ubuntu-latest' }}
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
+
+    - uses: ./.github/actions/ci-krb5
+
+    - uses: actions/cache@v6
+      with:
+        path: ~/.cache/pip
+        key: pip-${{ runner.os }}-aura-ci-v0.1.0-${{ hashFiles('requirements-dev.txt') }}
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Ensure mold / lld
+      run: |
+        set -e
+        need_apt=0
+        command -v mold >/dev/null 2>&1 || need_apt=1
+        command -v ld.lld >/dev/null 2>&1 || need_apt=1
+        if [ "$need_apt" = 1 ]; then
+          apt-get update -qq
+          command -v mold >/dev/null 2>&1 || apt-get install -y -qq mold || echo "::warning::mold not installed"
+          command -v ld.lld >/dev/null 2>&1 || apt-get install -y -qq lld || echo "::warning::lld not installed"
+        fi
+
+    - name: Build aura
+      env:
+        AURA_ISSUE_BUILD: none
+        AURA_BUILD_TARGETS: aura
+        AURA_DEBUG_LEVEL: "1"
+      run: python3 build.py build
+
+    - name: Upload aura
+      uses: actions/upload-artifact@v7
+      with:
+        name: aura-compiler
+        path: |
+          build/aura
+          build/libaura-reflect.so
+          build/libaura_tl_arena.so
+        if-no-files-found: error
+        retention-days: 1
+
   # Issue #4819: the issue/domain-batch matrix (all_test_issue_targets)
   # split into AURA_ISSUE_SHARD=i/4 slices, each on its own runner, in
-  # parallel with build-test. Each shard compiles aura + aura_test_objects
-  # + its slice (LPT-balanced by TU count) and runs only that slice.
+  # parallel with build-test. Each shard compiles aura_test_objects + its
+  # slice (LPT-balanced by TU count). The aura executable comes from
+  # aura-bin and is installed after this compile, before the tests.
   issue-farm:
     name: issue-farm (${{ matrix.shard }}/4)
     needs: [changes]
@@ -511,9 +581,14 @@ jobs:
     if: >-
       github.event_name == 'push' ||
       needs.changes.outputs.issue_matrix == 'true'
-    # A shard is ~40m (aura + aura_test_objects + ~1/4 of the farm).
+    # A shard is aura_test_objects (~20m) + ~1/4 of the farm (~16m) + tests.
+    # actions: write so this job can list aura-bin and keep the pip cache.
     timeout-minutes: 90
-    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+      packages: read
+    runs-on: ${{ vars.AURA_HEAVY_RUNNER || 'ubuntu-latest' }}
     container:
       image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
     strategy:
@@ -547,7 +622,128 @@ jobs:
           command -v ld.lld >/dev/null 2>&1 || apt-get install -y -qq lld || echo "::warning::lld not installed"
         fi
 
-    - name: Build & run issue shard
+    - name: Build issue shard
+      id: issues-build
+      env:
+        AURA_ISSUES_TIER: ${{ github.event_name == 'pull_request' && 'fast' || 'full' }}
+        AURA_GIT_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+        AURA_RUNTIME_DIR: ${{ github.workspace }}
+        AURA_ISSUE_BUILD: all
+        AURA_ISSUE_SHARD: ${{ matrix.shard }}/4
+        AURA_SKIP_AURA_BUILD: "1"
+        AURA_DEBUG_LEVEL: "1"
+      run: |
+        set -euo pipefail
+        python3 build.py ci-issues --build-only
+        if [ -f build/.issue-shard-targets ] && ! grep -q . build/.issue-shard-targets; then
+          echo "empty=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "empty=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    # aura-bin is not a needs: dependency. This step runs after the shard
+    # compile, which is longer than aura-bin, and only waits if that job
+    # is still queued or uploading.
+    - name: Wait for aura-bin
+      if: success() && steps.issues-build.outputs.empty != 'true'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        python3 - <<'PY'
+        import json, os, time, urllib.error, urllib.request
+
+        repo = os.environ["GITHUB_REPOSITORY"]
+        run_id = os.environ["GITHUB_RUN_ID"]
+        token = os.environ["GH_TOKEN"]
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "aura-ci",
+        }
+        jobs_url = (
+            f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/jobs"
+            "?per_page=100"
+        )
+        arts_url = (
+            f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/artifacts"
+            "?per_page=100"
+        )
+        deadline = time.time() + 40 * 60
+
+        def fetch(url):
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return json.load(resp)
+
+        while True:
+            try:
+                payload = fetch(jobs_url)
+                jobs = [j for j in payload.get("jobs", []) if j.get("name") == "aura-bin"]
+                if not jobs:
+                    print("aura-bin not listed yet")
+                else:
+                    job = jobs[-1]
+                    conclusion = job.get("conclusion") or ""
+                    status = job.get("status") or ""
+                    print(f"aura-bin status={status} conclusion={conclusion or '-'}")
+                    if conclusion in ("failure", "cancelled", "timed_out", "startup_failure"):
+                        raise SystemExit(f"aura-bin {conclusion}")
+                    if conclusion == "skipped":
+                        raise SystemExit("aura-bin skipped")
+                    if status == "completed" and conclusion == "success":
+                        arts = fetch(arts_url).get("artifacts", [])
+                        ready = any(
+                            a.get("name") == "aura-compiler" and not a.get("expired")
+                            for a in arts
+                        )
+                        if ready:
+                            print("aura-compiler artifact ready")
+                            break
+                        print("aura-bin succeeded; artifact not listed yet")
+            except urllib.error.HTTPError as exc:
+                if exc.code in (401, 403):
+                    raise SystemExit(
+                        f"waiting for aura-bin failed: HTTP {exc.code} "
+                        "(issue-farm needs actions: read)"
+                    ) from exc
+                print(f"list jobs HTTP {exc.code}; retrying")
+            except urllib.error.URLError as exc:
+                print(f"list jobs error: {exc.reason}; retrying")
+            if time.time() > deadline:
+                raise SystemExit("timed out waiting for aura-bin")
+            time.sleep(20)
+        PY
+
+    - name: Download aura
+      if: success() && steps.issues-build.outputs.empty != 'true'
+      uses: actions/download-artifact@v8
+      with:
+        name: aura-compiler
+        path: .aura-compiler
+
+    - name: Install aura binary
+      if: success() && steps.issues-build.outputs.empty != 'true'
+      run: |
+        set -euo pipefail
+        src=.aura-compiler/build
+        test -f "$src/aura"
+        install -m 0755 "$src/aura" build/aura
+        for so in libaura-reflect.so libaura_tl_arena.so; do
+          if [ ! -f "build/$so" ]; then
+            install -m 0755 "$src/$so" "build/$so"
+          fi
+        done
+        test -x build/aura
+        ldd build/aura
+        if ldd build/aura | grep -q 'not found'; then
+          echo "::error::aura binary has unresolved shared libraries"
+          exit 1
+        fi
+
+    - name: Run issue shard
+      if: success() && steps.issues-build.outputs.empty != 'true'
       env:
         AURA_ISSUES_TIER: ${{ github.event_name == 'pull_request' && 'fast' || 'full' }}
         AURA_GIT_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
@@ -561,7 +757,7 @@ jobs:
         # in test_failure_policy_bridge. All other CI test jobs already set it.
         AURA_SANDBOX: "off"
         AURA_DEBUG_LEVEL: "1"
-      run: python3 build.py ci-issues
+      run: python3 build.py ci-issues --test-only
 
     # Issue #2554: PR chaos hard-fail runtime (steal Δ==0, residual==0).
     # Needs aura_test_objects, which only the issue-farm shards compile.
@@ -646,7 +842,7 @@ jobs:
   # re-pulled the ~10GB image and failed at container init.
   asan-build:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.AURA_HEAVY_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 240  # #2636 belt-and-suspenders: ASAN instrumentation
                           # makes the build materially slower than the
                           # default 360-min budget after recent header
@@ -799,10 +995,11 @@ jobs:
         echo "✓ emit-binary suite clean under ASAN"
 
   # UBSAN: main only (full rebuild was doubling PR wall time vs build-test).
+  # Starts with the other main jobs. Waiting on gate added ~16m and this
+  # job does not download anything gate produces.
   ubsan-smoke:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [gate]
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.AURA_HEAVY_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 240  # #2636 belt-and-suspenders: same rationale as
                           # asan-build (same SLIM matrix + AURA_LINK_JOBS=2
                           # races the arena.ixx.o rebuild deadlock). UBSAN
@@ -917,9 +1114,10 @@ jobs:
         retention-days: 30
 
   # Issue #675: dual reproducible Release build verification (main only).
+  # Starts with the other main jobs. The two Release trees do not use
+  # gate outputs; waiting on gate only delayed this job.
   reproducible-build:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [gate]
     runs-on: ubuntu-latest
     timeout-minutes: 240  # Dual sequential Release builds (~2× wall).
                           # AURA_LINK_JOBS=1 serializes link to avoid
