@@ -56,7 +56,9 @@ def main() -> int:
     build = _read("build.py")
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
-    start = impl.find("bool ConstraintSystem::reverify_clean_constraints_for_touched(")
+    start = impl.find("void ConstraintSystem::record_truncated_partial_blame(")
+    if start < 0:
+        start = impl.find("bool ConstraintSystem::reverify_clean_constraints_for_touched(")
     end = impl.find("void ConstraintSystem::add_delta(", start) if start >= 0 else -1
     if start < 0 or end < 0:
         fails.append("AC1: reverify_clean_constraints_for_touched window not found")

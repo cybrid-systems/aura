@@ -123,8 +123,7 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
-void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
-
+void RegSplitParts::register_declare_type_primitive(PrimRegistrar add, Evaluator& ev) {
     // 示例: (declare-type add "Int Int" "Int") → add: (Int, Int) -> Int
     // 这些签名在 typecheck-current 时注入到类型环境中。
     add("declare-type", [&ev](std::span<const EvalValue> a) -> EvalValue {
@@ -142,7 +141,9 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
                                                           .resolved = false};
         return make_bool(true);
     });
+}
 
+void RegSplitParts::register_generate_type_sigs_primitive(PrimRegistrar add, Evaluator& ev) {
     // (generate-type-sigs "module-path") — 类型推断并生成 .aura-type 文件
     // 解析模块文件，对其中每个 export 的函数进行类型推断，
     // 生成同名的 .aura-type 签名文件。
@@ -314,7 +315,9 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
         std::println(std::cerr, "generate-type-sigs: wrote {} types to '{}'", written, type_gated);
         return make_bool(written > 0);
     });
+}
 
+void RegSplitParts::register_check_module_signature_primitive(PrimRegistrar add, Evaluator& ev) {
     // (check-module-signature "module-path")
     // 加载模块，对其每个 define 的函数进行类型推断，
     // 然后与 .aura-type 中的声明签名进行比对。
@@ -501,6 +504,12 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
                      matched, mismatched, missing);
         return make_bool(matched > 0 || (mismatched == 0 && missing == 0));
     });
+}
+
+void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
+    RegSplitParts::register_declare_type_primitive(add, ev);
+    RegSplitParts::register_generate_type_sigs_primitive(add, ev);
+    RegSplitParts::register_check_module_signature_primitive(add, ev);
 }
 
 void register_hot_swap_primitives(PrimRegistrar add, Evaluator& ev) {

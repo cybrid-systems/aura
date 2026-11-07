@@ -274,7 +274,7 @@ namespace {
 } // namespace
 
 #if AURA_ENABLE_GIT
-static void register_git_inspect_primitives(Evaluator& ev) {
+void RegSplitParts::register_git_inspect_primitives(Evaluator& ev) {
     // (git-status) → short status string (like "git status --short")
     ev.defer_std_host_prim("git-status", [&ev](const auto&) -> EvalValue {
         // Issue #4381: Restricted+MT / Strict tenant FS jail — the shared
@@ -422,7 +422,7 @@ static void register_git_inspect_primitives(Evaluator& ev) {
     });
 }
 
-static void register_git_index_primitives(Evaluator& ev) {
+void RegSplitParts::register_git_index_primitives(Evaluator& ev) {
     // (git-commit "message") → exit code (0 = ok, no shell escape needed)
     ev.defer_std_host_prim("git-commit", [&ev](std::span<const EvalValue> a) -> EvalValue {
         // Issue #2072: force git-commit through capability effect check
@@ -628,7 +628,7 @@ static void register_git_index_primitives(Evaluator& ev) {
     });
 }
 
-static void register_git_rev_parse_primitive(Evaluator& ev) {
+void RegSplitParts::register_git_rev_parse_primitive(Evaluator& ev) {
     // (git-rev-parse) → current HEAD sha (short, 7 chars)
     ev.defer_std_host_prim("git-rev-parse", [&ev](const auto&) -> EvalValue {
         // Issue #4381: tenant FS jail — same fence family; jailed child
@@ -682,9 +682,9 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
     // and avoids shell escape issues for commit messages and paths.
     // Issue #1970: commercial/integration vertical (AURA_ENABLE_GIT).
 
-    register_git_inspect_primitives(ev);
-    register_git_index_primitives(ev);
-    register_git_rev_parse_primitive(ev);
+    RegSplitParts::register_git_inspect_primitives(ev);
+    RegSplitParts::register_git_index_primitives(ev);
+    RegSplitParts::register_git_rev_parse_primitive(ev);
 #endif // AURA_ENABLE_GIT
 }
 
