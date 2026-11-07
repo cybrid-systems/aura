@@ -1,0 +1,13 @@
+;; Issue #5032: vector/hash registrations moved into RegSplitParts.
+(define fails 0)
+(define (check pred msg)
+  (if pred #t (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+(define v (vector 1 2 3))
+(check (= 3 (vector-length v)) "vector-length")
+(check (= 2 (vector-ref v 1)) "vector-ref")
+(define h (hash "a" 1 "b" 2))
+(check (= 1 (hash-ref h "a")) "hash-ref")
+(check (= 2 (hash-length h)) "hash-length")
+(if (> fails 0)
+    (error "vector split regression")
+    (begin (display "vector split ok") (newline)))

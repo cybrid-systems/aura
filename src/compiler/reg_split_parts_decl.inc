@@ -124,4 +124,33 @@ struct RegSplitParts {
     static void register_list_sort(PrimRegistrar add, Evaluator& ev, std::pmr::vector<Pair>& pairs,
                                    ::aura::compiler::LockedStringHeap& string_heap,
                                    std::vector<EvalValue>& error_values);
+    static void register_vector_core_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                ::aura::compiler::LockedStringHeap& string_heap,
+                                                std::vector<EvalValue>& error_values,
+                                                std::vector<std::vector<EvalValue>>& vector_heap,
+                                                std::atomic<std::uint64_t>* primitive_error_counter,
+                                                Evaluator& ev);
+    static void register_vector_seq_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                               ::aura::compiler::LockedStringHeap& string_heap,
+                                               std::vector<EvalValue>& error_values,
+                                               std::vector<std::vector<EvalValue>>& vector_heap,
+                                               std::atomic<std::uint64_t>* primitive_error_counter,
+                                               Evaluator& ev);
+    static void register_vector_mutate_primitives(
+        PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+        ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
+        std::vector<std::vector<EvalValue>>& vector_heap,
+        std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev);
+    static void register_hash_basic_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                               ::aura::compiler::LockedStringHeap& string_heap,
+                                               std::vector<EvalValue>& error_values,
+                                               std::vector<std::vector<EvalValue>>& vector_heap,
+                                               std::atomic<std::uint64_t>* primitive_error_counter,
+                                               Evaluator& ev);
+    static void register_hash_mutate_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                ::aura::compiler::LockedStringHeap& string_heap,
+                                                std::vector<EvalValue>& error_values,
+                                                std::vector<std::vector<EvalValue>>& vector_heap,
+                                                std::atomic<std::uint64_t>* primitive_error_counter,
+                                                Evaluator& ev);
 };
