@@ -100,7 +100,7 @@ module;
 // the aura.compiler.dirty namespace is undeclared and the ASAN build fails.
 import aura.compiler.dirty_propagation;
 
-#include <cassert>
+#include "core/cpp26_contract_stats.h"
 #include <chrono>
 #include <ranges>
 #include <cstdlib>
@@ -6355,9 +6355,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                         m->mutation_boundary_residual_defer_hard_fail_total.fetch_add(
                             1, std::memory_order_relaxed);
                     // Hard mode: fail closed so sticky defer never ships silent.
-                    assert(residual == 0 && "Issue #2211/#2269: residual GcDeferReason after "
-                                            "outermost success (hard policy)");
-                    // NDEBUG strips assert — still abort when hard policy requested.
+                    // Internal invariant, not a user-facing error. Debug enforce
+                    // uses the cold contract; production NDEBUG leaves it off.
+                    // The abort below is the release fail-closed path.
+                    AURA_COLD_CONTRACT(residual == 0);
+                    // NDEBUG strips the cold contract — still abort when hard policy requested.
                     if (aura::gc_hooks::defer_reasons_snapshot() != 0)
                         std::abort();
                 } else if (policy == ResidualPolicy::Clear) {
