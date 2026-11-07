@@ -33,6 +33,62 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
 
 
+def _function_body(text: str, signature: str) -> str:
+    start = text.find(signature)
+    if start < 0:
+        return ""
+    i = text.find("{", start)
+    if i < 0:
+        return ""
+    depth = 0
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            i = text.find("\n", i)
+            if i < 0:
+                break
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            continue
+        if c in "\"'":
+            q = c
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == q:
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+        i += 1
+    return ""
+
+
+def _partial_plumb_ok(bind_body: str, orch_body: str) -> str | None:
+    """First-pass partial engine must receive the knob before any re-infer."""
+    plumb = "engine.set_gradual_permissiveness(st.gradual_permissiveness)"
+    if plumb not in bind_body:
+        return f"partial_bind_partial_engine missing {plumb}"
+    if "engine.set_strict(st.strict)" not in bind_body:
+        return "partial_bind_partial_engine dropped set_strict(st.strict)"
+    bind_at = orch_body.find("partial_bind_partial_engine(st, engine)")
+    reinfer_at = orch_body.find("partial_reinfer_affected_roots(st, engine)")
+    if bind_at < 0 or reinfer_at < 0 or not (bind_at < reinfer_at):
+        return "infer_flat_partial must bind the engine before partial_reinfer_affected_roots"
+    return None
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -75,13 +131,39 @@ def main() -> int:
     must("ac3430_2_partial_entry", "AC2 test", ta)
     must("ac3430_2_live_effective_strict", "AC2 live", ta)
     must("ac3430_2_live_effective_strict", "AC2 live test_ir", tir)
-    plumb = "engine.set_gradual_permissiveness(st.gradual_permissiveness)"
-    if plumb not in impl:
-        # Pre-refactor shape: the locals lived on TypeChecker, not the
-        # InferFlatPartialState that the partial_* helpers now receive.
-        plumb = "engine.set_gradual_permissiveness(gradual_permissiveness_)"
-    must(plumb, "AC2 partial plumb", impl)
+    # The pre-split `set_gradual_permissiveness(gradual_permissiveness_)` string
+    # is not accepted on its own. The knob has to be applied inside
+    # partial_bind_partial_engine, and infer_flat_partial must call that
+    # helper before the first re-infer. type_check_flat_pure's own plumb
+    # does not cover this path.
+    bind = _function_body(impl, "void partial_bind_partial_engine(")
+    orch = _function_body(impl, "std::span<const aura::ast::MutationRecord> extra_recs)")
+    why = _partial_plumb_ok(bind, orch)
+    if why:
+        fails.append(f"AC2 partial plumb: {why}")
     must("TypeChecker::infer_flat_partial", "AC2 partial", impl)
+    late_only = bind.replace(
+        "engine.set_gradual_permissiveness(st.gradual_permissiveness)",
+        "/* plumb removed */",
+        1,
+    )
+    if bind and _partial_plumb_ok(late_only, orch) is None:
+        fails.append("AC2 negative: bind helper without the knob was accepted")
+    bind_tok = "partial_bind_partial_engine(st, engine)"
+    reinfer_tok = "partial_reinfer_affected_roots(st, engine)"
+    bind_at = orch.find(bind_tok)
+    reinfer_at = orch.find(reinfer_tok)
+    swapped = ""
+    if bind_at >= 0 and reinfer_at > bind_at:
+        swapped = (
+            orch[:bind_at]
+            + reinfer_tok
+            + orch[bind_at + len(bind_tok) : reinfer_at]
+            + bind_tok
+            + orch[reinfer_at + len(reinfer_tok) :]
+        )
+    if not swapped or _partial_plumb_ok(bind, swapped) is None:
+        fails.append("AC2 negative: reinfer-before-bind orchestration was accepted")
 
     must("ac3430_3_soft_balanced_unify_true", "AC3 Soft Balanced", ta)
     must("ac3430_3_numeric_int_float", "AC3 Int↔Float", ta)
