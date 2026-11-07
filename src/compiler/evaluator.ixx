@@ -6803,6 +6803,50 @@ private:
     // Added in refactor Step 0.1 (pure addition, no call-site changes yet).
     [[nodiscard]] EvalValue make_merr(const std::string& k, const std::string& m);
 
+    // Module-load phases of load_module_file. The workspace erase and the
+    // later module_mtx_ publish stay at their original call sites.
+    void erase_loading_module(const std::string& resolved);
+    [[nodiscard]] types::EvalValue fail_unresolved_module(const std::string& path, bool host_policy,
+                                                          const std::string& gated);
+    [[nodiscard]] types::EvalValue fail_module_parse(const std::string& resolved,
+                                                     std::string_view parse_error);
+    [[nodiscard]] types::EvalValue fail_module_load(const std::string& resolved,
+                                                    const std::string& why);
+    // Empty means the export set was applied (or there was nothing to filter).
+    // A string is the fail-closed reason; bindings are left unfiltered.
+    [[nodiscard]] std::optional<std::string> apply_module_export_filter(Env* mod_env);
+    void ingest_loaded_module_type_sigs(const std::string& resolved, Env* mod_env);
+    Env* create_loaded_module_env(ast::ASTArena& mod_arena, ast::StringPool* pool_ptr);
+
+    // solve_delta_occurrence phase of composite_txn_commit. Writes cr.solve_ok /
+    // cr.blame_ok and sdo_entered. No lock. The caller still owns the
+    // require_sdo gate and the post-checks that read sdo_entered.
+    void composite_commit_solve_delta(
+        std::uint64_t mutation_id, std::uint64_t after_epoch, bool expected_partial, bool has_work,
+        bool& sdo_entered, aura::compiler::typed_audit::CompositeTxnCommitResult& cr) noexcept;
+    // Production/Full match exhaustiveness during the SDO phase. Sets cr.solve_ok
+    // false and stamps a reject proof when a match is unproven.
+    void composite_commit_recheck_exhaustiveness(
+        std::uint64_t after_epoch,
+        aura::compiler::typed_audit::CompositeTxnCommitResult& cr) noexcept;
+    // Required TypeId invariant. false means the caller returns false; cr and
+    // out_commit are already filled for that hard reject.
+    [[nodiscard]] bool composite_commit_required_type_ids(
+        bool expected_partial, void* out_commit,
+        aura::compiler::typed_audit::CompositeTxnCommitResult& cr) noexcept;
+    // Decide expected_partial / require_sdo before the SDO call. Writes
+    // cr.solve_ok and cr.blame_ok the way the inline block did.
+    void composite_commit_prepare_sdo(
+        bool& expected_partial, bool& has_work, bool& auto_partial_from_cone, bool& cone_dirty,
+        bool& require_sdo, aura::compiler::typed_audit::CompositeTxnCommitResult& cr) noexcept;
+    // Full-strategy partial recovery. true means the commit succeeded and the
+    // caller returns true. A false return continues into the reject path.
+    [[nodiscard]] bool composite_commit_full_recover(
+        std::uint64_t mutation_id, std::uint32_t target_node, std::uint64_t before_epoch,
+        std::uint64_t after_epoch, bool nested, bool batch_active, void* out_commit,
+        const aura::compiler::typed_audit::InvariantAuditResult& audit,
+        aura::compiler::typed_audit::CompositeTxnCommitResult& cr) noexcept;
+
     Env top_;
     Primitives primitives_;
     // Issue #1663: serializes set_arena / set_temp_arena (rare path).
