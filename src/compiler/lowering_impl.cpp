@@ -304,26 +304,1711 @@ static std::uint32_t lower_data_operand(
     return slot;
 }
 
-static std::uint32_t lower_flat_expr(
-    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+// Lower move, borrow, mutable borrow, and drop.
+static std::uint32_t lower_flat_linear(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id, const NodeView& v,
     const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
-                             aura::core::TransparentStringHash, std::equal_to<>>* cache = nullptr,
-    std::vector<std::string>* cache_hits = nullptr) {
-    // Track current flat/pool for closure bridge data
-    state.current_flat = &flat;
-    state.current_pool = &pool;
-    LoweringState::SourceScope scope(state, id); // RAII: protects type_id propagation
-    // Issue #507: debug contract on valid NodeId range (observe mode
-    // uses early exit below instead of aborting on stale ids).
-    contract_assert(id == NULL_NODE || id < flat.size());
-    // Early exit for invalid ids (backup for contract-observe mode)
-    if (id == NULL_NODE || id >= flat.size()) {
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits) {
+    // Issue #133: linear type lowering extracted to
+    // try_lower_linear_type. The callback
+    // recurses into the inner expression via the
+    // main lower_flat_expr.
+    if (auto slot = try_lower_linear_type(state, flat, pool, v, [&](aura::ast::NodeId id) {
+            return lower_flat_expr(state, flat, pool, id, cache, cache_hits);
+        })) {
+        return *slot;
+    }
+    // Shouldn't happen for these tags, but fall
+    // through to the default case just in case.
+    auto slot = state.alloc_local();
+    state.emit(IROpcode::ConstI64, slot, 0, 0);
+    return slot;
+}
+
+// Lower a coercion.
+static std::uint32_t lower_flat_coercion(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id, const NodeView& v,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits) {
+    auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+    std::uint32_t type_tag = static_cast<std::uint32_t>(v.int_value);
+    auto target_type_id = flat.type_id(v.id);
+    const auto inner_type_id = flat.type_id(v.child(0));
+    const std::uint32_t entry_narrow_ev =
+        v.float_value != 0.0 ? static_cast<std::uint32_t>(v.float_value) : 0u;
+    const std::uint32_t narrow_ev =
+        entry_narrow_ev != 0 ? entry_narrow_ev : state.current_narrowing_evidence;
+    // Issue #691 / #1925: expanded lower-time elision (identity,
+    // Dynamic passthrough, narrow_ev + type match).
+    // Issue #1425 / #2025 / #2624 AC2: identity elision → no CastOp, no meta stamp.
+    if (can_elide_coercion_cast(target_type_id, inner_type_id, type_tag, narrow_ev,
+                                state.type_reg)) {
+        return inner;
+    }
+    auto slot = state.alloc_local();
+    std::uint32_t blame_loc =
+        (static_cast<std::uint32_t>(v.line) << 16) | (static_cast<std::uint32_t>(v.col) & 0xFFFFu);
+    // CastOp type_id = coercion target type (stored on the Coercion node)
+    // blame info is carried via blame_loc operand and source_id, not type_id
+    // Issue #629 / #691 / #1925: attach narrow_evidence to coercion CastOps
+    // from entry provenance or enclosing if-branch context.
+    if (narrow_ev != 0) {
+        state.emit_with_metadata(IROpcode::CastOp, target_type_id, 0, 0, narrow_ev, slot, inner,
+                                 type_tag, blame_loc);
+    } else {
+        state.emit_with_type(IROpcode::CastOp, target_type_id, slot, inner, type_tag, blame_loc);
+    }
+    // Issue #2624 Phase A: non-elided CoercionNode → CastOp + typed meta.
+    stamp_last_castop_typed_meta(state, inner_type_id, target_type_id, narrow_ev, type_tag);
+    return slot;
+}
+
+// Lower a type annotation.
+static std::uint32_t lower_flat_type_annotation(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id, const NodeView& v,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits) {
+    // Lower the inner expression first
+    auto inner_slot = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+    // Check if coercion is needed: compare annotation type_id with inner type_id
+    auto ann_type_id = flat.type_id(id);
+    auto inner_type_id = flat.type_id(v.child(0));
+    // Issue #4426: Int checked as Float keeps equal stamps (synthesize
+    // returns the inner type). The name is the tag-4 target. Evidence
+    // stays 0 so Rule 6c cannot treat the conversion as Dynamic.
+    aura::core::TypeId named_float{};
+    bool force_float = false;
+    if (state.type_reg && inner_type_id != 0 && inner_type_id == state.type_reg->int_type().index &&
+        (ann_type_id == 0 || ann_type_id == inner_type_id)) {
+        if (auto named = float_annotation_type(pool, v, state.type_reg)) {
+            named_float = *named;
+            force_float = true;
+        }
+    }
+    const std::uint32_t target_id = force_float ? named_float.index : ann_type_id;
+    // Emit CastOp for type boundary when:
+    // 1. Both types are known and differ (static → static coercion)
+    // 2. Annotation is static but inner is dynamic (runtime type check)
+    // 3. Int→Float name whose stamps matched (#4426)
+    if (force_float || (target_id != 0 && inner_type_id != 0 && target_id != inner_type_id) ||
+        (target_id != 0 && inner_type_id == 0)) {
+        auto ann_tid = force_float ? named_float : aura::core::TypeId{target_id, 1};
+        std::uint32_t type_tag = type_tag_for_coercion(ann_tid, state.type_reg);
+        const auto narrow_ev = force_float ? 0u : state.current_narrowing_evidence;
+        // Issue #1925: elide identity / Dynamic / narrow-proved at lower.
+        if (can_elide_coercion_cast(target_id, inner_type_id, type_tag, narrow_ev,
+                                    state.type_reg)) {
+            return inner_slot;
+        }
+        auto slot = state.alloc_local();
+        std::uint32_t blame_loc = 0;
+        if (narrow_ev != 0) {
+            state.emit_with_metadata(IROpcode::CastOp, target_id, 0, 0, narrow_ev, slot, inner_slot,
+                                     type_tag, blame_loc);
+        } else {
+            state.emit_with_type(IROpcode::CastOp, target_id, slot, inner_slot, type_tag,
+                                 blame_loc);
+        }
+        // Issue #2624 Phase A: stamp src/dst typed meta (non-elided).
+        stamp_last_castop_typed_meta(state, inner_type_id, target_id, narrow_ev, type_tag);
+        return slot;
+    }
+    return inner_slot;
+}
+
+// Lower quote.
+static std::uint32_t lower_flat_quote(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id, const NodeView& v,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits) {
+    // Inline simple literals
+    if (!v.children.empty()) {
+        auto cv = flat.get(v.child(0));
+        if (cv.tag == NodeTag::LiteralInt) {
+            if (cv.int_value == 0) {
+                // () empty list → make_void
+                auto slot = state.alloc_local();
+                state.emit(IROpcode::ConstVoid, slot);
+                return slot;
+            }
+            auto slot = state.alloc_local();
+            emit_int_const(state, slot, cv.int_value);
+            return slot;
+        }
+        if (cv.tag == NodeTag::LiteralFloat || cv.tag == NodeTag::LiteralString) {
+            return lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+        }
+        // Issue #2568: quoted symbols are data, not variable lookups.
+        // Falling through to lower_flat_expr on a Variable emitted a
+        // free-var load that returned 0 for unbound names — so
+        // `(define d 'commit)` bound fixnum 0 under IR.
+        //
+        // Issue #4727: operands[2]==2 interns a SYMBOL atom (the
+        // evaluator-global symbol table), matching the tree-walker's
+        // datum conversion. The IR keeps only the name; identity is
+        // resolved at materialization, so two compilation units (and
+        // a workspace layer's own StringPool) still agree on eq?.
+        if (cv.tag == NodeTag::Variable) {
+            auto s = pool.resolve(cv.sym_id);
+            auto si = state.module.add_string(std::string(s));
+            auto slot = state.alloc_local();
+            state.emit(IROpcode::ConstString, slot, si, /*symbol=*/2);
+            return slot;
+        }
+    }
+    // Non-trivial quoted data: lower as (cons car cdr) chain
+    // Issue #2482: empty quote / missing cons → ConstVoid (not fixnum 0).
+    if (v.children.empty() || !state.primitives) {
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::ConstVoid, slot);
+        return slot;
+    }
+
+    auto cons_slot = state.primitives->slot_for_name("cons");
+    if (cons_slot >= state.primitives->slot_count()) {
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::ConstVoid, slot);
+        return slot;
+    }
+    auto cons_fn = state.alloc_local();
+    state.emit(IROpcode::Primitive, cons_fn, static_cast<std::uint32_t>(cons_slot));
+
+    // Recursive helper: lower a quoted value as data
+    // For lists/pairs, lower each car/cdr with Quote semantics
+    // i.e. (1 2) as data is cons(1, cons(2, ())) with () = void (#2482).
+    std::function<std::uint32_t(NodeId)> lower_q;
+    lower_q = [&](NodeId nid) -> std::uint32_t {
+        if (nid == ast::NULL_NODE || nid >= flat.size()) {
+            auto s = state.alloc_local();
+            state.emit(IROpcode::ConstVoid, s);
+            return s;
+        }
+        auto nv = flat.get(nid);
+        // Simple literals
+        if (nv.tag == NodeTag::LiteralInt) {
+            auto s = state.alloc_local();
+            // Issue #4490: quoted #t / #f stay booleans.
+            if (nv.marker == ast::SyntaxMarker::BoolLiteral)
+                state.emit(IROpcode::ConstBool, s, nv.int_value != 0 ? 1 : 0);
+            else
+                emit_int_const(state, s, nv.int_value);
+            return s;
+        }
+        if (nv.tag == NodeTag::LiteralFloat || nv.tag == NodeTag::LiteralString) {
+            return lower_flat_expr(state, flat, pool, nid, cache, cache_hits);
+        }
+        // Issue #2568 / #4727: symbol atoms inside quoted lists are
+        // interned symbols (operands[2]==2), same as the atom case.
+        if (nv.tag == NodeTag::Variable) {
+            auto s = pool.resolve(nv.sym_id);
+            auto si = state.module.add_string(std::string(s));
+            auto slot = state.alloc_local();
+            state.emit(IROpcode::ConstString, slot, si, /*symbol=*/2);
+            return slot;
+        }
+        // Lists: Pair or Call as data
+        if (nv.tag == NodeTag::Pair) {
+            // Dotted pair: (car . cdr) → cons(lower_q(car), lower_q(cdr))
+            auto left = nv.children.empty() ? ast::NULL_NODE : nv.child(0);
+            auto right = nv.children.size() > 1 ? nv.child(1) : ast::NULL_NODE;
+            auto left_slot = lower_q(left);
+            auto right_slot = lower_q(right);
+            // Call cons(left, right)
+            auto ab = state.alloc_local();
+            state.emit(IROpcode::Local, ab, left_slot);
+            state.alloc_local();
+            auto cd = state.local_count - 1;
+            state.emit(IROpcode::Local, static_cast<std::uint32_t>(cd), right_slot);
+            auto rs = state.alloc_local();
+            state.emit(IROpcode::Call, cons_fn, ab, 2, rs);
+            return rs;
+        }
+        if (nv.tag == NodeTag::Call && !nv.children.empty() &&
+            flat.get(nv.child(0)).tag == NodeTag::Variable &&
+            pool.resolve(flat.get(nv.child(0)).sym_id) == "#vector") {
+            // Issue #4490: quoted #( ... ) → vector(elem...) of the
+            // quoted elements (parser reserved callee "#vector").
+            auto vec_slot = state.primitives->slot_for_name("vector");
+            if (vec_slot < state.primitives->slot_count()) {
+                std::vector<std::uint32_t> elems;
+                for (std::size_t ci = 1; ci < nv.children.size(); ++ci)
+                    elems.push_back(lower_q(nv.child(ci)));
+                auto vec_fn = state.alloc_local();
+                state.emit(IROpcode::Primitive, vec_fn, static_cast<std::uint32_t>(vec_slot));
+                auto first = state.alloc_local();
+                if (!elems.empty())
+                    state.emit(IROpcode::Local, first, elems[0]);
+                for (std::size_t ei = 1; ei < elems.size(); ++ei) {
+                    auto slot = state.alloc_local();
+                    state.emit(IROpcode::Local, slot, elems[ei]);
+                }
+                auto rs = state.alloc_local();
+                state.emit(IROpcode::Call, vec_fn, first, static_cast<std::uint32_t>(elems.size()),
+                           rs);
+                return rs;
+            }
+        }
+        if (nv.tag == NodeTag::Call) {
+            // Proper list: (a b c) → cons(a, cons(b, cons(c, ()))) void tail (#2482)
+            auto tail_s = state.alloc_local();
+            state.emit(IROpcode::ConstVoid, tail_s);
+            for (int ci = static_cast<int>(nv.children.size()) - 1; ci >= 0; --ci) {
+                auto elem_s = lower_q(nv.child(ci));
+                auto ab = state.alloc_local();
+                state.emit(IROpcode::Local, ab, elem_s);
+                state.alloc_local();
+                auto cd = state.local_count - 1;
+                state.emit(IROpcode::Local, static_cast<std::uint32_t>(cd), tail_s);
+                auto rs = state.alloc_local();
+                state.emit(IROpcode::Call, cons_fn, ab, 2, rs);
+                tail_s = rs;
+            }
+            return tail_s;
+        }
+        // Unknown node type
+        return lower_flat_expr(state, flat, pool, nid, cache, cache_hits);
+    };
+
+    return lower_q(v.child(0));
+}
+
+// Lower set!.
+static std::uint32_t
+lower_flat_set(LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+               const NodeView& v,
+               const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                        aura::core::TransparentStringHash, std::equal_to<>>* cache,
+               std::vector<std::string>* cache_hits) {
+    auto name = pool.resolve(v.sym_id);
+    auto val_id = v.children.empty() ? NULL_NODE : v.child(0);
+    auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache, cache_hits);
+
+    // Issue #4865: a top-level value define is a live evaluator
+    // cell; write it before any captured/local scope binding can
+    // shadow it, otherwise force-soa silently drops the side effect.
+    if (state.value_cells) {
+        auto vc_it = state.value_cells->find(std::string(name));
+        if (vc_it != state.value_cells->end()) {
+            state.emit(IROpcode::TopCellStore, static_cast<std::uint32_t>(vc_it->second), val_slot);
+            return val_slot;
+        }
+    }
+    if (const auto* slots = call_slot_cells_4681()) {
+        auto sit = slots->find(std::string(name));
+        if (sit != slots->end()) {
+            state.emit(IROpcode::TopCellStore, static_cast<std::uint32_t>(sit->second), val_slot);
+            return val_slot;
+        }
+    }
+
+    for (auto it = state.scopes.rbegin(); it != state.scopes.rend(); ++it) {
+        auto found = it->find(std::string(name));
+        if (found != it->end()) {
+            auto& binding = found->second;
+            if (binding.kind == BindingKind::Cell) {
+                state.emit(IROpcode::CellSet, binding.slot, val_slot);
+                return val_slot;
+            }
+            // For local vars, just update the slot value
+            state.emit(IROpcode::Local, binding.slot, val_slot);
+            return val_slot;
+        }
+    }
+    // Issue #3927: name not in lambda scopes (write-only free
+    // var filtered out, or REPL value-define cell). Caller
+    // cache_define skips IR when the body set!s a non-local.
+    return val_slot;
+}
+
+// Lower begin.
+static std::uint32_t lower_flat_begin(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id, const NodeView& v,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits) {
+    // First pass: pre-bind all define names for mutual recursion support.
+    // Each define gets a Cell that all sibling defines can reference.
+    if (!state.scopes.empty()) {
+        auto& scope = state.scopes.back();
+        for (auto c : v.children) {
+            if (c < flat.size() && flat.get(c).tag == NodeTag::Define) {
+                auto name = pool.resolve(flat.get(c).sym_id);
+                if (scope.find(std::string(name)) == scope.end()) {
+                    auto ci = state.alloc_local();
+                    state.emit(IROpcode::NewCell, ci);
+                    scope[std::string(name)] = Binding{BindingKind::Cell, ci};
+                }
+            }
+        }
+    } else {
+        state.scopes.push_back({});
+        auto& scope = state.scopes.back();
+        for (auto c : v.children) {
+            if (c < flat.size() && flat.get(c).tag == NodeTag::Define) {
+                auto name = pool.resolve(flat.get(c).sym_id);
+                auto ci = state.alloc_local();
+                state.emit(IROpcode::NewCell, ci);
+                scope[std::string(name)] = Binding{BindingKind::Cell, ci};
+            }
+        }
+    }
+    // Second pass: lower all children — defines find their pre-bound cells
+    // Issue #4552: an error value from a non-tail child leaves the
+    // body (tree-walker begin parity, #2570). Issue #4899: this holds
+    // at the top level too. The entry function used to discard a
+    // statement-position error value, so `(car 5)` at the top of a
+    // program printed nothing and the run exited 0 while the tree
+    // walker raised it. The value now escapes every non-tail
+    // statement; file mode turns the escaped value into a located
+    // diagnostic at the service boundary.
+    std::uint32_t last_slot = 0;
+    for (std::size_t bi = 0; bi < v.children.size(); ++bi) {
+        const auto c = v.child(bi);
+        last_slot = lower_flat_expr(state, flat, pool, c, cache, cache_hits);
+        if (bi + 1 < v.children.size() && !form_cannot_be_error(flat, c)) {
+            // The Return that escapes carries this statement's source
+            // node, so the error value can be located (#4899).
+            const auto prev_source = state.current_source_id;
+            state.current_source_id = c;
+            emit_error_escape(state, last_slot);
+            state.current_source_id = prev_source;
+        }
+    }
+    if (!v.children.empty())
+        return last_slot;
+    auto slot = state.alloc_local();
+    state.emit(IROpcode::ConstI64, slot, 0, 0);
+    return slot;
+}
+
+// Lower define.
+static std::uint32_t lower_flat_define(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id, const NodeView& v,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits) {
+    auto name = pool.resolve(v.sym_id);
+    auto val_id = v.children.empty() ? NULL_NODE : v.child(0);
+    auto& scope = state.scopes.empty() ? (state.scopes.push_back({}), state.scopes.back())
+                                       : state.scopes.back();
+    // Check if already pre-bound by Begin handler (for mutual recursion).
+    // If a Cell binding exists, reuse it (no NewCell needed).
+    auto existing = scope.find(std::string(name));
+    bool has_cell = (existing != scope.end() && existing->second.kind == BindingKind::Cell);
+    std::uint32_t ci = 0;
+    if (has_cell) {
+        ci = existing->second.slot;
+    } else {
+        // Pre-bind the name as a Cell BEFORE lowering the value so that
+        // self-references in the lambda body find the cell (like letrec).
+        ci = state.alloc_local();
+        state.emit(IROpcode::NewCell, ci);
+        scope[std::string(name)] = Binding{BindingKind::Cell, ci};
+    }
+    // Now lower the value — self-references will CellGet the pre-bound cell.
+    // Issue #4568: stamp the define name onto the lambda this value
+    // lowers, then drop it so a later define does not inherit it.
+    const bool stamp_feedback = state.feedback_define_name.empty();
+    if (stamp_feedback)
+        state.feedback_define_name.assign(name.begin(), name.end());
+    auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache, cache_hits);
+    if (stamp_feedback)
+        state.feedback_define_name.clear();
+    state.emit(IROpcode::CellSet, ci, val_slot);
+    return val_slot;
+}
+
+// Lower let and letrec.
+static std::uint32_t
+lower_flat_let(LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+               const NodeView& v,
+               const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                        aura::core::TransparentStringHash, std::equal_to<>>* cache,
+               std::vector<std::string>* cache_hits) {
+    bool rec = (v.tag == NodeTag::LetRec);
+    auto name = pool.resolve(v.sym_id);
+    auto val_id = v.children.empty() ? NULL_NODE : v.child(0);
+    auto body_id = v.children.size() < 2 ? NULL_NODE : v.child(1);
+
+    if (rec) {
+        // letrec: create cell, bind, init
+        auto ci = state.alloc_local();
+        state.emit(IROpcode::NewCell, ci);
+        state.scopes.push_back({});
+        auto& scope = state.scopes.back();
+        scope[std::string(name)] = Binding{BindingKind::Cell, ci};
+        // Issue #4588: an error init is not a binding. The body
+        // stays in the continuation and does not run.
+        auto val_slot = lower_data_operand(state, flat, pool, val_id, cache, cache_hits, true);
+        state.emit(IROpcode::CellSet, ci, val_slot);
+        auto body_slot = lower_flat_expr(state, flat, pool, body_id, cache, cache_hits);
+        state.scopes.pop_back();
+        return body_slot;
+    } else {
+        // Issue #4359: (let () body) has no binding.
+        if (v.sym_id == INVALID_SYM)
+            return lower_flat_expr(state, flat, pool, body_id, cache, cache_hits);
+        // let: use Cell binding (like evaluator fix 3392d77)
+        // so that set! can find the mutable Cell inside closures
+        auto ci = state.alloc_local();
+        state.emit(IROpcode::NewCell, ci);
+        // Issue #4588: same as letrec. Do not run the body.
+        auto val_slot = lower_data_operand(state, flat, pool, val_id, cache, cache_hits, true);
+        state.emit(IROpcode::CellSet, ci, val_slot);
+        state.scopes.push_back({});
+        auto& scope = state.scopes.back();
+        scope[std::string(name)] = Binding{BindingKind::Cell, ci};
+        auto body_slot = lower_flat_expr(state, flat, pool, body_id, cache, cache_hits);
+        state.scopes.pop_back();
+        return body_slot;
+    }
+}
+
+namespace {
+
+    // Names a lambda body reads or writes that are not its parameters.
+    struct FreeVarWalker {
+        const FlatAST& flat;
+        StringPool& pool;
+        std::unordered_set<std::string>& free;
+        std::unordered_set<std::string>& bound;
+        void walk(NodeId nid) {
+            if (nid == NULL_NODE || nid >= flat.size())
+                return;
+            auto nv = flat.get(nid);
+            switch (nv.tag) {
+                case NodeTag::Variable: {
+                    auto name = pool.resolve(nv.sym_id);
+                    if (bound.find(std::string(name)) == bound.end())
+                        free.insert(std::string(name));
+                    break;
+                }
+                case NodeTag::Set: {
+                    // Issue #3927: set! of a free cell is a store.
+                    // Collecting only Variable reads dropped
+                    // write-only top-level cells, so the body
+                    // Set missed scopes and was a no-op while
+                    // later < / = / - const-folded the init.
+                    auto name = std::string(pool.resolve(nv.sym_id));
+                    if (bound.find(name) == bound.end())
+                        free.insert(name);
+                    for (auto c : nv.children)
+                        walk(c);
+                    break;
+                }
+                case NodeTag::LiteralInt:
+                case NodeTag::LiteralString:
+                    break;
+                default:
+                    for (auto c : nv.children)
+                        walk(c);
+                    break;
+            }
+        }
+    };
+
+} // namespace
+
+// Lower a lambda to an IR function and a closure.
+static std::uint32_t lower_flat_lambda(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id, const NodeView& v,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits) {
+    // Native lambda lowering: create a new IRFunction, lower body
+    // via lower_flat_expr, emit MakeClosure.
+    auto param_span = v.params;
+    std::vector<std::string> param_names;
+    for (auto pid : param_span)
+        param_names.push_back(std::string(pool.resolve(pid)));
+
+    // Collect free variables: vars in body not in param list
+    std::unordered_set<std::string> free_set;
+    std::unordered_set<std::string> bound(param_names.begin(), param_names.end());
+    // Walk body to find free vars
+    FreeVarWalker{flat, pool, free_set, bound}.walk(v.child(0));
+
+    // Filter to only vars actually in scope.
+    // Issue #2292: exclude self_name — self-recursion uses
+    // MakeClosure(self_func_id), not a free-var cell capture.
+    std::vector<std::string> free_vars;
+    for (auto& fv : free_set) {
+        if (!state.self_name.empty() && fv == state.self_name)
+            continue;
+        bool in_scope = false;
+        for (auto it = state.scopes.rbegin(); it != state.scopes.rend(); ++it) {
+            if (it->find(fv) != it->end()) {
+                in_scope = true;
+                break;
+            }
+        }
+        // Issue #4764: a nested define (an internal define inside a
+        // lambda) is pre-bound as a Cell in the enclosing scope. It
+        // must be captured from that cell even when the workspace
+        // value-cell sync also knows its name from a leaked top_env
+        // binding: otherwise the self-call lowered to a TopCellLoad
+        // of the stale tree-walker closure and failed with
+        // "eval_flat: invalid closure".
+        if (in_scope) {
+            free_vars.push_back(fv);
+            continue;
+        }
+        // Issue #4865: a top-level value define must stay a live
+        // cell reference (TopCellLoad / TopCellStore); capturing
+        // it by value made set! write the lambda's copy.
+        if (state.value_cells && state.value_cells->find(fv) != state.value_cells->end())
+            continue;
+    }
+
+    // Create new IR function.
+    // Issue #4568: a define's own lambda keeps the define name so
+    // type feedback is keyed by that name. Nested lambdas (self
+    // already active, or the define name already consumed) stay
+    // "__lambda__".
+    IRFunction func;
+    func.name = "__lambda__";
+    if (!state.feedback_define_name.empty()) {
+        func.name = state.feedback_define_name;
+        state.feedback_define_name.clear();
+    } else if (!state.self_name.empty() && !state.self_func_active) {
+        func.name = state.self_name;
+    }
+    func.entry_block = 0;
+    func.blocks.push_back({0, {}, {}});
+    func.params = param_names;
+    func.arg_count = static_cast<std::uint32_t>(param_names.size());
+    func.variadic = (v.int_value != 0);
+    func.region = state.region;
+    // Issue #150 Phase 1b: if the user wrapped this
+    // lambda in a (performance-region ...) or
+    // (evolution-region ...) Aura form, the parser
+    // recorded the region in the FlatAST's
+    // region_by_lambda_id_ side-table. Look it up and
+    // override the IRFunction's region. This is the
+    // write-side that makes the annotation take effect:
+    // without this lookup, the parser-side hint
+    // (Phase 1) is just data in a side-table that
+    // nothing consumes.
+    if (auto opt_r = flat.get_function_region_for_lambda(id)) {
+        func.region = static_cast<aura::ir::Region>(*opt_r);
+    }
+
+    // Save parent state
+    auto* saved_func = state.cur_func;
+    auto saved_block = state.cur_block;
+    auto saved_locals = state.local_count;
+    auto saved_scopes = std::move(state.scopes);
+    auto saved_env_slot = state.env_slot;
+    auto saved_fv_map = std::move(state.free_var_map);
+    auto saved_self_func_id = state.self_func_id;
+    auto saved_self_func_active = state.self_func_active;
+    // Issue #4552: an enclosing try handler is a block of the
+    // parent function, not of this lambda.
+    auto saved_err_escapes = std::move(state.err_escapes);
+    state.err_escapes.clear();
+    ++state.lambda_depth;
+
+    // Issue #2292: pre-allocate function id so self-references inside
+    // the body can emit MakeClosure(self_func_id) before add_function.
+    // Only claim when this is the define's own lambda (self_name set and
+    // no outer self_func active yet). Nested lambdas keep the outer id.
+    // self_func_id may be 0 — track with self_func_active.
+    std::optional<std::uint32_t> preclaimed_fid;
+    if (!state.self_name.empty() && !state.self_func_active) {
+        IRFunction placeholder;
+        placeholder.name = "__self_placeholder__";
+        placeholder.entry_block = 0;
+        placeholder.blocks.push_back({0, {}, {}});
+        preclaimed_fid = state.module.add_function(std::move(placeholder));
+        state.self_func_id = *preclaimed_fid;
+        state.self_func_active = true;
+    }
+
+    state.cur_func = &func;
+    state.cur_block = 0;
+    state.local_count = 0;
+    state.free_var_map.clear();
+
+    state.env_slot = state.alloc_local(); // placeholder
+    state.scopes.push_back({});
+
+    // Load captured free vars from env prefix
+    for (std::size_t i = 0; i < free_vars.size(); ++i) {
+        auto& fv = free_vars[i];
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::Arg, slot, static_cast<std::uint32_t>(i));
+        // Check if this free var is a letrec cell in the outer scope
+        bool is_cell = false;
+        for (auto it = saved_scopes.rbegin(); it != saved_scopes.rend(); ++it) {
+            auto found = it->find(fv);
+            if (found != it->end() && found->second.kind == BindingKind::Cell) {
+                is_cell = true;
+                break;
+            }
+        }
+        if (is_cell) {
+            // Cell capture stays a Cell. Capture copies the cell
+            // value into the closure env. Arg copies that value
+            // through (#4439). CellGet and CellSet use cell_heap_.
+            state.scopes.back()[fv] = Binding{BindingKind::Cell, slot};
+            state.free_var_map[fv] = static_cast<std::uint32_t>(i);
+            state.cell_free_vars.insert(fv);
+        } else {
+            state.scopes.back()[fv] = Binding{BindingKind::Captured, slot};
+            state.free_var_map[fv] = static_cast<std::uint32_t>(i);
+        }
+    }
+
+    // Bind parameters
+    for (std::size_t i = 0; i < param_names.size(); ++i) {
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::Arg, slot, static_cast<std::uint32_t>(free_vars.size() + i));
+        state.scopes.back()[param_names[i]] = Binding{BindingKind::Local, slot};
+        // Issue #4426: a Float parameter converts at entry. The
+        // call's FlatAST does not carry the callee param type, so
+        // the call-arg CastOp is skipped. Tag 4 is not Dynamic.
+        if (i < v.param_annotations.size() && v.param_annotations[i] != NULL_NODE &&
+            state.type_reg) {
+            auto ann = flat.get(v.param_annotations[i]);
+            if (auto named = float_annotation_type(pool, ann, state.type_reg)) {
+                const auto cast_tag = type_tag_for_coercion(*named, state.type_reg);
+                if (cast_tag == 4) {
+                    auto cast_slot = state.alloc_local();
+                    state.emit_with_type(IROpcode::CastOp, named->index, cast_slot, slot, cast_tag,
+                                         0);
+                    stamp_last_castop_typed_meta(state, /*src=*/0, named->index, 0, cast_tag);
+                    state.scopes.back()[param_names[i]] = Binding{BindingKind::Local, cast_slot};
+                }
+            }
+        }
+    }
+
+    // Lower body via native FlatAST path
+    auto body_slot = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+    state.emit(IROpcode::Return, body_slot);
+
+    func.local_count = state.local_count;
+
+    // Restore parent state
+    state.cur_func = saved_func;
+    state.cur_block = saved_block;
+    state.local_count = saved_locals;
+    state.scopes = std::move(saved_scopes);
+    state.env_slot = saved_env_slot;
+    state.free_var_map = std::move(saved_fv_map);
+    state.self_func_id = saved_self_func_id;
+    state.self_func_active = saved_self_func_active;
+    state.err_escapes = std::move(saved_err_escapes);
+    --state.lambda_depth;
+
+    func.free_vars = free_vars;
+    if (!state.current_flat)
+        std::println("DEBUG: current_flat NULL at lambda bridge data");
+    if (!state.current_pool)
+        std::println("DEBUG: current_pool NULL at lambda bridge data");
+    std::uint32_t fid = 0;
+    if (preclaimed_fid) {
+        // Issue #2292: replace the self-placeholder in place.
+        func.id = *preclaimed_fid;
+        state.module.functions[*preclaimed_fid] = std::move(func);
+        fid = *preclaimed_fid;
+        if (state.module.closure_bridge.size() <= fid)
+            state.module.closure_bridge.resize(fid + 1);
+    } else {
+        fid = state.module.add_function(std::move(func));
+    }
+    // Issue #3263: propagate SyntaxMarker from the source Lambda
+    // node into the IRFunction (#246 / #2177). Sample marker once
+    // (no TOCTOU / double lookup). quote_lambda marker copy
+    // requires current_flat; the old else bumped stripped on
+    // nullptr — unreachable and a lie (no-flat is not stripped).
+    // Full: contract_assert. Soft/Off: skip (zero extra).
+    contract_assert(state.current_flat != nullptr);
+    if (state.current_flat) {
+        const auto m = state.current_flat->marker(v.id);
+        state.module.functions[fid].marker = static_cast<std::uint8_t>(m);
+        if (m == aura::ast::SyntaxMarker::MacroIntroduced)
+            aura_2177_record_aot_marker_propagated(1);
+    }
+    // Store bridge data for tree-walker compatibility
+    if (state.current_flat && state.current_pool) {
+        // Issue #224 Cycle 2: shared_ptr-based bridge. The
+        // shared_ptr is a non-owning view (no-op deleter) that
+        // keeps the FlatAST/StringPool alive as long as this
+        // bridge exists. The arena remains the actual owner.
+        auto flat_sp = std::shared_ptr<const aura::ast::FlatAST>(state.current_flat,
+                                                                 [](const aura::ast::FlatAST*) {});
+        auto pool_sp = std::shared_ptr<const aura::ast::StringPool>(
+            state.current_pool, [](const aura::ast::StringPool*) {});
+        state.module.set_closure_bridge(fid, std::move(flat_sp), std::move(pool_sp), v.child(0));
+        if (g_lowering_hooks.on_quote_lambda_bridge_copy)
+            g_lowering_hooks.on_quote_lambda_bridge_copy();
+        if (g_lowering_hooks.on_env_version_resync)
+            g_lowering_hooks.on_env_version_resync();
+        // Save lambda body source for bridge fallback re-parse
+        auto body_src = unparse_node(*state.current_flat, *state.current_pool, v.child(0));
+        state.module.set_closure_body_source(fid, body_src);
+    }
+    auto slot = state.alloc_local();
+    state.emit(IROpcode::MakeClosure, slot, fid, static_cast<std::uint32_t>(free_vars.size()));
+
+    // Capture each free variable into the closure
+    // Cell values (CellRef) are captured directly — CellGet/CellSet
+    // in the lambda body dereference via cell_heap_ for read/write.
+    for (std::size_t i = 0; i < free_vars.size(); ++i) {
+        auto& fv = free_vars[i];
+        for (auto it = state.scopes.rbegin(); it != state.scopes.rend(); ++it) {
+            auto found = it->find(fv);
+            if (found != it->end()) {
+                auto& binding = found->second;
+                auto cslot = state.alloc_local();
+                state.emit(IROpcode::Local, cslot, binding.slot);
+                state.emit(IROpcode::Capture, slot, static_cast<std::uint32_t>(i), cslot);
+                break;
+            }
+        }
+    }
+
+    return slot;
+}
+
+// Lower if to Branch and a merge slot.
+static std::uint32_t
+lower_flat_if(LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+              const NodeView& v,
+              const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                       aura::core::TransparentStringHash, std::equal_to<>>* cache,
+              std::vector<std::string>* cache_hits) {
+    auto cond_slot = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+    auto then_blk = state.alloc_block();
+    auto else_blk = state.alloc_block();
+    auto merge_blk = state.alloc_block();
+
+    // Issue #280 / #1925: attach if-predicate narrow_evidence to
+    // Branch AND keep it live while lowering the then-branch so
+    // Coercion / Call-arg / TypeAnnotation CastOps inside the
+    // refined arm inherit occurrence proof (post-mutate zero-overhead).
+    // Else-arm clears evidence (negation may refine differently).
+    const std::uint32_t if_narrow_ev = state.current_narrowing_evidence;
+    if (if_narrow_ev != 0) {
+        state.emit_with_metadata(IROpcode::Branch, 0, 0, 0, if_narrow_ev, cond_slot, then_blk,
+                                 else_blk);
+    } else {
+        state.emit(IROpcode::Branch, cond_slot, then_blk, else_blk);
+    }
+
+    auto phi_slot = state.alloc_local();
+
+    state.cur_block = then_blk;
+    state.current_narrowing_evidence = if_narrow_ev;
+    auto then_val = lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+    state.emit(IROpcode::Local, phi_slot, then_val);
+    state.emit(IROpcode::Jump, merge_blk);
+
+    state.cur_block = else_blk;
+    state.current_narrowing_evidence = 0;
+    // #4502 step 4: a missing else is the unspecified value
+    // (ConstVoid ops[1] = 1), matching the interpreter; it used to
+    // lower NULL_NODE to fixnum 0.
+    std::uint32_t else_val = 0;
+    if (v.children.size() < 3 || v.child(2) == NULL_NODE) {
+        else_val = state.alloc_local();
+        state.emit(IROpcode::ConstVoid, else_val, 1);
+    } else {
+        else_val = lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
+    }
+    state.emit(IROpcode::Local, phi_slot, else_val);
+    state.emit(IROpcode::Jump, merge_blk);
+    // Merge: no inherited narrow from this if.
+    state.current_narrowing_evidence = 0;
+
+    state.cur_block = merge_blk;
+    return phi_slot;
+}
+
+// Lower a variable from a local, a capture, or a cell.
+static std::uint32_t lower_flat_variable(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id, const NodeView& v,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits) {
+    auto name = pool.resolve(v.sym_id);
+    // Issue #4321: :foo is a keyword literal, same split as
+    // eval_flat. An unknown name used to fall through to
+    // ConstI64 0, so (query :find …) saw op 0 and
+    // :sync-query-index? was ignored. A LiteralString whose
+    // text starts with ':' stays a string (operands[2]==0).
+    if (!name.empty() && name[0] == ':') {
+        auto si = state.module.add_string(std::string(name));
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::ConstString, slot, si, /*keyword=*/1);
+        return slot;
+    }
+    // Issue #2292: self-recursion must emit MakeClosure(self_func_id)
+    // BEFORE outer Define's Cell binding is consulted. Otherwise the
+    // body captures a cell that is empty in a fresh IRInterpreter
+    // (call-site re-lower of (fact N)), and Call returns 0.
+    // Issue #2826: matches_self_name() ANDS self_func_active (id may be 0).
+    if (state.matches_self_name(name)) {
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::MakeClosure, slot, state.self_func_id, 0);
+        return slot;
+    }
+    // Look up in scope chain
+    for (auto it = state.scopes.rbegin(); it != state.scopes.rend(); ++it) {
+        auto found = it->find(std::string(name));
+        if (found != it->end()) {
+            auto& binding = found->second;
+            auto slot = state.alloc_local();
+            switch (binding.kind) {
+                case BindingKind::Local:
+                    state.emit(IROpcode::Local, slot, binding.slot);
+                    break;
+                case BindingKind::Captured:
+                    state.emit(IROpcode::Local, slot, binding.slot);
+                    break;
+                case BindingKind::Cell:
+                    state.emit(IROpcode::CellGet, slot, binding.slot);
+                    break;
+            }
+            return slot;
+        }
+    }
+    // Free variable from outer lambda
+    auto fv = state.free_var_map.find(std::string(name));
+    if (fv != state.free_var_map.end()) {
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::Local, slot, fv->second);
+        return slot;
+    }
+    // Issue #63723: top-level value defines bound via IR take
+    // precedence over the function-cache path. Without this,
+    // a value-define like `(define a 1)` is cached as a
+    // closure (NewCell + CellSet + return 1), and the
+    // cache-hit path below would emit MakeClosure — which
+    // when used in arithmetic, coerces to 0 instead of the
+    // actual value 1. The value_cells map (populated by
+    // bind_value_define_via_ir in populate_ir_cache_v2_from_workspace)
+    // records the cell_id holding the literal value; emit
+    // TopCellLoad to fetch it directly. The function cache
+    // is still consulted (for function-define bindings which
+    // DO want a closure); this check just runs first.
+    if (state.value_cells) {
+        auto vc_it = state.value_cells->find(std::string(name));
+        if (vc_it != state.value_cells->end()) {
+            auto slot = state.alloc_local();
+            state.emit(IROpcode::TopCellLoad, slot, static_cast<std::uint32_t>(vc_it->second));
+            return slot;
+        }
+    }
+    // Issue #4681: call slot - live read of the define's cell.
+    if (const auto* slots = call_slot_cells_4681()) {
+        auto sit = slots->find(std::string(name));
+        if (sit != slots->end()) {
+            if (auto* hits = call_slot_hits_4681())
+                hits->push_back(std::string(name));
+            auto slot = state.alloc_local();
+            state.emit(IROpcode::TopCellLoad, slot, static_cast<std::uint32_t>(sit->second));
+            return slot;
+        }
+    }
+    // Check if this variable names a cached define function
+    if (cache) {
+        auto cache_it = cache->find(std::string(name));
+        if (cache_it != cache->end()) {
+            if (cache_hits) {
+                cache_hits->push_back(std::string(name));
+            }
+            // Record the starting func id (offset) before adding bundle functions
+            auto base_fid = static_cast<std::uint32_t>(state.module.functions.size());
+            // Issue #2732: map original bundle func.id → new_fid so MakeClosure
+            // targets stay correct even when original ids are non-dense
+            // (self-placeholder / multi-function order). Arithmetic
+            // `orig + base_fid - 1` mis-points sibling calls at __top__
+            // and infinite-loops on multi-define cross-call (h→g).
+            std::unordered_map<std::uint32_t, std::uint32_t> orig_to_new;
+            std::vector<std::uint32_t> added_fids;
+            added_fids.reserve(cache_it->second.size());
+            std::uint32_t lambda_fid = 0;
+            bool found_user_lambda = false;
+            bool found_exact_name = false;
+            std::uint32_t first_added = 0;
+            bool have_first = false;
+            for (std::size_t ci = 0; ci < cache_it->second.size(); ++ci) {
+                auto& func = cache_it->second[ci];
+                auto copy = func;
+                // Remap ConstString pool indices using cached string pool
+                if (state.cache_strings) {
+                    auto str_it = state.cache_strings->find(std::string(name));
+                    if (str_it != state.cache_strings->end() && !str_it->second.empty()) {
+                        auto& str_pool = str_it->second;
+                        for (auto& blk : copy.blocks)
+                            for (auto& inst : blk.instructions)
+                                if (inst.opcode == IROpcode::ConstString &&
+                                    inst.operands[1] < str_pool.size())
+                                    inst.operands[1] =
+                                        state.module.add_string(str_pool[inst.operands[1]]);
+                    }
+                }
+                // Issue #660 / #2732: find the user-defined lambda by NAME.
+                // Prefer "<name>#0" (cache_define). Also accept "__lambda__",
+                // empty, or name#N — never leave lambda_fid==0 (→ __top__).
+                // Issue #4584: a define's own lambda is named exactly `name`
+                // (#4568). Nested lambdas are renamed to name#0 first, so a
+                // first match on name#0 MakeClosure'd the predicate. Exact
+                // name wins even when it appears later. Bundles that only
+                // have name#0 still use the fallback above.
+                const std::string want = std::string(name) + "#0";
+                const bool exact_name =
+                    copy.name.size() == name.size() && copy.name.compare(0, name.size(), name) == 0;
+                const bool is_user_lambda =
+                    exact_name || copy.name == want || copy.name == "__lambda__" ||
+                    copy.name.empty() ||
+                    (copy.name.size() > name.size() &&
+                     copy.name.compare(0, name.size(), name) == 0 && copy.name[name.size()] == '#');
+                const auto orig_id = copy.id;
+                auto new_fid = state.module.add_function(std::move(copy));
+                orig_to_new[orig_id] = new_fid;
+                added_fids.push_back(new_fid);
+                if (!have_first) {
+                    first_added = new_fid;
+                    have_first = true;
+                }
+                if (exact_name && !found_exact_name) {
+                    lambda_fid = new_fid;
+                    found_user_lambda = true;
+                    found_exact_name = true;
+                } else if (is_user_lambda && !found_user_lambda) {
+                    lambda_fid = new_fid;
+                    found_user_lambda = true;
+                }
+                // Keep base_fid for legacy bridge paths that still
+                // consult arithmetic remap on single-fn bundles.
+                (void)base_fid;
+                // Copy bridge data from cache bridge if available
+                if (state.cache_bridge) {
+                    auto bridge_it = state.cache_bridge->find(std::string(name));
+                    if (bridge_it != state.cache_bridge->end() && ci < bridge_it->second.size()) {
+                        // Issue #741: limit bridge shared_ptr copy to
+                        // func indices in the impact_scope set (partial
+                        // re-lower). Non-impacted lambdas get epoch-only
+                        // refresh so stale flat/pool are not retained.
+                        const bool in_impact_scope =
+                            !g_lowering_hooks.impact_func_indices ||
+                            g_lowering_hooks.impact_func_indices->count(ci) > 0;
+                        // Issue #224 Cycle 2: shared_ptr<>-based
+                        // bridge. The cache bridge holds a
+                        // shared_ptr; we copy it (refcount
+                        // incremented) so the new bridge keeps
+                        // the FlatAST alive independently.
+                        // Issue #657: sync bridge_epoch on cache-hit copy so
+                        // recursive-define closures see current mutation epoch.
+                        std::uint64_t bridge_epoch = bridge_it->second[ci].bridge_epoch;
+                        if (g_lowering_hooks.bridge_epoch_capture != 0)
+                            bridge_epoch = g_lowering_hooks.bridge_epoch_capture;
+                        if (in_impact_scope) {
+                            // Re-pin to the live lowering FlatAST/Pool, not the
+                            // cached no-op-deleter views. Those views dangle after
+                            // the CompilerService that filled the IR cache is
+                            // destroyed (set_closure_bridge_ptr then UAF in
+                            // FlatAST::provenance).
+                            std::shared_ptr<const aura::ast::FlatAST> live_flat;
+                            std::shared_ptr<const aura::ast::StringPool> live_pool;
+                            if (state.current_flat && state.current_pool) {
+                                live_flat = std::shared_ptr<const aura::ast::FlatAST>(
+                                    state.current_flat, [](const aura::ast::FlatAST*) {});
+                                live_pool = std::shared_ptr<const aura::ast::StringPool>(
+                                    state.current_pool, [](const aura::ast::StringPool*) {});
+                            }
+                            state.module.set_closure_bridge_ptr(
+                                new_fid, std::move(live_flat), std::move(live_pool),
+                                bridge_it->second[ci].body_id, bridge_epoch);
+                            if (g_lowering_hooks.on_quote_lambda_bridge_copy)
+                                g_lowering_hooks.on_quote_lambda_bridge_copy();
+                        } else {
+                            state.module.set_closure_bridge_ptr(new_fid, {}, {},
+                                                                aura::ast::NULL_NODE, bridge_epoch);
+                        }
+                        if (g_lowering_hooks.on_bridge_epoch_sync)
+                            g_lowering_hooks.on_bridge_epoch_sync();
+                        if (g_lowering_hooks.on_env_version_resync)
+                            g_lowering_hooks.on_env_version_resync();
+                        // Copy body_source for bridge fallback re-parse
+                        if (in_impact_scope && !bridge_it->second[ci].body_source.empty() &&
+                            new_fid < state.module.closure_bridge.size()) {
+                            state.module.closure_bridge[new_fid].body_source =
+                                bridge_it->second[ci].body_source;
+                        }
+                    }
+                }
+            }
+            // Issue #2732: rewrite MakeClosure targets via orig→new map
+            // (handles non-dense original ids from self-placeholder).
+            for (auto nf : added_fids) {
+                if (nf >= state.module.functions.size())
+                    continue;
+                for (auto& block : state.module.functions[nf].blocks) {
+                    for (auto& inst : block.instructions) {
+                        if (inst.opcode != aura::ir::IROpcode::MakeClosure)
+                            continue;
+                        auto it = orig_to_new.find(inst.operands[1]);
+                        if (it != orig_to_new.end())
+                            inst.operands[1] = it->second;
+                    }
+                }
+            }
+            // Issue #2732: never MakeClosure(0) when the bundle was
+            // non-empty — 0 is __top__ and causes infinite recursion.
+            if (!found_user_lambda && have_first)
+                lambda_fid = first_added;
+            auto closure_slot = state.alloc_local();
+            state.emit(IROpcode::MakeClosure, closure_slot, lambda_fid, 0);
+            return closure_slot;
+        }
+    }
+    // Check if this variable names a known primitive
+    if (state.primitives) {
+        auto slot_idx = state.primitives->slot_for_name(std::string(name));
+        if (slot_idx < state.primitives->slot_count()) {
+            auto slot = state.alloc_local();
+            state.emit(IROpcode::Primitive, slot, static_cast<std::uint32_t>(slot_idx));
+            return slot;
+        }
+    }
+    // Self-reference fallback (primary path is at Variable entry — #2292).
+    // Issue #2826: matches_self_name() — never test self_func_id != 0 alone.
+    if (state.matches_self_name(name)) {
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::MakeClosure, slot, state.self_func_id, 0);
+        return slot;
+    }
+    // (value_cells check was moved earlier — see Issue #63723.)
+    // Issue #4607: this name resolved to NOTHING — the scope chain
+    // (local / captured / top-level define cell), the free-var map,
+    // the value cells, the define cache, the primitive table and the
+    // self name were all consulted above. The interpreter raises
+    // "unbound variable: <name>" for such a reference
+    // (evaluator_eval_flat.cpp, Variable case). The JIT had no such
+    // check: it compiled the reference as the constant 0 and then
+    // dispatched 0 as a closure id — closure id 0 was either a live
+    // closure (wrong callee -> infinite recursion -> stack overflow
+    // -> SIGSEGV) or out of range (the bounds-fail echo returned the
+    // 0 silently). Report the substitution so the --jit entry can
+    // refuse to compile the program and take the tree walker
+    // (the eval face) instead of compiling a call to a missing
+    // closure.
+    if (state.unbound_globals)
+        state.unbound_globals->emplace_back(std::string(name), v.id);
+    auto slot = state.alloc_local();
+    state.emit(IROpcode::ConstI64, slot, 0, 0);
+    return slot;
+}
+
+// Lower or.
+static std::uint32_t
+lower_call_or(LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+              const NodeView& v,
+              const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                       aura::core::TransparentStringHash, std::equal_to<>>* cache,
+              std::vector<std::string>* cache_hits) {
+    // Expand (or e1 e2 ... en) to:
+    //   block0:
+    //     val = lower(e1)
+    //     branch val → block_done_with_val, block_next
+    //   block_next:
+    //     val = lower(e2)
+    //     branch val → block_done_with_val, block_next2
+    //   ...
+    //   block_last:
+    //     result = lower(en)
+    //     jump block_done
+    //   block_done_with_val_i:
+    //     result = val_i
+    //     jump block_done
+    //   block_done: return result
+    auto arg_count = static_cast<std::uint32_t>(v.children.size() - 1);
+    auto result_slot = state.alloc_local();
+    auto done_blk = decltype(state.alloc_block()){};
+
+    for (std::size_t i = 1; i < arg_count; ++i) {
+        auto val = lower_flat_expr(state, flat, pool, v.child(i), cache, cache_hits);
+        auto done_val_blk = state.alloc_block();
+        auto next_blk = state.alloc_block();
+        state.emit(IROpcode::Branch, val, done_val_blk, next_blk);
+
+        // done_val block: result = val, jump done
+        state.cur_block = done_val_blk;
+        state.emit(IROpcode::Local, result_slot, val);
+        if (!done_blk)
+            done_blk = state.alloc_block();
+        state.emit(IROpcode::Jump, done_blk);
+
+        // next block: evaluate next expression
+        state.cur_block = next_blk;
+    }
+
+    // Last expression: result = expression value, jump done
+    {
+        auto last_slot = lower_flat_expr(state, flat, pool, v.child(arg_count), cache, cache_hits);
+        state.emit(IROpcode::Local, result_slot, last_slot);
+        if (!done_blk)
+            done_blk = state.alloc_block();
+        state.emit(IROpcode::Jump, done_blk);
+    }
+
+    // Done block
+    state.cur_block = done_blk;
+    return result_slot;
+}
+
+// Lower and.
+static std::uint32_t
+lower_call_and(LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+               const NodeView& v,
+               const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                        aura::core::TransparentStringHash, std::equal_to<>>* cache,
+               std::vector<std::string>* cache_hits) {
+    // Expand (and e1 e2 ... en) to:
+    //   block0:
+    //     val = lower(e1)
+    //     branch val → block_ok1, block_nope1
+    //   block_nope1: result = val (falsy); jump block_done
+    //   block_ok1:
+    //     val = lower(e2)
+    //     branch val → block_ok2, block_nope2
+    //   ...
+    //   block_okN: (last expr)
+    //     result = lower(en)
+    //     jump block_done
+    //   block_done: return result
+    //
+    // Issue #1911 B8: pre-fix used ConstVoid on the
+    // short-circuit (nope) arm. Void is truthy under
+    // is_truthy (only #f is false since #4491), so
+    // (and #f x) became truthy void — breaking
+    // leap-year? / days-in-month for non-leap years
+    // when the define was IR-lowered (direct call path).
+    // Scheme semantics: return the falsy short-circuit
+    // value (Local val), matching TW special-form and.
+    auto arg_count = static_cast<std::uint32_t>(v.children.size() - 1);
+    auto result_slot = state.alloc_local();
+    auto done_blk = decltype(state.alloc_block()){};
+
+    for (std::size_t i = 1; i < arg_count; ++i) {
+        auto val = lower_flat_expr(state, flat, pool, v.child(i), cache, cache_hits);
+        auto nope_blk = state.alloc_block();
+        auto ok_blk = state.alloc_block();
+        state.emit(IROpcode::Branch, val, ok_blk, nope_blk);
+
+        // nope block: result = falsy val, jump done
+        state.cur_block = nope_blk;
+        state.emit(IROpcode::Local, result_slot, val);
+        if (!done_blk)
+            done_blk = state.alloc_block();
+        state.emit(IROpcode::Jump, done_blk);
+
+        // ok block: continue to next expression
+        state.cur_block = ok_blk;
+    }
+
+    // Last expression: result = expression value, jump done
+    {
+        auto last_slot = lower_flat_expr(state, flat, pool, v.child(arg_count), cache, cache_hits);
+        state.emit(IROpcode::Local, result_slot, last_slot);
+        if (!done_blk)
+            done_blk = state.alloc_block();
+        state.emit(IROpcode::Jump, done_blk);
+    }
+
+    // Done block
+    state.cur_block = done_blk;
+    return result_slot;
+}
+
+// Lower not.
+static std::uint32_t
+lower_call_not(LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+               const NodeView& v,
+               const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                        aura::core::TransparentStringHash, std::equal_to<>>* cache,
+               std::vector<std::string>* cache_hits) {
+    auto arg_slot = lower_data_operand(state, flat, pool, v.child(1), cache, cache_hits, true);
+    auto result_slot = state.alloc_local();
+    state.emit(IROpcode::Not, result_slot, arg_slot);
+    return result_slot;
+}
+
+// Lower cond to nested branches.
+static std::uint32_t
+lower_call_cond(LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+                const NodeView& v,
+                const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                         aura::core::TransparentStringHash, std::equal_to<>>* cache,
+                std::vector<std::string>* cache_hits) {
+    auto result_slot = state.alloc_local();
+    auto done_blk = decltype(state.alloc_block()){};
+    auto num_clauses = v.children.size() - 1;
+
+    for (std::size_t ci = 1; ci <= num_clauses; ++ci) {
+        auto clause = v.child(ci);
+        if (clause >= flat.size())
+            continue;
+        auto clause_node = flat.get(clause);
+        if (clause_node.children.empty())
+            continue;
+
+        // Clause: child[0] = predicate, child[1] = body (single expression)
+        auto pred_node = clause_node.child(0);
+        auto body_node =
+            (clause_node.children.size() > 1) ? clause_node.child(1) : clause_node.child(0);
+
+        bool is_last = (ci == num_clauses);
+        // Issue #4804: only a trailing `else` is unconditional;
+        // a trailing ordinary test still branches (void when
+        // false), it used to fall through unconditionally.
+        bool is_else = false;
+        if (pred_node < flat.size()) {
+            auto pn = flat.get(pred_node);
+            is_else = pn.tag == NodeTag::Variable && pool.resolve(pn.sym_id) == "else";
+        }
+
+        if (!is_last || !is_else) {
+            auto pred_slot = lower_flat_expr(state, flat, pool, pred_node, cache, cache_hits);
+            // Branch on predicate: if true → body, else → next clause
+            auto body_blk = state.alloc_block();
+            auto next_blk = state.alloc_block();
+            state.emit(IROpcode::Branch, pred_slot, body_blk, next_blk);
+
+            // Body block
+            state.cur_block = body_blk;
+            auto body_val = lower_flat_expr(state, flat, pool, body_node, cache, cache_hits);
+            state.emit(IROpcode::Local, result_slot, body_val);
+            if (!done_blk)
+                done_blk = state.alloc_block();
+            state.emit(IROpcode::Jump, done_blk);
+
+            // Next clause
+            state.cur_block = next_blk;
+            if (is_last) {
+                state.emit(IROpcode::ConstVoid, result_slot);
+                state.emit(IROpcode::Jump, done_blk);
+            }
+        } else {
+            // Last clause: fallthrough body
+            auto body_val = lower_flat_expr(state, flat, pool, body_node, cache, cache_hits);
+            state.emit(IROpcode::Local, result_slot, body_val);
+            if (!done_blk)
+                done_blk = state.alloc_block();
+            state.emit(IROpcode::Jump, done_blk);
+        }
+    }
+
+    state.cur_block = done_blk;
+    return result_slot;
+}
+
+// Lower one prim_call_map primitive.
+static std::uint32_t lower_call_prim(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id, const NodeView& v,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits, std::string_view callee_name, std::uint32_t prim_id) {
+    auto arg_count = static_cast<std::uint32_t>(v.children.size() - 1);
+    auto arg_base = state.local_count;
+    // Issue #4588: display outside an IR try still runs, so a
+    // host try can see the error (#4456) and a bare display
+    // still prints. Every other prim propagates first.
+    // Issue #4596: error? is the observer. The argument
+    // reaches the prim, including inside a try. A let
+    // init, list element, or other prim still escapes.
+    const bool escape_arg =
+        callee_name != "error?" && (callee_name != "display" || !state.err_escapes.empty());
+    for (std::size_t i = 1; i < v.children.size(); ++i) {
+        auto val_slot =
+            lower_data_operand(state, flat, pool, v.child(i), cache, cache_hits, escape_arg);
+        state.emit(IROpcode::Local, arg_base + static_cast<std::uint32_t>(i - 1), val_slot);
+        state.alloc_local();
+    }
+    auto result_slot = state.alloc_local();
+    state.emit(IROpcode::PrimCall, prim_id, arg_base, arg_count, result_slot);
+    return result_slot;
+}
+
+// Lower hash-ref, hash-remove!, and hash-set!.
+static std::uint32_t
+lower_call_hash(LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+                const NodeView& v,
+                const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                         aura::core::TransparentStringHash, std::equal_to<>>* cache,
+                std::vector<std::string>* cache_hits, std::string_view callee_name) {
+    IROpcode hop = callee_name == "hash-set!"
+                       ? IROpcode::HashSet
+                       : (callee_name == "hash-remove!" ? IROpcode::HashRemove : IROpcode::HashRef);
+    auto result_slot = state.alloc_local();
+    auto hash_slot = lower_data_operand(state, flat, pool, v.child(1), cache, cache_hits, true);
+    auto key_slot = lower_data_operand(state, flat, pool, v.child(2), cache, cache_hits, true);
+    if (callee_name == "hash-set!" && v.children.size() >= 4) {
+        auto val_slot = lower_data_operand(state, flat, pool, v.child(3), cache, cache_hits, true);
+        auto pair_slot = state.alloc_local();
+        state.emit(IROpcode::MakePair, pair_slot, key_slot, val_slot);
+        state.emit(hop, result_slot, hash_slot, pair_slot);
+    } else {
+        state.emit(hop, result_slot, hash_slot, key_slot);
+    }
+    return result_slot;
+}
+
+// Lower require and import as already-executed forms.
+static std::uint32_t lower_call_require(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id, const NodeView& v,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits) {
+    // import/require are handled by pre_exec_requires.
+    // The import call in the AST is still present; skip
+    // it here to avoid going through PrimCall dispatch.
+    auto slot = state.alloc_local();
+    state.emit(IROpcode::ConstVoid, slot);
+    return slot;
+}
+
+// Lower try/catch.
+static std::uint32_t
+lower_call_try(LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+               const NodeView& v,
+               const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                        aura::core::TransparentStringHash, std::equal_to<>>* cache,
+               std::vector<std::string>* cache_hits) {
+    // (try body (catch (var) handler))
+    if (v.children.size() < 2) {
         auto slot = state.alloc_local();
         state.emit(IROpcode::ConstI64, slot, 0, 0);
         return slot;
     }
-    auto v = flat.get(id);
+    // Issue #4552: non-tail error values inside the body
+    // escape to this handler with the error in err_value_slot.
+    auto err_value_slot = state.alloc_local();
+    auto handler_blk = state.alloc_block();
+    state.err_escapes.push_back({handler_blk, err_value_slot});
+    auto body_slot = lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+    state.err_escapes.pop_back();
+    auto is_err_slot = state.alloc_local();
+    state.emit(IROpcode::IsError, is_err_slot, body_slot);
 
+    auto body_err_blk = state.alloc_block();
+    auto continue_blk = state.alloc_block();
+    auto end_blk = state.alloc_block();
+    state.emit(IROpcode::Branch, is_err_slot, body_err_blk, continue_blk);
+
+    // Body value is an error: hand it to the handler.
+    state.cur_block = body_err_blk;
+    state.emit(IROpcode::Local, err_value_slot, body_slot);
+    state.emit(IROpcode::Jump, handler_blk);
+
+    // Continue block: body succeeded, pass through
+    state.cur_block = continue_blk;
+    auto phi_slot = state.alloc_local();
+    state.emit(IROpcode::Local, phi_slot, body_slot);
+    state.emit(IROpcode::Jump, end_blk);
+
+    // Handler block: find catch clause and execute
+    state.cur_block = handler_blk;
+    bool caught = false;
+    for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
+        auto catch_id = v.child(ci);
+        auto catch_v = flat.get(catch_id);
+        if (catch_v.tag == NodeTag::Call) {
+            auto catch_callee = flat.get(catch_v.child(0));
+            if (catch_callee.tag == NodeTag::Variable) {
+                auto catch_name = pool.resolve(catch_callee.sym_id);
+                if (std::string(catch_name) == "catch") {
+                    // Issue #4594: (catch EXPR) has no binder. The
+                    // handler block evaluates EXPR. JIT runs this
+                    // IR (IsError / Branch / the value); there is
+                    // no separate try special form in the JIT.
+                    if (catch_v.children.size() == 2) {
+                        auto handler_slot =
+                            lower_flat_expr(state, flat, pool, catch_v.child(1), cache, cache_hits);
+                        state.emit(IROpcode::Local, phi_slot, handler_slot);
+                        caught = true;
+                        break;
+                    }
+                    // (catch (var) handler-body) or (catch var handler)
+                    // Issue #2567: bare Variable binding also accepted.
+                    if (catch_v.children.size() >= 3) {
+                        auto var_form = flat.get(catch_v.child(1));
+                        std::string var_name;
+                        if (var_form.tag == NodeTag::Call && var_form.children.size() >= 1) {
+                            auto var_node = flat.get(var_form.child(0));
+                            if (var_node.tag == NodeTag::Variable)
+                                var_name = std::string(pool.resolve(var_node.sym_id));
+                        } else if (var_form.tag == NodeTag::Variable) {
+                            var_name = std::string(pool.resolve(var_form.sym_id));
+                        }
+                        // Issue #4588: bind the cause string, not the
+                        // raw Error. operands[2] is outside
+                        // Local's operand_count.
+                        auto err_slot = state.alloc_local();
+                        state.emit(IROpcode::Local, err_slot, err_value_slot, 1);
+                        // Ensure a scope exists for the error variable binding
+                        if (state.scopes.empty()) {
+                            state.scopes.push_back({});
+                        }
+                        if (!var_name.empty()) {
+                            state.scopes.back()[var_name] = Binding{BindingKind::Local, err_slot};
+                        }
+                        auto handler_slot =
+                            lower_flat_expr(state, flat, pool, catch_v.child(2), cache, cache_hits);
+                        state.emit(IROpcode::Local, phi_slot, handler_slot);
+                        caught = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (!caught) {
+        // No catch clause: re-raise by passing error through
+        state.emit(IROpcode::Local, phi_slot, err_value_slot);
+    }
+    state.emit(IROpcode::Jump, end_blk);
+
+    state.cur_block = end_blk;
+    return phi_slot;
+}
+
+// Lower a matched arithmetic or pair opcode.
+static std::uint32_t lower_call_arith(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id, const NodeView& v,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits, IROpcode op, std::string_view callee_name) {
+    auto result_slot = state.alloc_local();
+    auto arg_count = v.children.size() - 1;
+    // Issue #4463: numeric `=` shares IROpcode::Eq with eq?.
+    // ops[3] == 1 rejects non-numbers. eq? leaves it 0.
+    // Issue #4470: eqv? is not in this table.
+    const std::uint32_t num_eq = callee_name == "=" ? 1u : 0u;
+    if (arg_count == 0) {
+        // No args: return 0
+        state.emit(IROpcode::ConstI64, result_slot, 0, 0);
+    } else {
+        // Lower first arg. Issue #4588: an error operand
+        // propagates before car/cons/arith run.
+        auto prev = lower_data_operand(state, flat, pool, v.child(1), cache, cache_hits, true);
+        if (arg_count == 1) {
+            // Unary minus: emit Sub(0, arg)
+            if (callee_name == "-") {
+                auto zero = state.alloc_local();
+                state.emit(IROpcode::ConstI64, zero, 0, 0);
+                state.emit(op, result_slot, zero, prev);
+            } else if (callee_name == "/") {
+                // Issue #4461: (/ x) is 1/x, not x/x. A float
+                // zero is IEEE inf; an int zero is an error.
+                auto one = state.alloc_local();
+                state.emit(IROpcode::ConstI64, one, 1, 0);
+                state.emit(op, result_slot, one, prev);
+            } else {
+                state.emit(op, result_slot, prev, prev, num_eq);
+            }
+        } else if (arg_count == 2) {
+            auto arg1 = lower_data_operand(state, flat, pool, v.child(2), cache, cache_hits, true);
+            state.emit(op, result_slot, prev, arg1, num_eq);
+        } else {
+            // 3+ args: comparison ops need pairwise AND (= a b c → (and (= a b) (=
+            // b c))) arithmetic chains as before: ((a + b) + c)
+            bool is_comp = (op == IROpcode::Eq || op == IROpcode::Lt || op == IROpcode::Gt ||
+                            op == IROpcode::Le || op == IROpcode::Ge);
+            if (is_comp) {
+                // Adjacent pairs ANDed together
+                bool first = true;
+                auto pair_prev = prev;
+                auto and_acc = state.alloc_local();
+                for (std::size_t ai = 2; ai < v.children.size(); ++ai) {
+                    auto pair_next =
+                        lower_data_operand(state, flat, pool, v.child(ai), cache, cache_hits, true);
+                    auto cmp = state.alloc_local();
+                    state.emit(op, cmp, pair_prev, pair_next, num_eq);
+                    if (first) {
+                        state.emit(IROpcode::And, and_acc, cmp, cmp);
+                        first = false;
+                    } else {
+                        auto t = state.alloc_local();
+                        state.emit(IROpcode::And, t, and_acc, cmp);
+                        and_acc = t;
+                    }
+                    pair_prev = pair_next;
+                }
+                state.emit(IROpcode::And, result_slot, and_acc, and_acc);
+            } else {
+                // Arithmetic chaining: ((a + b) + c)
+                auto arg1 =
+                    lower_data_operand(state, flat, pool, v.child(2), cache, cache_hits, true);
+                auto acc = state.alloc_local();
+                state.emit(op, acc, prev, arg1);
+                for (std::size_t ai = 3; ai < v.children.size(); ++ai) {
+                    auto next =
+                        lower_data_operand(state, flat, pool, v.child(ai), cache, cache_hits, true);
+                    auto is_last = (ai + 1 == v.children.size());
+                    if (is_last) {
+                        state.emit(op, result_slot, acc, next);
+                    } else {
+                        auto tmp = state.alloc_local();
+                        state.emit(op, tmp, acc, next);
+                        acc = tmp;
+                    }
+                }
+            }
+        }
+    }
+    return result_slot;
+}
+
+// Lower with-arena.
+static std::uint32_t lower_call_with_arena(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id, const NodeView& v,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits) {
+    auto result_slot = state.alloc_local();
+    std::uint32_t arena_size = 65536; // default 64KB
+    std::uint32_t body_start = 1;
+
+    // Parse optional (size) argument
+    if (v.children.size() >= 2) {
+        auto first_arg = v.child(1);
+        auto first_v = flat.get(first_arg);
+        if (first_v.tag == NodeTag::Call && first_v.children.size() >= 1) {
+            auto size_expr = first_v.child(0);
+            auto sv = flat.get(size_expr);
+            if (sv.tag == NodeTag::LiteralInt && sv.int_value > 0)
+                arena_size = static_cast<std::uint32_t>(sv.int_value);
+            body_start = 2; // (with-arena (N) body...)
+        }
+    }
+
+    auto saved_slot = state.alloc_local();
+    state.emit(IROpcode::ArenaPush, saved_slot, arena_size, 0, 0);
+
+    // Evaluate all body expressions, keep last result
+    auto last_slot = result_slot;
+    for (auto ci = body_start; ci < v.children.size(); ++ci) {
+        last_slot = lower_flat_expr(state, flat, pool, v.child(ci), cache, cache_hits);
+    }
+    if (body_start >= v.children.size()) {
+        state.emit(IROpcode::ConstVoid, result_slot);
+    } else {
+        state.emit(IROpcode::Local, result_slot, last_slot);
+    }
+    state.emit(IROpcode::ArenaPop, saved_slot, 0, 0, 0);
+    return result_slot;
+}
+
+// Lower when and unless.
+static std::uint32_t
+lower_call_when(LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+                const NodeView& v,
+                const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                         aura::core::TransparentStringHash, std::equal_to<>>* cache,
+                std::vector<std::string>* cache_hits, std::string_view callee_name) {
+    const bool is_when = callee_name == "when";
+    auto cond_slot = lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
+    auto body_blk = state.alloc_block();
+    auto skip_blk = state.alloc_block();
+    auto merge_blk = state.alloc_block();
+    if (is_when)
+        state.emit(IROpcode::Branch, cond_slot, body_blk, skip_blk);
+    else
+        state.emit(IROpcode::Branch, cond_slot, skip_blk, body_blk);
+    auto phi_slot = state.alloc_local();
+    state.cur_block = body_blk;
+    std::uint32_t body_val = 0;
+    if (v.children.size() == 2) {
+        body_val = state.alloc_local();
+        state.emit(IROpcode::ConstVoid, body_val, 1);
+    } else {
+        for (std::size_t bi = 2; bi < v.children.size(); ++bi) {
+            const auto c = v.child(bi);
+            body_val = lower_flat_expr(state, flat, pool, c, cache, cache_hits);
+            if (bi + 1 < v.children.size() && !form_cannot_be_error(flat, c)) {
+                const auto prev_source = state.current_source_id;
+                state.current_source_id = c;
+                emit_error_escape(state, body_val);
+                state.current_source_id = prev_source;
+            }
+        }
+    }
+    state.emit(IROpcode::Local, phi_slot, body_val);
+    state.emit(IROpcode::Jump, merge_blk);
+    state.cur_block = skip_blk;
+    auto skip_val = state.alloc_local();
+    state.emit(IROpcode::ConstVoid, skip_val, 1);
+    state.emit(IROpcode::Local, phi_slot, skip_val);
+    state.emit(IROpcode::Jump, merge_blk);
+    state.cur_block = merge_blk;
+    return phi_slot;
+}
+
+// Lower list to a cons chain.
+static std::uint32_t
+lower_call_list(LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+                const NodeView& v,
+                const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                         aura::core::TransparentStringHash, std::equal_to<>>* cache,
+                std::vector<std::string>* cache_hits) {
+    auto result_slot = state.alloc_local();
+    auto arg_count = v.children.size() - 1;
+    if (arg_count == 0) {
+        state.emit(IROpcode::ConstVoid, result_slot);
+    } else {
+        // Build from the last arg backwards: cons(cdr, ())
+        auto tail_slot = state.alloc_local();
+        state.emit(IROpcode::ConstVoid, tail_slot);
+        for (std::size_t i = arg_count; i >= 1; --i) {
+            // Issue #4588: an error element is the list's
+            // result. Do not cons it.
+            auto val = lower_data_operand(state, flat, pool, v.child(i), cache, cache_hits, true);
+            auto cell = state.alloc_local();
+            state.emit(IROpcode::MakePair, cell, val, tail_slot);
+            if (i == 1) {
+                state.emit(IROpcode::Local, result_slot, cell);
+            }
+            tail_slot = cell;
+        }
+    }
+    return result_slot;
+}
+
+// Lower performance-region and evolution-region.
+static std::uint32_t lower_call_region(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id, const NodeView& v,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits, aura::ir::Region region) {
+    state.region = region;
+    auto result_slot = state.alloc_local();
+    if (v.children.size() <= 1) {
+        state.emit(IROpcode::ConstVoid, result_slot);
+    } else {
+        auto last_slot = result_slot;
+        for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
+            last_slot = lower_flat_expr(state, flat, pool, v.child(ci), cache, cache_hits);
+        }
+        state.emit(IROpcode::Local, result_slot, last_slot);
+    }
+    return result_slot;
+}
+
+// Lower float, int, bool, empty list, and string literals.
+static std::uint32_t lower_flat_literal(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id, const NodeView& v,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits) {
     switch (v.tag) {
         case NodeTag::LiteralFloat: {
             auto slot = state.alloc_local();
@@ -354,1894 +2039,423 @@ static std::uint32_t lower_flat_expr(
             state.emit(IROpcode::ConstString, slot, si, 0);
             return slot;
         }
-        case NodeTag::Variable: {
-            auto name = pool.resolve(v.sym_id);
-            // Issue #4321: :foo is a keyword literal, same split as
-            // eval_flat. An unknown name used to fall through to
-            // ConstI64 0, so (query :find …) saw op 0 and
-            // :sync-query-index? was ignored. A LiteralString whose
-            // text starts with ':' stays a string (operands[2]==0).
-            if (!name.empty() && name[0] == ':') {
-                auto si = state.module.add_string(std::string(name));
-                auto slot = state.alloc_local();
-                state.emit(IROpcode::ConstString, slot, si, /*keyword=*/1);
-                return slot;
+        default:
+            // Unreachable: the dispatcher calls this only for the three literal tags.
+            contract_assert(false);
+            return 0;
+    }
+}
+
+// Lower a call that is not a recognized special form.
+static std::uint32_t lower_call_general(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id, const NodeView& v,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache,
+    std::vector<std::string>* cache_hits) {
+    // General function call: lower callee and args, then emit Call
+    auto callee_slot = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
+    auto arg_count = static_cast<std::uint32_t>(v.children.size() - 1);
+
+    // Try to get callee's expected parameter types for coercion (P0)
+    aura::core::FuncType callee_func_type;
+    bool have_callee_type = false;
+    if (state.type_reg) {
+        auto callee_type_id = flat.type_id(v.child(0));
+        if (callee_type_id != 0) {
+            auto ctid = aura::core::TypeId{callee_type_id, 1};
+            if (auto* ft = state.type_reg->func_of(ctid)) {
+                callee_func_type = *ft;
+                have_callee_type = true;
             }
-            // Issue #2292: self-recursion must emit MakeClosure(self_func_id)
-            // BEFORE outer Define's Cell binding is consulted. Otherwise the
-            // body captures a cell that is empty in a fresh IRInterpreter
-            // (call-site re-lower of (fact N)), and Call returns 0.
-            // Issue #2826: matches_self_name() ANDS self_func_active (id may be 0).
-            if (state.matches_self_name(name)) {
-                auto slot = state.alloc_local();
-                state.emit(IROpcode::MakeClosure, slot, state.self_func_id, 0);
-                return slot;
-            }
-            // Look up in scope chain
-            for (auto it = state.scopes.rbegin(); it != state.scopes.rend(); ++it) {
-                auto found = it->find(std::string(name));
-                if (found != it->end()) {
-                    auto& binding = found->second;
-                    auto slot = state.alloc_local();
-                    switch (binding.kind) {
-                        case BindingKind::Local:
-                            state.emit(IROpcode::Local, slot, binding.slot);
-                            break;
-                        case BindingKind::Captured:
-                            state.emit(IROpcode::Local, slot, binding.slot);
-                            break;
-                        case BindingKind::Cell:
-                            state.emit(IROpcode::CellGet, slot, binding.slot);
-                            break;
-                    }
-                    return slot;
-                }
-            }
-            // Free variable from outer lambda
-            auto fv = state.free_var_map.find(std::string(name));
-            if (fv != state.free_var_map.end()) {
-                auto slot = state.alloc_local();
-                state.emit(IROpcode::Local, slot, fv->second);
-                return slot;
-            }
-            // Issue #63723: top-level value defines bound via IR take
-            // precedence over the function-cache path. Without this,
-            // a value-define like `(define a 1)` is cached as a
-            // closure (NewCell + CellSet + return 1), and the
-            // cache-hit path below would emit MakeClosure — which
-            // when used in arithmetic, coerces to 0 instead of the
-            // actual value 1. The value_cells map (populated by
-            // bind_value_define_via_ir in populate_ir_cache_v2_from_workspace)
-            // records the cell_id holding the literal value; emit
-            // TopCellLoad to fetch it directly. The function cache
-            // is still consulted (for function-define bindings which
-            // DO want a closure); this check just runs first.
-            if (state.value_cells) {
-                auto vc_it = state.value_cells->find(std::string(name));
-                if (vc_it != state.value_cells->end()) {
-                    auto slot = state.alloc_local();
-                    state.emit(IROpcode::TopCellLoad, slot,
-                               static_cast<std::uint32_t>(vc_it->second));
-                    return slot;
-                }
-            }
-            // Issue #4681: call slot - live read of the define's cell.
-            if (const auto* slots = call_slot_cells_4681()) {
-                auto sit = slots->find(std::string(name));
-                if (sit != slots->end()) {
-                    if (auto* hits = call_slot_hits_4681())
-                        hits->push_back(std::string(name));
-                    auto slot = state.alloc_local();
-                    state.emit(IROpcode::TopCellLoad, slot,
-                               static_cast<std::uint32_t>(sit->second));
-                    return slot;
-                }
-            }
-            // Check if this variable names a cached define function
-            if (cache) {
-                auto cache_it = cache->find(std::string(name));
-                if (cache_it != cache->end()) {
-                    if (cache_hits) {
-                        cache_hits->push_back(std::string(name));
-                    }
-                    // Record the starting func id (offset) before adding bundle functions
-                    auto base_fid = static_cast<std::uint32_t>(state.module.functions.size());
-                    // Issue #2732: map original bundle func.id → new_fid so MakeClosure
-                    // targets stay correct even when original ids are non-dense
-                    // (self-placeholder / multi-function order). Arithmetic
-                    // `orig + base_fid - 1` mis-points sibling calls at __top__
-                    // and infinite-loops on multi-define cross-call (h→g).
-                    std::unordered_map<std::uint32_t, std::uint32_t> orig_to_new;
-                    std::vector<std::uint32_t> added_fids;
-                    added_fids.reserve(cache_it->second.size());
-                    std::uint32_t lambda_fid = 0;
-                    bool found_user_lambda = false;
-                    bool found_exact_name = false;
-                    std::uint32_t first_added = 0;
-                    bool have_first = false;
-                    for (std::size_t ci = 0; ci < cache_it->second.size(); ++ci) {
-                        auto& func = cache_it->second[ci];
-                        auto copy = func;
-                        // Remap ConstString pool indices using cached string pool
-                        if (state.cache_strings) {
-                            auto str_it = state.cache_strings->find(std::string(name));
-                            if (str_it != state.cache_strings->end() && !str_it->second.empty()) {
-                                auto& str_pool = str_it->second;
-                                for (auto& blk : copy.blocks)
-                                    for (auto& inst : blk.instructions)
-                                        if (inst.opcode == IROpcode::ConstString &&
-                                            inst.operands[1] < str_pool.size())
-                                            inst.operands[1] =
-                                                state.module.add_string(str_pool[inst.operands[1]]);
-                            }
-                        }
-                        // Issue #660 / #2732: find the user-defined lambda by NAME.
-                        // Prefer "<name>#0" (cache_define). Also accept "__lambda__",
-                        // empty, or name#N — never leave lambda_fid==0 (→ __top__).
-                        // Issue #4584: a define's own lambda is named exactly `name`
-                        // (#4568). Nested lambdas are renamed to name#0 first, so a
-                        // first match on name#0 MakeClosure'd the predicate. Exact
-                        // name wins even when it appears later. Bundles that only
-                        // have name#0 still use the fallback above.
-                        const std::string want = std::string(name) + "#0";
-                        const bool exact_name = copy.name.size() == name.size() &&
-                                                copy.name.compare(0, name.size(), name) == 0;
-                        const bool is_user_lambda = exact_name || copy.name == want ||
-                                                    copy.name == "__lambda__" ||
-                                                    copy.name.empty() ||
-                                                    (copy.name.size() > name.size() &&
-                                                     copy.name.compare(0, name.size(), name) == 0 &&
-                                                     copy.name[name.size()] == '#');
-                        const auto orig_id = copy.id;
-                        auto new_fid = state.module.add_function(std::move(copy));
-                        orig_to_new[orig_id] = new_fid;
-                        added_fids.push_back(new_fid);
-                        if (!have_first) {
-                            first_added = new_fid;
-                            have_first = true;
-                        }
-                        if (exact_name && !found_exact_name) {
-                            lambda_fid = new_fid;
-                            found_user_lambda = true;
-                            found_exact_name = true;
-                        } else if (is_user_lambda && !found_user_lambda) {
-                            lambda_fid = new_fid;
-                            found_user_lambda = true;
-                        }
-                        // Keep base_fid for legacy bridge paths that still
-                        // consult arithmetic remap on single-fn bundles.
-                        (void)base_fid;
-                        // Copy bridge data from cache bridge if available
-                        if (state.cache_bridge) {
-                            auto bridge_it = state.cache_bridge->find(std::string(name));
-                            if (bridge_it != state.cache_bridge->end() &&
-                                ci < bridge_it->second.size()) {
-                                // Issue #741: limit bridge shared_ptr copy to
-                                // func indices in the impact_scope set (partial
-                                // re-lower). Non-impacted lambdas get epoch-only
-                                // refresh so stale flat/pool are not retained.
-                                const bool in_impact_scope =
-                                    !g_lowering_hooks.impact_func_indices ||
-                                    g_lowering_hooks.impact_func_indices->count(ci) > 0;
-                                // Issue #224 Cycle 2: shared_ptr<>-based
-                                // bridge. The cache bridge holds a
-                                // shared_ptr; we copy it (refcount
-                                // incremented) so the new bridge keeps
-                                // the FlatAST alive independently.
-                                // Issue #657: sync bridge_epoch on cache-hit copy so
-                                // recursive-define closures see current mutation epoch.
-                                std::uint64_t bridge_epoch = bridge_it->second[ci].bridge_epoch;
-                                if (g_lowering_hooks.bridge_epoch_capture != 0)
-                                    bridge_epoch = g_lowering_hooks.bridge_epoch_capture;
-                                if (in_impact_scope) {
-                                    // Re-pin to the live lowering FlatAST/Pool, not the
-                                    // cached no-op-deleter views. Those views dangle after
-                                    // the CompilerService that filled the IR cache is
-                                    // destroyed (set_closure_bridge_ptr then UAF in
-                                    // FlatAST::provenance).
-                                    std::shared_ptr<const aura::ast::FlatAST> live_flat;
-                                    std::shared_ptr<const aura::ast::StringPool> live_pool;
-                                    if (state.current_flat && state.current_pool) {
-                                        live_flat = std::shared_ptr<const aura::ast::FlatAST>(
-                                            state.current_flat, [](const aura::ast::FlatAST*) {});
-                                        live_pool = std::shared_ptr<const aura::ast::StringPool>(
-                                            state.current_pool,
-                                            [](const aura::ast::StringPool*) {});
-                                    }
-                                    state.module.set_closure_bridge_ptr(
-                                        new_fid, std::move(live_flat), std::move(live_pool),
-                                        bridge_it->second[ci].body_id, bridge_epoch);
-                                    if (g_lowering_hooks.on_quote_lambda_bridge_copy)
-                                        g_lowering_hooks.on_quote_lambda_bridge_copy();
-                                } else {
-                                    state.module.set_closure_bridge_ptr(
-                                        new_fid, {}, {}, aura::ast::NULL_NODE, bridge_epoch);
-                                }
-                                if (g_lowering_hooks.on_bridge_epoch_sync)
-                                    g_lowering_hooks.on_bridge_epoch_sync();
-                                if (g_lowering_hooks.on_env_version_resync)
-                                    g_lowering_hooks.on_env_version_resync();
-                                // Copy body_source for bridge fallback re-parse
-                                if (in_impact_scope && !bridge_it->second[ci].body_source.empty() &&
-                                    new_fid < state.module.closure_bridge.size()) {
-                                    state.module.closure_bridge[new_fid].body_source =
-                                        bridge_it->second[ci].body_source;
-                                }
-                            }
-                        }
-                    }
-                    // Issue #2732: rewrite MakeClosure targets via orig→new map
-                    // (handles non-dense original ids from self-placeholder).
-                    for (auto nf : added_fids) {
-                        if (nf >= state.module.functions.size())
-                            continue;
-                        for (auto& block : state.module.functions[nf].blocks) {
-                            for (auto& inst : block.instructions) {
-                                if (inst.opcode != aura::ir::IROpcode::MakeClosure)
-                                    continue;
-                                auto it = orig_to_new.find(inst.operands[1]);
-                                if (it != orig_to_new.end())
-                                    inst.operands[1] = it->second;
-                            }
-                        }
-                    }
-                    // Issue #2732: never MakeClosure(0) when the bundle was
-                    // non-empty — 0 is __top__ and causes infinite recursion.
-                    if (!found_user_lambda && have_first)
-                        lambda_fid = first_added;
-                    auto closure_slot = state.alloc_local();
-                    state.emit(IROpcode::MakeClosure, closure_slot, lambda_fid, 0);
-                    return closure_slot;
-                }
-            }
-            // Check if this variable names a known primitive
-            if (state.primitives) {
-                auto slot_idx = state.primitives->slot_for_name(std::string(name));
-                if (slot_idx < state.primitives->slot_count()) {
-                    auto slot = state.alloc_local();
-                    state.emit(IROpcode::Primitive, slot, static_cast<std::uint32_t>(slot_idx));
-                    return slot;
-                }
-            }
-            // Self-reference fallback (primary path is at Variable entry — #2292).
-            // Issue #2826: matches_self_name() — never test self_func_id != 0 alone.
-            if (state.matches_self_name(name)) {
-                auto slot = state.alloc_local();
-                state.emit(IROpcode::MakeClosure, slot, state.self_func_id, 0);
-                return slot;
-            }
-            // (value_cells check was moved earlier — see Issue #63723.)
-            // Issue #4607: this name resolved to NOTHING — the scope chain
-            // (local / captured / top-level define cell), the free-var map,
-            // the value cells, the define cache, the primitive table and the
-            // self name were all consulted above. The interpreter raises
-            // "unbound variable: <name>" for such a reference
-            // (evaluator_eval_flat.cpp, Variable case). The JIT had no such
-            // check: it compiled the reference as the constant 0 and then
-            // dispatched 0 as a closure id — closure id 0 was either a live
-            // closure (wrong callee -> infinite recursion -> stack overflow
-            // -> SIGSEGV) or out of range (the bounds-fail echo returned the
-            // 0 silently). Report the substitution so the --jit entry can
-            // refuse to compile the program and take the tree walker
-            // (the eval face) instead of compiling a call to a missing
-            // closure.
-            if (state.unbound_globals)
-                state.unbound_globals->emplace_back(std::string(name), v.id);
-            auto slot = state.alloc_local();
-            state.emit(IROpcode::ConstI64, slot, 0, 0);
-            return slot;
         }
-        case NodeTag::Call: {
-            auto callee_v = flat.get(v.child(0));
+    }
 
-            // Check if callee is a known primitive (+, -, *, /, =, <, >, <=, >=)
-            // and inline as direct IR opcode to avoid Call overhead.
-            if (callee_v.tag == NodeTag::Variable) {
-                auto callee_name = pool.resolve(callee_v.sym_id);
-
-                // ── (list ...) → nested cons chain ────────────────────
-                // Expand (list a b c) to (cons a (cons b (cons c ()))).
-                // This avoids evaluator primitive dispatch and works in AOT.
-                // Issue #2482: empty list is ConstVoid (make_void), never
-                // fixnum 0 — int 0 is a number, not the list terminator.
-                if (callee_name == "list") {
-                    auto result_slot = state.alloc_local();
-                    auto arg_count = v.children.size() - 1;
-                    if (arg_count == 0) {
-                        state.emit(IROpcode::ConstVoid, result_slot);
-                    } else {
-                        // Build from the last arg backwards: cons(cdr, ())
-                        auto tail_slot = state.alloc_local();
-                        state.emit(IROpcode::ConstVoid, tail_slot);
-                        for (std::size_t i = arg_count; i >= 1; --i) {
-                            // Issue #4588: an error element is the list's
-                            // result. Do not cons it.
-                            auto val = lower_data_operand(state, flat, pool, v.child(i), cache,
-                                                          cache_hits, true);
-                            auto cell = state.alloc_local();
-                            state.emit(IROpcode::MakePair, cell, val, tail_slot);
-                            if (i == 1) {
-                                state.emit(IROpcode::Local, result_slot, cell);
-                            }
-                            tail_slot = cell;
-                        }
-                    }
-                    return result_slot;
-                }
-
-                // ── (when c body ...) / (unless c body ...) ──────────────
-                // Issue #4903: these are tree-walker special forms. Under
-                // force-soa (ContinueIr) a top-level `(when #t (display "a"))`
-                // reached this switch as an ordinary call: every argument
-                // (the body too) was evaluated eagerly, then `when` itself was
-                // called -> "cannot call: when", rc=1, and a named-let loop
-                // guarded by `when` never stopped. Lower them as the `if`
-                // they are: body in sequence on the taken arm (non-tail error
-                // values escape like a Begin body, #4552/#4899), unspecified
-                // value on the other arm.
-                if ((callee_name == "when" || callee_name == "unless") && v.children.size() >= 2) {
-                    const bool is_when = callee_name == "when";
-                    auto cond_slot =
-                        lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
-                    auto body_blk = state.alloc_block();
-                    auto skip_blk = state.alloc_block();
-                    auto merge_blk = state.alloc_block();
-                    if (is_when)
-                        state.emit(IROpcode::Branch, cond_slot, body_blk, skip_blk);
-                    else
-                        state.emit(IROpcode::Branch, cond_slot, skip_blk, body_blk);
-                    auto phi_slot = state.alloc_local();
-                    state.cur_block = body_blk;
-                    std::uint32_t body_val = 0;
-                    if (v.children.size() == 2) {
-                        body_val = state.alloc_local();
-                        state.emit(IROpcode::ConstVoid, body_val, 1);
-                    } else {
-                        for (std::size_t bi = 2; bi < v.children.size(); ++bi) {
-                            const auto c = v.child(bi);
-                            body_val = lower_flat_expr(state, flat, pool, c, cache, cache_hits);
-                            if (bi + 1 < v.children.size() && !form_cannot_be_error(flat, c)) {
-                                const auto prev_source = state.current_source_id;
-                                state.current_source_id = c;
-                                emit_error_escape(state, body_val);
-                                state.current_source_id = prev_source;
-                            }
-                        }
-                    }
-                    state.emit(IROpcode::Local, phi_slot, body_val);
-                    state.emit(IROpcode::Jump, merge_blk);
-                    state.cur_block = skip_blk;
-                    auto skip_val = state.alloc_local();
-                    state.emit(IROpcode::ConstVoid, skip_val, 1);
-                    state.emit(IROpcode::Local, phi_slot, skip_val);
-                    state.emit(IROpcode::Jump, merge_blk);
-                    state.cur_block = merge_blk;
-                    return phi_slot;
-                }
-
-                // ── (with-arena (size) body ...) ──────────────────────
-                if (callee_name == "with-arena") {
-                    auto result_slot = state.alloc_local();
-                    std::uint32_t arena_size = 65536; // default 64KB
-                    std::uint32_t body_start = 1;
-
-                    // Parse optional (size) argument
-                    if (v.children.size() >= 2) {
-                        auto first_arg = v.child(1);
-                        auto first_v = flat.get(first_arg);
-                        if (first_v.tag == NodeTag::Call && first_v.children.size() >= 1) {
-                            auto size_expr = first_v.child(0);
-                            auto sv = flat.get(size_expr);
-                            if (sv.tag == NodeTag::LiteralInt && sv.int_value > 0)
-                                arena_size = static_cast<std::uint32_t>(sv.int_value);
-                            body_start = 2; // (with-arena (N) body...)
-                        }
-                    }
-
-                    auto saved_slot = state.alloc_local();
-                    state.emit(IROpcode::ArenaPush, saved_slot, arena_size, 0, 0);
-
-                    // Evaluate all body expressions, keep last result
-                    auto last_slot = result_slot;
-                    for (auto ci = body_start; ci < v.children.size(); ++ci) {
-                        last_slot =
-                            lower_flat_expr(state, flat, pool, v.child(ci), cache, cache_hits);
-                    }
-                    if (body_start >= v.children.size()) {
-                        state.emit(IROpcode::ConstVoid, result_slot);
-                    } else {
-                        state.emit(IROpcode::Local, result_slot, last_slot);
-                    }
-                    state.emit(IROpcode::ArenaPop, saved_slot, 0, 0, 0);
-                    return result_slot;
-                }
-
-                // ── (performance-region body ...) → set region flag ──────
-                if (callee_name == "performance-region") {
-                    state.region = aura::ir::Region::Performance;
-                    auto result_slot = state.alloc_local();
-                    if (v.children.size() <= 1) {
-                        state.emit(IROpcode::ConstVoid, result_slot);
-                    } else {
-                        auto last_slot = result_slot;
-                        for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
-                            last_slot =
-                                lower_flat_expr(state, flat, pool, v.child(ci), cache, cache_hits);
-                        }
-                        state.emit(IROpcode::Local, result_slot, last_slot);
-                    }
-                    return result_slot;
-                }
-
-                // ── (evolution-region body ...) → set region flag ────────
-                if (callee_name == "evolution-region") {
-                    state.region = aura::ir::Region::Evolution;
-                    auto result_slot = state.alloc_local();
-                    if (v.children.size() <= 1) {
-                        state.emit(IROpcode::ConstVoid, result_slot);
-                    } else {
-                        auto last_slot = result_slot;
-                        for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
-                            last_slot =
-                                lower_flat_expr(state, flat, pool, v.child(ci), cache, cache_hits);
-                        }
-                        state.emit(IROpcode::Local, result_slot, last_slot);
-                    }
-                    return result_slot;
-                }
-
-                // Issue #893: fixed table + string_view compare (no std::string temp /
-                // unordered_map).
-                static constexpr std::pair<std::string_view, IROpcode> kPrimOps[] = {
-                    {"+", IROpcode::Add},
-                    {"-", IROpcode::Sub},
-                    {"*", IROpcode::Mul},
-                    {"/", IROpcode::Div},
-                    {"=", IROpcode::Eq},
-                    {"<", IROpcode::Lt},
-                    {">", IROpcode::Gt},
-                    {"<=", IROpcode::Le},
-                    {">=", IROpcode::Ge},
-                    // Issue #1137: do NOT lower equal? to Eq — Eq is fixnum/pointer
-                    // equality and historically conflated int 0 with empty-list void.
-                    // equal? stays a call to the deep-equality primitive.
-                    // Issue #4470: do NOT lower eqv? to Eq. Eq is fixnum/pointer
-                    // identity on the JIT, and the interpreter also compares a
-                    // float with an int by magnitude, so (eqv? 2 2.0) became #t.
-                    // The runtime primitive checks same exactness, then identity.
-                    // Tree-walker and IR Call share that primitive.
-                    {"eq?", IROpcode::Eq},
-                    {"cons", IROpcode::MakePair},
-                    {"car", IROpcode::Car},
-                    {"cdr", IROpcode::Cdr},
-                };
-                const IROpcode* found_op = nullptr;
-                for (const auto& e : kPrimOps) {
-                    if (e.first == callee_name) {
-                        found_op = &e.second;
-                        break;
-                    }
-                }
-                if (found_op) {
-                    auto op = *found_op;
-                    auto result_slot = state.alloc_local();
-                    auto arg_count = v.children.size() - 1;
-                    // Issue #4463: numeric `=` shares IROpcode::Eq with eq?.
-                    // ops[3] == 1 rejects non-numbers. eq? leaves it 0.
-                    // Issue #4470: eqv? is not in this table.
-                    const std::uint32_t num_eq = callee_name == "=" ? 1u : 0u;
-                    if (arg_count == 0) {
-                        // No args: return 0
-                        state.emit(IROpcode::ConstI64, result_slot, 0, 0);
-                    } else {
-                        // Lower first arg. Issue #4588: an error operand
-                        // propagates before car/cons/arith run.
-                        auto prev = lower_data_operand(state, flat, pool, v.child(1), cache,
-                                                       cache_hits, true);
-                        if (arg_count == 1) {
-                            // Unary minus: emit Sub(0, arg)
-                            if (callee_name == "-") {
-                                auto zero = state.alloc_local();
-                                state.emit(IROpcode::ConstI64, zero, 0, 0);
-                                state.emit(op, result_slot, zero, prev);
-                            } else if (callee_name == "/") {
-                                // Issue #4461: (/ x) is 1/x, not x/x. A float
-                                // zero is IEEE inf; an int zero is an error.
-                                auto one = state.alloc_local();
-                                state.emit(IROpcode::ConstI64, one, 1, 0);
-                                state.emit(op, result_slot, one, prev);
-                            } else {
-                                state.emit(op, result_slot, prev, prev, num_eq);
-                            }
-                        } else if (arg_count == 2) {
-                            auto arg1 = lower_data_operand(state, flat, pool, v.child(2), cache,
-                                                           cache_hits, true);
-                            state.emit(op, result_slot, prev, arg1, num_eq);
-                        } else {
-                            // 3+ args: comparison ops need pairwise AND (= a b c → (and (= a b) (=
-                            // b c))) arithmetic chains as before: ((a + b) + c)
-                            bool is_comp =
-                                (op == IROpcode::Eq || op == IROpcode::Lt || op == IROpcode::Gt ||
-                                 op == IROpcode::Le || op == IROpcode::Ge);
-                            if (is_comp) {
-                                // Adjacent pairs ANDed together
-                                bool first = true;
-                                auto pair_prev = prev;
-                                auto and_acc = state.alloc_local();
-                                for (std::size_t ai = 2; ai < v.children.size(); ++ai) {
-                                    auto pair_next = lower_data_operand(
-                                        state, flat, pool, v.child(ai), cache, cache_hits, true);
-                                    auto cmp = state.alloc_local();
-                                    state.emit(op, cmp, pair_prev, pair_next, num_eq);
-                                    if (first) {
-                                        state.emit(IROpcode::And, and_acc, cmp, cmp);
-                                        first = false;
-                                    } else {
-                                        auto t = state.alloc_local();
-                                        state.emit(IROpcode::And, t, and_acc, cmp);
-                                        and_acc = t;
-                                    }
-                                    pair_prev = pair_next;
-                                }
-                                state.emit(IROpcode::And, result_slot, and_acc, and_acc);
-                            } else {
-                                // Arithmetic chaining: ((a + b) + c)
-                                auto arg1 = lower_data_operand(state, flat, pool, v.child(2), cache,
-                                                               cache_hits, true);
-                                auto acc = state.alloc_local();
-                                state.emit(op, acc, prev, arg1);
-                                for (std::size_t ai = 3; ai < v.children.size(); ++ai) {
-                                    auto next = lower_data_operand(state, flat, pool, v.child(ai),
-                                                                   cache, cache_hits, true);
-                                    auto is_last = (ai + 1 == v.children.size());
-                                    if (is_last) {
-                                        state.emit(op, result_slot, acc, next);
-                                    } else {
-                                        auto tmp = state.alloc_local();
-                                        state.emit(op, tmp, acc, next);
-                                        acc = tmp;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    return result_slot;
-                }
-
-                // Handle try/catch special form
-                if (callee_name == "try") {
-                    // (try body (catch (var) handler))
-                    if (v.children.size() < 2) {
-                        auto slot = state.alloc_local();
-                        state.emit(IROpcode::ConstI64, slot, 0, 0);
-                        return slot;
-                    }
-                    // Issue #4552: non-tail error values inside the body
-                    // escape to this handler with the error in err_value_slot.
-                    auto err_value_slot = state.alloc_local();
-                    auto handler_blk = state.alloc_block();
-                    state.err_escapes.push_back({handler_blk, err_value_slot});
-                    auto body_slot =
-                        lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
-                    state.err_escapes.pop_back();
-                    auto is_err_slot = state.alloc_local();
-                    state.emit(IROpcode::IsError, is_err_slot, body_slot);
-
-                    auto body_err_blk = state.alloc_block();
-                    auto continue_blk = state.alloc_block();
-                    auto end_blk = state.alloc_block();
-                    state.emit(IROpcode::Branch, is_err_slot, body_err_blk, continue_blk);
-
-                    // Body value is an error: hand it to the handler.
-                    state.cur_block = body_err_blk;
-                    state.emit(IROpcode::Local, err_value_slot, body_slot);
-                    state.emit(IROpcode::Jump, handler_blk);
-
-                    // Continue block: body succeeded, pass through
-                    state.cur_block = continue_blk;
-                    auto phi_slot = state.alloc_local();
-                    state.emit(IROpcode::Local, phi_slot, body_slot);
-                    state.emit(IROpcode::Jump, end_blk);
-
-                    // Handler block: find catch clause and execute
-                    state.cur_block = handler_blk;
-                    bool caught = false;
-                    for (std::size_t ci = 2; ci < v.children.size(); ++ci) {
-                        auto catch_id = v.child(ci);
-                        auto catch_v = flat.get(catch_id);
-                        if (catch_v.tag == NodeTag::Call) {
-                            auto catch_callee = flat.get(catch_v.child(0));
-                            if (catch_callee.tag == NodeTag::Variable) {
-                                auto catch_name = pool.resolve(catch_callee.sym_id);
-                                if (std::string(catch_name) == "catch") {
-                                    // Issue #4594: (catch EXPR) has no binder. The
-                                    // handler block evaluates EXPR. JIT runs this
-                                    // IR (IsError / Branch / the value); there is
-                                    // no separate try special form in the JIT.
-                                    if (catch_v.children.size() == 2) {
-                                        auto handler_slot = lower_flat_expr(
-                                            state, flat, pool, catch_v.child(1), cache, cache_hits);
-                                        state.emit(IROpcode::Local, phi_slot, handler_slot);
-                                        caught = true;
-                                        break;
-                                    }
-                                    // (catch (var) handler-body) or (catch var handler)
-                                    // Issue #2567: bare Variable binding also accepted.
-                                    if (catch_v.children.size() >= 3) {
-                                        auto var_form = flat.get(catch_v.child(1));
-                                        std::string var_name;
-                                        if (var_form.tag == NodeTag::Call &&
-                                            var_form.children.size() >= 1) {
-                                            auto var_node = flat.get(var_form.child(0));
-                                            if (var_node.tag == NodeTag::Variable)
-                                                var_name =
-                                                    std::string(pool.resolve(var_node.sym_id));
-                                        } else if (var_form.tag == NodeTag::Variable) {
-                                            var_name = std::string(pool.resolve(var_form.sym_id));
-                                        }
-                                        // Issue #4588: bind the cause string, not the
-                                        // raw Error. operands[2] is outside
-                                        // Local's operand_count.
-                                        auto err_slot = state.alloc_local();
-                                        state.emit(IROpcode::Local, err_slot, err_value_slot, 1);
-                                        // Ensure a scope exists for the error variable binding
-                                        if (state.scopes.empty()) {
-                                            state.scopes.push_back({});
-                                        }
-                                        if (!var_name.empty()) {
-                                            state.scopes.back()[var_name] =
-                                                Binding{BindingKind::Local, err_slot};
-                                        }
-                                        auto handler_slot = lower_flat_expr(
-                                            state, flat, pool, catch_v.child(2), cache, cache_hits);
-                                        state.emit(IROpcode::Local, phi_slot, handler_slot);
-                                        caught = true;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (!caught) {
-                        // No catch clause: re-raise by passing error through
-                        state.emit(IROpcode::Local, phi_slot, err_value_slot);
-                    }
-                    state.emit(IROpcode::Jump, end_blk);
-
-                    state.cur_block = end_blk;
-                    return phi_slot;
-                }
-
-                // Pre-executed require/import/use: skip (already handled by pre_exec_requires)
-                if (callee_name == "require" || callee_name == "import") {
-                    // import/require are handled by pre_exec_requires.
-                    // The import call in the AST is still present; skip
-                    // it here to avoid going through PrimCall dispatch.
-                    auto slot = state.alloc_local();
-                    state.emit(IROpcode::ConstVoid, slot);
-                    return slot;
-                }
-
-                // Check if callee is a known non-arithmetic primitive (string ops, etc.)
-                static const std::unordered_map<std::string, PrimId,
-                                                aura::core::TransparentStringHash, std::equal_to<>>
-                    prim_call_map = {
-                        {"hash", PrimId::Hash},
-                        {"hash-length", PrimId::HashLength},
-                        {"hash-has-key?", PrimId::HashHasKey},
-                        {"hash-keys", PrimId::HashKeys},
-                        {"hash-values", PrimId::HashValues},
-                        {"string-append", PrimId::StringAppend},
-                        {"string-length", PrimId::StringLength},
-                        {"string-ref", PrimId::StringRef},
-                        {"substring", PrimId::Substring},
-                        {"string=?", PrimId::StringEq},
-                        {"string<?", PrimId::StringLt},
-                        // Issue #4175: complete the R7RS string comparison suite.
-                        {"string>?", PrimId::StringGt},
-                        {"string>=?", PrimId::StringGe},
-                        {"string<=?", PrimId::StringLe},
-                        {"number->string", PrimId::NumberToString},
-                        {"string->number", PrimId::StringToNumber},
-                        {"display", PrimId::Display},
-                        {"write", PrimId::Write},
-                        {"newline", PrimId::Newline},
-                        {"error", PrimId::Error},
-                        {"assert", PrimId::Assert},
-                        {"raise", PrimId::Raise},
-                        {"error?", PrimId::ErrorP},
-                        {"read", PrimId::Read},
-                        {"read-file", PrimId::ReadFile},
-                        {"write-file", PrimId::WriteFile},
-                        {"file-exists?", PrimId::FileExists},
-                        {"gensym", PrimId::Gensym},
-                        {"apply", PrimId::Apply},
-                        {"vector", PrimId::Vector},
-                        {"vector-ref", PrimId::VectorRef},
-                        {"vector-set!", PrimId::VectorSet},
-                        {"vector-length", PrimId::VectorLength},
-                        {"vector?", PrimId::VectorP},
-                        {"make-vector", PrimId::MakeVector},
-                        {"import", PrimId::Import},
-                        {"char=?", PrimId::CharEq},
-                        {"char<?", PrimId::CharLt},
-                        {"char->integer", PrimId::CharToInteger},
-                        {"integer->char", PrimId::IntegerToChar},
-                        {"quotient", PrimId::Quotient},
-                        {"remainder", PrimId::Remainder},
-                        {"length", PrimId::ListLength},
-                        {"list-ref", PrimId::ListRef},
-                        {"reverse", PrimId::ListReverse},
-                        {"pair?", PrimId::PairP},
-                        {"null?", PrimId::NullP},
-                };
-                // Hash operations: emit inline opcodes (avoid PrimCall dispatch).
-                // Issue #2569: (hash-ref h k default) has 4 children but must NOT
-                // share the MakePair packing used by (hash-set! h k v) — that
-                // path treated the default as a value, built (k . default) as
-                // the "key", and HashRef looked up a pair → always miss → ().
-                // 2-arg hash-ref / hash-remove! → HashRef/HashRemove.
-                // 3-arg hash-ref (with default) → general Call (prim honors default).
-                // hash-set! with 3 data args keeps MakePair packing.
-                if ((callee_name == "hash-ref" || callee_name == "hash-remove!" ||
-                     callee_name == "hash-set!") &&
-                    !(callee_name == "hash-ref" && v.children.size() >= 4) &&
-                    v.children.size() >= 3) {
-                    IROpcode hop = callee_name == "hash-set!"
-                                       ? IROpcode::HashSet
-                                       : (callee_name == "hash-remove!" ? IROpcode::HashRemove
-                                                                        : IROpcode::HashRef);
-                    auto result_slot = state.alloc_local();
-                    auto hash_slot =
-                        lower_data_operand(state, flat, pool, v.child(1), cache, cache_hits, true);
-                    auto key_slot =
-                        lower_data_operand(state, flat, pool, v.child(2), cache, cache_hits, true);
-                    if (callee_name == "hash-set!" && v.children.size() >= 4) {
-                        auto val_slot = lower_data_operand(state, flat, pool, v.child(3), cache,
-                                                           cache_hits, true);
-                        auto pair_slot = state.alloc_local();
-                        state.emit(IROpcode::MakePair, pair_slot, key_slot, val_slot);
-                        state.emit(hop, result_slot, hash_slot, pair_slot);
-                    } else {
-                        state.emit(hop, result_slot, hash_slot, key_slot);
-                    }
-                    return result_slot;
-                }
-
-
-                auto pcit = prim_call_map.find(std::string(callee_name));
-                if (pcit != prim_call_map.end()) {
-                    auto prim_id = static_cast<std::uint32_t>(pcit->second);
-                    auto arg_count = static_cast<std::uint32_t>(v.children.size() - 1);
-                    auto arg_base = state.local_count;
-                    // Issue #4588: display outside an IR try still runs, so a
-                    // host try can see the error (#4456) and a bare display
-                    // still prints. Every other prim propagates first.
-                    // Issue #4596: error? is the observer. The argument
-                    // reaches the prim, including inside a try. A let
-                    // init, list element, or other prim still escapes.
-                    const bool escape_arg = callee_name != "error?" && (callee_name != "display" ||
-                                                                        !state.err_escapes.empty());
-                    for (std::size_t i = 1; i < v.children.size(); ++i) {
-                        auto val_slot = lower_data_operand(state, flat, pool, v.child(i), cache,
-                                                           cache_hits, escape_arg);
+    // Reserve contiguous argument block
+    auto arg_base = state.local_count;
+    for (std::size_t i = 1; i < v.children.size(); ++i) {
+        auto arg_node = v.child(i);
+        // Issue #4588: an error argument does not enter the call.
+        auto val_slot = lower_data_operand(state, flat, pool, arg_node, cache, cache_hits, true);
+        // Insert CastOp if arg type differs from expected param type.
+        // Issue #1925: elide identity / Dynamic / narrow-proved;
+        // attach current_narrowing_evidence for residual CastOps.
+        if (have_callee_type && (i - 1) < callee_func_type.args.size()) {
+            auto arg_type = flat.type_id(arg_node);
+            if (arg_type != 0) {
+                auto expected_type = callee_func_type.args[i - 1];
+                if (arg_type != expected_type.index) {
+                    auto cast_tag = type_tag_for_coercion(expected_type, state.type_reg);
+                    const auto narrow_ev = state.current_narrowing_evidence;
+                    if (can_elide_coercion_cast(expected_type.index, arg_type, cast_tag, narrow_ev,
+                                                state.type_reg)) {
                         state.emit(IROpcode::Local, arg_base + static_cast<std::uint32_t>(i - 1),
                                    val_slot);
                         state.alloc_local();
+                        continue;
                     }
-                    auto result_slot = state.alloc_local();
-                    state.emit(IROpcode::PrimCall, prim_id, arg_base, arg_count, result_slot);
-                    return result_slot;
-                }
-
-                // ── Expand cond to nested if/Branch IR ─────────────────
-                // (cond (p1 b1) (p2 b2) ... (else bn))
-                // → if p1: b1; elif p2: b2; ... else: bn
-                if (callee_name == "cond" && v.children.size() >= 2) {
-                    auto result_slot = state.alloc_local();
-                    auto done_blk = decltype(state.alloc_block()){};
-                    auto num_clauses = v.children.size() - 1;
-
-                    for (std::size_t ci = 1; ci <= num_clauses; ++ci) {
-                        auto clause = v.child(ci);
-                        if (clause >= flat.size())
-                            continue;
-                        auto clause_node = flat.get(clause);
-                        if (clause_node.children.empty())
-                            continue;
-
-                        // Clause: child[0] = predicate, child[1] = body (single expression)
-                        auto pred_node = clause_node.child(0);
-                        auto body_node = (clause_node.children.size() > 1) ? clause_node.child(1)
-                                                                           : clause_node.child(0);
-
-                        bool is_last = (ci == num_clauses);
-                        // Issue #4804: only a trailing `else` is unconditional;
-                        // a trailing ordinary test still branches (void when
-                        // false), it used to fall through unconditionally.
-                        bool is_else = false;
-                        if (pred_node < flat.size()) {
-                            auto pn = flat.get(pred_node);
-                            is_else =
-                                pn.tag == NodeTag::Variable && pool.resolve(pn.sym_id) == "else";
-                        }
-
-                        if (!is_last || !is_else) {
-                            auto pred_slot =
-                                lower_flat_expr(state, flat, pool, pred_node, cache, cache_hits);
-                            // Branch on predicate: if true → body, else → next clause
-                            auto body_blk = state.alloc_block();
-                            auto next_blk = state.alloc_block();
-                            state.emit(IROpcode::Branch, pred_slot, body_blk, next_blk);
-
-                            // Body block
-                            state.cur_block = body_blk;
-                            auto body_val =
-                                lower_flat_expr(state, flat, pool, body_node, cache, cache_hits);
-                            state.emit(IROpcode::Local, result_slot, body_val);
-                            if (!done_blk)
-                                done_blk = state.alloc_block();
-                            state.emit(IROpcode::Jump, done_blk);
-
-                            // Next clause
-                            state.cur_block = next_blk;
-                            if (is_last) {
-                                state.emit(IROpcode::ConstVoid, result_slot);
-                                state.emit(IROpcode::Jump, done_blk);
-                            }
-                        } else {
-                            // Last clause: fallthrough body
-                            auto body_val =
-                                lower_flat_expr(state, flat, pool, body_node, cache, cache_hits);
-                            state.emit(IROpcode::Local, result_slot, body_val);
-                            if (!done_blk)
-                                done_blk = state.alloc_block();
-                            state.emit(IROpcode::Jump, done_blk);
-                        }
+                    auto cast_slot = state.alloc_local();
+                    if (narrow_ev != 0) {
+                        state.emit_with_metadata(IROpcode::CastOp, expected_type.index, 0, 0,
+                                                 narrow_ev, cast_slot, val_slot, cast_tag, 0);
+                    } else {
+                        state.emit_with_type(IROpcode::CastOp, expected_type.index, cast_slot,
+                                             val_slot, cast_tag, 0);
                     }
-
-                    state.cur_block = done_blk;
-                    return result_slot;
-                }
-
-                // ── Expand and/or/not to IR opcodes ───────────────────────
-                // These must NOT go through OpPrimitive + OpCall (which requires
-                // the evaluator runtime for primitive dispatch). AOT binaries
-                // can only handle direct IR instructions.
-                //
-                // not: IROpcode::Not (inlined in LLVM builder)
-                // and: short-circuit via Branch + ConstVoid + Jump pattern
-                // or:  short-circuit via Branch + Local + Jump pattern
-                //
-                // not: inlined as IROpcode::Not (expanded to LLVM ICmp + Xor)
-                if (callee_name == "not" && v.children.size() == 2) {
-                    auto arg_slot =
-                        lower_data_operand(state, flat, pool, v.child(1), cache, cache_hits, true);
-                    auto result_slot = state.alloc_local();
-                    state.emit(IROpcode::Not, result_slot, arg_slot);
-                    return result_slot;
-                }
-
-                if (callee_name == "and" && v.children.size() >= 2) {
-                    // Expand (and e1 e2 ... en) to:
-                    //   block0:
-                    //     val = lower(e1)
-                    //     branch val → block_ok1, block_nope1
-                    //   block_nope1: result = val (falsy); jump block_done
-                    //   block_ok1:
-                    //     val = lower(e2)
-                    //     branch val → block_ok2, block_nope2
-                    //   ...
-                    //   block_okN: (last expr)
-                    //     result = lower(en)
-                    //     jump block_done
-                    //   block_done: return result
-                    //
-                    // Issue #1911 B8: pre-fix used ConstVoid on the
-                    // short-circuit (nope) arm. Void is truthy under
-                    // is_truthy (only #f is false since #4491), so
-                    // (and #f x) became truthy void — breaking
-                    // leap-year? / days-in-month for non-leap years
-                    // when the define was IR-lowered (direct call path).
-                    // Scheme semantics: return the falsy short-circuit
-                    // value (Local val), matching TW special-form and.
-                    auto arg_count = static_cast<std::uint32_t>(v.children.size() - 1);
-                    auto result_slot = state.alloc_local();
-                    auto done_blk = decltype(state.alloc_block()){};
-
-                    for (std::size_t i = 1; i < arg_count; ++i) {
-                        auto val =
-                            lower_flat_expr(state, flat, pool, v.child(i), cache, cache_hits);
-                        auto nope_blk = state.alloc_block();
-                        auto ok_blk = state.alloc_block();
-                        state.emit(IROpcode::Branch, val, ok_blk, nope_blk);
-
-                        // nope block: result = falsy val, jump done
-                        state.cur_block = nope_blk;
-                        state.emit(IROpcode::Local, result_slot, val);
-                        if (!done_blk)
-                            done_blk = state.alloc_block();
-                        state.emit(IROpcode::Jump, done_blk);
-
-                        // ok block: continue to next expression
-                        state.cur_block = ok_blk;
-                    }
-
-                    // Last expression: result = expression value, jump done
-                    {
-                        auto last_slot = lower_flat_expr(state, flat, pool, v.child(arg_count),
-                                                         cache, cache_hits);
-                        state.emit(IROpcode::Local, result_slot, last_slot);
-                        if (!done_blk)
-                            done_blk = state.alloc_block();
-                        state.emit(IROpcode::Jump, done_blk);
-                    }
-
-                    // Done block
-                    state.cur_block = done_blk;
-                    return result_slot;
-                }
-
-                if (callee_name == "or" && v.children.size() >= 2) {
-                    // Expand (or e1 e2 ... en) to:
-                    //   block0:
-                    //     val = lower(e1)
-                    //     branch val → block_done_with_val, block_next
-                    //   block_next:
-                    //     val = lower(e2)
-                    //     branch val → block_done_with_val, block_next2
-                    //   ...
-                    //   block_last:
-                    //     result = lower(en)
-                    //     jump block_done
-                    //   block_done_with_val_i:
-                    //     result = val_i
-                    //     jump block_done
-                    //   block_done: return result
-                    auto arg_count = static_cast<std::uint32_t>(v.children.size() - 1);
-                    auto result_slot = state.alloc_local();
-                    auto done_blk = decltype(state.alloc_block()){};
-
-                    for (std::size_t i = 1; i < arg_count; ++i) {
-                        auto val =
-                            lower_flat_expr(state, flat, pool, v.child(i), cache, cache_hits);
-                        auto done_val_blk = state.alloc_block();
-                        auto next_blk = state.alloc_block();
-                        state.emit(IROpcode::Branch, val, done_val_blk, next_blk);
-
-                        // done_val block: result = val, jump done
-                        state.cur_block = done_val_blk;
-                        state.emit(IROpcode::Local, result_slot, val);
-                        if (!done_blk)
-                            done_blk = state.alloc_block();
-                        state.emit(IROpcode::Jump, done_blk);
-
-                        // next block: evaluate next expression
-                        state.cur_block = next_blk;
-                    }
-
-                    // Last expression: result = expression value, jump done
-                    {
-                        auto last_slot = lower_flat_expr(state, flat, pool, v.child(arg_count),
-                                                         cache, cache_hits);
-                        state.emit(IROpcode::Local, result_slot, last_slot);
-                        if (!done_blk)
-                            done_blk = state.alloc_block();
-                        state.emit(IROpcode::Jump, done_blk);
-                    }
-
-                    // Done block
-                    state.cur_block = done_blk;
-                    return result_slot;
-                }
-
-                // Issue #4320: (while cond body ...) re-evaluates every arm.
-                // A general Call lowered the arms once, so force-soa ran
-                // the body a single time. Same split as the tree walker.
-                // Issue #4379: zero-arg lambda arms are the stdlib trim /
-                // split shape. The while primitive applies evaluator
-                // closures; an IR MakeClosure is not one of those, so the
-                // loop never ran and set! of the let cell was skipped.
-                // Inline those bodies into this function's cells.
-                // Issue #4466: later body forms belong in the loop. A mix
-                // of bare expressions and thunks falls through.
-                if (callee_name == "while" && v.children.size() >= 3 && state.cur_func) {
-                    auto c1 = flat.get(v.child(1));
-                    auto c2 = flat.get(v.child(2));
-                    const bool bare = c1.tag != NodeTag::Lambda && c2.tag != NodeTag::Lambda;
-                    auto zero_arg_thunk = [](const NodeView& n) {
-                        return n.tag == NodeTag::Lambda && n.params.empty() && n.int_value == 0 &&
-                               !n.children.empty();
-                    };
-                    bool all_thunk = true;
-                    for (std::size_t i = 1; i < v.children.size(); ++i) {
-                        if (!zero_arg_thunk(flat.get(v.child(i)))) {
-                            all_thunk = false;
-                            break;
-                        }
-                    }
-                    if (bare || all_thunk) {
-                        // Issue #4619: an error value in the test or in a body
-                        // form leaves the loop the way begin lets an error
-                        // leave (#2570) — it is not a value the loop may drop.
-                        // The Begin rule (Issue #4552) decides when the error
-                        // escapes. Issue #4899 follow-up: since #4899 that is
-                        // every depth, the top level included; a top-level
-                        // `(while (< i 3) (car i) ...)` under force-soa direct
-                        // dropped the body error (rc=0) while the walker
-                        // faces raised it.
-                        constexpr bool escape_errors = true;
-                        auto cond_id = all_thunk ? flat.get(v.child(1)).child(0) : v.child(1);
-                        auto head = state.alloc_block();
-                        state.emit(IROpcode::Jump, head);
-                        state.cur_block = head;
-                        auto cond_slot = lower_data_operand(state, flat, pool, cond_id, cache,
-                                                            cache_hits, escape_errors);
-                        auto body_blk = state.alloc_block();
-                        auto done_blk = state.alloc_block();
-                        state.emit(IROpcode::Branch, cond_slot, body_blk, done_blk);
-                        state.cur_block = body_blk;
-                        for (std::size_t i = 2; i < v.children.size(); ++i) {
-                            auto body_id = all_thunk ? flat.get(v.child(i)).child(0) : v.child(i);
-                            (void)lower_data_operand(state, flat, pool, body_id, cache, cache_hits,
-                                                     escape_errors);
-                        }
-                        state.emit(IROpcode::Jump, head);
-                        state.cur_block = done_blk;
-                        auto result_slot = state.alloc_local();
-                        state.emit(IROpcode::ConstVoid, result_slot);
-                        return result_slot;
-                    }
-                }
-
-                // Check if callee is a cached define function (now handled by Variable handler)
-                // Fall through to general function call path
-            }
-
-            // General function call: lower callee and args, then emit Call
-            auto callee_slot = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
-            auto arg_count = static_cast<std::uint32_t>(v.children.size() - 1);
-
-            // Try to get callee's expected parameter types for coercion (P0)
-            aura::core::FuncType callee_func_type;
-            bool have_callee_type = false;
-            if (state.type_reg) {
-                auto callee_type_id = flat.type_id(v.child(0));
-                if (callee_type_id != 0) {
-                    auto ctid = aura::core::TypeId{callee_type_id, 1};
-                    if (auto* ft = state.type_reg->func_of(ctid)) {
-                        callee_func_type = *ft;
-                        have_callee_type = true;
-                    }
+                    // Issue #2624 Phase A: stamp src/dst typed meta (non-elided).
+                    stamp_last_castop_typed_meta(state, arg_type, expected_type.index, narrow_ev,
+                                                 cast_tag);
+                    state.emit(IROpcode::Local, arg_base + static_cast<std::uint32_t>(i - 1),
+                               cast_slot);
+                    state.alloc_local();
+                    continue; // skip the normal Local emit below
                 }
             }
+        }
+        state.emit(IROpcode::Local, arg_base + static_cast<std::uint32_t>(i - 1), val_slot);
+        state.alloc_local();
+    }
+    auto result_slot = state.alloc_local();
+    // Call(callee_slot, arg_base, arg_count, result_slot)
+    state.emit(IROpcode::Call, callee_slot, arg_base, arg_count, result_slot);
+    return result_slot;
+}
 
-            // Reserve contiguous argument block
-            auto arg_base = state.local_count;
+// Lower a call: special forms first, then a general call.
+static std::uint32_t
+lower_flat_call(LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+                const NodeView& v,
+                const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                                         aura::core::TransparentStringHash, std::equal_to<>>* cache,
+                std::vector<std::string>* cache_hits) {
+    auto callee_v = flat.get(v.child(0));
+
+    // Check if callee is a known primitive (+, -, *, /, =, <, >, <=, >=)
+    // and inline as direct IR opcode to avoid Call overhead.
+    if (callee_v.tag == NodeTag::Variable) {
+        auto callee_name = pool.resolve(callee_v.sym_id);
+
+        // ── (list ...) → nested cons chain ────────────────────
+        // Expand (list a b c) to (cons a (cons b (cons c ()))).
+        // This avoids evaluator primitive dispatch and works in AOT.
+        // Issue #2482: empty list is ConstVoid (make_void), never
+        // fixnum 0 — int 0 is a number, not the list terminator.
+        if (callee_name == "list") {
+            return lower_call_list(state, flat, pool, id, v, cache, cache_hits);
+        }
+
+        // ── (when c body ...) / (unless c body ...) ──────────────
+        // Issue #4903: these are tree-walker special forms. Under
+        // force-soa (ContinueIr) a top-level `(when #t (display "a"))`
+        // reached this switch as an ordinary call: every argument
+        // (the body too) was evaluated eagerly, then `when` itself was
+        // called -> "cannot call: when", rc=1, and a named-let loop
+        // guarded by `when` never stopped. Lower them as the `if`
+        // they are: body in sequence on the taken arm (non-tail error
+        // values escape like a Begin body, #4552/#4899), unspecified
+        // value on the other arm.
+        if ((callee_name == "when" || callee_name == "unless") && v.children.size() >= 2) {
+            return lower_call_when(state, flat, pool, id, v, cache, cache_hits, callee_name);
+        }
+
+        // ── (with-arena (size) body ...) ──────────────────────
+        if (callee_name == "with-arena") {
+            return lower_call_with_arena(state, flat, pool, id, v, cache, cache_hits);
+        }
+
+        // ── (performance-region body ...) → set region flag ──────
+        if (callee_name == "performance-region") {
+            return lower_call_region(state, flat, pool, id, v, cache, cache_hits,
+                                     aura::ir::Region::Performance);
+        }
+
+        // ── (evolution-region body ...) → set region flag ────────
+        if (callee_name == "evolution-region") {
+            return lower_call_region(state, flat, pool, id, v, cache, cache_hits,
+                                     aura::ir::Region::Evolution);
+        }
+
+        // Issue #893: fixed table + string_view compare (no std::string temp /
+        // unordered_map).
+        static constexpr std::pair<std::string_view, IROpcode> kPrimOps[] = {
+            {"+", IROpcode::Add},
+            {"-", IROpcode::Sub},
+            {"*", IROpcode::Mul},
+            {"/", IROpcode::Div},
+            {"=", IROpcode::Eq},
+            {"<", IROpcode::Lt},
+            {">", IROpcode::Gt},
+            {"<=", IROpcode::Le},
+            {">=", IROpcode::Ge},
+            // Issue #1137: do NOT lower equal? to Eq — Eq is fixnum/pointer
+            // equality and historically conflated int 0 with empty-list void.
+            // equal? stays a call to the deep-equality primitive.
+            // Issue #4470: do NOT lower eqv? to Eq. Eq is fixnum/pointer
+            // identity on the JIT, and the interpreter also compares a
+            // float with an int by magnitude, so (eqv? 2 2.0) became #t.
+            // The runtime primitive checks same exactness, then identity.
+            // Tree-walker and IR Call share that primitive.
+            {"eq?", IROpcode::Eq},
+            {"cons", IROpcode::MakePair},
+            {"car", IROpcode::Car},
+            {"cdr", IROpcode::Cdr},
+        };
+        const IROpcode* found_op = nullptr;
+        for (const auto& e : kPrimOps) {
+            if (e.first == callee_name) {
+                found_op = &e.second;
+                break;
+            }
+        }
+        if (found_op) {
+            return lower_call_arith(state, flat, pool, id, v, cache, cache_hits, *found_op,
+                                    callee_name);
+        }
+
+        // Handle try/catch special form
+        if (callee_name == "try") {
+            return lower_call_try(state, flat, pool, id, v, cache, cache_hits);
+        }
+
+        // Pre-executed require/import/use: skip (already handled by pre_exec_requires)
+        if (callee_name == "require" || callee_name == "import") {
+            return lower_call_require(state, flat, pool, id, v, cache, cache_hits);
+        }
+
+        // Check if callee is a known non-arithmetic primitive (string ops, etc.)
+        static const std::unordered_map<std::string, PrimId, aura::core::TransparentStringHash,
+                                        std::equal_to<>>
+            prim_call_map = {
+                {"hash", PrimId::Hash},
+                {"hash-length", PrimId::HashLength},
+                {"hash-has-key?", PrimId::HashHasKey},
+                {"hash-keys", PrimId::HashKeys},
+                {"hash-values", PrimId::HashValues},
+                {"string-append", PrimId::StringAppend},
+                {"string-length", PrimId::StringLength},
+                {"string-ref", PrimId::StringRef},
+                {"substring", PrimId::Substring},
+                {"string=?", PrimId::StringEq},
+                {"string<?", PrimId::StringLt},
+                // Issue #4175: complete the R7RS string comparison suite.
+                {"string>?", PrimId::StringGt},
+                {"string>=?", PrimId::StringGe},
+                {"string<=?", PrimId::StringLe},
+                {"number->string", PrimId::NumberToString},
+                {"string->number", PrimId::StringToNumber},
+                {"display", PrimId::Display},
+                {"write", PrimId::Write},
+                {"newline", PrimId::Newline},
+                {"error", PrimId::Error},
+                {"assert", PrimId::Assert},
+                {"raise", PrimId::Raise},
+                {"error?", PrimId::ErrorP},
+                {"read", PrimId::Read},
+                {"read-file", PrimId::ReadFile},
+                {"write-file", PrimId::WriteFile},
+                {"file-exists?", PrimId::FileExists},
+                {"gensym", PrimId::Gensym},
+                {"apply", PrimId::Apply},
+                {"vector", PrimId::Vector},
+                {"vector-ref", PrimId::VectorRef},
+                {"vector-set!", PrimId::VectorSet},
+                {"vector-length", PrimId::VectorLength},
+                {"vector?", PrimId::VectorP},
+                {"make-vector", PrimId::MakeVector},
+                {"import", PrimId::Import},
+                {"char=?", PrimId::CharEq},
+                {"char<?", PrimId::CharLt},
+                {"char->integer", PrimId::CharToInteger},
+                {"integer->char", PrimId::IntegerToChar},
+                {"quotient", PrimId::Quotient},
+                {"remainder", PrimId::Remainder},
+                {"length", PrimId::ListLength},
+                {"list-ref", PrimId::ListRef},
+                {"reverse", PrimId::ListReverse},
+                {"pair?", PrimId::PairP},
+                {"null?", PrimId::NullP},
+        };
+        // Hash operations: emit inline opcodes (avoid PrimCall dispatch).
+        // Issue #2569: (hash-ref h k default) has 4 children but must NOT
+        // share the MakePair packing used by (hash-set! h k v) — that
+        // path treated the default as a value, built (k . default) as
+        // the "key", and HashRef looked up a pair → always miss → ().
+        // 2-arg hash-ref / hash-remove! → HashRef/HashRemove.
+        // 3-arg hash-ref (with default) → general Call (prim honors default).
+        // hash-set! with 3 data args keeps MakePair packing.
+        if ((callee_name == "hash-ref" || callee_name == "hash-remove!" ||
+             callee_name == "hash-set!") &&
+            !(callee_name == "hash-ref" && v.children.size() >= 4) && v.children.size() >= 3) {
+            return lower_call_hash(state, flat, pool, id, v, cache, cache_hits, callee_name);
+        }
+
+
+        auto pcit = prim_call_map.find(std::string(callee_name));
+        if (pcit != prim_call_map.end()) {
+            return lower_call_prim(state, flat, pool, id, v, cache, cache_hits, callee_name,
+                                   static_cast<std::uint32_t>(pcit->second));
+        }
+
+        // ── Expand cond to nested if/Branch IR ─────────────────
+        // (cond (p1 b1) (p2 b2) ... (else bn))
+        // → if p1: b1; elif p2: b2; ... else: bn
+        if (callee_name == "cond" && v.children.size() >= 2) {
+            return lower_call_cond(state, flat, pool, id, v, cache, cache_hits);
+        }
+
+        // ── Expand and/or/not to IR opcodes ───────────────────────
+        // These must NOT go through OpPrimitive + OpCall (which requires
+        // the evaluator runtime for primitive dispatch). AOT binaries
+        // can only handle direct IR instructions.
+        //
+        // not: IROpcode::Not (inlined in LLVM builder)
+        // and: short-circuit via Branch + ConstVoid + Jump pattern
+        // or:  short-circuit via Branch + Local + Jump pattern
+        //
+        // not: inlined as IROpcode::Not (expanded to LLVM ICmp + Xor)
+        if (callee_name == "not" && v.children.size() == 2) {
+            return lower_call_not(state, flat, pool, id, v, cache, cache_hits);
+        }
+
+        if (callee_name == "and" && v.children.size() >= 2) {
+            return lower_call_and(state, flat, pool, id, v, cache, cache_hits);
+        }
+
+        if (callee_name == "or" && v.children.size() >= 2) {
+            return lower_call_or(state, flat, pool, id, v, cache, cache_hits);
+        }
+
+        // Issue #4320: (while cond body ...) re-evaluates every arm.
+        // A general Call lowered the arms once, so force-soa ran
+        // the body a single time. Same split as the tree walker.
+        // Issue #4379: zero-arg lambda arms are the stdlib trim /
+        // split shape. The while primitive applies evaluator
+        // closures; an IR MakeClosure is not one of those, so the
+        // loop never ran and set! of the let cell was skipped.
+        // Inline those bodies into this function's cells.
+        // Issue #4466: later body forms belong in the loop. A mix
+        // of bare expressions and thunks falls through.
+        if (callee_name == "while" && v.children.size() >= 3 && state.cur_func) {
+            auto c1 = flat.get(v.child(1));
+            auto c2 = flat.get(v.child(2));
+            const bool bare = c1.tag != NodeTag::Lambda && c2.tag != NodeTag::Lambda;
+            auto zero_arg_thunk = [](const NodeView& n) {
+                return n.tag == NodeTag::Lambda && n.params.empty() && n.int_value == 0 &&
+                       !n.children.empty();
+            };
+            bool all_thunk = true;
             for (std::size_t i = 1; i < v.children.size(); ++i) {
-                auto arg_node = v.child(i);
-                // Issue #4588: an error argument does not enter the call.
-                auto val_slot =
-                    lower_data_operand(state, flat, pool, arg_node, cache, cache_hits, true);
-                // Insert CastOp if arg type differs from expected param type.
-                // Issue #1925: elide identity / Dynamic / narrow-proved;
-                // attach current_narrowing_evidence for residual CastOps.
-                if (have_callee_type && (i - 1) < callee_func_type.args.size()) {
-                    auto arg_type = flat.type_id(arg_node);
-                    if (arg_type != 0) {
-                        auto expected_type = callee_func_type.args[i - 1];
-                        if (arg_type != expected_type.index) {
-                            auto cast_tag = type_tag_for_coercion(expected_type, state.type_reg);
-                            const auto narrow_ev = state.current_narrowing_evidence;
-                            if (can_elide_coercion_cast(expected_type.index, arg_type, cast_tag,
-                                                        narrow_ev, state.type_reg)) {
-                                state.emit(IROpcode::Local,
-                                           arg_base + static_cast<std::uint32_t>(i - 1), val_slot);
-                                state.alloc_local();
-                                continue;
-                            }
-                            auto cast_slot = state.alloc_local();
-                            if (narrow_ev != 0) {
-                                state.emit_with_metadata(IROpcode::CastOp, expected_type.index, 0,
-                                                         0, narrow_ev, cast_slot, val_slot,
-                                                         cast_tag, 0);
-                            } else {
-                                state.emit_with_type(IROpcode::CastOp, expected_type.index,
-                                                     cast_slot, val_slot, cast_tag, 0);
-                            }
-                            // Issue #2624 Phase A: stamp src/dst typed meta (non-elided).
-                            stamp_last_castop_typed_meta(state, arg_type, expected_type.index,
-                                                         narrow_ev, cast_tag);
-                            state.emit(IROpcode::Local,
-                                       arg_base + static_cast<std::uint32_t>(i - 1), cast_slot);
-                            state.alloc_local();
-                            continue; // skip the normal Local emit below
-                        }
-                    }
+                if (!zero_arg_thunk(flat.get(v.child(i)))) {
+                    all_thunk = false;
+                    break;
                 }
-                state.emit(IROpcode::Local, arg_base + static_cast<std::uint32_t>(i - 1), val_slot);
-                state.alloc_local();
             }
-            auto result_slot = state.alloc_local();
-            // Call(callee_slot, arg_base, arg_count, result_slot)
-            state.emit(IROpcode::Call, callee_slot, arg_base, arg_count, result_slot);
-            return result_slot;
+            if (bare || all_thunk) {
+                // Issue #4619: an error value in the test or in a body
+                // form leaves the loop the way begin lets an error
+                // leave (#2570) — it is not a value the loop may drop.
+                // The Begin rule (Issue #4552) decides when the error
+                // escapes. Issue #4899 follow-up: since #4899 that is
+                // every depth, the top level included; a top-level
+                // `(while (< i 3) (car i) ...)` under force-soa direct
+                // dropped the body error (rc=0) while the walker
+                // faces raised it.
+                constexpr bool escape_errors = true;
+                auto cond_id = all_thunk ? flat.get(v.child(1)).child(0) : v.child(1);
+                auto head = state.alloc_block();
+                state.emit(IROpcode::Jump, head);
+                state.cur_block = head;
+                auto cond_slot = lower_data_operand(state, flat, pool, cond_id, cache, cache_hits,
+                                                    escape_errors);
+                auto body_blk = state.alloc_block();
+                auto done_blk = state.alloc_block();
+                state.emit(IROpcode::Branch, cond_slot, body_blk, done_blk);
+                state.cur_block = body_blk;
+                for (std::size_t i = 2; i < v.children.size(); ++i) {
+                    auto body_id = all_thunk ? flat.get(v.child(i)).child(0) : v.child(i);
+                    (void)lower_data_operand(state, flat, pool, body_id, cache, cache_hits,
+                                             escape_errors);
+                }
+                state.emit(IROpcode::Jump, head);
+                state.cur_block = done_blk;
+                auto result_slot = state.alloc_local();
+                state.emit(IROpcode::ConstVoid, result_slot);
+                return result_slot;
+            }
+        }
+
+        // Check if callee is a cached define function (now handled by Variable handler)
+        // Fall through to general function call path
+    }
+
+    return lower_call_general(state, flat, pool, id, v, cache, cache_hits);
+}
+
+static std::uint32_t lower_flat_expr(
+    LoweringState& state, const FlatAST& flat, StringPool& pool, NodeId id,
+    const std::unordered_map<std::string, std::vector<aura::ir::IRFunction>,
+                             aura::core::TransparentStringHash, std::equal_to<>>* cache = nullptr,
+    std::vector<std::string>* cache_hits = nullptr) {
+    // Track current flat/pool for closure bridge data
+    state.current_flat = &flat;
+    state.current_pool = &pool;
+    LoweringState::SourceScope scope(state, id); // RAII: protects type_id propagation
+    // Issue #507: debug contract on valid NodeId range (observe mode
+    // uses early exit below instead of aborting on stale ids).
+    contract_assert(id == NULL_NODE || id < flat.size());
+    // Early exit for invalid ids (backup for contract-observe mode)
+    if (id == NULL_NODE || id >= flat.size()) {
+        auto slot = state.alloc_local();
+        state.emit(IROpcode::ConstI64, slot, 0, 0);
+        return slot;
+    }
+    auto v = flat.get(id);
+
+    switch (v.tag) {
+        case NodeTag::LiteralFloat:
+        case NodeTag::LiteralInt:
+        case NodeTag::LiteralString:
+            return lower_flat_literal(state, flat, pool, id, v, cache, cache_hits);
+
+        case NodeTag::Variable: {
+            return lower_flat_variable(state, flat, pool, id, v, cache, cache_hits);
+        }
+        case NodeTag::Call: {
+            return lower_flat_call(state, flat, pool, id, v, cache, cache_hits);
         }
         case NodeTag::IfExpr: {
-            auto cond_slot = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
-            auto then_blk = state.alloc_block();
-            auto else_blk = state.alloc_block();
-            auto merge_blk = state.alloc_block();
-
-            // Issue #280 / #1925: attach if-predicate narrow_evidence to
-            // Branch AND keep it live while lowering the then-branch so
-            // Coercion / Call-arg / TypeAnnotation CastOps inside the
-            // refined arm inherit occurrence proof (post-mutate zero-overhead).
-            // Else-arm clears evidence (negation may refine differently).
-            const std::uint32_t if_narrow_ev = state.current_narrowing_evidence;
-            if (if_narrow_ev != 0) {
-                state.emit_with_metadata(IROpcode::Branch, 0, 0, 0, if_narrow_ev, cond_slot,
-                                         then_blk, else_blk);
-            } else {
-                state.emit(IROpcode::Branch, cond_slot, then_blk, else_blk);
-            }
-
-            auto phi_slot = state.alloc_local();
-
-            state.cur_block = then_blk;
-            state.current_narrowing_evidence = if_narrow_ev;
-            auto then_val = lower_flat_expr(state, flat, pool, v.child(1), cache, cache_hits);
-            state.emit(IROpcode::Local, phi_slot, then_val);
-            state.emit(IROpcode::Jump, merge_blk);
-
-            state.cur_block = else_blk;
-            state.current_narrowing_evidence = 0;
-            // #4502 step 4: a missing else is the unspecified value
-            // (ConstVoid ops[1] = 1), matching the interpreter; it used to
-            // lower NULL_NODE to fixnum 0.
-            std::uint32_t else_val = 0;
-            if (v.children.size() < 3 || v.child(2) == NULL_NODE) {
-                else_val = state.alloc_local();
-                state.emit(IROpcode::ConstVoid, else_val, 1);
-            } else {
-                else_val = lower_flat_expr(state, flat, pool, v.child(2), cache, cache_hits);
-            }
-            state.emit(IROpcode::Local, phi_slot, else_val);
-            state.emit(IROpcode::Jump, merge_blk);
-            // Merge: no inherited narrow from this if.
-            state.current_narrowing_evidence = 0;
-
-            state.cur_block = merge_blk;
-            return phi_slot;
+            return lower_flat_if(state, flat, pool, id, v, cache, cache_hits);
         }
         case NodeTag::Lambda: {
-            // Native lambda lowering: create a new IRFunction, lower body
-            // via lower_flat_expr, emit MakeClosure.
-            auto param_span = v.params;
-            std::vector<std::string> param_names;
-            for (auto pid : param_span)
-                param_names.push_back(std::string(pool.resolve(pid)));
-
-            // Collect free variables: vars in body not in param list
-            std::unordered_set<std::string> free_set;
-            std::unordered_set<std::string> bound(param_names.begin(), param_names.end());
-            // Walk body to find free vars
-            {
-                struct FreeVarWalker {
-                    const FlatAST& flat;
-                    StringPool& pool;
-                    std::unordered_set<std::string>& free;
-                    std::unordered_set<std::string>& bound;
-                    void walk(NodeId nid) {
-                        if (nid == NULL_NODE || nid >= flat.size())
-                            return;
-                        auto nv = flat.get(nid);
-                        switch (nv.tag) {
-                            case NodeTag::Variable: {
-                                auto name = pool.resolve(nv.sym_id);
-                                if (bound.find(std::string(name)) == bound.end())
-                                    free.insert(std::string(name));
-                                break;
-                            }
-                            case NodeTag::Set: {
-                                // Issue #3927: set! of a free cell is a store.
-                                // Collecting only Variable reads dropped
-                                // write-only top-level cells, so the body
-                                // Set missed scopes and was a no-op while
-                                // later < / = / - const-folded the init.
-                                auto name = std::string(pool.resolve(nv.sym_id));
-                                if (bound.find(name) == bound.end())
-                                    free.insert(name);
-                                for (auto c : nv.children)
-                                    walk(c);
-                                break;
-                            }
-                            case NodeTag::LiteralInt:
-                            case NodeTag::LiteralString:
-                                break;
-                            default:
-                                for (auto c : nv.children)
-                                    walk(c);
-                                break;
-                        }
-                    }
-                };
-                FreeVarWalker{flat, pool, free_set, bound}.walk(v.child(0));
-            }
-
-            // Filter to only vars actually in scope.
-            // Issue #2292: exclude self_name — self-recursion uses
-            // MakeClosure(self_func_id), not a free-var cell capture.
-            std::vector<std::string> free_vars;
-            for (auto& fv : free_set) {
-                if (!state.self_name.empty() && fv == state.self_name)
-                    continue;
-                bool in_scope = false;
-                for (auto it = state.scopes.rbegin(); it != state.scopes.rend(); ++it) {
-                    if (it->find(fv) != it->end()) {
-                        in_scope = true;
-                        break;
-                    }
-                }
-                // Issue #4764: a nested define (an internal define inside a
-                // lambda) is pre-bound as a Cell in the enclosing scope. It
-                // must be captured from that cell even when the workspace
-                // value-cell sync also knows its name from a leaked top_env
-                // binding: otherwise the self-call lowered to a TopCellLoad
-                // of the stale tree-walker closure and failed with
-                // "eval_flat: invalid closure".
-                if (in_scope) {
-                    free_vars.push_back(fv);
-                    continue;
-                }
-                // Issue #4865: a top-level value define must stay a live
-                // cell reference (TopCellLoad / TopCellStore); capturing
-                // it by value made set! write the lambda's copy.
-                if (state.value_cells && state.value_cells->find(fv) != state.value_cells->end())
-                    continue;
-            }
-
-            // Create new IR function.
-            // Issue #4568: a define's own lambda keeps the define name so
-            // type feedback is keyed by that name. Nested lambdas (self
-            // already active, or the define name already consumed) stay
-            // "__lambda__".
-            IRFunction func;
-            func.name = "__lambda__";
-            if (!state.feedback_define_name.empty()) {
-                func.name = state.feedback_define_name;
-                state.feedback_define_name.clear();
-            } else if (!state.self_name.empty() && !state.self_func_active) {
-                func.name = state.self_name;
-            }
-            func.entry_block = 0;
-            func.blocks.push_back({0, {}, {}});
-            func.params = param_names;
-            func.arg_count = static_cast<std::uint32_t>(param_names.size());
-            func.variadic = (v.int_value != 0);
-            func.region = state.region;
-            // Issue #150 Phase 1b: if the user wrapped this
-            // lambda in a (performance-region ...) or
-            // (evolution-region ...) Aura form, the parser
-            // recorded the region in the FlatAST's
-            // region_by_lambda_id_ side-table. Look it up and
-            // override the IRFunction's region. This is the
-            // write-side that makes the annotation take effect:
-            // without this lookup, the parser-side hint
-            // (Phase 1) is just data in a side-table that
-            // nothing consumes.
-            if (auto opt_r = flat.get_function_region_for_lambda(id)) {
-                func.region = static_cast<aura::ir::Region>(*opt_r);
-            }
-
-            // Save parent state
-            auto* saved_func = state.cur_func;
-            auto saved_block = state.cur_block;
-            auto saved_locals = state.local_count;
-            auto saved_scopes = std::move(state.scopes);
-            auto saved_env_slot = state.env_slot;
-            auto saved_fv_map = std::move(state.free_var_map);
-            auto saved_self_func_id = state.self_func_id;
-            auto saved_self_func_active = state.self_func_active;
-            // Issue #4552: an enclosing try handler is a block of the
-            // parent function, not of this lambda.
-            auto saved_err_escapes = std::move(state.err_escapes);
-            state.err_escapes.clear();
-            ++state.lambda_depth;
-
-            // Issue #2292: pre-allocate function id so self-references inside
-            // the body can emit MakeClosure(self_func_id) before add_function.
-            // Only claim when this is the define's own lambda (self_name set and
-            // no outer self_func active yet). Nested lambdas keep the outer id.
-            // self_func_id may be 0 — track with self_func_active.
-            std::optional<std::uint32_t> preclaimed_fid;
-            if (!state.self_name.empty() && !state.self_func_active) {
-                IRFunction placeholder;
-                placeholder.name = "__self_placeholder__";
-                placeholder.entry_block = 0;
-                placeholder.blocks.push_back({0, {}, {}});
-                preclaimed_fid = state.module.add_function(std::move(placeholder));
-                state.self_func_id = *preclaimed_fid;
-                state.self_func_active = true;
-            }
-
-            state.cur_func = &func;
-            state.cur_block = 0;
-            state.local_count = 0;
-            state.free_var_map.clear();
-
-            state.env_slot = state.alloc_local(); // placeholder
-            state.scopes.push_back({});
-
-            // Load captured free vars from env prefix
-            for (std::size_t i = 0; i < free_vars.size(); ++i) {
-                auto& fv = free_vars[i];
-                auto slot = state.alloc_local();
-                state.emit(IROpcode::Arg, slot, static_cast<std::uint32_t>(i));
-                // Check if this free var is a letrec cell in the outer scope
-                bool is_cell = false;
-                for (auto it = saved_scopes.rbegin(); it != saved_scopes.rend(); ++it) {
-                    auto found = it->find(fv);
-                    if (found != it->end() && found->second.kind == BindingKind::Cell) {
-                        is_cell = true;
-                        break;
-                    }
-                }
-                if (is_cell) {
-                    // Cell capture stays a Cell. Capture copies the cell
-                    // value into the closure env. Arg copies that value
-                    // through (#4439). CellGet and CellSet use cell_heap_.
-                    state.scopes.back()[fv] = Binding{BindingKind::Cell, slot};
-                    state.free_var_map[fv] = static_cast<std::uint32_t>(i);
-                    state.cell_free_vars.insert(fv);
-                } else {
-                    state.scopes.back()[fv] = Binding{BindingKind::Captured, slot};
-                    state.free_var_map[fv] = static_cast<std::uint32_t>(i);
-                }
-            }
-
-            // Bind parameters
-            for (std::size_t i = 0; i < param_names.size(); ++i) {
-                auto slot = state.alloc_local();
-                state.emit(IROpcode::Arg, slot, static_cast<std::uint32_t>(free_vars.size() + i));
-                state.scopes.back()[param_names[i]] = Binding{BindingKind::Local, slot};
-                // Issue #4426: a Float parameter converts at entry. The
-                // call's FlatAST does not carry the callee param type, so
-                // the call-arg CastOp is skipped. Tag 4 is not Dynamic.
-                if (i < v.param_annotations.size() && v.param_annotations[i] != NULL_NODE &&
-                    state.type_reg) {
-                    auto ann = flat.get(v.param_annotations[i]);
-                    if (auto named = float_annotation_type(pool, ann, state.type_reg)) {
-                        const auto cast_tag = type_tag_for_coercion(*named, state.type_reg);
-                        if (cast_tag == 4) {
-                            auto cast_slot = state.alloc_local();
-                            state.emit_with_type(IROpcode::CastOp, named->index, cast_slot, slot,
-                                                 cast_tag, 0);
-                            stamp_last_castop_typed_meta(state, /*src=*/0, named->index, 0,
-                                                         cast_tag);
-                            state.scopes.back()[param_names[i]] =
-                                Binding{BindingKind::Local, cast_slot};
-                        }
-                    }
-                }
-            }
-
-            // Lower body via native FlatAST path
-            auto body_slot = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
-            state.emit(IROpcode::Return, body_slot);
-
-            func.local_count = state.local_count;
-
-            // Restore parent state
-            state.cur_func = saved_func;
-            state.cur_block = saved_block;
-            state.local_count = saved_locals;
-            state.scopes = std::move(saved_scopes);
-            state.env_slot = saved_env_slot;
-            state.free_var_map = std::move(saved_fv_map);
-            state.self_func_id = saved_self_func_id;
-            state.self_func_active = saved_self_func_active;
-            state.err_escapes = std::move(saved_err_escapes);
-            --state.lambda_depth;
-
-            func.free_vars = free_vars;
-            if (!state.current_flat)
-                std::println("DEBUG: current_flat NULL at lambda bridge data");
-            if (!state.current_pool)
-                std::println("DEBUG: current_pool NULL at lambda bridge data");
-            std::uint32_t fid = 0;
-            if (preclaimed_fid) {
-                // Issue #2292: replace the self-placeholder in place.
-                func.id = *preclaimed_fid;
-                state.module.functions[*preclaimed_fid] = std::move(func);
-                fid = *preclaimed_fid;
-                if (state.module.closure_bridge.size() <= fid)
-                    state.module.closure_bridge.resize(fid + 1);
-            } else {
-                fid = state.module.add_function(std::move(func));
-            }
-            // Issue #3263: propagate SyntaxMarker from the source Lambda
-            // node into the IRFunction (#246 / #2177). Sample marker once
-            // (no TOCTOU / double lookup). quote_lambda marker copy
-            // requires current_flat; the old else bumped stripped on
-            // nullptr — unreachable and a lie (no-flat is not stripped).
-            // Full: contract_assert. Soft/Off: skip (zero extra).
-            contract_assert(state.current_flat != nullptr);
-            if (state.current_flat) {
-                const auto m = state.current_flat->marker(v.id);
-                state.module.functions[fid].marker = static_cast<std::uint8_t>(m);
-                if (m == aura::ast::SyntaxMarker::MacroIntroduced)
-                    aura_2177_record_aot_marker_propagated(1);
-            }
-            // Store bridge data for tree-walker compatibility
-            if (state.current_flat && state.current_pool) {
-                // Issue #224 Cycle 2: shared_ptr-based bridge. The
-                // shared_ptr is a non-owning view (no-op deleter) that
-                // keeps the FlatAST/StringPool alive as long as this
-                // bridge exists. The arena remains the actual owner.
-                auto flat_sp = std::shared_ptr<const aura::ast::FlatAST>(
-                    state.current_flat, [](const aura::ast::FlatAST*) {});
-                auto pool_sp = std::shared_ptr<const aura::ast::StringPool>(
-                    state.current_pool, [](const aura::ast::StringPool*) {});
-                state.module.set_closure_bridge(fid, std::move(flat_sp), std::move(pool_sp),
-                                                v.child(0));
-                if (g_lowering_hooks.on_quote_lambda_bridge_copy)
-                    g_lowering_hooks.on_quote_lambda_bridge_copy();
-                if (g_lowering_hooks.on_env_version_resync)
-                    g_lowering_hooks.on_env_version_resync();
-                // Save lambda body source for bridge fallback re-parse
-                auto body_src = unparse_node(*state.current_flat, *state.current_pool, v.child(0));
-                state.module.set_closure_body_source(fid, body_src);
-            }
-            auto slot = state.alloc_local();
-            state.emit(IROpcode::MakeClosure, slot, fid,
-                       static_cast<std::uint32_t>(free_vars.size()));
-
-            // Capture each free variable into the closure
-            // Cell values (CellRef) are captured directly — CellGet/CellSet
-            // in the lambda body dereference via cell_heap_ for read/write.
-            for (std::size_t i = 0; i < free_vars.size(); ++i) {
-                auto& fv = free_vars[i];
-                for (auto it = state.scopes.rbegin(); it != state.scopes.rend(); ++it) {
-                    auto found = it->find(fv);
-                    if (found != it->end()) {
-                        auto& binding = found->second;
-                        auto cslot = state.alloc_local();
-                        state.emit(IROpcode::Local, cslot, binding.slot);
-                        state.emit(IROpcode::Capture, slot, static_cast<std::uint32_t>(i), cslot);
-                        break;
-                    }
-                }
-            }
-
-            return slot;
+            return lower_flat_lambda(state, flat, pool, id, v, cache, cache_hits);
         }
         case NodeTag::Let:
         case NodeTag::LetRec: {
-            bool rec = (v.tag == NodeTag::LetRec);
-            auto name = pool.resolve(v.sym_id);
-            auto val_id = v.children.empty() ? NULL_NODE : v.child(0);
-            auto body_id = v.children.size() < 2 ? NULL_NODE : v.child(1);
-
-            if (rec) {
-                // letrec: create cell, bind, init
-                auto ci = state.alloc_local();
-                state.emit(IROpcode::NewCell, ci);
-                state.scopes.push_back({});
-                auto& scope = state.scopes.back();
-                scope[std::string(name)] = Binding{BindingKind::Cell, ci};
-                // Issue #4588: an error init is not a binding. The body
-                // stays in the continuation and does not run.
-                auto val_slot =
-                    lower_data_operand(state, flat, pool, val_id, cache, cache_hits, true);
-                state.emit(IROpcode::CellSet, ci, val_slot);
-                auto body_slot = lower_flat_expr(state, flat, pool, body_id, cache, cache_hits);
-                state.scopes.pop_back();
-                return body_slot;
-            } else {
-                // Issue #4359: (let () body) has no binding.
-                if (v.sym_id == INVALID_SYM)
-                    return lower_flat_expr(state, flat, pool, body_id, cache, cache_hits);
-                // let: use Cell binding (like evaluator fix 3392d77)
-                // so that set! can find the mutable Cell inside closures
-                auto ci = state.alloc_local();
-                state.emit(IROpcode::NewCell, ci);
-                // Issue #4588: same as letrec. Do not run the body.
-                auto val_slot =
-                    lower_data_operand(state, flat, pool, val_id, cache, cache_hits, true);
-                state.emit(IROpcode::CellSet, ci, val_slot);
-                state.scopes.push_back({});
-                auto& scope = state.scopes.back();
-                scope[std::string(name)] = Binding{BindingKind::Cell, ci};
-                auto body_slot = lower_flat_expr(state, flat, pool, body_id, cache, cache_hits);
-                state.scopes.pop_back();
-                return body_slot;
-            }
+            return lower_flat_let(state, flat, pool, id, v, cache, cache_hits);
         }
         case NodeTag::Define: {
-            auto name = pool.resolve(v.sym_id);
-            auto val_id = v.children.empty() ? NULL_NODE : v.child(0);
-            auto& scope = state.scopes.empty() ? (state.scopes.push_back({}), state.scopes.back())
-                                               : state.scopes.back();
-            // Check if already pre-bound by Begin handler (for mutual recursion).
-            // If a Cell binding exists, reuse it (no NewCell needed).
-            auto existing = scope.find(std::string(name));
-            bool has_cell = (existing != scope.end() && existing->second.kind == BindingKind::Cell);
-            std::uint32_t ci = 0;
-            if (has_cell) {
-                ci = existing->second.slot;
-            } else {
-                // Pre-bind the name as a Cell BEFORE lowering the value so that
-                // self-references in the lambda body find the cell (like letrec).
-                ci = state.alloc_local();
-                state.emit(IROpcode::NewCell, ci);
-                scope[std::string(name)] = Binding{BindingKind::Cell, ci};
-            }
-            // Now lower the value — self-references will CellGet the pre-bound cell.
-            // Issue #4568: stamp the define name onto the lambda this value
-            // lowers, then drop it so a later define does not inherit it.
-            const bool stamp_feedback = state.feedback_define_name.empty();
-            if (stamp_feedback)
-                state.feedback_define_name.assign(name.begin(), name.end());
-            auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache, cache_hits);
-            if (stamp_feedback)
-                state.feedback_define_name.clear();
-            state.emit(IROpcode::CellSet, ci, val_slot);
-            return val_slot;
+            return lower_flat_define(state, flat, pool, id, v, cache, cache_hits);
         }
         case NodeTag::Begin: {
-            // First pass: pre-bind all define names for mutual recursion support.
-            // Each define gets a Cell that all sibling defines can reference.
-            if (!state.scopes.empty()) {
-                auto& scope = state.scopes.back();
-                for (auto c : v.children) {
-                    if (c < flat.size() && flat.get(c).tag == NodeTag::Define) {
-                        auto name = pool.resolve(flat.get(c).sym_id);
-                        if (scope.find(std::string(name)) == scope.end()) {
-                            auto ci = state.alloc_local();
-                            state.emit(IROpcode::NewCell, ci);
-                            scope[std::string(name)] = Binding{BindingKind::Cell, ci};
-                        }
-                    }
-                }
-            } else {
-                state.scopes.push_back({});
-                auto& scope = state.scopes.back();
-                for (auto c : v.children) {
-                    if (c < flat.size() && flat.get(c).tag == NodeTag::Define) {
-                        auto name = pool.resolve(flat.get(c).sym_id);
-                        auto ci = state.alloc_local();
-                        state.emit(IROpcode::NewCell, ci);
-                        scope[std::string(name)] = Binding{BindingKind::Cell, ci};
-                    }
-                }
-            }
-            // Second pass: lower all children — defines find their pre-bound cells
-            // Issue #4552: an error value from a non-tail child leaves the
-            // body (tree-walker begin parity, #2570). Issue #4899: this holds
-            // at the top level too. The entry function used to discard a
-            // statement-position error value, so `(car 5)` at the top of a
-            // program printed nothing and the run exited 0 while the tree
-            // walker raised it. The value now escapes every non-tail
-            // statement; file mode turns the escaped value into a located
-            // diagnostic at the service boundary.
-            std::uint32_t last_slot = 0;
-            for (std::size_t bi = 0; bi < v.children.size(); ++bi) {
-                const auto c = v.child(bi);
-                last_slot = lower_flat_expr(state, flat, pool, c, cache, cache_hits);
-                if (bi + 1 < v.children.size() && !form_cannot_be_error(flat, c)) {
-                    // The Return that escapes carries this statement's source
-                    // node, so the error value can be located (#4899).
-                    const auto prev_source = state.current_source_id;
-                    state.current_source_id = c;
-                    emit_error_escape(state, last_slot);
-                    state.current_source_id = prev_source;
-                }
-            }
-            if (!v.children.empty())
-                return last_slot;
-            auto slot = state.alloc_local();
-            state.emit(IROpcode::ConstI64, slot, 0, 0);
-            return slot;
+            return lower_flat_begin(state, flat, pool, id, v, cache, cache_hits);
         }
         case NodeTag::Set: {
-            auto name = pool.resolve(v.sym_id);
-            auto val_id = v.children.empty() ? NULL_NODE : v.child(0);
-            auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache, cache_hits);
-
-            // Issue #4865: a top-level value define is a live evaluator
-            // cell; write it before any captured/local scope binding can
-            // shadow it, otherwise force-soa silently drops the side effect.
-            if (state.value_cells) {
-                auto vc_it = state.value_cells->find(std::string(name));
-                if (vc_it != state.value_cells->end()) {
-                    state.emit(IROpcode::TopCellStore, static_cast<std::uint32_t>(vc_it->second),
-                               val_slot);
-                    return val_slot;
-                }
-            }
-            if (const auto* slots = call_slot_cells_4681()) {
-                auto sit = slots->find(std::string(name));
-                if (sit != slots->end()) {
-                    state.emit(IROpcode::TopCellStore, static_cast<std::uint32_t>(sit->second),
-                               val_slot);
-                    return val_slot;
-                }
-            }
-
-            for (auto it = state.scopes.rbegin(); it != state.scopes.rend(); ++it) {
-                auto found = it->find(std::string(name));
-                if (found != it->end()) {
-                    auto& binding = found->second;
-                    if (binding.kind == BindingKind::Cell) {
-                        state.emit(IROpcode::CellSet, binding.slot, val_slot);
-                        return val_slot;
-                    }
-                    // For local vars, just update the slot value
-                    state.emit(IROpcode::Local, binding.slot, val_slot);
-                    return val_slot;
-                }
-            }
-            // Issue #3927: name not in lambda scopes (write-only free
-            // var filtered out, or REPL value-define cell). Caller
-            // cache_define skips IR when the body set!s a non-local.
-            return val_slot;
+            return lower_flat_set(state, flat, pool, id, v, cache, cache_hits);
         }
         case NodeTag::Quote: {
-            // Inline simple literals
-            if (!v.children.empty()) {
-                auto cv = flat.get(v.child(0));
-                if (cv.tag == NodeTag::LiteralInt) {
-                    if (cv.int_value == 0) {
-                        // () empty list → make_void
-                        auto slot = state.alloc_local();
-                        state.emit(IROpcode::ConstVoid, slot);
-                        return slot;
-                    }
-                    auto slot = state.alloc_local();
-                    emit_int_const(state, slot, cv.int_value);
-                    return slot;
-                }
-                if (cv.tag == NodeTag::LiteralFloat || cv.tag == NodeTag::LiteralString) {
-                    return lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
-                }
-                // Issue #2568: quoted symbols are data, not variable lookups.
-                // Falling through to lower_flat_expr on a Variable emitted a
-                // free-var load that returned 0 for unbound names — so
-                // `(define d 'commit)` bound fixnum 0 under IR.
-                //
-                // Issue #4727: operands[2]==2 interns a SYMBOL atom (the
-                // evaluator-global symbol table), matching the tree-walker's
-                // datum conversion. The IR keeps only the name; identity is
-                // resolved at materialization, so two compilation units (and
-                // a workspace layer's own StringPool) still agree on eq?.
-                if (cv.tag == NodeTag::Variable) {
-                    auto s = pool.resolve(cv.sym_id);
-                    auto si = state.module.add_string(std::string(s));
-                    auto slot = state.alloc_local();
-                    state.emit(IROpcode::ConstString, slot, si, /*symbol=*/2);
-                    return slot;
-                }
-            }
-            // Non-trivial quoted data: lower as (cons car cdr) chain
-            // Issue #2482: empty quote / missing cons → ConstVoid (not fixnum 0).
-            if (v.children.empty() || !state.primitives) {
-                auto slot = state.alloc_local();
-                state.emit(IROpcode::ConstVoid, slot);
-                return slot;
-            }
-
-            auto cons_slot = state.primitives->slot_for_name("cons");
-            if (cons_slot >= state.primitives->slot_count()) {
-                auto slot = state.alloc_local();
-                state.emit(IROpcode::ConstVoid, slot);
-                return slot;
-            }
-            auto cons_fn = state.alloc_local();
-            state.emit(IROpcode::Primitive, cons_fn, static_cast<std::uint32_t>(cons_slot));
-
-            // Recursive helper: lower a quoted value as data
-            // For lists/pairs, lower each car/cdr with Quote semantics
-            // i.e. (1 2) as data is cons(1, cons(2, ())) with () = void (#2482).
-            std::function<std::uint32_t(NodeId)> lower_q;
-            lower_q = [&](NodeId nid) -> std::uint32_t {
-                if (nid == ast::NULL_NODE || nid >= flat.size()) {
-                    auto s = state.alloc_local();
-                    state.emit(IROpcode::ConstVoid, s);
-                    return s;
-                }
-                auto nv = flat.get(nid);
-                // Simple literals
-                if (nv.tag == NodeTag::LiteralInt) {
-                    auto s = state.alloc_local();
-                    // Issue #4490: quoted #t / #f stay booleans.
-                    if (nv.marker == ast::SyntaxMarker::BoolLiteral)
-                        state.emit(IROpcode::ConstBool, s, nv.int_value != 0 ? 1 : 0);
-                    else
-                        emit_int_const(state, s, nv.int_value);
-                    return s;
-                }
-                if (nv.tag == NodeTag::LiteralFloat || nv.tag == NodeTag::LiteralString) {
-                    return lower_flat_expr(state, flat, pool, nid, cache, cache_hits);
-                }
-                // Issue #2568 / #4727: symbol atoms inside quoted lists are
-                // interned symbols (operands[2]==2), same as the atom case.
-                if (nv.tag == NodeTag::Variable) {
-                    auto s = pool.resolve(nv.sym_id);
-                    auto si = state.module.add_string(std::string(s));
-                    auto slot = state.alloc_local();
-                    state.emit(IROpcode::ConstString, slot, si, /*symbol=*/2);
-                    return slot;
-                }
-                // Lists: Pair or Call as data
-                if (nv.tag == NodeTag::Pair) {
-                    // Dotted pair: (car . cdr) → cons(lower_q(car), lower_q(cdr))
-                    auto left = nv.children.empty() ? ast::NULL_NODE : nv.child(0);
-                    auto right = nv.children.size() > 1 ? nv.child(1) : ast::NULL_NODE;
-                    auto left_slot = lower_q(left);
-                    auto right_slot = lower_q(right);
-                    // Call cons(left, right)
-                    auto ab = state.alloc_local();
-                    state.emit(IROpcode::Local, ab, left_slot);
-                    state.alloc_local();
-                    auto cd = state.local_count - 1;
-                    state.emit(IROpcode::Local, static_cast<std::uint32_t>(cd), right_slot);
-                    auto rs = state.alloc_local();
-                    state.emit(IROpcode::Call, cons_fn, ab, 2, rs);
-                    return rs;
-                }
-                if (nv.tag == NodeTag::Call && !nv.children.empty() &&
-                    flat.get(nv.child(0)).tag == NodeTag::Variable &&
-                    pool.resolve(flat.get(nv.child(0)).sym_id) == "#vector") {
-                    // Issue #4490: quoted #( ... ) → vector(elem...) of the
-                    // quoted elements (parser reserved callee "#vector").
-                    auto vec_slot = state.primitives->slot_for_name("vector");
-                    if (vec_slot < state.primitives->slot_count()) {
-                        std::vector<std::uint32_t> elems;
-                        for (std::size_t ci = 1; ci < nv.children.size(); ++ci)
-                            elems.push_back(lower_q(nv.child(ci)));
-                        auto vec_fn = state.alloc_local();
-                        state.emit(IROpcode::Primitive, vec_fn,
-                                   static_cast<std::uint32_t>(vec_slot));
-                        auto first = state.alloc_local();
-                        if (!elems.empty())
-                            state.emit(IROpcode::Local, first, elems[0]);
-                        for (std::size_t ei = 1; ei < elems.size(); ++ei) {
-                            auto slot = state.alloc_local();
-                            state.emit(IROpcode::Local, slot, elems[ei]);
-                        }
-                        auto rs = state.alloc_local();
-                        state.emit(IROpcode::Call, vec_fn, first,
-                                   static_cast<std::uint32_t>(elems.size()), rs);
-                        return rs;
-                    }
-                }
-                if (nv.tag == NodeTag::Call) {
-                    // Proper list: (a b c) → cons(a, cons(b, cons(c, ()))) void tail (#2482)
-                    auto tail_s = state.alloc_local();
-                    state.emit(IROpcode::ConstVoid, tail_s);
-                    for (int ci = static_cast<int>(nv.children.size()) - 1; ci >= 0; --ci) {
-                        auto elem_s = lower_q(nv.child(ci));
-                        auto ab = state.alloc_local();
-                        state.emit(IROpcode::Local, ab, elem_s);
-                        state.alloc_local();
-                        auto cd = state.local_count - 1;
-                        state.emit(IROpcode::Local, static_cast<std::uint32_t>(cd), tail_s);
-                        auto rs = state.alloc_local();
-                        state.emit(IROpcode::Call, cons_fn, ab, 2, rs);
-                        tail_s = rs;
-                    }
-                    return tail_s;
-                }
-                // Unknown node type
-                return lower_flat_expr(state, flat, pool, nid, cache, cache_hits);
-            };
-
-            return lower_q(v.child(0));
+            return lower_flat_quote(state, flat, pool, id, v, cache, cache_hits);
         }
         case NodeTag::TypeAnnotation: {
-            // Lower the inner expression first
-            auto inner_slot = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
-            // Check if coercion is needed: compare annotation type_id with inner type_id
-            auto ann_type_id = flat.type_id(id);
-            auto inner_type_id = flat.type_id(v.child(0));
-            // Issue #4426: Int checked as Float keeps equal stamps (synthesize
-            // returns the inner type). The name is the tag-4 target. Evidence
-            // stays 0 so Rule 6c cannot treat the conversion as Dynamic.
-            aura::core::TypeId named_float{};
-            bool force_float = false;
-            if (state.type_reg && inner_type_id != 0 &&
-                inner_type_id == state.type_reg->int_type().index &&
-                (ann_type_id == 0 || ann_type_id == inner_type_id)) {
-                if (auto named = float_annotation_type(pool, v, state.type_reg)) {
-                    named_float = *named;
-                    force_float = true;
-                }
-            }
-            const std::uint32_t target_id = force_float ? named_float.index : ann_type_id;
-            // Emit CastOp for type boundary when:
-            // 1. Both types are known and differ (static → static coercion)
-            // 2. Annotation is static but inner is dynamic (runtime type check)
-            // 3. Int→Float name whose stamps matched (#4426)
-            if (force_float ||
-                (target_id != 0 && inner_type_id != 0 && target_id != inner_type_id) ||
-                (target_id != 0 && inner_type_id == 0)) {
-                auto ann_tid = force_float ? named_float : aura::core::TypeId{target_id, 1};
-                std::uint32_t type_tag = type_tag_for_coercion(ann_tid, state.type_reg);
-                const auto narrow_ev = force_float ? 0u : state.current_narrowing_evidence;
-                // Issue #1925: elide identity / Dynamic / narrow-proved at lower.
-                if (can_elide_coercion_cast(target_id, inner_type_id, type_tag, narrow_ev,
-                                            state.type_reg)) {
-                    return inner_slot;
-                }
-                auto slot = state.alloc_local();
-                std::uint32_t blame_loc = 0;
-                if (narrow_ev != 0) {
-                    state.emit_with_metadata(IROpcode::CastOp, target_id, 0, 0, narrow_ev, slot,
-                                             inner_slot, type_tag, blame_loc);
-                } else {
-                    state.emit_with_type(IROpcode::CastOp, target_id, slot, inner_slot, type_tag,
-                                         blame_loc);
-                }
-                // Issue #2624 Phase A: stamp src/dst typed meta (non-elided).
-                stamp_last_castop_typed_meta(state, inner_type_id, target_id, narrow_ev, type_tag);
-                return slot;
-            }
-            return inner_slot;
+            return lower_flat_type_annotation(state, flat, pool, id, v, cache, cache_hits);
         }
         case NodeTag::Coercion: {
-            auto inner = lower_flat_expr(state, flat, pool, v.child(0), cache, cache_hits);
-            std::uint32_t type_tag = static_cast<std::uint32_t>(v.int_value);
-            auto target_type_id = flat.type_id(v.id);
-            const auto inner_type_id = flat.type_id(v.child(0));
-            const std::uint32_t entry_narrow_ev =
-                v.float_value != 0.0 ? static_cast<std::uint32_t>(v.float_value) : 0u;
-            const std::uint32_t narrow_ev =
-                entry_narrow_ev != 0 ? entry_narrow_ev : state.current_narrowing_evidence;
-            // Issue #691 / #1925: expanded lower-time elision (identity,
-            // Dynamic passthrough, narrow_ev + type match).
-            // Issue #1425 / #2025 / #2624 AC2: identity elision → no CastOp, no meta stamp.
-            if (can_elide_coercion_cast(target_type_id, inner_type_id, type_tag, narrow_ev,
-                                        state.type_reg)) {
-                return inner;
-            }
-            auto slot = state.alloc_local();
-            std::uint32_t blame_loc = (static_cast<std::uint32_t>(v.line) << 16) |
-                                      (static_cast<std::uint32_t>(v.col) & 0xFFFFu);
-            // CastOp type_id = coercion target type (stored on the Coercion node)
-            // blame info is carried via blame_loc operand and source_id, not type_id
-            // Issue #629 / #691 / #1925: attach narrow_evidence to coercion CastOps
-            // from entry provenance or enclosing if-branch context.
-            if (narrow_ev != 0) {
-                state.emit_with_metadata(IROpcode::CastOp, target_type_id, 0, 0, narrow_ev, slot,
-                                         inner, type_tag, blame_loc);
-            } else {
-                state.emit_with_type(IROpcode::CastOp, target_type_id, slot, inner, type_tag,
-                                     blame_loc);
-            }
-            // Issue #2624 Phase A: non-elided CoercionNode → CastOp + typed meta.
-            stamp_last_castop_typed_meta(state, inner_type_id, target_type_id, narrow_ev, type_tag);
-            return slot;
+            return lower_flat_coercion(state, flat, pool, id, v, cache, cache_hits);
         }
         case NodeTag::Linear:
         case NodeTag::Move:
         case NodeTag::Borrow:
         case NodeTag::MutBorrow:
         case NodeTag::Drop: {
-            // Issue #133: linear type lowering extracted to
-            // try_lower_linear_type. The callback
-            // recurses into the inner expression via the
-            // main lower_flat_expr.
-            if (auto slot = try_lower_linear_type(state, flat, pool, v, [&](aura::ast::NodeId id) {
-                    return lower_flat_expr(state, flat, pool, id, cache, cache_hits);
-                })) {
-                return *slot;
-            }
-            // Shouldn't happen for these tags, but fall
-            // through to the default case just in case.
-            auto slot = state.alloc_local();
-            state.emit(IROpcode::ConstI64, slot, 0, 0);
-            return slot;
+            return lower_flat_linear(state, flat, pool, id, v, cache, cache_hits);
         }
         case NodeTag::MacroDef:
         default: {
