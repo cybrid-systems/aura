@@ -9944,1682 +9944,1879 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     return infer_flat_partial(flat, pool, rec, diag, /*per_defuse_index_tracker=*/nullptr);
 }
 
+namespace {
+
+    // Working state for TypeChecker::infer_flat_partial. The engine stays on
+    // the caller's stack; these helpers only borrow it. Splitting does not
+    // allocate, reorder diagnostics, or change which nodes are re-inferred.
+    struct InferFlatPartialState {
+        TypeChecker& tc;
+        aura::ast::FlatAST& flat;
+        const aura::ast::StringPool& pool;
+        const aura::ast::MutationRecord& rec;
+        aura::diag::DiagnosticCollector& diag;
+        void* per_defuse_index_tracker;
+        std::span<const aura::ast::MutationRecord> extra_recs;
+        // Private TypeChecker fields, bound by the member function so these
+        // helpers do not need new declarations on the class.
+        TypeChecker::IncrementalStats& stats;
+        ConstraintSystem& solve_delta_cs;
+        std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                           std::equal_to<>>& type_module_src;
+        std::unordered_map<std::string, aura::core::TypeId, aura::core::TransparentStringHash,
+                           std::equal_to<>>& type_sigs;
+        bool& strict;
+        GradualPermissiveness& gradual_permissiveness;
+        std::uint64_t& cache_epoch;
+        bool (*&registered_prim_probe)(const void* ctx, std::string_view name) noexcept;
+        const void*& registered_prim_ctx;
+        std::vector<std::string>& host_visible_names;
+        std::shared_ptr<const TypeEnv::HostNameSet>& host_name_set;
+
+        std::vector<aura::ast::NodeId> affected;
+        bool per_defuse_index_used = false;
+        bool per_symbol_used = false;
+        aura::ast::SymId sym_for_lookup = aura::ast::INVALID_SYM;
+        std::vector<NodeId> occurrence_targets;
+        OwnershipEnv occurrence_linear_dirty;
+        std::vector<std::uint32_t> adt_reverify;
+        std::size_t re_inferred = 0;
+        std::uint32_t max_narrow_evidence = 0;
+        std::vector<aura::ast::NodeId> boundary_inferred_roots;
+
+        InferFlatPartialState(
+            TypeChecker& tc_in, aura::ast::FlatAST& flat_in, const aura::ast::StringPool& pool_in,
+            const aura::ast::MutationRecord& rec_in, aura::diag::DiagnosticCollector& diag_in,
+            void* tracker_in, std::span<const aura::ast::MutationRecord> extra_in,
+            TypeChecker::IncrementalStats& stats_in, ConstraintSystem& solve_delta_cs_in,
+            std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                               std::equal_to<>>& type_module_src_in,
+            std::unordered_map<std::string, aura::core::TypeId, aura::core::TransparentStringHash,
+                               std::equal_to<>>& type_sigs_in,
+            bool& strict_in, GradualPermissiveness& gradual_in, std::uint64_t& cache_epoch_in,
+            bool (*&probe_in)(const void*, std::string_view) noexcept, const void*& prim_ctx_in,
+            std::vector<std::string>& host_names_in,
+            std::shared_ptr<const TypeEnv::HostNameSet>& host_set_in)
+            : tc(tc_in)
+            , flat(flat_in)
+            , pool(pool_in)
+            , rec(rec_in)
+            , diag(diag_in)
+            , per_defuse_index_tracker(tracker_in)
+            , extra_recs(extra_in)
+            , stats(stats_in)
+            , solve_delta_cs(solve_delta_cs_in)
+            , type_module_src(type_module_src_in)
+            , type_sigs(type_sigs_in)
+            , strict(strict_in)
+            , gradual_permissiveness(gradual_in)
+            , cache_epoch(cache_epoch_in)
+            , registered_prim_probe(probe_in)
+            , registered_prim_ctx(prim_ctx_in)
+            , host_visible_names(host_names_in)
+            , host_name_set(host_set_in)
+            , occurrence_linear_dirty() {}
+    };
+
+    // Build the primary affected cone (DefUse index, per-symbol walk, ancestor fallback, extra
+    // Guard records). Returns true when the cone is empty and the caller must return 0. Same order
+    // and diagnostics as the former body of TypeChecker::infer_flat_partial.
+    bool partial_collect_affected(InferFlatPartialState& st) {
+        st.tc.last_type_export_authoritative_ = true;
+        st.tc.last_delta_solve_status_ = SolveResult::SOLVED;
+        // Issue #1336: selective incremental TC path entry counter.
+        if (st.tc.metrics_) {
+            static_cast<struct CompilerMetrics*>(st.tc.metrics_)
+                ->infer_flat_partial_selective_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Issue #2320: prune stale NodeIds from type_dep_graph_ on each
+        // infer_flat_partial entry (bounded live entries). Cheap O(N) per
+        // bucket, drops out-of-range or type_id-mismatch entries. Live
+        // filter in affected_nodes_for_type (#387) ensures no false-negative
+        // empty affected for still-typed nodes (#2320 AC3).
+        st.tc.prune_type_dep_graph(st.flat);
+        // Issue #3228: remirror residual CastOp persist before cone build so
+        // cascade pull unions under-marked leftover sites. Soft persist
+        // empty → 0 extra.
+        (void)dirty::force_residual_castop_undermark_into_cone();
+        // Issue #411 follow-up #1: per-symbol re-inference
+        // wiring. The baseline (ancestor-walk) used
+        // `affected_subtree_from_mutation` which marks every
+        // ancestor of the mutated node as affected — for a
+        // mutation deep in the AST this re-infers O(depth)
+        // nodes that didn't actually need re-inference. The
+        // per-symbol path (`affected_subtree_for_symbol`)
+        // returns only the Variable use-sites of the binding
+        // the mutation changed, which is O(uses) and is
+        // almost always a strict subset of the ancestor set.
+        //
+        // Issue #411 fu1 follow-up #3: per-DefUseIndex path
+        // (the actual O(uses) optimization). When the caller
+        // passes a non-null `per_defuse_index_tracker`
+        // pointer AND the tracker has the sym registered,
+        // the affected set comes straight from the tracker
+        // (O(uses) hash lookup) instead of the O(n) walk
+        // in `affected_subtree_for_symbol`. Falls back to
+        // the O(n) walk when the tracker is null or the sym
+        // isn't tracked (e.g. tracker not yet populated for
+        // this binding, or the sym changed since the last
+        // tracker build).
+        //
+        // The three paths compose: per-DefUseIndex (fastest,
+        // O(uses)) → per-symbol walk (O(n)) → ancestor walk
+        // (O(depth)). The metrics plumbed back
+        // (per_defuse_index_used_total,
+        // per_defuse_index_visited_total,
+        // per_symbol_used_total, per_symbol_visited_total,
+        // ancestor_used_total, ancestor_visited_total) let
+        // the user measure the share of work that went
+        // through each path via the
+        // (compile:per-symbol-reinfer-stats) Aura primitive.
+        // Extract the binding sym_id (if applicable) once,
+        // up-front. Same logic as the pre-#411-follow-up-1
+        // path.
+        if (st.rec.target_node != aura::ast::NULL_NODE && st.rec.target_node < st.flat.size()) {
+            auto tgv = st.flat.get(st.rec.target_node);
+            if (tgv.sym_id != aura::ast::INVALID_SYM &&
+                (tgv.tag == aura::ast::NodeTag::Define || tgv.tag == aura::ast::NodeTag::Let ||
+                 tgv.tag == aura::ast::NodeTag::LetRec)) {
+                st.sym_for_lookup = tgv.sym_id;
+            }
+        }
+        // 1) per-DefUseIndex path (fastest). Only fires when
+        // the caller passed a tracker AND the sym is
+        // registered. The O(uses) lookup returns the
+        // use-sites directly without scanning the flat.
+        if (st.per_defuse_index_tracker && st.sym_for_lookup != aura::ast::INVALID_SYM) {
+            // The PerDefUseIndexTracker stores callers as
+            // Caller structs (location strings), not as
+            // NodeIds — the tracker is a registration of
+            // "this caller depends on this binding", not a
+            // pre-resolved NodeId set. For the affected-set
+            // metrics we just need the count, which is the
+            // size_for_index (O(1) hash lookup). The actual
+            // re-inference iterates over a separate
+            // node-id affected set (computed below from
+            // the O(n) walk if the per-DefUseIndex path
+            // didn't yield one), so the per-DefUseIndex
+            // path's contribution is purely the
+            // visited-count + speedup signal.
+            //
+            // The O(n) walk in affected_subtree_for_symbol
+            // is the canonical "use-sites" computation
+            // (variable nodes whose sym_id matches). The
+            // per-DefUseIndex tracker tracks the same
+            // population, so its size_for_index should
+            // match the O(n) walk's count. We use the
+            // tracker count for the metric (cheap) and
+            // still run the O(n) walk to get the actual
+            // NodeIds (for the inference loop).
+            const auto* tracker = static_cast<const per_defuse_index::PerDefUseIndexTracker*>(
+                st.per_defuse_index_tracker);
+            // Look up the tracker entry by sym's lexical
+            // name. Note: the tracker keys on string
+            // names, not SymId. The caller is expected to
+            // have registered entries by the same name
+            // string that the binding uses. If the lookup
+            // misses, fall through to the O(n) walk.
+            // We use the sym's name from the flat's
+            // string pool.
+            std::string sym_name;
+            if (st.sym_for_lookup != aura::ast::INVALID_SYM) {
+                // The FlatAST doesn't expose the string
+                // pool directly; service.ixx populates
+                // per_defuse_index_tracker_ with names
+                // (see compile:per-defuse-index-add). The
+                // tracker uses std::string for its key.
+                // We don't have a direct sym → name API
+                // here, so we use a heuristic: the
+                // tracker may have the entry under any
+                // name. For scope-limited #411 fu1
+                // follow-up #3, the per-DefUseIndex path
+                // just BUMPS the metric when the tracker
+                // is non-null; the actual NodeId set
+                // comes from the O(n) walk below. This
+                // keeps the path metrics honest (the
+                // O(uses) optimization is the next
+                // follow-up commit which will store
+                // NodeIds directly in the tracker).
+                //
+                // For now, we conservatively bump
+                // per_defuse_index_used_total only if
+                // tracker.index_count() > 0 (signals that
+                // SOME syms are tracked). The O(uses)
+                // wins in scope-limited #411 fu1 fu1
+                // are: (a) avoiding the Variable sym_id
+                // comparison per node when tracker
+                // says "no use-sites for this sym" (we
+                // still walk but count the O(n) cost in
+                // per_symbol_visited), (b) the metric
+                // signals to the user that the path
+                // fired.
+                if (tracker->index_count() > 0) {
+                    st.per_defuse_index_used = true;
+                }
+            }
+        }
+        if (st.per_defuse_index_used) {
+            ++st.stats.per_defuse_index_used_total;
+            // Issue #411 fu1 fu4: the actual O(uses) win.
+            // The tracker now stores NodeIds directly, so we
+            // can iterate the use-sites without paying the
+            // O(n) `affected_subtree_for_symbol` walk cost.
+            // Get the sym's name from the StringPool, look
+            // up the tracker entry, and use the stored
+            // NodeIds as the affected set. If the sym isn't
+            // in the tracker (the `index_count() > 0` check
+            // was a coarse gate — the tracker might be
+            // populated for OTHER syms), fall through to the
+            // O(n) walk (bump walk_fallback).
+            if (st.sym_for_lookup != aura::ast::INVALID_SYM) {
+                const auto* tracker = static_cast<const per_defuse_index::PerDefUseIndexTracker*>(
+                    st.per_defuse_index_tracker);
+                const std::string sym_name(st.pool.resolve(st.sym_for_lookup));
+                const auto& tracker_callers =
+                    tracker->get_callers(per_defuse_index::DefUseIndex{sym_name});
+                if (!tracker_callers.empty()) {
+                    // O(uses) — directly iterate the tracker
+                    // entries. Bump visited_total with the
+                    // actual O(uses) count.
+                    st.affected.reserve(tracker_callers.size());
+                    for (const auto& c : tracker_callers)
+                        st.affected.push_back(c.node_id);
+                    st.stats.per_defuse_index_visited_total += st.affected.size();
+                } else {
+                    // Tracker doesn't have this sym — fall
+                    // through to O(n) walk (bump walk_fallback).
+                    st.affected = affected_subtree_for_symbol(st.flat, st.sym_for_lookup);
+                    ++st.stats.per_defuse_index_walk_fallback_total;
+                    st.stats.per_symbol_visited_total += st.affected.size();
+                }
+            }
+        } else {
+            // 2) per-symbol path (existing O(n) walk, from
+            // #411 fu1 follow-up #1).
+            if (st.sym_for_lookup != aura::ast::INVALID_SYM) {
+                st.affected = affected_subtree_for_symbol(st.flat, st.sym_for_lookup);
+                ++st.stats.per_symbol_used_total;
+                st.stats.per_symbol_visited_total += st.affected.size();
+                st.per_symbol_used = true;
+            }
+        }
+        if (st.affected.empty()) {
+            // 3) localized subtree fallback (#1456). Used when
+            // the mutation record doesn't carry a binding
+            // sym_id (sub-expression mutation like
+            // replace-type) or when the per-symbol path
+            // returns empty (no use-sites of the changed
+            // binding in the workspace).
+            st.affected = affected_subtree_from_mutation(st.flat, st.rec);
+            // Issue #487: bump the affected_subtree counter
+            // for observability (the dirty propagation
+            // path fired). Distinct from should_relower
+            // (the IR re-lower decision — happens
+            // downstream of the affected set).
+            if (st.tc.metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(st.tc.metrics_);
+                m->affected_subtree_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            ++st.stats.ancestor_used_total;
+            st.stats.ancestor_visited_total += st.affected.size();
+            // Bump the per-DefUseIndex walk-fallback metric
+            // (signals the index didn't have the sym — the
+            // user can use this to track index coverage).
+            if (st.per_defuse_index_tracker)
+                ++st.stats.per_defuse_index_walk_fallback_total;
+        } else {
+            // Issue #1456: per-symbol / DefUse paths return
+            // use-sites only. Always union the localized
+            // mutation primary (define body / replaced
+            // subtree) so rebind body nodes are re-inferred
+            // without falling back to a Begin-wide cascade.
+            auto local = affected_subtree_from_mutation(st.flat, st.rec);
+            if (!local.empty()) {
+                DenseNodeSet4682 seen(st.affected.begin(), st.affected.end(), st.flat.size());
+                for (auto id : local) {
+                    if (seen.insert(id).second)
+                        st.affected.push_back(id);
+                }
+                if (st.tc.metrics_) {
+                    auto* m = static_cast<struct CompilerMetrics*>(st.tc.metrics_);
+                    m->affected_subtree_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        }
+        // Issue #3686: Production/Full post-mutate unions every MutationRecord
+        // written under this outermost Guard. extra_recs is empty on Soft/Off
+        // and on single-op (zero extra — still the primary `rec` / log.back()).
+        // Reuse affected_subtree_from_mutation per record; cone cap (#2560)
+        // still applies on the unioned set below.
+        if (!st.extra_recs.empty()) {
+            DenseNodeSet4682 seen(st.affected.begin(), st.affected.end(), st.flat.size());
+            for (const auto& extra : st.extra_recs) {
+                if (&extra == &st.rec)
+                    continue;
+                auto local = affected_subtree_from_mutation(st.flat, extra);
+                for (auto id : local) {
+                    if (seen.insert(id).second)
+                        st.affected.push_back(id);
+                }
+            }
+        }
+        if (st.affected.empty()) {
+            // Issue #3228: residual CastOp persist + empty mutation cone
+            // (columnar under-mark). Remirror then pull cascade so residual
+            // AST sites still re-typecheck. Quiet persist → still return 0.
+            (void)dirty::force_residual_castop_undermark_into_cone();
+            {
+                std::vector<NodeId> cascade_ast;
+                dirty::pull_cascade_ast_dirty_into(cascade_ast);
+                for (auto id : cascade_ast) {
+                    if (id == NULL_NODE || id >= st.flat.size())
+                        continue;
+                    st.affected.push_back(id);
+                }
+            }
+        }
+        if (st.affected.empty()) {
+            // No affected nodes — the mutation was a no-op (or
+            // target_node + parent_id both null). Count as a
+            // full cache hit (no re-inference needed).
+            // Issue #2262: no engine CS to import — skip metric.
+            g_partial_cs_import_skip_total.fetch_add(1, std::memory_order_relaxed);
+            st.tc.last_partial_cs_live_ = st.tc.commit_cs_has_work(); // retain prior live flag
+            // Issue #2621 AC4: empty dirty → vacuous healthy (clear truncate).
+            st.tc.last_partial_cone_truncated_ = false;
+            st.tc.last_partial_cone_dropped_ = 0;
+            aura::compiler::typed_audit::publish_partial_cone_truncate(false, 0, 0);
+            // Issue #3347: empty affected after remirror — persist IDs are
+            // out of this AST or the mutation is a no-op. Drop the pending
+            // latch so grant is not stuck (C ABI remirror already seeded cone).
+            dirty::clear_residual_castop_undermark_pending();
+            return true;
+        }
+        return false;
+    }
+
+    // Expand the cone through type_dep, cascade dirty nodes, and top-level caller forms.
+    // Same order and diagnostics as the former body of TypeChecker::infer_flat_partial.
+    void partial_expand_affected_cone(InferFlatPartialState& st) {
+        // Issue #1528: expand the affected set via type_dep_graph_
+        // so dependents of *type variables* stamped on the primary
+        // mutation nodes are re-inferred without a full-function
+        // cascade. Ground types (Int/Bool/...) are intentionally
+        // not expanded (would pull every literal in the workspace).
+        //
+        // When the graph is empty (fresh TypeChecker per
+        // incremental_infer call), seed it from Variable nodes
+        // that already carry a type_id — O(n) once, O(uses) expand.
+        {
+            if (st.tc.type_dep_graph_.empty() && st.flat.size() > 0) {
+                for (NodeId id = 0; id < st.flat.size(); ++id) {
+                    auto v = st.flat.get(id);
+                    if (v.tag != NodeTag::Variable || v.type_id == 0)
+                        continue;
+                    st.tc.record_type_dependency(v.type_id, id);
+                }
+            }
+            DenseNodeSet4682 seen(st.affected.begin(), st.affected.end(), st.flat.size());
+            std::vector<NodeId> seeds = st.affected;
+            if (st.rec.target_node != aura::ast::NULL_NODE && st.rec.target_node < st.flat.size())
+                seeds.push_back(st.rec.target_node);
+            // Issue #3686: earlier Guard records seed type_dep expand too.
+            for (const auto& extra : st.extra_recs) {
+                if (&extra == &st.rec)
+                    continue;
+                if (extra.target_node != aura::ast::NULL_NODE && extra.target_node < st.flat.size())
+                    seeds.push_back(extra.target_node);
+            }
+            std::uint64_t expanded = 0;
+            std::unordered_set<std::uint32_t> seed_tids;
+            for (auto id : seeds) {
+                if (id == aura::ast::NULL_NODE || id >= st.flat.size())
+                    continue;
+                const auto tid = static_cast<std::uint32_t>(st.flat.get(id).type_id);
+                if (tid == 0 || !seed_tids.insert(tid).second)
+                    continue;
+                // Only expand type variables (not ground Int/Bool/...).
+                TypeId probe{};
+                probe.index = tid;
+                if (!st.tc.types.is_var(probe))
+                    continue;
+                // Issue #2560: degree-truncate per-TypeId fan-out (not cone-wide).
+                std::size_t fan = 0;
+                const auto fan_cap = type_dep_fanout_cap();
+                for (auto dep : st.tc.affected_nodes_for_type(tid)) {
+                    if (fan >= fan_cap) {
+                        if (st.tc.metrics_) {
+                            static_cast<struct CompilerMetrics*>(st.tc.metrics_)
+                                ->partial_cone_type_dep_degree_trunc_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                        }
+                        break;
+                    }
+                    if (dep == aura::ast::NULL_NODE || dep >= st.flat.size())
+                        continue;
+                    if (static_cast<std::uint32_t>(st.flat.get(dep).type_id) != tid)
+                        continue; // stale graph entry
+                    if (seen.insert(dep).second) {
+                        st.affected.push_back(dep);
+                        ++expanded;
+                        ++fan;
+                    }
+                }
+            }
+            if (expanded > 0 && st.tc.metrics_) {
+                static_cast<struct CompilerMetrics*>(st.tc.metrics_)
+                    ->type_dep_graph_affected_expand_total.fetch_add(expanded,
+                                                                     std::memory_order_relaxed);
+            }
+        }
+
+        // Issue #2191: pull IR/cascade-marked AST dep nodes into the type
+        // affected set (reverse unify). Preserves #1456 locality — only
+        // nodes already in g_global_dirty / pending cascade roots as
+        // encode_ast_dep_node, not sibling defines.
+        {
+            std::vector<NodeId> cascade_ast;
+            dirty::pull_cascade_ast_dirty_into(cascade_ast);
+            if (!cascade_ast.empty()) {
+                DenseNodeSet4682 seen(st.affected.begin(), st.affected.end(), st.flat.size());
+                for (auto id : cascade_ast) {
+                    if (id == NULL_NODE || id >= st.flat.size())
+                        continue;
+                    if (seen.insert(id).second)
+                        st.affected.push_back(id);
+                }
+            }
+        }
+
+        // Issue #518 P0 Phase 1: collect dirty if-contexts from the
+        // affected set plus the mutation target subtree (rebind
+        // auto-wires kOccurrenceDirty on if-nodes in the new body
+        // even when the per-symbol affected set is only use-sites).
+        // Issue #4682 (typecheck cone): the root Begin is no longer an
+        // affected root (affected_subtree_from_mutation). It used to re-check
+        // every caller's Call against the callee's new signature (arity, arg
+        // types). Lift each affected node to its top-level form under the root
+        // Begin so caller defines are re-inferred whole: O(callers), not O(W).
+        {
+            if (!st.affected.empty()) {
+                DenseNodeSet4682 seen(st.affected.begin(), st.affected.end(), st.flat.size());
+                const std::size_t n0 = st.affected.size();
+                std::vector<NodeId> lifted;
+                lifted.reserve(n0);
+                DenseNodeSet4682 lifted_seen(st.flat.size());
+                // Issue #4682: memo of each walked node's top-level form, so
+                // affected nodes sharing a spine walk it once (was
+                // O(|affected| * depth)). kLiftDetached marks a detached subtree.
+                constexpr NodeId kLiftUnknown = NULL_NODE;
+                const NodeId kLiftDetached = static_cast<NodeId>(st.flat.size());
+                std::vector<NodeId> lift_memo(st.flat.size(), kLiftUnknown);
+                std::vector<NodeId> lift_path;
+                for (std::size_t k = 0; k < n0; ++k) {
+                    NodeId cur = st.affected[k];
+                    if (cur == NULL_NODE || cur >= st.flat.size())
+                        continue;
+                    std::size_t safety = 0;
+                    bool detached = false;
+                    lift_path.clear();
+                    while (safety++ < st.flat.size()) {
+                        if (lift_memo[cur] != kLiftUnknown) {
+                            detached = lift_memo[cur] == kLiftDetached;
+                            if (!detached)
+                                cur = lift_memo[cur];
+                            break;
+                        }
+                        lift_path.push_back(cur);
+                        const NodeId par = st.flat.parent_of(cur);
+                        if (par == NULL_NODE || par >= st.flat.size()) {
+                            // Issue #4682 fix 1: a parentless non-root node is a
+                            // subtree a rebind detached (old lambda body). It is
+                            // not a top-level form; do not lift / walk it.
+                            detached = cur != st.flat.root;
+                            break;
+                        }
+                        const NodeId gp = st.flat.parent_of(par);
+                        const bool par_is_root_begin =
+                            st.flat.tag(par) == NodeTag::Begin &&
+                            (par == st.flat.root || gp == NULL_NODE || gp >= st.flat.size());
+                        if (par_is_root_begin)
+                            break;
+                        cur = par;
+                    }
+                    for (auto pn : lift_path)
+                        lift_memo[pn] = detached ? kLiftDetached : cur;
+                    if (detached)
+                        continue;
+                    // Every affected node's top-level form is part of the cone
+                    // (the primary Define is already there; use sites lift to it).
+                    if (cur != NULL_NODE && cur < st.flat.size() && lifted_seen.insert(cur).second)
+                        lifted.push_back(cur);
+                    if (cur != st.affected[k] && seen.insert(cur).second)
+                        st.affected.push_back(cur);
+                }
+                // Issue #4682: a lifted caller is re-checked whole, so the top-level
+                // Define of every name it references must be in the cone too —
+                // otherwise the callee reads as an unbound variable in the narrow
+                // cone (4362 soft loses the arity gate; 4363 leaves a spurious
+                // "unbound variable: hello" diagnostic after a rejected rebind).
+                // Only the referenced defines are added: O(callers), not O(W)
+                // (the root Begin itself stays out of the cone).
+                if (!lifted.empty() && st.flat.root != NULL_NODE && st.flat.root < st.flat.size() &&
+                    st.flat.tag(st.flat.root) == NodeTag::Begin) {
+                    std::unordered_set<std::uint32_t> want_syms;
+                    // Issue #4682 (B): per-top visited as a dense bitmap reset via
+                    // a touched list (same per-top semantics, no hash-node churn).
+                    std::vector<std::uint8_t> visited_bits(st.flat.size(), 0);
+                    std::vector<NodeId> visited_touched;
+                    for (auto top : lifted) {
+                        for (auto t : visited_touched)
+                            visited_bits[t] = 0;
+                        visited_touched.clear();
+                        std::vector<NodeId> stack{top};
+                        while (!stack.empty()) {
+                            const NodeId id = stack.back();
+                            stack.pop_back();
+                            if (id == NULL_NODE || id >= st.flat.size() ||
+                                id >= visited_bits.size() || visited_bits[id])
+                                continue;
+                            visited_bits[id] = 1;
+                            visited_touched.push_back(id);
+                            auto nv = st.flat.get(id);
+                            if (nv.tag == NodeTag::Variable && nv.sym_id != INVALID_SYM)
+                                want_syms.insert(static_cast<std::uint32_t>(nv.sym_id));
+                            for (auto c : nv.children) {
+                                if (c != NULL_NODE)
+                                    stack.push_back(c);
+                            }
+                        }
+                    }
+                    if (!want_syms.empty()) {
+                        // A lifted caller may reference another top-level define
+                        // (bye calls hello) that is not in the cone. The narrow
+                        // cone does not carry the root Begin's global scope, so
+                        // that reference reads as an unbound variable (4362 soft
+                        // loses the arity gate; 4363 leaves a stale "unbound
+                        // variable: hello"). For that shape only, fall back to the
+                        // root-Begin cone (old behaviour): correctness first. The
+                        // O(callers) path still covers callee rebinds, where the
+                        // caller's reference is the callee already in the cone.
+                        bool need_root = false;
+                        // Issue #4682 step 2: probe the persistent define index
+                        // per referenced name (O(refs)) instead of walking all W
+                        // root children.
+                        // Issue #4925: a Define nested in a top-level
+                        // (begin ...) is still a top-level binding, but its
+                        // parent is the inner Begin, not flat.root. Treat that
+                        // shape as top-level too, or the narrow cone drops the
+                        // root scope and the lifted caller reads the binding as
+                        // unbound / with a stale arity.
+                        auto is_top_level_define = [&st](aura::ast::NodeId d) {
+                            const auto p = st.flat.parent_of(d);
+                            if (p == st.flat.root)
+                                return true;
+                            return p != aura::ast::NULL_NODE &&
+                                   st.flat.tag(p) == aura::ast::NodeTag::Begin &&
+                                   st.flat.parent_of(p) == st.flat.root;
+                        };
+                        for (auto sym : want_syms) {
+                            for (auto d :
+                                 st.flat.defines_for_sym(static_cast<aura::ast::SymId>(sym))) {
+                                if (is_top_level_define(d) && d != st.rec.target_node) {
+                                    need_root = true;
+                                    break;
+                                }
+                            }
+                            if (need_root)
+                                break;
+                        }
+                        if (need_root) {
+                            if (seen.insert(st.flat.root).second) {
+                                st.affected.push_back(st.flat.root);
+                                if (st.tc.metrics_) {
+                                    static_cast<struct CompilerMetrics*>(st.tc.metrics_)
+                                        ->type_dep_partial_nodes_added.fetch_add(
+                                            1, std::memory_order_relaxed);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Collect occurrence-dirty ifs, deep predicates, and type-id dependents into the cone.
+    // Same order and diagnostics as the former body of TypeChecker::infer_flat_partial.
+    void partial_collect_occurrence_targets(InferFlatPartialState& st) {
+        std::unordered_set<NodeId> occurrence_seen;
+        // Issue #4682 step 4: one visited bitmap per collector so overlapping
+        // roots (ancestor + descendants, parent_id) walk each node once.
+        std::vector<std::uint8_t> occ_visited_4682(st.flat.size(), 0),
+            deep_visited_4682(st.flat.size(), 0);
+        auto* occ_v4682 = &occ_visited_4682;
+        auto* deep_v4682 = &deep_visited_4682;
+        st.occurrence_targets.reserve(st.affected.size());
+        for (auto id : st.affected)
+            collect_occurrence_dirty_if_exprs_in_subtree(st.flat, id, st.occurrence_targets,
+                                                         occurrence_seen, occ_v4682);
+        if (st.rec.target_node != NULL_NODE && st.rec.target_node < st.flat.size())
+            collect_occurrence_dirty_if_exprs_in_subtree(
+                st.flat, st.rec.target_node, st.occurrence_targets, occurrence_seen, occ_v4682);
+        if (st.rec.parent_id != NULL_NODE && st.rec.parent_id < st.flat.size())
+            collect_occurrence_dirty_if_exprs_in_subtree(
+                st.flat, st.rec.parent_id, st.occurrence_targets, occurrence_seen, occ_v4682);
+        // Issue #3686: occurrence dirty Ifs under earlier Guard records.
+        for (const auto& extra : st.extra_recs) {
+            if (&extra == &st.rec)
+                continue;
+            if (extra.target_node != NULL_NODE && extra.target_node < st.flat.size())
+                collect_occurrence_dirty_if_exprs_in_subtree(
+                    st.flat, extra.target_node, st.occurrence_targets, occurrence_seen, occ_v4682);
+            if (extra.parent_id != NULL_NODE && extra.parent_id < st.flat.size())
+                collect_occurrence_dirty_if_exprs_in_subtree(
+                    st.flat, extra.parent_id, st.occurrence_targets, occurrence_seen, occ_v4682);
+        }
+        // Issue #689: deep and/or/not predicates in mutation-affected subtrees.
+        for (auto id : st.affected)
+            collect_deep_predicate_if_exprs_in_subtree(st.flat, st.pool, id, st.occurrence_targets,
+                                                       occurrence_seen, deep_v4682);
+        if (st.rec.target_node != NULL_NODE && st.rec.target_node < st.flat.size())
+            collect_deep_predicate_if_exprs_in_subtree(st.flat, st.pool, st.rec.target_node,
+                                                       st.occurrence_targets, occurrence_seen,
+                                                       deep_v4682);
+        // Issue #2283: systematic merge of affected_nodes_for_type for delta-touched
+        // TypeIds. Build touched_type_ids from CS touched_roots + occurrence vars +
+        // rebinding type change, then call affected_nodes_for_type(tid) for each to
+        // pull in dependent nodes that the existing per-seed loop (only type variables)
+        // would miss. Prefer type_dep + DefUseIndex over pure ancestor walk when
+        // available; ancestor remains as fallback. live_and_still_typed filter drops
+        // stale graph entries whose current type_id no longer matches the touched tid.
+        {
+            std::unordered_set<std::uint32_t> touched_type_ids;
+            auto add_tid_from_node = [&](NodeId nid) {
+                if (nid == aura::ast::NULL_NODE || nid >= st.flat.size())
+                    return;
+                const auto tid = static_cast<std::uint32_t>(st.flat.get(nid).type_id);
+                if (tid != 0)
+                    touched_type_ids.insert(tid);
+            };
+            // CS touched_roots (ConstraintSystem::touched_roots_ — the set used by
+            // the existing type_dep_graph_ expansion at line 6517+). Accessed
+            // via TypeChecker::constraint_system() which returns solve_delta_cs_.
+            for (auto nid : st.tc.constraint_system().touched_roots()) {
+                add_tid_from_node(nid);
+            }
+            // Occurrence vars (Issue #518 / #689).
+            for (auto nid : st.occurrence_targets) {
+                add_tid_from_node(nid);
+            }
+            // Rebinding type change (rec.target_node).
+            add_tid_from_node(st.rec.target_node);
+            // Issue #3686: earlier Guard records' type changes too.
+            for (const auto& extra : st.extra_recs) {
+                if (&extra == &st.rec)
+                    continue;
+                add_tid_from_node(extra.target_node);
+            }
+
+            if (!touched_type_ids.empty()) {
+                DenseNodeSet4682 seen(st.affected.begin(), st.affected.end(), st.flat.size());
+                std::uint64_t nodes_added = 0;
+                const auto fan_cap = type_dep_fanout_cap();
+                for (auto tid : touched_type_ids) {
+                    // Issue #2560: degree-truncate per-TypeId merge fan-out.
+                    std::size_t fan = 0;
+                    for (auto dep : st.tc.affected_nodes_for_type(tid)) {
+                        if (fan >= fan_cap) {
+                            if (st.tc.metrics_) {
+                                static_cast<struct CompilerMetrics*>(st.tc.metrics_)
+                                    ->partial_cone_type_dep_degree_trunc_total.fetch_add(
+                                        1, std::memory_order_relaxed);
+                            }
+                            break;
+                        }
+                        if (dep == aura::ast::NULL_NODE || dep >= st.flat.size())
+                            continue;
+                        // live_and_still_typed: drop stale graph entries whose
+                        // current type_id no longer matches the touched tid.
+                        if (static_cast<std::uint32_t>(st.flat.get(dep).type_id) != tid)
+                            continue;
+                        if (seen.insert(dep).second) {
+                            st.affected.push_back(dep);
+                            ++nodes_added;
+                            ++fan;
+                        }
+                    }
+                }
+                if (st.tc.metrics_) {
+                    static_cast<struct CompilerMetrics*>(st.tc.metrics_)
+                        ->type_dep_partial_merge_total.fetch_add(1, std::memory_order_relaxed);
+                    static_cast<struct CompilerMetrics*>(st.tc.metrics_)
+                        ->type_dep_partial_nodes_added.fetch_add(nodes_added,
+                                                                 std::memory_order_relaxed);
+                }
+            }
+        }
+    }
+
+    // Apply the partial-cone SLA, then drop stale type_dep edges for the seeds (#2516 phase 1).
+    // Same order and diagnostics as the former body of TypeChecker::infer_flat_partial.
+    void partial_truncate_cone_and_invalidate(InferFlatPartialState& st) {
+        // ── Issue #2560: partial cone soft/hard SLA (type layer) ──
+        // Issue #2621: stamp last_partial_cone_truncated for commit_readiness
+        // (Soft observe / production hard — never silent-commit under prod).
+        // After full cone build (primary + type_dep + cascade + #2283 merge),
+        // before #2516 invalidate/re-infer. Zero cost when size ≤ soft_cap (AC3).
+        // Soft overflow: seed-preserving truncate to soft_cap + counter.
+        // Hard (production only): seed-preserving truncate to hard_cap + counter
+        // (deterministic; no silent O(n) without metric — AC2).
+        // #2516 order is unchanged; empty cone already returned above (AC4).
+        {
+            auto* m =
+                st.tc.metrics_ ? static_cast<struct CompilerMetrics*>(st.tc.metrics_) : nullptr;
+            const auto soft = partial_cone_soft_cap();
+            const auto hard = partial_cone_hard_cap();
+            // Seeds: mutation primary + parent (locality for truncate).
+            // Issue #3686: preserve extra Guard-record targets under truncate
+            // so a two-Define batch cannot drop the earlier sibling.
+            std::vector<aura::ast::NodeId> seed_buf;
+            seed_buf.reserve(4 + st.extra_recs.size() * 2);
+            auto push_seed = [&](aura::ast::NodeId id) {
+                if (id == aura::ast::NULL_NODE)
+                    return;
+                seed_buf.push_back(id);
+            };
+            push_seed(st.rec.target_node);
+            push_seed(st.rec.parent_id);
+            if (!st.affected.empty())
+                push_seed(st.affected.front());
+            for (const auto& extra : st.extra_recs) {
+                if (&extra == &st.rec)
+                    continue;
+                push_seed(extra.target_node);
+                push_seed(extra.parent_id);
+            }
+            const auto seeds = std::span<const aura::ast::NodeId>(seed_buf.data(), seed_buf.size());
+
+            const auto orig_sz = st.affected.size();
+            if (m)
+                m->partial_cone_last_size.store(static_cast<std::uint64_t>(orig_sz),
+                                                std::memory_order_relaxed);
+
+            // Counters use pre-truncate size so Agents see true fan-out pressure.
+            if (orig_sz > soft) {
+                if (m)
+                    m->partial_cone_soft_overflow_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            const bool production = aura::compiler::typed_audit::production_defaults_active();
+            std::size_t dropped = 0;
+            bool truncated = false;
+            if (production && orig_sz > hard) {
+                // AC2: hard path under production — seed-preserving truncate to
+                // hard_cap (deterministic; metric prevents silent O(n)).
+                // #2621 AC3: hard overflow is never silent success for commit.
+                if (m)
+                    m->partial_cone_hard_fallback_total.fetch_add(1, std::memory_order_relaxed);
+                dropped = truncate_partial_cone_seed_preserving(st.affected, seeds, hard);
+                truncated = true; // over hard always fidelity signal even if drop==0
+            } else if (orig_sz > soft) {
+                // Soft overflow: prefer DefUse/per-symbol already selected above;
+                // still truncate seed-preserving to soft_cap for latency SLA.
+                dropped = truncate_partial_cone_seed_preserving(st.affected, seeds, soft);
+                truncated = dropped > 0 || orig_sz > soft;
+            }
+            if (m)
+                m->partial_cone_last_size.store(static_cast<std::uint64_t>(st.affected.size()),
+                                                std::memory_order_relaxed);
+            // Issue #2621: publish truncate fidelity for commit_readiness Agents.
+            aura::compiler::typed_audit::publish_partial_cone_truncate(
+                truncated, static_cast<std::uint64_t>(dropped), /*fanout*/ 0);
+            st.tc.last_partial_cone_truncated_ = truncated;
+            st.tc.last_partial_cone_dropped_ = static_cast<std::uint64_t>(dropped);
+        }
+
+        // ── Issue #2516 dirty txn (single ordered sequence; all partial paths) ──
+        // Phase order (AC1 source-cite; do not reorder without updating tests):
+        //   1. invalidate_type_dep_for_nodes(dirty seeds)  — drop stale edges
+        //   2. re-infer affected (engine re-records type_dep)  — loop below
+        //   3. mirror_type_affected_to_cascade(post-infer cone) — AFTER phase 2
+        //   3b. remirror_persisted_residual_castops (#3120 / #3228) after wipe
+        // Empty affected already returned above (AC4: no invalidate / no mirror).
+        // Pre-#2516 mirrored cascade before re-infer (stale cone risk); mirror
+        // is now deferred to after re-infer (see phase-3 block below).
+        //
+        // Issue #2355 Phase B: after expand, drop dirty nids from type_dep so
+        // re-infer re-records under the current epoch (bounds session growth).
+        // Empty affected already returned above — span non-empty here.
+        (void)st.tc.invalidate_type_dep_for_nodes(
+            std::span<const NodeId>(st.affected.data(), st.affected.size()));
+        if (st.tc.metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(st.tc.metrics_);
+            m->type_dirty_txn_phase1_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+            m->type_dirty_txn_order_wired.store(1, std::memory_order_relaxed);
+        }
+        {
+            const std::uint8_t kOccurrenceBit =
+                static_cast<std::uint8_t>(FlatAST::DirtyReason::kOccurrenceDirty);
+            for (auto id : st.occurrence_targets) {
+                st.flat.mark_dirty(id, kOccurrenceBit);
+                st.flat.mark_occurrence_stale(id);
+            }
+        }
+    }
+
+    // Mark linear bindings under occurrence-dirty ifs so the later ownership re-sim sees them.
+    // Same order and diagnostics as the former body of TypeChecker::infer_flat_partial.
+    void partial_note_linear_occurrence(InferFlatPartialState& st) {
+        // Issue #747: linear bindings in occurrence-dirty if-contexts → ownership_dirty.
+        for (auto if_id : st.occurrence_targets) {
+            if (!subtree_has_linear_ops(st.flat, if_id))
+                continue;
+            std::unordered_set<std::string> if_linear;
+            collect_linear_bindings_under_nodes(st.flat, st.pool, {if_id}, if_linear);
+            for (const auto& name : if_linear)
+                st.occurrence_linear_dirty.mark_ownership_dirty(name);
+            if (st.tc.metrics_)
+                bump_linear_occurrence_predicate_safe(st.tc.metrics_);
+        }
+    }
+
+    // Copy the checker's host, strictness, epoch, and observability hooks onto the per-call engine.
+    // Same order and diagnostics as the former body of TypeChecker::infer_flat_partial.
+    void partial_bind_partial_engine(InferFlatPartialState& st, InferenceEngine& engine) {
+        engine.set_registered_prim_probe(st.registered_prim_probe, st.registered_prim_ctx);
+        {
+            // Issue #4682 fix 3: build the filtered host-name set once per
+            // host-name change and share it; skip the per-call vector copy.
+            if (!st.host_name_set && !st.host_visible_names.empty()) {
+                auto set = std::make_shared<TypeEnv::HostNameSet>();
+                set->reserve(st.host_visible_names.size());
+                for (const auto& n : st.host_visible_names) {
+                    if (n.empty() || n[0] == '_' || n[0] == '@' || n[0] == ':')
+                        continue;
+                    set->insert(n);
+                }
+                st.host_name_set = std::move(set);
+            }
+            engine.set_host_name_set(st.host_name_set);
+        }
+        engine.declared_modules_ = st.type_module_src;
+        engine.declared_sigs_ = st.type_sigs;
+        engine.set_strict(st.strict); // Issue #79: plumb strict mode
+        engine.set_gradual_permissiveness(st.gradual_permissiveness); // Issue #2992
+        engine.set_cache_epoch(st.cache_epoch);                       // Issue #168
+        engine.set_metrics(st.tc.metrics_); // Issue #537: provenance refresh metrics
+        engine.set_bidirectional_mode(st.tc.bidirectional_mode_); // Issue #627
+        engine.bind_declared_sigs();
+        engine.set_narrowing_observability_hooks(st.tc.on_narrowing_refresh_,
+                                                 st.tc.on_selective_recheck_);
+        engine.set_solve_delta_observability_hooks(st.tc.on_touched_roots_snapshot_,
+                                                   st.tc.on_cross_delta_conflict_);
+        engine.set_active_mutation_id(st.rec.mutation_id);
+    }
+
+    // Stamp blame, invalidate predicate memo for the dirty names, and record the affected prefix.
+    // Same order and diagnostics as the former body of TypeChecker::infer_flat_partial.
+    void partial_blame_and_selective_invalidate(InferFlatPartialState& st,
+                                                InferenceEngine& engine) {
+        // Issue #1924: stamp blame context from mutation primary BEFORE
+        // occurrence reanalyze / coercion defer so mid-pass add_delta and
+        // add_deferred_coercion never see a zero mutation_id.
+        {
+            std::uint32_t primary_aff = 0;
+            if (st.rec.target_node != NULL_NODE && st.rec.target_node < st.flat.size())
+                primary_aff = static_cast<std::uint32_t>(st.rec.target_node);
+            else if (st.rec.parent_id != NULL_NODE && st.rec.parent_id < st.flat.size())
+                primary_aff = static_cast<std::uint32_t>(st.rec.parent_id);
+            engine.set_active_blame_context(/*predicate_cond_node=*/0, primary_aff);
+            if (st.tc.metrics_ && st.rec.mutation_id != 0 && primary_aff == 0) {
+                static_cast<struct CompilerMetrics*>(st.tc.metrics_)
+                    ->blame_propagation_miss_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        // Issue #2104 / #2068 Phase 2: selective predicate-memo invalidation
+        // by dirty binding names (prefer when known) + min_gen, then #1923
+        // targeted node invalidation for occurrence If / affected set.
+        // Zero cost when dirty set empty (helpers no-op on empty).
+        {
+            std::unordered_set<std::string> dirty_var_names;
+            if (st.sym_for_lookup != aura::ast::INVALID_SYM) {
+                const auto nm = st.pool.resolve(st.sym_for_lookup);
+                if (!nm.empty())
+                    dirty_var_names.insert(std::string(nm));
+            }
+            // Rebind / set-body often leave target as Define/Lambda — also
+            // collect Variable names under the mutated subtree (bounded).
+            if (st.rec.target_node != NULL_NODE && st.rec.target_node < st.flat.size()) {
+                std::vector<NodeId> stack{st.rec.target_node};
+                std::vector<std::uint8_t> visited(st.flat.size(), 0);
+                visited[static_cast<std::size_t>(st.rec.target_node)] = 1;
+                int hops = 0;
+                while (!stack.empty() && hops < 48 && dirty_var_names.size() < 32) {
+                    ++hops;
+                    const auto nid = stack.back();
+                    stack.pop_back();
+                    auto nv = st.flat.get(nid);
+                    if (nv.tag == NodeTag::Variable && nv.sym_id != INVALID_SYM) {
+                        auto nm = st.pool.resolve(nv.sym_id);
+                        if (!nm.empty())
+                            dirty_var_names.insert(std::string(nm));
+                    }
+                    if (nv.tag == NodeTag::Define || nv.tag == NodeTag::Let ||
+                        nv.tag == NodeTag::LetRec) {
+                        if (nv.sym_id != INVALID_SYM) {
+                            auto nm = st.pool.resolve(nv.sym_id);
+                            if (!nm.empty())
+                                dirty_var_names.insert(std::string(nm));
+                        }
+                    }
+                    for (auto c : nv.children) {
+                        if (c == NULL_NODE || c >= st.flat.size())
+                            continue;
+                        if (visited[static_cast<std::size_t>(c)])
+                            continue;
+                        visited[static_cast<std::size_t>(c)] = 1;
+                        stack.push_back(c);
+                    }
+                }
+            }
+            // Prefer selective var_name path when the dirty set is known (#2104).
+            const auto selective_vars =
+                engine.invalidate_predicate_memo_for_var_names(dirty_var_names);
+            // Drop memo entries captured under a strictly older epoch than the
+            // current cache epoch (generation advanced across mutate).
+            const auto selective_gen = engine.invalidate_predicate_memo_for_min_gen(
+                st.cache_epoch > 0 ? st.cache_epoch : 0);
+            // #1923 / #2622: unified dirty-key authority — memo + OccurrenceGoal
+            // drop for affected / occurrence node ids (single pipeline).
+            std::vector<NodeId> memo_targets;
+            memo_targets.reserve(st.affected.size() + st.occurrence_targets.size());
+            for (auto id : st.affected)
+                memo_targets.push_back(id);
+            for (auto id : st.occurrence_targets)
+                memo_targets.push_back(id);
+            // Issue #2622: sync_occurrence_after_dirty invalidates memo AND drops
+            // goals on engine CS + long-lived solve_delta_cs_ (no goal/memo diverge).
+            (void)engine.sync_occurrence_after_dirty(
+                std::span<const NodeId>(memo_targets.data(), memo_targets.size()), &st.flat,
+                &st.solve_delta_cs);
+            if (st.tc.metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(st.tc.metrics_);
+                // Path always wired on infer_flat_partial (zero cost when empty).
+                m->predicate_memo_boundary_selective_wired.store(1, std::memory_order_relaxed);
+                // Boundary-selective total: only drops from var_names/min_gen
+                // (not #1923 node invalidations). AC3: empty dirty → 0 add.
+                if (selective_vars + selective_gen > 0) {
+                    m->predicate_memo_boundary_selective_total.fetch_add(
+                        selective_vars + selective_gen, std::memory_order_relaxed);
+                }
+            }
+        }
+        // Issue #2646: cone-truncate must drop goals/memo for dirty If/cond
+        // NodeIds that fell OUTSIDE the truncated cone (anti ghost-narrow
+        // after cone-truncated self-modify). The existing #2622 invalidate
+        // above covers occurrence_targets but if cone was truncated, dirty
+        // Ifs that did NOT make the truncated cone retain a prior epoch's
+        // refined type — next delta priority-replays a ghost narrow. This
+        // path collects `occurrence_targets` not in the truncated cone
+        // (set difference) and re-runs sync_occurrence_after_dirty on them.
+        // Zero cost on !truncated or empty outside set (AC3). Counters
+        // observe call / dropped (placeholder counts — exact drop counts
+        // wire in follow-up commit per AC4 ordering note).
+        if (st.tc.last_partial_cone_truncated_) {
+            std::vector<NodeId> outside_cone_conds;
+            outside_cone_conds.reserve(st.occurrence_targets.size());
+            DenseNodeSet4682 affected_set(st.affected.begin(), st.affected.end(), st.flat.size());
+            for (auto id : st.occurrence_targets) {
+                if (affected_set.find(id) == affected_set.end())
+                    outside_cone_conds.push_back(id);
+            }
+            if (!outside_cone_conds.empty()) {
+                (void)engine.sync_occurrence_after_dirty(
+                    std::span<const NodeId>(outside_cone_conds.data(), outside_cone_conds.size()),
+                    &st.flat, &st.solve_delta_cs);
+                // Issue #2703 / #2909: publish outside-If goal drop face so
+                // production commit_readiness can force full-solve recover
+                // (or hard reject) — Soft observes only. Quiet empty set
+                // never reaches here (zero cost).
+                aura::compiler::typed_audit::publish_cone_outside_goal_drop(
+                    static_cast<std::uint64_t>(outside_cone_conds.size()));
+                if (st.tc.metrics_) {
+                    auto* m = static_cast<struct CompilerMetrics*>(st.tc.metrics_);
+                    m->occurrence_cone_outside_invalidate_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    // Placeholder counts — exact drop counts wire in follow-up commit
+                    // (engine.sync_occurrence_after_dirty returns void today; AC4
+                    // #2622 diverge metric ordering preserved by calling AFTER the
+                    // existing #2622 sync so its counters advance first).
+                    m->occurrence_cone_outside_goals_dropped_total.fetch_add(
+                        outside_cone_conds.size(), std::memory_order_relaxed);
+                    m->occurrence_cone_outside_memo_dropped_total.fetch_add(
+                        outside_cone_conds.size(), std::memory_order_relaxed);
+                }
+            }
+            // Issue #2694: Soft truncated cone silent dependency detection
+            // (refine #2646 outside-If invalidate + #2672 soak — closes the
+            // silent class for Sampled/Soft hosts). When Soft + cone truncate
+            // dropped edges that are NOT in the #2646 outside-cone set (i.e.,
+            // non-If silent deps of live OccurrenceGoal / linear-typed bindings),
+            // arm the escalate counter so commit_readiness can force one Full
+            // audit / reject under production_defaults. Soft pure-observe path
+            // only when no silent-dep edges exist (zero cost happy path).
+            // production / Full already hard — unchanged.
+            {
+                const auto dropped_n = st.tc.last_partial_cone_dropped();
+                if (dropped_n > outside_cone_conds.size()) {
+                    const auto silent_n = dropped_n - outside_cone_conds.size();
+                    aura::compiler::typed_audit::publish_soft_truncated_silent_dep_escalate(
+                        silent_n);
+                }
+            }
+        }
+        // Issue #2285 Phase 2: selective invalidate from FULL affected set
+        // (broader than the target_node subtree walk above; covers type_dep
+        // additions from #2283 that extend beyond the mutated binding's
+        // direct subtree). Drops memo entries that mention any binding name
+        // in affected, preserving unrelated entries (AC1: independent If
+        // predicates → unrelated conds stay cached). Zero cost when
+        // affected is empty (helper no-op on empty set).
+        {
+            std::unordered_set<std::string> affected_names;
+            affected_names.reserve(st.affected.size());
+            for (auto nid : st.affected) {
+                if (nid == aura::ast::NULL_NODE || nid >= st.flat.size())
+                    continue;
+                auto nv = st.flat.get(nid);
+                if (nv.sym_id != aura::ast::INVALID_SYM &&
+                    (nv.tag == aura::ast::NodeTag::Variable ||
+                     nv.tag == aura::ast::NodeTag::Define || nv.tag == aura::ast::NodeTag::Let ||
+                     nv.tag == aura::ast::NodeTag::LetRec || nv.tag == aura::ast::NodeTag::Lambda ||
+                     nv.tag == aura::ast::NodeTag::Set)) {
+                    auto nm = st.pool.resolve(nv.sym_id);
+                    if (!nm.empty())
+                        affected_names.insert(std::string(nm));
+                }
+            }
+            const auto selective_affected =
+                affected_names.empty()
+                    ? std::size_t{0}
+                    : engine.invalidate_predicate_memo_for_var_names(affected_names);
+            if (st.tc.metrics_ && selective_affected > 0) {
+                auto* m = static_cast<struct CompilerMetrics*>(st.tc.metrics_);
+                m->predicate_memo_boundary_selective_total.fetch_add(selective_affected,
+                                                                     std::memory_order_relaxed);
+            }
+        }
+    }
+
+    // Re-narrow dirty ifs, seed ADT exhaustiveness, and drop nodes unreachable from the live root.
+    // Same order and diagnostics as the former body of TypeChecker::infer_flat_partial.
+    void partial_renarrow_and_seed_adt(InferFlatPartialState& st, InferenceEngine& engine) {
+        // Issue #1529 / #1924: pre-seed blame affected sequence from the
+        // mutation primary + a bounded prefix of the affected set
+        // (full dump is O(delta), not O(workspace)).
+        if (st.rec.target_node != NULL_NODE && st.rec.target_node < st.flat.size())
+            engine.push_blame_affected_node(static_cast<std::uint32_t>(st.rec.target_node));
+        if (st.rec.parent_id != NULL_NODE && st.rec.parent_id < st.flat.size() &&
+            st.rec.parent_id != st.rec.target_node)
+            engine.push_blame_affected_node(static_cast<std::uint32_t>(st.rec.parent_id));
+        constexpr std::size_t kBlameAffectedCap = 32;
+        for (std::size_t i = 0; i < st.affected.size() && i < kBlameAffectedCap; ++i) {
+            auto id = st.affected[i];
+            if (id != NULL_NODE && id < st.flat.size())
+                engine.push_blame_affected_node(static_cast<std::uint32_t>(id));
+        }
+        if (st.tc.on_touched_roots_snapshot_)
+            st.tc.on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
+
+        // Issue #518: re-narrow dirty if-contexts before the infer
+        // loop, then propagate narrowed-variable use-sites into the
+        // affected set.
+        st.tc.last_occurrence_refresh_count_ = engine.reanalyze_occurrence_contexts(
+            st.flat, const_cast<StringPool&>(st.pool), st.occurrence_targets);
+        engine.propagate_narrowing_to_uses(st.flat, const_cast<StringPool&>(st.pool), st.affected);
+        engine.seed_mutation_touched_roots(st.flat, st.pool, st.occurrence_targets,
+                                           st.rec.mutation_id);
+        // Issue #2028: selective ADT/GuardShape re-narrow only on dirty
+        // affected + occurrence roots (cross-delta local, no full walk).
+        {
+            std::vector<NodeId> renarrow_roots;
+            renarrow_roots.reserve(st.affected.size() + st.occurrence_targets.size());
+            for (auto id : st.affected)
+                renarrow_roots.push_back(id);
+            for (auto id : st.occurrence_targets)
+                renarrow_roots.push_back(id);
+            (void)selective_adt_guardshape_renarrow(st.flat, st.pool, st.tc.types, renarrow_roots,
+                                                    st.tc.metrics_);
+        }
+        // Issue #2288 / #2564 / #3005 / #3045: selective ADT exhaustiveness
+        // on infer_flat_partial. Variant invalidate + pattern-dirty match
+        // nodes seed reverify roots; those roots join the dirty cone
+        // (affected) and solve_delta touched/pending seeds (#2939 BFS).
+        // Soft bumps observe counters; Production hard-rejects unproven
+        // / Dynamic-slide results (no residual SOLVED via Dynamic).
+        // Quiet: no match in dirty set and no reverify roots → zero extra.
+        // #3045: constructor / arm-only under-mark still walks ancestors
+        // so containing match sites enter the cone (dirty_propagation +
+        // evaluator_typecheck + mutate_type_gate Hard).
+        // #3083: complete seed every match of a mutated ADT type so an
+        // incomplete call-site list cannot silently under-seed.
+        {
+            std::vector<NodeId> undermark_seeds;
+            undermark_seeds.reserve(st.affected.size() + 2);
+            if (st.rec.target_node != aura::ast::NULL_NODE)
+                undermark_seeds.push_back(st.rec.target_node);
+            if (st.rec.parent_id != aura::ast::NULL_NODE)
+                undermark_seeds.push_back(st.rec.parent_id);
+            for (auto id : st.affected)
+                undermark_seeds.push_back(id);
+            (void)force_adt_exhaust_undermark_into_cone(
+                st.flat, st.pool, st.tc.types, undermark_seeds, &engine.constraint_system(),
+                st.tc.metrics_);
+        }
+        engine.constraint_system().absorb_pending_adt_reverify_roots();
+        {
+            std::vector<std::uint32_t> pattern_matches;
+            pattern_matches.reserve(st.affected.size() + st.occurrence_targets.size());
+            auto push_match = [&](NodeId nid) {
+                if (nid == aura::ast::NULL_NODE || nid >= st.flat.size())
+                    return;
+                if (st.flat.has_match_info(nid))
+                    pattern_matches.push_back(static_cast<std::uint32_t>(nid));
+            };
+            for (auto nid : st.affected)
+                push_match(nid);
+            for (auto nid : st.occurrence_targets)
+                push_match(nid);
+            (void)engine.constraint_system().seed_adt_reverify_from_match_nodes(pattern_matches);
+        }
+        st.adt_reverify = engine.constraint_system().drain_adt_reverify_roots();
+        if (!st.adt_reverify.empty()) {
+            DenseNodeSet4682 cone_seen(st.affected.begin(), st.affected.end(), st.flat.size());
+            auto* m =
+                st.tc.metrics_ ? static_cast<struct CompilerMetrics*>(st.tc.metrics_) : nullptr;
+            for (auto raw : st.adt_reverify) {
+                const auto nid = static_cast<NodeId>(raw);
+                if (nid == aura::ast::NULL_NODE || nid >= st.flat.size())
+                    continue;
+                if (!st.flat.has_match_info(nid))
+                    continue; // stale id after rebind — do not infer
+                // Issue #3045: do not infer the match-let as a root (unbound
+                // pattern vars). Lift to enclosing Lambda/Define; post-infer
+                // exhaustiveness recheck still uses `nid` via adt_reverify.
+                {
+                    NodeId cur = st.flat.parent_of(nid);
+                    std::size_t safety = 0;
+                    NodeId lift = aura::ast::NULL_NODE;
+                    while (cur != aura::ast::NULL_NODE && cur < st.flat.size() &&
+                           safety++ < st.flat.size()) {
+                        const auto v = st.flat.get(cur);
+                        const bool match_let =
+                            v.tag == NodeTag::Let &&
+                            (st.flat.has_match_info(cur) ||
+                             std::string(st.pool.resolve(v.sym_id)) == "__match_tmp");
+                        if (v.tag == NodeTag::Lambda || v.tag == NodeTag::Define ||
+                            v.tag == NodeTag::LetRec || (v.tag == NodeTag::Let && !match_let)) {
+                            lift = cur;
+                            break;
+                        }
+                        cur = st.flat.parent_of(cur);
+                    }
+                    if (lift != aura::ast::NULL_NODE && cone_seen.insert(lift).second) {
+                        st.affected.push_back(lift);
+                        if (m)
+                            m->adt_exhaust_cone_seed_total.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+                if (auto* mi = st.flat.get_match_info(nid)) {
+                    if (mi->subject_type_id > 0)
+                        engine.constraint_system().note_adt_exhaust_dirty_type(mi->subject_type_id);
+                }
+            }
+            auto recheck = [&](NodeId nid) {
+                if (nid == aura::ast::NULL_NODE || nid >= st.flat.size())
+                    return;
+                if (!st.flat.has_match_info(nid))
+                    return;
+                auto exh = check_match_exhaustiveness(st.flat, st.pool, st.tc.types, nid);
+                const bool unproven = exh.via_dynamic || !exh.missing_constructors.empty() ||
+                                      !exh.checked || !exh.exhaustive;
+                if (m && (!exh.missing_constructors.empty() || exh.via_dynamic))
+                    m->adt_partial_non_exhaustive_total.fetch_add(1, std::memory_order_relaxed);
+                if (!unproven)
+                    return;
+                // Pre-infer: observe only. Production fail-closed waits
+                // until after re-infer so a pattern mutate that *adds*
+                // an arm is not rejected on stale match_info.
+                if (m)
+                    m->adt_exhaust_soft_observe_total.fetch_add(1, std::memory_order_relaxed);
+            };
+            std::unordered_set<NodeId> rechecked;
+            rechecked.reserve(
+                (st.affected.size() + st.occurrence_targets.size() + st.adt_reverify.size()) * 2);
+            auto once = [&](NodeId nid) {
+                if (rechecked.insert(nid).second)
+                    recheck(nid);
+            };
+            for (auto nid : st.affected)
+                once(nid);
+            for (auto nid : st.occurrence_targets)
+                once(nid);
+            for (auto raw : st.adt_reverify)
+                once(static_cast<NodeId>(raw));
+        } else if (st.tc.metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(st.tc.metrics_);
+            auto recheck = [&](NodeId nid) {
+                if (nid == aura::ast::NULL_NODE || nid >= st.flat.size())
+                    return;
+                if (!st.flat.has_match_info(nid))
+                    return;
+                auto exh = check_match_exhaustiveness(st.flat, st.pool, st.tc.types, nid);
+                if (!exh.missing_constructors.empty())
+                    m->adt_partial_non_exhaustive_total.fetch_add(1, std::memory_order_relaxed);
+            };
+            for (auto nid : st.affected)
+                recheck(nid);
+            for (auto nid : st.occurrence_targets)
+                recheck(nid);
+        }
+        if (st.tc.on_touched_roots_snapshot_)
+            st.tc.on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
+
+        // Issue #4363: a rejected rebind frees or unlinks the new body, but the
+        // slot keeps its tag, type id, and source column. Drop anything that is
+        // not reachable from the live root so the report describes the restored
+        // program. A linked body (the in-flight check) stays in the cone.
+        if (!st.affected.empty() && st.flat.root != NULL_NODE &&
+            st.flat.is_live_node(st.flat.root)) {
+            // Issue #4682: memoized per node (0 unknown, 1 reachable, 2 not),
+            // so a shared spine is walked once per pass.
+            std::vector<std::uint8_t> reach_memo(st.flat.size(), 0);
+            std::vector<NodeId> reach_path;
+            auto reachable = [&](NodeId id) -> bool {
+                if (!st.flat.is_live_node(id))
+                    return false;
+                reach_path.clear();
+                NodeId cur = id;
+                bool result = false;
+                for (std::size_t n = 0; n <= st.flat.size(); ++n) {
+                    if (cur == st.flat.root) {
+                        result = true;
+                        break;
+                    }
+                    if (cur < reach_memo.size() && reach_memo[cur] != 0) {
+                        result = reach_memo[cur] == 1;
+                        break;
+                    }
+                    if (!st.flat.is_live_node(cur))
+                        break;
+                    reach_path.push_back(cur);
+                    const NodeId parent = st.flat.parent_of(cur);
+                    if (parent == cur || parent == NULL_NODE)
+                        break;
+                    cur = parent;
+                }
+                for (auto pn : reach_path)
+                    if (pn < reach_memo.size())
+                        reach_memo[pn] = result ? 1 : 2;
+                return result;
+            };
+            std::vector<NodeId> live;
+            live.reserve(st.affected.size());
+            for (auto id : st.affected) {
+                if (reachable(id))
+                    live.push_back(id);
+            }
+            st.affected.swap(live);
+        }
+    }
+
+    // Re-infer each affected root once, skipping ancestors already in the cone and quoted datum.
+    // Same order and diagnostics as the former body of TypeChecker::infer_flat_partial.
+    void partial_reinfer_affected_roots(InferFlatPartialState& st, InferenceEngine& engine) {
+        engine.seed_workspace_value_defines(st.flat, const_cast<StringPool&>(st.pool));
+        // Issue #4682 step 5c: membership for the #656 ancestor dedupe, and a
+        // marker telling infer_flat that this pass already seeded (re-seeding
+        // per affected root was O(W) each; seed binds only unbound names, so a
+        // repeat inside the same pass is a no-op).
+        std::unordered_set<NodeId> affected_member_4682(st.affected.begin(), st.affected.end());
+        std::unordered_map<NodeId, std::uint32_t> affected_id_count_4682;
+        for (auto a : st.affected)
+            ++affected_id_count_4682[a];
+        SeededPassMarker4682 seeded_marker_4682(&engine);
+        std::vector<std::uint8_t> anc_memo_4682(st.flat.size(), 0);
+        std::vector<NodeId> anc_path_4682;
+
+        // Issue #4527: roots actually re-inferred by this boundary (after
+        // the ancestor dedupe). If the boundary demotes the production
+        // export authority, these are exactly the subtrees that must not
+        // survive clean-cached (see the re-dirty below).
+        for (std::size_t ai = 0; ai < st.affected.size(); ++ai) {
+            const auto id = st.affected[ai];
+            if (id == aura::ast::NULL_NODE || id >= st.flat.size() || st.flat.is_free_slot(id))
+                continue;
+            // Issue #656: dedupe. If `id` has an ancestor in the affected
+            // set, the ancestor's recursive walk will re-check `id` with
+            // the correct env_/scope context. Without this dedupe, every
+            // descendant node is processed as a SEPARATE engine.infer_flat
+            // call, and the env_ (which is popped back to empty after each
+            // Lambda scope exits) doesn't have the new Lambda's params
+            // bound — so Variables in the new body get reported as
+            // unbound. Symptom: test_issue_166 Test 3 fails on
+            // `(mutate:set-body "g" "(lambda (x) (+ x 100))")` because
+            // the selective recheck visits the new Lambda's body Variable
+            // `x` without x being in env_. Fix: skip `id` if any ancestor
+            // is also in the affected set.
+            // Issue #4682 step 5c: one upward walk against a membership set
+            // (was O(|affected|^2 * depth)). Same answer: the walk starts at
+            // parent_of(id), so `id` itself never matches (other than via the
+            // impossible cycle case, which the old loop also tolerated only for
+            // bi != ai entries holding a different copy of id).
+            bool ancestor_in_affected = false;
+            {
+                // Issue #4682: memo "this node or an ancestor is in affected"
+                // (0 unknown, 1 yes, 2 no); shared spines are walked once.
+                anc_path_4682.clear();
+                NodeId cur = st.flat.parent_of(id);
+                std::size_t safety = 0;
+                while (cur != aura::ast::NULL_NODE && cur < st.flat.size() &&
+                       safety++ < st.flat.size()) {
+                    if (affected_member_4682.count(cur) != 0 &&
+                        (cur != id || affected_id_count_4682[cur] > 1)) {
+                        ancestor_in_affected = true;
+                        break;
+                    }
+                    if (anc_memo_4682[cur] != 0) {
+                        ancestor_in_affected = anc_memo_4682[cur] == 1;
+                        break;
+                    }
+                    anc_path_4682.push_back(cur);
+                    cur = st.flat.parent_of(cur);
+                }
+                for (auto pn : anc_path_4682)
+                    anc_memo_4682[pn] = ancestor_in_affected ? 1 : 2;
+            }
+            if (ancestor_in_affected) {
+                continue; // ancestor's recursive walk will cover us
+            }
+            // Issue #4914: a node under a Quote is datum, not code. The cone
+            // can hold a quoted list's inner Call node (the rebind parse marks
+            // every new node); inferring it as an application reported
+            // `cannot apply non-function Int` for `(quote (1 2 3))` and failed
+            // the production solve. Quote itself types the whole datum.
+            {
+                bool under_quote = false;
+                NodeId cur = st.flat.parent_of(id);
+                std::size_t safety = 0;
+                while (cur != aura::ast::NULL_NODE && cur < st.flat.size() &&
+                       safety++ < st.flat.size()) {
+                    if (st.flat.get(cur).tag == aura::ast::NodeTag::Quote) {
+                        under_quote = true;
+                        break;
+                    }
+                    cur = st.flat.parent_of(cur);
+                }
+                if (under_quote)
+                    continue;
+            }
+            // Issue #466: preserve ConstraintSystem across affected
+            // nodes; first node full-solves + mark_clean, subsequent
+            // nodes add_delta + solve_delta with touched-root reverify.
+            engine.set_incremental_delta_mode(true, ai > 0);
+            st.boundary_inferred_roots.push_back(id);
+            auto type = engine.infer_flat(st.flat, const_cast<aura::ast::StringPool&>(st.pool), id,
+                                          /*preserve_cs=*/ai > 0);
+            st.max_narrow_evidence =
+                std::max(st.max_narrow_evidence, engine.last_narrowing_evidence());
+            if (type != st.tc.types.dynamic_type()) {
+                ++st.re_inferred;
+            }
+        }
+    }
+
+    // Fail-closed on dirty exhaustiveness, re-dirty demoted roots, and mirror the post-infer cone.
+    // Same order and diagnostics as the former body of TypeChecker::infer_flat_partial.
+    void partial_post_infer_mirror(InferFlatPartialState& st, InferenceEngine& engine) {
+        // Issue #3005: post-re-infer Production / Full fail-closed on dirty
+        // exhaustiveness cone. Uses updated match_info (pattern mutate) +
+        // refreshed ADT constructors (variant mutate). Soft already observed
+        // pre-infer; Quiet never reaches here with a non-empty cone.
+        if (!st.adt_reverify.empty()) {
+            const bool production = aura::compiler::typed_audit::production_defaults_active();
+            auto* m =
+                st.tc.metrics_ ? static_cast<struct CompilerMetrics*>(st.tc.metrics_) : nullptr;
+            bool production_adt_fail = false;
+            for (auto raw : st.adt_reverify) {
+                const auto nid = static_cast<NodeId>(raw);
+                if (nid == aura::ast::NULL_NODE || nid >= st.flat.size())
+                    continue;
+                if (!st.flat.has_match_info(nid))
+                    continue;
+                auto exh = check_match_exhaustiveness(st.flat, st.pool, st.tc.types, nid);
+                const bool unproven = exh.via_dynamic || !exh.missing_constructors.empty() ||
+                                      (exh.checked && !exh.exhaustive);
+                if (!unproven)
+                    continue;
+                if (production) {
+                    production_adt_fail = true;
+                    if (m) {
+                        m->adt_exhaust_production_reject_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                        if (exh.via_dynamic)
+                            m->adt_exhaust_dynamic_slide_prevented_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    }
+                    auto msg = format_match_exhaustiveness_message(exh);
+                    if (msg.empty())
+                        msg = "match: exhaustiveness unproven after ADT/pattern mutate";
+                    st.diag.report(aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError, msg));
+                }
+            }
+            if (production_adt_fail)
+                st.tc.last_type_export_authoritative_ = false;
+        }
+
+        // Issue #4527: a production-face boundary that demoted the engine
+        // type-export authority (the preserve_cs ground-join TypeError —
+        // sticky AND — a first-node synthesis TypeError, or not-SOLVED)
+        // must not leave the subtrees it just cleaned as cacheable types.
+        // The hard-gate full recheck would otherwise cache-hit the join
+        // committed in this same boundary (Void for the ground gate) and
+        // drop the diagnostic as an empty collector. Re-dirty every
+        // inferred root so the full walk re-derives and re-reports.
+        // Soft/Off: engine authority is never demoted by the production
+        // scans and the face guard keeps this a no-op (historical pass).
+        if ((aura::compiler::typed_audit::production_defaults_active() ||
+             aura::compiler::typed_audit::production_hard_face_active()) &&
+            !engine.last_type_export_authoritative()) {
+            for (auto root_id : st.boundary_inferred_roots) {
+                if (root_id != aura::ast::NULL_NODE && root_id < st.flat.size())
+                    st.flat.mark_subtree_dirty(root_id);
+            }
+        }
+
+        // Issue #2516 phase 2 complete: re-infer finished; type_dep re-recorded
+        // for visited nodes. Phase 3 mirror must see this post-infer cone.
+        if (st.tc.metrics_) {
+            static_cast<struct CompilerMetrics*>(st.tc.metrics_)
+                ->type_dirty_txn_phase2_reinfer_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (st.tc.on_touched_roots_snapshot_)
+            st.tc.on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
+
+        // Issue #2516 phase 3 / #2191: mirror type cone (affected ∪ occurrence
+        // Ifs) into dirty::DepGraph cascade AFTER re-infer so cascade sees the
+        // post-infer affected set (not pre-invalidate stale). Empty cone →
+        // zero cost (mirror_type_affected_to_cascade no-ops). Occurrence If
+        // nodes stay in the cone when cascade also marks their blocks.
+        {
+            std::vector<NodeId> cone;
+            cone.reserve(st.affected.size() + st.occurrence_targets.size());
+            std::unordered_set<NodeId> seen;
+            seen.reserve((st.affected.size() + st.occurrence_targets.size()) * 2);
+            for (auto id : st.affected) {
+                if (id == NULL_NODE || id >= st.flat.size())
+                    continue;
+                if (seen.insert(id).second)
+                    cone.push_back(id);
+            }
+            for (auto id : st.occurrence_targets) {
+                if (id == NULL_NODE || id >= st.flat.size())
+                    continue;
+                if (seen.insert(id).second)
+                    cone.push_back(id);
+            }
+            const auto mirrored = dirty::mirror_type_affected_to_cascade(cone);
+            // Issue #3120 / #3228: remirror persisted residual CastOp source
+            // AST / containing blocks after the type-txn wipe — including
+            // when the post-infer cone is empty (columnar under-mark). Soft
+            // persist is empty → remirror no-ops. Reuses #3065 force_*.
+            (void)dirty::remirror_persisted_residual_castops();
+            // Issue #3347: re-infer consumed residual undermark; drop the
+            // pending latch so commit_readiness / grant can succeed after
+            // typecheck. Post-wipe remirror keeps persist in cone without
+            // re-latching pending (only the C ABI force path latches).
+            dirty::clear_residual_castop_undermark_pending();
+            if (st.tc.metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(st.tc.metrics_);
+                m->type_dirty_txn_phase3_mirror_total.fetch_add(1, std::memory_order_relaxed);
+                m->type_dirty_txn_total.fetch_add(1, std::memory_order_relaxed);
+                if (mirrored > 0)
+                    m->type_dirty_cone_mirrored_total.fetch_add(mirrored,
+                                                                std::memory_order_relaxed);
+                // Snapshot last union size for Agent (avg lives in dirty::).
+                const auto avg_bp = static_cast<std::uint64_t>(
+                    dirty::type_ir_cone_union_size_avg() * 100.0); // fixed-point ×100
+                m->type_ir_cone_union_size_avg_x100.store(avg_bp, std::memory_order_relaxed);
+            }
+        }
+    }
+
+    // Fold the short-lived engine's stats into the checker and import its constraint delta.
+    // Same order and diagnostics as the former body of TypeChecker::infer_flat_partial.
+    void partial_accumulate_and_import(InferFlatPartialState& st, InferenceEngine& engine) {
+        // Accumulate per-call engine stats into TypeChecker stats.
+        auto es = engine.stats();
+        st.stats.cache_hits += es.cache_hits;
+        st.stats.cache_misses += es.cache_misses;
+        st.stats.stale_cache += es.stale_cache;
+        st.stats.gen_saved += es.gen_saved;
+        // Issue #386: aggregate narrowing counters.
+        st.stats.narrowing_applied += es.narrowing_applied;
+        st.stats.narrowing_skipped += es.narrowing_skipped;
+        st.stats.narrowing_reanalyzed += es.narrowing_reanalyzed;
+        // Issue #338: aggregate and/or precision.
+        st.stats.and_or_meet_uses += es.and_or_meet_uses;
+        st.stats.and_or_join_uses += es.and_or_join_uses;
+        // Issue #434: aggregate dirty recovery.
+        st.stats.narrowing_dirty_recovery += es.narrowing_dirty_recovery;
+        // Issue #390: aggregate schema cache.
+        st.stats.schema_cache_lookups += es.schema_cache_lookups;
+        st.stats.schema_cache_hits += es.schema_cache_hits;
+        // Issue #281 / #340 / #1781 / #1872: predicate_memo_ stats from
+        // the short-lived engine for this partial infer.
+        st.stats.predicate_memo_hits += engine.predicate_memo_hits();
+        st.stats.predicate_memo_misses += engine.predicate_memo_misses();
+        st.stats.predicate_memo_evictions += engine.predicate_memo_evictions();
+        st.stats.predicate_memo_partial_evictions += engine.predicate_memo_partial_evictions();
+        // Issue #2514: sticky synth hard-fail outlives short-lived engine
+        // so MutationBoundary / finish_mutate_hard_gate can force rollback
+        // without soft partial recovery claiming Success.
+        if (engine.linear_synth_hard_fail()) {
+            st.tc.last_linear_synth_hard_fail_ = true;
+            st.tc.last_linear_synth_violation_count_ += engine.linear_synth_violation_count();
+        }
+        if (engine.uncovered_bidirectional_tag_count() > 0) {
+            st.tc.last_uncovered_bidirectional_tag_count_ +=
+                engine.uncovered_bidirectional_tag_count();
+            if (engine.uncovered_bidirectional_tag_hard_fail())
+                st.tc.last_uncovered_bidirectional_tag_hard_fail_ = true;
+        }
+        // Issue #2359: snapshot memo epoch health for the Agent query
+        // surface (engine dies at end of this partial; guard_infer_engine
+        // may still hold a live memo on the Evaluator path).
+        st.tc.last_predicate_memo_live_ = engine.predicate_memo_size();
+        st.tc.last_predicate_memo_stale_vs_epoch_ = engine.predicate_memo_stale_vs_epoch();
+        // Issue #411 follow-up #1: per_symbol / ancestor path
+        // tracking already bumped on this infer_flat_partial
+        // call (at the top of the function). The per-call
+        // engine doesn't carry the per_symbol / ancestor
+        // counts; we accumulate them on stats_ directly here.
+
+        // Issue #627: capture narrowing evidence for post-mutate
+        // lowering freshness + consistency observability.
+        st.tc.last_partial_narrowing_evidence_ = st.max_narrow_evidence;
+        if (st.tc.last_occurrence_refresh_count_ > 0 &&
+            st.tc.last_partial_narrowing_evidence_ != 0 && st.tc.metrics_) {
+            static_cast<struct CompilerMetrics*>(st.tc.metrics_)
+                ->post_mutate_narrow_consistency_total.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        // Issue #2180 / #2262: after EVERY successful infer_flat_partial,
+        // import engine CS delta into the long-lived solve_delta_cs_ and
+        // stash occurrence TypeIds. This is the single source of truth for
+        // non-composite typed_mutate AND composite_txn_commit — never leave
+        // solve_delta_cs_ empty after a partial that did real work.
+        {
+            st.solve_delta_cs.import_delta_marks_from(engine.constraint_system());
+            g_partial_cs_import_total.fetch_add(1, std::memory_order_relaxed);
+            if (st.tc.metrics_) {
+                static_cast<struct CompilerMetrics*>(st.tc.metrics_)
+                    ->partial_cs_import_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            st.tc.last_occurrence_vars_.clear();
+            st.tc.last_occurrence_vars_.reserve(st.occurrence_targets.size());
+            std::unordered_set<std::uint32_t> seen_tid;
+            for (auto id : st.occurrence_targets) {
+                if (id == NULL_NODE || id >= st.flat.size())
+                    continue;
+                const auto raw = static_cast<std::uint32_t>(st.flat.get(id).type_id);
+                if (raw == 0 || !seen_tid.insert(raw).second)
+                    continue;
+                TypeId t{};
+                t.index = raw;
+                st.tc.last_occurrence_vars_.push_back(t);
+            }
+            // Mark occurrence TypeIds as touched so the next
+            // solve_delta_occurrence on solve_delta_cs_ is not greenfield.
+            for (const auto& t : st.tc.last_occurrence_vars_) {
+                if (t.valid())
+                    st.solve_delta_cs.mark_touched_on_delta(t, /*occurrence_narrow=*/true);
+            }
+            st.tc.last_partial_cs_live_ =
+                st.solve_delta_cs.is_dirty() || st.solve_delta_cs.touched_roots_size() > 0 ||
+                st.solve_delta_cs.occurrence_priority_roots_size() > 0 ||
+                st.solve_delta_cs.let_poly_dirty_roots_size() > 0 ||
+                !st.tc.last_occurrence_vars_.empty() || st.re_inferred > 0;
+            // Issue #3003: Production / Full + not SOLVED → no stash-as-live
+            // (recover must not commit a half-solution). Repair surface
+            // still imported above.
+            st.tc.last_delta_solve_status_ = engine.last_solve_status();
+            if (!engine.last_type_export_authoritative()) {
+                st.tc.last_type_export_authoritative_ = false;
+                st.tc.last_partial_cs_live_ = false;
+                // Issue #3203: no live refined TypeId from a half-solved CS.
+                st.tc.last_occurrence_vars_.clear();
+                // Issue #3360: Soft TIMEOUT must not leave provisional
+                // OccurrenceGoals Agent-visible via query:type.
+                if (!aura::compiler::typed_audit::production_defaults_active()) {
+                    (void)engine.constraint_system().discard_provisional_occurrence_goals();
+                    aura::compiler::typed_audit::g_type_export_soft_refuse_observe_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
+        }
+    }
+
+    // Re-simulate linear ownership on the dirty cone, then the full walk when production requires
+    // it. Same order and diagnostics as the former body of TypeChecker::infer_flat_partial.
+    void partial_revalidate_linear_ownership(InferFlatPartialState& st, InferenceEngine& engine) {
+        // Issue #688 / #2460 Phase 2: OwnershipEnv re-sim on dirty linear set
+        // during infer_flat_partial (before boundary-only Full audit).
+        // Zero cost when no linear bindings in the dirty cone (AC5).
+        // Soft/permissive: Warning + notes (AC3). production_defaults || strict:
+        // TypeError + set_node_error so partial TC fails early (AC1).
+        // Defense-in-depth: post_mutation validate_ownership_full + #2108 escape
+        // hard-block still run at boundary (AC4).
+        st.tc.last_partial_linear_revalidate_fail_ = false;
+        if (st.flat.root != aura::ast::NULL_NODE && st.flat.root < st.flat.size()) {
+            std::unordered_set<std::string> linear_bindings;
+            collect_linear_bindings_under_nodes(st.flat, st.pool, st.affected, linear_bindings);
+            // Issue #2460 / #1458: also walk discover_linear_bindings_in_subtree
+            // for each affected root (O(dirty) linear name discovery).
+            for (auto nid : st.affected) {
+                if (nid != aura::ast::NULL_NODE && nid < st.flat.size())
+                    discover_linear_bindings_in_subtree(st.flat, st.pool, nid, linear_bindings);
+            }
+            if (st.rec.target_node != aura::ast::NULL_NODE && st.rec.target_node < st.flat.size()) {
+                collect_linear_bindings_under_nodes(st.flat, st.pool, {st.rec.target_node},
+                                                    linear_bindings);
+                discover_linear_bindings_in_subtree(st.flat, st.pool, st.rec.target_node,
+                                                    linear_bindings);
+            }
+            if (st.rec.parent_id != aura::ast::NULL_NODE && st.rec.parent_id < st.flat.size()) {
+                collect_linear_bindings_under_nodes(st.flat, st.pool, {st.rec.parent_id},
+                                                    linear_bindings);
+                discover_linear_bindings_in_subtree(st.flat, st.pool, st.rec.parent_id,
+                                                    linear_bindings);
+            }
+            // Issue #4682 fix 2: the rebound name is added even when nothing
+            // marks it linear, which made every rebind walk the whole workspace
+            // (validate_ownership from flat.root, O(W)). With no live linear-op
+            // node and no discovered linear binding the name is not a linear
+            // resource, so leave it out (the walk is skipped when the set ends
+            // up empty).
+            if (st.sym_for_lookup != aura::ast::INVALID_SYM &&
+                (!linear_bindings.empty() || st.flat.has_linear_ops_live())) {
+                const auto sym_name = std::string(st.pool.resolve(st.sym_for_lookup));
+                if (!sym_name.empty())
+                    linear_bindings.insert(sym_name);
+            }
+            for (const auto& name : st.occurrence_linear_dirty.ownership_dirty_bindings())
+                linear_bindings.insert(name);
+            if (!linear_bindings.empty()) {
+                std::vector<OwnershipNote> ownership_notes;
+                const bool ownership_pass = OwnershipEnv::validate_ownership(
+                    st.flat, st.pool, st.flat.root, linear_bindings, ownership_notes);
+                record_linear_ownership_mutation_metrics(st.tc.metrics_, true, ownership_notes,
+                                                         ownership_pass);
+                if (st.tc.metrics_) {
+                    auto* m = static_cast<struct CompilerMetrics*>(st.tc.metrics_);
+                    m->linear_dirty_revalidate_count.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #2460: sibling counters for partial-infer ownership path.
+                    m->linear_partial_revalidate_total.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #1531: validate_ownership already runs escape
+                    // re-analysis; surface the counters here as well for
+                    // dashboards that only watch the partial-infer path.
+                    m->linear_escape_reanalysis_total.fetch_add(1, std::memory_order_relaxed);
+                    m->ownership_dirty_revalidate_hits.fetch_add(linear_bindings.size(),
+                                                                 std::memory_order_relaxed);
+                    for (const auto& n : ownership_notes) {
+                        if (n.kind == "escape-while-borrowed")
+                            m->linear_escape_while_borrowed_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        else if (n.kind == "escape-after-move")
+                            m->linear_escape_after_move_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                    }
+                }
+                // Issue #2460: elevate ownership fail to partial TC fail signal
+                // (not only metric bump / late boundary audit).
+                if (!ownership_pass) {
+                    st.tc.last_partial_linear_revalidate_fail_ = true;
+                    const bool hard =
+                        st.strict || aura::compiler::typed_audit::production_defaults_active();
+                    const auto ek = hard ? ErrorKind::TypeError : ErrorKind::Warning;
+                    if (st.tc.metrics_) {
+                        auto* m = static_cast<struct CompilerMetrics*>(st.tc.metrics_);
+                        m->linear_partial_revalidate_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        if (hard)
+                            m->linear_partial_revalidate_hard_fail_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    }
+                    for (const auto& n : ownership_notes) {
+                        st.diag.report(
+                            aura::diag::Diagnostic(ek, n.message, aura::diag::SourceLocation{})
+                                .with_blame(aura::diag::BlameInfo{aura::diag::BlameParty::System,
+                                                                  "", "compile"})
+                                .with_suggestion(
+                                    "fix linear ownership in the dirty cone (move/drop/borrow "
+                                    "order) before committing; see OwnershipNote kind=" +
+                                    n.kind));
+                        if (n.node != aura::ast::NULL_NODE && n.node < st.flat.size()) {
+                            // Always stamp TypeError bit so partial TC / Guard see fail
+                            // (matches #2357 set_node_error policy).
+                            st.flat.set_node_error(n.node,
+                                                   static_cast<std::uint8_t>(ErrorKind::TypeError));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Issue #3295: dirty-only re-sim can miss cross-function / closure
+        // linear flows (callee locals / closure captures outside the dirty
+        // set). Production/Full forces the full ownership walk when the
+        // escape gate or densify-pending is present; Soft observes only.
+        if (st.flat.root != aura::ast::NULL_NODE && st.flat.root < st.flat.size() &&
+            aura::compiler::typed_audit::linear_force_full_validate_needed()) {
+            std::vector<OwnershipNote> full_notes;
+            const bool full_pass = OwnershipEnv::validate_ownership_full(
+                st.flat, st.pool, st.tc.types, st.flat.root, full_notes);
+            record_linear_ownership_mutation_metrics(st.tc.metrics_, true, full_notes, full_pass);
+            if (st.tc.metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(st.tc.metrics_);
+                m->linear_post_mutation_full_validate_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (!full_pass) {
+                st.tc.last_partial_linear_revalidate_fail_ = true;
+                const bool hard =
+                    st.strict || aura::compiler::typed_audit::production_defaults_active();
+                const auto ek = hard ? ErrorKind::TypeError : ErrorKind::Warning;
+                if (st.tc.metrics_) {
+                    auto* m = static_cast<struct CompilerMetrics*>(st.tc.metrics_);
+                    m->linear_partial_revalidate_fail_total.fetch_add(1, std::memory_order_relaxed);
+                    if (hard)
+                        m->linear_partial_revalidate_hard_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                }
+                for (const auto& n : full_notes) {
+                    st.diag.report(
+                        aura::diag::Diagnostic(ek, n.message, aura::diag::SourceLocation{})
+                            .with_blame(aura::diag::BlameInfo{aura::diag::BlameParty::System, "",
+                                                              "compile"})
+                            .with_suggestion(
+                                "fix linear ownership in the full scope (cross-function / "
+                                "closure capture) before committing; see OwnershipNote kind=" +
+                                n.kind));
+                    if (n.node != aura::ast::NULL_NODE && n.node < st.flat.size()) {
+                        st.flat.set_node_error(n.node,
+                                               static_cast<std::uint8_t>(ErrorKind::TypeError));
+                    }
+                }
+            }
+        }
+    }
+
+    // Re-validate ADT exhaustiveness and publish the incremental recheck metrics.
+    // Same order and diagnostics as the former body of TypeChecker::infer_flat_partial.
+    void partial_finish_adt_and_metrics(InferFlatPartialState& st, InferenceEngine& engine) {
+        // Issue #692: ADT DefineType + match exhaustiveness incremental
+        // re-validation + pattern NarrowingRecord provenance refresh.
+        {
+            std::vector<NodeId> adt_roots;
+            adt_roots.reserve(st.affected.size() + 2);
+            for (auto id : st.affected)
+                adt_roots.push_back(id);
+            if (st.rec.target_node != NULL_NODE && st.rec.target_node < st.flat.size())
+                adt_roots.push_back(st.rec.target_node);
+            if (st.rec.parent_id != NULL_NODE && st.rec.parent_id < st.flat.size())
+                adt_roots.push_back(st.rec.parent_id);
+            revalidate_adt_typed_mutation_scope(st.flat, st.pool, st.tc.types, adt_roots, st.rec,
+                                                st.cache_epoch, st.tc.metrics_);
+        }
+
+        // Issue #1528 / #1923: lifetime re-infer node counter for O(delta)
+        // dashboards (pairs with type_dep_graph expand + solve_delta
+        // worklist prune metrics). Also record recheck ratio vs workspace
+        // size and predicate_memo hit rate for AI multi-round gates.
+        if (st.tc.metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(st.tc.metrics_);
+            if (st.re_inferred > 0)
+                m->incremental_reinfer_nodes_total.fetch_add(st.re_inferred,
+                                                             std::memory_order_relaxed);
+            // Affected-set size (pre-dedupe recheck frontier).
+            m->incremental_recheck_affected_total.fetch_add(st.affected.size(),
+                                                            std::memory_order_relaxed);
+            const auto workspace = st.flat.size() > 0 ? st.flat.size() : 1;
+            const auto ratio_bp =
+                static_cast<std::uint64_t>((st.affected.size() * 10000ull) / workspace);
+            m->incremental_recheck_ratio_bp.store(ratio_bp, std::memory_order_relaxed);
+            // Predicate memo hit rate (engine-local for this partial call).
+            const auto mh = engine.predicate_memo_hits();
+            const auto mm = engine.predicate_memo_misses();
+            const auto mden = mh + mm;
+            if (mden > 0) {
+                m->predicate_memo_hit_rate_bp.store((mh * 10000ull) / mden,
+                                                    std::memory_order_relaxed);
+            }
+            m->predicate_memo_targeted_invalidations_total.fetch_add(
+                engine.predicate_memo_targeted_invalidations(), std::memory_order_relaxed);
+            // Issue #2104: also mirror engine selective total (cumulative per call).
+            m->predicate_memo_selective_invalidate_total.fetch_add(
+                engine.predicate_memo_selective_invalidate_total(), std::memory_order_relaxed);
+            m->incremental_locality_minimal_recheck_wired.store(1, std::memory_order_relaxed);
+        }
+    }
+} // namespace
+
 std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                                             const aura::ast::StringPool& pool,
                                             const aura::ast::MutationRecord& rec,
                                             aura::diag::DiagnosticCollector& diag,
                                             void* per_defuse_index_tracker,
                                             std::span<const aura::ast::MutationRecord> extra_recs) {
-    // Issue #3003: start of partial is authoritative until a not-SOLVED
-    // Production/Full solve flips the engine flag.
-    last_type_export_authoritative_ = true;
-    last_delta_solve_status_ = SolveResult::SOLVED;
-    // Issue #1336: selective incremental TC path entry counter.
-    if (metrics_) {
-        static_cast<struct CompilerMetrics*>(metrics_)
-            ->infer_flat_partial_selective_total.fetch_add(1, std::memory_order_relaxed);
-    }
-    // Issue #2320: prune stale NodeIds from type_dep_graph_ on each
-    // infer_flat_partial entry (bounded live entries). Cheap O(N) per
-    // bucket, drops out-of-range or type_id-mismatch entries. Live
-    // filter in affected_nodes_for_type (#387) ensures no false-negative
-    // empty affected for still-typed nodes (#2320 AC3).
-    prune_type_dep_graph(flat);
-    // Issue #3228: remirror residual CastOp persist before cone build so
-    // cascade pull unions under-marked leftover sites. Soft persist
-    // empty → 0 extra.
-    (void)dirty::force_residual_castop_undermark_into_cone();
-    // Issue #411 follow-up #1: per-symbol re-inference
-    // wiring. The baseline (ancestor-walk) used
-    // `affected_subtree_from_mutation` which marks every
-    // ancestor of the mutated node as affected — for a
-    // mutation deep in the AST this re-infers O(depth)
-    // nodes that didn't actually need re-inference. The
-    // per-symbol path (`affected_subtree_for_symbol`)
-    // returns only the Variable use-sites of the binding
-    // the mutation changed, which is O(uses) and is
-    // almost always a strict subset of the ancestor set.
-    //
-    // Issue #411 fu1 follow-up #3: per-DefUseIndex path
-    // (the actual O(uses) optimization). When the caller
-    // passes a non-null `per_defuse_index_tracker`
-    // pointer AND the tracker has the sym registered,
-    // the affected set comes straight from the tracker
-    // (O(uses) hash lookup) instead of the O(n) walk
-    // in `affected_subtree_for_symbol`. Falls back to
-    // the O(n) walk when the tracker is null or the sym
-    // isn't tracked (e.g. tracker not yet populated for
-    // this binding, or the sym changed since the last
-    // tracker build).
-    //
-    // The three paths compose: per-DefUseIndex (fastest,
-    // O(uses)) → per-symbol walk (O(n)) → ancestor walk
-    // (O(depth)). The metrics plumbed back
-    // (per_defuse_index_used_total,
-    // per_defuse_index_visited_total,
-    // per_symbol_used_total, per_symbol_visited_total,
-    // ancestor_used_total, ancestor_visited_total) let
-    // the user measure the share of work that went
-    // through each path via the
-    // (compile:per-symbol-reinfer-stats) Aura primitive.
-    std::vector<aura::ast::NodeId> affected;
-    bool per_defuse_index_used = false;
-    bool per_symbol_used = false;
-    aura::ast::SymId sym_for_lookup = aura::ast::INVALID_SYM;
-    // Extract the binding sym_id (if applicable) once,
-    // up-front. Same logic as the pre-#411-follow-up-1
-    // path.
-    if (rec.target_node != aura::ast::NULL_NODE && rec.target_node < flat.size()) {
-        auto tgv = flat.get(rec.target_node);
-        if (tgv.sym_id != aura::ast::INVALID_SYM &&
-            (tgv.tag == aura::ast::NodeTag::Define || tgv.tag == aura::ast::NodeTag::Let ||
-             tgv.tag == aura::ast::NodeTag::LetRec)) {
-            sym_for_lookup = tgv.sym_id;
-        }
-    }
-    // 1) per-DefUseIndex path (fastest). Only fires when
-    // the caller passed a tracker AND the sym is
-    // registered. The O(uses) lookup returns the
-    // use-sites directly without scanning the flat.
-    if (per_defuse_index_tracker && sym_for_lookup != aura::ast::INVALID_SYM) {
-        // The PerDefUseIndexTracker stores callers as
-        // Caller structs (location strings), not as
-        // NodeIds — the tracker is a registration of
-        // "this caller depends on this binding", not a
-        // pre-resolved NodeId set. For the affected-set
-        // metrics we just need the count, which is the
-        // size_for_index (O(1) hash lookup). The actual
-        // re-inference iterates over a separate
-        // node-id affected set (computed below from
-        // the O(n) walk if the per-DefUseIndex path
-        // didn't yield one), so the per-DefUseIndex
-        // path's contribution is purely the
-        // visited-count + speedup signal.
-        //
-        // The O(n) walk in affected_subtree_for_symbol
-        // is the canonical "use-sites" computation
-        // (variable nodes whose sym_id matches). The
-        // per-DefUseIndex tracker tracks the same
-        // population, so its size_for_index should
-        // match the O(n) walk's count. We use the
-        // tracker count for the metric (cheap) and
-        // still run the O(n) walk to get the actual
-        // NodeIds (for the inference loop).
-        const auto* tracker =
-            static_cast<const per_defuse_index::PerDefUseIndexTracker*>(per_defuse_index_tracker);
-        // Look up the tracker entry by sym's lexical
-        // name. Note: the tracker keys on string
-        // names, not SymId. The caller is expected to
-        // have registered entries by the same name
-        // string that the binding uses. If the lookup
-        // misses, fall through to the O(n) walk.
-        // We use the sym's name from the flat's
-        // string pool.
-        std::string sym_name;
-        if (sym_for_lookup != aura::ast::INVALID_SYM) {
-            // The FlatAST doesn't expose the string
-            // pool directly; service.ixx populates
-            // per_defuse_index_tracker_ with names
-            // (see compile:per-defuse-index-add). The
-            // tracker uses std::string for its key.
-            // We don't have a direct sym → name API
-            // here, so we use a heuristic: the
-            // tracker may have the entry under any
-            // name. For scope-limited #411 fu1
-            // follow-up #3, the per-DefUseIndex path
-            // just BUMPS the metric when the tracker
-            // is non-null; the actual NodeId set
-            // comes from the O(n) walk below. This
-            // keeps the path metrics honest (the
-            // O(uses) optimization is the next
-            // follow-up commit which will store
-            // NodeIds directly in the tracker).
-            //
-            // For now, we conservatively bump
-            // per_defuse_index_used_total only if
-            // tracker.index_count() > 0 (signals that
-            // SOME syms are tracked). The O(uses)
-            // wins in scope-limited #411 fu1 fu1
-            // are: (a) avoiding the Variable sym_id
-            // comparison per node when tracker
-            // says "no use-sites for this sym" (we
-            // still walk but count the O(n) cost in
-            // per_symbol_visited), (b) the metric
-            // signals to the user that the path
-            // fired.
-            if (tracker->index_count() > 0) {
-                per_defuse_index_used = true;
-            }
-        }
-    }
-    if (per_defuse_index_used) {
-        ++stats_.per_defuse_index_used_total;
-        // Issue #411 fu1 fu4: the actual O(uses) win.
-        // The tracker now stores NodeIds directly, so we
-        // can iterate the use-sites without paying the
-        // O(n) `affected_subtree_for_symbol` walk cost.
-        // Get the sym's name from the StringPool, look
-        // up the tracker entry, and use the stored
-        // NodeIds as the affected set. If the sym isn't
-        // in the tracker (the `index_count() > 0` check
-        // was a coarse gate — the tracker might be
-        // populated for OTHER syms), fall through to the
-        // O(n) walk (bump walk_fallback).
-        if (sym_for_lookup != aura::ast::INVALID_SYM) {
-            const auto* tracker = static_cast<const per_defuse_index::PerDefUseIndexTracker*>(
-                per_defuse_index_tracker);
-            const std::string sym_name(pool.resolve(sym_for_lookup));
-            const auto& tracker_callers =
-                tracker->get_callers(per_defuse_index::DefUseIndex{sym_name});
-            if (!tracker_callers.empty()) {
-                // O(uses) — directly iterate the tracker
-                // entries. Bump visited_total with the
-                // actual O(uses) count.
-                affected.reserve(tracker_callers.size());
-                for (const auto& c : tracker_callers)
-                    affected.push_back(c.node_id);
-                stats_.per_defuse_index_visited_total += affected.size();
-            } else {
-                // Tracker doesn't have this sym — fall
-                // through to O(n) walk (bump walk_fallback).
-                affected = affected_subtree_for_symbol(flat, sym_for_lookup);
-                ++stats_.per_defuse_index_walk_fallback_total;
-                stats_.per_symbol_visited_total += affected.size();
-            }
-        }
-    } else {
-        // 2) per-symbol path (existing O(n) walk, from
-        // #411 fu1 follow-up #1).
-        if (sym_for_lookup != aura::ast::INVALID_SYM) {
-            affected = affected_subtree_for_symbol(flat, sym_for_lookup);
-            ++stats_.per_symbol_used_total;
-            stats_.per_symbol_visited_total += affected.size();
-            per_symbol_used = true;
-        }
-    }
-    if (affected.empty()) {
-        // 3) localized subtree fallback (#1456). Used when
-        // the mutation record doesn't carry a binding
-        // sym_id (sub-expression mutation like
-        // replace-type) or when the per-symbol path
-        // returns empty (no use-sites of the changed
-        // binding in the workspace).
-        affected = affected_subtree_from_mutation(flat, rec);
-        // Issue #487: bump the affected_subtree counter
-        // for observability (the dirty propagation
-        // path fired). Distinct from should_relower
-        // (the IR re-lower decision — happens
-        // downstream of the affected set).
-        if (metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-            m->affected_subtree_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        ++stats_.ancestor_used_total;
-        stats_.ancestor_visited_total += affected.size();
-        // Bump the per-DefUseIndex walk-fallback metric
-        // (signals the index didn't have the sym — the
-        // user can use this to track index coverage).
-        if (per_defuse_index_tracker)
-            ++stats_.per_defuse_index_walk_fallback_total;
-    } else {
-        // Issue #1456: per-symbol / DefUse paths return
-        // use-sites only. Always union the localized
-        // mutation primary (define body / replaced
-        // subtree) so rebind body nodes are re-inferred
-        // without falling back to a Begin-wide cascade.
-        auto local = affected_subtree_from_mutation(flat, rec);
-        if (!local.empty()) {
-            DenseNodeSet4682 seen(affected.begin(), affected.end(), flat.size());
-            for (auto id : local) {
-                if (seen.insert(id).second)
-                    affected.push_back(id);
-            }
-            if (metrics_) {
-                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-                m->affected_subtree_total.fetch_add(1, std::memory_order_relaxed);
-            }
-        }
-    }
-    // Issue #3686: Production/Full post-mutate unions every MutationRecord
-    // written under this outermost Guard. extra_recs is empty on Soft/Off
-    // and on single-op (zero extra — still the primary `rec` / log.back()).
-    // Reuse affected_subtree_from_mutation per record; cone cap (#2560)
-    // still applies on the unioned set below.
-    if (!extra_recs.empty()) {
-        DenseNodeSet4682 seen(affected.begin(), affected.end(), flat.size());
-        for (const auto& extra : extra_recs) {
-            if (&extra == &rec)
-                continue;
-            auto local = affected_subtree_from_mutation(flat, extra);
-            for (auto id : local) {
-                if (seen.insert(id).second)
-                    affected.push_back(id);
-            }
-        }
-    }
-    if (affected.empty()) {
-        // Issue #3228: residual CastOp persist + empty mutation cone
-        // (columnar under-mark). Remirror then pull cascade so residual
-        // AST sites still re-typecheck. Quiet persist → still return 0.
-        (void)dirty::force_residual_castop_undermark_into_cone();
-        {
-            std::vector<NodeId> cascade_ast;
-            dirty::pull_cascade_ast_dirty_into(cascade_ast);
-            for (auto id : cascade_ast) {
-                if (id == NULL_NODE || id >= flat.size())
-                    continue;
-                affected.push_back(id);
-            }
-        }
-    }
-    if (affected.empty()) {
-        // No affected nodes — the mutation was a no-op (or
-        // target_node + parent_id both null). Count as a
-        // full cache hit (no re-inference needed).
-        // Issue #2262: no engine CS to import — skip metric.
-        g_partial_cs_import_skip_total.fetch_add(1, std::memory_order_relaxed);
-        last_partial_cs_live_ = commit_cs_has_work(); // retain prior live flag
-        // Issue #2621 AC4: empty dirty → vacuous healthy (clear truncate).
-        last_partial_cone_truncated_ = false;
-        last_partial_cone_dropped_ = 0;
-        aura::compiler::typed_audit::publish_partial_cone_truncate(false, 0, 0);
-        // Issue #3347: empty affected after remirror — persist IDs are
-        // out of this AST or the mutation is a no-op. Drop the pending
-        // latch so grant is not stuck (C ABI remirror already seeded cone).
-        dirty::clear_residual_castop_undermark_pending();
+    InferFlatPartialState st{*this,
+                             flat,
+                             pool,
+                             rec,
+                             diag,
+                             per_defuse_index_tracker,
+                             extra_recs,
+                             stats_,
+                             solve_delta_cs_,
+                             type_module_src_,
+                             type_sigs_,
+                             strict_,
+                             gradual_permissiveness_,
+                             cache_epoch_,
+                             registered_prim_probe_,
+                             registered_prim_ctx_,
+                             host_visible_names_,
+                             host_name_set_};
+    // Empty cone: the helper already published the vacuous counters.
+    if (partial_collect_affected(st))
         return 0;
-    }
-
-    // Issue #1528: expand the affected set via type_dep_graph_
-    // so dependents of *type variables* stamped on the primary
-    // mutation nodes are re-inferred without a full-function
-    // cascade. Ground types (Int/Bool/...) are intentionally
-    // not expanded (would pull every literal in the workspace).
-    //
-    // When the graph is empty (fresh TypeChecker per
-    // incremental_infer call), seed it from Variable nodes
-    // that already carry a type_id — O(n) once, O(uses) expand.
-    {
-        if (type_dep_graph_.empty() && flat.size() > 0) {
-            for (NodeId id = 0; id < flat.size(); ++id) {
-                auto v = flat.get(id);
-                if (v.tag != NodeTag::Variable || v.type_id == 0)
-                    continue;
-                record_type_dependency(v.type_id, id);
-            }
-        }
-        DenseNodeSet4682 seen(affected.begin(), affected.end(), flat.size());
-        std::vector<NodeId> seeds = affected;
-        if (rec.target_node != aura::ast::NULL_NODE && rec.target_node < flat.size())
-            seeds.push_back(rec.target_node);
-        // Issue #3686: earlier Guard records seed type_dep expand too.
-        for (const auto& extra : extra_recs) {
-            if (&extra == &rec)
-                continue;
-            if (extra.target_node != aura::ast::NULL_NODE && extra.target_node < flat.size())
-                seeds.push_back(extra.target_node);
-        }
-        std::uint64_t expanded = 0;
-        std::unordered_set<std::uint32_t> seed_tids;
-        for (auto id : seeds) {
-            if (id == aura::ast::NULL_NODE || id >= flat.size())
-                continue;
-            const auto tid = static_cast<std::uint32_t>(flat.get(id).type_id);
-            if (tid == 0 || !seed_tids.insert(tid).second)
-                continue;
-            // Only expand type variables (not ground Int/Bool/...).
-            TypeId probe{};
-            probe.index = tid;
-            if (!types.is_var(probe))
-                continue;
-            // Issue #2560: degree-truncate per-TypeId fan-out (not cone-wide).
-            std::size_t fan = 0;
-            const auto fan_cap = type_dep_fanout_cap();
-            for (auto dep : affected_nodes_for_type(tid)) {
-                if (fan >= fan_cap) {
-                    if (metrics_) {
-                        static_cast<struct CompilerMetrics*>(metrics_)
-                            ->partial_cone_type_dep_degree_trunc_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                    }
-                    break;
-                }
-                if (dep == aura::ast::NULL_NODE || dep >= flat.size())
-                    continue;
-                if (static_cast<std::uint32_t>(flat.get(dep).type_id) != tid)
-                    continue; // stale graph entry
-                if (seen.insert(dep).second) {
-                    affected.push_back(dep);
-                    ++expanded;
-                    ++fan;
-                }
-            }
-        }
-        if (expanded > 0 && metrics_) {
-            static_cast<struct CompilerMetrics*>(metrics_)
-                ->type_dep_graph_affected_expand_total.fetch_add(expanded,
-                                                                 std::memory_order_relaxed);
-        }
-    }
-
-    // Issue #2191: pull IR/cascade-marked AST dep nodes into the type
-    // affected set (reverse unify). Preserves #1456 locality — only
-    // nodes already in g_global_dirty / pending cascade roots as
-    // encode_ast_dep_node, not sibling defines.
-    {
-        std::vector<NodeId> cascade_ast;
-        dirty::pull_cascade_ast_dirty_into(cascade_ast);
-        if (!cascade_ast.empty()) {
-            DenseNodeSet4682 seen(affected.begin(), affected.end(), flat.size());
-            for (auto id : cascade_ast) {
-                if (id == NULL_NODE || id >= flat.size())
-                    continue;
-                if (seen.insert(id).second)
-                    affected.push_back(id);
-            }
-        }
-    }
-
-    // Issue #518 P0 Phase 1: collect dirty if-contexts from the
-    // affected set plus the mutation target subtree (rebind
-    // auto-wires kOccurrenceDirty on if-nodes in the new body
-    // even when the per-symbol affected set is only use-sites).
-    std::vector<NodeId> occurrence_targets;
-    // Issue #4682 (typecheck cone): the root Begin is no longer an
-    // affected root (affected_subtree_from_mutation). It used to re-check
-    // every caller's Call against the callee's new signature (arity, arg
-    // types). Lift each affected node to its top-level form under the root
-    // Begin so caller defines are re-inferred whole: O(callers), not O(W).
-    {
-        if (!affected.empty()) {
-            DenseNodeSet4682 seen(affected.begin(), affected.end(), flat.size());
-            const std::size_t n0 = affected.size();
-            std::vector<NodeId> lifted;
-            lifted.reserve(n0);
-            DenseNodeSet4682 lifted_seen(flat.size());
-            // Issue #4682: memo of each walked node's top-level form, so
-            // affected nodes sharing a spine walk it once (was
-            // O(|affected| * depth)). kLiftDetached marks a detached subtree.
-            constexpr NodeId kLiftUnknown = NULL_NODE;
-            const NodeId kLiftDetached = static_cast<NodeId>(flat.size());
-            std::vector<NodeId> lift_memo(flat.size(), kLiftUnknown);
-            std::vector<NodeId> lift_path;
-            for (std::size_t k = 0; k < n0; ++k) {
-                NodeId cur = affected[k];
-                if (cur == NULL_NODE || cur >= flat.size())
-                    continue;
-                std::size_t safety = 0;
-                bool detached = false;
-                lift_path.clear();
-                while (safety++ < flat.size()) {
-                    if (lift_memo[cur] != kLiftUnknown) {
-                        detached = lift_memo[cur] == kLiftDetached;
-                        if (!detached)
-                            cur = lift_memo[cur];
-                        break;
-                    }
-                    lift_path.push_back(cur);
-                    const NodeId par = flat.parent_of(cur);
-                    if (par == NULL_NODE || par >= flat.size()) {
-                        // Issue #4682 fix 1: a parentless non-root node is a
-                        // subtree a rebind detached (old lambda body). It is
-                        // not a top-level form; do not lift / walk it.
-                        detached = cur != flat.root;
-                        break;
-                    }
-                    const NodeId gp = flat.parent_of(par);
-                    const bool par_is_root_begin =
-                        flat.tag(par) == NodeTag::Begin &&
-                        (par == flat.root || gp == NULL_NODE || gp >= flat.size());
-                    if (par_is_root_begin)
-                        break;
-                    cur = par;
-                }
-                for (auto pn : lift_path)
-                    lift_memo[pn] = detached ? kLiftDetached : cur;
-                if (detached)
-                    continue;
-                // Every affected node's top-level form is part of the cone
-                // (the primary Define is already there; use sites lift to it).
-                if (cur != NULL_NODE && cur < flat.size() && lifted_seen.insert(cur).second)
-                    lifted.push_back(cur);
-                if (cur != affected[k] && seen.insert(cur).second)
-                    affected.push_back(cur);
-            }
-            // Issue #4682: a lifted caller is re-checked whole, so the top-level
-            // Define of every name it references must be in the cone too —
-            // otherwise the callee reads as an unbound variable in the narrow
-            // cone (4362 soft loses the arity gate; 4363 leaves a spurious
-            // "unbound variable: hello" diagnostic after a rejected rebind).
-            // Only the referenced defines are added: O(callers), not O(W)
-            // (the root Begin itself stays out of the cone).
-            if (!lifted.empty() && flat.root != NULL_NODE && flat.root < flat.size() &&
-                flat.tag(flat.root) == NodeTag::Begin) {
-                std::unordered_set<std::uint32_t> want_syms;
-                // Issue #4682 (B): per-top visited as a dense bitmap reset via
-                // a touched list (same per-top semantics, no hash-node churn).
-                std::vector<std::uint8_t> visited_bits(flat.size(), 0);
-                std::vector<NodeId> visited_touched;
-                for (auto top : lifted) {
-                    for (auto t : visited_touched)
-                        visited_bits[t] = 0;
-                    visited_touched.clear();
-                    std::vector<NodeId> stack{top};
-                    while (!stack.empty()) {
-                        const NodeId id = stack.back();
-                        stack.pop_back();
-                        if (id == NULL_NODE || id >= flat.size() || id >= visited_bits.size() ||
-                            visited_bits[id])
-                            continue;
-                        visited_bits[id] = 1;
-                        visited_touched.push_back(id);
-                        auto nv = flat.get(id);
-                        if (nv.tag == NodeTag::Variable && nv.sym_id != INVALID_SYM)
-                            want_syms.insert(static_cast<std::uint32_t>(nv.sym_id));
-                        for (auto c : nv.children) {
-                            if (c != NULL_NODE)
-                                stack.push_back(c);
-                        }
-                    }
-                }
-                if (!want_syms.empty()) {
-                    // A lifted caller may reference another top-level define
-                    // (bye calls hello) that is not in the cone. The narrow
-                    // cone does not carry the root Begin's global scope, so
-                    // that reference reads as an unbound variable (4362 soft
-                    // loses the arity gate; 4363 leaves a stale "unbound
-                    // variable: hello"). For that shape only, fall back to the
-                    // root-Begin cone (old behaviour): correctness first. The
-                    // O(callers) path still covers callee rebinds, where the
-                    // caller's reference is the callee already in the cone.
-                    bool need_root = false;
-                    // Issue #4682 step 2: probe the persistent define index
-                    // per referenced name (O(refs)) instead of walking all W
-                    // root children.
-                    // Issue #4925: a Define nested in a top-level
-                    // (begin ...) is still a top-level binding, but its
-                    // parent is the inner Begin, not flat.root. Treat that
-                    // shape as top-level too, or the narrow cone drops the
-                    // root scope and the lifted caller reads the binding as
-                    // unbound / with a stale arity.
-                    auto is_top_level_define = [&flat](aura::ast::NodeId d) {
-                        const auto p = flat.parent_of(d);
-                        if (p == flat.root)
-                            return true;
-                        return p != aura::ast::NULL_NODE &&
-                               flat.tag(p) == aura::ast::NodeTag::Begin &&
-                               flat.parent_of(p) == flat.root;
-                    };
-                    for (auto sym : want_syms) {
-                        for (auto d : flat.defines_for_sym(static_cast<aura::ast::SymId>(sym))) {
-                            if (is_top_level_define(d) && d != rec.target_node) {
-                                need_root = true;
-                                break;
-                            }
-                        }
-                        if (need_root)
-                            break;
-                    }
-                    if (need_root) {
-                        if (seen.insert(flat.root).second) {
-                            affected.push_back(flat.root);
-                            if (metrics_) {
-                                static_cast<struct CompilerMetrics*>(metrics_)
-                                    ->type_dep_partial_nodes_added.fetch_add(
-                                        1, std::memory_order_relaxed);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    std::unordered_set<NodeId> occurrence_seen;
-    // Issue #4682 step 4: one visited bitmap per collector so overlapping
-    // roots (ancestor + descendants, parent_id) walk each node once.
-    std::vector<std::uint8_t> occ_visited_4682(flat.size(), 0), deep_visited_4682(flat.size(), 0);
-    auto* occ_v4682 = &occ_visited_4682;
-    auto* deep_v4682 = &deep_visited_4682;
-    occurrence_targets.reserve(affected.size());
-    for (auto id : affected)
-        collect_occurrence_dirty_if_exprs_in_subtree(flat, id, occurrence_targets, occurrence_seen,
-                                                     occ_v4682);
-    if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
-        collect_occurrence_dirty_if_exprs_in_subtree(flat, rec.target_node, occurrence_targets,
-                                                     occurrence_seen, occ_v4682);
-    if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size())
-        collect_occurrence_dirty_if_exprs_in_subtree(flat, rec.parent_id, occurrence_targets,
-                                                     occurrence_seen, occ_v4682);
-    // Issue #3686: occurrence dirty Ifs under earlier Guard records.
-    for (const auto& extra : extra_recs) {
-        if (&extra == &rec)
-            continue;
-        if (extra.target_node != NULL_NODE && extra.target_node < flat.size())
-            collect_occurrence_dirty_if_exprs_in_subtree(
-                flat, extra.target_node, occurrence_targets, occurrence_seen, occ_v4682);
-        if (extra.parent_id != NULL_NODE && extra.parent_id < flat.size())
-            collect_occurrence_dirty_if_exprs_in_subtree(flat, extra.parent_id, occurrence_targets,
-                                                         occurrence_seen, occ_v4682);
-    }
-    // Issue #689: deep and/or/not predicates in mutation-affected subtrees.
-    for (auto id : affected)
-        collect_deep_predicate_if_exprs_in_subtree(flat, pool, id, occurrence_targets,
-                                                   occurrence_seen, deep_v4682);
-    if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
-        collect_deep_predicate_if_exprs_in_subtree(flat, pool, rec.target_node, occurrence_targets,
-                                                   occurrence_seen, deep_v4682);
-    // Issue #2283: systematic merge of affected_nodes_for_type for delta-touched
-    // TypeIds. Build touched_type_ids from CS touched_roots + occurrence vars +
-    // rebinding type change, then call affected_nodes_for_type(tid) for each to
-    // pull in dependent nodes that the existing per-seed loop (only type variables)
-    // would miss. Prefer type_dep + DefUseIndex over pure ancestor walk when
-    // available; ancestor remains as fallback. live_and_still_typed filter drops
-    // stale graph entries whose current type_id no longer matches the touched tid.
-    {
-        std::unordered_set<std::uint32_t> touched_type_ids;
-        auto add_tid_from_node = [&](NodeId nid) {
-            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
-                return;
-            const auto tid = static_cast<std::uint32_t>(flat.get(nid).type_id);
-            if (tid != 0)
-                touched_type_ids.insert(tid);
-        };
-        // CS touched_roots (ConstraintSystem::touched_roots_ — the set used by
-        // the existing type_dep_graph_ expansion at line 6517+). Accessed
-        // via TypeChecker::constraint_system() which returns solve_delta_cs_.
-        for (auto nid : constraint_system().touched_roots()) {
-            add_tid_from_node(nid);
-        }
-        // Occurrence vars (Issue #518 / #689).
-        for (auto nid : occurrence_targets) {
-            add_tid_from_node(nid);
-        }
-        // Rebinding type change (rec.target_node).
-        add_tid_from_node(rec.target_node);
-        // Issue #3686: earlier Guard records' type changes too.
-        for (const auto& extra : extra_recs) {
-            if (&extra == &rec)
-                continue;
-            add_tid_from_node(extra.target_node);
-        }
-
-        if (!touched_type_ids.empty()) {
-            DenseNodeSet4682 seen(affected.begin(), affected.end(), flat.size());
-            std::uint64_t nodes_added = 0;
-            const auto fan_cap = type_dep_fanout_cap();
-            for (auto tid : touched_type_ids) {
-                // Issue #2560: degree-truncate per-TypeId merge fan-out.
-                std::size_t fan = 0;
-                for (auto dep : affected_nodes_for_type(tid)) {
-                    if (fan >= fan_cap) {
-                        if (metrics_) {
-                            static_cast<struct CompilerMetrics*>(metrics_)
-                                ->partial_cone_type_dep_degree_trunc_total.fetch_add(
-                                    1, std::memory_order_relaxed);
-                        }
-                        break;
-                    }
-                    if (dep == aura::ast::NULL_NODE || dep >= flat.size())
-                        continue;
-                    // live_and_still_typed: drop stale graph entries whose
-                    // current type_id no longer matches the touched tid.
-                    if (static_cast<std::uint32_t>(flat.get(dep).type_id) != tid)
-                        continue;
-                    if (seen.insert(dep).second) {
-                        affected.push_back(dep);
-                        ++nodes_added;
-                        ++fan;
-                    }
-                }
-            }
-            if (metrics_) {
-                static_cast<struct CompilerMetrics*>(metrics_)
-                    ->type_dep_partial_merge_total.fetch_add(1, std::memory_order_relaxed);
-                static_cast<struct CompilerMetrics*>(metrics_)
-                    ->type_dep_partial_nodes_added.fetch_add(nodes_added,
-                                                             std::memory_order_relaxed);
-            }
-        }
-    }
-
-    // ── Issue #2560: partial cone soft/hard SLA (type layer) ──
-    // Issue #2621: stamp last_partial_cone_truncated for commit_readiness
-    // (Soft observe / production hard — never silent-commit under prod).
-    // After full cone build (primary + type_dep + cascade + #2283 merge),
-    // before #2516 invalidate/re-infer. Zero cost when size ≤ soft_cap (AC3).
-    // Soft overflow: seed-preserving truncate to soft_cap + counter.
-    // Hard (production only): seed-preserving truncate to hard_cap + counter
-    // (deterministic; no silent O(n) without metric — AC2).
-    // #2516 order is unchanged; empty cone already returned above (AC4).
-    {
-        auto* m = metrics_ ? static_cast<struct CompilerMetrics*>(metrics_) : nullptr;
-        const auto soft = partial_cone_soft_cap();
-        const auto hard = partial_cone_hard_cap();
-        // Seeds: mutation primary + parent (locality for truncate).
-        // Issue #3686: preserve extra Guard-record targets under truncate
-        // so a two-Define batch cannot drop the earlier sibling.
-        std::vector<aura::ast::NodeId> seed_buf;
-        seed_buf.reserve(4 + extra_recs.size() * 2);
-        auto push_seed = [&](aura::ast::NodeId id) {
-            if (id == aura::ast::NULL_NODE)
-                return;
-            seed_buf.push_back(id);
-        };
-        push_seed(rec.target_node);
-        push_seed(rec.parent_id);
-        if (!affected.empty())
-            push_seed(affected.front());
-        for (const auto& extra : extra_recs) {
-            if (&extra == &rec)
-                continue;
-            push_seed(extra.target_node);
-            push_seed(extra.parent_id);
-        }
-        const auto seeds = std::span<const aura::ast::NodeId>(seed_buf.data(), seed_buf.size());
-
-        const auto orig_sz = affected.size();
-        if (m)
-            m->partial_cone_last_size.store(static_cast<std::uint64_t>(orig_sz),
-                                            std::memory_order_relaxed);
-
-        // Counters use pre-truncate size so Agents see true fan-out pressure.
-        if (orig_sz > soft) {
-            if (m)
-                m->partial_cone_soft_overflow_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        const bool production = aura::compiler::typed_audit::production_defaults_active();
-        std::size_t dropped = 0;
-        bool truncated = false;
-        if (production && orig_sz > hard) {
-            // AC2: hard path under production — seed-preserving truncate to
-            // hard_cap (deterministic; metric prevents silent O(n)).
-            // #2621 AC3: hard overflow is never silent success for commit.
-            if (m)
-                m->partial_cone_hard_fallback_total.fetch_add(1, std::memory_order_relaxed);
-            dropped = truncate_partial_cone_seed_preserving(affected, seeds, hard);
-            truncated = true; // over hard always fidelity signal even if drop==0
-        } else if (orig_sz > soft) {
-            // Soft overflow: prefer DefUse/per-symbol already selected above;
-            // still truncate seed-preserving to soft_cap for latency SLA.
-            dropped = truncate_partial_cone_seed_preserving(affected, seeds, soft);
-            truncated = dropped > 0 || orig_sz > soft;
-        }
-        if (m)
-            m->partial_cone_last_size.store(static_cast<std::uint64_t>(affected.size()),
-                                            std::memory_order_relaxed);
-        // Issue #2621: publish truncate fidelity for commit_readiness Agents.
-        aura::compiler::typed_audit::publish_partial_cone_truncate(
-            truncated, static_cast<std::uint64_t>(dropped), /*fanout*/ 0);
-        last_partial_cone_truncated_ = truncated;
-        last_partial_cone_dropped_ = static_cast<std::uint64_t>(dropped);
-    }
-
-    // ── Issue #2516 dirty txn (single ordered sequence; all partial paths) ──
-    // Phase order (AC1 source-cite; do not reorder without updating tests):
-    //   1. invalidate_type_dep_for_nodes(dirty seeds)  — drop stale edges
-    //   2. re-infer affected (engine re-records type_dep)  — loop below
-    //   3. mirror_type_affected_to_cascade(post-infer cone) — AFTER phase 2
-    //   3b. remirror_persisted_residual_castops (#3120 / #3228) after wipe
-    // Empty affected already returned above (AC4: no invalidate / no mirror).
-    // Pre-#2516 mirrored cascade before re-infer (stale cone risk); mirror
-    // is now deferred to after re-infer (see phase-3 block below).
-    //
-    // Issue #2355 Phase B: after expand, drop dirty nids from type_dep so
-    // re-infer re-records under the current epoch (bounds session growth).
-    // Empty affected already returned above — span non-empty here.
-    (void)invalidate_type_dep_for_nodes(std::span<const NodeId>(affected.data(), affected.size()));
-    if (metrics_) {
-        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-        m->type_dirty_txn_phase1_invalidate_total.fetch_add(1, std::memory_order_relaxed);
-        m->type_dirty_txn_order_wired.store(1, std::memory_order_relaxed);
-    }
-    {
-        const std::uint8_t kOccurrenceBit =
-            static_cast<std::uint8_t>(FlatAST::DirtyReason::kOccurrenceDirty);
-        for (auto id : occurrence_targets) {
-            flat.mark_dirty(id, kOccurrenceBit);
-            flat.mark_occurrence_stale(id);
-        }
-    }
-
-    // Issue #747: linear bindings in occurrence-dirty if-contexts → ownership_dirty.
-    OwnershipEnv occurrence_linear_dirty;
-    for (auto if_id : occurrence_targets) {
-        if (!subtree_has_linear_ops(flat, if_id))
-            continue;
-        std::unordered_set<std::string> if_linear;
-        collect_linear_bindings_under_nodes(flat, pool, {if_id}, if_linear);
-        for (const auto& name : if_linear)
-            occurrence_linear_dirty.mark_ownership_dirty(name);
-        if (metrics_)
-            bump_linear_occurrence_predicate_safe(metrics_);
-    }
-
-    // Spin up a per-call engine. Same pattern as the existing
-    // TypeChecker::infer_flat — short-lived engine per
-    // re-inference pass.
+    partial_expand_affected_cone(st);
+    partial_collect_occurrence_targets(st);
+    partial_truncate_cone_and_invalidate(st);
+    partial_note_linear_occurrence(st);
+    // Per-call engine. Stack allocated, same as the previous inline body.
     InferenceEngine engine(types, diag);
-    engine.set_registered_prim_probe(registered_prim_probe_, registered_prim_ctx_);
-    {
-        // Issue #4682 fix 3: build the filtered host-name set once per
-        // host-name change and share it; skip the per-call vector copy.
-        if (!host_name_set_ && !host_visible_names_.empty()) {
-            auto set = std::make_shared<TypeEnv::HostNameSet>();
-            set->reserve(host_visible_names_.size());
-            for (const auto& n : host_visible_names_) {
-                if (n.empty() || n[0] == '_' || n[0] == '@' || n[0] == ':')
-                    continue;
-                set->insert(n);
-            }
-            host_name_set_ = std::move(set);
-        }
-        engine.set_host_name_set(host_name_set_);
-    }
-    engine.declared_modules_ = type_module_src_;
-    engine.declared_sigs_ = type_sigs_;
-    engine.set_strict(strict_);                                 // Issue #79: plumb strict mode
-    engine.set_gradual_permissiveness(gradual_permissiveness_); // Issue #2992
-    engine.set_cache_epoch(cache_epoch_);                       // Issue #168
-    engine.set_metrics(metrics_);                       // Issue #537: provenance refresh metrics
-    engine.set_bidirectional_mode(bidirectional_mode_); // Issue #627
-    engine.bind_declared_sigs();
-    engine.set_narrowing_observability_hooks(on_narrowing_refresh_, on_selective_recheck_);
-    engine.set_solve_delta_observability_hooks(on_touched_roots_snapshot_,
-                                               on_cross_delta_conflict_);
-    engine.set_active_mutation_id(rec.mutation_id);
-    // Issue #1924: stamp blame context from mutation primary BEFORE
-    // occurrence reanalyze / coercion defer so mid-pass add_delta and
-    // add_deferred_coercion never see a zero mutation_id.
-    {
-        std::uint32_t primary_aff = 0;
-        if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
-            primary_aff = static_cast<std::uint32_t>(rec.target_node);
-        else if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size())
-            primary_aff = static_cast<std::uint32_t>(rec.parent_id);
-        engine.set_active_blame_context(/*predicate_cond_node=*/0, primary_aff);
-        if (metrics_ && rec.mutation_id != 0 && primary_aff == 0) {
-            static_cast<struct CompilerMetrics*>(metrics_)->blame_propagation_miss_total.fetch_add(
-                1, std::memory_order_relaxed);
-        }
-    }
-    // Issue #2104 / #2068 Phase 2: selective predicate-memo invalidation
-    // by dirty binding names (prefer when known) + min_gen, then #1923
-    // targeted node invalidation for occurrence If / affected set.
-    // Zero cost when dirty set empty (helpers no-op on empty).
-    {
-        std::unordered_set<std::string> dirty_var_names;
-        if (sym_for_lookup != aura::ast::INVALID_SYM) {
-            const auto nm = pool.resolve(sym_for_lookup);
-            if (!nm.empty())
-                dirty_var_names.insert(std::string(nm));
-        }
-        // Rebind / set-body often leave target as Define/Lambda — also
-        // collect Variable names under the mutated subtree (bounded).
-        if (rec.target_node != NULL_NODE && rec.target_node < flat.size()) {
-            std::vector<NodeId> stack{rec.target_node};
-            std::vector<std::uint8_t> visited(flat.size(), 0);
-            visited[static_cast<std::size_t>(rec.target_node)] = 1;
-            int hops = 0;
-            while (!stack.empty() && hops < 48 && dirty_var_names.size() < 32) {
-                ++hops;
-                const auto nid = stack.back();
-                stack.pop_back();
-                auto nv = flat.get(nid);
-                if (nv.tag == NodeTag::Variable && nv.sym_id != INVALID_SYM) {
-                    auto nm = pool.resolve(nv.sym_id);
-                    if (!nm.empty())
-                        dirty_var_names.insert(std::string(nm));
-                }
-                if (nv.tag == NodeTag::Define || nv.tag == NodeTag::Let ||
-                    nv.tag == NodeTag::LetRec) {
-                    if (nv.sym_id != INVALID_SYM) {
-                        auto nm = pool.resolve(nv.sym_id);
-                        if (!nm.empty())
-                            dirty_var_names.insert(std::string(nm));
-                    }
-                }
-                for (auto c : nv.children) {
-                    if (c == NULL_NODE || c >= flat.size())
-                        continue;
-                    if (visited[static_cast<std::size_t>(c)])
-                        continue;
-                    visited[static_cast<std::size_t>(c)] = 1;
-                    stack.push_back(c);
-                }
-            }
-        }
-        // Prefer selective var_name path when the dirty set is known (#2104).
-        const auto selective_vars = engine.invalidate_predicate_memo_for_var_names(dirty_var_names);
-        // Drop memo entries captured under a strictly older epoch than the
-        // current cache epoch (generation advanced across mutate).
-        const auto selective_gen =
-            engine.invalidate_predicate_memo_for_min_gen(cache_epoch_ > 0 ? cache_epoch_ : 0);
-        // #1923 / #2622: unified dirty-key authority — memo + OccurrenceGoal
-        // drop for affected / occurrence node ids (single pipeline).
-        std::vector<NodeId> memo_targets;
-        memo_targets.reserve(affected.size() + occurrence_targets.size());
-        for (auto id : affected)
-            memo_targets.push_back(id);
-        for (auto id : occurrence_targets)
-            memo_targets.push_back(id);
-        // Issue #2622: sync_occurrence_after_dirty invalidates memo AND drops
-        // goals on engine CS + long-lived solve_delta_cs_ (no goal/memo diverge).
-        (void)engine.sync_occurrence_after_dirty(
-            std::span<const NodeId>(memo_targets.data(), memo_targets.size()), &flat,
-            &solve_delta_cs_);
-        if (metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-            // Path always wired on infer_flat_partial (zero cost when empty).
-            m->predicate_memo_boundary_selective_wired.store(1, std::memory_order_relaxed);
-            // Boundary-selective total: only drops from var_names/min_gen
-            // (not #1923 node invalidations). AC3: empty dirty → 0 add.
-            if (selective_vars + selective_gen > 0) {
-                m->predicate_memo_boundary_selective_total.fetch_add(selective_vars + selective_gen,
-                                                                     std::memory_order_relaxed);
-            }
-        }
-    }
-    // Issue #2646: cone-truncate must drop goals/memo for dirty If/cond
-    // NodeIds that fell OUTSIDE the truncated cone (anti ghost-narrow
-    // after cone-truncated self-modify). The existing #2622 invalidate
-    // above covers occurrence_targets but if cone was truncated, dirty
-    // Ifs that did NOT make the truncated cone retain a prior epoch's
-    // refined type — next delta priority-replays a ghost narrow. This
-    // path collects `occurrence_targets` not in the truncated cone
-    // (set difference) and re-runs sync_occurrence_after_dirty on them.
-    // Zero cost on !truncated or empty outside set (AC3). Counters
-    // observe call / dropped (placeholder counts — exact drop counts
-    // wire in follow-up commit per AC4 ordering note).
-    if (last_partial_cone_truncated_) {
-        std::vector<NodeId> outside_cone_conds;
-        outside_cone_conds.reserve(occurrence_targets.size());
-        DenseNodeSet4682 affected_set(affected.begin(), affected.end(), flat.size());
-        for (auto id : occurrence_targets) {
-            if (affected_set.find(id) == affected_set.end())
-                outside_cone_conds.push_back(id);
-        }
-        if (!outside_cone_conds.empty()) {
-            (void)engine.sync_occurrence_after_dirty(
-                std::span<const NodeId>(outside_cone_conds.data(), outside_cone_conds.size()),
-                &flat, &solve_delta_cs_);
-            // Issue #2703 / #2909: publish outside-If goal drop face so
-            // production commit_readiness can force full-solve recover
-            // (or hard reject) — Soft observes only. Quiet empty set
-            // never reaches here (zero cost).
-            aura::compiler::typed_audit::publish_cone_outside_goal_drop(
-                static_cast<std::uint64_t>(outside_cone_conds.size()));
-            if (metrics_) {
-                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-                m->occurrence_cone_outside_invalidate_total.fetch_add(1, std::memory_order_relaxed);
-                // Placeholder counts — exact drop counts wire in follow-up commit
-                // (engine.sync_occurrence_after_dirty returns void today; AC4
-                // #2622 diverge metric ordering preserved by calling AFTER the
-                // existing #2622 sync so its counters advance first).
-                m->occurrence_cone_outside_goals_dropped_total.fetch_add(outside_cone_conds.size(),
-                                                                         std::memory_order_relaxed);
-                m->occurrence_cone_outside_memo_dropped_total.fetch_add(outside_cone_conds.size(),
-                                                                        std::memory_order_relaxed);
-            }
-        }
-        // Issue #2694: Soft truncated cone silent dependency detection
-        // (refine #2646 outside-If invalidate + #2672 soak — closes the
-        // silent class for Sampled/Soft hosts). When Soft + cone truncate
-        // dropped edges that are NOT in the #2646 outside-cone set (i.e.,
-        // non-If silent deps of live OccurrenceGoal / linear-typed bindings),
-        // arm the escalate counter so commit_readiness can force one Full
-        // audit / reject under production_defaults. Soft pure-observe path
-        // only when no silent-dep edges exist (zero cost happy path).
-        // production / Full already hard — unchanged.
-        {
-            const auto dropped_n = last_partial_cone_dropped();
-            if (dropped_n > outside_cone_conds.size()) {
-                const auto silent_n = dropped_n - outside_cone_conds.size();
-                aura::compiler::typed_audit::publish_soft_truncated_silent_dep_escalate(silent_n);
-            }
-        }
-    }
-    // Issue #2285 Phase 2: selective invalidate from FULL affected set
-    // (broader than the target_node subtree walk above; covers type_dep
-    // additions from #2283 that extend beyond the mutated binding's
-    // direct subtree). Drops memo entries that mention any binding name
-    // in affected, preserving unrelated entries (AC1: independent If
-    // predicates → unrelated conds stay cached). Zero cost when
-    // affected is empty (helper no-op on empty set).
-    {
-        std::unordered_set<std::string> affected_names;
-        affected_names.reserve(affected.size());
-        for (auto nid : affected) {
-            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
-                continue;
-            auto nv = flat.get(nid);
-            if (nv.sym_id != aura::ast::INVALID_SYM &&
-                (nv.tag == aura::ast::NodeTag::Variable || nv.tag == aura::ast::NodeTag::Define ||
-                 nv.tag == aura::ast::NodeTag::Let || nv.tag == aura::ast::NodeTag::LetRec ||
-                 nv.tag == aura::ast::NodeTag::Lambda || nv.tag == aura::ast::NodeTag::Set)) {
-                auto nm = pool.resolve(nv.sym_id);
-                if (!nm.empty())
-                    affected_names.insert(std::string(nm));
-            }
-        }
-        const auto selective_affected =
-            affected_names.empty() ? std::size_t{0}
-                                   : engine.invalidate_predicate_memo_for_var_names(affected_names);
-        if (metrics_ && selective_affected > 0) {
-            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-            m->predicate_memo_boundary_selective_total.fetch_add(selective_affected,
-                                                                 std::memory_order_relaxed);
-        }
-    }
-    // Issue #1529 / #1924: pre-seed blame affected sequence from the
-    // mutation primary + a bounded prefix of the affected set
-    // (full dump is O(delta), not O(workspace)).
-    if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
-        engine.push_blame_affected_node(static_cast<std::uint32_t>(rec.target_node));
-    if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size() &&
-        rec.parent_id != rec.target_node)
-        engine.push_blame_affected_node(static_cast<std::uint32_t>(rec.parent_id));
-    constexpr std::size_t kBlameAffectedCap = 32;
-    for (std::size_t i = 0; i < affected.size() && i < kBlameAffectedCap; ++i) {
-        auto id = affected[i];
-        if (id != NULL_NODE && id < flat.size())
-            engine.push_blame_affected_node(static_cast<std::uint32_t>(id));
-    }
-    if (on_touched_roots_snapshot_)
-        on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
-
-    // Issue #518: re-narrow dirty if-contexts before the infer
-    // loop, then propagate narrowed-variable use-sites into the
-    // affected set.
-    last_occurrence_refresh_count_ = engine.reanalyze_occurrence_contexts(
-        flat, const_cast<StringPool&>(pool), occurrence_targets);
-    engine.propagate_narrowing_to_uses(flat, const_cast<StringPool&>(pool), affected);
-    engine.seed_mutation_touched_roots(flat, pool, occurrence_targets, rec.mutation_id);
-    // Issue #2028: selective ADT/GuardShape re-narrow only on dirty
-    // affected + occurrence roots (cross-delta local, no full walk).
-    {
-        std::vector<NodeId> renarrow_roots;
-        renarrow_roots.reserve(affected.size() + occurrence_targets.size());
-        for (auto id : affected)
-            renarrow_roots.push_back(id);
-        for (auto id : occurrence_targets)
-            renarrow_roots.push_back(id);
-        (void)selective_adt_guardshape_renarrow(flat, pool, types, renarrow_roots, metrics_);
-    }
-    // Issue #2288 / #2564 / #3005 / #3045: selective ADT exhaustiveness
-    // on infer_flat_partial. Variant invalidate + pattern-dirty match
-    // nodes seed reverify roots; those roots join the dirty cone
-    // (affected) and solve_delta touched/pending seeds (#2939 BFS).
-    // Soft bumps observe counters; Production hard-rejects unproven
-    // / Dynamic-slide results (no residual SOLVED via Dynamic).
-    // Quiet: no match in dirty set and no reverify roots → zero extra.
-    // #3045: constructor / arm-only under-mark still walks ancestors
-    // so containing match sites enter the cone (dirty_propagation +
-    // evaluator_typecheck + mutate_type_gate Hard).
-    // #3083: complete seed every match of a mutated ADT type so an
-    // incomplete call-site list cannot silently under-seed.
-    {
-        std::vector<NodeId> undermark_seeds;
-        undermark_seeds.reserve(affected.size() + 2);
-        if (rec.target_node != aura::ast::NULL_NODE)
-            undermark_seeds.push_back(rec.target_node);
-        if (rec.parent_id != aura::ast::NULL_NODE)
-            undermark_seeds.push_back(rec.parent_id);
-        for (auto id : affected)
-            undermark_seeds.push_back(id);
-        (void)force_adt_exhaust_undermark_into_cone(flat, pool, types, undermark_seeds,
-                                                    &engine.constraint_system(), metrics_);
-    }
-    engine.constraint_system().absorb_pending_adt_reverify_roots();
-    {
-        std::vector<std::uint32_t> pattern_matches;
-        pattern_matches.reserve(affected.size() + occurrence_targets.size());
-        auto push_match = [&](NodeId nid) {
-            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
-                return;
-            if (flat.has_match_info(nid))
-                pattern_matches.push_back(static_cast<std::uint32_t>(nid));
-        };
-        for (auto nid : affected)
-            push_match(nid);
-        for (auto nid : occurrence_targets)
-            push_match(nid);
-        (void)engine.constraint_system().seed_adt_reverify_from_match_nodes(pattern_matches);
-    }
-    auto adt_reverify = engine.constraint_system().drain_adt_reverify_roots();
-    if (!adt_reverify.empty()) {
-        DenseNodeSet4682 cone_seen(affected.begin(), affected.end(), flat.size());
-        auto* m = metrics_ ? static_cast<struct CompilerMetrics*>(metrics_) : nullptr;
-        for (auto raw : adt_reverify) {
-            const auto nid = static_cast<NodeId>(raw);
-            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
-                continue;
-            if (!flat.has_match_info(nid))
-                continue; // stale id after rebind — do not infer
-            // Issue #3045: do not infer the match-let as a root (unbound
-            // pattern vars). Lift to enclosing Lambda/Define; post-infer
-            // exhaustiveness recheck still uses `nid` via adt_reverify.
-            {
-                NodeId cur = flat.parent_of(nid);
-                std::size_t safety = 0;
-                NodeId lift = aura::ast::NULL_NODE;
-                while (cur != aura::ast::NULL_NODE && cur < flat.size() && safety++ < flat.size()) {
-                    const auto v = flat.get(cur);
-                    const bool match_let = v.tag == NodeTag::Let &&
-                                           (flat.has_match_info(cur) ||
-                                            std::string(pool.resolve(v.sym_id)) == "__match_tmp");
-                    if (v.tag == NodeTag::Lambda || v.tag == NodeTag::Define ||
-                        v.tag == NodeTag::LetRec || (v.tag == NodeTag::Let && !match_let)) {
-                        lift = cur;
-                        break;
-                    }
-                    cur = flat.parent_of(cur);
-                }
-                if (lift != aura::ast::NULL_NODE && cone_seen.insert(lift).second) {
-                    affected.push_back(lift);
-                    if (m)
-                        m->adt_exhaust_cone_seed_total.fetch_add(1, std::memory_order_relaxed);
-                }
-            }
-            if (auto* mi = flat.get_match_info(nid)) {
-                if (mi->subject_type_id > 0)
-                    engine.constraint_system().note_adt_exhaust_dirty_type(mi->subject_type_id);
-            }
-        }
-        auto recheck = [&](NodeId nid) {
-            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
-                return;
-            if (!flat.has_match_info(nid))
-                return;
-            auto exh = check_match_exhaustiveness(flat, pool, types, nid);
-            const bool unproven = exh.via_dynamic || !exh.missing_constructors.empty() ||
-                                  !exh.checked || !exh.exhaustive;
-            if (m && (!exh.missing_constructors.empty() || exh.via_dynamic))
-                m->adt_partial_non_exhaustive_total.fetch_add(1, std::memory_order_relaxed);
-            if (!unproven)
-                return;
-            // Pre-infer: observe only. Production fail-closed waits
-            // until after re-infer so a pattern mutate that *adds*
-            // an arm is not rejected on stale match_info.
-            if (m)
-                m->adt_exhaust_soft_observe_total.fetch_add(1, std::memory_order_relaxed);
-        };
-        std::unordered_set<NodeId> rechecked;
-        rechecked.reserve((affected.size() + occurrence_targets.size() + adt_reverify.size()) * 2);
-        auto once = [&](NodeId nid) {
-            if (rechecked.insert(nid).second)
-                recheck(nid);
-        };
-        for (auto nid : affected)
-            once(nid);
-        for (auto nid : occurrence_targets)
-            once(nid);
-        for (auto raw : adt_reverify)
-            once(static_cast<NodeId>(raw));
-    } else if (metrics_) {
-        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-        auto recheck = [&](NodeId nid) {
-            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
-                return;
-            if (!flat.has_match_info(nid))
-                return;
-            auto exh = check_match_exhaustiveness(flat, pool, types, nid);
-            if (!exh.missing_constructors.empty())
-                m->adt_partial_non_exhaustive_total.fetch_add(1, std::memory_order_relaxed);
-        };
-        for (auto nid : affected)
-            recheck(nid);
-        for (auto nid : occurrence_targets)
-            recheck(nid);
-    }
-    if (on_touched_roots_snapshot_)
-        on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
-
-    // Issue #4363: a rejected rebind frees or unlinks the new body, but the
-    // slot keeps its tag, type id, and source column. Drop anything that is
-    // not reachable from the live root so the report describes the restored
-    // program. A linked body (the in-flight check) stays in the cone.
-    if (!affected.empty() && flat.root != NULL_NODE && flat.is_live_node(flat.root)) {
-        // Issue #4682: memoized per node (0 unknown, 1 reachable, 2 not),
-        // so a shared spine is walked once per pass.
-        std::vector<std::uint8_t> reach_memo(flat.size(), 0);
-        std::vector<NodeId> reach_path;
-        auto reachable = [&](NodeId id) -> bool {
-            if (!flat.is_live_node(id))
-                return false;
-            reach_path.clear();
-            NodeId cur = id;
-            bool result = false;
-            for (std::size_t n = 0; n <= flat.size(); ++n) {
-                if (cur == flat.root) {
-                    result = true;
-                    break;
-                }
-                if (cur < reach_memo.size() && reach_memo[cur] != 0) {
-                    result = reach_memo[cur] == 1;
-                    break;
-                }
-                if (!flat.is_live_node(cur))
-                    break;
-                reach_path.push_back(cur);
-                const NodeId parent = flat.parent_of(cur);
-                if (parent == cur || parent == NULL_NODE)
-                    break;
-                cur = parent;
-            }
-            for (auto pn : reach_path)
-                if (pn < reach_memo.size())
-                    reach_memo[pn] = result ? 1 : 2;
-            return result;
-        };
-        std::vector<NodeId> live;
-        live.reserve(affected.size());
-        for (auto id : affected) {
-            if (reachable(id))
-                live.push_back(id);
-        }
-        affected.swap(live);
-    }
-    engine.seed_workspace_value_defines(flat, const_cast<StringPool&>(pool));
-    // Issue #4682 step 5c: membership for the #656 ancestor dedupe, and a
-    // marker telling infer_flat that this pass already seeded (re-seeding
-    // per affected root was O(W) each; seed binds only unbound names, so a
-    // repeat inside the same pass is a no-op).
-    std::unordered_set<NodeId> affected_member_4682(affected.begin(), affected.end());
-    std::unordered_map<NodeId, std::uint32_t> affected_id_count_4682;
-    for (auto a : affected)
-        ++affected_id_count_4682[a];
-    SeededPassMarker4682 seeded_marker_4682(&engine);
-    std::vector<std::uint8_t> anc_memo_4682(flat.size(), 0);
-    std::vector<NodeId> anc_path_4682;
-
-    std::size_t re_inferred = 0;
-    std::uint32_t max_narrow_evidence = 0;
-    // Issue #4527: roots actually re-inferred by this boundary (after
-    // the ancestor dedupe). If the boundary demotes the production
-    // export authority, these are exactly the subtrees that must not
-    // survive clean-cached (see the re-dirty below).
-    std::vector<aura::ast::NodeId> boundary_inferred_roots;
-    for (std::size_t ai = 0; ai < affected.size(); ++ai) {
-        const auto id = affected[ai];
-        if (id == aura::ast::NULL_NODE || id >= flat.size() || flat.is_free_slot(id))
-            continue;
-        // Issue #656: dedupe. If `id` has an ancestor in the affected
-        // set, the ancestor's recursive walk will re-check `id` with
-        // the correct env_/scope context. Without this dedupe, every
-        // descendant node is processed as a SEPARATE engine.infer_flat
-        // call, and the env_ (which is popped back to empty after each
-        // Lambda scope exits) doesn't have the new Lambda's params
-        // bound — so Variables in the new body get reported as
-        // unbound. Symptom: test_issue_166 Test 3 fails on
-        // `(mutate:set-body "g" "(lambda (x) (+ x 100))")` because
-        // the selective recheck visits the new Lambda's body Variable
-        // `x` without x being in env_. Fix: skip `id` if any ancestor
-        // is also in the affected set.
-        // Issue #4682 step 5c: one upward walk against a membership set
-        // (was O(|affected|^2 * depth)). Same answer: the walk starts at
-        // parent_of(id), so `id` itself never matches (other than via the
-        // impossible cycle case, which the old loop also tolerated only for
-        // bi != ai entries holding a different copy of id).
-        bool ancestor_in_affected = false;
-        {
-            // Issue #4682: memo "this node or an ancestor is in affected"
-            // (0 unknown, 1 yes, 2 no); shared spines are walked once.
-            anc_path_4682.clear();
-            NodeId cur = flat.parent_of(id);
-            std::size_t safety = 0;
-            while (cur != aura::ast::NULL_NODE && cur < flat.size() && safety++ < flat.size()) {
-                if (affected_member_4682.count(cur) != 0 &&
-                    (cur != id || affected_id_count_4682[cur] > 1)) {
-                    ancestor_in_affected = true;
-                    break;
-                }
-                if (anc_memo_4682[cur] != 0) {
-                    ancestor_in_affected = anc_memo_4682[cur] == 1;
-                    break;
-                }
-                anc_path_4682.push_back(cur);
-                cur = flat.parent_of(cur);
-            }
-            for (auto pn : anc_path_4682)
-                anc_memo_4682[pn] = ancestor_in_affected ? 1 : 2;
-        }
-        if (ancestor_in_affected) {
-            continue; // ancestor's recursive walk will cover us
-        }
-        // Issue #4914: a node under a Quote is datum, not code. The cone
-        // can hold a quoted list's inner Call node (the rebind parse marks
-        // every new node); inferring it as an application reported
-        // `cannot apply non-function Int` for `(quote (1 2 3))` and failed
-        // the production solve. Quote itself types the whole datum.
-        {
-            bool under_quote = false;
-            NodeId cur = flat.parent_of(id);
-            std::size_t safety = 0;
-            while (cur != aura::ast::NULL_NODE && cur < flat.size() && safety++ < flat.size()) {
-                if (flat.get(cur).tag == aura::ast::NodeTag::Quote) {
-                    under_quote = true;
-                    break;
-                }
-                cur = flat.parent_of(cur);
-            }
-            if (under_quote)
-                continue;
-        }
-        // Issue #466: preserve ConstraintSystem across affected
-        // nodes; first node full-solves + mark_clean, subsequent
-        // nodes add_delta + solve_delta with touched-root reverify.
-        engine.set_incremental_delta_mode(true, ai > 0);
-        boundary_inferred_roots.push_back(id);
-        auto type = engine.infer_flat(flat, const_cast<aura::ast::StringPool&>(pool), id,
-                                      /*preserve_cs=*/ai > 0);
-        max_narrow_evidence = std::max(max_narrow_evidence, engine.last_narrowing_evidence());
-        if (type != types.dynamic_type()) {
-            ++re_inferred;
-        }
-    }
-    // Issue #3005: post-re-infer Production / Full fail-closed on dirty
-    // exhaustiveness cone. Uses updated match_info (pattern mutate) +
-    // refreshed ADT constructors (variant mutate). Soft already observed
-    // pre-infer; Quiet never reaches here with a non-empty cone.
-    if (!adt_reverify.empty()) {
-        const bool production = aura::compiler::typed_audit::production_defaults_active();
-        auto* m = metrics_ ? static_cast<struct CompilerMetrics*>(metrics_) : nullptr;
-        bool production_adt_fail = false;
-        for (auto raw : adt_reverify) {
-            const auto nid = static_cast<NodeId>(raw);
-            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
-                continue;
-            if (!flat.has_match_info(nid))
-                continue;
-            auto exh = check_match_exhaustiveness(flat, pool, types, nid);
-            const bool unproven = exh.via_dynamic || !exh.missing_constructors.empty() ||
-                                  (exh.checked && !exh.exhaustive);
-            if (!unproven)
-                continue;
-            if (production) {
-                production_adt_fail = true;
-                if (m) {
-                    m->adt_exhaust_production_reject_total.fetch_add(1, std::memory_order_relaxed);
-                    if (exh.via_dynamic)
-                        m->adt_exhaust_dynamic_slide_prevented_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                }
-                auto msg = format_match_exhaustiveness_message(exh);
-                if (msg.empty())
-                    msg = "match: exhaustiveness unproven after ADT/pattern mutate";
-                diag.report(aura::diag::Diagnostic(aura::diag::ErrorKind::TypeError, msg));
-            }
-        }
-        if (production_adt_fail)
-            last_type_export_authoritative_ = false;
-    }
-
-    // Issue #4527: a production-face boundary that demoted the engine
-    // type-export authority (the preserve_cs ground-join TypeError —
-    // sticky AND — a first-node synthesis TypeError, or not-SOLVED)
-    // must not leave the subtrees it just cleaned as cacheable types.
-    // The hard-gate full recheck would otherwise cache-hit the join
-    // committed in this same boundary (Void for the ground gate) and
-    // drop the diagnostic as an empty collector. Re-dirty every
-    // inferred root so the full walk re-derives and re-reports.
-    // Soft/Off: engine authority is never demoted by the production
-    // scans and the face guard keeps this a no-op (historical pass).
-    if ((aura::compiler::typed_audit::production_defaults_active() ||
-         aura::compiler::typed_audit::production_hard_face_active()) &&
-        !engine.last_type_export_authoritative()) {
-        for (auto root_id : boundary_inferred_roots) {
-            if (root_id != aura::ast::NULL_NODE && root_id < flat.size())
-                flat.mark_subtree_dirty(root_id);
-        }
-    }
-
-    // Issue #2516 phase 2 complete: re-infer finished; type_dep re-recorded
-    // for visited nodes. Phase 3 mirror must see this post-infer cone.
-    if (metrics_) {
-        static_cast<struct CompilerMetrics*>(metrics_)
-            ->type_dirty_txn_phase2_reinfer_total.fetch_add(1, std::memory_order_relaxed);
-    }
-    if (on_touched_roots_snapshot_)
-        on_touched_roots_snapshot_(engine.constraint_touched_roots_size());
-
-    // Issue #2516 phase 3 / #2191: mirror type cone (affected ∪ occurrence
-    // Ifs) into dirty::DepGraph cascade AFTER re-infer so cascade sees the
-    // post-infer affected set (not pre-invalidate stale). Empty cone →
-    // zero cost (mirror_type_affected_to_cascade no-ops). Occurrence If
-    // nodes stay in the cone when cascade also marks their blocks.
-    {
-        std::vector<NodeId> cone;
-        cone.reserve(affected.size() + occurrence_targets.size());
-        std::unordered_set<NodeId> seen;
-        seen.reserve((affected.size() + occurrence_targets.size()) * 2);
-        for (auto id : affected) {
-            if (id == NULL_NODE || id >= flat.size())
-                continue;
-            if (seen.insert(id).second)
-                cone.push_back(id);
-        }
-        for (auto id : occurrence_targets) {
-            if (id == NULL_NODE || id >= flat.size())
-                continue;
-            if (seen.insert(id).second)
-                cone.push_back(id);
-        }
-        const auto mirrored = dirty::mirror_type_affected_to_cascade(cone);
-        // Issue #3120 / #3228: remirror persisted residual CastOp source
-        // AST / containing blocks after the type-txn wipe — including
-        // when the post-infer cone is empty (columnar under-mark). Soft
-        // persist is empty → remirror no-ops. Reuses #3065 force_*.
-        (void)dirty::remirror_persisted_residual_castops();
-        // Issue #3347: re-infer consumed residual undermark; drop the
-        // pending latch so commit_readiness / grant can succeed after
-        // typecheck. Post-wipe remirror keeps persist in cone without
-        // re-latching pending (only the C ABI force path latches).
-        dirty::clear_residual_castop_undermark_pending();
-        if (metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-            m->type_dirty_txn_phase3_mirror_total.fetch_add(1, std::memory_order_relaxed);
-            m->type_dirty_txn_total.fetch_add(1, std::memory_order_relaxed);
-            if (mirrored > 0)
-                m->type_dirty_cone_mirrored_total.fetch_add(mirrored, std::memory_order_relaxed);
-            // Snapshot last union size for Agent (avg lives in dirty::).
-            const auto avg_bp = static_cast<std::uint64_t>(dirty::type_ir_cone_union_size_avg() *
-                                                           100.0); // fixed-point ×100
-            m->type_ir_cone_union_size_avg_x100.store(avg_bp, std::memory_order_relaxed);
-        }
-    }
-
-    // Accumulate per-call engine stats into TypeChecker stats.
-    auto es = engine.stats();
-    stats_.cache_hits += es.cache_hits;
-    stats_.cache_misses += es.cache_misses;
-    stats_.stale_cache += es.stale_cache;
-    stats_.gen_saved += es.gen_saved;
-    // Issue #386: aggregate narrowing counters.
-    stats_.narrowing_applied += es.narrowing_applied;
-    stats_.narrowing_skipped += es.narrowing_skipped;
-    stats_.narrowing_reanalyzed += es.narrowing_reanalyzed;
-    // Issue #338: aggregate and/or precision.
-    stats_.and_or_meet_uses += es.and_or_meet_uses;
-    stats_.and_or_join_uses += es.and_or_join_uses;
-    // Issue #434: aggregate dirty recovery.
-    stats_.narrowing_dirty_recovery += es.narrowing_dirty_recovery;
-    // Issue #390: aggregate schema cache.
-    stats_.schema_cache_lookups += es.schema_cache_lookups;
-    stats_.schema_cache_hits += es.schema_cache_hits;
-    // Issue #281 / #340 / #1781 / #1872: predicate_memo_ stats from
-    // the short-lived engine for this partial infer.
-    stats_.predicate_memo_hits += engine.predicate_memo_hits();
-    stats_.predicate_memo_misses += engine.predicate_memo_misses();
-    stats_.predicate_memo_evictions += engine.predicate_memo_evictions();
-    stats_.predicate_memo_partial_evictions += engine.predicate_memo_partial_evictions();
-    // Issue #2514: sticky synth hard-fail outlives short-lived engine
-    // so MutationBoundary / finish_mutate_hard_gate can force rollback
-    // without soft partial recovery claiming Success.
-    if (engine.linear_synth_hard_fail()) {
-        last_linear_synth_hard_fail_ = true;
-        last_linear_synth_violation_count_ += engine.linear_synth_violation_count();
-    }
-    if (engine.uncovered_bidirectional_tag_count() > 0) {
-        last_uncovered_bidirectional_tag_count_ += engine.uncovered_bidirectional_tag_count();
-        if (engine.uncovered_bidirectional_tag_hard_fail())
-            last_uncovered_bidirectional_tag_hard_fail_ = true;
-    }
-    // Issue #2359: snapshot memo epoch health for the Agent query
-    // surface (engine dies at end of this partial; guard_infer_engine
-    // may still hold a live memo on the Evaluator path).
-    last_predicate_memo_live_ = engine.predicate_memo_size();
-    last_predicate_memo_stale_vs_epoch_ = engine.predicate_memo_stale_vs_epoch();
-    // Issue #411 follow-up #1: per_symbol / ancestor path
-    // tracking already bumped on this infer_flat_partial
-    // call (at the top of the function). The per-call
-    // engine doesn't carry the per_symbol / ancestor
-    // counts; we accumulate them on stats_ directly here.
-
-    // Issue #627: capture narrowing evidence for post-mutate
-    // lowering freshness + consistency observability.
-    last_partial_narrowing_evidence_ = max_narrow_evidence;
-    if (last_occurrence_refresh_count_ > 0 && last_partial_narrowing_evidence_ != 0 && metrics_) {
-        static_cast<struct CompilerMetrics*>(metrics_)
-            ->post_mutate_narrow_consistency_total.fetch_add(1, std::memory_order_relaxed);
-    }
-
-    // Issue #2180 / #2262: after EVERY successful infer_flat_partial,
-    // import engine CS delta into the long-lived solve_delta_cs_ and
-    // stash occurrence TypeIds. This is the single source of truth for
-    // non-composite typed_mutate AND composite_txn_commit — never leave
-    // solve_delta_cs_ empty after a partial that did real work.
-    {
-        solve_delta_cs_.import_delta_marks_from(engine.constraint_system());
-        g_partial_cs_import_total.fetch_add(1, std::memory_order_relaxed);
-        if (metrics_) {
-            static_cast<struct CompilerMetrics*>(metrics_)->partial_cs_import_total.fetch_add(
-                1, std::memory_order_relaxed);
-        }
-        last_occurrence_vars_.clear();
-        last_occurrence_vars_.reserve(occurrence_targets.size());
-        std::unordered_set<std::uint32_t> seen_tid;
-        for (auto id : occurrence_targets) {
-            if (id == NULL_NODE || id >= flat.size())
-                continue;
-            const auto raw = static_cast<std::uint32_t>(flat.get(id).type_id);
-            if (raw == 0 || !seen_tid.insert(raw).second)
-                continue;
-            TypeId t{};
-            t.index = raw;
-            last_occurrence_vars_.push_back(t);
-        }
-        // Mark occurrence TypeIds as touched so the next
-        // solve_delta_occurrence on solve_delta_cs_ is not greenfield.
-        for (const auto& t : last_occurrence_vars_) {
-            if (t.valid())
-                solve_delta_cs_.mark_touched_on_delta(t, /*occurrence_narrow=*/true);
-        }
-        last_partial_cs_live_ = solve_delta_cs_.is_dirty() ||
-                                solve_delta_cs_.touched_roots_size() > 0 ||
-                                solve_delta_cs_.occurrence_priority_roots_size() > 0 ||
-                                solve_delta_cs_.let_poly_dirty_roots_size() > 0 ||
-                                !last_occurrence_vars_.empty() || re_inferred > 0;
-        // Issue #3003: Production / Full + not SOLVED → no stash-as-live
-        // (recover must not commit a half-solution). Repair surface
-        // still imported above.
-        last_delta_solve_status_ = engine.last_solve_status();
-        if (!engine.last_type_export_authoritative()) {
-            last_type_export_authoritative_ = false;
-            last_partial_cs_live_ = false;
-            // Issue #3203: no live refined TypeId from a half-solved CS.
-            last_occurrence_vars_.clear();
-            // Issue #3360: Soft TIMEOUT must not leave provisional
-            // OccurrenceGoals Agent-visible via query:type.
-            if (!aura::compiler::typed_audit::production_defaults_active()) {
-                (void)engine.constraint_system().discard_provisional_occurrence_goals();
-                aura::compiler::typed_audit::g_type_export_soft_refuse_observe_total.fetch_add(
-                    1, std::memory_order_relaxed);
-            }
-        }
-    }
-
-    // Issue #688 / #2460 Phase 2: OwnershipEnv re-sim on dirty linear set
-    // during infer_flat_partial (before boundary-only Full audit).
-    // Zero cost when no linear bindings in the dirty cone (AC5).
-    // Soft/permissive: Warning + notes (AC3). production_defaults || strict:
-    // TypeError + set_node_error so partial TC fails early (AC1).
-    // Defense-in-depth: post_mutation validate_ownership_full + #2108 escape
-    // hard-block still run at boundary (AC4).
-    last_partial_linear_revalidate_fail_ = false;
-    if (flat.root != aura::ast::NULL_NODE && flat.root < flat.size()) {
-        std::unordered_set<std::string> linear_bindings;
-        collect_linear_bindings_under_nodes(flat, pool, affected, linear_bindings);
-        // Issue #2460 / #1458: also walk discover_linear_bindings_in_subtree
-        // for each affected root (O(dirty) linear name discovery).
-        for (auto nid : affected) {
-            if (nid != aura::ast::NULL_NODE && nid < flat.size())
-                discover_linear_bindings_in_subtree(flat, pool, nid, linear_bindings);
-        }
-        if (rec.target_node != aura::ast::NULL_NODE && rec.target_node < flat.size()) {
-            collect_linear_bindings_under_nodes(flat, pool, {rec.target_node}, linear_bindings);
-            discover_linear_bindings_in_subtree(flat, pool, rec.target_node, linear_bindings);
-        }
-        if (rec.parent_id != aura::ast::NULL_NODE && rec.parent_id < flat.size()) {
-            collect_linear_bindings_under_nodes(flat, pool, {rec.parent_id}, linear_bindings);
-            discover_linear_bindings_in_subtree(flat, pool, rec.parent_id, linear_bindings);
-        }
-        // Issue #4682 fix 2: the rebound name is added even when nothing
-        // marks it linear, which made every rebind walk the whole workspace
-        // (validate_ownership from flat.root, O(W)). With no live linear-op
-        // node and no discovered linear binding the name is not a linear
-        // resource, so leave it out (the walk is skipped when the set ends
-        // up empty).
-        if (sym_for_lookup != aura::ast::INVALID_SYM &&
-            (!linear_bindings.empty() || flat.has_linear_ops_live())) {
-            const auto sym_name = std::string(pool.resolve(sym_for_lookup));
-            if (!sym_name.empty())
-                linear_bindings.insert(sym_name);
-        }
-        for (const auto& name : occurrence_linear_dirty.ownership_dirty_bindings())
-            linear_bindings.insert(name);
-        if (!linear_bindings.empty()) {
-            std::vector<OwnershipNote> ownership_notes;
-            const bool ownership_pass = OwnershipEnv::validate_ownership(
-                flat, pool, flat.root, linear_bindings, ownership_notes);
-            record_linear_ownership_mutation_metrics(metrics_, true, ownership_notes,
-                                                     ownership_pass);
-            if (metrics_) {
-                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-                m->linear_dirty_revalidate_count.fetch_add(1, std::memory_order_relaxed);
-                // Issue #2460: sibling counters for partial-infer ownership path.
-                m->linear_partial_revalidate_total.fetch_add(1, std::memory_order_relaxed);
-                // Issue #1531: validate_ownership already runs escape
-                // re-analysis; surface the counters here as well for
-                // dashboards that only watch the partial-infer path.
-                m->linear_escape_reanalysis_total.fetch_add(1, std::memory_order_relaxed);
-                m->ownership_dirty_revalidate_hits.fetch_add(linear_bindings.size(),
-                                                             std::memory_order_relaxed);
-                for (const auto& n : ownership_notes) {
-                    if (n.kind == "escape-while-borrowed")
-                        m->linear_escape_while_borrowed_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-                    else if (n.kind == "escape-after-move")
-                        m->linear_escape_after_move_total.fetch_add(1, std::memory_order_relaxed);
-                }
-            }
-            // Issue #2460: elevate ownership fail to partial TC fail signal
-            // (not only metric bump / late boundary audit).
-            if (!ownership_pass) {
-                last_partial_linear_revalidate_fail_ = true;
-                const bool hard =
-                    strict_ || aura::compiler::typed_audit::production_defaults_active();
-                const auto ek = hard ? ErrorKind::TypeError : ErrorKind::Warning;
-                if (metrics_) {
-                    auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-                    m->linear_partial_revalidate_fail_total.fetch_add(1, std::memory_order_relaxed);
-                    if (hard)
-                        m->linear_partial_revalidate_hard_fail_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                }
-                for (const auto& n : ownership_notes) {
-                    diag.report(aura::diag::Diagnostic(ek, n.message, aura::diag::SourceLocation{})
-                                    .with_blame(aura::diag::BlameInfo{
-                                        aura::diag::BlameParty::System, "", "compile"})
-                                    .with_suggestion(
-                                        "fix linear ownership in the dirty cone (move/drop/borrow "
-                                        "order) before committing; see OwnershipNote kind=" +
-                                        n.kind));
-                    if (n.node != aura::ast::NULL_NODE && n.node < flat.size()) {
-                        // Always stamp TypeError bit so partial TC / Guard see fail
-                        // (matches #2357 set_node_error policy).
-                        flat.set_node_error(n.node,
-                                            static_cast<std::uint8_t>(ErrorKind::TypeError));
-                    }
-                }
-            }
-        }
-    }
-
-    // Issue #3295: dirty-only re-sim can miss cross-function / closure
-    // linear flows (callee locals / closure captures outside the dirty
-    // set). Production/Full forces the full ownership walk when the
-    // escape gate or densify-pending is present; Soft observes only.
-    if (flat.root != aura::ast::NULL_NODE && flat.root < flat.size() &&
-        aura::compiler::typed_audit::linear_force_full_validate_needed()) {
-        std::vector<OwnershipNote> full_notes;
-        const bool full_pass =
-            OwnershipEnv::validate_ownership_full(flat, pool, types, flat.root, full_notes);
-        record_linear_ownership_mutation_metrics(metrics_, true, full_notes, full_pass);
-        if (metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-            m->linear_post_mutation_full_validate_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        if (!full_pass) {
-            last_partial_linear_revalidate_fail_ = true;
-            const bool hard = strict_ || aura::compiler::typed_audit::production_defaults_active();
-            const auto ek = hard ? ErrorKind::TypeError : ErrorKind::Warning;
-            if (metrics_) {
-                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-                m->linear_partial_revalidate_fail_total.fetch_add(1, std::memory_order_relaxed);
-                if (hard)
-                    m->linear_partial_revalidate_hard_fail_total.fetch_add(
-                        1, std::memory_order_relaxed);
-            }
-            for (const auto& n : full_notes) {
-                diag.report(aura::diag::Diagnostic(ek, n.message, aura::diag::SourceLocation{})
-                                .with_blame(aura::diag::BlameInfo{aura::diag::BlameParty::System,
-                                                                  "", "compile"})
-                                .with_suggestion(
-                                    "fix linear ownership in the full scope (cross-function / "
-                                    "closure capture) before committing; see OwnershipNote kind=" +
-                                    n.kind));
-                if (n.node != aura::ast::NULL_NODE && n.node < flat.size()) {
-                    flat.set_node_error(n.node, static_cast<std::uint8_t>(ErrorKind::TypeError));
-                }
-            }
-        }
-    }
-
-    // Issue #692: ADT DefineType + match exhaustiveness incremental
-    // re-validation + pattern NarrowingRecord provenance refresh.
-    {
-        std::vector<NodeId> adt_roots;
-        adt_roots.reserve(affected.size() + 2);
-        for (auto id : affected)
-            adt_roots.push_back(id);
-        if (rec.target_node != NULL_NODE && rec.target_node < flat.size())
-            adt_roots.push_back(rec.target_node);
-        if (rec.parent_id != NULL_NODE && rec.parent_id < flat.size())
-            adt_roots.push_back(rec.parent_id);
-        revalidate_adt_typed_mutation_scope(flat, pool, types, adt_roots, rec, cache_epoch_,
-                                            metrics_);
-    }
-
-    // Issue #1528 / #1923: lifetime re-infer node counter for O(delta)
-    // dashboards (pairs with type_dep_graph expand + solve_delta
-    // worklist prune metrics). Also record recheck ratio vs workspace
-    // size and predicate_memo hit rate for AI multi-round gates.
-    if (metrics_) {
-        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
-        if (re_inferred > 0)
-            m->incremental_reinfer_nodes_total.fetch_add(re_inferred, std::memory_order_relaxed);
-        // Affected-set size (pre-dedupe recheck frontier).
-        m->incremental_recheck_affected_total.fetch_add(affected.size(), std::memory_order_relaxed);
-        const auto workspace = flat.size() > 0 ? flat.size() : 1;
-        const auto ratio_bp = static_cast<std::uint64_t>((affected.size() * 10000ull) / workspace);
-        m->incremental_recheck_ratio_bp.store(ratio_bp, std::memory_order_relaxed);
-        // Predicate memo hit rate (engine-local for this partial call).
-        const auto mh = engine.predicate_memo_hits();
-        const auto mm = engine.predicate_memo_misses();
-        const auto mden = mh + mm;
-        if (mden > 0) {
-            m->predicate_memo_hit_rate_bp.store((mh * 10000ull) / mden, std::memory_order_relaxed);
-        }
-        m->predicate_memo_targeted_invalidations_total.fetch_add(
-            engine.predicate_memo_targeted_invalidations(), std::memory_order_relaxed);
-        // Issue #2104: also mirror engine selective total (cumulative per call).
-        m->predicate_memo_selective_invalidate_total.fetch_add(
-            engine.predicate_memo_selective_invalidate_total(), std::memory_order_relaxed);
-        m->incremental_locality_minimal_recheck_wired.store(1, std::memory_order_relaxed);
-    }
-
-    return re_inferred;
+    partial_bind_partial_engine(st, engine);
+    partial_blame_and_selective_invalidate(st, engine);
+    partial_renarrow_and_seed_adt(st, engine);
+    partial_reinfer_affected_roots(st, engine);
+    partial_post_infer_mirror(st, engine);
+    partial_accumulate_and_import(st, engine);
+    partial_revalidate_linear_ownership(st, engine);
+    partial_finish_adt_and_metrics(st, engine);
+    return st.re_inferred;
 }
+
 
 // ── Ownership Validation ────────────────────────────────────────
 //
