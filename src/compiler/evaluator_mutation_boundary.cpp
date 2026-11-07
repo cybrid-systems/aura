@@ -1663,31 +1663,105 @@ void Evaluator::rebase_open_mutation_checkpoint_after_flat_replace() noexcept {
     }
 }
 
-void Evaluator::invalidate_defuse_index_for_nested() noexcept {
+Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
+    auto& stack = active_mutation_stack();
+    if (stack.empty())
+        return {0, 0};
+    const bool nested_boundary = stack.size() > 1;
+    // Issue #4540: move, not copy — the checkpoint is popped right here and
+    // its column / CS snapshots can be large.
+    auto cp = std::move(stack.back());
+    stack.pop_back();
+    if (!nested_boundary) {
+        // Issue #3918: hash-set! / vector-set! / set-car! / agent-bump!
+        // take an outermost guard and do not append a FlatAST record.
+        // flush reads this bit. Lightweight field checkpoints still count
+        // (their records live on the side log, not mutation_log_).
+        outermost_ast_mutated_ =
+            workspace_flat_ &&
+            (cp.lightweight || workspace_flat_->mutation_log_size() > cp.mutation_log_size);
+    }
+    // Issue #4089: soft-only-below — only orch soft checkpoint frames
+    // remain, so this exit IS the type-authority outermost. A failed audit
+    // must take the real restore path below (never the nested-success skip
+    // that would leave a type-failed tree committed on the agent fiber).
+    // Host outermost (stack empty) and real Guard nesting are unchanged:
+    // empty reads true but nested_boundary is already false there; any
+    // non-soft frame below reads false and keeps the skip.
+    bool soft_only_below = true;
+    for (const auto& c4089 : stack) {
+        if (!c4089.orch_soft_frame) {
+            soft_only_below = false;
+            break;
+        }
+    }
+    // Staged defuse names are consumed by this boundary's cascade and by
+    // the outermost occurrence refresh, both before this function returns.
+    // Drop them on the outermost return so the next boundary does not
+    // replay the previous name set.
+    struct ClearStagedDefuseOnOutermost : ::aura::core::NoCopy {
+        Evaluator* ev;
+        bool outermost;
+        ~ClearStagedDefuseOnOutermost() {
+            if (outermost && ev)
+                ev->defuse_affected_syms_.clear();
+        }
+    } clear_staged_defuse{{}, this, !nested_boundary};
+    // Issue #3322: production/Full force-close the pre-proof observation
+    // window (nested exit + outermost render-fast skip). Soft/Off: no-op.
+    // Does not stamp TypeLinearCommitProof or persist occurrence.
+    auto invalidate_defuse_index_for_nested = [&]() noexcept {
         if (!(typed_audit::production_defaults_active() ||
               typed_audit::get_strategy() == typed_audit::AuditStrategy::Full))
             return;
         defuse_index_ = nullptr;
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->nested_observation_window_closed_total.fetch_add(1, std::memory_order_relaxed);
-}
-
-void Evaluator::exit_record_failure_deny(const MutationCheckpoint& cp) {
-    // Issue #1589: TypedMutationAudit rollback trail.
-    // Issue #4403: a deny belt that never emitted its own SE leaves a
-    // first-wins gate token. Absent token stays the ungated rollback.
-    // Stamp stays after restore (#3217).
-    // Issue #4564: before/after are the Mutation epoch. mid stays
-    // cp.audit_mid. SE.epoch is restamped inside emit_invariant_deny_se.
-    const std::uint64_t audit_epoch = ::aura::core::current_mutation_epoch();
-    const std::uint64_t mid = cp.audit_mid;
-    const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
-    const char* deny_op = typed_audit::take_boundary_deny_op();
-    typed_audit::record_boundary_deny_after_restore(mid, deny_op, audit_epoch, audit_epoch, 0, 0,
-                                                    fid);
-}
-
-void Evaluator::exit_lightweight_checkpoint(MutationCheckpoint& cp, bool success) {
+    };
+    // Issue #3233: pair pcv_checkpoint_live_enter from snapshot.
+    struct PcvCkptExit : ::aura::core::NoCopy {
+        bool on;
+        ~PcvCkptExit() {
+            if (on)
+                aura::ast::pcv_checkpoint_live_exit();
+        }
+    } pcv_ckpt_exit{{}, !cp.lightweight && !cp.heap_slot_only};
+    // Issue #4432: BoundaryExit and phase-4 reemit run after this clear.
+    // Capture the session audit mid first. join(0) would publish the
+    // process Mutation epoch.
+    std::uint64_t session_audit_mid = cp.audit_mid;
+    if (session_audit_mid == 0 && typed_audit::g_tls_boundary_audit_noted)
+        session_audit_mid = typed_audit::current_boundary_audit_mid();
+    if (stack.empty())
+        typed_audit::clear_boundary_audit_mid();
+    // Issue #3379: outermost exit — drop the TLS evaluator slot so a
+    // subsequent commit_readiness_live_policy() (outside any boundary)
+    // falls back to today's face-only fill. Nested exits keep the
+    // outer Evaluator's slot intact until the outermost runs.
+    if (stack.empty()) {
+        aura_typed_audit_clear_readiness_evaluator();
+    }
+    // Issue #3102: AC5 — the boundary exit decays the TLS depth (nested
+    // exits decrement by 1; the outermost exit 1→0 clears the tracker).
+    // Issue #4672: that clear made the #3102 AC2 abort take always empty
+    // (the outermost abort force-dirtied NOTHING). Capture the tracker
+    // BEFORE the drain; the abort rewind consumes the capture. Success:
+    // no capture — the vector is discarded exactly as before.
+    std::vector<aura::compiler::dirty::NodeId> coerced_nodes_at_exit;
+    if (!success)
+        coerced_nodes_at_exit = aura::compiler::coerced_nodes_tracker_take();
+    aura::compiler::coerced_nodes_tracker_exit_boundary();
+    // Issue #2920 SSOT: FlatAST is authoritative after structural mutate.
+    // Invalidate set-code text cache when this flat actually mutated so
+    // JIT/serialize cannot re-parse pre-mutate source. set-code swaps in a
+    // fresh flat (mutation_log empty, size not > entry) and keeps its stamp.
+    // Live unparse (get_workspace_source_fn_ / current-source :workspace) is
+    // the post-mutate reader. Cross-link #2918 snapshot path.
+    if (success && workspace_flat_) {
+        if (cp.lightweight || workspace_flat_->mutation_log_size() > cp.mutation_log_size) {
+            invalidate_workspace_source_text();
+        }
+    }
     if (cp.lightweight && workspace_flat_) {
         // Issue #1355: lightweight path — commit or rollback side log.
         if (success) {
@@ -1729,11 +1803,7 @@ void Evaluator::exit_lightweight_checkpoint(MutationCheckpoint& cp, bool success
             abort_lightweight_type_face(cp);
             defuse_index_ = nullptr;
         }
-    }
-}
-
-void Evaluator::exit_failure_rollback(MutationCheckpoint& cp, bool nested_boundary,
-    std::vector<aura::compiler::dirty::NodeId>& coerced_nodes_at_exit) {
+    } else if (!success && workspace_flat_) {
         clear_expected_occurrence_snapshot_fp();
         // Issue #3122: Agent-visible topology-restore is the Guard wrap
         // (run_under_mutation_guard); this path owns the Hard restore.
@@ -1933,10 +2003,42 @@ void Evaluator::exit_failure_rollback(MutationCheckpoint& cp, bool nested_bounda
                 typed_audit::kTypeLinearProofOutcomeReject);
         }
         typed_audit::end_mid_abort_authority(cp.audit_mid);
-}
-
-void Evaluator::exit_nested_observation(MutationCheckpoint& cp, bool success,
-    const std::vector<MutationCheckpoint>& stack) {
+    }
+    // Issue #273: structural mutates bump generation_; refresh all
+    // live node_gen_ entries so subsequent eval_flat paths see
+    // valid NodeIds (including unrelated workspace defines).
+    // Issue #1282: restamp also consumes auto_restamp_pending_
+    // after a generation wrap so live node_gen_ recovers.
+    // Issue #2934 / #3019: restamp_all_node_generations honors restamp
+    // budget (AURA_RESTAMP_BUDGET_NODES / process override). Over budget
+    // → soft-degrade to incremental or lazy-align only; Agents read
+    // restamp-budget-exceeded-total / restamp-last-budget-exceeded.
+    // Hard fail-closed only on genuine invariant violations (never
+    // silent torn generation — lazy-align keeps is_valid consistent).
+    // Issue #3000: export face is the residual — query:*-stable must
+    // not stamp a pre-mutate generation when last restamp exceeded
+    // and the node was not eagerly restamped (allow_query_stable_ref_export).
+    // Issue #3037: over-budget marks generation torn; production
+    // reject_stable_ref_export even after lazy-align hides node_gen lag.
+    // Issue #3019: outermost triad (node → stable → pin) runs in the
+    // Guard dtor via unified_restamp_after_boundary. Nested still
+    // restamps node gen here (outer owns pin/stable).
+    // Issue #3166: I5 residual for multi-round Agent — nested exit
+    // must close the window between this nested exit and the outermost
+    // exit under production/Full. Nested path here does NOT run
+    // refresh_occurrence_on_guard_exit / LayoutStamp publish / Phase-5
+    // densify / unified_restamp_after_boundary (full triad). On the
+    // success path defuse_index_ also stays cached until outermost
+    // exits, so the next Agent query:*-stable / eval-current
+    // (called BEFORE outermost dtor) can observe pre-cascade IR /
+    // stale DefUse / half-dirty cone.
+    //
+    // Per AC1: production/Full closes the window by invalidating
+    // defuse_index_ inline (next query rebuilds against the
+    // post-mutate state — mark_dirty_upward already ran via
+    // push_post_mutate_incremental_cascade at L915 below). Per AC2:
+    // soft / Off observe counter only (existing Soft behavior
+    // unchanged). Outermost path unaffected (zero AC3 regression).
     if (workspace_flat_ && !stack.empty()) {
         // Issue #3322: every nested exit under production/Full closes the
         // observation window (success or fail, structural or not). #3166
@@ -2018,9 +2120,128 @@ void Evaluator::exit_nested_observation(MutationCheckpoint& cp, bool success,
             }
         }
     }
-}
-
-bool Evaluator::exit_collect_provenance_miss(bool nested_boundary, bool success) {
+    // Issue #1283: unified provenance capture at Guard boundary exit.
+    // Stamps defuse_version / mutation impact into Agent-visible metrics
+    // so closed-loop self-evo can blame dirty nodes on this boundary.
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+        m->provenance_boundary_capture_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #1638 / #2201: mutation_log compact at boundary exit (success
+    // path only — failure path already rolls back via
+    // rollback_to_size, so the log is already shrunk). Threshold
+    // gate avoids the shrink_to_fit cost on small log states
+    // (heavy-mutation safety net — 200MB+/day reclaim in long-
+    // running Agent scenarios). Cheap when under threshold.
+    // #2201: also stamp high-water + pressure for Agent closed-loop.
+    if (success && workspace_flat_) {
+        static constexpr std::size_t kCompactThreshold = 64uz * 1024; // entries
+        const auto log_sz = workspace_flat_->mutation_log_size();
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            auto hw = m->mutation_log_high_water.load(std::memory_order_relaxed);
+            while (log_sz > hw &&
+                   !m->mutation_log_high_water.compare_exchange_weak(
+                       hw, static_cast<std::uint64_t>(log_sz), std::memory_order_relaxed)) {
+            }
+            const auto soft = m->mutation_log_soft_threshold.load(std::memory_order_relaxed);
+            const auto soft_n = soft == 0 ? 5'000ull : soft;
+            const auto score =
+                soft_n == 0
+                    ? 0ull
+                    : std::min<std::uint64_t>(
+                          10'000ull, (static_cast<std::uint64_t>(log_sz) * 10'000ull) / soft_n);
+            m->mutation_log_pressure_score_bp.store(score, std::memory_order_relaxed);
+            m->mutation_log_pressure_flag.store(log_sz >= soft_n ? 1 : 0,
+                                                std::memory_order_relaxed);
+        }
+        if (log_sz > kCompactThreshold)
+            compact_mutation_log();
+    }
+    // Bump version on both success and failure (legacy
+    // invariant: 2 bumps per boundary). The lock is
+    // released by the unique_lock going out of scope.
+    // Issue #4346: heap slot writes are not AST mutations. Skipping the
+    // second bump keeps capture frames current without a shard walk.
+    if (!cp.heap_slot_only) {
+        // Issue #189: the total-mutations counter (stats-only, relaxed) is
+        // bumped even on rollback so dashboards can see "the boundary
+        // attempted to mutate, then rolled back".
+        // Issue #4109: ride still-valid capture frames up to the new defuse
+        // in the same critical section as the bump. The boundary's own
+        // mutation-log window decides invalidation: frames binding a name the
+        // boundary re-defined (mutate:rebind / set-code replaced the Define —
+        // module captures, #2579, are NOT re-defined by unrelated mutates)
+        // stay behind; materialize_call_env then returns the empty Env
+        // instead of copying pre-mutate bindings into the next call.
+        // Issue #4730: bump + restamp under ONE shard barrier (see the
+        // helper) so a sibling body never observes a frame one bump behind.
+        (void)bump_defuse_and_restamp(cp.version, cp.mutation_log_size);
+    }
+    // Issue #4377: a store inside this boundary stamped defuse before the
+    // exit bump above. Outermost success writes that post-exit defuse onto
+    // the stored entries. Failure drops the names (rolled-back IR stays
+    // needs-relower). Nested success keeps them for the outer bump.
+    if (!success) {
+        aura::compiler::clear_ir_cache_boundary_stored_names();
+    } else if (stack.empty()) {
+        if (auto* hook = aura::compiler::current_ir_cache_boundary_restamp()) {
+            if (hook->fn && !aura::compiler::ir_cache_boundary_stored_names().empty())
+                hook->fn(hook->ctx);
+        }
+        aura::compiler::clear_ir_cache_boundary_stored_names();
+    }
+    // Issue #550 / #518: narrowing_refresh_count_ is
+    // bumped from TypeChecker::infer_flat_partial's
+    // reanalyze_occurrence_contexts path (actual
+    // OccurrenceInfoFlat refresh), not here.
+    // Issue #551: bump impact_snapshot_count_ on every
+    // successful Guard exit — mirrors the post-mutate
+    // impact snapshot the AI loop reads for adaptive
+    // strategy. Stats-only (relaxed-ordering); the
+    // follow-up wires the actual snapshot collection
+    // (dirty_nodes_in_snapshot_, marker delta, epoch
+    // change, affected roots via StableNodeRef).
+    bump_impact_snapshot_count();
+    // Issue #555: bump guard_dirty_epoch_count_ on
+    // every successful Guard exit — measures the
+    // Guard + type cache integration. Pairs with
+    // dirty_propagation_count_ (bumped in
+    // mark_dirty_upward) so the AI Agent can compute
+    // propagation_ratio = dirty_propagation / guard_dirty_epoch
+    // (close to 1.0 = every Guard exit propagates).
+    bump_guard_dirty_epoch_count();
+    // Issue #672: every successful Guard exit is itself a
+    // linear ownership enforcement event — bump the
+    // post-mutate enforcement counter so the AI Agent can
+    // gauge how often Guard exits propagate through
+    // (query:linear-ownership-enforcement-stats). Pairs
+    // with bump_guard_dirty_epoch_count() above so the
+    // Agent can compute enforcement_ratio =
+    // linear_post_mutate_enforcements / guard_dirty_epoch.
+    bump_linear_post_mutate_enforcement();
+    // Issue #2068 Phase 2 / #2104: selective predicate-memo invalidation is
+    // also wired in TypeChecker::infer_flat_partial (dirty var_names + min_gen
+    // before reanalyze_occurrence_contexts) for post-mutate typecheck /
+    // typecheck-incremental. Issue #2144: outermost Guard success also
+    // calls refresh_occurrence_on_guard_exit (below, with cascade) so
+    // multi-round mutate:* does not wait for query:type / full infer.
+    // Empty dirty → zero cost (AC4 early exit).
+    // Issue #555 / #518: selective_recheck_count_ is
+    // bumped from reanalyze_occurrence_contexts paths.
+    // Issue #2102: always consume provenance-miss flag on boundary exit
+    // (even without workspace) so TLS does not stick across tests/fibers.
+    // Count force-audit metric here; Full-path invariant suite still needs
+    // workspace_flat_ (below).
+    // Issue #2558: re-evaluate completeness SLO under production so long
+    // Sampled sessions that accumulated miss pressure force Full on this
+    // outermost exit (one-shot pending flag). Soft/non-production only
+    // observes. Vacuous 10000 bp → no breach.
+    if (typed_audit::production_defaults_active()) {
+        aura::compiler::evaluate_coercion_provenance_slo(
+            aura::compiler::coercion_provenance_completeness_bp(), /*production_active=*/true);
+    }
+    // Issue #2648: Soft evidence-loss pressure is a pure read here (arming
+    // happens on soft incomplete skip via evaluate_coercion_evidence_loss_slo
+    // in arm_soft_incomplete_force_full_observe). Do NOT re-arm on every
+    // boundary exit — AC2: second exit without new misses must not re-arm.
     const auto evidence_loss_bp = aura::compiler::coercion_evidence_loss_bp();
     const bool evidence_loss_pressure =
         aura::compiler::coercion_evidence_loss_pressure(evidence_loss_bp);
@@ -2101,28 +2322,42 @@ bool Evaluator::exit_collect_provenance_miss(bool nested_boundary, bool success)
                 1, std::memory_order_relaxed);
         }
     }
-    return provenance_miss;
-}
-
-void Evaluator::exit_success_record_impact(MutationCheckpoint& cp, bool nested_boundary,
-    bool soft_only_below, ExitSuccessShare& st) {
+    // Issue #456: record mutation-impact summary on
+    // success only. Walk the workspace mutation log
+    // from `mutation_log_size` (pre-mutation) to
+    // current size (post-mutation) and count entries.
+    // Skip on rollback (the rolled-back mutations
+    // don't actually affect state).
+    //
+    // P0: the per-record DirtyReason bitmask is NOT
+    // stored on MutationRecord (issue #188 stores it
+    // on the AST node's dirty_ column, not on the
+    // log entry). So we count log entries (= nodes
+    // touched) and use the defuse_version_ delta as
+    // the "reasons seen" surrogate: any delta >= 2
+    // implies a structural change (kStructuralDirty
+    // equivalent). Follow-up: extend MutationRecord
+    // to carry a dirty_reasons byte so we can OR the
+    // actual reasons in here.
+    if (success && workspace_flat_) {
         const auto post_size = workspace_flat_->all_mutations().size();
-                if (post_size > cp.mutation_log_size) {
-            st.nodes_changed = post_size - cp.mutation_log_size;
+        std::uint64_t nodes_changed = 0;
+        if (post_size > cp.mutation_log_size) {
+            nodes_changed = post_size - cp.mutation_log_size;
         }
         const std::uint64_t epoch_after = defuse_version_.load(std::memory_order_acquire);
         // Issue #4564: typed before/after are the Mutation epoch at the
         // stamp. The mutation-impact ring keeps this defuse surrogate.
-        st.audit_epoch = ::aura::core::current_mutation_epoch();
+        const std::uint64_t audit_epoch = ::aura::core::current_mutation_epoch();
         const std::uint64_t epoch_delta = epoch_after - cp.version;
         // Surrogate reasons mask: bit 0 = any node was
         // touched (kGeneralDirty equivalent).
         // Higher bits reserved for follow-up
         // MutationRecord reason bytes.
-        const std::uint8_t reasons_mask = st.nodes_changed > 0 ? 0x01 : 0x00;
+        const std::uint8_t reasons_mask = nodes_changed > 0 ? 0x01 : 0x00;
         mutation_impact_count_.fetch_add(1, std::memory_order_relaxed);
-        if (st.nodes_changed > 0) {
-            mutation_impact_nodes_changed_total_.fetch_add(st.nodes_changed,
+        if (nodes_changed > 0) {
+            mutation_impact_nodes_changed_total_.fetch_add(nodes_changed,
                                                            std::memory_order_relaxed);
         }
         // OR the new reasons into the running mask
@@ -2143,14 +2378,16 @@ void Evaluator::exit_success_record_impact(MutationCheckpoint& cp, bool nested_b
         auto& slot = mutation_impact_ring_[seq % kMutationImpactRingSize];
         slot.epoch_after = epoch_after;
         slot.epoch_delta = epoch_delta;
-        slot.nodes_changed = st.nodes_changed;
+        slot.nodes_changed = nodes_changed;
         slot.reasons_mask = reasons_mask;
         // Issue #676: security audit event for successful mutations.
-                        const auto& log = workspace_flat_->all_mutations();
+        std::string_view audit_op = "structural";
+        ast::NodeId audit_target = ast::NULL_NODE;
+        const auto& log = workspace_flat_->all_mutations();
         if (post_size > cp.mutation_log_size && post_size <= log.size()) {
             const auto& rec = log[post_size - 1];
-            st.audit_op = rec.operator_name;
-            st.audit_target = rec.target_node;
+            audit_op = rec.operator_name;
+            audit_target = rec.target_node;
         }
         // Issue #3780: outermost pre-persist may have already appended
         // under fail-closed + WAL — skip only that duplicate. Nested /
@@ -2158,9 +2395,9 @@ void Evaluator::exit_success_record_impact(MutationCheckpoint& cp, bool nested_b
         if (g_tls_mutation_audit_wal_precommitted) {
             g_tls_mutation_audit_wal_precommitted = false;
         } else {
-            (void)emit_mutation_audit(static_cast<std::uint32_t>(st.nodes_changed),
-                                      static_cast<std::uint32_t>(epoch_delta), st.audit_op,
-                                      st.audit_target);
+            (void)emit_mutation_audit(static_cast<std::uint32_t>(nodes_changed),
+                                      static_cast<std::uint32_t>(epoch_delta), audit_op,
+                                      audit_target);
         }
         // Issue #2038 / #2988: push-automatic DefUse/IR/JIT cascade so the
         // next eval-current / apply_closure sees updated caches without a
@@ -2189,14 +2426,51 @@ void Evaluator::exit_success_record_impact(MutationCheckpoint& cp, bool nested_b
         const bool heap_occ_quiet = cp.heap_slot_only && !cp.lightweight &&
                                     workspace_flat_->mutation_log_size() <= cp.mutation_log_size;
         if (!nested_boundary && !heap_occ_quiet)
-            refresh_occurrence_on_guard_exit(cp.mutation_log_size, st.nodes_changed);
-}
-
-void Evaluator::exit_success_audit_decide(MutationCheckpoint& cp, bool nested_boundary,
-    bool provenance_miss, ExitSuccessShare& st, ExitEarly& early) {
-                st.linear_hint = (st.audit_op.find("linear") != std::string_view::npos) ||
-                                         (st.audit_op.find("move") != std::string_view::npos) ||
-                                         (st.audit_op.find("inline") != std::string_view::npos);
+            refresh_occurrence_on_guard_exit(cp.mutation_log_size, nodes_changed);
+        // Issue #1589 / #1614 / #1894 / #2027 / #2029: TypedMutationAudit
+        // trail + real invariant suite on mutation boundary hot path.
+        // Contextual sampling (#1894) forces audit for large dirty / linear.
+        // #2027: nested/atomic_batch never under-samples.
+        // #2029: Full strategy always tries per-category partial recovery
+        // (type recheck / linear re-enforce / provenance restamp) before
+        // structural rollback — composite and single-boundary alike.
+        // #2102: provenance_miss (consumed above) forces Full-path audit.
+        // Issue #2215 RenderFastExit: skip Full suite under render hotpath
+        // success (frame budget); still record lightweight boundary outcome.
+        {
+            const std::uint64_t mid = cp.audit_mid;
+            const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+            if (render_fast_exit_this_boundary_ && !nested_boundary) {
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->render_fast_exit_skipped_audit_total.fetch_add(1, std::memory_order_relaxed);
+                clear_txn_dirty();
+                // Issue #2814: intentional skip of invariant suite (frame budget).
+                typed_audit::note_invariant_enforcement_skipped(mid);
+                typed_audit::record_boundary_outcome(
+                    mid, audit_op, audit_epoch, audit_epoch, /*success=*/true,
+                    static_cast<std::uint32_t>(audit_target),
+                    static_cast<std::uint32_t>(nodes_changed), fid);
+                // Issue #3322: production/Full still drop stale defuse/IR so
+                // a mid-boundary query cannot observe pre-proof state before
+                // outermost TypeLinearCommitProof. Soft/Off: helper no-ops.
+                invalidate_defuse_index_for_nested();
+                // Skip Full/composite invariant walk + partial recovery.
+            } else if (rebind_light_skip_heavy_exit(*this)) {
+                // Issue #4357: record the boundary and skip the suite.
+                // The body's finish_mutate_hard_gate already ran. A nested
+                // guard is composite and would always enter
+                // composite_txn_commit even when the strategy is Sampled.
+                clear_txn_dirty();
+                typed_audit::note_invariant_enforcement_skipped(mid);
+                typed_audit::record_boundary_outcome(
+                    mid, audit_op, audit_epoch, audit_epoch, /*success=*/true,
+                    static_cast<std::uint32_t>(audit_target),
+                    static_cast<std::uint32_t>(nodes_changed), fid);
+                invalidate_defuse_index_for_nested();
+            } else {
+                const bool linear_hint = (audit_op.find("linear") != std::string_view::npos) ||
+                                         (audit_op.find("move") != std::string_view::npos) ||
+                                         (audit_op.find("inline") != std::string_view::npos);
                 // Issue #2223: match sites force Sampled hard-gate / audit
                 // (mirror linear_ops_present — ADT self-mod must not under-sample).
                 bool match_sites = false;
@@ -2215,15 +2489,15 @@ void Evaluator::exit_success_audit_decide(MutationCheckpoint& cp, bool nested_bo
                         }
                     }
                 }
-                st.batch_active =
+                const bool batch_active =
                     cp.bump_suppressed_at_entry ||
                     (workspace_flat_ && workspace_flat_->atomic_batch_active());
-                st.composite = nested_boundary || st.batch_active;
-                st.strat = typed_audit::get_strategy();
+                const bool composite = nested_boundary || batch_active;
+                const auto strat = typed_audit::get_strategy();
                 // Issue #2145: Strict sandbox links Full-class hard gate.
-                st.strict_sandbox = aura::core::sandbox::is_strict();
-                st.hard_gate = typed_audit::requires_invariant_hard_gate(
-                    st.nodes_changed, st.linear_hint, st.strict_sandbox, match_sites,
+                const bool strict_sandbox = aura::core::sandbox::is_strict();
+                const bool hard_gate = typed_audit::requires_invariant_hard_gate(
+                    nodes_changed, linear_hint, strict_sandbox, match_sites,
                     /*mutate_session=*/true);
                 // Issue #2514 / #2545 / Issue #2559: unified linear force entry
                 // is single rollback authority for synth + sticky post-mutate /
@@ -2240,7 +2514,7 @@ void Evaluator::exit_success_audit_decide(MutationCheckpoint& cp, bool nested_bo
                 // Issue #4082: capture the synth sticky before force clears it.
                 // Nested re-arms it so the outer pre-persist belt still denies.
                 const bool synth_sticky_4082 = linear_synth_hard_fail_pending();
-                if (force_linear_rollback(st.composite ? "composite-linear-synth-hard-fail"
+                if (force_linear_rollback(composite ? "composite-linear-synth-hard-fail"
                                                     : "linear-synth-hard-fail")) {
                     // Issue #3217: fence then restore then proof clear then stamp.
                     if (abort_ir_cache_begin_force_fn_)
@@ -2298,15 +2572,15 @@ void Evaluator::exit_success_audit_decide(MutationCheckpoint& cp, bool nested_bo
                     if (!nested_boundary)
                         clear_txn_dirty();
                     typed_audit::record_boundary_deny_after_restore(
-                        st.mid,
-                        st.composite ? "composite-linear-synth-hard-fail" : "linear-synth-hard-fail",
-                        st.audit_epoch, st.audit_epoch, static_cast<std::uint32_t>(st.audit_target), 0, st.fid);
-                    if (st.strict_sandbox)
+                        mid,
+                        composite ? "composite-linear-synth-hard-fail" : "linear-synth-hard-fail",
+                        audit_epoch, audit_epoch, static_cast<std::uint32_t>(audit_target), 0, fid);
+                    if (strict_sandbox)
                         typed_audit::capture_audit_event_forced(
-                            st.mid, "strict-linear-synth-denied",
-                            typed_audit::MutationKind::Structural, st.audit_epoch, st.audit_epoch,
+                            mid, "strict-linear-synth-denied",
+                            typed_audit::MutationKind::Structural, audit_epoch, audit_epoch,
                             typed_audit::AuditOutcome::Error,
-                            static_cast<std::uint32_t>(st.audit_target), 0, st.fid, 0,
+                            static_cast<std::uint32_t>(audit_target), 0, fid, 0,
                             static_cast<std::uint32_t>(capability_tenant_id()));
                     // Issue #4082: force_linear_rollback already cleared the
                     // sticky, so a live stamp would see linear_ok and publish
@@ -2347,9 +2621,7 @@ void Evaluator::exit_success_audit_decide(MutationCheckpoint& cp, bool nested_bo
                     else if (synth_sticky_4082)
                         note_linear_synth_hard_fail_pending();
                     typed_audit::end_mid_abort_authority(cp.audit_mid);
-                    early.stop = true;
-        early.cp = std::move(cp);
-        return;
+                    return cp;
                 }
                 // Composite paths never under-sample (self-evo multi-step safety).
                 // Provenance miss forces audit even when Sampled would skip and
@@ -2359,25 +2631,24 @@ void Evaluator::exit_success_audit_decide(MutationCheckpoint& cp, bool nested_bo
                 // skip analyze_linear_escape / Moved live-root checks.
                 // Issue #2145: Full/Strict hard_gate always audits (even small dirty).
                 // Issue #2223: match_sites force Sampled audit.
-                st.do_audit =
-                    st.strat != typed_audit::AuditStrategy::Off &&
-                    (st.hard_gate || provenance_miss || st.composite || st.linear_hint || match_sites ||
-                     (st.nodes_changed > 0 && typed_audit::should_audit_contextual(
-                                               st.mid, st.nodes_changed, st.linear_hint, match_sites)));
-                if (!st.do_audit && st.strat == typed_audit::AuditStrategy::Sampled)
+                const bool do_audit =
+                    strat != typed_audit::AuditStrategy::Off &&
+                    (hard_gate || provenance_miss || composite || linear_hint || match_sites ||
+                     (nodes_changed > 0 && typed_audit::should_audit_contextual(
+                                               mid, nodes_changed, linear_hint, match_sites)));
+                if (!do_audit && strat == typed_audit::AuditStrategy::Sampled)
                     typed_audit::g_typed_mutation_audit_counters.hard_gate_sampled_skip_total
                         .fetch_add(1, std::memory_order_relaxed);
-}
-
-void Evaluator::exit_success_audit_recover(MutationCheckpoint& cp, bool nested_boundary,
-    ExitSuccessShare& st) {
+                if (do_audit) {
                     typed_audit::InvariantAuditResult first{};
-                                                            // Issue #2105: composite/nested/atomic_batch uses ordered
+                    bool inv_ok = false;
+                    bool recovered = false;
+                    // Issue #2105: composite/nested/atomic_batch uses ordered
                     // commit barrier (solve_delta_occurrence → linear revalidate
                     // → invariant audit → Full partial recovery or reject).
                     // Issue #2260: non-composite hard-gate must prove SOLVED /
                     // !truncated_reverify (or full-resync) before native continues.
-                    if (st.composite) {
+                    if (composite) {
                         typed_audit::CompositeTxnCommitResult ccr{};
                         // Issue #2851: stage mutations-since-boundary-enter so
                         // composite_txn_commit body (which holds the #2610
@@ -2394,9 +2665,9 @@ void Evaluator::exit_success_audit_recover(MutationCheckpoint& cp, bool nested_b
                                 : 0ull;
                         typed_audit::g_composite_commit_log_forces_partial_pending_log_delta.store(
                             log_delta, std::memory_order_relaxed);
-                        st.inv_ok = composite_txn_commit(
-                            st.mid, st.audit_op, static_cast<std::uint32_t>(st.audit_target), st.audit_epoch,
-                            st.audit_epoch, nested_boundary, st.batch_active, &ccr);
+                        inv_ok = composite_txn_commit(
+                            mid, audit_op, static_cast<std::uint32_t>(audit_target), audit_epoch,
+                            audit_epoch, nested_boundary, batch_active, &ccr);
                         // Reset pending log_delta after composite_txn_commit
                         // returns so subsequent non-composite boundaries
                         // don't see stale value. composite_txn_commit body
@@ -2404,29 +2675,29 @@ void Evaluator::exit_success_audit_recover(MutationCheckpoint& cp, bool nested_b
                         typed_audit::g_composite_commit_log_forces_partial_pending_log_delta.store(
                             0, std::memory_order_relaxed);
                         first = ccr.audit;
-                        st.recovered = ccr.partial_recovered;
-                        if (st.inv_ok)
+                        recovered = ccr.partial_recovered;
+                        if (inv_ok)
                             clear_txn_dirty();
                     } else {
                         bool proof_trunc = false;
                         bool proof_force = false;
                         const bool proof_ok = boundary_solve_proof_gate(
-                            st.hard_gate, st.linear_hint, st.nodes_changed, &proof_trunc, &proof_force);
-                        if (st.hard_gate && (!proof_ok || proof_force)) {
+                            hard_gate, linear_hint, nodes_changed, &proof_trunc, &proof_force);
+                        if (hard_gate && (!proof_ok || proof_force)) {
                             first.type_ok = false;
-                            st.inv_ok = false;
+                            inv_ok = false;
                             // Fall through to force-rollback path below.
                         } else {
-                            st.inv_ok = run_typed_mutation_invariant_audit(
-                                st.mid, st.audit_op, static_cast<std::uint32_t>(st.audit_target),
-                                st.audit_epoch, st.audit_epoch,
+                            inv_ok = run_typed_mutation_invariant_audit(
+                                mid, audit_op, static_cast<std::uint32_t>(audit_target),
+                                audit_epoch, audit_epoch,
                                 /*composite_mode=*/false, &first);
                         }
                         (void)proof_trunc;
                     }
                     // #1894 / #2029 / #2145: non-composite Full/Strict hard-gate →
                     // per-category partial recover before structural rollback.
-                    if (!st.composite && !st.inv_ok && st.hard_gate) {
+                    if (!composite && !inv_ok && hard_gate) {
                         auto& ac = typed_audit::g_typed_mutation_audit_counters;
                         ac.partial_recovery_attempt_total.fetch_add(1, std::memory_order_relaxed);
                         ac.hard_gate_audits_total.fetch_add(1, std::memory_order_relaxed);
@@ -2478,33 +2749,29 @@ void Evaluator::exit_success_audit_recover(MutationCheckpoint& cp, bool nested_b
                         // Issue #2223: ADT renarrow / revalidate before re-audit.
                         if (!first.adt_ok) {
                             ac.partial_recovery_adt_total.fetch_add(1, std::memory_order_relaxed);
-                            partial_recover_adt_exhaustiveness(st.mid);
+                            partial_recover_adt_exhaustiveness(mid);
                         }
                         typed_audit::InvariantAuditResult after{};
-                        st.inv_ok = run_typed_mutation_invariant_audit(
-                            st.mid, "full-partial-recover", static_cast<std::uint32_t>(st.audit_target),
-                            st.audit_epoch, st.audit_epoch,
+                        inv_ok = run_typed_mutation_invariant_audit(
+                            mid, "full-partial-recover", static_cast<std::uint32_t>(audit_target),
+                            audit_epoch, audit_epoch,
                             /*composite_mode=*/false, &after);
-                        if (st.inv_ok) {
-                            st.recovered = true;
+                        if (inv_ok) {
+                            recovered = true;
                             ac.partial_recovery_success_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
                         } else {
                             ac.partial_recovery_fail_total.fetch_add(1, std::memory_order_relaxed);
                         }
                     }
-}
-
-void Evaluator::exit_success_audit_force(MutationCheckpoint& cp, bool nested_boundary,
-    bool soft_only_below, ExitSuccessShare& st, ExitEarly& early) {
                     // Issue #2145 / #2545 / #2029: hard-gate force rollback
                     // for Full / Strict / composite. Linear axes go through
                     // the unified force_linear_rollback entry first (single
                     // counter ownership; no double-count with
                     // linear_invariant_fail). Structural rollback only if
                     // partial recover did not succeed.
-                    if (!st.inv_ok && (st.composite || st.hard_gate)) {
-                        if (!st.recovered) {
+                    if (!inv_ok && (composite || hard_gate)) {
+                        if (!recovered) {
                             // add_mutate holds an outermost wrapper Guard; the
                             // primitive's try_acquire is nested → composite.
                             // Nested success must not dual-restore here: that
@@ -2521,10 +2788,10 @@ void Evaluator::exit_success_audit_force(MutationCheckpoint& cp, bool nested_bou
                                 goto skip_nested_success_composite_restore;
                             auto& ac = typed_audit::g_typed_mutation_audit_counters;
                             const bool linear_forced = force_linear_rollback(
-                                st.composite ? "composite-linear-force" : "linear-force-rollback",
+                                composite ? "composite-linear-force" : "linear-force-rollback",
                                 &first);
                             if (!linear_forced &&
-                                (st.strat == typed_audit::AuditStrategy::Full || st.hard_gate)) {
+                                (strat == typed_audit::AuditStrategy::Full || hard_gate)) {
                                 // Type / provenance / adt (non-linear) force path.
                                 ac.full_strategy_force_rollback_total.fetch_add(
                                     1, std::memory_order_relaxed);
@@ -2537,7 +2804,7 @@ void Evaluator::exit_success_audit_force(MutationCheckpoint& cp, bool nested_bou
                                 g_linear_escape_gate_clear_on_rollback_total.fetch_add(
                                     1, std::memory_order_relaxed);
                             }
-                            if (st.composite) {
+                            if (composite) {
                                 ac.composite_full_rollback_total.fetch_add(
                                     1, std::memory_order_relaxed);
                             }
@@ -2568,9 +2835,9 @@ void Evaluator::exit_success_audit_force(MutationCheckpoint& cp, bool nested_bou
                                 deny_kind = "provenance";
                             last_mutate_error_ = typed_audit::format_invariant_deny_reason(
                                 deny_kind, capability_tenant_id(),
-                                st.composite ? "composite-invariant-force-rollback"
+                                composite ? "composite-invariant-force-rollback"
                                           : "invariant-force-rollback");
-                            if (st.strict_sandbox) {
+                            if (strict_sandbox) {
                                 strict_mutate_hold_.store(1, std::memory_order_relaxed);
                                 ac.hard_gate_strict_hold_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
@@ -2694,18 +2961,18 @@ void Evaluator::exit_success_audit_force(MutationCheckpoint& cp, bool nested_bou
                             if (!nested_boundary)
                                 clear_txn_dirty();
                             typed_audit::record_boundary_deny_after_restore(
-                                st.mid,
-                                st.composite ? "composite-invariant-force-rollback"
+                                mid,
+                                composite ? "composite-invariant-force-rollback"
                                           : "invariant-force-rollback",
-                                st.audit_epoch, st.audit_epoch, static_cast<std::uint32_t>(st.audit_target),
-                                0, st.fid);
+                                audit_epoch, audit_epoch, static_cast<std::uint32_t>(audit_target),
+                                0, fid);
                             // Strict trail: Error outcome for Agent dashboards.
-                            if (st.strict_sandbox)
+                            if (strict_sandbox)
                                 typed_audit::capture_audit_event_forced(
-                                    st.mid, "strict-invariant-denied",
-                                    typed_audit::MutationKind::Structural, st.audit_epoch, st.audit_epoch,
+                                    mid, "strict-invariant-denied",
+                                    typed_audit::MutationKind::Structural, audit_epoch, audit_epoch,
                                     typed_audit::AuditOutcome::Error,
-                                    static_cast<std::uint32_t>(st.audit_target), 0, st.fid, 0);
+                                    static_cast<std::uint32_t>(audit_target), 0, fid, 0);
                             // Issue #3281: mid-bound authority post-clear check —
                             // same shape as the main abort site. If a concurrent
                             // densify/steal bumped the mid authority version during
@@ -2730,26 +2997,33 @@ void Evaluator::exit_success_audit_force(MutationCheckpoint& cp, bool nested_bou
                                     typed_audit::kTypeLinearProofOutcomeReject);
                             }
                             typed_audit::end_mid_abort_authority(cp.audit_mid);
-                            early.stop = true;
-        early.cp = std::move(cp);
-        return;
+                            return cp;
                         }
                     }
                 skip_nested_success_composite_restore:
                     // Success path: record outcome when audit passed / recovered.
                     // Enforcement already linked via record_invariant_audit_result.
-                    if (st.inv_ok || st.recovered) {
+                    if (inv_ok || recovered) {
                         if (!nested_boundary)
                             clear_txn_dirty();
                         typed_audit::record_boundary_outcome(
-                            st.mid, st.audit_op, st.audit_epoch, st.audit_epoch, /*success=*/true,
-                            static_cast<std::uint32_t>(st.audit_target),
-                            static_cast<std::uint32_t>(st.nodes_changed), st.fid);
+                            mid, audit_op, audit_epoch, audit_epoch, /*success=*/true,
+                            static_cast<std::uint32_t>(audit_target),
+                            static_cast<std::uint32_t>(nodes_changed), fid);
                     }
-}
-
-void Evaluator::exit_success_reflect(MutationCheckpoint& cp, bool nested_boundary,
-    ExitEarly& early) {
+                } else {
+                    // Issue #2814: Sampled/quiet path — no invariant suite;
+                    // mark intentional skip so Success trail is not a gap.
+                    typed_audit::note_invariant_enforcement_skipped(mid);
+                    if (!nested_boundary)
+                        clear_txn_dirty();
+                    typed_audit::record_boundary_outcome(
+                        mid, audit_op, audit_epoch, audit_epoch, /*success=*/true,
+                        static_cast<std::uint32_t>(audit_target),
+                        static_cast<std::uint32_t>(nodes_changed), fid);
+                }
+            } // !render_fast_exit_this_boundary_
+        }
         // Issue #488 / #1611 / #2765: post-mutate reflect auto_validate /
         // hygiene_validate on Guard success path (schema-level closed loop).
         // Default ON (guard_reflect_validate_enabled_); Soft → metric-only
@@ -2871,7 +3145,7 @@ void Evaluator::exit_success_reflect(MutationCheckpoint& cp, bool nested_boundar
                     const std::uint64_t mid = cp.audit_mid;
                     const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
                     typed_audit::record_boundary_deny_after_restore(
-                        mid, "guard-reflect-validate-force-rollback", st.audit_epoch, st.audit_epoch, 0,
+                        mid, "guard-reflect-validate-force-rollback", audit_epoch, audit_epoch, 0,
                         0, fid);
                     // Issue #3281: mid-bound authority post-clear check —
                     // same shape as the main abort site. If a concurrent
@@ -2894,17 +3168,43 @@ void Evaluator::exit_success_reflect(MutationCheckpoint& cp, bool nested_boundar
                             typed_audit::kTypeLinearProofOutcomeReject);
                     }
                     typed_audit::end_mid_abort_authority(cp.audit_mid);
-                    early.stop = true;
-        early.cp = std::move(cp);
-        return;
+                    return cp;
                 }
                 // Soft / non-Strict: metric-only; mutation stays committed.
             }
         }
-}
-
-void Evaluator::exit_reemit_on_boundary(bool nested_boundary, bool success,
-    std::uint64_t session_audit_mid) {
+    } else if (!success) {
+        // Issue #1589: TypedMutationAudit rollback trail.
+        // Issue #4403: a deny belt that never emitted its own SE leaves a
+        // first-wins gate token. Absent token stays the ungated rollback.
+        // Stamp stays after restore (#3217).
+        // Issue #4564: before/after are the Mutation epoch. mid stays
+        // cp.audit_mid. SE.epoch is restamped inside emit_invariant_deny_se.
+        const std::uint64_t audit_epoch = ::aura::core::current_mutation_epoch();
+        const std::uint64_t mid = cp.audit_mid;
+        const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+        const char* deny_op = typed_audit::take_boundary_deny_op();
+        typed_audit::record_boundary_deny_after_restore(mid, deny_op, audit_epoch, audit_epoch, 0,
+                                                        0, fid);
+    }
+    // Issue #2690: unified PendingRecovery drain. Boundary exit routes
+    // through the same single-owner drain as `maybe_storm_clear_health_pass`
+    // (StormClear). Exchange-not-check semantics: a concurrent storm-clear
+    // drain in the same ms observes `kinds == 0` (cheap) and bumps
+    // `double_drain_prevented` to surface the race. Closes the residual
+    // unhealed window from novel interleavings (#2690).
+    if (!nested_boundary && success) {
+        aura_hot_update_drain_pending_recovery(
+            static_cast<std::uint8_t>(HotUpdateRegistry::DrainReason::BoundaryExit));
+    }
+    // Issue #2604: outermost MutationBoundary exit auto-drain deferred
+    // reemit + one region-filtered pass. Closes the "visible but
+    // unhealed" stale window without making reemit unbounded.
+    // Soft path (no deferred + mask=0) → zero extra work (AC4).
+    // Issue #2690: kept for backward compat — the unified drain above
+    // also drives the deferred branch atomically (exchange-not-check);
+    // this block preserves the legacy aura_reemit_aot_for_dirty counter
+    // surface for existing test expectations.
     if (!nested_boundary && success) {
         auto& reg = hot_update_registry();
         if (reg.has_deferred_reemit() || reg.last_region_mask_from_dirty() != 0) {
@@ -2954,354 +3254,6 @@ void Evaluator::exit_reemit_on_boundary(bool nested_boundary, bool success,
                     session_audit_mid);
         }
     }
-}
-
-void Evaluator::exit_success_typed_audit(MutationCheckpoint& cp, bool nested_boundary,
-    bool soft_only_below, bool provenance_miss, ExitSuccessShare& st, ExitEarly& early) {
-        {
-            st.mid = cp.audit_mid;
-            st.fid = static_cast<std::int64_t>(aura_fiber_current_id());
-            if (render_fast_exit_this_boundary_ && !nested_boundary) {
-                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                    m->render_fast_exit_skipped_audit_total.fetch_add(1, std::memory_order_relaxed);
-                clear_txn_dirty();
-                // Issue #2814: intentional skip of invariant suite (frame budget).
-                typed_audit::note_invariant_enforcement_skipped(st.mid);
-                typed_audit::record_boundary_outcome(
-                    st.mid, st.audit_op, st.audit_epoch, st.audit_epoch, /*success=*/true,
-                    static_cast<std::uint32_t>(st.audit_target),
-                    static_cast<std::uint32_t>(st.nodes_changed), st.fid);
-                // Issue #3322: production/Full still drop stale defuse/IR so
-                // a mid-boundary query cannot observe pre-proof state before
-                // outermost TypeLinearCommitProof. Soft/Off: helper no-ops.
-                invalidate_defuse_index_for_nested();
-                // Skip Full/composite invariant walk + partial recovery.
-            } else if (rebind_light_skip_heavy_exit(*this)) {
-                // Issue #4357: record the boundary and skip the suite.
-                // The body's finish_mutate_hard_gate already ran. A nested
-                // guard is composite and would always enter
-                // composite_txn_commit even when the strategy is Sampled.
-                clear_txn_dirty();
-                typed_audit::note_invariant_enforcement_skipped(st.mid);
-                typed_audit::record_boundary_outcome(
-                    st.mid, st.audit_op, st.audit_epoch, st.audit_epoch, /*success=*/true,
-                    static_cast<std::uint32_t>(st.audit_target),
-                    static_cast<std::uint32_t>(st.nodes_changed), st.fid);
-                invalidate_defuse_index_for_nested();
-            } else {
-                exit_success_audit_decide(cp, nested_boundary, provenance_miss, st, early);
-                if (early.stop)
-                    return;
-                if (st.do_audit) {
-                    exit_success_audit_recover(cp, nested_boundary, st);
-                    exit_success_audit_force(cp, nested_boundary, soft_only_below, st, early);
-                    if (early.stop)
-                        return;
-                } else {
-                    typed_audit::note_invariant_enforcement_skipped(st.mid);
-                    if (!nested_boundary)
-                        clear_txn_dirty();
-                    typed_audit::record_boundary_outcome(
-                        st.mid, st.audit_op, st.audit_epoch, st.audit_epoch, /*success=*/true,
-                        static_cast<std::uint32_t>(st.audit_target),
-                        static_cast<std::uint32_t>(st.nodes_changed), st.fid);
-                }
-            }
-        }
-}
-
-void Evaluator::exit_success_workspace(MutationCheckpoint& cp, bool nested_boundary,
-    bool success, bool soft_only_below, bool provenance_miss, ExitEarly& early) {
-    if (!(success && workspace_flat_))
-        return;
-    ExitSuccessShare st;
-    exit_success_record_impact(cp, nested_boundary, soft_only_below, st);
-    exit_success_typed_audit(cp, nested_boundary, soft_only_below, provenance_miss, st, early);
-    if (early.stop)
-        return;
-    exit_success_reflect(cp, nested_boundary, early);
-}
-
-Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
-    auto& stack = active_mutation_stack();
-    if (stack.empty())
-        return {0, 0};
-    const bool nested_boundary = stack.size() > 1;
-    // Issue #4540: move, not copy — the checkpoint is popped right here and
-    // its column / CS snapshots can be large.
-    auto cp = std::move(stack.back());
-    stack.pop_back();
-    if (!nested_boundary) {
-        // Issue #3918: hash-set! / vector-set! / set-car! / agent-bump!
-        // take an outermost guard and do not append a FlatAST record.
-        // flush reads this bit. Lightweight field checkpoints still count
-        // (their records live on the side log, not mutation_log_).
-        outermost_ast_mutated_ =
-            workspace_flat_ &&
-            (cp.lightweight || workspace_flat_->mutation_log_size() > cp.mutation_log_size);
-    }
-    // Issue #4089: soft-only-below — only orch soft checkpoint frames
-    // remain, so this exit IS the type-authority outermost. A failed audit
-    // must take the real restore path below (never the nested-success skip
-    // that would leave a type-failed tree committed on the agent fiber).
-    // Host outermost (stack empty) and real Guard nesting are unchanged:
-    // empty reads true but nested_boundary is already false there; any
-    // non-soft frame below reads false and keeps the skip.
-    bool soft_only_below = true;
-    for (const auto& c4089 : stack) {
-        if (!c4089.orch_soft_frame) {
-            soft_only_below = false;
-            break;
-        }
-    }
-    // Staged defuse names are consumed by this boundary's cascade and by
-    // the outermost occurrence refresh, both before this function returns.
-    // Drop them on the outermost return so the next boundary does not
-    // replay the previous name set.
-    struct ClearStagedDefuseOnOutermost : ::aura::core::NoCopy {
-        Evaluator* ev;
-        bool outermost;
-        ~ClearStagedDefuseOnOutermost() {
-            if (outermost && ev)
-                ev->defuse_affected_syms_.clear();
-        }
-    } clear_staged_defuse{{}, this, !nested_boundary};
-    // Issue #3322: production/Full force-close the pre-proof observation
-    // window (nested exit + outermost render-fast skip). Soft/Off: no-op.
-    // Does not stamp TypeLinearCommitProof or persist occurrence.
-    // Issue #3233: pair pcv_checkpoint_live_enter from snapshot.
-    struct PcvCkptExit : ::aura::core::NoCopy {
-        bool on;
-        ~PcvCkptExit() {
-            if (on)
-                aura::ast::pcv_checkpoint_live_exit();
-        }
-    } pcv_ckpt_exit{{}, !cp.lightweight && !cp.heap_slot_only};
-    // Issue #4432: BoundaryExit and phase-4 reemit run after this clear.
-    // Capture the session audit mid first. join(0) would publish the
-    // process Mutation epoch.
-    std::uint64_t session_audit_mid = cp.audit_mid;
-    if (session_audit_mid == 0 && typed_audit::g_tls_boundary_audit_noted)
-        session_audit_mid = typed_audit::current_boundary_audit_mid();
-    if (stack.empty())
-        typed_audit::clear_boundary_audit_mid();
-    // Issue #3379: outermost exit — drop the TLS evaluator slot so a
-    // subsequent commit_readiness_live_policy() (outside any boundary)
-    // falls back to today's face-only fill. Nested exits keep the
-    // outer Evaluator's slot intact until the outermost runs.
-    if (stack.empty()) {
-        aura_typed_audit_clear_readiness_evaluator();
-    }
-    // Issue #3102: AC5 — the boundary exit decays the TLS depth (nested
-    // exits decrement by 1; the outermost exit 1→0 clears the tracker).
-    // Issue #4672: that clear made the #3102 AC2 abort take always empty
-    // (the outermost abort force-dirtied NOTHING). Capture the tracker
-    // BEFORE the drain; the abort rewind consumes the capture. Success:
-    // no capture — the vector is discarded exactly as before.
-    std::vector<aura::compiler::dirty::NodeId> coerced_nodes_at_exit;
-    if (!success)
-        coerced_nodes_at_exit = aura::compiler::coerced_nodes_tracker_take();
-    aura::compiler::coerced_nodes_tracker_exit_boundary();
-    // Issue #2920 SSOT: FlatAST is authoritative after structural mutate.
-    // Invalidate set-code text cache when this flat actually mutated so
-    // JIT/serialize cannot re-parse pre-mutate source. set-code swaps in a
-    // fresh flat (mutation_log empty, size not > entry) and keeps its stamp.
-    // Live unparse (get_workspace_source_fn_ / current-source :workspace) is
-    // the post-mutate reader. Cross-link #2918 snapshot path.
-    if (success && workspace_flat_) {
-        if (cp.lightweight || workspace_flat_->mutation_log_size() > cp.mutation_log_size) {
-            invalidate_workspace_source_text();
-        }
-    }
-    if (cp.lightweight && workspace_flat_)
-        exit_lightweight_checkpoint(cp, success);
-    else if (!success && workspace_flat_) {
-        exit_failure_rollback(cp, nested_boundary, coerced_nodes_at_exit);
-    }
-    // Issue #273: structural mutates bump generation_; refresh all
-    // live node_gen_ entries so subsequent eval_flat paths see
-    // valid NodeIds (including unrelated workspace defines).
-    // Issue #1282: restamp also consumes auto_restamp_pending_
-    // after a generation wrap so live node_gen_ recovers.
-    // Issue #2934 / #3019: restamp_all_node_generations honors restamp
-    // budget (AURA_RESTAMP_BUDGET_NODES / process override). Over budget
-    // → soft-degrade to incremental or lazy-align only; Agents read
-    // restamp-budget-exceeded-total / restamp-last-budget-exceeded.
-    // Hard fail-closed only on genuine invariant violations (never
-    // silent torn generation — lazy-align keeps is_valid consistent).
-    // Issue #3000: export face is the residual — query:*-stable must
-    // not stamp a pre-mutate generation when last restamp exceeded
-    // and the node was not eagerly restamped (allow_query_stable_ref_export).
-    // Issue #3037: over-budget marks generation torn; production
-    // reject_stable_ref_export even after lazy-align hides node_gen lag.
-    // Issue #3019: outermost triad (node → stable → pin) runs in the
-    // Guard dtor via unified_restamp_after_boundary. Nested still
-    // restamps node gen here (outer owns pin/stable).
-    // Issue #3166: I5 residual for multi-round Agent — nested exit
-    // must close the window between this nested exit and the outermost
-    // exit under production/Full. Nested path here does NOT run
-    // refresh_occurrence_on_guard_exit / LayoutStamp publish / Phase-5
-    // densify / unified_restamp_after_boundary (full triad). On the
-    // success path defuse_index_ also stays cached until outermost
-    // exits, so the next Agent query:*-stable / eval-current
-    // (called BEFORE outermost dtor) can observe pre-cascade IR /
-    // stale DefUse / half-dirty cone.
-    //
-    // Per AC1: production/Full closes the window by invalidating
-    // defuse_index_ inline (next query rebuilds against the
-    // post-mutate state — mark_dirty_upward already ran via
-    // push_post_mutate_incremental_cascade at L915 below). Per AC2:
-    // soft / Off observe counter only (existing Soft behavior
-    // unchanged). Outermost path unaffected (zero AC3 regression).
-    exit_nested_observation(cp, success, stack);
-    // Issue #1283: unified provenance capture at Guard boundary exit.
-    // Stamps defuse_version / mutation impact into Agent-visible metrics
-    // so closed-loop self-evo can blame dirty nodes on this boundary.
-    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-        m->provenance_boundary_capture_count.fetch_add(1, std::memory_order_relaxed);
-    // Issue #1638 / #2201: mutation_log compact at boundary exit (success
-    // path only — failure path already rolls back via
-    // rollback_to_size, so the log is already shrunk). Threshold
-    // gate avoids the shrink_to_fit cost on small log states
-    // (heavy-mutation safety net — 200MB+/day reclaim in long-
-    // running Agent scenarios). Cheap when under threshold.
-    // #2201: also stamp high-water + pressure for Agent closed-loop.
-    if (success && workspace_flat_) {
-        static constexpr std::size_t kCompactThreshold = 64uz * 1024; // entries
-        const auto log_sz = workspace_flat_->mutation_log_size();
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-            auto hw = m->mutation_log_high_water.load(std::memory_order_relaxed);
-            while (log_sz > hw &&
-                   !m->mutation_log_high_water.compare_exchange_weak(
-                       hw, static_cast<std::uint64_t>(log_sz), std::memory_order_relaxed)) {
-            }
-            const auto soft = m->mutation_log_soft_threshold.load(std::memory_order_relaxed);
-            const auto soft_n = soft == 0 ? 5'000ull : soft;
-            const auto score =
-                soft_n == 0
-                    ? 0ull
-                    : std::min<std::uint64_t>(
-                          10'000ull, (static_cast<std::uint64_t>(log_sz) * 10'000ull) / soft_n);
-            m->mutation_log_pressure_score_bp.store(score, std::memory_order_relaxed);
-            m->mutation_log_pressure_flag.store(log_sz >= soft_n ? 1 : 0,
-                                                std::memory_order_relaxed);
-        }
-        if (log_sz > kCompactThreshold)
-            compact_mutation_log();
-    }
-    // Bump version on both success and failure (legacy
-    // invariant: 2 bumps per boundary). The lock is
-    // released by the unique_lock going out of scope.
-    // Issue #4346: heap slot writes are not AST mutations. Skipping the
-    // second bump keeps capture frames current without a shard walk.
-    if (!cp.heap_slot_only) {
-        // Issue #189: the total-mutations counter (stats-only, relaxed) is
-        // bumped even on rollback so dashboards can see "the boundary
-        // attempted to mutate, then rolled back".
-        // Issue #4109: ride still-valid capture frames up to the new defuse
-        // in the same critical section as the bump. The boundary's own
-        // mutation-log window decides invalidation: frames binding a name the
-        // boundary re-defined (mutate:rebind / set-code replaced the Define —
-        // module captures, #2579, are NOT re-defined by unrelated mutates)
-        // stay behind; materialize_call_env then returns the empty Env
-        // instead of copying pre-mutate bindings into the next call.
-        // Issue #4730: bump + restamp under ONE shard barrier (see the
-        // helper) so a sibling body never observes a frame one bump behind.
-        (void)bump_defuse_and_restamp(cp.version, cp.mutation_log_size);
-    }
-    // Issue #4377: a store inside this boundary stamped defuse before the
-    // exit bump above. Outermost success writes that post-exit defuse onto
-    // the stored entries. Failure drops the names (rolled-back IR stays
-    // needs-relower). Nested success keeps them for the outer bump.
-    if (!success) {
-        aura::compiler::clear_ir_cache_boundary_stored_names();
-    } else if (stack.empty()) {
-        if (auto* hook = aura::compiler::current_ir_cache_boundary_restamp()) {
-            if (hook->fn && !aura::compiler::ir_cache_boundary_stored_names().empty())
-                hook->fn(hook->ctx);
-        }
-        aura::compiler::clear_ir_cache_boundary_stored_names();
-    }
-    // Issue #550 / #518: narrowing_refresh_count_ is
-    // bumped from TypeChecker::infer_flat_partial's
-    // reanalyze_occurrence_contexts path (actual
-    // OccurrenceInfoFlat refresh), not here.
-    // Issue #551: bump impact_snapshot_count_ on every
-    // successful Guard exit — mirrors the post-mutate
-    // impact snapshot the AI loop reads for adaptive
-    // strategy. Stats-only (relaxed-ordering); the
-    // follow-up wires the actual snapshot collection
-    // (dirty_nodes_in_snapshot_, marker delta, epoch
-    // change, affected roots via StableNodeRef).
-    bump_impact_snapshot_count();
-    // Issue #555: bump guard_dirty_epoch_count_ on
-    // every successful Guard exit — measures the
-    // Guard + type cache integration. Pairs with
-    // dirty_propagation_count_ (bumped in
-    // mark_dirty_upward) so the AI Agent can compute
-    // propagation_ratio = dirty_propagation / guard_dirty_epoch
-    // (close to 1.0 = every Guard exit propagates).
-    bump_guard_dirty_epoch_count();
-    // Issue #672: every successful Guard exit is itself a
-    // linear ownership enforcement event — bump the
-    // post-mutate enforcement counter so the AI Agent can
-    // gauge how often Guard exits propagate through
-    // (query:linear-ownership-enforcement-stats). Pairs
-    // with bump_guard_dirty_epoch_count() above so the
-    // Agent can compute enforcement_ratio =
-    // linear_post_mutate_enforcements / guard_dirty_epoch.
-    bump_linear_post_mutate_enforcement();
-    // Issue #2068 Phase 2 / #2104: selective predicate-memo invalidation is
-    // also wired in TypeChecker::infer_flat_partial (dirty var_names + min_gen
-    // before reanalyze_occurrence_contexts) for post-mutate typecheck /
-    // typecheck-incremental. Issue #2144: outermost Guard success also
-    // calls refresh_occurrence_on_guard_exit (below, with cascade) so
-    // multi-round mutate:* does not wait for query:type / full infer.
-    // Empty dirty → zero cost (AC4 early exit).
-    // Issue #555 / #518: selective_recheck_count_ is
-    // bumped from reanalyze_occurrence_contexts paths.
-    // Issue #2102: always consume provenance-miss flag on boundary exit
-    // (even without workspace) so TLS does not stick across tests/fibers.
-    // Count force-audit metric here; Full-path invariant suite still needs
-    // workspace_flat_ (below).
-    // Issue #2558: re-evaluate completeness SLO under production so long
-    // Sampled sessions that accumulated miss pressure force Full on this
-    // outermost exit (one-shot pending flag). Soft/non-production only
-    // observes. Vacuous 10000 bp → no breach.
-    if (typed_audit::production_defaults_active()) {
-        aura::compiler::evaluate_coercion_provenance_slo(
-            aura::compiler::coercion_provenance_completeness_bp(), /*production_active=*/true);
-    }
-    // Issue #2648: Soft evidence-loss pressure is a pure read here (arming
-    // happens on soft incomplete skip via evaluate_coercion_evidence_loss_slo
-    // in arm_soft_incomplete_force_full_observe). Do NOT re-arm on every
-    // boundary exit — AC2: second exit without new misses must not re-arm.
-    const bool provenance_miss = exit_collect_provenance_miss(nested_boundary, success);
-    ExitEarly early;
-    exit_success_workspace(cp, nested_boundary, success, soft_only_below, provenance_miss, early);
-    if (early.stop)
-        return std::move(early.cp);
-    if (!success)
-        exit_record_failure_deny(cp);
-    // Issue #2690: unified PendingRecovery drain. Boundary exit routes
-    // through the same single-owner drain as `maybe_storm_clear_health_pass`
-    // (StormClear). Exchange-not-check semantics: a concurrent storm-clear
-    // drain in the same ms observes `kinds == 0` (cheap) and bumps
-    // `double_drain_prevented` to surface the race. Closes the residual
-    // unhealed window from novel interleavings (#2690).
-    if (!nested_boundary && success) {
-        aura_hot_update_drain_pending_recovery(
-            static_cast<std::uint8_t>(HotUpdateRegistry::DrainReason::BoundaryExit));
-    }
-    // Issue #2604: outermost MutationBoundary exit auto-drain deferred
-    // reemit + one region-filtered pass. Closes the "visible but
-    // unhealed" stale window without making reemit unbounded.
-    // Soft path (no deferred + mask=0) → zero extra work (AC4).
-    // Issue #2690: kept for backward compat — the unified drain above
-    // also drives the deferred branch atomically (exchange-not-check);
-    // this block preserves the legacy aura_reemit_aot_for_dirty counter
-    // surface for existing test expectations.
-    exit_reemit_on_boundary(nested_boundary, success, session_audit_mid);
     // Issue #3312: re-seed thin cone before return so cascade / wrap
     // restamp_all later in this function cannot leave a full-tree eager face.
     if (nested_boundary && success && workspace_flat_ &&
@@ -4802,7 +4754,302 @@ extern "C" void aura_evaluator_force_unlock_outermost_holder(std::uint64_t fiber
 }
 
 // ── destructor ───────────────────────────────────────────────────────────
-void Evaluator::MutationBoundaryGuard::guard_release_depth_slot(bool& success) {
+Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
+    // One pre-cascade audit per boundary exit (cascade marks + BFS drain).
+    struct BoundaryPrepBatch : ::aura::core::NoCopy {
+        const std::function<void(bool)>* fn = nullptr;
+        ~BoundaryPrepBatch() {
+            if (fn && *fn)
+                (*fn)(false);
+        }
+    } boundary_prep_batch;
+    if (ev_ && !inert_ && ev_->boundary_prep_batch_fn_) {
+        boundary_prep_batch.fn = &ev_->boundary_prep_batch_fn_;
+        ev_->boundary_prep_batch_fn_(true);
+    }
+    if (g_tls_outermost_guard == this)
+        g_tls_outermost_guard = nullptr;
+    if (!ev_ || inert_) {
+        // Issue #2222: if somehow pushed without full enter, still pop.
+        if (linear_enforce_strict_pushed_) {
+            aura::core::provenance::mutation_boundary_pop_linear_enforce_strict();
+            linear_enforce_strict_pushed_ = false;
+        }
+        // Issue #3723 belt: if a mid was published before inert (race /
+        // old publish-then-inert order), still revoke + clear so grants
+        // cannot survive the inert dtor.
+        if (inert_ && ev_ && session_mid_at_enter_ != 0) {
+            using ::aura::core::capability::g_capability_registry;
+            auto& reg = g_capability_registry();
+            auto& met = ::aura::core::capability::g_capability_effect_metrics();
+            const auto mode = reg.sandbox_mode.load(std::memory_order_acquire);
+            const bool production =
+                mode == ::aura::core::capability::EffectSandboxMode::Restricted ||
+                mode == ::aura::core::capability::EffectSandboxMode::Strict;
+            if (production ||
+                met.capability_live_session_grants.load(std::memory_order_relaxed) != 0) {
+                std::scoped_lock<std::mutex> lock(reg.mtx);
+                // Issue #3799 / Issue #3241: prefer enter-captured fiber_id_ so
+                // TLS-cleared dtor under Restricted+MT never mid-only sweeps
+                // peer outermost grants. Fall back to live current id;
+                // registry fail-closes if still 0 under hard_fiber.
+                std::uint32_t fid = static_cast<std::uint32_t>(fiber_id_);
+                if (fid == 0)
+                    fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+                (void)reg.revoke_session_grants_for_mid_locked(session_mid_at_enter_,
+                                                               "session-mid-exit", fid);
+            }
+            aura::serve::clear_current_fiber_session_mid();
+            if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
+                session_mid_at_enter_) {
+                aura::compiler::g_mutation_hold_live_session_mid.store(0,
+                                                                       std::memory_order_release);
+            }
+            // Issue #4278: write-side string caps do not bump
+            // capability_live_session_grants, so the production/live
+            // short-circuit above must not skip them. Registry lock is
+            // not held.
+            ev_->retire_session_string_caps(session_mid_at_enter_);
+            session_mid_at_enter_ = 0;
+        }
+        return; // Issue #1590: quota soft-reject never entered a boundary
+                // Issue #3743: never-entered inert does not restamp (no gen bump).
+    }
+    // Issue #4302: remember this evaluator's action mid, including 0,
+    // before exit clears the fiber session mid and the boundary TLS note.
+    // Nested guards are not outermost. Moved-from guards have ev_ == nullptr.
+    if (is_outermost_ && ev_)
+        ev_->note_last_completed_audit_mid(session_mid_at_enter_);
+    // Issue #1897 / #1818 class: auto-flip success_flag when an
+    // exception is unwinding through the Guard and the caller did
+    // not mark_failed / set flag=false. Without this, dtor would
+    // commit_panic_checkpoint on a partially-mutated workspace.
+    if (std::uncaught_exceptions() > uncaught_at_enter_ && success_flag_exchange_false(flag_)) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+            m->mutation_guard_uncaught_auto_rollback_total.fetch_add(1, std::memory_order_relaxed);
+            m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #2726 / Issue #2932 / Issue #2999: outermost hold-budget
+    // cancel poll. Issue #2932 arms cancel + force-safepoint so a
+    // still-in-body loop can hit check_gc_safepoint and
+    // mark_outermost_mutation_failed. Phase-5 still runs the
+    // forced-failure residual closed-loop (#2846) because success=false.
+    // #2999 is the *exit* half: once this dtor runs with cancel armed,
+    // it cannot commit success — even if check_gc_safepoint never ran
+    // in this body. Remaining in-body window (body that never exits)
+    // still relies on #2932 force-safepoint to enter dtor. Issue #3071
+    // bounds that window: scheduler idle poll re-arms force-safepoint
+    // (no preemptive unlock while the body is still running).
+    //
+    // AC3 — only outermost Guards observe/clear the flag. Nested
+    // guards fall through; is_outermost_ is ctor-captured (#2120).
+    // AC2 — Soft / sandbox=off: peek + soft-observe only; no consume,
+    // no forced fail. Production / hard-env: consume + fail-closed.
+    // Issue #3035: P0 force-unlock + dual-topology restore on hold-budget
+    // cancel for a non-yield body. #2932/#2999 consume the cancel flag at
+    // safepoint/dtor edges, but a body that never polls the flag can keep
+    // workspace_mtx_ + per-fiber depth slot held indefinitely (steal/GC
+    // residual starve; densify×steal can observe half-topology). #3035
+    // closes the remaining window: consuming a pending cancel under
+    // production / hard-env forces the boundary fail-closed (success=false
+    // EVEN when the Guard carries no success flag — flag_==nullptr used to
+    // fall through to success=true and skip abort_restore_dual_topology).
+    // exit_mutation_boundary(false) then runs abort_restore_dual_topology +
+    // dual canary (same path as panic/abort) and the Phase-5 pipeline
+    // force-releases workspace_mtx_ + clears the fiber depth slot + closes
+    // residual defer. Soft / sandbox=off: peek + soft_observe only (no
+    // consume, no force — existing #2701 AC2). Zero cost on happy path
+    // (cancel flag unset: one peek inside consume_hold_budget_cancel CAS).
+    bool cancel_forced_fail = false;
+    if (is_outermost_) {
+        if (auto* f = aura::serve::g_current_fiber) {
+            if (mutation_hold_budget_reject_enabled()) {
+                if (f->consume_hold_budget_cancel()) {
+                    g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total
+                        .fetch_add(1, std::memory_order_relaxed);
+                    g_mutation_hold_budget_forced_fail_closed_dtor_consume_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    // #3035: consumed cancel → forced unlock + dual restore.
+                    // consume only fires under reject_enabled (production or
+                    // hard env), so this is the production force path.
+                    cancel_forced_fail = true;
+                    g_mutation_hold_budget_forced_unlock_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                    // Issue #3118: consume is production/hard-env only.
+                    // After exit_mutation_boundary(false) restores
+                    // topology, force-release lock + depth immediately.
+                    // Issue #3268: single exchange so a shared flag cannot
+                    // stay true for another fiber after we fail-close.
+                    if (success_flag_exchange_false(flag_)) {
+                        g_mutation_hold_budget_forced_fail_closed_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
+            } else if (f->peek_hold_budget_cancel()) {
+                g_mutation_hold_budget_soft_observe_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
+    // Issue #3637: MacroIntroduced marker-delta backstop — one net at the
+    // outermost boundary covering prim paths, lockless helpers (#3213),
+    // and future prims the four enumerated pre-gate mechanisms might miss.
+    // Field source hoisted from the eval_flat apply site: the #1611
+    // MutationReflectHealth validator decides (existing error string — AC3;
+    // no new query keys, no mid-metrics counter inserts). The delta is a
+    // single cumulative-counter read per edge (AC2 quiet path: no O(n)
+    // scan, zero extra atomics when no macro subtree was dirtied).
+    bool macro_hygiene_forced_fail = false;
+    if (is_outermost_ && !cancel_forced_fail && ev_ && ev_->workspace_flat_ &&
+        success_flag_load(flag_)) {
+        const auto macro_exit = ev_->workspace_flat_->macro_expansion_dirty_total();
+        const auto macro_delta = macro_exit - macro_expansion_dirty_at_enter_;
+        if (macro_delta != 0) {
+            aura::reflect::MutationReflectHealth h3637;
+            h3637.enforce_macro_hygiene_reject = true;
+            // Issue #4035: OR per-call MSE-validated allow latch so production
+            // :allow-macro? #t is not force-rolled by a global-flag-only net.
+            h3637.allow_macro_evolution =
+                ev_->get_allow_macro_mutate() || ev_->boundary_macro_allow_latched();
+            h3637.dirty_macro_nodes = macro_delta;
+            std::string backstop_err;
+            const bool net_reject =
+                !aura::reflect::validate_mutation_reflect_health(h3637, &backstop_err);
+            if (net_reject) {
+                // Counter = "net fired" (violation observed), not merely
+                // delta>0 — a recorded allow keeps the net quiet (AC4).
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                    m->mutation_boundary_macro_hygiene_backstop_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                // Issue #3637: hard = production defaults only. AuditStrategy::Full
+                // is a test/audit regime — unit tests that restamp macro columns
+                // under Full get the observe counter, not forced rollbacks.
+                const bool hard = typed_audit::production_defaults_active();
+                if (hard) {
+                    // Production: do not commit unauthorized macro-introduced
+                    // schema evolution — fail the boundary (same reject shape
+                    // as the region-type-commit gate). The #3542 recorded allow
+                    // (capability-fenced) is the only in-window pass (AC4:
+                    // the net never widens authorization).
+                    macro_hygiene_forced_fail = true;
+                    // #3268: single exchange so the caller observes the forced
+                    // fail (same caller-flag protocol as the #3035 cancel path).
+                    success_flag_exchange_false(flag_);
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                        m->hygiene_violation_prevented_on_boundary_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
+            }
+            // Soft / Off: observe only — success unchanged (AC2).
+        }
+    }
+    // Issue #4035: end of MutationBoundary window — clear the per-call
+    // allow latch (RAII). Nested guards skip; only outermost owns the net.
+    if (is_outermost_ && ev_)
+        ev_->clear_boundary_macro_allow_latch();
+    bool success =
+        (cancel_forced_fail || macro_hygiene_forced_fail) ? false : success_flag_load(flag_);
+    // Issue #3423: nested Guard fail must flip the outermost success
+    // flag. add_mutate now holds the outermost Guard; a body that
+    // sets its nested ok=false still has to abort-restore via the
+    // wrapper dtor (sole restore path). Soft / Off: no extra store
+    // (#3082 AC5 — nested fail stays in-flight, outer may still commit).
+    if (!is_outermost_ && !success && ev_ &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full))
+        ev_->mark_outermost_mutation_failed();
+    // Issue #2944: outermost MutationBoundary exit revokes mutation-session
+    // grants bound to session_mid_at_enter_ (success or fail). Nested
+    // guards skip (session_mid_at_enter_==0). Zero cost when no live
+    // session grants (capability_live_session_grants==0 early-out, AC3).
+    if (is_outermost_ && session_mid_at_enter_ != 0) {
+        using ::aura::core::capability::g_capability_registry;
+        // Issue #3209: revoke + clear mid under one lock so steal cannot
+        // sample a published mid after grants are already gone (or skip
+        // revoke because mid already 0). Steal/abort that already ran is
+        // a commutative no-op (AC3 / #3048). Soft live==0 still takes
+        // the public wrapper's short-circuit.
+        auto& reg = g_capability_registry();
+        auto& met = ::aura::core::capability::g_capability_effect_metrics();
+        const auto mode = reg.sandbox_mode.load(std::memory_order_acquire);
+        const bool production = mode == ::aura::core::capability::EffectSandboxMode::Restricted ||
+                                mode == ::aura::core::capability::EffectSandboxMode::Strict;
+        if (production || met.capability_live_session_grants.load(std::memory_order_relaxed) != 0) {
+            std::scoped_lock<std::mutex> lock(reg.mtx);
+            // Issue #3799 / Issue #3241: (mid, fiber) so a peer outermost sharing
+            // epoch mid is not collateral. Prefer enter-captured fiber_id_
+            // (TLS may already be clear at dtor). fiber=0 under Soft /
+            // soft-share Restricted stays legacy mid-only; Restricted+MT
+            // fail-closes in the registry (no silent peer sweep).
+            std::uint32_t fid = static_cast<std::uint32_t>(fiber_id_);
+            if (fid == 0)
+                fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+            (void)reg.revoke_session_grants_for_mid_locked(session_mid_at_enter_,
+                                                           "session-mid-exit", fid);
+            aura::serve::clear_current_fiber_session_mid();
+            if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
+                session_mid_at_enter_) {
+                aura::compiler::g_mutation_hold_live_session_mid.store(0,
+                                                                       std::memory_order_release);
+            }
+        } else {
+            aura::serve::clear_current_fiber_session_mid();
+            if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
+                session_mid_at_enter_) {
+                aura::compiler::g_mutation_hold_live_session_mid.store(0,
+                                                                       std::memory_order_release);
+            }
+        }
+        // Issue #4278: retire write-side SECURITY_EXEMPT strings bound to
+        // this session mid after the registry lock drops. Soft/Off never
+        // records, so an empty table is a no-op. Abort that already
+        // retired the same mid is idempotent.
+        if (ev_)
+            ev_->retire_session_string_caps(session_mid_at_enter_);
+    }
+    // Issue #2847: region type/occurrence commit bind. When this Guard
+    // admitted a non-zero cone/ImpactScope mask, any OccurrenceGoal
+    // predicate node outside that mask is type-cross-talk. Soft: observe
+    // only. production / Full: reject commit (success=false). mask==0 /
+    // GlobalExclusive: zero extra cost (region_type_commit_ok short-circuit).
+    if (is_outermost_ && success && admitted_cone_mask_ != 0) {
+        std::uint64_t touched = 0;
+        bool over_cap = false;
+        if (void* h = ev_->commit_type_checker_handle()) {
+            auto* tc = static_cast<TypeChecker*>(h);
+            const auto& goals = tc->constraint_system().occurrence_goals_for_test();
+            // Bound walk (soft-cone discipline — same cap as #2842 fingerprint).
+            constexpr std::size_t kMaxGoals = 256;
+            // Issue #4105: production/Full must not treat the 256 prefix as
+            // the whole cone. A later goal outside the mask would commit.
+            // Soft keeps the capped observe walk.
+            const bool hard_face = typed_audit::production_defaults_active() ||
+                                   typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+            if (hard_face && goals.size() > kMaxGoals) {
+                over_cap = true;
+            } else {
+                const std::size_t n = goals.size() < kMaxGoals ? goals.size() : kMaxGoals;
+                for (std::size_t i = 0; i < n; ++i) {
+                    const auto pred = goals[i].predicate_cond_node;
+                    if (pred != 0)
+                        touched |= typed_audit::node_id_to_region_mask_bit(pred);
+                }
+            }
+        }
+        if (over_cap || !typed_audit::region_type_commit_ok(admitted_cone_mask_, touched)) {
+            const bool hard = typed_audit::production_defaults_active() ||
+                              typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+            typed_audit::note_region_type_cross_talk(hard);
+            if (hard) {
+                // Production reject: do not commit half-green type surface.
+                success = false;
+                success_flag_store(flag_, false);
+            }
+            // Soft: observe only — success unchanged.
+        }
+    }
     // Issue #2120: use ctor-captured is_outermost_ so depth_slot can
     // stay elevated until unlock (steal/GC must not see depth==0 mid
     // exit pipeline). Nested guards still use the same member flag.
@@ -5011,9 +5258,1380 @@ void Evaluator::MutationBoundaryGuard::guard_release_depth_slot(bool& success) {
                 m->runtime_obs_export_ready.store(1, std::memory_order_relaxed);
         }
     }
-}
-
-void Evaluator::MutationBoundaryGuard::guard_phase5_moving_compact(bool& success, int*& slot, bool& heap_slot_quiet) {
+    // post-boundary linear closed-loop (hold-time batch published above; #1764)
+    // Issue #1461: Agent Decision Metrics liveness — outermost
+    // failed Guard must bump the fiber-boundary rollback counter
+    // so (agent:decision-metrics) / stats facade see a real signal
+    // (not a dead zero). Nested guards do not bump (outer owns the
+    // transaction outcome).
+    if (outermost && !success)
+        ev_->bump_mutation_boundary_rollback();
+    // Issue #2859: schema_validate_on_commit gate (opt-in).
+    // On outermost commit success, if validate_schema_on_commit() is
+    // set AND effect_sandbox_mode != 0 (production/Strict), walk
+    // mutated subtrees tagged with schema_cache (clone_macro_body +
+    // set_schema_cache), verify cached schema id is consistent. On
+    // mismatch: force-rollback + emit typed audit event. Soft /
+    // non-production default = zero overhead (gate short-circuits
+    // before any reflect walk). Source-cited in the two new
+    // CompilerMetrics counters (schema_validate_on_commit_ok_total +
+    // schema_validate_on_commit_fail_total) + the
+    // validate_schema_on_commit_ flag on Evaluator.
+    if (outermost && success && ev_->validate_schema_on_commit() &&
+        ev_->effect_sandbox_mode() != 0) {
+        auto* ws = ev_->workspace_flat_;
+        if (ws) {
+            bool schema_ok = true;
+            std::string schema_err;
+            // Lightweight cache-hit path: verify cached schema id is
+            // in valid range. Full reflect fallback (auto_validate on
+            // the cached POD view) is reserved for cache miss + dirty
+            // schema — future work. The cap matches the
+            // macro_schema_cache_dirty_stamped_total path (16M cap).
+            constexpr std::uint32_t kSchemaIdMax = 1u << 24;
+            const auto cur_size = ws->size();
+            for (aura::ast::NodeId id = 0; id < cur_size; ++id) {
+                if (!ws->is_live_node(id))
+                    continue;
+                auto cached_tid = ws->schema_cache(id);
+                if (cached_tid == 0)
+                    continue;
+                if (cached_tid >= kSchemaIdMax) {
+                    schema_ok = false;
+                    schema_err = "schema_cache OOB node=" + std::to_string(id) +
+                                 " tid=" + std::to_string(cached_tid);
+                    break;
+                }
+            }
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
+                if (schema_ok) {
+                    m->schema_validate_on_commit_ok_total.fetch_add(1, std::memory_order_relaxed);
+                } else {
+                    m->schema_validate_on_commit_fail_total.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #2859 AC1: force rollback + typed audit
+                    // event on shape mismatch. Mirrors the SLO
+                    // circuit-breaker rollback pattern at the same
+                    // site (force-flag + success=false + audit event).
+                    success_flag_store(flag_, false);
+                    success = false;
+                    aura::compiler::typed_audit::capture_audit_event_forced(
+                        /*mutation_id=*/0, schema_err,
+                        aura::compiler::typed_audit::MutationKind::Structural,
+                        /*before_epoch=*/0, /*after_epoch=*/0,
+                        aura::compiler::typed_audit::AuditOutcome::Error);
+                }
+            }
+        }
+    }
+    // ═══════════════════════════════════════════════════════════════════
+    // Issue #2120: outermost exit unified order (documented AC5).
+    //
+    // Success path:
+    //   1. exit_mutation_boundary (workspace commit + defuse bump)
+    //   2. linear + dual-path + LifetimePin probes (under lock, depth held)
+    //   3. GC defer release (after panic-checkpoint commit when applicable)
+    //   4. hot-update throttle → reemit → epoch notify (#2090 / #2114)
+    //   5. flush + held clear + depth_slot pop + unlock (LAST)
+    //
+    // Full-rollback (failed + panic_auto_rollback_): probes + restore
+    // checkpoint + GC defer release; skip reemit coalesce.
+    // Partial recovery (failed + !panic_auto_rollback_): probes + reemit
+    // notify (keep panic checkpoint / defer for retry).
+    //
+    // Nested guards: only exit_mutation_boundary + depth_slot-- (outer owns pipeline).
+    // ═══════════════════════════════════════════════════════════════════
+    // Issue #2215: RenderFastExit — success + outermost entered under
+    // render hotpath. Skip Full TypedMutationAudit / full linear+dual-path;
+    // always keep pin restamp + unlock. Failure never uses fast exit.
+    //
+    // Issue #2311: RenderFastExit must NOT skip linear / match-site
+    // hard-gate. If the outermost Guard encloses linear ops OR ADT match
+    // sites OR requires_invariant_hard_gate fires, force full audit
+    // path even under render hotpath. Closes the under-sample /
+    // soft-continue hole that #2145/#2222/#2223 closed for Agent
+    // mutate but #2215 reopened for render hotpath when the same Guard
+    // encloses linear ops or match sites.
+    const bool render_fast_candidate = outermost && success && render_fast_exit_;
+    bool linear_ops_present_local = false;
+    bool match_sites_present_local = false;
+    std::uint64_t nodes_changed_local = 0;
+    // Issue #4346: heap slot writes (vector-set! / set-car! / hash-set!)
+    // leave the FlatAST and env bindings unchanged. Scanning every node
+    // and every binding made each write linear in the define count.
+    bool heap_slot_quiet = false;
+    if (ev_) {
+        const auto& stk = ev_->active_mutation_stack();
+        if (!stk.empty()) {
+            const auto& top = stk.back();
+            if (top.heap_slot_only && !top.lightweight && !top.exit_fence) {
+                auto* ws = ev_->workspace_flat();
+                heap_slot_quiet = !ws || ws->mutation_log_size() <= top.mutation_log_size;
+            }
+        }
+    }
+    if (heap_slot_quiet && !render_fast_candidate) {
+        // Quiet: nodes_changed / match / linear stay zero. Soft hard-gate
+        // stays off. Production still hard-gates via mutate_session below.
+    } else if (auto* ws = ev_->workspace_flat()) {
+        const auto cur_dirty_calls = ws->mark_dirty_upward_call_count();
+        nodes_changed_local = (cur_dirty_calls > dirty_upward_at_enter_)
+                                  ? (cur_dirty_calls - dirty_upward_at_enter_)
+                                  : 0;
+        // Issue #4598: the live linear-op / match-site existence scan is
+        // O(1). The counters are exact live-node counts maintained at the
+        // FlatAST write sites (add_node births, free/recycle deaths,
+        // set_tag_live_adjusted, set_match_info) and recomputed wholesale
+        // after column swaps — the same live-scan semantics the per-node
+        // walk below used to pay O(n) per boundary exit for.
+        match_sites_present_local = ws->has_match_sites_live();
+        linear_ops_present_local = ws->has_linear_ops_live();
+    }
+    const bool strict_sandbox_local = aura::core::sandbox::is_strict();
+    const bool hard_gate_local = typed_audit::requires_invariant_hard_gate(
+        nodes_changed_local, linear_ops_present_local, strict_sandbox_local,
+        match_sites_present_local, /*mutate_session=*/true);
+    const bool linear_or_match_suppress =
+        linear_ops_present_local || match_sites_present_local || hard_gate_local;
+    const bool render_fast = render_fast_candidate && !linear_or_match_suppress;
+    if (render_fast_candidate && linear_or_match_suppress) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+            m->render_fast_exit_suppressed_linear_or_match_total.fetch_add(
+                1, std::memory_order_relaxed);
+            if (linear_ops_present_local)
+                m->render_fast_exit_suppressed_linear_total.fetch_add(1, std::memory_order_relaxed);
+            if (match_sites_present_local)
+                m->render_fast_exit_suppressed_match_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #3625 (#2311/#3322 residual): under Production defaults / Full
+    // strategy, RenderFastExit is metrics-only — never an audit skip. Agent
+    // self-modify of ordinary typed code (set-body / ReplaceType /
+    // annotation rewrite) is exactly the non-linear non-match case, so the
+    // #2145/#2311 Full invariant suite + #3517 force-rollback / grant-drop
+    // must run. #2311's linear/match/hard-gate suppress stays the Soft-path
+    // gate (its counters above still fire first). render_fast_exit_total
+    // keeps bumping as an observe-only hotpath signal, but the boundary
+    // flag stays false so exit_mutation_boundary audits. Persist/linear
+    // order remains #3614 (untouched).
+    const bool render_fast_audit_hard =
+        typed_audit::production_defaults_active() ||
+        typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+    const bool render_fast_effective = render_fast && !render_fast_audit_hard;
+    ev_->render_fast_exit_this_boundary_ = render_fast_effective;
+    if (render_fast) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+            m->render_fast_exit_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #2608 / #2641 / #2896 / #2910 / #2938: OccurrenceGoal persist
+    // on outermost success. Issue #3440: persist-reject must restore the
+    // already-mutated AST. Run the helper BEFORE exit_mutation_boundary
+    // so flipping success hits the existing !success abort_restore SSOT
+    // (dual topology + coercion rewind + #3158 occurrence restore).
+    // Soft/Off: note is a no-op (flag stays false). Quiet SOLVED: one
+    // TLS load. Happy persist + grant path unchanged (no extra restore).
+    // Issue #3614: linear deny + pending_full_solve drain gate BEFORE the
+    // outermost persist helper freezes authority (#3472 residual — order,
+    // not a missing restore). The previous order ran the Phase-1 walk
+    // after the persist helper, so a linear-unsafe outermost could write
+    // the Occurrence persist buffer + stamp a green TypeLinearCommitProof
+    // + grant query:type for one beat before the deny un-stamped them
+    // (concurrent steal / rehydrate / query:type observed frozen green
+    // authority). Order: drain + linear first, persist + green stamp
+    // last. Deny reuses the #3472 un-stamp set (clear proof / persist /
+    // grant) and flips success into the existing !success abort_restore
+    // SSOT — no second restore, no new query key. Soft/Off: gate is
+    // production/Full-only (persist helper stays zero-cost; no extra
+    // walk beyond the current Soft observe). #3512: staging is one-shot —
+    // the deny arm also clears expected_fp so a stale staged fingerprint
+    // cannot poison the next outermost persist.
+    bool linear_pre_exit_enforced = false;
+    if (outermost && success &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+        const auto lin = ev_->enforce_linear_boundary_consistency(
+            Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
+        linear_pre_exit_enforced = true;
+        // Pre-persist drain (#3190 face hoisted ahead of the persist
+        // write): non-SOLVED pending_full_solve must deny BEFORE
+        // maybe_persist_occurrence_snapshot freezes the snapshot. The
+        // in-helper drain stays as belt-and-suspenders for residuals
+        // that latch after this gate.
+        bool drain_pre_persist_ok = true;
+        if (auto* pre_gate_tc =
+                static_cast<aura::compiler::TypeChecker*>(ev_->commit_type_checker_handle())) {
+            std::vector<aura::compiler::Constraint> pre_gate_unresolved;
+            drain_pre_persist_ok =
+                pre_gate_tc->constraint_system().drain_pending_full_solve_before_commit(
+                    &pre_gate_unresolved) == aura::compiler::SolveResult::SOLVED;
+        }
+        const bool density_gate =
+            aura::compiler::castop_density::consume_density_gate_reject_pending();
+        if (!lin.all_safe || ev_->linear_synth_hard_fail_pending() || !drain_pre_persist_ok ||
+            density_gate) {
+            // Issue #4403: first match. Un-stamp stays before the exit stamp.
+            const char* gate_op = "density-streak";
+            if (!lin.all_safe || ev_->linear_synth_hard_fail_pending())
+                gate_op = "linear-boundary";
+            else if (!drain_pre_persist_ok)
+                gate_op = "pending-full-solve";
+            typed_audit::note_boundary_deny_op(gate_op);
+            typed_audit::clear_type_linear_commit_proof_on_abort();
+            typed_audit::publish_type_linear_proof_outcome(
+                typed_audit::kTypeLinearProofOutcomeReject);
+            aura_clear_occurrence_persist_buffer(ev_);
+            ev_->clear_type_export_authority();
+            ev_->clear_expected_occurrence_snapshot_fp();
+            success = false;
+            success_flag_store(flag_, false);
+        }
+    }
+    // Issue #3658: Production/Full outermost success structural mutate
+    // must complete this-boundary type dirty txn + mirror BEFORE persist
+    // and before exit_mutation_boundary IR cascade / invalidate_function
+    // drain. Complementary to #3655 (persist SDO vs type∪IR cone).
+    // rebind/set-body already ran infer_flat_partial_with_dirty_txn
+    // (type_dirty_txn_this_boundary_). replace-subtree / lockless /
+    // move-node do not. Phase-5 densify is not a type txn. Vacuous
+    // (no dirty/log) skips extra mirror. Soft/Off: no extra typecheck.
+    // lockless helpers must not infer; this outermost dtor runs once.
+    if (outermost && success &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) &&
+        !ev_->type_dirty_txn_this_boundary()) {
+        bool mutated = ev_->txn_dirty();
+        if (ev_->workspace_flat_) {
+            mutated = mutated ||
+                      ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty()) {
+                const auto enter_log = stk.back().mutation_log_size;
+                mutated = mutated || ev_->workspace_flat_->mutation_log_size() > enter_log;
+            }
+        }
+        if (mutated) {
+            if (!ev_->run_post_mutate_typecheck_no_lock() || !ev_->last_type_solve_solved()) {
+                typed_audit::note_boundary_deny_op("post-mutate-typecheck");
+                typed_audit::clear_type_linear_commit_proof_on_abort();
+                typed_audit::publish_type_linear_proof_outcome(
+                    typed_audit::kTypeLinearProofOutcomeReject);
+                aura_clear_occurrence_persist_buffer(ev_);
+                ev_->clear_type_export_authority();
+                ev_->clear_expected_occurrence_snapshot_fp();
+                success = false;
+                success_flag_store(flag_, false);
+            }
+        }
+    }
+    // Issue #3655: Production/Full persist must have this-boundary SDO
+    // (SOLVED infer or composite stage). rebind/set-body already ran
+    // run_post_mutate_typecheck + stage_expected. replace-subtree /
+    // tweak-literal / lockless eval_flat_apply_* do not — without this
+    // gate, expected_fp==0 && live==0 freezes an empty snapshot as
+    // Occurrence authority. Vacuous (no dirty/log delta) skips extra
+    // SDO. Soft/Off: no extra typecheck. lockless helpers must not
+    // infer (deadlock); this outermost dtor runs once under the lock.
+    if (outermost && success &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) &&
+        !ev_->occurrence_fp_staged()) {
+        bool mutated = ev_->txn_dirty();
+        if (ev_->workspace_flat_) {
+            mutated = mutated ||
+                      ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty()) {
+                const auto enter_log = stk.back().mutation_log_size;
+                mutated = mutated || ev_->workspace_flat_->mutation_log_size() > enter_log;
+            }
+        }
+        if (mutated) {
+            if (!ev_->run_post_mutate_typecheck_no_lock() || !ev_->last_type_solve_solved()) {
+                typed_audit::note_boundary_deny_op("occurrence-sdo");
+                typed_audit::clear_type_linear_commit_proof_on_abort();
+                typed_audit::publish_type_linear_proof_outcome(
+                    typed_audit::kTypeLinearProofOutcomeReject);
+                aura_clear_occurrence_persist_buffer(ev_);
+                ev_->clear_type_export_authority();
+                ev_->clear_expected_occurrence_snapshot_fp();
+                success = false;
+                success_flag_store(flag_, false);
+            }
+        }
+    }
+    // Issue #3653: Production/Full outermost — this-boundary type +
+    // invariant proof BEFORE persist freeze (#3614/#3517 residual —
+    // order, not a missing restore). #3614 already hoisted linear +
+    // drain; #3517 can flip Guard success after Full deny, but the
+    // persist helper had already published a Stamped green face for
+    // one beat (steal / query:type / IR). Check-only: composite_txn_commit
+    // / boundary_solve_proof_gate / finish_mutate_hard_gate /
+    // run_typed_mutation_invariant_audit return false without restore.
+    // Vacuous (no dirty/log) does not force finish_mutate_hard_gate's
+    // no-CS resync deny — that would abort happy Guards exit currently
+    // accepts. Vacuous still runs the invariant suite so ADT / type
+    // inject deny before freeze. Deny reuses the #3472 un-stamp set
+    // and flips success into the existing abort_restore SSOT. Soft/Off:
+    // this block does not run (persist helper stays zero-cost; no extra
+    // audit walk). Happy path may re-audit in exit_mutation_boundary.
+    if (outermost && success &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+        bool mutated = ev_->txn_dirty();
+        if (ev_->workspace_flat_) {
+            mutated = mutated ||
+                      ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty()) {
+                const auto enter_log = stk.back().mutation_log_size;
+                mutated = mutated || ev_->workspace_flat_->mutation_log_size() > enter_log;
+            }
+        }
+        bool audit_ok = true;
+        bool proof_trunc = false;
+        bool proof_force = false;
+        const bool batch_active =
+            ev_->workspace_flat_ && ev_->workspace_flat_->atomic_batch_active();
+        typed_audit::InvariantAuditResult inv{};
+        // Issue #4402: epoch pair is the Mutation epoch. mid_audit stays
+        // the session audit mid (mutation_id only).
+        const auto mut_epoch = ::aura::core::current_mutation_epoch();
+        // Issue #3778: join SSOT (cp.audit_mid / session / join_audit_and_se_mid)
+        // — never stamp defuse_version_ as the Typed/SE/Occurrence mid.
+        std::uint64_t mid_audit = 0;
+        {
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty() && stk.back().audit_mid != 0)
+                mid_audit = stk.back().audit_mid;
+            else if (session_mid_at_enter_ != 0)
+                mid_audit = session_mid_at_enter_;
+            else
+                mid_audit = typed_audit::join_audit_and_se_mid(0);
+        }
+        // Issue #4685: keep the audit verdict, not just adt_ok. A vacuous
+        // outermost (no dirty/log, no atomic batch) still freezes the
+        // Occurrence snapshot + may grant query:type; a false provenance
+        // (reflect) or type invariant must deny before that persist. The
+        // empty workspace stays successful: post_mutation_reflect_validate
+        // reports false for !ws/size==0, which is vacuous, not a failure.
+        // Linear !all_safe is already denied by the #3614 gate above
+        // (enforce_linear_boundary_consistency) — no extra sweep here.
+        const bool inv_ok = ev_->run_typed_mutation_invariant_audit(
+            mid_audit, "outermost-pre-persist", 0, mut_epoch, mut_epoch,
+            /*composite_mode=*/false, &inv);
+        const bool live_ws = ev_->workspace_flat_ && ev_->workspace_flat_->size() > 0;
+        if (!inv.adt_ok || (!mutated && !batch_active && live_ws && !inv_ok))
+            audit_ok = false;
+        if (batch_active) {
+            typed_audit::CompositeTxnCommitResult ccr{};
+            audit_ok = ev_->composite_txn_commit(mid_audit, "outermost-pre-persist", 0, mut_epoch,
+                                                 mut_epoch,
+                                                 /*nested=*/false, /*batch_active=*/true, &ccr) &&
+                       audit_ok;
+        } else if (mutated) {
+            const bool proof_ok = ev_->boundary_solve_proof_gate(
+                /*hard_gate=*/true, linear_ops_present_local, nodes_changed_local, &proof_trunc,
+                &proof_force);
+            audit_ok = audit_ok && proof_ok && !proof_force;
+            if (audit_ok) {
+                audit_ok = ev_->finish_mutate_hard_gate(
+                    nodes_changed_local, linear_ops_present_local, "outermost-pre-persist");
+            }
+        }
+        if (!audit_ok) {
+            typed_audit::clear_type_linear_commit_proof_on_abort();
+            typed_audit::publish_type_linear_proof_outcome(
+                typed_audit::kTypeLinearProofOutcomeReject);
+            aura_clear_occurrence_persist_buffer(ev_);
+            ev_->clear_type_export_authority();
+            ev_->clear_expected_occurrence_snapshot_fp();
+            success = false;
+            success_flag_store(flag_, false);
+        }
+    }
+    if (outermost && success) {
+        // Issue #3778: Occurrence persist mid == Typed/SE/grant/WAL join mid.
+        // Production/Full mid==0 refuse — never invent defuse_version_ as a
+        // phantom join key. Soft/Off: prefer join mid; else defuse observe.
+        std::uint64_t mid = 0;
+        {
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty() && stk.back().audit_mid != 0)
+                mid = stk.back().audit_mid;
+            else if (session_mid_at_enter_ != 0)
+                mid = session_mid_at_enter_;
+            else
+                mid = typed_audit::join_audit_and_se_mid(0);
+        }
+        const bool hard_3778 = typed_audit::production_defaults_active() ||
+                               typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+        if (hard_3778 && mid == 0) {
+            // Issue #3778 / #3472: production mid==0 refuse applies when an
+            // Occurrence identity is actually required (mutated / staged).
+            // Vacuous empty MutationBoundaryGuard must not invent defuse
+            // OR abort — skip persist, keep success (happy AC3).
+            bool need_occurrence_mid = ev_->txn_dirty() || ev_->occurrence_fp_staged();
+            if (ev_->workspace_flat_) {
+                auto& stk = ev_->active_mutation_stack();
+                const auto enter_log = (!stk.empty()) ? stk.back().mutation_log_size : 0ull;
+                need_occurrence_mid =
+                    need_occurrence_mid || ev_->workspace_flat_->mutation_log_size() > enter_log ||
+                    ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
+            }
+            if (need_occurrence_mid) {
+                typed_audit::clear_type_linear_commit_proof_on_abort();
+                typed_audit::publish_type_linear_proof_outcome(
+                    typed_audit::kTypeLinearProofOutcomeReject);
+                aura_clear_occurrence_persist_buffer(ev_);
+                ev_->clear_type_export_authority();
+                ev_->clear_expected_occurrence_snapshot_fp();
+                success = false;
+                success_flag_store(flag_, false);
+            }
+            // else vacuous: no persist, success stays true
+        } else {
+            // Issue #3780: production fail-closed + force_wal — structural
+            // mutation WAL must land BEFORE Occurrence persist. #3734
+            // post-commit overflow alone is not crash-durable (cap 256,
+            // process-local). On miss: overflow still stamps
+            // mutation_wal_append_miss, then flip success into the
+            // existing !success abort_restore SSOT (no Occurrence commit).
+            // Soft / WAL-off: skip (fail-open; late emit in exit path).
+            // #3639 require_effect body deny is unchanged.
+            if (::aura::core::wal_slo::wal_append_fail_closed_active() &&
+                ::aura::core::audit_wal::g_mutation_audit_wal().is_enabled()) {
+                std::uint32_t nodes_changed_wal = 0;
+                std::uint32_t epoch_delta_wal = 0;
+                std::string_view audit_op_wal = "structural";
+                ast::NodeId audit_target_wal = ast::NULL_NODE;
+                if (ev_->workspace_flat_) {
+                    auto& stk = ev_->active_mutation_stack();
+                    const auto enter_log = (!stk.empty()) ? stk.back().mutation_log_size : 0ull;
+                    const auto post_size = ev_->workspace_flat_->all_mutations().size();
+                    if (post_size > enter_log)
+                        nodes_changed_wal = static_cast<std::uint32_t>(post_size - enter_log);
+                    const auto& log = ev_->workspace_flat_->all_mutations();
+                    if (post_size > enter_log && post_size <= log.size()) {
+                        const auto& rec = log[post_size - 1];
+                        audit_op_wal = rec.operator_name;
+                        audit_target_wal = rec.target_node;
+                    }
+                }
+                if (!ev_->emit_mutation_audit(nodes_changed_wal, epoch_delta_wal, audit_op_wal,
+                                              audit_target_wal)) {
+                    typed_audit::clear_type_linear_commit_proof_on_abort();
+                    typed_audit::publish_type_linear_proof_outcome(
+                        typed_audit::kTypeLinearProofOutcomeReject);
+                    aura_clear_occurrence_persist_buffer(ev_);
+                    ev_->clear_type_export_authority();
+                    ev_->clear_expected_occurrence_snapshot_fp();
+                    success = false;
+                    success_flag_store(flag_, false);
+                    g_tls_mutation_audit_wal_precommitted = false;
+                } else {
+                    g_tls_mutation_audit_wal_precommitted = true;
+                }
+            }
+            if (success) {
+                if (!hard_3778 && mid == 0)
+                    mid = ev_->defuse_version_.load(std::memory_order_relaxed);
+                aura_outermost_success_persist_occurrence(ev_, mid);
+                // Issue #3512: staging is one-shot for this outermost persist.
+                ev_->clear_expected_occurrence_snapshot_fp();
+                // Issue #3984: inject after persist helper so #3472 belt can
+                // fire without the #3614 pre-gate seeing the latch (test).
+                if (typed_audit::g_inject_linear_synth_after_persist_for_test.exchange(
+                        0, std::memory_order_acq_rel) != 0)
+                    ev_->note_linear_synth_hard_fail_pending();
+                if (typed_audit::consume_outermost_persist_reject_needs_restore()) {
+                    typed_audit::note_boundary_deny_op("persist-reject");
+                    typed_audit::drop_deferred_outermost_green_proof();
+                    success = false;
+                    success_flag_store(flag_, false);
+                }
+            }
+            // else: #3780 miss already un-stamped; skip Occurrence persist
+        }
+    }
+    // Issue #3472 / #3818: belt-and-suspenders post-persist linear deny.
+    // The pre-persist #3614 gate above is the primary deny path now; retain
+    // this walk for the case the persist helper's own drain / recover
+    // latch flips linear safety after a green pre-check. Same un-stamp
+    // set (proof / persist buffer / query:type grant) and the same
+    // success flip into the existing abort_restore SSOT — do not
+    // invent a second restore. Soft/Off: observe-only, no hard flip.
+    // Issue #3818: after a green persist beat, also run the shared
+    // note_3440 / #3545 reject-undo (CoercionMap journal + #3687 AST).
+    // abort_restore then no-ops dual-topology if already restored.
+    if (outermost && success &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+        const auto lin = ev_->enforce_linear_boundary_consistency(
+            Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
+        linear_pre_exit_enforced = true;
+        const bool post_persist_linear = !lin.all_safe || ev_->linear_synth_hard_fail_pending();
+        const bool post_persist_density =
+            !post_persist_linear &&
+            aura::compiler::castop_density::consume_density_gate_reject_pending();
+        if (post_persist_linear || post_persist_density) {
+            typed_audit::note_boundary_deny_op(post_persist_linear ? "post-persist-linear"
+                                                                   : "post-persist-density");
+            typed_audit::clear_type_linear_commit_proof_on_abort();
+            typed_audit::publish_type_linear_proof_outcome(
+                typed_audit::kTypeLinearProofOutcomeReject);
+            aura_clear_occurrence_persist_buffer(ev_);
+            ev_->clear_type_export_authority();
+            // Issue #3818: #3545 CoercionMap journal undo + #3687 AST
+            // (same aura_persist_reject_undo as in-helper persist-reject).
+            // Soft/Off never enters this arm (no undo cost).
+            std::uint64_t mid_undo = 0;
+            {
+                auto& stk = ev_->active_mutation_stack();
+                if (!stk.empty() && stk.back().audit_mid != 0)
+                    mid_undo = stk.back().audit_mid;
+                else if (session_mid_at_enter_ != 0)
+                    mid_undo = session_mid_at_enter_;
+                else
+                    mid_undo = typed_audit::join_audit_and_se_mid(0);
+            }
+            aura_persist_reject_undo(ev_, mid_undo);
+            typed_audit::drop_deferred_outermost_green_proof();
+            success = false;
+            success_flag_store(flag_, false);
+        }
+    }
+    // Issue #3984: observer-visible green only after every post-persist
+    // deny arm in this Guard has passed. Soft/Off never deferred.
+    // Issue #4030: grant_type_export_authority only when deferred green
+    // actually commits (live would_allow was true at stamp). Soft/Off
+    // already granted in the persist helper; commit returns false.
+    if (outermost && success) {
+        if (typed_audit::commit_deferred_outermost_green_proof())
+            ev_->grant_type_export_authority();
+    } else {
+        typed_audit::drop_deferred_outermost_green_proof();
+    }
+    // Issue #4044: pre-persist emit already published effect_denied=false
+    // and latched the post-success skip. A post-persist deny (linear /
+    // density) must amend that same mid before exit, then drop the latch
+    // so the next success still emits. Structural undo already ran;
+    // record_boundary_deny_after_restore stays inside exit (!success).
+    // Soft/Off never sets the latch.
+    if (outermost && !success && g_tls_mutation_audit_wal_precommitted) {
+        std::uint64_t amend_mid = 0;
+        {
+            auto& stk = ev_->active_mutation_stack();
+            if (!stk.empty() && stk.back().audit_mid != 0)
+                amend_mid = stk.back().audit_mid;
+            else if (session_mid_at_enter_ != 0)
+                amend_mid = session_mid_at_enter_;
+            else
+                amend_mid = typed_audit::join_audit_and_se_mid(0);
+        }
+        if (amend_mid != 0) {
+            const auto seq_now = ev_->mutation_audit_seq_.load(std::memory_order_relaxed);
+            const auto n = std::min<std::uint64_t>(seq_now, Evaluator::kMutationAuditRingSize);
+            for (std::uint64_t i = 0; i < n; ++i) {
+                auto& slot = ev_->mutation_audit_ring_[(seq_now - 1 - i) %
+                                                       Evaluator::kMutationAuditRingSize];
+                if (slot.provenance_mutation_id != amend_mid)
+                    continue;
+                slot.effect_denied = true;
+                // Issue #4063: fill epoch_delta from the defuse delta at
+                // amend time. epoch stays slot.epoch (Mutation), not Bridge.
+                {
+                    const auto defuse_now = ev_->defuse_version_.load(std::memory_order_relaxed);
+                    if (defuse_now >= defuse_version_at_enter_) {
+                        const auto d = defuse_now - defuse_version_at_enter_;
+                        slot.epoch_delta =
+                            d > 0xffffffffu ? 0xffffffffu : static_cast<std::uint32_t>(d);
+                    }
+                }
+                if (::aura::core::audit_wal::g_mutation_audit_wal().is_enabled()) {
+                    // Issue #4063: fail this append once when the test arms
+                    // the latch. The pre-persist allow row must not consume it.
+                    if (typed_audit::g_inject_post_persist_amend_append_fail_for_test.exchange(
+                            0, std::memory_order_acq_rel) != 0) {
+                        ::aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining
+                            .store(1, std::memory_order_relaxed);
+                    }
+                    const auto rec = ::aura::core::audit_wal::make_record(
+                        slot.seq, slot.timestamp_ms, slot.fiber_id, slot.nodes_changed,
+                        slot.epoch_delta, slot.target_node, slot.op, slot.effect_bits,
+                        slot.tenant_id, slot.provenance_mutation_id, slot.epoch,
+                        /*effect_denied=*/true, "post-persist-deny");
+                    auto& wal = ::aura::core::audit_wal::g_mutation_audit_wal();
+                    bool appended = wal.append(rec);
+                    if (!appended && ::aura::core::wal_slo::wal_append_fail_closed_active()) {
+                        // Same miss face as emit_mutation_audit (#3856/#3907).
+                        // Ring stays effect_denied. One retry so a single
+                        // injected miss does not leave the newest row denied=0.
+                        const auto se_mid = typed_audit::join_audit_and_se_mid(amend_mid);
+                        (void)::aura::core::security_event_wal::emit_security_event_durable(
+                            ::aura::core::security_event::SecurityEventKind::EffectDeny,
+                            static_cast<std::uint32_t>(slot.tenant_id), se_mid, slot.epoch,
+                            slot.effect_bits, slot.op, "mutation_wal_append_miss",
+                            /*denied=*/true, slot.fiber_id);
+                        ::aura::core::security_event_wal::WalOverflowRecord ovr{};
+                        ovr.mid = amend_mid;
+                        ovr.tenant_id = static_cast<std::uint32_t>(slot.tenant_id);
+                        ovr.fiber_id = static_cast<std::uint64_t>(slot.fiber_id);
+                        ovr.epoch = slot.epoch;
+                        ovr.op = slot.op[0] ? std::string(slot.op) : std::string("structural");
+                        ovr.reason = "mutation_wal_append_miss";
+                        (void)::aura::core::security_event_wal::wal_overflow_ring_push(ovr);
+                        appended = wal.append(rec);
+                    }
+                    (void)appended;
+                }
+                break;
+            }
+        }
+        g_tls_mutation_audit_wal_precommitted = false;
+    }
+    Evaluator::MutationCheckpoint exited_cp{};
+    bool did_exit_boundary = false;
+    if (!inbody_force_exited_) {
+        exited_cp = ev_->exit_mutation_boundary(success);
+        did_exit_boundary = true;
+    } else {
+        // Issue #4403: in-body exit already stamped. Drop a token noted
+        // after that exit so it cannot name a later boundary.
+        typed_audit::clear_boundary_deny_op();
+    }
+    // Issue #3517: Full/hard-gate force-rollback inside exit already
+    // restored AST; consume the TLS note so local success matches
+    // persist-reject (dtor `!success` tail drops grant / proof).
+    if (typed_audit::consume_outermost_audit_rollback_needs_fail()) {
+        success = false;
+        success_flag_store(flag_, false);
+    }
+    ev_->render_fast_exit_this_boundary_ = false;
+    // Issue #3118: production hold-budget cancel — lock + depth must
+    // drop immediately after abort_restore_dual_topology so densify /
+    // steal cannot wait through Phase-1-4 while seeing held+depth.
+    // Soft never sets cancel_forced_fail (observe-only). Happy path
+    // (flag unset) does not enter here.
+    if (cancel_forced_fail && outermost)
+        force_release_hold_after_cancel_();
+    // Issue #2964 / #3006: unified linear fast-path gate on outermost
+    // success. Depth is 0 after pop (before exit fence). When
+    // !linear_fast_path_ok under production/Full → force dirty-root
+    // linear revalidate (enforce_linear_boundary_consistency — no Quiet
+    // skip, no render_fast skip). Soft → observe only.
+    // #3006: re-eval again after Phase 1 so escape/densify/depth flips
+    // after the initial check still force the dirty-root walk.
+    bool linear_fast_path_force_revalidated = false;
+    auto linear_fast_path_maybe_force_dirty_revalidate = [&](bool late) {
+        if (!(outermost && success))
+            return;
+        using aura::compiler::typed_audit::g_linear_fast_path_dirty_revalidate_total;
+        using aura::compiler::typed_audit::g_linear_fast_path_force_revalidate_observe_total;
+        using aura::compiler::typed_audit::g_linear_fast_path_force_revalidate_total;
+        using aura::compiler::typed_audit::g_linear_fast_path_late_reeval_total;
+        using aura::compiler::typed_audit::linear_fast_path_boundary_exit_action;
+        using aura::compiler::typed_audit::LinearFastPathExitAction;
+        const auto act = linear_fast_path_boundary_exit_action();
+        if (act == LinearFastPathExitAction::ForceRevalidate) {
+            if (linear_fast_path_force_revalidated)
+                return;
+            g_linear_fast_path_force_revalidate_total.fetch_add(1, std::memory_order_relaxed);
+            g_linear_fast_path_dirty_revalidate_total.fetch_add(1, std::memory_order_relaxed);
+            if (late)
+                g_linear_fast_path_late_reeval_total.fetch_add(1, std::memory_order_relaxed);
+            aura::compiler::linear_occurrence_mutate::record_revalidate_hit();
+            (void)ev_->enforce_linear_boundary_consistency(Evaluator::kLinearGcRootAuditTypedMutate,
+                                                           /*mark_all_linear=*/false);
+            linear_fast_path_force_revalidated = true;
+        } else if (act == LinearFastPathExitAction::SoftObserve && !late) {
+            g_linear_fast_path_force_revalidate_observe_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        }
+        // Quiet: no extra revalidate / counter (matches #2899 quiet path).
+    };
+    linear_fast_path_maybe_force_dirty_revalidate(/*late=*/false);
+    // Issue #2120: keep per-fiber mutation stack depth visible during
+    // exit pipeline so steal/GC do not observe "depth==0 mid-probes".
+    // exit_mutation_boundary already popped the real checkpoint; push a
+    // lightweight fence that is removed just before unlock.
+    bool exit_fence_pushed = false;
+    if (outermost) {
+        Evaluator::MutationCheckpoint fence{};
+        fence.version = ev_->defuse_version_.load(std::memory_order_relaxed);
+        fence.evaluator_id = static_cast<void*>(ev_);
+        fence.exit_fence = true;
+        Evaluator::active_mutation_stack_static().push_back(std::move(fence));
+        exit_fence_pushed = true;
+        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+            m->outermost_exit_phase1_probes_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // ── Phase 1: linear + dual-path + LifetimePin probes ──
+    // Issue #1486 / #1545 / #1568 / #1634 / #2120 / #2131
+    // Issue #2131: outermost exit walks GcCoord PrePin → PostAudit
+    // (boundary path; audit runs inside enforce helpers).
+    // Issue #2215 RenderFastExit: skip Full linear + dual-path EnvFrame walk
+    // (frame budget); still restamp pins for live render buffers.
+    std::optional<gc_coord::Scope> boundary_gc_coord;
+    if (outermost)
+        boundary_gc_coord.emplace(gc_coord::Path::Boundary);
+    else if (!success && nested_linear_keep_armed_) {
+        // Issue #3249: nested abort — drain extras vs enter snapshot.
+        // Outer still-live pins stay in the registry (no silent leftover
+        // of nested-only roots). Soft never arms the snapshot.
+        (void)aura::core::lifetime::unpin_linear_roots_except(nested_linear_keep_);
+    }
+    if (outermost) {
+        if (render_fast) {
+            // Issue #3006: Production/Full + !linear_fast_path_ok cannot
+            // skip the dirty-root walk (elision may have been taken under
+            // a momentarily true predicate). Soft render-fast still skips.
+            linear_fast_path_maybe_force_dirty_revalidate(/*late=*/true);
+            if (!linear_fast_path_force_revalidated) {
+                // Fast: skip enforce_linear_boundary_consistency + dual-path scan.
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                    m->render_fast_exit_skipped_audit_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (boundary_gc_coord)
+                boundary_gc_coord->enter_cascade();
+        } else if (!success) {
+            // Issue #1951: 4-step closed-loop pattern consolidated helper.
+            (void)ev_->enforce_linear_post_failure(Evaluator::kLinearGcRootAuditTypedMutate);
+            if (boundary_gc_coord)
+                boundary_gc_coord->enter_cascade();
+            // dual-path still on failure path below for non-fast
+            {
+                std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+                for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+                    rlock[ef_i] = std::shared_lock<std::shared_mutex>(
+                        ev_->env_frame_shard_mu(ef_i)); // Issue #3900
+                const auto n = ev_->env_frames_size();
+                for (EnvId id = 0; id < n; ++id) {
+                    if (!ev_->is_valid_env_id(id))
+                        continue;
+                    const auto& fr = ev_->env_frame(id);
+                    if (fr.version_ == INVALID_VERSION)
+                        continue;
+                    (void)ev_->ensure_envframe_dual_path_consistency(fr);
+                }
+            }
+        } else {
+            // Issue #3472: Production/Full already paid this walk (and
+            // checked the return) before exit_mutation_boundary. Skip
+            // the duplicate; still bump the happy-path observability
+            // counter (not a deny signal).
+            // Issue #4357: the rebind body already ran ownership validation.
+            // The full closure + env-frame walk is the rest of the millisecond
+            // on a one-line Soft rebind. Full / production / hard still walk.
+            if (!linear_pre_exit_enforced && !rebind_light_skip_heavy_exit(*ev_) &&
+                !heap_slot_quiet) {
+                (void)ev_->enforce_linear_boundary_consistency(
+                    Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
+            }
+            // Issue #2067: post-mutate force-rollback observability bump.
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                m->linear_post_mutate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (boundary_gc_coord)
+                boundary_gc_coord->enter_cascade();
+            // Issue #2120 / #2116: dual-path consistency probe at boundary exit
+            // (no half-consistent EnvFrame left live after probes).
+            // Issue #4357: same light-path skip as the enforce above. The
+            // walk locks every env-frame shard, including the Soft prelude.
+            // Issue #4346: heap-slot quiet skips the same walk. Each frame's
+            // ensure_dual_path_consistent compares every binding.
+            if (!rebind_light_skip_heavy_exit(*ev_) && !heap_slot_quiet) {
+                std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+                for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+                    rlock[ef_i] = std::shared_lock<std::shared_mutex>(
+                        ev_->env_frame_shard_mu(ef_i)); // Issue #3900
+                const auto n = ev_->env_frames_size();
+                for (EnvId id = 0; id < n; ++id) {
+                    if (!ev_->is_valid_env_id(id))
+                        continue;
+                    const auto& fr = ev_->env_frame(id);
+                    if (fr.version_ == INVALID_VERSION)
+                        continue;
+                    (void)ev_->ensure_envframe_dual_path_consistency(fr);
+                }
+            }
+        }
+        // Issue #1500 / #2085 / #3019: unified restamp under lock
+        // (node gen → StableNodeRef → LifetimePin) BEFORE reemit so
+        // hot-update sees consistent pins (#2120 order). Always on
+        // outermost (including RenderFastExit — live render buffers).
+        // Abort restore uses the same entry (AbortRestore).
+        // Issue #3259: production over-budget restamp eager-restamps
+        // the hot cone here (outermost only) before Agent export.
+        // Issue #3743: persist-reject / inbody force-exit / force-rollback
+        // already restamped at the restore site; this outermost triad is
+        // the belt (nested abort never reaches here).
+        // Issue #4346: a heap-slot write did not change node generations.
+        // restamp_all_node_generations walks the whole workspace per write.
+        if (!heap_slot_quiet) {
+            const auto ur = ev_->unified_restamp_after_boundary(
+                success ? Evaluator::UnifiedRestampSite::BoundarySuccess
+                        : Evaluator::UnifiedRestampSite::AbortRestore);
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
+                if (ur.pins > 0)
+                    m->lifetime_pin_restamps_total.fetch_add(static_cast<std::uint64_t>(ur.pins),
+                                                             std::memory_order_relaxed);
+            }
+        }
+        // Issue #3196: outermost triad published — drop nested authority-gap.
+        // Issue #3312: record the nested-return → outermost window length.
+        if (auto* ws = ev_->workspace_flat()) {
+            if (ws->nested_authority_gap()) {
+                const auto open = ws->nested_authority_gap_open_ns();
+                if (open != 0) {
+                    const auto now_ns = static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count());
+                    const auto window = now_ns >= open ? now_ns - open : 0;
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
+                        m->nested_authority_gap_last_window_ns.store(window,
+                                                                     std::memory_order_relaxed);
+                        m->nested_authority_gap_windows_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                        m->nested_return_not_triad_complete.store(0, std::memory_order_relaxed);
+                    }
+                }
+            }
+            ws->clear_nested_authority_gap();
+        }
+        // Issue #2003: EnvFrame lifetime scan at boundary exit.
+        // Issue #4346: that scan locks every closure shard and walks
+        // every live closure. A heap slot write did not move a capture.
+        if (!heap_slot_quiet) {
+            aura::core::envframe_lifetime::EnvFrameLifetimeGuard envframe_guard{
+                aura::core::envframe_lifetime::make_envframe_lifetime_host_with(
+                    const_cast<void*>(static_cast<const void*>(ev_)),
+                    &::aura::compiler::Evaluator::envframe_lifetime_trampoline),
+                aura::core::envframe_lifetime::EnvFrameLifetimeSite::BoundaryExit};
+            (void)envframe_guard.site();
+        }
+        // Issue #2131: PostAudit after pin/probe phase (audit ran in enforce).
+        if (boundary_gc_coord)
+            boundary_gc_coord->after_cascade();
+        // Issue #3006: late re-eval after Phase 1 probes (escape / densify
+        // / depth can flip after the post-pop check). Production !ok
+        // still forces dirty-root revalidate; Soft stays observe-only.
+        linear_fast_path_maybe_force_dirty_revalidate(/*late=*/true);
+    }
+    // Issue #3438: outermost exit — the Guard's linear-keep scope ends.
+    // Fail paths already drained scoped inside enforce (take + disarm);
+    // a successful exit disarms now so a later reclaim never drains with
+    // a stale keep. Abandoned mid-Guard (steal): dtor never runs — the
+    // keep stays armed for the steal hard-fail scoped drain.
+    if (outermost) {
+        if (auto* f3438 = aura::serve::g_current_fiber)
+            f3438->clear_outermost_linear_keep();
+    }
+    // ── Phase 2–3: panic checkpoint + GC defer (before reemit) ──
+    // Issue #241 / #2120: commit/restore under lock so dual-epoch observers
+    // never see a pending panic window after probes.
+    //
+    // commit_panic_checkpoint / restore_panic_checkpoint (ok path) already
+    // call release_gc_defer_for_pending_panic once — do NOT double-release
+    // (process-wide depth would underflow other evaluators' arms).
+    // Partial recovery (failed + !auto_rollback) keeps checkpoint + defer.
+    // Success AC1: drain any residual panic-defer still attributed to this
+    // evaluator after commit (steal-orphan / multi-arm edge cases).
+    bool panic_handled = false;
+    if (outermost && had_panic_checkpoint_) {
+        if (success) {
+            ev_->commit_panic_checkpoint(); // includes release_gc_defer once
+            panic_handled = true;
+        } else if (ev_->panic_auto_rollback_) {
+            (void)ev_->restore_panic_checkpoint(); // releases on successful restore
+            panic_handled = true;
+        } else if (typed_audit::production_defaults_active()) {
+            // Issue #4914: a failed outermost exit has already run the
+            // abort-restore SSOT (#3423), so the workspace topology is back
+            // at the pre-mutate state and the checkpoint guards nothing.
+            // Leaving it live with the GC defer armed failed the densify
+            // panic_residual axis, and densify-throttle then refused every
+            // later admit — one rejected rebind wedged the workspace for
+            // good (`aura soft`). Accept the restored state instead. Not
+            // restore_panic_checkpoint(): that truncates the value arenas
+            // under results the program already holds (the reject value).
+            ev_->commit_panic_checkpoint(); // includes release_gc_defer once
+            panic_handled = true;
+        }
+        // else (Soft/Off) partial recovery: leave checkpoint + defer armed
+        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+            m->outermost_exit_phase3_gc_defer_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // AC1: outermost success → no residual panic-defer for this evaluator.
+    // Use clear_gc_defer_for_evaluator (not release_gc_defer_for_pending_panic):
+    // commit/restore already cleared the Evaluator arm flag, so the flag-gated
+    // release would no-op while table depth from steal-orphan / external arm
+    // could remain — a while(release) loop would spin forever.
+    if (outermost && success) {
+        if (aura::gc_hooks::gc_deferred_for_evaluator(static_cast<void*>(ev_)))
+            (void)aura::gc_hooks::clear_gc_defer_for_evaluator(static_cast<void*>(ev_));
+        if (!had_panic_checkpoint_) {
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                m->outermost_exit_phase3_gc_defer_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // ── Phase 4: hot-update throttle → reemit → epoch notify (#2090 / #2114 / #2162) ──
+    // Issue #2090 / #2162: outermost dtor drives the single-owner helper so
+    // fiber-steal restore / partial recovery / exception unwind / compact-only
+    // share the same ordered sequence (no silent stale closures).
+    // Issue #2215 RenderFastExit: defer synchronous reemit under render hotpath
+    // success — HotUpdateRegistry Defer policy already fail-closed for steal;
+    // do not block present on full reemit. Non-render / failure still recover.
+    if (outermost) {
+        if (render_fast) {
+            const std::uint64_t cur_defuse = ev_->defuse_version_.load(std::memory_order_acquire);
+            const std::uint64_t dirty_calls =
+                ev_->workspace_flat_ ? ev_->workspace_flat_->mark_dirty_upward_call_count() : 0;
+            const bool dirty =
+                (cur_defuse != defuse_version_at_enter_) || (dirty_calls > dirty_upward_at_enter_);
+            if (dirty) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                    m->render_fast_exit_deferred_reemit_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                // Issue #4507: the defer still stamps the reemit audit face
+                // with the session mid captured before the TLS clear — same
+                // fallback as the non-render sibling below. The func-table
+                // epoch below is a listener signal only; it never becomes
+                // the face mid (query last-reemit-mid stays a session mid).
+                aura_note_aot_reemit_audit_face(
+                    aura::compiler::CompilerMetrics::kAotLastReemitReasonRenderFastDeferred,
+                    exited_cp.audit_mid != 0 ? exited_cp.audit_mid : session_mid_at_enter_);
+                // Epoch notify only (no sync reemit) so dual-epoch observers
+                // see a bump; actual reemit coalesces on next non-render boundary.
+                aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
+            }
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                m->outermost_exit_phase4_reemit_total.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            // Issue #4357: a one-line Soft rebind does not reemit. The
+            // recovery walk is the phase-4 cost on that path.
+            if (!rebind_light_skip_heavy_exit(*ev_) && !heap_slot_quiet) {
+                // Issue #4432: phase 4 runs after the note is cleared.
+                const std::uint64_t session_audit_mid =
+                    exited_cp.audit_mid != 0 ? exited_cp.audit_mid : session_mid_at_enter_;
+                ev_->run_hot_update_recovery_if_needed(success, defuse_version_at_enter_,
+                                                       dirty_upward_at_enter_, session_audit_mid);
+            }
+            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                m->outermost_exit_phase4_reemit_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // ── Phase 5: flush + depth/unlock LAST (#2120) ──
+    if (outermost) {
+        // Issue #3918: re-stamp from this guard's checkpoint immediately
+        // before flush. Phases above can enter another boundary and clear
+        // the bit exit_mutation_boundary already stored.
+        if (did_exit_boundary) {
+            ev_->outermost_ast_mutated_ =
+                ev_->workspace_flat_ &&
+                (exited_cp.lightweight ||
+                 ev_->workspace_flat_->mutation_log_size() > exited_cp.mutation_log_size);
+        }
+        ev_->flush_mutation_boundary();
+        if (ev_->compiler_metrics())
+            aura_macro_hygiene_snapshot_metrics(ev_->compiler_metrics());
+        // Pop exit fence before depth_slot-- so steal sees consistent zero.
+        if (exit_fence_pushed) {
+            auto& st = Evaluator::active_mutation_stack_static();
+            if (!st.empty())
+                st.pop_back();
+            exit_fence_pushed = false;
+        }
+        // depth_slot last (paired with ctor ++; was early-decrement pre-#2120).
+        // Issue #3118: cancel path already zeroed the slot + process-held.
+        if (!cancel_force_released_) {
+            if (slot)
+                (*slot)--;
+            ev_->mutation_boundary_held_.store(false, std::memory_order_release);
+            // Issue #2849: process-wide held count exit (paired with enter at
+            // outermost held_.store true). Cross-thread mailbox gate reopens
+            // only after this count hits zero (and TLS depth is 0).
+            aura_process_mutation_boundary_held_exit();
+        }
+        // Issue #2517: clear process-wide live max probe if this fiber owns it.
+        // Simplified exit: only clear when we are the recorded max holder
+        // (next enter rebuilds; best-effort under multi-eval contention).
+        aura::compiler::mutation_hold_live_note_exit(aura_fiber_current_id());
+        // Issue #2204: release MutationHold when logical hold ends (paired
+        // with held_ clear, after exit probes / reemit / flush). Abort
+        // (strict force-fail) still reaches here via dtor — bit always
+        // released. Nested guards never armed so never release here.
+        aura::gc_hooks::release_mutation_hold_defer();
+        // Issue #2211 / #2269 / #2296: residual GcDeferReason policy after
+        // residual drain (phase3 panic clear + phase5 MutationHold release).
+        //
+        // ── Decision table (Soft / Clear / Hard × single vs multi-eval) ──
+        // | Policy | Env select                         | Residual≠0 action              |
+        // Multi-eval note                          | | Soft   | AURA_SANDBOX=off | metric only
+        // (legacy #2211)     | no clear; test/sandbox                   | | Clear  | production
+        // default (unset policy)  | force_clear_all_for_eval + hold | panic table + bit reconcile
+        // (#2296)      | | Hard   | AURA_RESIDUAL_DEFER_POLICY=hard or  | hard-fail metric + abort
+        // | same as single; fail closed              | |        | AURA_HARD_RESIDUAL_DEFER=1 | | |
+        // Happy path (residual==0): single relaxed snapshot load, zero clear work (AC3).
+        // Fail/partial-recovery paths intentionally leave checkpoint+defer armed.
+        if (success) {
+            // AC3: zero-cost success path — single relaxed load of
+            // defer_reasons_snapshot(); if zero, skip the entire
+            // residual block (no extra clears / bumps / abort probes).
+            const auto residual = aura::gc_hooks::defer_reasons_snapshot();
+            if (residual != 0) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                    m->mutation_boundary_residual_defer_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                // Issue #2269: production-default policy.
+                // AURA_RESIDUAL_DEFER_POLICY=hard | clear | unset
+                // (unset defaults to 'clear' under production security
+                // defaults, 'soft' under AURA_SANDBOX=off).
+                // Legacy AURA_HARD_RESIDUAL_DEFER=1 still maps to hard
+                // for backward compat (kept so pre-#2269 deploys keep
+                // their hard-fail behavior).
+                const char* sandbox_e = std::getenv("AURA_SANDBOX");
+                const bool dev_off =
+                    sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
+                const bool test_soft = aura::serve::is_residual_defer_soft_for_test();
+                const bool prod_lock = aura::serve::production_residual_policy_locked();
+                // Issue #2853 AC4: bump gauge when production lock is
+                // actively gating the policy (sandbox != off + production
+                // defaults active + not test override). Surfaces to
+                // query:mutation-boundary-hold-stats schema-2853.
+                if (prod_lock && !test_soft) {
+                    aura::serve::g_production_residual_policy_lock_active_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    if (auto* gm = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                        gm->production_residual_policy_lock_active_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                }
+                // Default under production security defaults: clear
+                // (B path — availability-friendly). Sandbox / unit
+                // tests: soft (legacy behavior).
+                //
+                // Issue #2853 AC1: production lock (sandbox != off +
+                // production_defaults_active + not test override) →
+                // AURA_RESIDUAL_DEFER_POLICY=soft env is IGNORED. Only
+                // Clear (default) or Hard (explicit env) applies.
+                enum class ResidualPolicy { Soft, Clear, Hard };
+                ResidualPolicy policy = ResidualPolicy::Clear; // production default
+                if (dev_off || test_soft) {
+                    // Soft path: sandbox=off or explicit test override
+                    // (BOTH bypass the production lock — AC2).
+                    policy = ResidualPolicy::Soft;
+                } else if (prod_lock) {
+                    // Production lock: only Clear (default) or Hard
+                    // (explicit AURA_RESIDUAL_DEFER_POLICY=hard or
+                    // legacy AURA_HARD_RESIDUAL_DEFER=1). Soft env is
+                    // IGNORED.
+                    const char* policy_e = std::getenv("AURA_RESIDUAL_DEFER_POLICY");
+                    const bool policy_hard_env =
+                        policy_e && *policy_e && std::string_view(policy_e) == "hard";
+                    const char* legacy_e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
+                    const bool legacy_hard = legacy_e && *legacy_e && legacy_e[0] != '0';
+                    if (policy_hard_env || legacy_hard) {
+                        policy = ResidualPolicy::Hard;
+                    }
+                    // else: stay Clear (production default — AC1).
+                } else {
+                    // Non-production (no prod_defaults_active or sandbox=off
+                    // — both bypass prod_lock): legacy env-based path
+                    // honors hard / soft / clear env vars (no production
+                    // lock enforcement).
+                    const char* policy_e = std::getenv("AURA_RESIDUAL_DEFER_POLICY");
+                    const bool policy_hard_env =
+                        policy_e && *policy_e && std::string_view(policy_e) == "hard";
+                    const char* legacy_e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
+                    const bool legacy_hard = legacy_e && *legacy_e && legacy_e[0] != '0';
+                    if (policy_hard_env || legacy_hard) {
+                        policy = ResidualPolicy::Hard;
+                    } else if (policy_e && *policy_e && std::string_view(policy_e) == "soft") {
+                        policy = ResidualPolicy::Soft;
+                    }
+                    // else: stay Clear (default).
+                }
+                if (policy == ResidualPolicy::Hard) {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                        m->mutation_boundary_residual_defer_hard_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    // Hard mode: fail closed so sticky defer never ships silent.
+                    // Internal invariant, not a user-facing error. Debug enforce
+                    // uses the cold contract; production NDEBUG leaves it off.
+                    // The abort below is the release fail-closed path.
+                    AURA_COLD_CONTRACT(residual == 0);
+                    // NDEBUG strips the cold contract — still abort when hard policy requested.
+                    if (aura::gc_hooks::defer_reasons_snapshot() != 0)
+                        std::abort();
+                } else if (policy == ResidualPolicy::Clear) {
+                    // Issue #2600 + #2846: force residual clear + hold
+                    // release + residual-after-exit closed loop. Shared
+                    // exit helper matches soft fiber boundary path
+                    // (orch_soft_boundary_exit). Idempotent under multi-
+                    // fiber (CAS-based). Production denseness never
+                    // leaves residual armed across outermost exit.
+                    // #2296 lineage: close_residual_defer_after_exit →
+                    // force_clear_residual_defer_for_evaluator →
+                    // force_clear_all_gc_defer_for_evaluator + reconcile_gc_defer_bits_after_clear.
+                    // Issue #2314: residual GcDeferReason interlock — Guard Phase 5
+                    // inline symbols (force_clear_all_gc_defer_for_evaluator,
+                    // release_mutation_hold_defer, reconcile_gc_defer_bits_after_clear)
+                    // preserved for #2296 contract rows check.
+                    const auto after = aura::gc_hooks::close_residual_defer_after_exit(
+                        static_cast<void*>(ev_), /*production_force=*/true);
+                    aura::compiler::mutation_boundary_shared_exit(static_cast<void*>(ev_));
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                        const auto n = (after.clear.panic_depth_cleared > 0)
+                                           ? after.clear.panic_depth_cleared
+                                           : 1u;
+                        m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
+                            n, std::memory_order_relaxed);
+                        if (after.residual_seen)
+                            m->residual_defer_after_exit_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                    }
+                } else {
+                    // Soft (sandbox / unit tests): no clear, no abort —
+                    // residual metric bump above (legacy #2211) covers
+                    // observe visibility. Issue #2931: Soft exits do NOT
+                    // bump residual_defer_after_exit (helper or metrics
+                    // twin) — the #2846 detection counter is
+                    // production-only so every detection is matched by a
+                    // clear invocation in the soak gate.
+                    (void)aura::gc_hooks::close_residual_defer_after_exit(
+                        static_cast<void*>(ev_), /*production_force=*/false);
+                }
+            }
+        } else {
+            // Issue #2846: outermost *failure* exit also closes residual
+            // defer (success *and* failure). Partial recovery (failed +
+            // checkpoint left armed) intentionally keeps defer — skip.
+            // Other failures: production Clear force-clears; Soft observes.
+            const bool partial_recovery = had_panic_checkpoint_ && !panic_handled;
+            if (!partial_recovery) {
+                const char* sandbox_e = std::getenv("AURA_SANDBOX");
+                const bool dev_off =
+                    sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
+                const bool test_soft = aura::serve::is_residual_defer_soft_for_test();
+                const bool production_force = !(dev_off || test_soft);
+                if (aura::gc_hooks::defer_reasons_snapshot() != 0) {
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
+                        m->mutation_boundary_residual_defer_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    const auto after = aura::gc_hooks::close_residual_defer_after_exit(
+                        static_cast<void*>(ev_), production_force);
+                    if (production_force)
+                        aura::compiler::mutation_boundary_shared_exit(static_cast<void*>(ev_));
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                        if (production_force) {
+                            const auto n = (after.clear.panic_depth_cleared > 0)
+                                               ? after.clear.panic_depth_cleared
+                                               : 1u;
+                            m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
+                                n, std::memory_order_relaxed);
+                        }
+                        // #2931: production-only detection (Soft observe
+                        // covered by the legacy #2211 metric above).
+                        if (production_force && after.residual_seen)
+                            m->residual_defer_after_exit_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                    }
+                }
+            }
+        }
+        // Issue #2184: clear fiber-local held mirror after outermost exit.
+        // fiber.cpp helper keeps TLS null-check + member call co-located —
+        // required for ubsan-smoke (test_ir set-code Guard dtor on host
+        // thread where g_current_fiber is null).
+        aura::serve::publish_current_fiber_mutation_safety(
+            Evaluator::active_mutation_stack_static().size(), /*held=*/false,
+            defuse_version_at_enter_);
+        // Issue #2956: outermost exit post-publish mirror canary (after
+        // residual close + held=false publish). Nested skip via outermost.
+        (void)aura_mutation_boundary_assert_mirrors_consistent(/*is_active=*/1,
+                                                               /*expect_held=*/0,
+                                                               /*check_process=*/1);
+        // Issue #3894: delay workspace unlock + cascade drain until after
+        // Moving compact (lock-held densify). invalidate_function still
+        // takes mutate_mtx_ only after workspace release. Idempotent so
+        // Soft / Moving-disabled still release at this site.
+        bool workspace_released = false;
+        auto release_workspace_then_drain_after_densify_ = [&]() {
+            if (workspace_released)
+                return;
+            workspace_released = true;
+            // Clear bool* before unlock so Guard ctor cannot race the store.
+            ev_->outermost_mutation_success_flag_.store(nullptr, std::memory_order_release);
+            // Issue #2121: unlock matching acquire mode.
+            if (region_mode_) {
+                if (region_lock_.owns_lock()) {
+                    region_shard_occ_clear(region_shard_);
+                    region_lock_.unlock();
+                    ev_->workspace_region_holders_[region_shard_].fetch_sub(
+                        1, std::memory_order_relaxed);
+                }
+                if (shared_lock_.owns_lock())
+                    shared_lock_.unlock();
+            } else if (lock_.owns_lock()) {
+                lock_.unlock();
+            }
+            // Issue #4407 / #4575: C-ABI lock_workspace_* under this Guard
+            // only bumps adopt depth. The cancel unlock drops those layers.
+            // The success drain calls invalidate_function, which acquires
+            // Mutate. A leftover Workspace depth inverts (Mutate < Workspace).
+            while (Evaluator::workspace_lock_adopt_depth_tls() > 0) {
+                --Evaluator::workspace_lock_adopt_depth_tls();
+                aura::compiler::lock_order::on_release(
+                    aura::compiler::lock_order::Level::Workspace);
+            }
+            aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
+            // Issue #2812: post-Guard BFS invalidate_function drain.
+            if (success)
+                ev_->drain_cascade_bfs_invalidate();
+            else
+                ev_->clear_cascade_bfs_invalidate();
+        };
+        if (!aura::ast::moving_compact_enabled()) {
+            // Issue #3955: sticky densify-off blinds Moving so Phase-5
+            // would skip lock-held compact and unlock here; #3128 recover
+            // then densifies with workspace already free. Keep the lock
+            // through recover (GlobalExclusive unique / Region shared) and
+            // release after the recover site. Soft / no sticky: unlock now.
+            if (!(typed_audit::production_defaults_active() &&
+                  aura::ast::moving_incomplete_remap_sticky_densify_off()))
+                release_workspace_then_drain_after_densify_();
+        } else if (rebind_light_skip_heavy_exit(*ev_)) {
+            // Issue #4357: Moving is on, but a one-line Soft rebind does not
+            // need an arena compact to publish the new body. Drain now so
+            // the light invalidate still runs before the wrapper specialises.
+            // The compact block below is skipped (same release lambda).
+            release_workspace_then_drain_after_densify_();
+        }
+        // Issue #2347: clear TLS Guard-window reject count so multi-round
+        // mutates do not accumulate a stale threshold across outermost
+        // boundaries (Soft dashboard + Strict force-rollback both reset).
+        aura::serve::mf_mailbox::clear_recv_boundary_reject_window();
+        // Issue #2378 / #2511 / #2551 / #2849: outermost exit is the sole
+        // place that reopens the mailbox deliverability window after the
+        // #2849 mid-mutation push/fanout gate (note_mailbox_deferred_under_
+        // boundary). Forces deferred drain under budget (hold-exit SLA).
+        // Success + exception paths both hit this Phase-5 block (Guard dtor).
+        // AC5: free when deferred_depth==0 (single relaxed load). Soft:
+        // retain open depth + starvation bump; Strict/production:
+        // force-resolve remaining + audit; residual after budget → hard
+        // counter + Agent throttle flag (#2551). Wraps
+        // note_mailbox_outermost_exit_drain (#2378 opportunity stamp).
+        {
+            // Issue #3775: drain / arm starvation on the holder's mailbox
+            // bp_scope_id so cross-tenant mutate admits stay isolated.
+            std::string_view drain_scope{};
+            if (aura::serve::g_current_fiber != nullptr) {
+                if (auto* mb = aura::serve::g_current_fiber->mailbox()) {
+                    const auto s = mb->bp_scope_id();
+                    if (!s.empty() && s != "-")
+                        drain_scope = s;
+                }
+            }
+            (void)aura::serve::mf_mailbox::drain_deferred_under_budget(/*budget_us=*/0,
+                                                                       drain_scope);
+        }
+        ev_->unbind_yield_hook_evaluator();
+        // Issue #2170: publish LayoutStamp at outermost exit (Phase 5).
+        // Captures the post-mutation stamp (env_generation_ + defuse_version_
+        // already bumped by exit_mutation_boundary; arena_gen + flat_gen
+        // reflect the latest compact state). Companion publisher lives
+        // at live_compact success path (compact_env_frames is a follow-up
+        // — #2170 Phase 2 — wired through the same publish_layout_stamp()
+        // helper so the last-stamp fields stay consistent regardless of
+        // which path bumps the underlying generations).
+        // Issue #4346: publish walks every env frame to restamp
+        // env_gen_stamp_. A heap-slot write did not bump env_generation_
+        // or defuse_version_, so the stamp is unchanged.
+        if (!heap_slot_quiet)
+            ev_->publish_layout_stamp();
+        // Issue #2250: write current LayoutStamp into the current
+        // Fiber (fence captured BEFORE unlock so a concurrent reemit
+        // by another fiber of the same Evaluator is detectable at
+        // Fiber::resume / refresh_stale_frames_after_steal). 6-field
+        // POD copied by value (LayoutStamp is trivially copyable
+        // per #2170 contract).
+        // Issue #2436: LayoutStamp is published *after* Moving densify +
+        // ShapeProfiler/IR dirty close (step 9 of post_compact_lifecycle.hh)
+        // so shape_version + ir_soa_generation fences see post-compact truth.
+        // Soft / no-compact still publishes once below (same POD cost).
+        //
+        // Issue #2256 + #2257: trigger Moving compaction after
+        // outermost Guard exit (post-publish). Honors the pin-or-
+        // remap hard contract: compact_all_moving_pinned() (issue #2266)
+        // returns AdaptiveCompactResult with bytes_reclaimed_total +
+        // pin_contract_held (verify_pins_under_moving_compact() is now
+        // fail-closed and runs inside live_compact(Moving) per arena).
+        // The compact path also bumps shape_version via
+        // ShapeProfiler::on_arena_compact (per #2255/#2256); deopt-
+        // storm enter (per #2257) bumps the same file-scope atomic
+        // independently. Source-cite StormLevel facade integration
+        // lives at #2094 lineage (StormLevel::None default; storm
+        // enter → adaptive partial-relower threshold widens).
+        // moving_compact_enabled lives in aura::ast (arena.ixx);
+        // pin verify in aura::core::lifetime (lifetime_pin.ixx).
+        bool pin_contract_held = true; // #2266 — default true (no Moving = contract held)
+        // Issue #2353: true only when Moving densify actually relocated live objects
+        // (Soft / empty densify → false → AC3 zero-cost revalidate early return).
+        bool had_moving_densify = false;
+        // Issue #2619: last densify window aggregates for Agent health surface.
+        std::size_t densify_objects_moved = 0;
+        std::size_t densify_untracked_kept = 0;
+        bool densify_incomplete_remap = false;
+        // Issue #3783: AdaptiveCompactResult blocked aggregate for unified success.
+        bool densify_moving_blocked = false;
+        std::size_t densify_root_remap_fails = 0;
+        // Issue #2775: aggregate external roots registered via prep API that
+        // were consumed by the last Moving densify window. Sourced from
+        // AdaptiveCompactResult::external_roots_prep_registered_total and
+        // forwarded to publish_last_moving_densify_window so Agent dashboards
+        // observe caller compliance with "register all external roots before
+        // Moving" contract. Pure observability — does not gate any
+        // success / fail predicate (per AC4 additive-only).
+        std::size_t densify_external_roots_prep_registered_cleared = 0;
+        // Stash RootRemap axes for #2682 unified success predicate (lives
+        // outside the moving_compact_enabled() block — compact_r is scoped
+        // to that if-body).
+        std::uint64_t densify_root_remap_stable_ref_fail = 0;
+        std::uint64_t densify_root_remap_closure_capture_fail = 0;
+        // Issue #2499 / #2559: densify-call RootRemap axis (last-call fail totals
+        // == 0). Three-layer memory inventory: pin ∧ root_remap ∧ scan_fail.
+        // Soft / no Moving → vacuous true. Used for DensifyConsistencyReport so
+        // force_reason reports "root_remap" when only RootRemap fails (not "pin").
+        bool densify_root_remap_call_ok = true;
+        // Pin axis for the report (pin-verify only when RootRemap fails alone).
+        bool densify_pin_axis_ok = true;
+        // Issue #3782: densify-entry LCP block (hoisted so Phase-5 window
+        // publish can mark the attempt fail-closed with objects_moved==0
+        // without setting had_moving_densify — that flag still means
+        // relocated live objects for invalidate/pairing).
+        bool densify_entry_lcp_blocked = false;
+        // Issue #4304: the guard is not movable. Armed only inside
+        // moving_compact_enabled(); reset after the Phase-5 publish.
+        // Null on Soft / Moving off — no in-flight store.
+        std::unique_ptr<aura::core::densify_consistency::DensifyInFlightGuard>
+            phase5_densify_inflight;
+        // Issue #2497 / #2559: baseline ownership-scan fail counter BEFORE the
+        // Moving densify window opens. Any fail delta across compact + pairing
+        // + injected tests must suppress Phase 5 success the same way
+        // pin_contract_held does (no path where scan fail is metrics-only —
+        // mirrors #2266 fail-closed). Cross-layer inventory gate: #2559.
+        std::uint64_t scan_fail_baseline = 0;
+        // Issue #2595: untracked external roots counter baseline (#2495
+        // source). Any growth during the densify window → untracked_ok=false
+        // and the unified densify gate (overall_ok) fails. Same fail-closed
+        // shape as the envframe scan baseline above. Closes the
+        // half-green window where pin ok + root_remap ok + envframe ok but
+        // any arena left untracked_kept_count > 0 after Moving relocate.
+        std::uint64_t untracked_baseline = 0;
+        // Issue #2595 / #3850: panic_residual_ok keys off the live Evaluator
+        // PanicCheckpoint (has_panic_checkpoint), not process panic depth —
+        // steal can clear defer while CP remains. Depth baseline kept for
+        // observability only (no longer drives the success axis).
+        std::uint32_t panic_depth_baseline = 0;
         if (aura::ast::moving_compact_enabled()) {
             if (rebind_light_skip_heavy_exit(*ev_) || heap_slot_quiet)
                 goto rebind_light_skip_densify_4357;
@@ -5209,10 +6827,404 @@ void Evaluator::MutationBoundaryGuard::guard_phase5_moving_compact(bool& success
                                      "suppressing success metrics\n");
             }
         }
-}
-
-void Evaluator::MutationBoundaryGuard::guard_phase5_pin_contract(bool& success, const bool& outermost, int*& slot,
-    bool& linear_ops_present_local) {
+    rebind_light_skip_densify_4357:;
+        // Issue #2266 AC2: do NOT publish success metrics if pin contract failed.
+        // (Gated on pin_contract_held — false suppresses outermost_exit_phase5_unlock
+        // + outermost_exit_order_complete so Agents see the contract miss, not a
+        // false success.)
+        //
+        // Issue #2341: compute DensifyConsistencyReport once at densify
+        // success (after RootRemap + pin verify + closure remount).
+        // Gate the same success metrics on overall_ok() — mirrors the
+        // pin_contract_held gating above. Bumps unified fail counter
+        // on !overall_ok() (per-axis fail counters remain additive).
+        //
+        // Issue #2353: after pin verify, ordered Linear+Type revalidate
+        // composes into densify_consistency.linear_ok / type_ok. Soft /
+        // empty densify / no linear → early true (AC3 zero cost). Fail
+        // suppresses Phase 5 success via overall_ok() (AC2 fail-closed).
+        aura::core::densify_consistency::DensifyConsistencyReport densify_consistency;
+        // Issue #2499: pin_ok is pin-verify axis only when RootRemap alone fails
+        // (densify_pin_axis_ok); unified pin_contract_held still gates success.
+        densify_consistency.pin_ok = densify_pin_axis_ok;
+        // Issue #2595: untracked_ok = no moving_incomplete_remap delta during
+        // the densify window. Soft / no Moving → vacuous true. The untracked
+        // axis catches #2495 half-green (pin_ok true + any arena leaving
+        // untracked_kept_count > 0 after relocate_tracked_objects_for_moving_).
+        // Read the delta AFTER compact_all_moving_pinned + pairing (any
+        // injection during either window bumps g_moving_untracked_external_roots_total).
+        const auto untracked_after =
+            aura::ast::g_moving_untracked_external_roots_total.load(std::memory_order_relaxed);
+        const bool untracked_ok = !had_moving_densify || (untracked_after <= untracked_baseline);
+        densify_consistency.untracked_ok = untracked_ok;
+        // Issue #2595 / #3850: panic_residual_ok = !ev->has_panic_checkpoint()
+        // OR gc_deferred_for_evaluator. Process panic depth alone is wrong —
+        // steal can clear orphan defer while the Evaluator CP is still live
+        // (Moving gate uses evaluator_has_panic_checkpoint_probe; this axis
+        // must agree). Soft leftover: CP kept + defer cleared → !ok (observe).
+        (void)panic_depth_baseline; // observability snapshot only (#3850)
+        const bool panic_cp_live_now = ev_->has_panic_checkpoint();
+        const bool panic_deferred_now =
+            aura::gc_hooks::gc_deferred_for_evaluator(static_cast<void*>(ev_));
+        const bool panic_residual_ok = !panic_cp_live_now || panic_deferred_now;
+        densify_consistency.panic_residual_ok = panic_residual_ok;
+        // Issue #2353: linear_ok + type_ok from post-densify revalidate
+        // (pin-subsumed linear pin verify remains in pin_ok; this is the
+        // ownership + type axis complementary to #2341 object-axis).
+        const bool linear_type_ok =
+            pin_contract_held ? ev_->run_post_densify_linear_type_revalidate(had_moving_densify)
+                              : false;
+        densify_consistency.linear_ok = linear_type_ok;
+        densify_consistency.type_ok = linear_type_ok;
+        // Issue #2609: hard-AND linear force sticky + residual GcDefer into
+        // densify success (same pure gate as steal-complete). Soft / no
+        // production: metric-only observe when axes fail but keep Soft
+        // vacuous axes unless overall densify already fails closed.
+        // Production or Hard densify contract: force linear_ok / panic axis
+        // so Phase 5 cannot publish half-green success.
+        {
+            const bool residual_zero = (aura::gc_hooks::defer_reasons_snapshot() == 0);
+            // Type fence applied later on Moving success; for densify gate
+            // evaluate residual + linear first (type fence is step after).
+            const auto axis = ev_->evaluate_linear_type_provenance_hard_and(
+                residual_zero, /*type_fence_applied=*/true);
+            const char* densify_contract_env = std::getenv("AURA_DENSIFY_CONTRACT");
+            const bool hard_densify = typed_audit::production_defaults_active() ||
+                                      (densify_contract_env != nullptr &&
+                                       std::string_view(densify_contract_env) == "hard");
+            if (axis != Evaluator::LinearTypeProvenanceAxis::Ok) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                    if (hard_densify) {
+                        m->steal_densify_linear_type_hard_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        m->steal_densify_linear_type_last_fail_axis.store(
+                            static_cast<std::uint8_t>(axis), std::memory_order_relaxed);
+                        if (axis == Evaluator::LinearTypeProvenanceAxis::LinearForcePending) {
+                            m->steal_densify_linear_type_fail_linear_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            densify_consistency.linear_ok = false;
+                        } else if (axis == Evaluator::LinearTypeProvenanceAxis::ResidualGcDefer) {
+                            m->steal_densify_linear_type_fail_residual_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            densify_consistency.panic_residual_ok = false;
+                        }
+                    } else {
+                        m->steal_densify_linear_type_soft_observe_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
+                }
+            }
+        }
+        // Issue #2365 / #2368: densify-success closed-loop. Soft / no Moving
+        // densify → root_remap / closure / envframe vacuous true (zero cost).
+        // Moving + unified contract held → force_densify_remap_pairing() encodes
+        // permanent order (do not open-code steps 3–5 here — pairing is never
+        // optional):
+        //   1 RootRemap probe (inside densify) → last_root_remap_any_fail
+        //   2 pin verify (pin_contract_held above)
+        //   3 EnvFrame live-ref transfer
+        //   4 closure remount scan
+        //   5 dual-epoch restamp (always last before report)
+        //   6 report axes from pairing result + linear_type_ok
+        // Issue #2361: real envframe_ok remains ownership scan + dual-epoch.
+        if (had_moving_densify && pin_contract_held) {
+            // Issue #2368: single forced pairing entry (order encoded in body).
+            const auto pairing = ev_->force_densify_remap_pairing();
+            // Issue #2497: re-check scan fail counter after pairing. Any delta
+            // since the Moving densify baseline (compact + pairing + injected
+            // fails) suppresses envframe_ok — same fail-closed shape as
+            // pin_contract_held gating at #2266 / #2341 AC2.
+            const auto scan_fail_after = aura::core::envframe_lifetime::
+                envframe_lifetime_densify_ownership_scan_fail_total();
+            const bool scan_fail_delta = (scan_fail_after > scan_fail_baseline);
+            // Issue #2499: AND densify-call RootRemap fail totals into axis.
+            densify_consistency.root_remap_ok = pairing.root_remap_ok && densify_root_remap_call_ok;
+            densify_consistency.closure_remount_ok = pairing.closure_remount_ok;
+            // Issue #2497: scan_fail_delta ANDs into envframe_ok. Pairing already
+            // checks within-pairing delta — this gate widens the window so a
+            // pre-pairing inject (test helper) or compact-callback fail also
+            // suppresses.
+            // Issue #2599: production-only gating — under production
+            // (production_defaults_active()), scan_fail_delta forces
+            // envframe_ok=false (commit barrier rejects outermost commit;
+            // force_rollback_suggestion: EnvFrameDensifyOwnership). Under
+            // Soft / sandbox=off, scan_fail_delta bumps
+            // densify_ownership_scan_fail_total counter but keeps
+            // envframe_ok=true (AC2 metric-only, no forced rollback solely
+            // from EnvFrame axis). Phase 5 success still gated via
+            // overall_ok() at #2266 site.
+            {
+                const bool prod_for_densify = typed_audit::production_defaults_active();
+                const bool envframe_block = prod_for_densify && scan_fail_delta;
+                densify_consistency.envframe_ok =
+                    pairing.envframe_ok && linear_type_ok && !envframe_block;
+            }
+            aura::core::densify_consistency::note_last_densify_dual_epoch_ok(pairing.dual_epoch_ok);
+            aura::core::densify_consistency::note_last_densify_remap_pairing_forced(pairing.forced);
+        } else if (had_moving_densify) {
+            // Issue #3372: Moving densify ran but unified pin contract
+            // failed. The densify-call RootRemap axis is real (the call
+            // ran); the EnvFrame / closure-remount / dual-epoch axes are
+            // NOT — pairing did not run, so Steal LCP would otherwise AND
+            // a vacuous-green EnvFrame on a window that never ran the
+            // ownership scan. Fail-closed last-call so Steal hard-AND
+            // cannot be true solely from a vacuous EnvFrame axis. The
+            // Soft / empty branch below keeps vacuous-true (zero-cost).
+            densify_consistency.root_remap_ok = densify_root_remap_call_ok;
+            densify_consistency.closure_remount_ok = false;
+            densify_consistency.envframe_ok = false;
+            aura::core::densify_consistency::note_last_densify_dual_epoch_ok(false);
+            aura::core::densify_consistency::note_last_densify_remap_pairing_forced(false);
+            // Issue #3612: pin-contract fail forces the remount axes false
+            // without running the pairing — same remount-last-zero outcome
+            // as the JIT residual walks (#3548). A still-green
+            // TypeLinearCommitProof must not survive a failed Moving
+            // densify window. Share the existing strip (Quiet outcome +
+            // invalidate_gen advance; helper self-gates Soft / Off to
+            // observe-only, and Soft takes the vacuous-true branch below
+            // so it never reaches this path — AC3).
+            if (typed_audit::production_defaults_active() ||
+                typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)
+                typed_audit::strip_green_face_on_remount_last_zero();
+        } else {
+            // Soft / empty densify: vacuous axes (do not read stale
+            // last_root_remap or cumulative closure fails).
+            densify_consistency.root_remap_ok = true;
+            densify_consistency.closure_remount_ok = true;
+            densify_consistency.envframe_ok = true;
+            aura::core::densify_consistency::note_last_densify_dual_epoch_ok(true);
+            // Soft never forced pairing (agents distinguish Soft vacuous
+            // from Moving forced-ok).
+            aura::core::densify_consistency::note_last_densify_remap_pairing_forced(false);
+        }
+        // Publish last densify axes for query:lifetime-contract-snapshot.
+        // Issue #2376: last-call envframe + closure are the production
+        // contract (not cumulative / not force-true under Moving). Soft
+        // vacuous true is published only on the Soft branch above.
+        // Call-seq bumps every Phase 5 report so Agents detect stale samples.
+        using aura::core::densify_consistency::kDensifyEnvframeFailLinearType;
+        using aura::core::densify_consistency::kDensifyFailNone;
+        aura::core::densify_consistency::note_last_densify_root_remap_ok(
+            densify_consistency.root_remap_ok);
+        // Envframe fail code: Soft → 0; Moving pairing set ownership/dual;
+        // linear_type composition can force envframe_ok false with code 3.
+        std::uint8_t env_fc = kDensifyFailNone;
+        if (!densify_consistency.envframe_ok) {
+            if (had_moving_densify && pin_contract_held && !linear_type_ok &&
+                aura::core::densify_consistency::last_densify_envframe_fail_code() ==
+                    kDensifyFailNone) {
+                env_fc = kDensifyEnvframeFailLinearType;
+            } else {
+                env_fc = aura::core::densify_consistency::last_densify_envframe_fail_code();
+            }
+        }
+        aura::core::densify_consistency::note_last_densify_envframe_ok(
+            densify_consistency.envframe_ok, env_fc);
+        const std::uint8_t cl_fc =
+            densify_consistency.closure_remount_ok
+                ? kDensifyFailNone
+                : aura::core::densify_consistency::last_densify_closure_fail_code();
+        aura::core::densify_consistency::note_last_densify_closure_remount_ok(
+            densify_consistency.closure_remount_ok, cl_fc);
+        aura::core::densify_consistency::bump_last_densify_call_seq();
+        // Issue #3617: mirror this evaluator's fresh densify result into its
+        // keyed slot (values just noted process-wide on this thread).
+        aura::core::densify_consistency::note_last_densify_result_for(
+            static_cast<void*>(ev_), aura::core::densify_consistency::last_densify_envframe_ok(),
+            aura::core::densify_consistency::last_densify_dual_epoch_ok());
+        // Issue #2619: publish Agent-visible Moving densify health window.
+        // Soft/no densify → vacuous healthy (would-allow-mutate=true). Production
+        // hard (#2596) + incomplete remap → agent_throttle (orch refuse mutate).
+        //
+        // Issue #3128: production auto-recover before throttle. Under
+        // production_defaults_active() + sticky armed, call
+        // this->recover_moving_sticky_densify_off(retry_densify=true) —
+        // re-register known roots, clear sticky (or stay armed on failure),
+        // optional one-shot densify. On success the retry densify's
+        // internal publish handles the window + throttle update, so we
+        // skip the manual publish below (idempotent with the retry's
+        // already-published state). On failure sticky re-arms and the
+        // retry's publish sets the throttle (fail-closed — AC2). Soft/Off:
+        // zero extra work (auto-recover not attempted; manual publish
+        // unchanged from before). Agents that already call recover
+        // explicitly are unaffected (sticky is already clear when they
+        // re-enter Phase-5 → auto-recover gate skips — AC4).
+        {
+            const bool incomplete =
+                densify_incomplete_remap || !untracked_ok || densify_untracked_kept > 0;
+            bool auto_recover_attempted = false;
+            if (typed_audit::production_defaults_active() &&
+                aura::ast::moving_incomplete_remap_sticky_densify_off()) {
+                auto r = ev_->recover_moving_sticky_densify_off(/*retry_densify=*/true);
+                // Issue #4067: skip this publish only when the retry
+                // densify already published (success clears throttle;
+                // incomplete advances the window seq). A recover that
+                // did not densify still publishes the Phase-5 window.
+                auto_recover_attempted = r.densify_retried;
+                (void)r;
+            }
+            if (!auto_recover_attempted) {
+                // Issue #3782: LCP skip publishes had=true, pin=false.
+                const bool blocked = densify_moving_blocked;
+                const bool publish_had = had_moving_densify || densify_entry_lcp_blocked || blocked;
+                const bool pin_for_publish =
+                    pin_contract_held && densify_consistency.pin_ok && !blocked;
+                aura::core::moving_densify_health::publish_last_moving_densify_window(
+                    publish_had, pin_for_publish, incomplete,
+                    static_cast<std::uint64_t>(densify_objects_moved),
+                    static_cast<std::uint64_t>(densify_untracked_kept),
+                    static_cast<std::uint64_t>(densify_root_remap_fails),
+                    static_cast<std::uint64_t>(densify_external_roots_prep_registered_cleared),
+                    /*#4928 refused, no move*/ blocked && !densify_entry_lcp_blocked &&
+                        !had_moving_densify && pin_contract_held);
+            }
+            // Issue #4304: in-flight drops only after this publish. When the
+            // retry already published, recover's guard cleared the bit and
+            // this reset is empty. Soft never armed the pointer.
+            phase5_densify_inflight.reset();
+            // Issue #3955: sticky recover densify ran lock-held; release now
+            // (idempotent with #3894 happy-path unlock after compact).
+            release_workspace_then_drain_after_densify_();
+            // Issue #4288: soft-gate blocked is folded into the publish above.
+        }
+        // Issue #2975: production hard gate on every outermost Phase-5 exit
+        // (success *and* non-intentional-failure). Shared residual leftover
+        // predicate with steal-complete (#2546 / #2890). Soft observe-only
+        // (never force-clear or fail). Composes with #2932 hold-budget
+        // fail-closed (independent counters; both can fire on one exit).
+        // Intentional partial recovery keeps residual armed — skip.
+        {
+            const bool partial_recovery = !success && had_panic_checkpoint_ && !panic_handled;
+            if (!partial_recovery) {
+                const char* sandbox_e = std::getenv("AURA_SANDBOX");
+                const bool dev_off =
+                    sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
+                const bool test_soft = aura::serve::is_residual_defer_soft_for_test();
+                const bool residual_force = !(dev_off || test_soft);
+                const bool fail_closed =
+                    typed_audit::production_defaults_active() && residual_force;
+                const bool pin_ok = pin_contract_held && densify_consistency.pin_ok;
+                const bool incomplete =
+                    densify_incomplete_remap || !untracked_ok || densify_untracked_kept > 0;
+                const auto gate = aura::gc_hooks::gate_outermost_exit_residual_and_pin(
+                    static_cast<void*>(ev_), residual_force, pin_ok, incomplete, fail_closed);
+                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                    if (residual_force && gate.residual.residual_seen) {
+                        m->residual_defer_after_exit_total.fetch_add(1, std::memory_order_relaxed);
+                        // Matched clear invocation (#2931): the gate's
+                        // production close must land in forced_clear too,
+                        // even when the policy block above saw residual==0
+                        // (concurrent re-arm between the two snapshots).
+                        const auto n = (gate.residual.clear.panic_depth_cleared > 0)
+                                           ? gate.residual.clear.panic_depth_cleared
+                                           : 1u;
+                        m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
+                            n, std::memory_order_relaxed);
+                    }
+                    if (gate.hard_fail)
+                        m->residual_after_exit_hard_fail_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                    if (!pin_ok)
+                        m->pin_contract_fail_on_exit_total.fetch_add(1, std::memory_order_relaxed);
+                }
+                if (gate.hard_fail) {
+                    // Fail-closed for agents: flip the caller flag even if
+                    // ev_->outermost_mutation_success_flag_ was already
+                    // cleared earlier in Phase 5. #2932 may already have
+                    // flipped it — both reasons compose.
+                    success_flag_store(flag_, false);
+                    ev_->mark_outermost_mutation_failed();
+                }
+            }
+        }
+        // Issue #2979: outermost Phase-5 consume of layered-evidence
+        // force-Full pending. Success *and* non-intentional-failure
+        // (skip intentional partial recovery — residual stays armed).
+        // Quiet (pending==0): one exchange, no extra audit. If consumed
+        // → one-shot Full invariant sample before allow-commit / trail.
+        // HARD env consume stamps force_reason; default is sample.
+        // not hard-reject of the current commit
+        {
+            const bool partial_recovery_2979 = !success && had_panic_checkpoint_ && !panic_handled;
+            if (!partial_recovery_2979) {
+                const bool layered_diverge_force =
+                    aura::compiler::consume_layered_evidence_diverge_force_full();
+                const bool layered_diverge_hard =
+                    aura::compiler::consume_layered_evidence_diverge_hard_reject();
+                if (layered_diverge_force) {
+                    aura::compiler::note_layered_evidence_diverge_force_full_sample();
+                    ev_->ensure_mutation_invariants();
+                }
+                if (layered_diverge_hard &&
+                    (typed_audit::production_defaults_active() ||
+                     typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+                    ev_->last_mutate_error_ = "layered-evidence-diverge";
+                }
+            }
+        }
+        // Issue #2682: single unified Moving success predicate — folds all
+        // 5 conditions (moving_blocked_precondition / pin_contract_held /
+        // root_remap fails / untracked_kept_count > 0 when objects_moved > 0)
+        // into one boolean. Replaces the scattered local-variable checks
+        // that previously lived inline. Bumps process-wide
+        // g_moving_unified_success_total / g_moving_unified_fail_total for
+        // Agent dashboards. AC3 Soft / observe-only: predicate runs in all
+        // modes (no behavior change for Soft — counters bump either way).
+        // Issue #3783: pass AdaptiveCompactResult blocked aggregate — hardcoded
+        // false left vacuous-green unified success on blocked Moving windows
+        // (pin still true / objects_moved==0). Soft/Off observe-only counters.
+        const bool moving_unified_success =
+            aura::core::moving_densify_health::compute_moving_unified_success(
+                /*moving_blocked_precondition=*/densify_moving_blocked, pin_contract_held,
+                /*root_remap_stable_ref_fail_total=*/densify_root_remap_stable_ref_fail,
+                /*root_remap_closure_capture_fail_total=*/densify_root_remap_closure_capture_fail,
+                /*objects_moved=*/static_cast<std::uint64_t>(densify_objects_moved),
+                /*untracked_kept_count=*/static_cast<std::uint64_t>(densify_untracked_kept));
+        if (moving_unified_success) {
+            aura::ast::g_moving_unified_success_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2905 / #3123 AC3: Phase-5 aggregated green clears
+            // sticky only after a healthy Moving window: unified success
+            // AND zero untracked AND !incomplete AND pin held. Soft / no
+            // densify windows leave sticky alone. Incomplete windows must
+            // not clear (unified_success can ignore untracked when
+            // objects_moved==0 — require untracked==0 explicitly).
+            if (had_moving_densify && densify_untracked_kept == 0 && !densify_incomplete_remap &&
+                pin_contract_held) {
+                aura::ast::clear_moving_incomplete_remap_sticky_densify_off_reason(
+                    aura::ast::kStickyClearPhase5Green);
+            }
+        } else if (had_moving_densify) {
+            // Only bump fail when densify actually ran (vacuous healthy on
+            // Soft / no-densify windows stays out of the fail counter).
+            aura::ast::g_moving_unified_fail_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (!densify_consistency.overall_ok()) {
+            // Issue #2341 AC2: unified fail — mirror pin_contract_held
+            // gating above. Bump fail counter; optional hard abort
+            // when AURA_DENSIFY_CONTRACT=hard (aligns RootRemap hard
+            // contract pattern at root_remap_pass.ixx:380).
+            aura::core::densify_consistency::bump_densify_consistency_fail_total();
+            // Issue #2595: unified gate fail counter (additive schema key
+            // densify_unified_gate_fail_total). Bumps in lockstep with the
+            // existing g_densify_consistency_fail_total so production
+            // dashboards can distinguish the new half-green axes (untracked,
+            // panic_residual) from the legacy #2341 axes (pin / linear /
+            // type / root_remap / closure / envframe).
+            aura::core::densify_consistency::bump_densify_unified_gate_fail_total();
+            const char* contract_env = std::getenv("AURA_DENSIFY_CONTRACT");
+            const bool hard_fail = (contract_env != nullptr && std::string(contract_env) == "hard");
+            if (hard_fail) {
+                std::fprintf(stderr,
+                             "[#2341] Densify consistency contract failed: %s "
+                             "(AURA_DENSIFY_CONTRACT=hard) — aborting\n",
+                             densify_consistency.force_reason());
+                std::abort();
+            }
+            std::fprintf(stderr,
+                         "[#2341] Densify consistency contract failed (soft mode): %s "
+                         "— suppressing success metrics\n",
+                         densify_consistency.force_reason());
+        }
         if (pin_contract_held && densify_consistency.overall_ok()) {
             // Issue #2673: hard-path lock — densify → linear-root consistency
             // scan (refine #2642). Under prod/Full, mismatch forces
@@ -5473,1234 +7485,96 @@ void Evaluator::MutationBoundaryGuard::guard_phase5_pin_contract(bool& success, 
             // (envframe_ok computation above) — single call site, no
             // duplicate scan here.
         }
-}
-
-void Evaluator::MutationBoundaryGuard::linear_fast_path_maybe_force_dirty_revalidate(
-    bool late, bool outermost, bool success, bool& linear_fast_path_force_revalidated) {
-        if (!(outermost && success))
-            return;
-        using aura::compiler::typed_audit::g_linear_fast_path_dirty_revalidate_total;
-        using aura::compiler::typed_audit::g_linear_fast_path_force_revalidate_observe_total;
-        using aura::compiler::typed_audit::g_linear_fast_path_force_revalidate_total;
-        using aura::compiler::typed_audit::g_linear_fast_path_late_reeval_total;
-        using aura::compiler::typed_audit::linear_fast_path_boundary_exit_action;
-        using aura::compiler::typed_audit::LinearFastPathExitAction;
-        const auto act = linear_fast_path_boundary_exit_action();
-        if (act == LinearFastPathExitAction::ForceRevalidate) {
-            if (linear_fast_path_force_revalidated)
-                return;
-            g_linear_fast_path_force_revalidate_total.fetch_add(1, std::memory_order_relaxed);
-            g_linear_fast_path_dirty_revalidate_total.fetch_add(1, std::memory_order_relaxed);
-            if (late)
-                g_linear_fast_path_late_reeval_total.fetch_add(1, std::memory_order_relaxed);
-            aura::compiler::linear_occurrence_mutate::record_revalidate_hit();
-            (void)ev_->enforce_linear_boundary_consistency(Evaluator::kLinearGcRootAuditTypedMutate,
-                                                           /*mark_all_linear=*/false);
-            linear_fast_path_force_revalidated = true;
-        } else if (act == LinearFastPathExitAction::SoftObserve && !late) {
-            g_linear_fast_path_force_revalidate_observe_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-        }
-        // Quiet: no extra revalidate / counter (matches #2899 quiet path).
-}
-
-void Evaluator::MutationBoundaryGuard::guard_dtor_seg_0(GuardDtorState& gs) {
-    // Issue #4302: remember this evaluator's action mid, including 0,
-    // before exit clears the fiber session mid and the boundary TLS note.
-    // Nested guards are not outermost. Moved-from guards have ev_ == nullptr.
-    if (is_outermost_ && ev_)
-        ev_->note_last_completed_audit_mid(session_mid_at_enter_);
-    // Issue #1897 / #1818 class: auto-flip success_flag when an
-    // exception is unwinding through the Guard and the caller did
-    // not mark_failed / set flag=false. Without this, dtor would
-    // commit_panic_checkpoint on a partially-mutated workspace.
-    if (std::uncaught_exceptions() > uncaught_at_enter_ && success_flag_exchange_false(flag_)) {
-        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-            m->mutation_guard_uncaught_auto_rollback_total.fetch_add(1, std::memory_order_relaxed);
-            m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-    // Issue #2726 / Issue #2932 / Issue #2999: outermost hold-budget
-    // cancel poll. Issue #2932 arms cancel + force-safepoint so a
-    // still-in-body loop can hit check_gc_safepoint and
-    // mark_outermost_mutation_failed. Phase-5 still runs the
-    // forced-failure residual closed-loop (#2846) because success=false.
-    // #2999 is the *exit* half: once this dtor runs with cancel armed,
-    // it cannot commit success — even if check_gc_safepoint never ran
-    // in this body. Remaining in-body window (body that never exits)
-    // still relies on #2932 force-safepoint to enter dtor. Issue #3071
-    // bounds that window: scheduler idle poll re-arms force-safepoint
-    // (no preemptive unlock while the body is still running).
-    //
-    // AC3 — only outermost Guards observe/clear the flag. Nested
-    // guards fall through; is_outermost_ is ctor-captured (#2120).
-    // AC2 — Soft / sandbox=off: peek + soft-observe only; no consume,
-    // no forced fail. Production / hard-env: consume + fail-closed.
-    // Issue #3035: P0 force-unlock + dual-topology restore on hold-budget
-    // cancel for a non-yield body. #2932/#2999 consume the cancel flag at
-    // safepoint/dtor edges, but a body that never polls the flag can keep
-    // workspace_mtx_ + per-fiber depth slot held indefinitely (steal/GC
-    // residual starve; densify×steal can observe half-topology). #3035
-    // closes the remaining window: consuming a pending cancel under
-    // production / hard-env forces the boundary fail-closed (success=false
-    // EVEN when the Guard carries no success flag — flag_==nullptr used to
-    // fall through to success=true and skip abort_restore_dual_topology).
-    // exit_mutation_boundary(false) then runs abort_restore_dual_topology +
-    // dual canary (same path as panic/abort) and the Phase-5 pipeline
-    // force-releases workspace_mtx_ + clears the fiber depth slot + closes
-    // residual defer. Soft / sandbox=off: peek + soft_observe only (no
-    // consume, no force — existing #2701 AC2). Zero cost on happy path
-    // (cancel flag unset: one peek inside consume_hold_budget_cancel CAS).
-    gs.cancel_forced_fail = false;
-    if (is_outermost_) {
-        if (auto* f = aura::serve::g_current_fiber) {
-            if (mutation_hold_budget_reject_enabled()) {
-                if (f->consume_hold_budget_cancel()) {
-                    g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_consumed_total
-                        .fetch_add(1, std::memory_order_relaxed);
-                    g_mutation_hold_budget_forced_fail_closed_dtor_consume_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    // #3035: consumed cancel → forced unlock + dual restore.
-                    // consume only fires under reject_enabled (production or
-                    // hard env), so this is the production force path.
-                    gs.cancel_forced_fail = true;
-                    g_mutation_hold_budget_forced_unlock_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-                    // Issue #3118: consume is production/hard-env only.
-                    // After exit_mutation_boundary(false) restores
-                    // topology, force-release lock + depth immediately.
-                    // Issue #3268: single exchange so a shared flag cannot
-                    // stay true for another fiber after we fail-close.
-                    if (success_flag_exchange_false(flag_)) {
-                        g_mutation_hold_budget_forced_fail_closed_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    }
-                }
-            } else if (f->peek_hold_budget_cancel()) {
-                g_mutation_hold_budget_soft_observe_total.fetch_add(1, std::memory_order_relaxed);
-            }
-        }
-    }
-    // Issue #3637: MacroIntroduced marker-delta backstop — one net at the
-    // outermost boundary covering prim paths, lockless helpers (#3213),
-    // and future prims the four enumerated pre-gate mechanisms might miss.
-    // Field source hoisted from the eval_flat apply site: the #1611
-    // MutationReflectHealth validator decides (existing error string — AC3;
-    // no new query keys, no mid-metrics counter inserts). The delta is a
-    // single cumulative-counter read per edge (AC2 quiet path: no O(n)
-    // scan, zero extra atomics when no macro subtree was dirtied).
-    gs.macro_hygiene_forced_fail = false;
-    if (is_outermost_ && !gs.cancel_forced_fail && ev_ && ev_->workspace_flat_ &&
-        success_flag_load(flag_)) {
-        const auto macro_exit = ev_->workspace_flat_->macro_expansion_dirty_total();
-        const auto macro_delta = macro_exit - macro_expansion_dirty_at_enter_;
-        if (macro_delta != 0) {
-            aura::reflect::MutationReflectHealth h3637;
-            h3637.enforce_macro_hygiene_reject = true;
-            // Issue #4035: OR per-call MSE-validated allow latch so production
-            // :allow-macro? #t is not force-rolled by a global-flag-only net.
-            h3637.allow_macro_evolution =
-                ev_->get_allow_macro_mutate() || ev_->boundary_macro_allow_latched();
-            h3637.dirty_macro_nodes = macro_delta;
-            std::string backstop_err;
-            const bool net_reject =
-                !aura::reflect::validate_mutation_reflect_health(h3637, &backstop_err);
-            if (net_reject) {
-                // Counter = "net fired" (violation observed), not merely
-                // delta>0 — a recorded allow keeps the net quiet (AC4).
-                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                    m->mutation_boundary_macro_hygiene_backstop_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                }
-                // Issue #3637: hard = production defaults only. AuditStrategy::Full
-                // is a test/audit regime — unit tests that restamp macro columns
-                // under Full get the observe counter, not forced rollbacks.
-                const bool hard = typed_audit::production_defaults_active();
-                if (hard) {
-                    // Production: do not commit unauthorized macro-introduced
-                    // schema evolution — fail the boundary (same reject shape
-                    // as the region-type-commit gate). The #3542 recorded allow
-                    // (capability-fenced) is the only in-window pass (AC4:
-                    // the net never widens authorization).
-                    gs.macro_hygiene_forced_fail = true;
-                    // #3268: single exchange so the caller observes the forced
-                    // fail (same caller-flag protocol as the #3035 cancel path).
-                    success_flag_exchange_false(flag_);
-                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                        m->hygiene_violation_prevented_on_boundary_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    }
-                }
-            }
-            // Soft / Off: observe only — success unchanged (AC2).
-        }
-    }
-    // Issue #4035: end of MutationBoundary window — clear the per-call
-    // allow latch (RAII). Nested guards skip; only outermost owns the net.
-    if (is_outermost_ && ev_)
-        ev_->clear_boundary_macro_allow_latch();
-    gs.success =
-        (gs.cancel_forced_fail || gs.macro_hygiene_forced_fail) ? false : success_flag_load(flag_);
-    // Issue #3423: nested Guard fail must flip the outermost success
-    // flag. add_mutate now holds the outermost Guard; a body that
-    // sets its nested ok=false still has to abort-restore via the
-    // wrapper dtor (sole restore path). Soft / Off: no extra store
-    // (#3082 AC5 — nested fail stays in-flight, outer may still commit).
-    if (!is_outermost_ && !gs.success && ev_ &&
-        (typed_audit::production_defaults_active() ||
-         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full))
-        ev_->mark_outermost_mutation_failed();
-    // Issue #2944: outermost MutationBoundary exit revokes mutation-session
-    // grants bound to session_mid_at_enter_ (success or fail). Nested
-    // guards skip (session_mid_at_enter_==0). Zero cost when no live
-    // session grants (capability_live_session_grants==0 early-out, AC3).
-    if (is_outermost_ && session_mid_at_enter_ != 0) {
-        using ::aura::core::capability::g_capability_registry;
-        // Issue #3209: revoke + clear mid under one lock so steal cannot
-        // sample a published mid after grants are already gone (or skip
-        // revoke because mid already 0). Steal/abort that already ran is
-        // a commutative no-op (AC3 / #3048). Soft live==0 still takes
-        // the public wrapper's short-circuit.
-        auto& reg = g_capability_registry();
-        auto& met = ::aura::core::capability::g_capability_effect_metrics();
-        const auto mode = reg.sandbox_mode.load(std::memory_order_acquire);
-        const bool production = mode == ::aura::core::capability::EffectSandboxMode::Restricted ||
-                                mode == ::aura::core::capability::EffectSandboxMode::Strict;
-        if (production || met.capability_live_session_grants.load(std::memory_order_relaxed) != 0) {
-            std::scoped_lock<std::mutex> lock(reg.mtx);
-            // Issue #3799 / Issue #3241: (mid, fiber) so a peer outermost sharing
-            // epoch mid is not collateral. Prefer enter-captured fiber_id_
-            // (TLS may already be clear at dtor). fiber=0 under Soft /
-            // soft-share Restricted stays legacy mid-only; Restricted+MT
-            // fail-closes in the registry (no silent peer sweep).
-            std::uint32_t fid = static_cast<std::uint32_t>(fiber_id_);
-            if (fid == 0)
-                fid = static_cast<std::uint32_t>(aura_fiber_current_id());
-            (void)reg.revoke_session_grants_for_mid_locked(session_mid_at_enter_,
-                                                           "session-mid-exit", fid);
-            aura::serve::clear_current_fiber_session_mid();
-            if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
-                session_mid_at_enter_) {
-                aura::compiler::g_mutation_hold_live_session_mid.store(0,
-                                                                       std::memory_order_release);
-            }
-        } else {
-            aura::serve::clear_current_fiber_session_mid();
-            if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
-                session_mid_at_enter_) {
-                aura::compiler::g_mutation_hold_live_session_mid.store(0,
-                                                                       std::memory_order_release);
-            }
-        }
-        // Issue #4278: retire write-side SECURITY_EXEMPT strings bound to
-        // this session mid after the registry lock drops. Soft/Off never
-        // records, so an empty table is a no-op. Abort that already
-        // retired the same mid is idempotent.
-        if (ev_)
-            ev_->retire_session_string_caps(session_mid_at_enter_);
-    }
-    // Issue #2847: region type/occurrence commit bind. When this Guard
-    // admitted a non-zero cone/ImpactScope mask, any OccurrenceGoal
-    // predicate node outside that mask is type-cross-talk. Soft: observe
-    // only. production / Full: reject commit (success=false). mask==0 /
-    // GlobalExclusive: zero extra cost (region_type_commit_ok short-circuit).
-    if (is_outermost_ && gs.success && admitted_cone_mask_ != 0) {
-        std::uint64_t touched = 0;
-        bool over_cap = false;
-        if (void* h = ev_->commit_type_checker_handle()) {
-            auto* tc = static_cast<TypeChecker*>(h);
-            const auto& goals = tc->constraint_system().occurrence_goals_for_test();
-            // Bound walk (soft-cone discipline — same cap as #2842 fingerprint).
-            constexpr std::size_t kMaxGoals = 256;
-            // Issue #4105: production/Full must not treat the 256 prefix as
-            // the whole cone. A later goal outside the mask would commit.
-            // Soft keeps the capped observe walk.
-            const bool hard_face = typed_audit::production_defaults_active() ||
-                                   typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
-            if (hard_face && goals.size() > kMaxGoals) {
-                over_cap = true;
-            } else {
-                const std::size_t n = goals.size() < kMaxGoals ? goals.size() : kMaxGoals;
-                for (std::size_t i = 0; i < n; ++i) {
-                    const auto pred = goals[i].predicate_cond_node;
-                    if (pred != 0)
-                        touched |= typed_audit::node_id_to_region_mask_bit(pred);
-                }
-            }
-        }
-        if (over_cap || !typed_audit::region_type_commit_ok(admitted_cone_mask_, touched)) {
-            const bool hard = typed_audit::production_defaults_active() ||
-                              typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
-            typed_audit::note_region_type_cross_talk(hard);
-            if (hard) {
-                // Production reject: do not commit half-green type surface.
-                gs.success = false;
-                success_flag_store(flag_, false);
-            }
-            // Soft: observe only — success unchanged.
-        }
-    }
-    guard_release_depth_slot(gs.success);
-    // post-boundary linear closed-loop (hold-time batch published above; #1764)
-    // Issue #1461: Agent Decision Metrics liveness — outermost
-    // failed Guard must bump the fiber-boundary rollback counter
-    // so (agent:decision-metrics) / stats facade see a real signal
-    // (not a dead zero). Nested guards do not bump (outer owns the
-    // transaction outcome).
-    if (gs.outermost && !gs.success)
-        ev_->bump_mutation_boundary_rollback();
-}
-
-void Evaluator::MutationBoundaryGuard::guard_dtor_seg_1(GuardDtorState& gs) {
-    // Issue #2859: schema_validate_on_commit gate (opt-in).
-    // On outermost commit success, if validate_schema_on_commit() is
-    // set AND effect_sandbox_mode != 0 (production/Strict), walk
-    // mutated subtrees tagged with schema_cache (clone_macro_body +
-    // set_schema_cache), verify cached schema id is consistent. On
-    // mismatch: force-rollback + emit typed audit event. Soft /
-    // non-production default = zero overhead (gate short-circuits
-    // before any reflect walk). Source-cited in the two new
-    // CompilerMetrics counters (schema_validate_on_commit_ok_total +
-    // schema_validate_on_commit_fail_total) + the
-    // validate_schema_on_commit_ flag on Evaluator.
-    if (gs.outermost && gs.success && ev_->validate_schema_on_commit() &&
-        ev_->effect_sandbox_mode() != 0) {
-        auto* ws = ev_->workspace_flat_;
-        if (ws) {
-            bool schema_ok = true;
-            std::string schema_err;
-            // Lightweight cache-hit path: verify cached schema id is
-            // in valid range. Full reflect fallback (auto_validate on
-            // the cached POD view) is reserved for cache miss + dirty
-            // schema — future work. The cap matches the
-            // macro_schema_cache_dirty_stamped_total path (16M cap).
-            constexpr std::uint32_t kSchemaIdMax = 1u << 24;
-            const auto cur_size = ws->size();
-            for (aura::ast::NodeId id = 0; id < cur_size; ++id) {
-                if (!ws->is_live_node(id))
-                    continue;
-                auto cached_tid = ws->schema_cache(id);
-                if (cached_tid == 0)
-                    continue;
-                if (cached_tid >= kSchemaIdMax) {
-                    schema_ok = false;
-                    schema_err = "schema_cache OOB node=" + std::to_string(id) +
-                                 " tid=" + std::to_string(cached_tid);
-                    break;
-                }
-            }
-            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
-                if (schema_ok) {
-                    m->schema_validate_on_commit_ok_total.fetch_add(1, std::memory_order_relaxed);
-                } else {
-                    m->schema_validate_on_commit_fail_total.fetch_add(1, std::memory_order_relaxed);
-                    // Issue #2859 AC1: force rollback + typed audit
-                    // event on shape mismatch. Mirrors the SLO
-                    // circuit-breaker rollback pattern at the same
-                    // site (force-flag + success=false + audit event).
-                    success_flag_store(flag_, false);
-                    gs.success = false;
-                    aura::compiler::typed_audit::capture_audit_event_forced(
-                        /*mutation_id=*/0, schema_err,
-                        aura::compiler::typed_audit::MutationKind::Structural,
-                        /*before_epoch=*/0, /*after_epoch=*/0,
-                        aura::compiler::typed_audit::AuditOutcome::Error);
-                }
-            }
-        }
-    }
-    // ═══════════════════════════════════════════════════════════════════
-    // Issue #2120: outermost exit unified order (documented AC5).
-    //
-    // Success path:
-    //   1. exit_mutation_boundary (workspace commit + defuse bump)
-    //   2. linear + dual-path + LifetimePin probes (under lock, depth held)
-    //   3. GC defer release (after panic-checkpoint commit when applicable)
-    //   4. hot-update throttle → reemit → epoch notify (#2090 / #2114)
-    //   5. flush + held clear + depth_slot pop + unlock (LAST)
-    //
-    // Full-rollback (failed + panic_auto_rollback_): probes + restore
-    // checkpoint + GC defer release; skip reemit coalesce.
-    // Partial recovery (failed + !panic_auto_rollback_): probes + reemit
-    // notify (keep panic checkpoint / defer for retry).
-    //
-    // Nested guards: only exit_mutation_boundary + depth_slot-- (outer owns pipeline).
-    // ═══════════════════════════════════════════════════════════════════
-    // Issue #2215: RenderFastExit — success + outermost entered under
-    // render hotpath. Skip Full TypedMutationAudit / full linear+dual-path;
-    // always keep pin restamp + unlock. Failure never uses fast exit.
-    //
-    // Issue #2311: RenderFastExit must NOT skip linear / match-site
-    // hard-gate. If the outermost Guard encloses linear ops OR ADT match
-    // sites OR requires_invariant_hard_gate fires, force full audit
-    // path even under render hotpath. Closes the under-sample /
-    // soft-continue hole that #2145/#2222/#2223 closed for Agent
-    // mutate but #2215 reopened for render hotpath when the same Guard
-    // encloses linear ops or match sites.
-    gs.render_fast_candidate = gs.outermost && gs.success && render_fast_exit_;
-    gs.linear_ops_present_local = false;
-    gs.match_sites_present_local = false;
-    gs.nodes_changed_local = 0;
-    // Issue #4346: heap slot writes (vector-set! / set-car! / hash-set!)
-    // leave the FlatAST and env bindings unchanged. Scanning every node
-    // and every binding made each write linear in the define count.
-    gs.heap_slot_quiet = false;
-    if (ev_) {
-        const auto& stk = ev_->active_mutation_stack();
-        if (!stk.empty()) {
-            const auto& top = stk.back();
-            if (top.heap_slot_only && !top.lightweight && !top.exit_fence) {
-                auto* ws = ev_->workspace_flat();
-                gs.heap_slot_quiet = !ws || ws->mutation_log_size() <= top.mutation_log_size;
-            }
-        }
-    }
-    if (gs.heap_slot_quiet && !gs.render_fast_candidate) {
-        // Quiet: nodes_changed / match / linear stay zero. Soft hard-gate
-        // stays off. Production still hard-gates via mutate_session below.
-    } else if (auto* ws = ev_->workspace_flat()) {
-        const auto cur_dirty_calls = ws->mark_dirty_upward_call_count();
-        gs.nodes_changed_local = (cur_dirty_calls > dirty_upward_at_enter_)
-                                  ? (cur_dirty_calls - dirty_upward_at_enter_)
-                                  : 0;
-        // Issue #4598: the live linear-op / match-site existence scan is
-        // O(1). The counters are exact live-node counts maintained at the
-        // FlatAST write sites (add_node births, free/recycle deaths,
-        // set_tag_live_adjusted, set_match_info) and recomputed wholesale
-        // after column swaps — the same live-scan semantics the per-node
-        // walk below used to pay O(n) per boundary exit for.
-        gs.match_sites_present_local = ws->has_match_sites_live();
-        gs.linear_ops_present_local = ws->has_linear_ops_live();
-    }
-    gs.strict_sandbox_local = aura::core::sandbox::is_strict();
-    gs.hard_gate_local = typed_audit::requires_invariant_hard_gate(
-        gs.nodes_changed_local, gs.linear_ops_present_local, gs.strict_sandbox_local,
-        gs.match_sites_present_local, /*mutate_session=*/true);
-    gs.linear_or_match_suppress =
-        gs.linear_ops_present_local || gs.match_sites_present_local || gs.hard_gate_local;
-    gs.render_fast = gs.render_fast_candidate && !gs.linear_or_match_suppress;
-    if (gs.render_fast_candidate && gs.linear_or_match_suppress) {
-        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-            m->render_fast_exit_suppressed_linear_or_match_total.fetch_add(
-                1, std::memory_order_relaxed);
-            if (gs.linear_ops_present_local)
-                m->render_fast_exit_suppressed_linear_total.fetch_add(1, std::memory_order_relaxed);
-            if (gs.match_sites_present_local)
-                m->render_fast_exit_suppressed_match_total.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-    // Issue #3625 (#2311/#3322 residual): under Production defaults / Full
-    // strategy, RenderFastExit is metrics-only — never an audit skip. Agent
-    // self-modify of ordinary typed code (set-body / ReplaceType /
-    // annotation rewrite) is exactly the non-linear non-match case, so the
-    // #2145/#2311 Full invariant suite + #3517 force-rollback / grant-drop
-    // must run. #2311's linear/match/hard-gate suppress stays the Soft-path
-    // gate (its counters above still fire first). render_fast_exit_total
-    // keeps bumping as an observe-only hotpath signal, but the boundary
-    // flag stays false so exit_mutation_boundary audits. Persist/linear
-    // order remains #3614 (untouched).
-    gs.render_fast_audit_hard =
-        typed_audit::production_defaults_active() ||
-        typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
-    gs.render_fast_effective = gs.render_fast && !gs.render_fast_audit_hard;
-    ev_->render_fast_exit_this_boundary_ = gs.render_fast_effective;
-    if (gs.render_fast) {
-        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-            m->render_fast_exit_total.fetch_add(1, std::memory_order_relaxed);
-    }
-    // Issue #2608 / #2641 / #2896 / #2910 / #2938: OccurrenceGoal persist
-    // on outermost success. Issue #3440: persist-reject must restore the
-    // already-mutated AST. Run the helper BEFORE exit_mutation_boundary
-    // so flipping success hits the existing !success abort_restore SSOT
-    // (dual topology + coercion rewind + #3158 occurrence restore).
-    // Soft/Off: note is a no-op (flag stays false). Quiet SOLVED: one
-    // TLS load. Happy persist + grant path unchanged (no extra restore).
-    // Issue #3614: linear deny + pending_full_solve drain gate BEFORE the
-    // outermost persist helper freezes authority (#3472 residual — order,
-    // not a missing restore). The previous order ran the Phase-1 walk
-    // after the persist helper, so a linear-unsafe outermost could write
-    // the Occurrence persist buffer + stamp a green TypeLinearCommitProof
-    // + grant query:type for one beat before the deny un-stamped them
-    // (concurrent steal / rehydrate / query:type observed frozen green
-    // authority). Order: drain + linear first, persist + green stamp
-    // last. Deny reuses the #3472 un-stamp set (clear proof / persist /
-    // grant) and flips success into the existing !success abort_restore
-    // SSOT — no second restore, no new query key. Soft/Off: gate is
-    // production/Full-only (persist helper stays zero-cost; no extra
-    // walk beyond the current Soft observe). #3512: staging is one-shot —
-    // the deny arm also clears expected_fp so a stale staged fingerprint
-    // cannot poison the next outermost persist.
-    gs.linear_pre_exit_enforced = false;
-    if (gs.outermost && gs.success &&
-        (typed_audit::production_defaults_active() ||
-         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
-        const auto lin = ev_->enforce_linear_boundary_consistency(
-            Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
-        gs.linear_pre_exit_enforced = true;
-        // Pre-persist drain (#3190 face hoisted ahead of the persist
-        // write): non-SOLVED pending_full_solve must deny BEFORE
-        // maybe_persist_occurrence_snapshot freezes the snapshot. The
-        // in-helper drain stays as belt-and-suspenders for residuals
-        // that latch after this gate.
-        bool drain_pre_persist_ok = true;
-        if (auto* pre_gate_tc =
-                static_cast<aura::compiler::TypeChecker*>(ev_->commit_type_checker_handle())) {
-            std::vector<aura::compiler::Constraint> pre_gate_unresolved;
-            drain_pre_persist_ok =
-                pre_gate_tc->constraint_system().drain_pending_full_solve_before_commit(
-                    &pre_gate_unresolved) == aura::compiler::SolveResult::SOLVED;
-        }
-        const bool density_gate =
-            aura::compiler::castop_density::consume_density_gate_reject_pending();
-        if (!lin.all_safe || ev_->linear_synth_hard_fail_pending() || !drain_pre_persist_ok ||
-            density_gate) {
-            // Issue #4403: first match. Un-stamp stays before the exit stamp.
-            const char* gate_op = "density-streak";
-            if (!lin.all_safe || ev_->linear_synth_hard_fail_pending())
-                gate_op = "linear-boundary";
-            else if (!drain_pre_persist_ok)
-                gate_op = "pending-full-solve";
-            typed_audit::note_boundary_deny_op(gate_op);
-            typed_audit::clear_type_linear_commit_proof_on_abort();
-            typed_audit::publish_type_linear_proof_outcome(
-                typed_audit::kTypeLinearProofOutcomeReject);
-            aura_clear_occurrence_persist_buffer(ev_);
-            ev_->clear_type_export_authority();
-            ev_->clear_expected_occurrence_snapshot_fp();
-            gs.success = false;
-            success_flag_store(flag_, false);
-        }
-    }
-    // Issue #3658: Production/Full outermost success structural mutate
-    // must complete this-boundary type dirty txn + mirror BEFORE persist
-    // and before exit_mutation_boundary IR cascade / invalidate_function
-    // drain. Complementary to #3655 (persist SDO vs type∪IR cone).
-    // rebind/set-body already ran infer_flat_partial_with_dirty_txn
-    // (type_dirty_txn_this_boundary_). replace-subtree / lockless /
-    // move-node do not. Phase-5 densify is not a type txn. Vacuous
-    // (no dirty/log) skips extra mirror. Soft/Off: no extra typecheck.
-    // lockless helpers must not infer; this outermost dtor runs once.
-    if (gs.outermost && gs.success &&
-        (typed_audit::production_defaults_active() ||
-         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) &&
-}
-
-void Evaluator::MutationBoundaryGuard::guard_dtor_seg_2(GuardDtorState& gs) {
-        !ev_->type_dirty_txn_this_boundary()) {
-        bool mutated = ev_->txn_dirty();
-        if (ev_->workspace_flat_) {
-            mutated = mutated ||
-                      ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
-            auto& stk = ev_->active_mutation_stack();
-            if (!stk.empty()) {
-                const auto enter_log = stk.back().mutation_log_size;
-                mutated = mutated || ev_->workspace_flat_->mutation_log_size() > enter_log;
-            }
-        }
-        if (mutated) {
-            if (!ev_->run_post_mutate_typecheck_no_lock() || !ev_->last_type_solve_solved()) {
-                typed_audit::note_boundary_deny_op("post-mutate-typecheck");
-                typed_audit::clear_type_linear_commit_proof_on_abort();
-                typed_audit::publish_type_linear_proof_outcome(
-                    typed_audit::kTypeLinearProofOutcomeReject);
-                aura_clear_occurrence_persist_buffer(ev_);
-                ev_->clear_type_export_authority();
-                ev_->clear_expected_occurrence_snapshot_fp();
-                gs.success = false;
-                success_flag_store(flag_, false);
-            }
-        }
-    }
-    // Issue #3655: Production/Full persist must have this-boundary SDO
-    // (SOLVED infer or composite stage). rebind/set-body already ran
-    // run_post_mutate_typecheck + stage_expected. replace-subtree /
-    // tweak-literal / lockless eval_flat_apply_* do not — without this
-    // gate, expected_fp==0 && live==0 freezes an empty snapshot as
-    // Occurrence authority. Vacuous (no dirty/log delta) skips extra
-    // SDO. Soft/Off: no extra typecheck. lockless helpers must not
-    // infer (deadlock); this outermost dtor runs once under the lock.
-    if (gs.outermost && gs.success &&
-        (typed_audit::production_defaults_active() ||
-         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) &&
-        !ev_->occurrence_fp_staged()) {
-        bool mutated = ev_->txn_dirty();
-        if (ev_->workspace_flat_) {
-            mutated = mutated ||
-                      ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
-            auto& stk = ev_->active_mutation_stack();
-            if (!stk.empty()) {
-                const auto enter_log = stk.back().mutation_log_size;
-                mutated = mutated || ev_->workspace_flat_->mutation_log_size() > enter_log;
-            }
-        }
-        if (mutated) {
-            if (!ev_->run_post_mutate_typecheck_no_lock() || !ev_->last_type_solve_solved()) {
-                typed_audit::note_boundary_deny_op("occurrence-sdo");
-                typed_audit::clear_type_linear_commit_proof_on_abort();
-                typed_audit::publish_type_linear_proof_outcome(
-                    typed_audit::kTypeLinearProofOutcomeReject);
-                aura_clear_occurrence_persist_buffer(ev_);
-                ev_->clear_type_export_authority();
-                ev_->clear_expected_occurrence_snapshot_fp();
-                gs.success = false;
-                success_flag_store(flag_, false);
-            }
-        }
-    }
-    // Issue #3653: Production/Full outermost — this-boundary type +
-    // invariant proof BEFORE persist freeze (#3614/#3517 residual —
-    // order, not a missing restore). #3614 already hoisted linear +
-    // drain; #3517 can flip Guard success after Full deny, but the
-    // persist helper had already published a Stamped green face for
-    // one beat (steal / query:type / IR). Check-only: composite_txn_commit
-    // / boundary_solve_proof_gate / finish_mutate_hard_gate /
-    // run_typed_mutation_invariant_audit return false without restore.
-    // Vacuous (no dirty/log) does not force finish_mutate_hard_gate's
-    // no-CS resync deny — that would abort happy Guards exit currently
-    // accepts. Vacuous still runs the invariant suite so ADT / type
-    // inject deny before freeze. Deny reuses the #3472 un-stamp set
-    // and flips success into the existing abort_restore SSOT. Soft/Off:
-    // this block does not run (persist helper stays zero-cost; no extra
-    // audit walk). Happy path may re-audit in exit_mutation_boundary.
-    if (gs.outermost && gs.success &&
-        (typed_audit::production_defaults_active() ||
-         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
-        bool mutated = ev_->txn_dirty();
-        if (ev_->workspace_flat_) {
-            mutated = mutated ||
-                      ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
-            auto& stk = ev_->active_mutation_stack();
-            if (!stk.empty()) {
-                const auto enter_log = stk.back().mutation_log_size;
-                mutated = mutated || ev_->workspace_flat_->mutation_log_size() > enter_log;
-            }
-        }
-        bool audit_ok = true;
-        bool proof_trunc = false;
-        bool proof_force = false;
-        const bool batch_active =
-            ev_->workspace_flat_ && ev_->workspace_flat_->atomic_batch_active();
-        typed_audit::InvariantAuditResult inv{};
-        // Issue #4402: epoch pair is the Mutation epoch. mid_audit stays
-        // the session audit mid (mutation_id only).
-        const auto mut_epoch = ::aura::core::current_mutation_epoch();
-        // Issue #3778: join SSOT (cp.audit_mid / session / join_audit_and_se_mid)
-        // — never stamp defuse_version_ as the Typed/SE/Occurrence mid.
-        std::uint64_t mid_audit = 0;
+        // Issue #2436: single ordered lifecycle close (steps 7–10).
+        // Densify core (1–6) already finished above. Compact hook may have
+        // already run IR dirty sync (step 7) + ShapeProfiler (step 8);
+        // pass already_done so the orchestrator does not re-run them.
+        // Soft densify → soft_skip; pin fail → pin_fail; Moving success → run.
+        // LayoutStamp re-publish AFTER compact + shape/IR so fiber resume
+        // fences observe post-compact shape_version + ir_soa_generation
+        // (lifecycle step 9). publish + set_resume stay adjacent
+        // (#2250 Phase 5 ordering proximity) inside the orchestrator hooks.
+        // Issue #2892: single ordered post-compact close entry — all
+        // densify success paths route through run_post_compact_close
+        // (pin restamp → EnvFrame scan → rebind/stamp → residual audit
+        // → LayoutStamp publish); no out-of-band order drift.
         {
-            auto& stk = ev_->active_mutation_stack();
-            if (!stk.empty() && stk.back().audit_mid != 0)
-                mid_audit = stk.back().audit_mid;
-            else if (session_mid_at_enter_ != 0)
-                mid_audit = session_mid_at_enter_;
-            else
-                mid_audit = typed_audit::join_audit_and_se_mid(0);
-        }
-        // Issue #4685: keep the audit verdict, not just adt_ok. A vacuous
-        // outermost (no dirty/log, no atomic batch) still freezes the
-        // Occurrence snapshot + may grant query:type; a false provenance
-        // (reflect) or type invariant must deny before that persist. The
-        // empty workspace stays successful: post_mutation_reflect_validate
-        // reports false for !ws/size==0, which is vacuous, not a failure.
-        // Linear !all_safe is already denied by the #3614 gate above
-        // (enforce_linear_boundary_consistency) — no extra sweep here.
-        const bool inv_ok = ev_->run_typed_mutation_invariant_audit(
-            mid_audit, "outermost-pre-persist", 0, mut_epoch, mut_epoch,
-            /*composite_mode=*/false, &inv);
-        const bool live_ws = ev_->workspace_flat_ && ev_->workspace_flat_->size() > 0;
-        if (!inv.adt_ok || (!mutated && !batch_active && live_ws && !inv_ok))
-            audit_ok = false;
-        if (batch_active) {
-            typed_audit::CompositeTxnCommitResult ccr{};
-            audit_ok = ev_->composite_txn_commit(mid_audit, "outermost-pre-persist", 0, mut_epoch,
-                                                 mut_epoch,
-                                                 /*nested=*/false, /*batch_active=*/true, &ccr) &&
-                       audit_ok;
-        } else if (mutated) {
-            const bool proof_ok = ev_->boundary_solve_proof_gate(
-                /*hard_gate=*/true, gs.linear_ops_present_local, gs.nodes_changed_local, &proof_trunc,
-                &proof_force);
-            audit_ok = audit_ok && proof_ok && !proof_force;
-            if (audit_ok) {
-                audit_ok = ev_->finish_mutate_hard_gate(
-                    gs.nodes_changed_local, gs.linear_ops_present_local, "outermost-pre-persist");
-            }
-        }
-        if (!audit_ok) {
-            typed_audit::clear_type_linear_commit_proof_on_abort();
-            typed_audit::publish_type_linear_proof_outcome(
-                typed_audit::kTypeLinearProofOutcomeReject);
-            aura_clear_occurrence_persist_buffer(ev_);
-            ev_->clear_type_export_authority();
-            ev_->clear_expected_occurrence_snapshot_fp();
-            gs.success = false;
-            success_flag_store(flag_, false);
-        }
-    }
-}
+            using namespace aura::core::post_compact_lifecycle;
+            PostCompactCloseInput close_in{};
+            close_in.had_moving_densify = had_moving_densify;
+            close_in.pin_contract_held = pin_contract_held;
+            close_in.densify_gate_ok = pin_contract_held && densify_consistency.overall_ok();
+            // service.ixx compact notify already force_soa_instruction_dirty_sync
+            // + note_lifecycle_ir_sync when compact hooks fire.
+            close_in.ir_sync_already_done = true;
+            close_in.shape_already_done = true;
 
-void Evaluator::MutationBoundaryGuard::guard_dtor_seg_3(GuardDtorState& gs) {
-    if (gs.outermost && gs.success) {
-        // Issue #3778: Occurrence persist mid == Typed/SE/grant/WAL join mid.
-        // Production/Full mid==0 refuse — never invent defuse_version_ as a
-        // phantom join key. Soft/Off: prefer join mid; else defuse observe.
-        std::uint64_t mid = 0;
+            PostCompactCloseHooks close_hooks{};
+            close_hooks.ctx = static_cast<void*>(ev_);
+            // Issue #4346: the orchestrator always invokes this hook.
+            // Heap-slot quiet already skipped the Phase-5 publish above;
+            // leaving the hook set walks every env frame a second time.
+            if (!heap_slot_quiet) {
+                close_hooks.publish_layout_stamp = [](void* c) noexcept {
+                    static_cast<Evaluator*>(c)->publish_layout_stamp();
+                };
+            }
+            close_hooks.set_fiber_resume_stamp = [](void* c) noexcept -> bool {
+                auto* ev = static_cast<Evaluator*>(c);
+                auto* cur_fiber = aura::serve::g_current_fiber;
+                if (!cur_fiber)
+                    return false;
+                const auto stamp = ev->current_layout_stamp();
+                cur_fiber->set_resume_layout_stamp(stamp.arena_id, stamp.arena_gen, stamp.flat_gen,
+                                                   stamp.mutation_epoch, stamp.env_gen,
+                                                   stamp.defuse_version, stamp.shape_version,
+                                                   stamp.ir_soa_generation);
+                return true;
+            };
+            close_hooks.read_shape_version = [](void* /*c*/) noexcept -> std::uint64_t {
+                return aura::compiler::shape::current_global_shape_version();
+            };
+            close_hooks.read_ir_soa_generation = [](void* /*c*/) noexcept -> std::uint64_t {
+                return aura::compiler::current_ir_soa_generation_fence();
+            };
+            // Issue #2436 AC4: orchestrated stamp publish after densify close.
+            (void)run_post_compact_close(close_in, close_hooks);
+        }
+        // Issue #2364: PanicCheckpoint residual × densify closed loop.
+        // After densify (success or fail leaving evaluator live), residual
+        // Panic defer must not outlive a cleared checkpoint; a still-live
+        // checkpoint re-arms defer. Soft / no densify / no panic → free.
+        // densify_attempted: Moving was enabled this exit (compact call ran).
         {
-            auto& stk = ev_->active_mutation_stack();
-            if (!stk.empty() && stk.back().audit_mid != 0)
-                mid = stk.back().audit_mid;
-            else if (session_mid_at_enter_ != 0)
-                mid = session_mid_at_enter_;
-            else
-                mid = typed_audit::join_audit_and_se_mid(0);
-        }
-        const bool hard_3778 = typed_audit::production_defaults_active() ||
-                               typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
-        if (hard_3778 && mid == 0) {
-            // Issue #3778 / #3472: production mid==0 refuse applies when an
-            // Occurrence identity is actually required (mutated / staged).
-            // Vacuous empty MutationBoundaryGuard must not invent defuse
-            // OR abort — skip persist, keep success (happy AC3).
-            bool need_occurrence_mid = ev_->txn_dirty() || ev_->occurrence_fp_staged();
-            if (ev_->workspace_flat_) {
-                auto& stk = ev_->active_mutation_stack();
-                const auto enter_log = (!stk.empty()) ? stk.back().mutation_log_size : 0ull;
-                need_occurrence_mid =
-                    need_occurrence_mid || ev_->workspace_flat_->mutation_log_size() > enter_log ||
-                    ev_->workspace_flat_->mark_dirty_upward_call_count() > dirty_upward_at_enter_;
-            }
-            if (need_occurrence_mid) {
-                typed_audit::clear_type_linear_commit_proof_on_abort();
-                typed_audit::publish_type_linear_proof_outcome(
-                    typed_audit::kTypeLinearProofOutcomeReject);
-                aura_clear_occurrence_persist_buffer(ev_);
-                ev_->clear_type_export_authority();
-                ev_->clear_expected_occurrence_snapshot_fp();
-                gs.success = false;
-                success_flag_store(flag_, false);
-            }
-            // else vacuous: no persist, success stays true
-        } else {
-            // Issue #3780: production fail-closed + force_wal — structural
-            // mutation WAL must land BEFORE Occurrence persist. #3734
-            // post-commit overflow alone is not crash-durable (cap 256,
-            // process-local). On miss: overflow still stamps
-            // mutation_wal_append_miss, then flip success into the
-            // existing !success abort_restore SSOT (no Occurrence commit).
-            // Soft / WAL-off: skip (fail-open; late emit in exit path).
-            // #3639 require_effect body deny is unchanged.
-            if (::aura::core::wal_slo::wal_append_fail_closed_active() &&
-                ::aura::core::audit_wal::g_mutation_audit_wal().is_enabled()) {
-                std::uint32_t nodes_changed_wal = 0;
-                std::uint32_t epoch_delta_wal = 0;
-                std::string_view audit_op_wal = "structural";
-                ast::NodeId audit_target_wal = ast::NULL_NODE;
-                if (ev_->workspace_flat_) {
-                    auto& stk = ev_->active_mutation_stack();
-                    const auto enter_log = (!stk.empty()) ? stk.back().mutation_log_size : 0ull;
-                    const auto post_size = ev_->workspace_flat_->all_mutations().size();
-                    if (post_size > enter_log)
-                        nodes_changed_wal = static_cast<std::uint32_t>(post_size - enter_log);
-                    const auto& log = ev_->workspace_flat_->all_mutations();
-                    if (post_size > enter_log && post_size <= log.size()) {
-                        const auto& rec = log[post_size - 1];
-                        audit_op_wal = rec.operator_name;
-                        audit_target_wal = rec.target_node;
-                    }
-                }
-                if (!ev_->emit_mutation_audit(nodes_changed_wal, epoch_delta_wal, audit_op_wal,
-                                              audit_target_wal)) {
-                    typed_audit::clear_type_linear_commit_proof_on_abort();
-                    typed_audit::publish_type_linear_proof_outcome(
-                        typed_audit::kTypeLinearProofOutcomeReject);
-                    aura_clear_occurrence_persist_buffer(ev_);
-                    ev_->clear_type_export_authority();
-                    ev_->clear_expected_occurrence_snapshot_fp();
-                    gs.success = false;
-                    success_flag_store(flag_, false);
-                    g_tls_mutation_audit_wal_precommitted = false;
-                } else {
-                    g_tls_mutation_audit_wal_precommitted = true;
-                }
-            }
-            if (gs.success) {
-                if (!hard_3778 && mid == 0)
-                    mid = ev_->defuse_version_.load(std::memory_order_relaxed);
-                aura_outermost_success_persist_occurrence(ev_, mid);
-                // Issue #3512: staging is one-shot for this outermost persist.
-                ev_->clear_expected_occurrence_snapshot_fp();
-                // Issue #3984: inject after persist helper so #3472 belt can
-                // fire without the #3614 pre-gate seeing the latch (test).
-                if (typed_audit::g_inject_linear_synth_after_persist_for_test.exchange(
-                        0, std::memory_order_acq_rel) != 0)
-                    ev_->note_linear_synth_hard_fail_pending();
-                if (typed_audit::consume_outermost_persist_reject_needs_restore()) {
-                    typed_audit::note_boundary_deny_op("persist-reject");
-                    typed_audit::drop_deferred_outermost_green_proof();
-                    gs.success = false;
-                    success_flag_store(flag_, false);
-                }
-            }
-            // else: #3780 miss already un-stamped; skip Occurrence persist
-        }
-    }
-    // Issue #3472 / #3818: belt-and-suspenders post-persist linear deny.
-    // The pre-persist #3614 gate above is the primary deny path now; retain
-    // this walk for the case the persist helper's own drain / recover
-    // latch flips linear safety after a green pre-check. Same un-stamp
-    // set (proof / persist buffer / query:type grant) and the same
-    // success flip into the existing abort_restore SSOT — do not
-    // invent a second restore. Soft/Off: observe-only, no hard flip.
-    // Issue #3818: after a green persist beat, also run the shared
-    // note_3440 / #3545 reject-undo (CoercionMap journal + #3687 AST).
-    // abort_restore then no-ops dual-topology if already restored.
-    if (gs.outermost && gs.success &&
-        (typed_audit::production_defaults_active() ||
-         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
-        const auto lin = ev_->enforce_linear_boundary_consistency(
-            Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
-        gs.linear_pre_exit_enforced = true;
-        const bool post_persist_linear = !lin.all_safe || ev_->linear_synth_hard_fail_pending();
-        const bool post_persist_density =
-            !post_persist_linear &&
-            aura::compiler::castop_density::consume_density_gate_reject_pending();
-        if (post_persist_linear || post_persist_density) {
-            typed_audit::note_boundary_deny_op(post_persist_linear ? "post-persist-linear"
-                                                                   : "post-persist-density");
-            typed_audit::clear_type_linear_commit_proof_on_abort();
-            typed_audit::publish_type_linear_proof_outcome(
-                typed_audit::kTypeLinearProofOutcomeReject);
-            aura_clear_occurrence_persist_buffer(ev_);
-            ev_->clear_type_export_authority();
-            // Issue #3818: #3545 CoercionMap journal undo + #3687 AST
-            // (same aura_persist_reject_undo as in-helper persist-reject).
-            // Soft/Off never enters this arm (no undo cost).
-            std::uint64_t mid_undo = 0;
-            {
-                auto& stk = ev_->active_mutation_stack();
-                if (!stk.empty() && stk.back().audit_mid != 0)
-                    mid_undo = stk.back().audit_mid;
-                else if (session_mid_at_enter_ != 0)
-                    mid_undo = session_mid_at_enter_;
-                else
-                    mid_undo = typed_audit::join_audit_and_se_mid(0);
-            }
-            aura_persist_reject_undo(ev_, mid_undo);
-            typed_audit::drop_deferred_outermost_green_proof();
-            gs.success = false;
-            success_flag_store(flag_, false);
-        }
-    }
-    // Issue #3984: observer-visible green only after every post-persist
-    // deny arm in this Guard has passed. Soft/Off never deferred.
-    // Issue #4030: grant_type_export_authority only when deferred green
-    // actually commits (live would_allow was true at stamp). Soft/Off
-    // already granted in the persist helper; commit returns false.
-    if (gs.outermost && gs.success) {
-        if (typed_audit::commit_deferred_outermost_green_proof())
-            ev_->grant_type_export_authority();
-    } else {
-        typed_audit::drop_deferred_outermost_green_proof();
-    }
-    // Issue #4044: pre-persist emit already published effect_denied=false
-    // and latched the post-success skip. A post-persist deny (linear /
-    // density) must amend that same mid before exit, then drop the latch
-    // so the next success still emits. Structural undo already ran;
-    // record_boundary_deny_after_restore stays inside exit (!success).
-    // Soft/Off never sets the latch.
-    if (gs.outermost && !gs.success && g_tls_mutation_audit_wal_precommitted) {
-        std::uint64_t amend_mid = 0;
-        {
-            auto& stk = ev_->active_mutation_stack();
-            if (!stk.empty() && stk.back().audit_mid != 0)
-                amend_mid = stk.back().audit_mid;
-            else if (session_mid_at_enter_ != 0)
-                amend_mid = session_mid_at_enter_;
-            else
-                amend_mid = typed_audit::join_audit_and_se_mid(0);
-        }
-        if (amend_mid != 0) {
-            const auto seq_now = ev_->mutation_audit_seq_.load(std::memory_order_relaxed);
-            const auto n = std::min<std::uint64_t>(seq_now, Evaluator::kMutationAuditRingSize);
-            for (std::uint64_t i = 0; i < n; ++i) {
-                auto& ring_slot = ev_->mutation_audit_ring_[(seq_now - 1 - i) %
-                                                          Evaluator::kMutationAuditRingSize];
-                if (ring_slot.provenance_mutation_id != amend_mid)
-                    continue;
-                ring_slot.effect_denied = true;
-                // Issue #4063: fill epoch_delta from the defuse delta at
-                // amend time. epoch stays slot.epoch (Mutation), not Bridge.
-                {
-                    const auto defuse_now = ev_->defuse_version_.load(std::memory_order_relaxed);
-                    if (defuse_now >= defuse_version_at_enter_) {
-                        const auto d = defuse_now - defuse_version_at_enter_;
-                        ring_slot.epoch_delta =
-                            d > 0xffffffffu ? 0xffffffffu : static_cast<std::uint32_t>(d);
-                    }
-                }
-                if (::aura::core::audit_wal::g_mutation_audit_wal().is_enabled()) {
-                    // Issue #4063: fail this append once when the test arms
-                    // the latch. The pre-persist allow row must not consume it.
-                    if (typed_audit::g_inject_post_persist_amend_append_fail_for_test.exchange(
-                            0, std::memory_order_acq_rel) != 0) {
-                        ::aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining
-                            .store(1, std::memory_order_relaxed);
-                    }
-                    const auto rec = ::aura::core::audit_wal::make_record(
-                        ring_slot.seq, ring_slot.timestamp_ms, ring_slot.fiber_id, ring_slot.nodes_changed,
-                        ring_slot.epoch_delta, ring_slot.target_node, ring_slot.op, ring_slot.effect_bits,
-                        ring_slot.tenant_id, ring_slot.provenance_mutation_id, ring_slot.epoch,
-                        /*effect_denied=*/true, "post-persist-deny");
-                    auto& wal = ::aura::core::audit_wal::g_mutation_audit_wal();
-                    bool appended = wal.append(rec);
-                    if (!appended && ::aura::core::wal_slo::wal_append_fail_closed_active()) {
-                        // Same miss face as emit_mutation_audit (#3856/#3907).
-                        // Ring stays effect_denied. One retry so a single
-                        // injected miss does not leave the newest row denied=0.
-                        const auto se_mid = typed_audit::join_audit_and_se_mid(amend_mid);
-                        (void)::aura::core::security_event_wal::emit_security_event_durable(
-                            ::aura::core::security_event::SecurityEventKind::EffectDeny,
-                            static_cast<std::uint32_t>(ring_slot.tenant_id), se_mid, ring_slot.epoch,
-                            ring_slot.effect_bits, ring_slot.op, "mutation_wal_append_miss",
-                            /*denied=*/true, ring_slot.fiber_id);
-                        ::aura::core::security_event_wal::WalOverflowRecord ovr{};
-                        ovr.mid = amend_mid;
-                        ovr.tenant_id = static_cast<std::uint32_t>(ring_slot.tenant_id);
-                        ovr.fiber_id = static_cast<std::uint64_t>(ring_slot.fiber_id);
-                        ovr.epoch = ring_slot.epoch;
-                        ovr.op = ring_slot.op[0] ? std::string(ring_slot.op) : std::string("structural");
-                        ovr.reason = "mutation_wal_append_miss";
-                        (void)::aura::core::security_event_wal::wal_overflow_ring_push(ovr);
-                        appended = wal.append(rec);
-                    }
-                    (void)appended;
-                }
-                break;
-            }
-        }
-        g_tls_mutation_audit_wal_precommitted = false;
-    }
-    gs.exited_cp = {};
-    gs.did_exit_boundary = false;
-    if (!inbody_force_exited_) {
-        gs.exited_cp = ev_->exit_mutation_boundary(gs.success);
-        gs.did_exit_boundary = true;
-    } else {
-        // Issue #4403: in-body exit already stamped. Drop a token noted
-        // after that exit so it cannot name a later boundary.
-        typed_audit::clear_boundary_deny_op();
-    }
-}
-
-void Evaluator::MutationBoundaryGuard::guard_dtor_seg_4(GuardDtorState& gs) {
-    // Issue #3517: Full/hard-gate force-rollback inside exit already
-    // restored AST; consume the TLS note so local success matches
-    // persist-reject (dtor `!success` tail drops grant / proof).
-    if (typed_audit::consume_outermost_audit_rollback_needs_fail()) {
-        gs.success = false;
-        success_flag_store(flag_, false);
-    }
-    ev_->render_fast_exit_this_boundary_ = false;
-    // Issue #3118: production hold-budget cancel — lock + depth must
-    // drop immediately after abort_restore_dual_topology so densify /
-    // steal cannot wait through Phase-1-4 while seeing held+depth.
-    // Soft never sets cancel_forced_fail (observe-only). Happy path
-    // (flag unset) does not enter here.
-    if (gs.cancel_forced_fail && gs.outermost)
-        force_release_hold_after_cancel_();
-    // Issue #2964 / #3006: unified linear fast-path gate on outermost
-    // success. Depth is 0 after pop (before exit fence). When
-    // !linear_fast_path_ok under production/Full → force dirty-root
-    // linear revalidate (enforce_linear_boundary_consistency — no Quiet
-    // skip, no render_fast skip). Soft → observe only.
-    // #3006: re-eval again after Phase 1 so escape/densify/depth flips
-    // after the initial check still force the dirty-root walk.
-    gs.linear_fast_path_force_revalidated = false;
-    linear_fast_path_maybe_force_dirty_revalidate(/*late=*/false, gs.outermost, gs.success, gs.linear_fast_path_force_revalidated);
-    // Issue #2120: keep per-fiber mutation stack depth visible during
-    // exit pipeline so steal/GC do not observe "depth==0 mid-probes".
-    // exit_mutation_boundary already popped the real checkpoint; push a
-    // lightweight fence that is removed just before unlock.
-    gs.exit_fence_pushed = false;
-    if (gs.outermost) {
-        Evaluator::MutationCheckpoint fence{};
-        fence.version = ev_->defuse_version_.load(std::memory_order_relaxed);
-        fence.evaluator_id = static_cast<void*>(ev_);
-        fence.exit_fence = true;
-        Evaluator::active_mutation_stack_static().push_back(std::move(fence));
-        gs.exit_fence_pushed = true;
-        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-            m->outermost_exit_phase1_probes_total.fetch_add(1, std::memory_order_relaxed);
-    }
-    // ── Phase 1: linear + dual-path + LifetimePin probes ──
-    // Issue #1486 / #1545 / #1568 / #1634 / #2120 / #2131
-    // Issue #2131: outermost exit walks GcCoord PrePin → PostAudit
-    // (boundary path; audit runs inside enforce helpers).
-    // Issue #2215 RenderFastExit: skip Full linear + dual-path EnvFrame walk
-    // (frame budget); still restamp pins for live render buffers.
-    std::optional<gc_coord::Scope> boundary_gc_coord;
-    if (gs.outermost)
-        boundary_gc_coord.emplace(gc_coord::Path::Boundary);
-    else if (!gs.success && nested_linear_keep_armed_) {
-        // Issue #3249: nested abort — drain extras vs enter snapshot.
-        // Outer still-live pins stay in the registry (no silent leftover
-        // of nested-only roots). Soft never arms the snapshot.
-        (void)aura::core::lifetime::unpin_linear_roots_except(nested_linear_keep_);
-    }
-    if (gs.outermost) {
-        if (gs.render_fast) {
-            // Issue #3006: Production/Full + !linear_fast_path_ok cannot
-            // skip the dirty-root walk (elision may have been taken under
-            // a momentarily true predicate). Soft render-fast still skips.
-            linear_fast_path_maybe_force_dirty_revalidate(/*late=*/true, gs.outermost, gs.success, gs.linear_fast_path_force_revalidated);
-            if (!gs.linear_fast_path_force_revalidated) {
-                // Fast: skip enforce_linear_boundary_consistency + dual-path scan.
-                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-                    m->render_fast_exit_skipped_audit_total.fetch_add(1, std::memory_order_relaxed);
-            }
-            if (boundary_gc_coord)
-                boundary_gc_coord->enter_cascade();
-        } else if (!gs.success) {
-            // Issue #1951: 4-step closed-loop pattern consolidated helper.
-            (void)ev_->enforce_linear_post_failure(Evaluator::kLinearGcRootAuditTypedMutate);
-            if (boundary_gc_coord)
-                boundary_gc_coord->enter_cascade();
-            // dual-path still on failure path below for non-fast
-            {
-                std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
-                for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
-                    rlock[ef_i] = std::shared_lock<std::shared_mutex>(
-                        ev_->env_frame_shard_mu(ef_i)); // Issue #3900
-                const auto n = ev_->env_frames_size();
-                for (EnvId id = 0; id < n; ++id) {
-                    if (!ev_->is_valid_env_id(id))
-                        continue;
-                    const auto& fr = ev_->env_frame(id);
-                    if (fr.version_ == INVALID_VERSION)
-                        continue;
-                    (void)ev_->ensure_envframe_dual_path_consistency(fr);
-                }
-            }
-        } else {
-            // Issue #3472: Production/Full already paid this walk (and
-            // checked the return) before exit_mutation_boundary. Skip
-            // the duplicate; still bump the happy-path observability
-            // counter (not a deny signal).
-            // Issue #4357: the rebind body already ran ownership validation.
-            // The full closure + env-frame walk is the rest of the millisecond
-            // on a one-line Soft rebind. Full / production / hard still walk.
-            if (!gs.linear_pre_exit_enforced && !rebind_light_skip_heavy_exit(*ev_) &&
-                !gs.heap_slot_quiet) {
-                (void)ev_->enforce_linear_boundary_consistency(
-                    Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
-            }
-            // Issue #2067: post-mutate force-rollback observability bump.
+            const bool densify_attempted = aura::ast::moving_compact_enabled();
+            // Checkpoint may still be live on partial recovery (failed +
+            // !auto_rollback) or if densify raced a concurrent save.
+            const bool has_cp = ev_->has_panic_checkpoint();
+            const auto audit = aura::gc_hooks::audit_panic_defer_after_densify(
+                static_cast<void*>(ev_), has_cp, densify_attempted);
             if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                m->linear_post_mutate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+                if (!audit.free_path)
+                    m->panic_defer_after_densify_total.fetch_add(1, std::memory_order_relaxed);
+                if (audit.cleared)
+                    m->panic_defer_after_densify_cleared_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                if (audit.rearmed)
+                    m->panic_defer_after_densify_rearmed_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                if (audit.hard_fail)
+                    m->panic_defer_after_densify_hard_fail_total.fetch_add(
+                        1, std::memory_order_relaxed);
             }
-            if (boundary_gc_coord)
-                boundary_gc_coord->enter_cascade();
-            // Issue #2120 / #2116: dual-path consistency probe at boundary exit
-            // (no half-consistent EnvFrame left live after probes).
-            // Issue #4357: same light-path skip as the enforce above. The
-            // walk locks every env-frame shard, including the Soft prelude.
-            // Issue #4346: heap-slot quiet skips the same walk. Each frame's
-            // ensure_dual_path_consistent compares every binding.
-            if (!rebind_light_skip_heavy_exit(*ev_) && !gs.heap_slot_quiet) {
-                std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
-                for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
-                    rlock[ef_i] = std::shared_lock<std::shared_mutex>(
-                        ev_->env_frame_shard_mu(ef_i)); // Issue #3900
-                const auto n = ev_->env_frames_size();
-                for (EnvId id = 0; id < n; ++id) {
-                    if (!ev_->is_valid_env_id(id))
-                        continue;
-                    const auto& fr = ev_->env_frame(id);
-                    if (fr.version_ == INVALID_VERSION)
-                        continue;
-                    (void)ev_->ensure_envframe_dual_path_consistency(fr);
-                }
-            }
+            (void)audit;
         }
-        // Issue #1500 / #2085 / #3019: unified restamp under lock
-        // (node gen → StableNodeRef → LifetimePin) BEFORE reemit so
-        // hot-update sees consistent pins (#2120 order). Always on
-        // outermost (including RenderFastExit — live render buffers).
-        // Abort restore uses the same entry (AbortRestore).
-        // Issue #3259: production over-budget restamp eager-restamps
-        // the hot cone here (outermost only) before Agent export.
-        // Issue #3743: persist-reject / inbody force-exit / force-rollback
-        // already restamped at the restore site; this outermost triad is
-        // the belt (nested abort never reaches here).
-        // Issue #4346: a heap-slot write did not change node generations.
-        // restamp_all_node_generations walks the whole workspace per write.
-        if (!gs.heap_slot_quiet) {
-            const auto ur = ev_->unified_restamp_after_boundary(
-                gs.success ? Evaluator::UnifiedRestampSite::BoundarySuccess
-                        : Evaluator::UnifiedRestampSite::AbortRestore);
-            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
-                if (ur.pins > 0)
-                    m->lifetime_pin_restamps_total.fetch_add(static_cast<std::uint64_t>(ur.pins),
-                                                             std::memory_order_relaxed);
-            }
-        }
-        // Issue #3196: outermost triad published — drop nested authority-gap.
-        // Issue #3312: record the nested-return → outermost window length.
-        if (auto* ws = ev_->workspace_flat()) {
-            if (ws->nested_authority_gap()) {
-                const auto open = ws->nested_authority_gap_open_ns();
-                if (open != 0) {
-                    const auto now_ns = static_cast<std::uint64_t>(
-                        std::chrono::duration_cast<std::chrono::nanoseconds>(
-                            std::chrono::steady_clock::now().time_since_epoch())
-                            .count());
-                    const auto window = now_ns >= open ? now_ns - open : 0;
-                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
-                        m->nested_authority_gap_last_window_ns.store(window,
-                                                                     std::memory_order_relaxed);
-                        m->nested_authority_gap_windows_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-                        m->nested_return_not_triad_complete.store(0, std::memory_order_relaxed);
-                    }
-                }
-            }
-            ws->clear_nested_authority_gap();
-        }
-        // Issue #2003: EnvFrame lifetime scan at boundary exit.
-        // Issue #4346: that scan locks every closure shard and walks
-        // every live closure. A heap slot write did not move a capture.
-        if (!gs.heap_slot_quiet) {
-            aura::core::envframe_lifetime::EnvFrameLifetimeGuard envframe_guard{
-                aura::core::envframe_lifetime::make_envframe_lifetime_host_with(
-                    const_cast<void*>(static_cast<const void*>(ev_)),
-                    &::aura::compiler::Evaluator::envframe_lifetime_trampoline),
-                aura::core::envframe_lifetime::EnvFrameLifetimeSite::BoundaryExit};
-            (void)envframe_guard.site();
-        }
-        // Issue #2131: PostAudit after pin/probe phase (audit ran in enforce).
-        if (boundary_gc_coord)
-            boundary_gc_coord->after_cascade();
-        // Issue #3006: late re-eval after Phase 1 probes (escape / densify
-        // / depth can flip after the post-pop check). Production !ok
-        // still forces dirty-root revalidate; Soft stays observe-only.
-        linear_fast_path_maybe_force_dirty_revalidate(/*late=*/true, gs.outermost, gs.success, gs.linear_fast_path_force_revalidated);
-    }
-    // Issue #3438: outermost exit — the Guard's linear-keep scope ends.
-    // Fail paths already drained scoped inside enforce (take + disarm);
-    // a successful exit disarms now so a later reclaim never drains with
-    // a stale keep. Abandoned mid-Guard (steal): dtor never runs — the
-    // keep stays armed for the steal hard-fail scoped drain.
-    if (gs.outermost) {
-        if (auto* f3438 = aura::serve::g_current_fiber)
-            f3438->clear_outermost_linear_keep();
-    }
-    // ── Phase 2–3: panic checkpoint + GC defer (before reemit) ──
-    // Issue #241 / #2120: commit/restore under lock so dual-epoch observers
-    // never see a pending panic window after probes.
-    //
-    // commit_panic_checkpoint / restore_panic_checkpoint (ok path) already
-    // call release_gc_defer_for_pending_panic once — do NOT double-release
-    // (process-wide depth would underflow other evaluators' arms).
-    // Partial recovery (failed + !auto_rollback) keeps checkpoint + defer.
-    // Success AC1: drain any residual panic-defer still attributed to this
-    // evaluator after commit (steal-orphan / multi-arm edge cases).
-    gs.panic_handled = false;
-    if (gs.outermost && had_panic_checkpoint_) {
-        if (gs.success) {
-            ev_->commit_panic_checkpoint(); // includes release_gc_defer once
-            gs.panic_handled = true;
-        } else if (ev_->panic_auto_rollback_) {
-            (void)ev_->restore_panic_checkpoint(); // releases on successful restore
-            gs.panic_handled = true;
-        } else if (typed_audit::production_defaults_active()) {
-            // Issue #4914: a failed outermost exit has already run the
-            // abort-restore SSOT (#3423), so the workspace topology is back
-            // at the pre-mutate state and the checkpoint guards nothing.
-            // Leaving it live with the GC defer armed failed the densify
-            // panic_residual axis, and densify-throttle then refused every
-            // later admit — one rejected rebind wedged the workspace for
-            // good (`aura soft`). Accept the restored state instead. Not
-            // restore_panic_checkpoint(): that truncates the value arenas
-            // under results the program already holds (the reject value).
-            ev_->commit_panic_checkpoint(); // includes release_gc_defer once
-            gs.panic_handled = true;
-        }
-        // else (Soft/Off) partial recovery: leave checkpoint + defer armed
-        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-            m->outermost_exit_phase3_gc_defer_total.fetch_add(1, std::memory_order_relaxed);
-    }
-    // AC1: outermost success → no residual panic-defer for this evaluator.
-    // Use clear_gc_defer_for_evaluator (not release_gc_defer_for_pending_panic):
-    // commit/restore already cleared the Evaluator arm flag, so the flag-gated
-    // release would no-op while table depth from steal-orphan / external arm
-    // could remain — a while(release) loop would spin forever.
-    if (gs.outermost && gs.success) {
-        if (aura::gc_hooks::gc_deferred_for_evaluator(static_cast<void*>(ev_)))
-            (void)aura::gc_hooks::clear_gc_defer_for_evaluator(static_cast<void*>(ev_));
-        if (!had_panic_checkpoint_) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-                m->outermost_exit_phase3_gc_defer_total.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-}
-
-void Evaluator::MutationBoundaryGuard::guard_dtor_seg_5(GuardDtorState& gs) {
-    // ── Phase 4: hot-update throttle → reemit → epoch notify (#2090 / #2114 / #2162) ──
-    // Issue #2090 / #2162: outermost dtor drives the single-owner helper so
-    // fiber-steal restore / partial recovery / exception unwind / compact-only
-    // share the same ordered sequence (no silent stale closures).
-    // Issue #2215 RenderFastExit: defer synchronous reemit under render hotpath
-    // success — HotUpdateRegistry Defer policy already fail-closed for steal;
-    // do not block present on full reemit. Non-render / failure still recover.
-    if (gs.outermost) {
-        if (gs.render_fast) {
-            const std::uint64_t cur_defuse = ev_->defuse_version_.load(std::memory_order_acquire);
-            const std::uint64_t dirty_calls =
-                ev_->workspace_flat_ ? ev_->workspace_flat_->mark_dirty_upward_call_count() : 0;
-            const bool dirty =
-                (cur_defuse != defuse_version_at_enter_) || (dirty_calls > dirty_upward_at_enter_);
-            if (dirty) {
-                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-                    m->render_fast_exit_deferred_reemit_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-                // Issue #4507: the defer still stamps the reemit audit face
-                // with the session mid captured before the TLS clear — same
-                // fallback as the non-render sibling below. The func-table
-                // epoch below is a listener signal only; it never becomes
-                // the face mid (query last-reemit-mid stays a session mid).
-                aura_note_aot_reemit_audit_face(
-                    aura::compiler::CompilerMetrics::kAotLastReemitReasonRenderFastDeferred,
-                    gs.exited_cp.audit_mid != 0 ? gs.exited_cp.audit_mid : session_mid_at_enter_);
-                // Epoch notify only (no sync reemit) so dual-epoch observers
-                // see a bump; actual reemit coalesces on next non-render boundary.
-                aura_hot_update_notify_epoch_bump(aura_aot_func_table_epoch());
-            }
-            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-                m->outermost_exit_phase4_reemit_total.fetch_add(1, std::memory_order_relaxed);
-        } else {
-            // Issue #4357: a one-line Soft rebind does not reemit. The
-            // recovery walk is the phase-4 cost on that path.
-            if (!rebind_light_skip_heavy_exit(*ev_) && !gs.heap_slot_quiet) {
-                // Issue #4432: phase 4 runs after the note is cleared.
-                const std::uint64_t session_audit_mid =
-                    gs.exited_cp.audit_mid != 0 ? gs.exited_cp.audit_mid : session_mid_at_enter_;
-                ev_->run_hot_update_recovery_if_needed(gs.success, defuse_version_at_enter_,
-                                                       dirty_upward_at_enter_, session_audit_mid);
-            }
-            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-                m->outermost_exit_phase4_reemit_total.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
-    // ── Phase 5: flush + depth/unlock LAST (#2120) ──
-    if (gs.outermost) {
-        guard_phase5_part_0(gs);
-        guard_phase5_part_1(gs);
-        guard_phase5_part_2(gs);
-        guard_phase5_part_3(gs);
+    } else {
+        // Nested: depth_slot-- (outermost deferred this to phase 5).
+        if (slot)
+            (*slot)--;
     }
     // Issue #241 residual: partial-recovery panic path still needs handling
     // if we did not commit/restore above (failed + !auto_rollback).
-    if (gs.outermost && had_panic_checkpoint_ && !gs.panic_handled) {
+    if (outermost && had_panic_checkpoint_ && !panic_handled) {
         // Leave checkpoint alive for retry (pre-#241 / #2120 partial recovery).
         // Issue #2364: densify already audited above when outermost; if
         // densify was skipped (nested), re-arm is still owned by the live
@@ -6779,12 +7653,12 @@ void Evaluator::MutationBoundaryGuard::guard_dtor_seg_5(GuardDtorState& gs) {
     // success/failure distinction is a #464
     // follow-up. The counter is the precondition
     // that the AI Agent can monitor.
-    if (gs.outermost && ev_->arena_group_) {
+    if (outermost && ev_->arena_group_) {
         // Issue #4346: a heap-slot write did not allocate AST. The probe
         // compacts every loaded module arena (std/hash.aura and the rest)
         // and that walk is linear in program size on each vector-set!.
-        if (!gs.heap_slot_quiet)
-            ev_->probe_arena_auto_policy_on_boundary_exit(gs.success);
+        if (!heap_slot_quiet)
+            ev_->probe_arena_auto_policy_on_boundary_exit(success);
     }
     // Issue #490 / #1503: proactive Evaluator tag_arity_index
     // maintenance on successful outermost Guard exit:
@@ -6792,7 +7666,7 @@ void Evaluator::MutationBoundaryGuard::guard_dtor_seg_5(GuardDtorState& gs) {
     //   - Lazy + warm index: auto incremental sync so the next
     //     query:pattern after self-mutate stays O(dirty), not a
     //     surprise O(N) full rebuild on large ASTs
-    if (gs.outermost && gs.success && ev_->workspace_flat_) {
+    if (outermost && success && ev_->workspace_flat_) {
         const bool eager = ev_->pattern_index_policy_ == PatternIndexPolicy::EagerAfterMutate;
         const bool warm_lazy = ev_->pattern_index_policy_ == PatternIndexPolicy::Lazy &&
                                ev_->tag_arity_index_is_warm();
@@ -6810,12 +7684,12 @@ void Evaluator::MutationBoundaryGuard::guard_dtor_seg_5(GuardDtorState& gs) {
     // so persist-reject can flip success into the existing abort_restore
     // SSOT. This block is post-restore: persist-reject never reaches it
     // (success already false). Happy persist already ran (no second write).
-    if (gs.outermost && gs.success) {
+    if (outermost && success) {
         ev_->bump_linear_post_mutate_enforcement();
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
             m->mutation_boundary_linear_revalidations.fetch_add(1, std::memory_order_relaxed);
         }
-    } else if (gs.outermost && !gs.success) {
+    } else if (outermost && !success) {
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
             m->mutation_boundary_steal_recoveries.fetch_add(1, std::memory_order_relaxed);
         }
@@ -6836,7 +7710,7 @@ void Evaluator::MutationBoundaryGuard::guard_dtor_seg_5(GuardDtorState& gs) {
         // abort_restore already cleared (had_face false).
         typed_audit::clear_type_linear_commit_proof_on_abort();
         typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeReject);
-    } else if (!gs.outermost) {
+    } else if (!outermost) {
         // Issue #3082: nested/mid success or fail never persist and never
         // grant. Occurrence stays provisional; query:type is in-flight
         // until the outermost Guard freezes the snapshot (#2938 helper).
@@ -6850,7 +7724,7 @@ void Evaluator::MutationBoundaryGuard::guard_dtor_seg_5(GuardDtorState& gs) {
     }
     // Issue #1255: on Guard exit, if hygiene drift was seen,
     // force DefUseIndex sync before releasing the boundary.
-    if (gs.outermost && ev_->workspace_flat_) {
+    if (outermost && ev_->workspace_flat_) {
         const auto dirty = ev_->workspace_flat_->mark_dirty_upward_call_count();
         if (dirty > 0) {
             if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
@@ -6869,16 +7743,13 @@ void Evaluator::MutationBoundaryGuard::guard_dtor_seg_5(GuardDtorState& gs) {
     // Hook is internally rate-limited via steady_ms_now + period_ms, so even
     // called on every outermost success-exit the amortized cost is bounded
     // (mode != Soft / sandbox=off / disabled take a fast no-op skip path).
-    if (gs.outermost && gs.success)
+    if (outermost && success)
         aura_periodic_epoch_invariant_walk_if_due();
-}
-
-void Evaluator::MutationBoundaryGuard::guard_dtor_seg_6(GuardDtorState& gs) {
     // Issue #2928: outermost success BoundaryExit residual remount tick
     // (after deferred drain above). Amortizes residual MustDeopt when
     // reemit-success sync walk was missed. Soft / budget=0 → zero walk.
     // Issue #3886: skip if the quiet pipeline already ticked this exit.
-    if (gs.outermost && gs.success) {
+    if (outermost && success) {
         // Issue #3910: bump exit gen BEFORE coalesce so a peer/pipeline
         // quiet tick cannot steal this BoundaryExit's slot (#3886
         // same-exit coalesce still holds — this exit owns the new gen).
@@ -6898,7 +7769,7 @@ void Evaluator::MutationBoundaryGuard::guard_dtor_seg_6(GuardDtorState& gs) {
         }
         // Issue #3323: drain is not gated on !render_fast.
         // Soft / budget=0: max_n==0, no drain.
-    } else if (gs.outermost && !gs.success) {
+    } else if (outermost && !success) {
         aura_residual_remount_note_boundary_exit();
         // Issue #3342: success-BoundaryExit is the primary drain (above).
         // Failure-dominated / boundary-sparse HF mutate never reaches it,
@@ -6914,7 +7785,7 @@ void Evaluator::MutationBoundaryGuard::guard_dtor_seg_6(GuardDtorState& gs) {
     // still age toward #3096 auto-heal. Remount / drain stay
     // success-only above except #3342 starved heal. Soft / Off is one
     // production_defaults load. Playbook stays observe-only.
-    if (gs.outermost) // Issue #3248
+    if (outermost) // Issue #3248
         aura_hot_update_observe_residual_force_stale();
     // Issue #2727: clear the durable per-Fiber evaluator_id so stale
     // steals cannot observe a previous evaluator. Only outermost
@@ -6929,7 +7800,7 @@ void Evaluator::MutationBoundaryGuard::guard_dtor_seg_6(GuardDtorState& gs) {
     // Issue #3312: last writer of restamp_eager_ on nested production
     // success. exit_mutation_boundary cascade / wrap restamp_all can
     // refill the full-tree eager face after the early thin cone.
-    if (!gs.outermost && gs.success && ev_ && ev_->workspace_flat_ &&
+    if (!outermost && success && ev_ && ev_->workspace_flat_ &&
         g_tls_nested_hot_cone_from != ~std::size_t{0} &&
         (typed_audit::production_defaults_active() ||
          typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
@@ -6937,985 +7808,6 @@ void Evaluator::MutationBoundaryGuard::guard_dtor_seg_6(GuardDtorState& gs) {
         g_tls_nested_hot_cone_from = ~std::size_t{0};
     }
     // unique_lock destructor runs automatically here.
-}
-
-void Evaluator::MutationBoundaryGuard::guard_phase5_part_0(GuardDtorState& gs) {
-        // Issue #3918: re-stamp from this guard's checkpoint immediately
-        // before flush. Phases above can enter another boundary and clear
-        // the bit exit_mutation_boundary already stored.
-        if (gs.did_exit_boundary) {
-            ev_->outermost_ast_mutated_ =
-                ev_->workspace_flat_ &&
-                (gs.exited_cp.lightweight ||
-                 ev_->workspace_flat_->mutation_log_size() > gs.exited_cp.mutation_log_size);
-        }
-        ev_->flush_mutation_boundary();
-        if (ev_->compiler_metrics())
-            aura_macro_hygiene_snapshot_metrics(ev_->compiler_metrics());
-        // Pop exit fence before depth_slot-- so steal sees consistent zero.
-        if (gs.exit_fence_pushed) {
-            auto& st = Evaluator::active_mutation_stack_static();
-            if (!st.empty())
-                st.pop_back();
-            gs.exit_fence_pushed = false;
-        }
-        // depth_slot last (paired with ctor ++; was early-decrement pre-#2120).
-        // Issue #3118: cancel path already zeroed the slot + process-held.
-        if (!cancel_force_released_) {
-            if (gs.slot)
-                (*gs.slot)--;
-            ev_->mutation_boundary_held_.store(false, std::memory_order_release);
-            // Issue #2849: process-wide held count exit (paired with enter at
-            // outermost held_.store true). Cross-thread mailbox gate reopens
-            // only after this count hits zero (and TLS depth is 0).
-            aura_process_mutation_boundary_held_exit();
-        }
-        // Issue #2517: clear process-wide live max probe if this fiber owns it.
-        // Simplified exit: only clear when we are the recorded max holder
-        // (next enter rebuilds; best-effort under multi-eval contention).
-        aura::compiler::mutation_hold_live_note_exit(aura_fiber_current_id());
-        // Issue #2204: release MutationHold when logical hold ends (paired
-        // with held_ clear, after exit probes / reemit / flush). Abort
-        // (strict force-fail) still reaches here via dtor — bit always
-        // released. Nested guards never armed so never release here.
-        aura::gc_hooks::release_mutation_hold_defer();
-        // Issue #2211 / #2269 / #2296: residual GcDeferReason policy after
-        // residual drain (phase3 panic clear + phase5 MutationHold release).
-        //
-        // ── Decision table (Soft / Clear / Hard × single vs multi-eval) ──
-        // | Policy | Env select                         | Residual≠0 action              |
-        // Multi-eval note                          | | Soft   | AURA_SANDBOX=off | metric only
-        // (legacy #2211)     | no clear; test/sandbox                   | | Clear  | production
-        // default (unset policy)  | force_clear_all_for_eval + hold | panic table + bit reconcile
-        // (#2296)      | | Hard   | AURA_RESIDUAL_DEFER_POLICY=hard or  | hard-fail metric + abort
-        // | same as single; fail closed              | |        | AURA_HARD_RESIDUAL_DEFER=1 | | |
-        // Happy path (residual==0): single relaxed snapshot load, zero clear work (AC3).
-        // Fail/partial-recovery paths intentionally leave checkpoint+defer armed.
-        if (gs.success) {
-            // AC3: zero-cost success path — single relaxed load of
-            // defer_reasons_snapshot(); if zero, skip the entire
-            // residual block (no extra clears / bumps / abort probes).
-            const auto residual = aura::gc_hooks::defer_reasons_snapshot();
-            if (residual != 0) {
-                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-                    m->mutation_boundary_residual_defer_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-                // Issue #2269: production-default policy.
-                // AURA_RESIDUAL_DEFER_POLICY=hard | clear | unset
-                // (unset defaults to 'clear' under production security
-                // defaults, 'soft' under AURA_SANDBOX=off).
-                // Legacy AURA_HARD_RESIDUAL_DEFER=1 still maps to hard
-                // for backward compat (kept so pre-#2269 deploys keep
-                // their hard-fail behavior).
-                const char* sandbox_e = std::getenv("AURA_SANDBOX");
-                const bool dev_off =
-                    sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
-                const bool test_soft = aura::serve::is_residual_defer_soft_for_test();
-                const bool prod_lock = aura::serve::production_residual_policy_locked();
-                // Issue #2853 AC4: bump gauge when production lock is
-                // actively gating the policy (sandbox != off + production
-                // defaults active + not test override). Surfaces to
-                // query:mutation-boundary-hold-stats schema-2853.
-                if (prod_lock && !test_soft) {
-                    aura::serve::g_production_residual_policy_lock_active_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    if (auto* gm = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-                        gm->production_residual_policy_lock_active_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                }
-                // Default under production security defaults: clear
-                // (B path — availability-friendly). Sandbox / unit
-                // tests: soft (legacy behavior).
-                //
-                // Issue #2853 AC1: production lock (sandbox != off +
-                // production_defaults_active + not test override) →
-                // AURA_RESIDUAL_DEFER_POLICY=soft env is IGNORED. Only
-                // Clear (default) or Hard (explicit env) applies.
-                enum class ResidualPolicy { Soft, Clear, Hard };
-                ResidualPolicy policy = ResidualPolicy::Clear; // production default
-                if (dev_off || test_soft) {
-                    // Soft path: sandbox=off or explicit test override
-                    // (BOTH bypass the production lock — AC2).
-                    policy = ResidualPolicy::Soft;
-                } else if (prod_lock) {
-                    // Production lock: only Clear (default) or Hard
-                    // (explicit AURA_RESIDUAL_DEFER_POLICY=hard or
-                    // legacy AURA_HARD_RESIDUAL_DEFER=1). Soft env is
-                    // IGNORED.
-                    const char* policy_e = std::getenv("AURA_RESIDUAL_DEFER_POLICY");
-                    const bool policy_hard_env =
-                        policy_e && *policy_e && std::string_view(policy_e) == "hard";
-                    const char* legacy_e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
-                    const bool legacy_hard = legacy_e && *legacy_e && legacy_e[0] != '0';
-                    if (policy_hard_env || legacy_hard) {
-                        policy = ResidualPolicy::Hard;
-                    }
-                    // else: stay Clear (production default — AC1).
-                } else {
-                    // Non-production (no prod_defaults_active or sandbox=off
-                    // — both bypass prod_lock): legacy env-based path
-                    // honors hard / soft / clear env vars (no production
-                    // lock enforcement).
-                    const char* policy_e = std::getenv("AURA_RESIDUAL_DEFER_POLICY");
-                    const bool policy_hard_env =
-                        policy_e && *policy_e && std::string_view(policy_e) == "hard";
-                    const char* legacy_e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
-                    const bool legacy_hard = legacy_e && *legacy_e && legacy_e[0] != '0';
-                    if (policy_hard_env || legacy_hard) {
-                        policy = ResidualPolicy::Hard;
-                    } else if (policy_e && *policy_e && std::string_view(policy_e) == "soft") {
-                        policy = ResidualPolicy::Soft;
-                    }
-                    // else: stay Clear (default).
-                }
-                if (policy == ResidualPolicy::Hard) {
-                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-                        m->mutation_boundary_residual_defer_hard_fail_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    // Hard mode: fail closed so sticky defer never ships silent.
-                    // Internal invariant, not a user-facing error. Debug enforce
-                    // uses the cold contract; production NDEBUG leaves it off.
-                    // The abort below is the release fail-closed path.
-                    AURA_COLD_CONTRACT(residual == 0);
-                    // NDEBUG strips the cold contract — still abort when hard policy requested.
-                    if (aura::gc_hooks::defer_reasons_snapshot() != 0)
-                        std::abort();
-                } else if (policy == ResidualPolicy::Clear) {
-                    // Issue #2600 + #2846: force residual clear + hold
-                    // release + residual-after-exit closed loop. Shared
-                    // exit helper matches soft fiber boundary path
-                    // (orch_soft_boundary_exit). Idempotent under multi-
-                    // fiber (CAS-based). Production denseness never
-                    // leaves residual armed across outermost exit.
-                    // #2296 lineage: close_residual_defer_after_exit →
-                    // force_clear_residual_defer_for_evaluator →
-                    // force_clear_all_gc_defer_for_evaluator + reconcile_gc_defer_bits_after_clear.
-                    // Issue #2314: residual GcDeferReason interlock — Guard Phase 5
-                    // inline symbols (force_clear_all_gc_defer_for_evaluator,
-                    // release_mutation_hold_defer, reconcile_gc_defer_bits_after_clear)
-                    // preserved for #2296 contract rows check.
-                    const auto after = aura::gc_hooks::close_residual_defer_after_exit(
-                        static_cast<void*>(ev_), /*production_force=*/true);
-                    aura::compiler::mutation_boundary_shared_exit(static_cast<void*>(ev_));
-                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                        const auto n = (after.clear.panic_depth_cleared > 0)
-                                           ? after.clear.panic_depth_cleared
-                                           : 1u;
-                        m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
-                            n, std::memory_order_relaxed);
-                        if (after.residual_seen)
-                            m->residual_defer_after_exit_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-                    }
-                } else {
-                    // Soft (sandbox / unit tests): no clear, no abort —
-                    // residual metric bump above (legacy #2211) covers
-                    // observe visibility. Issue #2931: Soft exits do NOT
-                    // bump residual_defer_after_exit (helper or metrics
-                    // twin) — the #2846 detection counter is
-                    // production-only so every detection is matched by a
-                    // clear invocation in the soak gate.
-                    (void)aura::gc_hooks::close_residual_defer_after_exit(
-                        static_cast<void*>(ev_), /*production_force=*/false);
-                }
-            }
-        } else {
-            // Issue #2846: outermost *failure* exit also closes residual
-            // defer (success *and* failure). Partial recovery (failed +
-            // checkpoint left armed) intentionally keeps defer — skip.
-            // Other failures: production Clear force-clears; Soft observes.
-            const bool partial_recovery = had_panic_checkpoint_ && !gs.panic_handled;
-            if (!partial_recovery) {
-                const char* sandbox_e = std::getenv("AURA_SANDBOX");
-                const bool dev_off =
-                    sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
-                const bool test_soft = aura::serve::is_residual_defer_soft_for_test();
-                const bool production_force = !(dev_off || test_soft);
-                if (aura::gc_hooks::defer_reasons_snapshot() != 0) {
-                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
-                        m->mutation_boundary_residual_defer_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    const auto after = aura::gc_hooks::close_residual_defer_after_exit(
-                        static_cast<void*>(ev_), production_force);
-                    if (production_force)
-                        aura::compiler::mutation_boundary_shared_exit(static_cast<void*>(ev_));
-                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                        if (production_force) {
-                            const auto n = (after.clear.panic_depth_cleared > 0)
-                                               ? after.clear.panic_depth_cleared
-                                               : 1u;
-                            m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
-                                n, std::memory_order_relaxed);
-                        }
-                        // #2931: production-only detection (Soft observe
-                        // covered by the legacy #2211 metric above).
-                        if (production_force && after.residual_seen)
-                            m->residual_defer_after_exit_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-                    }
-                }
-            }
-        }
-        // Issue #2184: clear fiber-local held mirror after outermost exit.
-        // fiber.cpp helper keeps TLS null-check + member call co-located —
-        // required for ubsan-smoke (test_ir set-code Guard dtor on host
-        // thread where g_current_fiber is null).
-        aura::serve::publish_current_fiber_mutation_safety(
-            Evaluator::active_mutation_stack_static().size(), /*held=*/false,
-            defuse_version_at_enter_);
-        // Issue #2956: outermost exit post-publish mirror canary (after
-        // residual close + held=false publish). Nested skip via outermost.
-        (void)aura_mutation_boundary_assert_mirrors_consistent(/*is_active=*/1,
-                                                               /*expect_held=*/0,
-                                                               /*check_process=*/1);
-        // Issue #3894: delay workspace unlock + cascade drain until after
-        // Moving compact (lock-held densify). invalidate_function still
-        // takes mutate_mtx_ only after workspace release. Idempotent so
-        // Soft / Moving-disabled still release at this site.
-        bool workspace_released = false;
-}
-
-void Evaluator::MutationBoundaryGuard::guard_phase5_part_1(GuardDtorState& gs) {
-        auto release_workspace_then_drain_after_densify_ = [&]() {
-            if (workspace_released)
-                return;
-            workspace_released = true;
-            // Clear bool* before unlock so Guard ctor cannot race the store.
-            ev_->outermost_mutation_success_flag_.store(nullptr, std::memory_order_release);
-            // Issue #2121: unlock matching acquire mode.
-            if (region_mode_) {
-                if (region_lock_.owns_lock()) {
-                    region_shard_occ_clear(region_shard_);
-                    region_lock_.unlock();
-                    ev_->workspace_region_holders_[region_shard_].fetch_sub(
-                        1, std::memory_order_relaxed);
-                }
-                if (shared_lock_.owns_lock())
-                    shared_lock_.unlock();
-            } else if (lock_.owns_lock()) {
-                lock_.unlock();
-            }
-            // Issue #4407 / #4575: C-ABI lock_workspace_* under this Guard
-            // only bumps adopt depth. The cancel unlock drops those layers.
-            // The success drain calls invalidate_function, which acquires
-            // Mutate. A leftover Workspace depth inverts (Mutate < Workspace).
-            while (Evaluator::workspace_lock_adopt_depth_tls() > 0) {
-                --Evaluator::workspace_lock_adopt_depth_tls();
-                aura::compiler::lock_order::on_release(
-                    aura::compiler::lock_order::Level::Workspace);
-            }
-            aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
-            // Issue #2812: post-Guard BFS invalidate_function drain.
-            if (gs.success)
-                ev_->drain_cascade_bfs_invalidate();
-            else
-                ev_->clear_cascade_bfs_invalidate();
-        };
-        if (!aura::ast::moving_compact_enabled()) {
-            // Issue #3955: sticky densify-off blinds Moving so Phase-5
-            // would skip lock-held compact and unlock here; #3128 recover
-            // then densifies with workspace already free. Keep the lock
-            // through recover (GlobalExclusive unique / Region shared) and
-            // release after the recover site. Soft / no sticky: unlock now.
-            if (!(typed_audit::production_defaults_active() &&
-                  aura::ast::moving_incomplete_remap_sticky_densify_off()))
-                release_workspace_then_drain_after_densify_();
-        } else if (rebind_light_skip_heavy_exit(*ev_)) {
-            // Issue #4357: Moving is on, but a one-line Soft rebind does not
-            // need an arena compact to publish the new body. Drain now so
-            // the light invalidate still runs before the wrapper specialises.
-            // The compact block below is skipped (same release lambda).
-            release_workspace_then_drain_after_densify_();
-        }
-        // Issue #2347: clear TLS Guard-window reject count so multi-round
-        // mutates do not accumulate a stale threshold across outermost
-        // boundaries (Soft dashboard + Strict force-rollback both reset).
-        aura::serve::mf_mailbox::clear_recv_boundary_reject_window();
-        // Issue #2378 / #2511 / #2551 / #2849: outermost exit is the sole
-        // place that reopens the mailbox deliverability window after the
-        // #2849 mid-mutation push/fanout gate (note_mailbox_deferred_under_
-        // boundary). Forces deferred drain under budget (hold-exit SLA).
-        // Success + exception paths both hit this Phase-5 block (Guard dtor).
-        // AC5: free when deferred_depth==0 (single relaxed load). Soft:
-        // retain open depth + starvation bump; Strict/production:
-        // force-resolve remaining + audit; residual after budget → hard
-        // counter + Agent throttle flag (#2551). Wraps
-        // note_mailbox_outermost_exit_drain (#2378 opportunity stamp).
-        {
-            // Issue #3775: drain / arm starvation on the holder's mailbox
-            // bp_scope_id so cross-tenant mutate admits stay isolated.
-            std::string_view drain_scope{};
-            if (aura::serve::g_current_fiber != nullptr) {
-                if (auto* mb = aura::serve::g_current_fiber->mailbox()) {
-                    const auto s = mb->bp_scope_id();
-                    if (!s.empty() && s != "-")
-                        drain_scope = s;
-                }
-            }
-            (void)aura::serve::mf_mailbox::drain_deferred_under_budget(/*budget_us=*/0,
-                                                                       drain_scope);
-        }
-        ev_->unbind_yield_hook_evaluator();
-        // Issue #2170: publish LayoutStamp at outermost exit (Phase 5).
-        // Captures the post-mutation stamp (env_generation_ + defuse_version_
-        // already bumped by exit_mutation_boundary; arena_gen + flat_gen
-        // reflect the latest compact state). Companion publisher lives
-        // at live_compact success path (compact_env_frames is a follow-up
-        // — #2170 Phase 2 — wired through the same publish_layout_stamp()
-        // helper so the last-stamp fields stay consistent regardless of
-        // which path bumps the underlying generations).
-        // Issue #4346: publish walks every env frame to restamp
-        // env_gen_stamp_. A heap-slot write did not bump env_generation_
-        // or defuse_version_, so the stamp is unchanged.
-        if (!gs.heap_slot_quiet)
-            ev_->publish_layout_stamp();
-        // Issue #2250: write current LayoutStamp into the current
-        // Fiber (fence captured BEFORE unlock so a concurrent reemit
-        // by another fiber of the same Evaluator is detectable at
-        // Fiber::resume / refresh_stale_frames_after_steal). 6-field
-        // POD copied by value (LayoutStamp is trivially copyable
-        // per #2170 contract).
-        // Issue #2436: LayoutStamp is published *after* Moving densify +
-        // ShapeProfiler/IR dirty close (step 9 of post_compact_lifecycle.hh)
-        // so shape_version + ir_soa_generation fences see post-compact truth.
-        // Soft / no-compact still publishes once below (same POD cost).
-        //
-        // Issue #2256 + #2257: trigger Moving compaction after
-        // outermost Guard exit (post-publish). Honors the pin-or-
-        // remap hard contract: compact_all_moving_pinned() (issue #2266)
-        // returns AdaptiveCompactResult with bytes_reclaimed_total +
-        // pin_contract_held (verify_pins_under_moving_compact() is now
-        // fail-closed and runs inside live_compact(Moving) per arena).
-        // The compact path also bumps shape_version via
-        // ShapeProfiler::on_arena_compact (per #2255/#2256); deopt-
-        // storm enter (per #2257) bumps the same file-scope atomic
-        // independently. Source-cite StormLevel facade integration
-        // lives at #2094 lineage (StormLevel::None default; storm
-        // enter → adaptive partial-relower threshold widens).
-        // moving_compact_enabled lives in aura::ast (arena.ixx);
-        // pin verify in aura::core::lifetime (lifetime_pin.ixx).
-        bool pin_contract_held = true; // #2266 — default true (no Moving = contract held)
-        // Issue #2353: true only when Moving densify actually relocated live objects
-        // (Soft / empty densify → false → AC3 zero-cost revalidate early return).
-        bool had_moving_densify = false;
-        // Issue #2619: last densify window aggregates for Agent health surface.
-        std::size_t densify_objects_moved = 0;
-        std::size_t densify_untracked_kept = 0;
-        bool densify_incomplete_remap = false;
-        // Issue #3783: AdaptiveCompactResult blocked aggregate for unified success.
-        bool densify_moving_blocked = false;
-        std::size_t densify_root_remap_fails = 0;
-        // Issue #2775: aggregate external roots registered via prep API that
-        // were consumed by the last Moving densify window. Sourced from
-        // AdaptiveCompactResult::external_roots_prep_registered_total and
-        // forwarded to publish_last_moving_densify_window so Agent dashboards
-        // observe caller compliance with "register all external roots before
-        // Moving" contract. Pure observability — does not gate any
-        // success / fail predicate (per AC4 additive-only).
-        std::size_t densify_external_roots_prep_registered_cleared = 0;
-        // Stash RootRemap axes for #2682 unified success predicate (lives
-        // outside the moving_compact_enabled() block — compact_r is scoped
-        // to that if-body).
-        std::uint64_t densify_root_remap_stable_ref_fail = 0;
-        std::uint64_t densify_root_remap_closure_capture_fail = 0;
-        // Issue #2499 / #2559: densify-call RootRemap axis (last-call fail totals
-        // == 0). Three-layer memory inventory: pin ∧ root_remap ∧ scan_fail.
-        // Soft / no Moving → vacuous true. Used for DensifyConsistencyReport so
-        // force_reason reports "root_remap" when only RootRemap fails (not "pin").
-        bool densify_root_remap_call_ok = true;
-        // Pin axis for the report (pin-verify only when RootRemap fails alone).
-        bool densify_pin_axis_ok = true;
-        // Issue #3782: densify-entry LCP block (hoisted so Phase-5 window
-        // publish can mark the attempt fail-closed with objects_moved==0
-        // without setting had_moving_densify — that flag still means
-        // relocated live objects for invalidate/pairing).
-        bool densify_entry_lcp_blocked = false;
-        // Issue #4304: the guard is not movable. Armed only inside
-        // moving_compact_enabled(); reset after the Phase-5 publish.
-        // Null on Soft / Moving off — no in-flight store.
-        std::unique_ptr<aura::core::densify_consistency::DensifyInFlightGuard>
-            phase5_densify_inflight;
-        // Issue #2497 / #2559: baseline ownership-scan fail counter BEFORE the
-        // Moving densify window opens. Any fail delta across compact + pairing
-        // + injected tests must suppress Phase 5 success the same way
-        // pin_contract_held does (no path where scan fail is metrics-only —
-        // mirrors #2266 fail-closed). Cross-layer inventory gate: #2559.
-        std::uint64_t scan_fail_baseline = 0;
-        // Issue #2595: untracked external roots counter baseline (#2495
-        // source). Any growth during the densify window → untracked_ok=false
-        // and the unified densify gate (overall_ok) fails. Same fail-closed
-        // shape as the envframe scan baseline above. Closes the
-        // half-green window where pin ok + root_remap ok + envframe ok but
-        // any arena left untracked_kept_count > 0 after Moving relocate.
-        std::uint64_t untracked_baseline = 0;
-        // Issue #2595 / #3850: panic_residual_ok keys off the live Evaluator
-        // PanicCheckpoint (has_panic_checkpoint), not process panic depth —
-        // steal can clear defer while CP remains. Depth baseline kept for
-        // observability only (no longer drives the success axis).
-        std::uint32_t panic_depth_baseline = 0;
-        guard_phase5_moving_compact(gs.success, gs.slot, gs.heap_slot_quiet);
-    rebind_light_skip_densify_4357:;
-        // Issue #2266 AC2: do NOT publish success metrics if pin contract failed.
-        // (Gated on pin_contract_held — false suppresses outermost_exit_phase5_unlock
-        // + outermost_exit_order_complete so Agents see the contract miss, not a
-        // false success.)
-        //
-        // Issue #2341: compute DensifyConsistencyReport once at densify
-        // success (after RootRemap + pin verify + closure remount).
-        // Gate the same success metrics on overall_ok() — mirrors the
-        // pin_contract_held gating above. Bumps unified fail counter
-        // on !overall_ok() (per-axis fail counters remain additive).
-        //
-        // Issue #2353: after pin verify, ordered Linear+Type revalidate
-        // composes into densify_consistency.linear_ok / type_ok. Soft /
-        // empty densify / no linear → early true (AC3 zero cost). Fail
-        // suppresses Phase 5 success via overall_ok() (AC2 fail-closed).
-        aura::core::densify_consistency::DensifyConsistencyReport densify_consistency;
-        // Issue #2499: pin_ok is pin-verify axis only when RootRemap alone fails
-        // (densify_pin_axis_ok); unified pin_contract_held still gates success.
-        densify_consistency.pin_ok = densify_pin_axis_ok;
-        // Issue #2595: untracked_ok = no moving_incomplete_remap delta during
-        // the densify window. Soft / no Moving → vacuous true. The untracked
-        // axis catches #2495 half-green (pin_ok true + any arena leaving
-        // untracked_kept_count > 0 after relocate_tracked_objects_for_moving_).
-        // Read the delta AFTER compact_all_moving_pinned + pairing (any
-        // injection during either window bumps g_moving_untracked_external_roots_total).
-        const auto untracked_after =
-            aura::ast::g_moving_untracked_external_roots_total.load(std::memory_order_relaxed);
-        const bool untracked_ok = !had_moving_densify || (untracked_after <= untracked_baseline);
-        densify_consistency.untracked_ok = untracked_ok;
-        // Issue #2595 / #3850: panic_residual_ok = !ev->has_panic_checkpoint()
-        // OR gc_deferred_for_evaluator. Process panic depth alone is wrong —
-        // steal can clear orphan defer while the Evaluator CP is still live
-        // (Moving gate uses evaluator_has_panic_checkpoint_probe; this axis
-        // must agree). Soft leftover: CP kept + defer cleared → !ok (observe).
-        (void)panic_depth_baseline; // observability snapshot only (#3850)
-        const bool panic_cp_live_now = ev_->has_panic_checkpoint();
-        const bool panic_deferred_now =
-            aura::gc_hooks::gc_deferred_for_evaluator(static_cast<void*>(ev_));
-        const bool panic_residual_ok = !panic_cp_live_now || panic_deferred_now;
-        densify_consistency.panic_residual_ok = panic_residual_ok;
-        // Issue #2353: linear_ok + type_ok from post-densify revalidate
-        // (pin-subsumed linear pin verify remains in pin_ok; this is the
-        // ownership + type axis complementary to #2341 object-axis).
-        const bool linear_type_ok =
-            pin_contract_held ? ev_->run_post_densify_linear_type_revalidate(had_moving_densify)
-                              : false;
-        densify_consistency.linear_ok = linear_type_ok;
-        densify_consistency.type_ok = linear_type_ok;
-}
-
-void Evaluator::MutationBoundaryGuard::guard_phase5_part_2(GuardDtorState& gs) {
-        // Issue #2609: hard-AND linear force sticky + residual GcDefer into
-        // densify success (same pure gate as steal-complete). Soft / no
-        // production: metric-only observe when axes fail but keep Soft
-        // vacuous axes unless overall densify already fails closed.
-        // Production or Hard densify contract: force linear_ok / panic axis
-        // so Phase 5 cannot publish half-green success.
-        {
-            const bool residual_zero = (aura::gc_hooks::defer_reasons_snapshot() == 0);
-            // Type fence applied later on Moving success; for densify gate
-            // evaluate residual + linear first (type fence is step after).
-            const auto axis = ev_->evaluate_linear_type_provenance_hard_and(
-                residual_zero, /*type_fence_applied=*/true);
-            const char* densify_contract_env = std::getenv("AURA_DENSIFY_CONTRACT");
-            const bool hard_densify = typed_audit::production_defaults_active() ||
-                                      (densify_contract_env != nullptr &&
-                                       std::string_view(densify_contract_env) == "hard");
-            if (axis != Evaluator::LinearTypeProvenanceAxis::Ok) {
-                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                    if (hard_densify) {
-                        m->steal_densify_linear_type_hard_fail_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        m->steal_densify_linear_type_last_fail_axis.store(
-                            static_cast<std::uint8_t>(axis), std::memory_order_relaxed);
-                        if (axis == Evaluator::LinearTypeProvenanceAxis::LinearForcePending) {
-                            m->steal_densify_linear_type_fail_linear_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                            densify_consistency.linear_ok = false;
-                        } else if (axis == Evaluator::LinearTypeProvenanceAxis::ResidualGcDefer) {
-                            m->steal_densify_linear_type_fail_residual_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                            densify_consistency.panic_residual_ok = false;
-                        }
-                    } else {
-                        m->steal_densify_linear_type_soft_observe_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    }
-                }
-            }
-        }
-        // Issue #2365 / #2368: densify-success closed-loop. Soft / no Moving
-        // densify → root_remap / closure / envframe vacuous true (zero cost).
-        // Moving + unified contract held → force_densify_remap_pairing() encodes
-        // permanent order (do not open-code steps 3–5 here — pairing is never
-        // optional):
-        //   1 RootRemap probe (inside densify) → last_root_remap_any_fail
-        //   2 pin verify (pin_contract_held above)
-        //   3 EnvFrame live-ref transfer
-        //   4 closure remount scan
-        //   5 dual-epoch restamp (always last before report)
-        //   6 report axes from pairing result + linear_type_ok
-        // Issue #2361: real envframe_ok remains ownership scan + dual-epoch.
-        if (had_moving_densify && pin_contract_held) {
-            // Issue #2368: single forced pairing entry (order encoded in body).
-            const auto pairing = ev_->force_densify_remap_pairing();
-            // Issue #2497: re-check scan fail counter after pairing. Any delta
-            // since the Moving densify baseline (compact + pairing + injected
-            // fails) suppresses envframe_ok — same fail-closed shape as
-            // pin_contract_held gating at #2266 / #2341 AC2.
-            const auto scan_fail_after = aura::core::envframe_lifetime::
-                envframe_lifetime_densify_ownership_scan_fail_total();
-            const bool scan_fail_delta = (scan_fail_after > scan_fail_baseline);
-            // Issue #2499: AND densify-call RootRemap fail totals into axis.
-            densify_consistency.root_remap_ok = pairing.root_remap_ok && densify_root_remap_call_ok;
-            densify_consistency.closure_remount_ok = pairing.closure_remount_ok;
-            // Issue #2497: scan_fail_delta ANDs into envframe_ok. Pairing already
-            // checks within-pairing delta — this gate widens the window so a
-            // pre-pairing inject (test helper) or compact-callback fail also
-            // suppresses.
-            // Issue #2599: production-only gating — under production
-            // (production_defaults_active()), scan_fail_delta forces
-            // envframe_ok=false (commit barrier rejects outermost commit;
-            // force_rollback_suggestion: EnvFrameDensifyOwnership). Under
-            // Soft / sandbox=off, scan_fail_delta bumps
-            // densify_ownership_scan_fail_total counter but keeps
-            // envframe_ok=true (AC2 metric-only, no forced rollback solely
-            // from EnvFrame axis). Phase 5 success still gated via
-            // overall_ok() at #2266 site.
-            {
-                const bool prod_for_densify = typed_audit::production_defaults_active();
-                const bool envframe_block = prod_for_densify && scan_fail_delta;
-                densify_consistency.envframe_ok =
-                    pairing.envframe_ok && linear_type_ok && !envframe_block;
-            }
-            aura::core::densify_consistency::note_last_densify_dual_epoch_ok(pairing.dual_epoch_ok);
-            aura::core::densify_consistency::note_last_densify_remap_pairing_forced(pairing.forced);
-        } else if (had_moving_densify) {
-            // Issue #3372: Moving densify ran but unified pin contract
-            // failed. The densify-call RootRemap axis is real (the call
-            // ran); the EnvFrame / closure-remount / dual-epoch axes are
-            // NOT — pairing did not run, so Steal LCP would otherwise AND
-            // a vacuous-green EnvFrame on a window that never ran the
-            // ownership scan. Fail-closed last-call so Steal hard-AND
-            // cannot be true solely from a vacuous EnvFrame axis. The
-            // Soft / empty branch below keeps vacuous-true (zero-cost).
-            densify_consistency.root_remap_ok = densify_root_remap_call_ok;
-            densify_consistency.closure_remount_ok = false;
-            densify_consistency.envframe_ok = false;
-            aura::core::densify_consistency::note_last_densify_dual_epoch_ok(false);
-            aura::core::densify_consistency::note_last_densify_remap_pairing_forced(false);
-            // Issue #3612: pin-contract fail forces the remount axes false
-            // without running the pairing — same remount-last-zero outcome
-            // as the JIT residual walks (#3548). A still-green
-            // TypeLinearCommitProof must not survive a failed Moving
-            // densify window. Share the existing strip (Quiet outcome +
-            // invalidate_gen advance; helper self-gates Soft / Off to
-            // observe-only, and Soft takes the vacuous-true branch below
-            // so it never reaches this path — AC3).
-            if (typed_audit::production_defaults_active() ||
-                typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)
-                typed_audit::strip_green_face_on_remount_last_zero();
-        } else {
-            // Soft / empty densify: vacuous axes (do not read stale
-            // last_root_remap or cumulative closure fails).
-            densify_consistency.root_remap_ok = true;
-            densify_consistency.closure_remount_ok = true;
-            densify_consistency.envframe_ok = true;
-            aura::core::densify_consistency::note_last_densify_dual_epoch_ok(true);
-            // Soft never forced pairing (agents distinguish Soft vacuous
-            // from Moving forced-ok).
-            aura::core::densify_consistency::note_last_densify_remap_pairing_forced(false);
-        }
-        // Publish last densify axes for query:lifetime-contract-snapshot.
-        // Issue #2376: last-call envframe + closure are the production
-        // contract (not cumulative / not force-true under Moving). Soft
-        // vacuous true is published only on the Soft branch above.
-        // Call-seq bumps every Phase 5 report so Agents detect stale samples.
-        using aura::core::densify_consistency::kDensifyEnvframeFailLinearType;
-        using aura::core::densify_consistency::kDensifyFailNone;
-        aura::core::densify_consistency::note_last_densify_root_remap_ok(
-            densify_consistency.root_remap_ok);
-        // Envframe fail code: Soft → 0; Moving pairing set ownership/dual;
-        // linear_type composition can force envframe_ok false with code 3.
-        std::uint8_t env_fc = kDensifyFailNone;
-        if (!densify_consistency.envframe_ok) {
-            if (had_moving_densify && pin_contract_held && !linear_type_ok &&
-                aura::core::densify_consistency::last_densify_envframe_fail_code() ==
-                    kDensifyFailNone) {
-                env_fc = kDensifyEnvframeFailLinearType;
-            } else {
-                env_fc = aura::core::densify_consistency::last_densify_envframe_fail_code();
-            }
-        }
-        aura::core::densify_consistency::note_last_densify_envframe_ok(
-            densify_consistency.envframe_ok, env_fc);
-        const std::uint8_t cl_fc =
-            densify_consistency.closure_remount_ok
-                ? kDensifyFailNone
-                : aura::core::densify_consistency::last_densify_closure_fail_code();
-        aura::core::densify_consistency::note_last_densify_closure_remount_ok(
-            densify_consistency.closure_remount_ok, cl_fc);
-        aura::core::densify_consistency::bump_last_densify_call_seq();
-        // Issue #3617: mirror this evaluator's fresh densify result into its
-        // keyed slot (values just noted process-wide on this thread).
-        aura::core::densify_consistency::note_last_densify_result_for(
-            static_cast<void*>(ev_), aura::core::densify_consistency::last_densify_envframe_ok(),
-            aura::core::densify_consistency::last_densify_dual_epoch_ok());
-        // Issue #2619: publish Agent-visible Moving densify health window.
-        // Soft/no densify → vacuous healthy (would-allow-mutate=true). Production
-        // hard (#2596) + incomplete remap → agent_throttle (orch refuse mutate).
-        //
-        // Issue #3128: production auto-recover before throttle. Under
-        // production_defaults_active() + sticky armed, call
-        // this->recover_moving_sticky_densify_off(retry_densify=true) —
-        // re-register known roots, clear sticky (or stay armed on failure),
-        // optional one-shot densify. On success the retry densify's
-        // internal publish handles the window + throttle update, so we
-        // skip the manual publish below (idempotent with the retry's
-        // already-published state). On failure sticky re-arms and the
-        // retry's publish sets the throttle (fail-closed — AC2). Soft/Off:
-        // zero extra work (auto-recover not attempted; manual publish
-        // unchanged from before). Agents that already call recover
-        // explicitly are unaffected (sticky is already clear when they
-        // re-enter Phase-5 → auto-recover gate skips — AC4).
-        {
-            const bool incomplete =
-                densify_incomplete_remap || !untracked_ok || densify_untracked_kept > 0;
-            bool auto_recover_attempted = false;
-            if (typed_audit::production_defaults_active() &&
-                aura::ast::moving_incomplete_remap_sticky_densify_off()) {
-                auto r = ev_->recover_moving_sticky_densify_off(/*retry_densify=*/true);
-                // Issue #4067: skip this publish only when the retry
-                // densify already published (success clears throttle;
-                // incomplete advances the window seq). A recover that
-                // did not densify still publishes the Phase-5 window.
-                auto_recover_attempted = r.densify_retried;
-                (void)r;
-            }
-            if (!auto_recover_attempted) {
-                // Issue #3782: LCP skip publishes had=true, pin=false.
-                const bool blocked = densify_moving_blocked;
-                const bool publish_had = had_moving_densify || densify_entry_lcp_blocked || blocked;
-                const bool pin_for_publish =
-                    pin_contract_held && densify_consistency.pin_ok && !blocked;
-                aura::core::moving_densify_health::publish_last_moving_densify_window(
-                    publish_had, pin_for_publish, incomplete,
-                    static_cast<std::uint64_t>(densify_objects_moved),
-                    static_cast<std::uint64_t>(densify_untracked_kept),
-                    static_cast<std::uint64_t>(densify_root_remap_fails),
-                    static_cast<std::uint64_t>(densify_external_roots_prep_registered_cleared),
-                    /*#4928 refused, no move*/ blocked && !densify_entry_lcp_blocked &&
-                        !had_moving_densify && pin_contract_held);
-            }
-            // Issue #4304: in-flight drops only after this publish. When the
-            // retry already published, recover's guard cleared the bit and
-            // this reset is empty. Soft never armed the pointer.
-            phase5_densify_inflight.reset();
-            // Issue #3955: sticky recover densify ran lock-held; release now
-            // (idempotent with #3894 happy-path unlock after compact).
-            release_workspace_then_drain_after_densify_();
-            // Issue #4288: soft-gate blocked is folded into the publish above.
-        }
-}
-
-void Evaluator::MutationBoundaryGuard::guard_phase5_part_3(GuardDtorState& gs) {
-        // Issue #2975: production hard gate on every outermost Phase-5 exit
-        // (success *and* non-intentional-failure). Shared residual leftover
-        // predicate with steal-complete (#2546 / #2890). Soft observe-only
-        // (never force-clear or fail). Composes with #2932 hold-budget
-        // fail-closed (independent counters; both can fire on one exit).
-        // Intentional partial recovery keeps residual armed — skip.
-        {
-            const bool partial_recovery = !gs.success && had_panic_checkpoint_ && !gs.panic_handled;
-            if (!partial_recovery) {
-                const char* sandbox_e = std::getenv("AURA_SANDBOX");
-                const bool dev_off =
-                    sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
-                const bool test_soft = aura::serve::is_residual_defer_soft_for_test();
-                const bool residual_force = !(dev_off || test_soft);
-                const bool fail_closed =
-                    typed_audit::production_defaults_active() && residual_force;
-                const bool pin_ok = pin_contract_held && densify_consistency.pin_ok;
-                const bool incomplete =
-                    densify_incomplete_remap || !untracked_ok || densify_untracked_kept > 0;
-                const auto gate = aura::gc_hooks::gate_outermost_exit_residual_and_pin(
-                    static_cast<void*>(ev_), residual_force, pin_ok, incomplete, fail_closed);
-                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                    if (residual_force && gate.residual.residual_seen) {
-                        m->residual_defer_after_exit_total.fetch_add(1, std::memory_order_relaxed);
-                        // Matched clear invocation (#2931): the gate's
-                        // production close must land in forced_clear too,
-                        // even when the policy block above saw residual==0
-                        // (concurrent re-arm between the two snapshots).
-                        const auto n = (gate.residual.clear.panic_depth_cleared > 0)
-                                           ? gate.residual.clear.panic_depth_cleared
-                                           : 1u;
-                        m->mutation_boundary_residual_defer_forced_clear_total.fetch_add(
-                            n, std::memory_order_relaxed);
-                    }
-                    if (gate.hard_fail)
-                        m->residual_after_exit_hard_fail_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-                    if (!pin_ok)
-                        m->pin_contract_fail_on_exit_total.fetch_add(1, std::memory_order_relaxed);
-                }
-                if (gate.hard_fail) {
-                    // Fail-closed for agents: flip the caller flag even if
-                    // ev_->outermost_mutation_success_flag_ was already
-                    // cleared earlier in Phase 5. #2932 may already have
-                    // flipped it — both reasons compose.
-                    success_flag_store(flag_, false);
-                    ev_->mark_outermost_mutation_failed();
-                }
-            }
-        }
-        // Issue #2979: outermost Phase-5 consume of layered-evidence
-        // force-Full pending. Success *and* non-intentional-failure
-        // (skip intentional partial recovery — residual stays armed).
-        // Quiet (pending==0): one exchange, no extra audit. If consumed
-        // → one-shot Full invariant sample before allow-commit / trail.
-        // HARD env consume stamps force_reason; default is sample.
-        // not hard-reject of the current commit
-        {
-            const bool partial_recovery_2979 = !gs.success && had_panic_checkpoint_ && !gs.panic_handled;
-            if (!partial_recovery_2979) {
-                const bool layered_diverge_force =
-                    aura::compiler::consume_layered_evidence_diverge_force_full();
-                const bool layered_diverge_hard =
-                    aura::compiler::consume_layered_evidence_diverge_hard_reject();
-                if (layered_diverge_force) {
-                    aura::compiler::note_layered_evidence_diverge_force_full_sample();
-                    ev_->ensure_mutation_invariants();
-                }
-                if (layered_diverge_hard &&
-                    (typed_audit::production_defaults_active() ||
-                     typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
-                    ev_->last_mutate_error_ = "layered-evidence-diverge";
-                }
-            }
-        }
-        // Issue #2682: single unified Moving success predicate — folds all
-        // 5 conditions (moving_blocked_precondition / pin_contract_held /
-        // root_remap fails / untracked_kept_count > 0 when objects_moved > 0)
-        // into one boolean. Replaces the scattered local-variable checks
-        // that previously lived inline. Bumps process-wide
-        // g_moving_unified_success_total / g_moving_unified_fail_total for
-        // Agent dashboards. AC3 Soft / observe-only: predicate runs in all
-        // modes (no behavior change for Soft — counters bump either way).
-        // Issue #3783: pass AdaptiveCompactResult blocked aggregate — hardcoded
-        // false left vacuous-green unified success on blocked Moving windows
-        // (pin still true / objects_moved==0). Soft/Off observe-only counters.
-        const bool moving_unified_success =
-            aura::core::moving_densify_health::compute_moving_unified_success(
-                /*moving_blocked_precondition=*/densify_moving_blocked, pin_contract_held,
-                /*root_remap_stable_ref_fail_total=*/densify_root_remap_stable_ref_fail,
-                /*root_remap_closure_capture_fail_total=*/densify_root_remap_closure_capture_fail,
-                /*objects_moved=*/static_cast<std::uint64_t>(densify_objects_moved),
-                /*untracked_kept_count=*/static_cast<std::uint64_t>(densify_untracked_kept));
-        if (moving_unified_success) {
-            aura::ast::g_moving_unified_success_total.fetch_add(1, std::memory_order_relaxed);
-            // Issue #2905 / #3123 AC3: Phase-5 aggregated green clears
-            // sticky only after a healthy Moving window: unified success
-            // AND zero untracked AND !incomplete AND pin held. Soft / no
-            // densify windows leave sticky alone. Incomplete windows must
-            // not clear (unified_success can ignore untracked when
-            // objects_moved==0 — require untracked==0 explicitly).
-            if (had_moving_densify && densify_untracked_kept == 0 && !densify_incomplete_remap &&
-                pin_contract_held) {
-                aura::ast::clear_moving_incomplete_remap_sticky_densify_off_reason(
-                    aura::ast::kStickyClearPhase5Green);
-            }
-        } else if (had_moving_densify) {
-            // Only bump fail when densify actually ran (vacuous healthy on
-            // Soft / no-densify windows stays out of the fail counter).
-            aura::ast::g_moving_unified_fail_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        if (!densify_consistency.overall_ok()) {
-            // Issue #2341 AC2: unified fail — mirror pin_contract_held
-            // gating above. Bump fail counter; optional hard abort
-            // when AURA_DENSIFY_CONTRACT=hard (aligns RootRemap hard
-            // contract pattern at root_remap_pass.ixx:380).
-            aura::core::densify_consistency::bump_densify_consistency_fail_total();
-            // Issue #2595: unified gate fail counter (additive schema key
-            // densify_unified_gate_fail_total). Bumps in lockstep with the
-            // existing g_densify_consistency_fail_total so production
-            // dashboards can distinguish the new half-green axes (untracked,
-            // panic_residual) from the legacy #2341 axes (pin / linear /
-            // type / root_remap / closure / envframe).
-            aura::core::densify_consistency::bump_densify_unified_gate_fail_total();
-            const char* contract_env = std::getenv("AURA_DENSIFY_CONTRACT");
-            const bool hard_fail = (contract_env != nullptr && std::string(contract_env) == "hard");
-            if (hard_fail) {
-                std::fprintf(stderr,
-                             "[#2341] Densify consistency contract failed: %s "
-                             "(AURA_DENSIFY_CONTRACT=hard) — aborting\n",
-                             densify_consistency.force_reason());
-                std::abort();
-            }
-            std::fprintf(stderr,
-                         "[#2341] Densify consistency contract failed (soft mode): %s "
-                         "— suppressing success metrics\n",
-                         densify_consistency.force_reason());
-        }
-        guard_phase5_pin_contract(gs.success, gs.outermost, gs.slot, gs.linear_ops_present_local);
-        // Issue #2436: single ordered lifecycle close (steps 7–10).
-        // Densify core (1–6) already finished above. Compact hook may have
-        // already run IR dirty sync (step 7) + ShapeProfiler (step 8);
-        // pass already_done so the orchestrator does not re-run them.
-        // Soft densify → soft_skip; pin fail → pin_fail; Moving success → run.
-        // LayoutStamp re-publish AFTER compact + shape/IR so fiber resume
-        // fences observe post-compact shape_version + ir_soa_generation
-        // (lifecycle step 9). publish + set_resume stay adjacent
-        // (#2250 Phase 5 ordering proximity) inside the orchestrator hooks.
-        // Issue #2892: single ordered post-compact close entry — all
-        // densify success paths route through run_post_compact_close
-        // (pin restamp → EnvFrame scan → rebind/stamp → residual audit
-        // → LayoutStamp publish); no out-of-band order drift.
-        {
-            using namespace aura::core::post_compact_lifecycle;
-            PostCompactCloseInput close_in{};
-            close_in.had_moving_densify = had_moving_densify;
-            close_in.pin_contract_held = pin_contract_held;
-            close_in.densify_gate_ok = pin_contract_held && densify_consistency.overall_ok();
-            // service.ixx compact notify already force_soa_instruction_dirty_sync
-            // + note_lifecycle_ir_sync when compact hooks fire.
-            close_in.ir_sync_already_done = true;
-            close_in.shape_already_done = true;
-
-            PostCompactCloseHooks close_hooks{};
-            close_hooks.ctx = static_cast<void*>(ev_);
-            // Issue #4346: the orchestrator always invokes this hook.
-            // Heap-slot quiet already skipped the Phase-5 publish above;
-            // leaving the hook set walks every env frame a second time.
-            if (!gs.heap_slot_quiet) {
-                close_hooks.publish_layout_stamp = [](void* c) noexcept {
-                    static_cast<Evaluator*>(c)->publish_layout_stamp();
-                };
-            }
-            close_hooks.set_fiber_resume_stamp = [](void* c) noexcept -> bool {
-                auto* ev = static_cast<Evaluator*>(c);
-                auto* cur_fiber = aura::serve::g_current_fiber;
-                if (!cur_fiber)
-                    return false;
-                const auto stamp = ev->current_layout_stamp();
-                cur_fiber->set_resume_layout_stamp(stamp.arena_id, stamp.arena_gen, stamp.flat_gen,
-                                                   stamp.mutation_epoch, stamp.env_gen,
-                                                   stamp.defuse_version, stamp.shape_version,
-                                                   stamp.ir_soa_generation);
-                return true;
-            };
-            close_hooks.read_shape_version = [](void* /*c*/) noexcept -> std::uint64_t {
-                return aura::compiler::shape::current_global_shape_version();
-            };
-            close_hooks.read_ir_soa_generation = [](void* /*c*/) noexcept -> std::uint64_t {
-                return aura::compiler::current_ir_soa_generation_fence();
-            };
-            // Issue #2436 AC4: orchestrated stamp publish after densify close.
-            (void)run_post_compact_close(close_in, close_hooks);
-        }
-        // Issue #2364: PanicCheckpoint residual × densify closed loop.
-        // After densify (success or fail leaving evaluator live), residual
-        // Panic defer must not outlive a cleared checkpoint; a still-live
-        // checkpoint re-arms defer. Soft / no densify / no panic → free.
-        // densify_attempted: Moving was enabled this exit (compact call ran).
-        {
-            const bool densify_attempted = aura::ast::moving_compact_enabled();
-            // Checkpoint may still be live on partial recovery (failed +
-            // !auto_rollback) or if densify raced a concurrent save.
-            const bool has_cp = ev_->has_panic_checkpoint();
-            const auto audit = aura::gc_hooks::audit_panic_defer_after_densify(
-                static_cast<void*>(ev_), has_cp, densify_attempted);
-            if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                if (!audit.free_path)
-                    m->panic_defer_after_densify_total.fetch_add(1, std::memory_order_relaxed);
-                if (audit.cleared)
-                    m->panic_defer_after_densify_cleared_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-                if (audit.rearmed)
-                    m->panic_defer_after_densify_rearmed_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-                if (audit.hard_fail)
-                    m->panic_defer_after_densify_hard_fail_total.fetch_add(
-                        1, std::memory_order_relaxed);
-            }
-            (void)audit;
-        }
-    } else {
-        // Nested: depth_slot-- (outermost deferred this to phase 5).
-        if (gs.slot)
-            (*gs.slot)--;
-}
-
-Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
-    // One pre-cascade audit per boundary exit (cascade marks + BFS drain).
-    struct BoundaryPrepBatch : ::aura::core::NoCopy {
-        const std::function<void(bool)>* fn = nullptr;
-        ~BoundaryPrepBatch() {
-            if (fn && *fn)
-                (*fn)(false);
-        }
-    } boundary_prep_batch;
-    if (ev_ && !inert_ && ev_->boundary_prep_batch_fn_) {
-        boundary_prep_batch.fn = &ev_->boundary_prep_batch_fn_;
-        ev_->boundary_prep_batch_fn_(true);
-    }
-    if (g_tls_outermost_guard == this)
-        g_tls_outermost_guard = nullptr;
-    if (!ev_ || inert_) {
-        // Issue #2222: if somehow pushed without full enter, still pop.
-        if (linear_enforce_strict_pushed_) {
-            aura::core::provenance::mutation_boundary_pop_linear_enforce_strict();
-            linear_enforce_strict_pushed_ = false;
-        }
-        // Issue #3723 belt: if a mid was published before inert (race /
-        // old publish-then-inert order), still revoke + clear so grants
-        // cannot survive the inert dtor.
-        if (inert_ && ev_ && session_mid_at_enter_ != 0) {
-            using ::aura::core::capability::g_capability_registry;
-            auto& reg = g_capability_registry();
-            auto& met = ::aura::core::capability::g_capability_effect_metrics();
-            const auto mode = reg.sandbox_mode.load(std::memory_order_acquire);
-            const bool production =
-                mode == ::aura::core::capability::EffectSandboxMode::Restricted ||
-                mode == ::aura::core::capability::EffectSandboxMode::Strict;
-            if (production ||
-                met.capability_live_session_grants.load(std::memory_order_relaxed) != 0) {
-                std::scoped_lock<std::mutex> lock(reg.mtx);
-                // Issue #3799 / Issue #3241: prefer enter-captured fiber_id_ so
-                // TLS-cleared dtor under Restricted+MT never mid-only sweeps
-                // peer outermost grants. Fall back to live current id;
-                // registry fail-closes if still 0 under hard_fiber.
-                std::uint32_t fid = static_cast<std::uint32_t>(fiber_id_);
-                if (fid == 0)
-                    fid = static_cast<std::uint32_t>(aura_fiber_current_id());
-                (void)reg.revoke_session_grants_for_mid_locked(session_mid_at_enter_,
-                                                               "session-mid-exit", fid);
-            }
-            aura::serve::clear_current_fiber_session_mid();
-            if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
-                session_mid_at_enter_) {
-                aura::compiler::g_mutation_hold_live_session_mid.store(0,
-                                                                       std::memory_order_release);
-            }
-            // Issue #4278: write-side string caps do not bump
-            // capability_live_session_grants, so the production/live
-            // short-circuit above must not skip them. Registry lock is
-            // not held.
-            ev_->retire_session_string_caps(session_mid_at_enter_);
-            session_mid_at_enter_ = 0;
-        }
-        return; // Issue #1590: quota soft-reject never entered a boundary
-                // Issue #3743: never-entered inert does not restamp (no gen bump).
-    }
-    GuardDtorState gs;
-    guard_dtor_seg_0(gs);
-    guard_dtor_seg_1(gs);
-    guard_dtor_seg_2(gs);
-    guard_dtor_seg_3(gs);
-    guard_dtor_seg_4(gs);
-    guard_dtor_seg_5(gs);
-    guard_dtor_seg_6(gs);
 }
 
 // ── enable_fine_rollback (instance) ──────────────────────────────────────
