@@ -159,18 +159,18 @@ export inline std::optional<SourceFile> source_file(std::uint32_t file_id) {
 
 // Issue #4916: the path a report shows — relative to the cwd when the
 // file is under it (helper.aura, kits/x/main.aura), else as registered.
-export inline std::string display_source_path(std::string path) {
+export inline std::string display_source_path(std::string_view path) {
     if (path.empty() || path[0] != '/')
-        return path;
+        return std::string(path);
     std::error_code err;
     auto cwd = std::filesystem::current_path(err).string();
     if (err || cwd.empty())
-        return path;
+        return std::string(path);
     if (!cwd.ends_with('/'))
         cwd += '/';
     if (path.starts_with(cwd) && path.size() > cwd.size())
-        return path.substr(cwd.size());
-    return path;
+        return std::string(path.substr(cwd.size()));
+    return std::string(path);
 }
 
 export inline std::string source_file_path(std::uint32_t file_id) {

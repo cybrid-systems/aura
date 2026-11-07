@@ -529,7 +529,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(bytes))));
     };
     auto rd = [](const std::string& s, std::size_t i) {
-        double d;
+        double d = 0.0;
         std::memcpy(&d, s.data() + i * 8, 8);
         return d;
     };
@@ -722,11 +722,11 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         std::string out(static_cast<std::size_t>(cnt) * 8, '\0');
         for (std::int64_t k = 0; k < cnt; ++k) {
             const char* p = src.data() + off + k * static_cast<std::int64_t>(width);
-            double d;
+            double d = 0.0;
             if (width == 8) {
                 std::memcpy(&d, p, 8);
             } else {
-                float f;
+                float f = 0.0;
                 std::memcpy(&f, p, 4);
                 d = static_cast<double>(f);
             }
@@ -789,7 +789,7 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
         const auto off = as_int(a[1]);
         if (off < 0 || static_cast<std::size_t>(off) + 4 > s.size())
             return f64err("bytes-i32-ref: offset out of range");
-        std::int32_t v;
+        std::int32_t v = 0;
         std::memcpy(&v, s.data() + off, 4);
         return make_int(v);
     });
@@ -845,29 +845,29 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
     auto view_load = [](const char* p, ViewKind k) -> EvalValue {
         switch (k) {
             case ViewKind::F64: {
-                double d;
+                double d = 0.0;
                 std::memcpy(&d, p, 8);
                 return make_float(d);
             }
             case ViewKind::I64: {
-                std::int64_t x;
+                std::int64_t x = 0;
                 std::memcpy(&x, p, 8);
                 return types::make_int_or_promote(x);
             }
             case ViewKind::U64: {
-                std::uint64_t x;
+                std::uint64_t x = 0;
                 std::memcpy(&x, p, 8);
                 if (x > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
                     return make_float(static_cast<double>(x));
                 return types::make_int_or_promote(static_cast<std::int64_t>(x));
             }
             case ViewKind::I32: {
-                std::int32_t x;
+                std::int32_t x = 0;
                 std::memcpy(&x, p, 4);
                 return make_int(x);
             }
             case ViewKind::U32: {
-                std::uint32_t x;
+                std::uint32_t x = 0;
                 std::memcpy(&x, p, 4);
                 return make_int(static_cast<std::int64_t>(x));
             }
@@ -879,27 +879,27 @@ void register_char_primitives(PrimRegistrar add, Evaluator& ev) {
     auto view_load_f64 = [](const char* p, ViewKind k) -> double {
         switch (k) {
             case ViewKind::F64: {
-                double d;
+                double d = 0.0;
                 std::memcpy(&d, p, 8);
                 return d;
             }
             case ViewKind::I64: {
-                std::int64_t x;
+                std::int64_t x = 0;
                 std::memcpy(&x, p, 8);
                 return static_cast<double>(x);
             }
             case ViewKind::U64: {
-                std::uint64_t x;
+                std::uint64_t x = 0;
                 std::memcpy(&x, p, 8);
                 return static_cast<double>(x);
             }
             case ViewKind::I32: {
-                std::int32_t x;
+                std::int32_t x = 0;
                 std::memcpy(&x, p, 4);
                 return static_cast<double>(x);
             }
             case ViewKind::U32: {
-                std::uint32_t x;
+                std::uint32_t x = 0;
                 std::memcpy(&x, p, 4);
                 return static_cast<double>(x);
             }
