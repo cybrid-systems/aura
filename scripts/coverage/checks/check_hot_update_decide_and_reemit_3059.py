@@ -92,7 +92,9 @@ def main() -> int:
     if drain < 0:
         fails.append("AC1: auto-drain bumper missing")
     else:
-        body = mb[drain : drain + 1600]
+        # Issue #4936 R4: the auto-drain arm grew past 1600 chars before
+        # the decide_and_reemit call; widen to 2600 (recovery is far below).
+        body = mb[drain : drain + 2600]
         if "decide_and_reemit" not in body:
             fails.append("AC1: auto-drain missing decide_and_reemit")
         if "aura_reemit_aot_for_dirty(" in body:

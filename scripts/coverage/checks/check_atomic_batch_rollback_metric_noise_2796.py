@@ -49,7 +49,9 @@ def main() -> int:
     # Issue #3652: the pre-audit opt-out arm gained the #3542 MSE gate
     # (~1.5KB, incl. its own abort_batch_workspace call) — widen the window
     # so the throw/!sub_result/!ok abort paths stay counted (was 22000).
-    win = mut[pos : pos + 26000] if pos >= 0 else ""
+    # Issue #4936 R4: the same body grew again; the !ok abort moved past
+    # 26000, so widen to 30000 (the next primitive starts ~55000 in).
+    win = mut[pos : pos + 30000] if pos >= 0 else ""
 
     # AC1
     must("Issue #2796", "AC1", win)
