@@ -88,7 +88,13 @@ def main() -> int:
     # ── AC3: Soft gated on production_defaults_active
     must("production_defaults_active()", "AC3 helper gated", prim)
     # Both helpers must return before intern when Soft.
-    helper_pos = prim.find("auto add_identity_plane")
+    # Issue #5033: the helper moved to a peeled RegSplitParts part; accept
+    # either shape (local lambda or member definition).
+    helper_pos = prim.find("void RegSplitParts::add_identity_plane(")
+    if helper_pos == -1:
+        helper_pos = prim.find("RegSplitParts::add_identity_plane(")
+    if helper_pos == -1:
+        helper_pos = prim.find("auto add_identity_plane")
     if helper_pos == -1:
         fails.append("AC3: add_identity_plane helper missing")
     else:
