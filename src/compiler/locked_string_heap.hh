@@ -845,7 +845,7 @@ private:
             const std::size_t n = s.size();
             std::size_t k = 0;
             for (; k + 8 <= n; k += 8) {
-                std::uint64_t w;
+                std::uint64_t w = 0;
                 std::memcpy(&w, p + k, 8);
                 if (w & 0x8080808080808080ull) {
                     ascii = false;

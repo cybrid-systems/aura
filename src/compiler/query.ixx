@@ -469,7 +469,7 @@ ReplaceTemplate parse_rt(TokenStream& ts) {
     }
     // Single token
     try {
-        std::size_t pos;
+        std::size_t pos = 0;
         auto v = std::stoll(tok, &pos);
         if (pos == tok.size()) {
             ReplaceTemplate r;

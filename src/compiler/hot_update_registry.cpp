@@ -1578,7 +1578,7 @@ void HotUpdateRegistry::on_force_jit_for_reason(AotReloadFail reason) noexcept {
     const auto bit_index = aot_reload_fail_to_force_jit_bit_index(reason);
     last_force_jit_mapped_bit_.store(bit_index, std::memory_order_relaxed);
     const auto bit_mask = aot_reload_fail_to_force_jit_mask(reason);
-    std::uint64_t new_mask;
+    std::uint64_t new_mask = 0;
     if (bit_mask != 0) {
         const auto prev_mask =
             force_jit_regions_mask_.fetch_or(bit_mask, std::memory_order_relaxed);
