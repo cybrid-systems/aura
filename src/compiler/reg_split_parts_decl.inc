@@ -270,4 +270,18 @@ struct RegSplitParts {
     static void register_compile_instruction_dirty_primitives(PrimRegistrar add, Evaluator& ev);
     static void register_compile_incremental_stats_primitives(PrimRegistrar add, Evaluator& ev);
     static void register_compile_safety_stats_primitives(PrimRegistrar add, Evaluator& ev);
+    // Issue #5033: mutation / rollback / atomic-batch registration parts
+    // (defined in evaluator_primitives_mutation.cpp). Each part is one
+    // responsibility group and register_mutation_primitives calls them in the
+    // original single-function order.
+    static void register_mutation_counter_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_mutation_log_compact_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_mutation_log_pressure_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_mutation_history_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_mutation_rollback_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_mutation_log_summary_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_mutation_log_diff_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_atomic_batch_stats_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_atomic_batch_sv_stats_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_atomic_batch_snapshot_stats_primitive(PrimRegistrar add, Evaluator& ev);
 };
