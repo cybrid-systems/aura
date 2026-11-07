@@ -1517,6 +1517,604 @@ static std::vector<TopLevelForm4865> split_top_level_forms_4865(std::string_view
     return out;
 }
 
+// Sync --serve protocol, extracted from aura_main. The dispatcher only
+// selects the mode. Session ownership, the workspace tree, and every JSON
+// reply stay in these helpers.
+struct SyncServeState {
+    bool soft_shared_graph = false;
+    void* shared_workspace_tree = nullptr;
+    std::unordered_map<std::string, aura::compiler::CompilerService,
+                       aura::core::TransparentStringHash, std::equal_to<>>
+        sessions;
+    std::unordered_set<std::string> session_names;
+    std::string active_session = "default";
+    aura::compiler::CompilerService& resolve() {
+        if (soft_shared_graph)
+            return sessions.at("default");
+        return sessions[active_session];
+    }
+};
+
+using ServeCmd = std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                                    std::equal_to<>>;
+
+static void serve_json_session(SyncServeState& st, ServeCmd& cmd) {
+    auto act_it = cmd.find("action");
+    auto action = (act_it != cmd.end()) ? act_it->second : std::string{};
+
+    if (action == "list") {
+        std::println("{{\"status\":\"ok\",\"sessions\":[");
+        bool first = true;
+        for (const auto& sn : st.session_names) {
+            if (!first)
+                std::println(",");
+            first = false;
+            std::print("  \"{}\"", json_escape(sn));
+        }
+        std::println("],\"active\":\"{}\"}}", json_escape(st.active_session));
+        return;
+    }
+
+    if (action == "delete") {
+        auto name_it = cmd.find("name");
+        if (name_it == cmd.end() || name_it->second == "default") {
+            std::println("{{\"status\":\"error\",\"msg\":\"cannot delete default "
+                         "session\"}}");
+            return;
+        }
+        auto& sname = name_it->second;
+        // Issue #955: drop process-global registry entry BEFORE
+        // destroying the CompilerService (UAF otherwise).
+        if (st.session_names.count(sname)) {
+            aura::compiler::CompilerService::unregister_session(sname);
+            // Issue #955 observability (via active session metrics if present)
+            st.resolve().metrics().session_registry_unregisters_total.fetch_add(
+                1, std::memory_order_relaxed);
+            st.session_names.erase(sname);
+            if (!st.soft_shared_graph)
+                st.sessions.erase(sname);
+            if (st.active_session == sname) {
+                st.active_session = "default";
+            }
+            std::println("{{\"status\":\"deleted\",\"session\":\"{}\"}}", json_escape(sname));
+        } else {
+            std::println("{{\"status\":\"error\",\"msg\":\"session not found\"}}");
+        }
+        return;
+    }
+
+    // Default: activate / create session
+    auto name_it = cmd.find("name");
+    if (name_it == cmd.end()) {
+        std::println("{{\"status\":\"error\",\"msg\":\"missing name field\"}}");
+        return;
+    }
+    auto& sname = name_it->second;
+    auto real_name = (sname.find("new:") == 0) ? sname.substr(4) : sname;
+    bool created = st.session_names.insert(real_name).second;
+    if (created) {
+        if (st.soft_shared_graph) {
+            // Soft (#4047 B): alias named session → shared default CS
+            aura::compiler::CompilerService::register_session(real_name,
+                                                              &st.sessions.at("default"));
+        } else {
+            auto [it, _] = st.sessions.try_emplace(real_name);
+            it->second.set_session_id(real_name);
+            it->second.set_workspace_tree(st.shared_workspace_tree);
+            aura::compiler::CompilerService::register_session(real_name, &it->second);
+        }
+    }
+    if (created)
+        std::println("{{\"status\":\"created\",\"session\":\"{}\"}}", json_escape(real_name));
+    else
+        std::println("{{\"status\":\"ok\",\"session\":\"{}\"}}", json_escape(real_name));
+    st.active_session = real_name;
+    return;
+}
+
+static void serve_json_module(aura::compiler::CompilerService& cs, ServeCmd& cmd) {
+    auto action_it = cmd.find("action");
+    auto name_it = cmd.find("name");
+    if (action_it == cmd.end()) {
+        std::println("{{\"status\":\"error\",\"msg\":\"missing action field\"}}");
+        return;
+    }
+    auto& action = action_it->second;
+
+    if (action == "compile") {
+        auto code_it = cmd.find("code");
+        if (name_it == cmd.end() || code_it == cmd.end()) {
+            std::println("{{\"status\":\"error\",\"msg\":\"missing name or code field\"}}");
+            return;
+        }
+        auto result = cs.compile_module(name_it->second, code_it->second);
+        if (result) {
+            std::println("{{\"status\":\"ok\",\"module\":\"{}\"}}", json_escape(name_it->second));
+        } else {
+            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                         json_escape(result.error().message));
+        }
+    } else if (action == "unload") {
+        if (name_it == cmd.end()) {
+            std::println("{{\"status\":\"error\",\"msg\":\"missing name field\"}}");
+            return;
+        }
+        cs.unload_module(name_it->second);
+        std::println("{{\"status\":\"ok\",\"unloaded\":\"{}\"}}", json_escape(name_it->second));
+    } else if (action == "reload") {
+        if (name_it == cmd.end()) {
+            std::println("{{\"status\":\"error\",\"msg\":\"missing name field\"}}");
+            return;
+        }
+        auto result = cs.reload_module(name_it->second);
+        if (result) {
+            std::println("{{\"status\":\"ok\",\"reloaded\":\"{}\"}}", json_escape(name_it->second));
+        } else {
+            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
+                         json_escape(result.error().message));
+        }
+    } else if (action == "list") {
+        auto modules = cs.loaded_modules();
+        std::println("{{\"status\":\"ok\",\"modules\":[");
+        bool first = true;
+        for (auto& m : modules) {
+            if (!first)
+                std::println(",");
+            first = false;
+            std::print("  \"{}\"", json_escape(m));
+        }
+        std::println("]}}");
+    } else if (action == "stats") {
+        auto stats = cs.module_memory_stats();
+        std::println("{{\"status\":\"ok\",\"arenas\":[");
+        bool first = true;
+        for (auto& [name, s] : stats) {
+            if (!first)
+                std::println(",");
+            first = false;
+            std::print("  {{\"name\":\"{}\",\"used\":{},\"capacity\":{}}}", json_escape(name),
+                       s.used, s.capacity);
+        }
+        std::println("]}}");
+    } else {
+        std::println("{{\"status\":\"error\",\"msg\":\"unknown action: {}\"}}",
+                     json_escape(action));
+    }
+    return;
+}
+
+// Commands that do not take a code field. False means the verb still needs
+// the code-bearing dispatcher.
+static bool serve_json_immediate(aura::compiler::CompilerService& cs, ServeCmd& cmd,
+                                 const std::string& type) {
+    if (type == "mutate") {
+        // {"cmd": "mutate", "op": "record-patch", "node": 0, "op-name": "replace-type",
+        // "summary": "change type"}
+        auto op_it = cmd.find("op");      // mutation op name
+        auto node_it = cmd.find("node");  // target node ID
+        auto val_it = cmd.find("value");  // for replace-value
+        auto on_it = cmd.find("op-name"); // for record-patch: recorded op name
+        auto sum_it = cmd.find("summary");
+        if (op_it == cmd.end() || node_it == cmd.end()) {
+            std::println("{{\"status\":\"error\",\"msg\":\"missing op or node\"}}");
+        } else {
+            auto op_name = op_it->second;
+            auto node = std::stoll(node_it->second);
+            std::string sexpr;
+            if (op_name == "mutate:record-patch") {
+                // (mutate:record-patch node op-name summary)
+                std::string on = on_it != cmd.end() ? on_it->second : "patch";
+                std::string s = sum_it != cmd.end() ? sum_it->second : "";
+                sexpr = std::format("(mutate:record-patch {} \"{}\" \"{}\")", node, on, s);
+            } else if (op_name == "mutate:replace-value") {
+                // (mutate:replace-value node new-value summary)
+                std::string v = val_it != cmd.end() ? val_it->second : "0";
+                std::string s = sum_it != cmd.end() ? sum_it->second : "";
+                sexpr = std::format("(mutate:replace-value {} {} \"{}\")", node, v, s);
+            } else if (op_name == "mutate:replace-type") {
+                // (mutate:replace-type node type-string)
+                std::string t = val_it != cmd.end() ? val_it->second : "Dyn";
+                sexpr = std::format("(mutate:replace-type {} \"{}\")", node, t);
+            } else {
+                // Generic: pass through with all fields
+                std::string v = val_it != cmd.end() ? val_it->second : "0";
+                std::string s = sum_it != cmd.end() ? sum_it->second : "";
+                sexpr = std::format("({} {} {} \"{}\")", op_name, node, v, s);
+            }
+            auto mut_result = cs.typed_mutate(sexpr);
+            // Issue #147: typed-mutate response now
+            // includes invariant_status + invariant_diagnostics.
+            print_typed_mutate_response(mut_result);
+        }
+        return true;
+    }
+    if (type == "rollback") {
+        // {"cmd": "rollback", "id": 1}
+        auto id_it = cmd.find("id");
+        if (id_it == cmd.end()) {
+            std::println("{{\"status\":\"error\",\"msg\":\"missing id\"}}");
+        } else {
+            auto sexpr = std::format("(rollback {})", id_it->second);
+            auto result = cs.eval_on_current(sexpr);
+            std::println("{{\"status\":\"ok\",\"rolled_back\":{}}}",
+                         result
+                             ? (is_bool(*result) ? (as_bool(*result) ? "true" : "false") : "false")
+                             : "false");
+        }
+        return true;
+    }
+    if (type == "mutation-log") {
+        // {"cmd": "mutation-log", "node": 0}
+        auto node_it = cmd.find("node");
+        if (node_it == cmd.end()) {
+            std::println("{{\"status\":\"error\",\"msg\":\"missing node\"}}");
+        } else {
+            auto node = static_cast<aura::ast::NodeId>(std::stoul(node_it->second));
+            auto entries = cs.query_mutation_log(node);
+            std::println("{{\"status\":\"ok\",\"log\":[");
+            bool first = true;
+            for (auto& e : entries) {
+                if (!first)
+                    std::println(",");
+                first = false;
+                std::print("  {{\"id\":{},\"ts\":{},\"node\":{},\"op\":\"{}\","
+                           "\"old_type\":\"{}\",\"new_type\":\"{}\","
+                           "\"summary\":\"{}\",\"status\":\"{}\","
+                           "\"invariant_status\":\"{}\"}}",
+                           e.mutation_id, e.timestamp_ms, e.target_node,
+                           json_escape(e.operator_name), json_escape(e.old_type),
+                           json_escape(e.new_type), json_escape(e.summary), json_escape(e.status),
+                           json_escape(e.invariant_status));
+            }
+            std::println("]}}");
+        }
+        return true;
+    }
+
+    // Issue #157 Phase 5: jit:metrics --serve command.
+    // Reports the runtime telemetry counters (bypass_count
+    // / unchecked_fastpath_count / deopt_count). After
+    // Phase 2, bypass_count stays at 0 in steady state
+    // and acts as a regression detector — if a future
+    // change adds a new bypass site, the counter will
+    // tick and ops dashboards can flag it. Pass
+    // {"reset": true} to read + reset in one call (the
+    // response shows the pre-reset values).
+    if (type == "jit:metrics") {
+        auto reset_it = cmd.find("reset");
+        bool do_reset =
+            (reset_it != cmd.end() && (reset_it->second == "true" || reset_it->second == "1"));
+        auto bypass = aura_bypass_count();
+        auto fastpath = aura_unchecked_fastpath_count();
+        auto deopt = aura_deopt_count();
+        if (do_reset) {
+            aura_counters_reset();
+        }
+        std::println("{{\"status\":\"ok\",\"metrics\":{{\"bypass_count\":{},"
+                     "\"unchecked_fastpath_count\":{},\"deopt_count\":{}}},"
+                     "\"reset\":{}}}",
+                     bypass, fastpath, deopt, do_reset ? "true" : "false");
+        return true;
+    }
+
+    // ── Configuration commands ─────────────────────────────
+    if (type == "config") {
+        auto key_it = cmd.find("key");
+        auto val_it = cmd.find("value");
+        if (key_it != cmd.end() && val_it != cmd.end()) {
+            auto& key = key_it->second;
+            if (key == "strict") {
+                cs.set_strict_mode(val_it->second == "true" || val_it->second == "1");
+                auto val_str = val_it->second == "true" ? "true" : "false";
+                std::string out =
+                    "{\"status\":\"ok\",\"config\":{\"" + json_escape(key) + "\":" + val_str + "}}";
+                std::println("{}", out);
+                return true;
+            }
+            std::println("{{\"status\":\"error\",\"msg\":\"unknown config key: {}\"}}",
+                         json_escape(key));
+        } else {
+            std::println("{{\"status\":\"error\",\"msg\":\"missing key or value fields\"}}");
+        }
+        return true;
+    }
+    return false;
+}
+
+static void serve_json_code(aura::compiler::CompilerService& cs, ServeCmd& cmd,
+                            const std::string& type) {
+    auto code_it = cmd.find("code");
+    if (code_it == cmd.end()) {
+        std::println("{{\"status\":\"error\",\"msg\":\"missing code field\"}}");
+        return;
+    }
+    auto& code = code_it->second;
+
+    if (type == "defmacro") {
+        auto result = cs.define_function(code);
+        if (result) {
+            auto name = cmd.count("name") ? cmd["name"] : "<macro>";
+            std::println("{{\"status\":\"defined\",\"name\":\"{}\"}}", json_escape(name));
+        } else {
+            auto& d = result.error();
+            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}", json_escape(d.format()));
+        }
+    } else if (type == "define") {
+        auto result = cs.define_function(code);
+        if (result) {
+            auto name = cmd.count("name") ? cmd["name"] : "<lambda>";
+            std::println("{{\"status\":\"defined\",\"name\":\"{}\"}}", json_escape(name));
+        } else {
+            auto& d = result.error();
+            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}", json_escape(d.format()));
+        }
+    } else if (type == "exec") {
+        // Issue #4702: split the chunk into its top-level
+        // forms and evaluate them one at a time. A
+        // multi-form chunk used to be evaluated as ONE
+        // program: the compiler lowers a multi-form program
+        // (Begin root) to IR, where the top-level defines
+        // become IR-local cells that die with the IR module
+        // — so the defines never reached the session env
+        // and the NEXT exec failed with "unbound variable".
+        // One form per eval makes every top-level define a
+        // single-form program, which the compiler binds in
+        // the session env. An unbalanced chunk is rejected
+        // before anything runs (it used to be accepted
+        // silently and to swallow the forms after it).
+        auto split = aura::serve::detail::split_top_level_forms(code);
+        if (!split.ok()) {
+            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}", json_escape(split.error));
+            return;
+        }
+        // Timeout-based eval: run in async future, wait up to 30s
+        int timeout_sec = 30;
+        auto timeout_it = cmd.find("timeout");
+        if (timeout_it != cmd.end()) {
+            timeout_sec =
+                aura::core::parse_leading_int<int>(timeout_it->second).value_or(timeout_sec);
+        }
+        auto future = std::async(std::launch::async, [&]() {
+            return aura::serve::detail::eval_top_level_forms(
+                split.forms, [&](std::string_view form) { return cs.exec_with_cache(form); });
+        });
+        auto status = future.wait_for(std::chrono::seconds(timeout_sec));
+        if (status == std::future_status::timeout) {
+            std::println("{{\"status\":\"timeout\",\"msg\":\"exec timed out ({}s)\"}}",
+                         timeout_sec);
+        } else {
+            auto result = future.get();
+            if (!result) {
+                // The chunk held no top-level form.
+                std::println("{{\"status\":\"error\",\"msg\":\"parse error: no "
+                             "complete form in exec chunk\"}}");
+            } else if (!*result) {
+                auto& d = (*result).error();
+                std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}", json_escape(d.format()));
+            } else {
+                try {
+                    auto& v = **result;
+                    if (aura::compiler::types::is_closure(v)) {
+                        std::println("{{\"status\":\"closure\",\"value\":\"#<"
+                                     "procedure>\"}}");
+                    } else {
+                        std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
+                                     json_escape(fmt_val(v, cs)));
+                    }
+                } catch (const std::bad_alloc&) {
+                    std::println("{{\"status\":\"error\",\"msg\":\"out of memory\"}}");
+                }
+            }
+        }
+    } else if (type == "redefine") {
+        auto name = cmd.count("name") ? cmd["name"] : "<lambda>";
+        auto result = cs.define_function(code);
+        if (result) {
+            std::println("{{\"status\":\"redefined\",\"name\":\"{}\"}}", json_escape(name));
+        } else {
+            auto& d = result.error();
+            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}", json_escape(d.format()));
+        }
+    } else if (type == "unparse") {
+        auto alloc = cs.arena().allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto ux_pr = aura::parser::parse_to_flat(code, flat, pool);
+        if (!ux_pr.success) {
+            std::println("{{\"status\":\"error\",\"msg\":\"parse error\"}}");
+        } else {
+            flat.root = ux_pr.root;
+            auto src = aura::compiler::unparse_node(flat, pool, flat.root);
+            std::println("{{\"status\":\"ok\",\"source\":\"{}\"}}", json_escape(src));
+        }
+    } else if (type == "write") {
+        auto write_path = cmd.count("file") ? cmd["file"] : "";
+        if (write_path.empty()) {
+            std::println("{{\"status\":\"error\",\"msg\":\"missing file field\"}}");
+        } else {
+            auto w_alloc = cs.arena().allocator();
+            aura::ast::StringPool w_pool(w_alloc);
+            aura::ast::FlatAST w_flat(w_alloc);
+            auto w_pr = aura::parser::parse_to_flat(code, w_flat, w_pool);
+            if (!w_pr.success) {
+                std::println("{{\"status\":\"error\",\"msg\":\"parse error\"}}");
+            } else {
+                w_flat.root = w_pr.root;
+                auto w_src = aura::compiler::unparse_node(w_flat, w_pool, w_flat.root);
+                std::ofstream w_f(write_path);
+                if (w_f) {
+                    w_f << w_src << "\n";
+                    std::println("{{\"status\":\"ok\",\"file\":\"{}\"}}", json_escape(write_path));
+                } else {
+                    std::println("{{\"status\":\"error\",\"msg\":\"cannot write: {}\"}}",
+                                 json_escape(write_path));
+                }
+            }
+        }
+    } else if (type == "query") {
+        // Eval code and return result (like exec, but simpler)
+        auto future = std::async(std::launch::async, [&]() { return cs.exec_with_cache(code); });
+        auto status = future.wait_for(std::chrono::seconds(30));
+        if (status == std::future_status::timeout) {
+            std::println("{{\"status\":\"timeout\",\"msg\":\"query timed out (30s)\"}}");
+        } else {
+            auto result = future.get();
+            if (result) {
+                auto& v = *result;
+                if (aura::compiler::types::is_closure(v)) {
+                    std::println("{{\"status\":\"ok\",\"value\":\"#<procedure>\"}}");
+                } else {
+                    std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
+                                 json_escape(fmt_val(v, cs)));
+                }
+            } else {
+                auto& d = result.error();
+                std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}", json_escape(d.format()));
+            }
+        }
+    } else if (type == "mutate") {
+        // {"cmd": "mutate", "op": "replace-value", "node": 0, "value": 42,
+        // "summary": "change x"}
+        auto op_it = cmd.find("op");
+        auto node_it = cmd.find("node");
+        auto val_it = cmd.find("value");
+        auto sum_it = cmd.find("summary");
+        if (op_it == cmd.end() || node_it == cmd.end()) {
+            std::println("{{\"status\":\"error\",\"msg\":\"missing op or node\"}}");
+        } else {
+            auto node = std::stoll(node_it->second);
+            auto sexpr = std::format(
+                "({} {} {}{}{})", op_it->second, node, val_it != cmd.end() ? val_it->second : "0",
+                sum_it != cmd.end() ? " \"" + sum_it->second + "\"" : " \"\"", "");
+            // Evaluate mutation against the persistent AST
+            auto mut_result = cs.typed_mutate(sexpr);
+            // Issue #147: typed-mutate response now
+            // includes invariant_status + invariant_diagnostics.
+            print_typed_mutate_response(mut_result);
+        }
+    } else if (type == "rollback") {
+        // {"cmd": "rollback", "id": 1}
+        auto id_it = cmd.find("id");
+        if (id_it == cmd.end()) {
+            std::println("{{\"status\":\"error\",\"msg\":\"missing id\"}}");
+        } else {
+            auto sexpr = std::format("(rollback {})", id_it->second);
+            auto result = cs.eval_on_current(sexpr);
+            std::println("{{\"status\":\"ok\",\"rolled_back\":{}}}",
+                         result
+                             ? (is_bool(*result) ? (as_bool(*result) ? "true" : "false") : "false")
+                             : "false");
+        }
+    } else if (type == "mutation-log") {
+        // {"cmd": "mutation-log", "node": 0}
+        auto node_it = cmd.find("node");
+        if (node_it == cmd.end()) {
+            std::println("{{\"status\":\"error\",\"msg\":\"missing node\"}}");
+        } else {
+            auto node = static_cast<aura::ast::NodeId>(std::stoul(node_it->second));
+            auto entries = cs.query_mutation_log(node);
+            std::println("{{\"status\":\"ok\",\"log\":[");
+            bool first = true;
+            for (auto& e : entries) {
+                if (!first)
+                    std::println(",");
+                first = false;
+                std::print("  {{\"id\":{},\"ts\":{},\"node\":{},\"op\":\"{}\","
+                           "\"old_type\":\"{}\",\"new_type\":\"{}\","
+                           "\"summary\":\"{}\",\"status\":\"{}\","
+                           "\"invariant_status\":\"{}\"}}",
+                           e.mutation_id, e.timestamp_ms, e.target_node,
+                           json_escape(e.operator_name), json_escape(e.old_type),
+                           json_escape(e.new_type), json_escape(e.summary), json_escape(e.status),
+                           json_escape(e.invariant_status));
+            }
+            std::println("]}}");
+        }
+    } else {
+        std::println("{{\"status\":\"error\",\"msg\":\"unknown command: {}\"}}", json_escape(type));
+    }
+}
+
+static int run_sync_serve() {
+    SyncServeState st;
+    st.soft_shared_graph = !aura::serve::production_abi_selfcheck_required();
+    st.shared_workspace_tree = aura::compiler::Evaluator::create_workspace_tree();
+    st.sessions.try_emplace(st.active_session);
+    st.session_names.insert(st.active_session);
+    {
+        auto& default_cs = st.sessions[st.active_session];
+        default_cs.set_session_id(st.active_session);
+        default_cs.set_workspace_tree(st.shared_workspace_tree);
+        aura::compiler::CompilerService::register_session(st.active_session, &default_cs);
+    }
+    if (st.soft_shared_graph) {
+        static bool soft_serve_b_logged = false;
+        if (!soft_serve_b_logged) {
+            soft_serve_b_logged = true;
+            std::println(std::cerr, "aura: Soft shared_workspace (#4047 B): sync --serve named "
+                                    "sessions share one CompilerService + workspace_tree — "
+                                    "orch→project bindings visible. NOT production isolation.");
+        }
+    }
+
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        if (line.empty())
+            continue;
+
+        auto trimmed = line;
+        auto first_non_space = trimmed.find_first_not_of(" \t");
+        if (first_non_space != std::string::npos && trimmed[first_non_space] == '{') {
+            // ── JSON command protocol ──────────────────────────
+            auto json_input = trimmed.substr(first_non_space);
+            auto cmd = parse_json_command(json_input);
+            if (cmd.empty()) {
+                std::println("{{\"status\":\"parse-error\",\"msg\":\"invalid JSON command\"}}");
+                continue;
+            }
+            auto cmd_type = cmd.find("cmd");
+            if (cmd_type == cmd.end()) {
+                std::println("{{\"status\":\"error\",\"msg\":\"missing cmd field\"}}");
+                continue;
+            }
+            auto& type = cmd_type->second;
+            if (type == "session") {
+                serve_json_session(st, cmd);
+                continue;
+            }
+            if (type == "module") {
+                serve_json_module(st.resolve(), cmd);
+                continue;
+            }
+            auto& cs = st.resolve();
+            aura::messaging::g_current_compiler_service = &cs;
+            if (serve_json_immediate(cs, cmd, type))
+                continue;
+            serve_json_code(cs, cmd, type);
+        } else {
+            // ── Plain S-expression (backward compatible) ────────
+            auto& cs = st.resolve();
+            aura::messaging::g_current_compiler_service = &cs;
+            auto r = cs.eval(line);
+            if (r) {
+                std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
+                             json_escape(fmt_val(*r, cs)));
+            } else {
+                auto& d = r.error();
+                std::println("{{\"status\":\"error\",\"kind\":{},\"msg\":\"{}\",\"node_id\":{}}}",
+                             static_cast<int>(d.kind), json_escape(d.format()), d.node_id);
+                // Auto-fix path removed: it depended on the per-eval
+                // `flat` / `pool` (now produced by cs.eval internally).
+                // Without them, lower_to_ir / AutoFixEngine have no
+                // FlatAST to operate on. Surfacing the error directly
+                // is sufficient for the --serve JSON protocol.
+            }
+        }
+    }
+    aura::compiler::Evaluator::destroy_workspace_tree(st.shared_workspace_tree);
+    return 0;
+}
+
 static int aura_main(int argc, char* argv[]) {
     // Issue #137: register an atexit handler that frees the
     // runtime's hash tables. The `hash` primitive in the
@@ -2071,621 +2669,9 @@ static int aura_main(int argc, char* argv[]) {
     // ── --serve: persistent JSON-line compile-fix loop ─────────
     // Each line of output is JSON. Agent reads with JSON.parse(line).
     // Messages: ok, error, fix, fixed, fix-fail
-    if (argc > 1 && std::string_view(argv[1]) == "--serve") {
-        // ── Multi-session (#4047 B Soft shared graph) ────────
-        // Soft (!production_abi_selfcheck_required): one CompilerService
-        // aliases all named sessions so orch→project (define)/(resolve) and
-        // FlatAST bindings share one graph. Always inject shared_workspace_tree
-        // (parity with Soft Ready async). Production-defaults keep isolated
-        // per-session CompilerServices; do not stamp shared_ast from tree alone.
-        const bool soft_shared_graph = !aura::serve::production_abi_selfcheck_required();
-        void* shared_workspace_tree = aura::compiler::Evaluator::create_workspace_tree();
+    if (argc > 1 && std::string_view(argv[1]) == "--serve")
+        return run_sync_serve();
 
-        std::unordered_map<std::string, aura::compiler::CompilerService,
-                           aura::core::TransparentStringHash, std::equal_to<>>
-            sessions;
-        std::unordered_set<std::string> session_names;
-        std::string active_session = "default";
-        sessions.try_emplace(active_session);
-        session_names.insert(active_session);
-        {
-            auto& default_cs = sessions[active_session];
-            default_cs.set_session_id(active_session);
-            default_cs.set_workspace_tree(shared_workspace_tree);
-            aura::compiler::CompilerService::register_session(active_session, &default_cs);
-        }
-        if (soft_shared_graph) {
-            static bool soft_serve_b_logged = false;
-            if (!soft_serve_b_logged) {
-                soft_serve_b_logged = true;
-                std::println(std::cerr, "aura: Soft shared_workspace (#4047 B): sync --serve named "
-                                        "sessions share one CompilerService + workspace_tree — "
-                                        "orch→project bindings visible. NOT production isolation.");
-            }
-        }
-
-        auto resolve_cs = [&]() -> aura::compiler::CompilerService& {
-            if (soft_shared_graph)
-                return sessions.at("default");
-            return sessions[active_session];
-        };
-
-        std::string line;
-        while (std::getline(std::cin, line)) {
-            if (line.empty())
-                continue;
-
-            auto trimmed = line;
-            auto first_non_space = trimmed.find_first_not_of(" \t");
-            if (first_non_space != std::string::npos && trimmed[first_non_space] == '{') {
-                // ── JSON command protocol ──────────────────────────
-                auto json_input = trimmed.substr(first_non_space);
-                auto cmd = parse_json_command(json_input);
-                if (cmd.empty()) {
-                    std::println("{{\"status\":\"parse-error\",\"msg\":\"invalid JSON command\"}}");
-                    continue;
-                }
-                auto cmd_type = cmd.find("cmd");
-                if (cmd_type == cmd.end()) {
-                    std::println("{{\"status\":\"error\",\"msg\":\"missing cmd field\"}}");
-                    continue;
-                }
-                auto& type = cmd_type->second;
-
-                // Session management
-                if (type == "session") {
-                    auto act_it = cmd.find("action");
-                    auto action = (act_it != cmd.end()) ? act_it->second : std::string{};
-
-                    if (action == "list") {
-                        std::println("{{\"status\":\"ok\",\"sessions\":[");
-                        bool first = true;
-                        for (const auto& sn : session_names) {
-                            if (!first)
-                                std::println(",");
-                            first = false;
-                            std::print("  \"{}\"", json_escape(sn));
-                        }
-                        std::println("],\"active\":\"{}\"}}", json_escape(active_session));
-                        continue;
-                    }
-
-                    if (action == "delete") {
-                        auto name_it = cmd.find("name");
-                        if (name_it == cmd.end() || name_it->second == "default") {
-                            std::println("{{\"status\":\"error\",\"msg\":\"cannot delete default "
-                                         "session\"}}");
-                            continue;
-                        }
-                        auto& sname = name_it->second;
-                        // Issue #955: drop process-global registry entry BEFORE
-                        // destroying the CompilerService (UAF otherwise).
-                        if (session_names.count(sname)) {
-                            aura::compiler::CompilerService::unregister_session(sname);
-                            // Issue #955 observability (via active session metrics if present)
-                            resolve_cs().metrics().session_registry_unregisters_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                            session_names.erase(sname);
-                            if (!soft_shared_graph)
-                                sessions.erase(sname);
-                            if (active_session == sname) {
-                                active_session = "default";
-                            }
-                            std::println("{{\"status\":\"deleted\",\"session\":\"{}\"}}",
-                                         json_escape(sname));
-                        } else {
-                            std::println("{{\"status\":\"error\",\"msg\":\"session not found\"}}");
-                        }
-                        continue;
-                    }
-
-                    // Default: activate / create session
-                    auto name_it = cmd.find("name");
-                    if (name_it == cmd.end()) {
-                        std::println("{{\"status\":\"error\",\"msg\":\"missing name field\"}}");
-                        continue;
-                    }
-                    auto& sname = name_it->second;
-                    auto real_name = (sname.find("new:") == 0) ? sname.substr(4) : sname;
-                    bool created = session_names.insert(real_name).second;
-                    if (created) {
-                        if (soft_shared_graph) {
-                            // Soft (#4047 B): alias named session → shared default CS
-                            aura::compiler::CompilerService::register_session(
-                                real_name, &sessions.at("default"));
-                        } else {
-                            auto [it, _] = sessions.try_emplace(real_name);
-                            it->second.set_session_id(real_name);
-                            it->second.set_workspace_tree(shared_workspace_tree);
-                            aura::compiler::CompilerService::register_session(real_name,
-                                                                              &it->second);
-                        }
-                    }
-                    if (created)
-                        std::println("{{\"status\":\"created\",\"session\":\"{}\"}}",
-                                     json_escape(real_name));
-                    else
-                        std::println("{{\"status\":\"ok\",\"session\":\"{}\"}}",
-                                     json_escape(real_name));
-                    active_session = real_name;
-                    continue;
-                }
-
-                // Module management (ArenaGroup)
-                if (type == "module") {
-                    auto& cs = resolve_cs();
-                    auto action_it = cmd.find("action");
-                    auto name_it = cmd.find("name");
-                    if (action_it == cmd.end()) {
-                        std::println("{{\"status\":\"error\",\"msg\":\"missing action field\"}}");
-                        continue;
-                    }
-                    auto& action = action_it->second;
-
-                    if (action == "compile") {
-                        auto code_it = cmd.find("code");
-                        if (name_it == cmd.end() || code_it == cmd.end()) {
-                            std::println(
-                                "{{\"status\":\"error\",\"msg\":\"missing name or code field\"}}");
-                            continue;
-                        }
-                        auto result = cs.compile_module(name_it->second, code_it->second);
-                        if (result) {
-                            std::println("{{\"status\":\"ok\",\"module\":\"{}\"}}",
-                                         json_escape(name_it->second));
-                        } else {
-                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                         json_escape(result.error().message));
-                        }
-                    } else if (action == "unload") {
-                        if (name_it == cmd.end()) {
-                            std::println("{{\"status\":\"error\",\"msg\":\"missing name field\"}}");
-                            continue;
-                        }
-                        cs.unload_module(name_it->second);
-                        std::println("{{\"status\":\"ok\",\"unloaded\":\"{}\"}}",
-                                     json_escape(name_it->second));
-                    } else if (action == "reload") {
-                        if (name_it == cmd.end()) {
-                            std::println("{{\"status\":\"error\",\"msg\":\"missing name field\"}}");
-                            continue;
-                        }
-                        auto result = cs.reload_module(name_it->second);
-                        if (result) {
-                            std::println("{{\"status\":\"ok\",\"reloaded\":\"{}\"}}",
-                                         json_escape(name_it->second));
-                        } else {
-                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                         json_escape(result.error().message));
-                        }
-                    } else if (action == "list") {
-                        auto modules = cs.loaded_modules();
-                        std::println("{{\"status\":\"ok\",\"modules\":[");
-                        bool first = true;
-                        for (auto& m : modules) {
-                            if (!first)
-                                std::println(",");
-                            first = false;
-                            std::print("  \"{}\"", json_escape(m));
-                        }
-                        std::println("]}}");
-                    } else if (action == "stats") {
-                        auto stats = cs.module_memory_stats();
-                        std::println("{{\"status\":\"ok\",\"arenas\":[");
-                        bool first = true;
-                        for (auto& [name, s] : stats) {
-                            if (!first)
-                                std::println(",");
-                            first = false;
-                            std::print("  {{\"name\":\"{}\",\"used\":{},\"capacity\":{}}}",
-                                       json_escape(name), s.used, s.capacity);
-                        }
-                        std::println("]}}");
-                    } else {
-                        std::println("{{\"status\":\"error\",\"msg\":\"unknown action: {}\"}}",
-                                     json_escape(action));
-                    }
-                    continue;
-                }
-
-                // Look up the current session
-                auto& cs = resolve_cs();
-                aura::messaging::g_current_compiler_service = &cs;
-
-                // Commands that don't need a code field
-                if (type == "mutate") {
-                    // {"cmd": "mutate", "op": "record-patch", "node": 0, "op-name": "replace-type",
-                    // "summary": "change type"}
-                    auto op_it = cmd.find("op");      // mutation op name
-                    auto node_it = cmd.find("node");  // target node ID
-                    auto val_it = cmd.find("value");  // for replace-value
-                    auto on_it = cmd.find("op-name"); // for record-patch: recorded op name
-                    auto sum_it = cmd.find("summary");
-                    if (op_it == cmd.end() || node_it == cmd.end()) {
-                        std::println("{{\"status\":\"error\",\"msg\":\"missing op or node\"}}");
-                    } else {
-                        auto op_name = op_it->second;
-                        auto node = std::stoll(node_it->second);
-                        std::string sexpr;
-                        if (op_name == "mutate:record-patch") {
-                            // (mutate:record-patch node op-name summary)
-                            std::string on = on_it != cmd.end() ? on_it->second : "patch";
-                            std::string s = sum_it != cmd.end() ? sum_it->second : "";
-                            sexpr =
-                                std::format("(mutate:record-patch {} \"{}\" \"{}\")", node, on, s);
-                        } else if (op_name == "mutate:replace-value") {
-                            // (mutate:replace-value node new-value summary)
-                            std::string v = val_it != cmd.end() ? val_it->second : "0";
-                            std::string s = sum_it != cmd.end() ? sum_it->second : "";
-                            sexpr = std::format("(mutate:replace-value {} {} \"{}\")", node, v, s);
-                        } else if (op_name == "mutate:replace-type") {
-                            // (mutate:replace-type node type-string)
-                            std::string t = val_it != cmd.end() ? val_it->second : "Dyn";
-                            sexpr = std::format("(mutate:replace-type {} \"{}\")", node, t);
-                        } else {
-                            // Generic: pass through with all fields
-                            std::string v = val_it != cmd.end() ? val_it->second : "0";
-                            std::string s = sum_it != cmd.end() ? sum_it->second : "";
-                            sexpr = std::format("({} {} {} \"{}\")", op_name, node, v, s);
-                        }
-                        auto mut_result = cs.typed_mutate(sexpr);
-                        // Issue #147: typed-mutate response now
-                        // includes invariant_status + invariant_diagnostics.
-                        print_typed_mutate_response(mut_result);
-                    }
-                    continue;
-                }
-                if (type == "rollback") {
-                    // {"cmd": "rollback", "id": 1}
-                    auto id_it = cmd.find("id");
-                    if (id_it == cmd.end()) {
-                        std::println("{{\"status\":\"error\",\"msg\":\"missing id\"}}");
-                    } else {
-                        auto sexpr = std::format("(rollback {})", id_it->second);
-                        auto result = cs.eval_on_current(sexpr);
-                        std::println("{{\"status\":\"ok\",\"rolled_back\":{}}}",
-                                     result
-                                         ? (is_bool(*result) ? (as_bool(*result) ? "true" : "false")
-                                                             : "false")
-                                         : "false");
-                    }
-                    continue;
-                }
-                if (type == "mutation-log") {
-                    // {"cmd": "mutation-log", "node": 0}
-                    auto node_it = cmd.find("node");
-                    if (node_it == cmd.end()) {
-                        std::println("{{\"status\":\"error\",\"msg\":\"missing node\"}}");
-                    } else {
-                        auto node = static_cast<aura::ast::NodeId>(std::stoul(node_it->second));
-                        auto entries = cs.query_mutation_log(node);
-                        std::println("{{\"status\":\"ok\",\"log\":[");
-                        bool first = true;
-                        for (auto& e : entries) {
-                            if (!first)
-                                std::println(",");
-                            first = false;
-                            std::print("  {{\"id\":{},\"ts\":{},\"node\":{},\"op\":\"{}\","
-                                       "\"old_type\":\"{}\",\"new_type\":\"{}\","
-                                       "\"summary\":\"{}\",\"status\":\"{}\","
-                                       "\"invariant_status\":\"{}\"}}",
-                                       e.mutation_id, e.timestamp_ms, e.target_node,
-                                       json_escape(e.operator_name), json_escape(e.old_type),
-                                       json_escape(e.new_type), json_escape(e.summary),
-                                       json_escape(e.status), json_escape(e.invariant_status));
-                        }
-                        std::println("]}}");
-                    }
-                    continue;
-                }
-
-                // Issue #157 Phase 5: jit:metrics --serve command.
-                // Reports the runtime telemetry counters (bypass_count
-                // / unchecked_fastpath_count / deopt_count). After
-                // Phase 2, bypass_count stays at 0 in steady state
-                // and acts as a regression detector — if a future
-                // change adds a new bypass site, the counter will
-                // tick and ops dashboards can flag it. Pass
-                // {"reset": true} to read + reset in one call (the
-                // response shows the pre-reset values).
-                if (type == "jit:metrics") {
-                    auto reset_it = cmd.find("reset");
-                    bool do_reset = (reset_it != cmd.end() &&
-                                     (reset_it->second == "true" || reset_it->second == "1"));
-                    auto bypass = aura_bypass_count();
-                    auto fastpath = aura_unchecked_fastpath_count();
-                    auto deopt = aura_deopt_count();
-                    if (do_reset) {
-                        aura_counters_reset();
-                    }
-                    std::println("{{\"status\":\"ok\",\"metrics\":{{\"bypass_count\":{},"
-                                 "\"unchecked_fastpath_count\":{},\"deopt_count\":{}}},"
-                                 "\"reset\":{}}}",
-                                 bypass, fastpath, deopt, do_reset ? "true" : "false");
-                    continue;
-                }
-
-                // ── Configuration commands ─────────────────────────────
-                if (type == "config") {
-                    auto key_it = cmd.find("key");
-                    auto val_it = cmd.find("value");
-                    if (key_it != cmd.end() && val_it != cmd.end()) {
-                        auto& key = key_it->second;
-                        if (key == "strict") {
-                            cs.set_strict_mode(val_it->second == "true" || val_it->second == "1");
-                            auto val_str = val_it->second == "true" ? "true" : "false";
-                            std::string out = "{\"status\":\"ok\",\"config\":{\"" +
-                                              json_escape(key) + "\":" + val_str + "}}";
-                            std::println("{}", out);
-                            continue;
-                        }
-                        std::println("{{\"status\":\"error\",\"msg\":\"unknown config key: {}\"}}",
-                                     json_escape(key));
-                    } else {
-                        std::println(
-                            "{{\"status\":\"error\",\"msg\":\"missing key or value fields\"}}");
-                    }
-                    continue;
-                }
-
-                {
-                    auto code_it = cmd.find("code");
-                    if (code_it == cmd.end()) {
-                        std::println("{{\"status\":\"error\",\"msg\":\"missing code field\"}}");
-                        continue;
-                    }
-                    auto& code = code_it->second;
-
-                    if (type == "defmacro") {
-                        auto result = cs.define_function(code);
-                        if (result) {
-                            auto name = cmd.count("name") ? cmd["name"] : "<macro>";
-                            std::println("{{\"status\":\"defined\",\"name\":\"{}\"}}",
-                                         json_escape(name));
-                        } else {
-                            auto& d = result.error();
-                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                         json_escape(d.format()));
-                        }
-                    } else if (type == "define") {
-                        auto result = cs.define_function(code);
-                        if (result) {
-                            auto name = cmd.count("name") ? cmd["name"] : "<lambda>";
-                            std::println("{{\"status\":\"defined\",\"name\":\"{}\"}}",
-                                         json_escape(name));
-                        } else {
-                            auto& d = result.error();
-                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                         json_escape(d.format()));
-                        }
-                    } else if (type == "exec") {
-                        // Issue #4702: split the chunk into its top-level
-                        // forms and evaluate them one at a time. A
-                        // multi-form chunk used to be evaluated as ONE
-                        // program: the compiler lowers a multi-form program
-                        // (Begin root) to IR, where the top-level defines
-                        // become IR-local cells that die with the IR module
-                        // — so the defines never reached the session env
-                        // and the NEXT exec failed with "unbound variable".
-                        // One form per eval makes every top-level define a
-                        // single-form program, which the compiler binds in
-                        // the session env. An unbalanced chunk is rejected
-                        // before anything runs (it used to be accepted
-                        // silently and to swallow the forms after it).
-                        auto split = aura::serve::detail::split_top_level_forms(code);
-                        if (!split.ok()) {
-                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                         json_escape(split.error));
-                            continue;
-                        }
-                        // Timeout-based eval: run in async future, wait up to 30s
-                        int timeout_sec = 30;
-                        auto timeout_it = cmd.find("timeout");
-                        if (timeout_it != cmd.end()) {
-                            timeout_sec = aura::core::parse_leading_int<int>(timeout_it->second)
-                                              .value_or(timeout_sec);
-                        }
-                        auto future = std::async(std::launch::async, [&]() {
-                            return aura::serve::detail::eval_top_level_forms(
-                                split.forms,
-                                [&](std::string_view form) { return cs.exec_with_cache(form); });
-                        });
-                        auto status = future.wait_for(std::chrono::seconds(timeout_sec));
-                        if (status == std::future_status::timeout) {
-                            std::println(
-                                "{{\"status\":\"timeout\",\"msg\":\"exec timed out ({}s)\"}}",
-                                timeout_sec);
-                        } else {
-                            auto result = future.get();
-                            if (!result) {
-                                // The chunk held no top-level form.
-                                std::println("{{\"status\":\"error\",\"msg\":\"parse error: no "
-                                             "complete form in exec chunk\"}}");
-                            } else if (!*result) {
-                                auto& d = (*result).error();
-                                std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                             json_escape(d.format()));
-                            } else {
-                                try {
-                                    auto& v = **result;
-                                    if (aura::compiler::types::is_closure(v)) {
-                                        std::println("{{\"status\":\"closure\",\"value\":\"#<"
-                                                     "procedure>\"}}");
-                                    } else {
-                                        std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
-                                                     json_escape(fmt_val(v, cs)));
-                                    }
-                                } catch (const std::bad_alloc&) {
-                                    std::println(
-                                        "{{\"status\":\"error\",\"msg\":\"out of memory\"}}");
-                                }
-                            }
-                        }
-                    } else if (type == "redefine") {
-                        auto name = cmd.count("name") ? cmd["name"] : "<lambda>";
-                        auto result = cs.define_function(code);
-                        if (result) {
-                            std::println("{{\"status\":\"redefined\",\"name\":\"{}\"}}",
-                                         json_escape(name));
-                        } else {
-                            auto& d = result.error();
-                            std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                         json_escape(d.format()));
-                        }
-                    } else if (type == "unparse") {
-                        auto alloc = cs.arena().allocator();
-                        aura::ast::StringPool pool(alloc);
-                        aura::ast::FlatAST flat(alloc);
-                        auto ux_pr = aura::parser::parse_to_flat(code, flat, pool);
-                        if (!ux_pr.success) {
-                            std::println("{{\"status\":\"error\",\"msg\":\"parse error\"}}");
-                        } else {
-                            flat.root = ux_pr.root;
-                            auto src = aura::compiler::unparse_node(flat, pool, flat.root);
-                            std::println("{{\"status\":\"ok\",\"source\":\"{}\"}}",
-                                         json_escape(src));
-                        }
-                    } else if (type == "write") {
-                        auto write_path = cmd.count("file") ? cmd["file"] : "";
-                        if (write_path.empty()) {
-                            std::println("{{\"status\":\"error\",\"msg\":\"missing file field\"}}");
-                        } else {
-                            auto w_alloc = cs.arena().allocator();
-                            aura::ast::StringPool w_pool(w_alloc);
-                            aura::ast::FlatAST w_flat(w_alloc);
-                            auto w_pr = aura::parser::parse_to_flat(code, w_flat, w_pool);
-                            if (!w_pr.success) {
-                                std::println("{{\"status\":\"error\",\"msg\":\"parse error\"}}");
-                            } else {
-                                w_flat.root = w_pr.root;
-                                auto w_src =
-                                    aura::compiler::unparse_node(w_flat, w_pool, w_flat.root);
-                                std::ofstream w_f(write_path);
-                                if (w_f) {
-                                    w_f << w_src << "\n";
-                                    std::println("{{\"status\":\"ok\",\"file\":\"{}\"}}",
-                                                 json_escape(write_path));
-                                } else {
-                                    std::println(
-                                        "{{\"status\":\"error\",\"msg\":\"cannot write: {}\"}}",
-                                        json_escape(write_path));
-                                }
-                            }
-                        }
-                    } else if (type == "query") {
-                        // Eval code and return result (like exec, but simpler)
-                        auto future = std::async(std::launch::async,
-                                                 [&]() { return cs.exec_with_cache(code); });
-                        auto status = future.wait_for(std::chrono::seconds(30));
-                        if (status == std::future_status::timeout) {
-                            std::println(
-                                "{{\"status\":\"timeout\",\"msg\":\"query timed out (30s)\"}}");
-                        } else {
-                            auto result = future.get();
-                            if (result) {
-                                auto& v = *result;
-                                if (aura::compiler::types::is_closure(v)) {
-                                    std::println(
-                                        "{{\"status\":\"ok\",\"value\":\"#<procedure>\"}}");
-                                } else {
-                                    std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
-                                                 json_escape(fmt_val(v, cs)));
-                                }
-                            } else {
-                                auto& d = result.error();
-                                std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}",
-                                             json_escape(d.format()));
-                            }
-                        }
-                    } else if (type == "mutate") {
-                        // {"cmd": "mutate", "op": "replace-value", "node": 0, "value": 42,
-                        // "summary": "change x"}
-                        auto op_it = cmd.find("op");
-                        auto node_it = cmd.find("node");
-                        auto val_it = cmd.find("value");
-                        auto sum_it = cmd.find("summary");
-                        if (op_it == cmd.end() || node_it == cmd.end()) {
-                            std::println("{{\"status\":\"error\",\"msg\":\"missing op or node\"}}");
-                        } else {
-                            auto node = std::stoll(node_it->second);
-                            auto sexpr = std::format(
-                                "({} {} {}{}{})", op_it->second, node,
-                                val_it != cmd.end() ? val_it->second : "0",
-                                sum_it != cmd.end() ? " \"" + sum_it->second + "\"" : " \"\"", "");
-                            // Evaluate mutation against the persistent AST
-                            auto mut_result = cs.typed_mutate(sexpr);
-                            // Issue #147: typed-mutate response now
-                            // includes invariant_status + invariant_diagnostics.
-                            print_typed_mutate_response(mut_result);
-                        }
-                    } else if (type == "rollback") {
-                        // {"cmd": "rollback", "id": 1}
-                        auto id_it = cmd.find("id");
-                        if (id_it == cmd.end()) {
-                            std::println("{{\"status\":\"error\",\"msg\":\"missing id\"}}");
-                        } else {
-                            auto sexpr = std::format("(rollback {})", id_it->second);
-                            auto result = cs.eval_on_current(sexpr);
-                            std::println("{{\"status\":\"ok\",\"rolled_back\":{}}}",
-                                         result ? (is_bool(*result)
-                                                       ? (as_bool(*result) ? "true" : "false")
-                                                       : "false")
-                                                : "false");
-                        }
-                    } else if (type == "mutation-log") {
-                        // {"cmd": "mutation-log", "node": 0}
-                        auto node_it = cmd.find("node");
-                        if (node_it == cmd.end()) {
-                            std::println("{{\"status\":\"error\",\"msg\":\"missing node\"}}");
-                        } else {
-                            auto node = static_cast<aura::ast::NodeId>(std::stoul(node_it->second));
-                            auto entries = cs.query_mutation_log(node);
-                            std::println("{{\"status\":\"ok\",\"log\":[");
-                            bool first = true;
-                            for (auto& e : entries) {
-                                if (!first)
-                                    std::println(",");
-                                first = false;
-                                std::print("  {{\"id\":{},\"ts\":{},\"node\":{},\"op\":\"{}\","
-                                           "\"old_type\":\"{}\",\"new_type\":\"{}\","
-                                           "\"summary\":\"{}\",\"status\":\"{}\","
-                                           "\"invariant_status\":\"{}\"}}",
-                                           e.mutation_id, e.timestamp_ms, e.target_node,
-                                           json_escape(e.operator_name), json_escape(e.old_type),
-                                           json_escape(e.new_type), json_escape(e.summary),
-                                           json_escape(e.status), json_escape(e.invariant_status));
-                            }
-                            std::println("]}}");
-                        }
-                    } else {
-                        std::println("{{\"status\":\"error\",\"msg\":\"unknown command: {}\"}}",
-                                     json_escape(type));
-                    }
-                }
-            } else {
-                // ── Plain S-expression (backward compatible) ────────
-                auto& cs = resolve_cs();
-                aura::messaging::g_current_compiler_service = &cs;
-                auto r = cs.eval(line);
-                if (r) {
-                    std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
-                                 json_escape(fmt_val(*r, cs)));
-                } else {
-                    auto& d = r.error();
-                    std::println(
-                        "{{\"status\":\"error\",\"kind\":{},\"msg\":\"{}\",\"node_id\":{}}}",
-                        static_cast<int>(d.kind), json_escape(d.format()), d.node_id);
-                    // Auto-fix path removed: it depended on the per-eval
-                    // `flat` / `pool` (now produced by cs.eval internally).
-                    // Without them, lower_to_ir / AutoFixEngine have no
-                    // FlatAST to operate on. Surfacing the error directly
-                    // is sufficient for the --serve JSON protocol.
-                }
-            }
-        }
-        aura::compiler::Evaluator::destroy_workspace_tree(shared_workspace_tree);
-        return 0;
-    }
 
     // ── --ir: lower to IR and execute ─────────────────────────────
     if (argc > 1 && std::string_view(argv[1]) == "--ir") {
