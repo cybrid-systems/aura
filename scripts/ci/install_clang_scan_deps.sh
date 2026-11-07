@@ -1,26 +1,33 @@
 #!/bin/bash
-# Install clang-scan-deps for the clang++ this job actually runs.
+# Locate the clang-scan-deps that belongs to the clang++ this job runs.
 #
-# The version comes from `clang++ --version`. A scanner that already
-# reports that same version is kept: nothing is downloaded and that
-# file is not replaced. The actions cache is stored per version and
-# architecture. The only fallback packages are the official assets
-# LLVM-<version>-Linux-X64.tar.xz and LLVM-<version>-Linux-ARM64.tar.xz
-# on the llvmorg-<version> release. Those names were checked on the
-# llvmorg-20.1.8, 21.1.8, and 22.1.2 releases and on the later release
-# that uses the same two filenames. Other archive names are not guessed. A compiler that is not a plain X.Y.Z release (a git
-# snapshot or a release candidate) fails here instead of installing a
-# different scanner.
+# The version is the plain X.Y.Z in `clang++ --version`. A scanner that
+# reports that same version is used as-is. Nothing is downloaded and the
+# image copy is not replaced. Search PATH, the compiler's directory, and
+# the usual LLVM prefix directories. If none match, fail: the aura-ci
+# image is missing the tool, and the Clang module BMI build must not
+# pretend otherwise.
 set -euo pipefail
 
 compiler=${CXX:-clang++}
-dest=${SCAN_DEPS_DEST:-/usr/local/bin/clang-scan-deps}
+if [[ "$compiler" != /* ]]; then
+    compiler_path=$(command -v "$compiler" || true)
+else
+    compiler_path=$compiler
+fi
+if [[ -z "$compiler_path" || ! -x "$compiler_path" ]]; then
+    echo "clang++ not found: $compiler" >&2
+    exit 1
+fi
+compiler_real=$(readlink -f "$compiler_path")
+compiler_dir=$(dirname "$compiler_real")
 
-ver_line=$("$compiler" --version | head -1)
-echo "compiler: $ver_line" >&2
+ver_line=$("$compiler_real" --version | head -1)
+echo "compiler: $compiler_real" >&2
+echo "compiler version: $ver_line" >&2
 
-# "clang version X.Y.Z" and then end, space, or "(". A git snapshot
-# (X.Y.Zgit) or a candidate (X.Y.Z-rc1) does not match.
+# "clang version X.Y.Z" then end, space, or "(". A git snapshot or
+# X.Y.Z-rcN does not match.
 if [[ "$ver_line" =~ clang\ version\ ([0-9]+\.[0-9]+\.[0-9]+)([^0-9]|$) ]]; then
     ver=${BASH_REMATCH[1]}
     rest=${BASH_REMATCH[2]}
@@ -32,7 +39,7 @@ else
 fi
 if [[ -z "${ver:-}" ]]; then
     echo "cannot resolve an LLVM release from: $ver_line" >&2
-    echo "refusing to install a scanner that may not match this clang++" >&2
+    echo "refusing to select a scanner that may not match this clang++" >&2
     exit 1
 fi
 echo "matched clang++ LLVM version $ver" >&2
@@ -42,83 +49,65 @@ if [[ "${1:-}" == "--print-version" ]]; then
 fi
 
 ver_re=${ver//./\\.}
+major=${ver%%.*}
 scanner_matches() {
     local bin=$1
     local out
-    [[ -n "$bin" && -x "$bin" ]] || return 1
+    [[ -n "$bin" && -x "$bin" && ! -d "$bin" ]] || return 1
     out=$("$bin" --version 2>&1 || true)
-    echo "clang-scan-deps ($bin): $out"
+    echo "clang-scan-deps ($bin): $out" >&2
     echo "$out" | grep -Eq "(LLVM|clang) version ${ver_re}([^0-9]|$)"
 }
 
-install_bin() {
-    local src=$1
-    local dir
-    dir=$(dirname "$dest")
-    mkdir -p "$dir"
-    if [[ -w "$dir" ]]; then
-        install -m 755 "$src" "$dest"
-    else
-        sudo install -m 755 "$src" "$dest"
+searched=()
+mismatched=()
+use_scanner() {
+    local path=$1
+    echo "using clang-scan-deps $ver at $path" >&2
+    if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+        echo "path=$path" >> "$GITHUB_OUTPUT"
     fi
+    if [[ -n "${GITHUB_ENV:-}" ]]; then
+        echo "CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS=$path" >> "$GITHUB_ENV"
+    fi
+    printf '%s\n' "$path"
+    exit 0
+}
+consider() {
+    local path=$1
+    searched+=("$path")
+    [[ -x "$path" && ! -d "$path" ]] || return 0
+    if scanner_matches "$path"; then
+        use_scanner "$path"
+    fi
+    mismatched+=("$path")
 }
 
-if scanner_matches "$dest"; then
-    echo "using installed clang-scan-deps $ver at $dest"
-    exit 0
+consider "$compiler_dir/clang-scan-deps"
+consider "$compiler_dir/clang-scan-deps-$major"
+consider "$compiler_dir/clang-scan-deps-$ver"
+if path_on_path=$(command -v clang-scan-deps 2>/dev/null || true); [[ -n "$path_on_path" ]]; then
+    consider "$(readlink -f "$path_on_path")"
 fi
-if command -v clang-scan-deps >/dev/null 2>&1; then
-    found=$(command -v clang-scan-deps)
-    if [[ "$found" != "$dest" ]] && scanner_matches "$found"; then
-        echo "using installed clang-scan-deps $ver at $found"
-        install_bin "$found"
-        exit 0
-    fi
-    echo "installed clang-scan-deps does not match LLVM $ver" >&2
-fi
+consider "/usr/lib/llvm-$major/bin/clang-scan-deps"
+consider "/usr/lib/llvm-$ver/bin/clang-scan-deps"
+consider "/usr/lib/llvm/bin/clang-scan-deps"
+consider "/usr/local/llvm/bin/clang-scan-deps"
+consider "/usr/local/llvm-$ver/bin/clang-scan-deps"
+consider "/opt/llvm/bin/clang-scan-deps"
+consider "/opt/llvm-$ver/bin/clang-scan-deps"
 
-arch=$(uname -m)
-cache=${SCAN_DEPS_CACHE:-}
-if [[ -n "$cache" && -x "$cache/$ver/$arch/clang-scan-deps" ]]; then
-    install_bin "$cache/$ver/$arch/clang-scan-deps"
-    if scanner_matches "$dest"; then
-        echo "using cached clang-scan-deps $ver $arch"
-        exit 0
-    fi
-    echo "cached clang-scan-deps for $ver $arch did not match" >&2
+echo "aura-ci image has no clang-scan-deps matching clang++ $ver" >&2
+echo "compiler: $compiler_real" >&2
+echo "compiler version: $ver_line" >&2
+echo "searched:" >&2
+for path in "${searched[@]}"; do
+    echo "  $path" >&2
+done
+if [[ ${#mismatched[@]} -gt 0 ]]; then
+    echo "found but version does not match $ver:" >&2
+    for path in "${mismatched[@]}"; do
+        echo "  $path" >&2
+    done
 fi
-
-case "$arch" in
-    x86_64) asset="LLVM-${ver}-Linux-X64.tar.xz" ;;
-    aarch64 | arm64) asset="LLVM-${ver}-Linux-ARM64.tar.xz" ;;
-    *)
-        echo "unsupported architecture $arch" >&2
-        exit 1
-        ;;
-esac
-
-if ! command -v curl >/dev/null || ! command -v xz >/dev/null; then
-    sudo mkdir -p /var/lib/apt/lists/partial
-    sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl xz-utils ca-certificates
-fi
-
-url="https://github.com/llvm/llvm-project/releases/download/llvmorg-${ver}/${asset}"
-tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
-echo "download $url"
-curl -fL --retry 3 --retry-delay 2 -o "$tmp/llvm.tar.xz" "$url"
-tar -xJf "$tmp/llvm.tar.xz" -C "$tmp" --wildcards '*/bin/clang-scan-deps'
-bin=$(find "$tmp" -type f -name clang-scan-deps -print -quit)
-test -n "$bin"
-if [[ -n "$cache" ]]; then
-    mkdir -p "$cache/$ver/$arch"
-    cp "$bin" "$cache/$ver/$arch/clang-scan-deps"
-    chmod 755 "$cache/$ver/$arch/clang-scan-deps"
-fi
-install_bin "$bin"
-if ! scanner_matches "$dest"; then
-    echo "downloaded clang-scan-deps does not match LLVM $ver" >&2
-    exit 1
-fi
-echo "installed clang-scan-deps $ver from $url"
+exit 1

@@ -59,23 +59,24 @@ class CiToolchainImage(unittest.TestCase):
 
     def test_scan_deps_is_the_matching_llvm_release(self) -> None:
         script = (ROOT / "scripts" / "ci" / "install_clang_scan_deps.sh").read_text()
-        self.assertIn("llvmorg-${ver}", script)
-        self.assertIn("LLVM-${ver}-Linux-X64.tar.xz", script)
-        self.assertIn("LLVM-${ver}-Linux-ARM64.tar.xz", script)
-        self.assertNotIn("expected_ver=", script)
-        self.assertNotIn("expected_commit=", script)
-        self.assertNotIn("392dfff97d29", script)
-        self.assertNotIn("clang-tools-22", script)
+        for banned in ("curl", "wget", "apt-get", "llvmorg-", "expected_ver=", "expected_commit=", "392dfff97d29"):
+            self.assertNotIn(banned, script)
         action = (ROOT / ".github" / "actions" / "clang-scan-deps" / "action.yml").read_text()
         self.assertNotIn("23.1.5", action)
-        self.assertIn("steps.clangver.outputs.version", action)
-        self.assertIn("runner.arch", action)
-        self.assertNotIn("dev:v1.1.1", script)
+        self.assertNotIn("actions/cache", action)
+        self.assertIn("outputs:", action)
+        self.assertIn("steps.locate.outputs.path", action)
         gate = (WORKFLOWS / "ci.yml").read_text()
         self.assertIn("uses: ./.github/actions/clang-scan-deps", gate)
-        self.assertIn("CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS=/usr/local/bin/clang-scan-deps", gate)
+        self.assertIn("id: clang-scan-deps", gate)
+        self.assertIn(
+            "CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS=${{ steps.clang-scan-deps.outputs.path }}",
+            gate,
+        )
+        self.assertNotIn("/usr/local/bin/clang-scan-deps", gate)
         self.assertIn("runs-on: ubuntu-24.04-arm", gate)
         self.assertIn("clang-module-arm64", gate)
+        self.assertIn("Build Clang module BMIs", gate)
 
     def test_runtime_image_is_not_the_toolchain(self) -> None:
         for path in (ROOT / "templates").rglob("ci.yml"):
