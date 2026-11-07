@@ -14,7 +14,7 @@
 // the evaluator partition by extracting focused modules.
 
 module;
-#include "compiler/ffi_addr.hh" // #4936 named FFI address conversions
+#include "compiler/ffi_addr.hh"           // #4936 named FFI address conversions
 #include "compiler/locked_string_heap.hh" // Issue #4543
 #include <array>
 #include <cstddef>

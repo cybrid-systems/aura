@@ -843,10 +843,11 @@ struct UnderBoundaryWaitSnap {
 [[nodiscard]] inline UnderBoundaryWaitSnap snapshot_under_boundary_wait() noexcept {
     UnderBoundaryWaitSnap s;
     for (std::size_t i = 0; i < MultiFiberMailboxStats::kUnderBoundaryWaitHistBuckets; ++i) {
-        s.counts[i] = g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[i].load(
-            std::memory_order_relaxed);
+        s.counts[i] =
+            g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[i].load(std::memory_order_relaxed);
     }
-    s.max_us = g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(std::memory_order_relaxed);
+    s.max_us =
+        g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(std::memory_order_relaxed);
     return s;
 }
 
@@ -859,8 +860,8 @@ under_boundary_wait_p99_since(const UnderBoundaryWaitSnap& snap) noexcept {
     std::uint64_t counts[MultiFiberMailboxStats::kUnderBoundaryWaitHistBuckets]{};
     std::uint64_t total = 0;
     for (std::size_t i = 0; i < MultiFiberMailboxStats::kUnderBoundaryWaitHistBuckets; ++i) {
-        const auto now = g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[i].load(
-            std::memory_order_relaxed);
+        const auto now =
+            g_mf_mailbox_stats.mailbox_under_boundary_wait_hist[i].load(std::memory_order_relaxed);
         counts[i] = now >= snap.counts[i] ? now - snap.counts[i] : 0;
         total += counts[i];
     }
@@ -869,8 +870,9 @@ under_boundary_wait_p99_since(const UnderBoundaryWaitSnap& snap) noexcept {
     static constexpr std::uint64_t kEdges[4]{100, 1'000, 10'000, 100'000};
     const auto now_max =
         g_mf_mailbox_stats.mailbox_under_boundary_wait_us_max.load(std::memory_order_relaxed);
-    const auto open_edge =
-        counts[4] == 0 ? std::uint64_t{0} : (now_max > snap.max_us ? now_max : std::uint64_t{100'000});
+    const auto open_edge = counts[4] == 0
+                               ? std::uint64_t{0}
+                               : (now_max > snap.max_us ? now_max : std::uint64_t{100'000});
     const auto target99 = (total * 99 + 99) / 100;
     std::uint64_t cum = 0;
     for (std::size_t i = 0; i < 4; ++i) {

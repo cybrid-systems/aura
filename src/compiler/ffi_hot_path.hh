@@ -18,7 +18,7 @@
 #include <string_view>
 
 #include "compiler/ffi_addr.hh" // #4936 named FFI address conversions
-#include "hash_meta.h" // FNV constants (#901)
+#include "hash_meta.h"          // FNV constants (#901)
 // Issue #195: C ABI — 0 when no fiber (host thread / tests).
 extern "C" std::uint64_t aura_fiber_current_id();
 

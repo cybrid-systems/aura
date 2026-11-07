@@ -58,7 +58,8 @@ struct FFIBatchHotPath {
                 return -1;
             if (cached_abi == RenderFfiAbi::BatchArgs) {
                 ++g_ffi_hot_path_stats.invoke_total;
-                return aura::compiler::fn_from_void<BatchRenderFn>(cached_func_ptr)(args.data(), args.size());
+                return aura::compiler::fn_from_void<BatchRenderFn>(cached_func_ptr)(args.data(),
+                                                                                    args.size());
             }
             if (cached_abi == RenderFfiAbi::Nullary) {
                 ++g_ffi_hot_path_stats.invoke_total;
@@ -77,7 +78,8 @@ struct FFIBatchHotPath {
             return -1;
         if (abi == RenderFfiAbi::BatchArgs) {
             ++g_ffi_hot_path_stats.invoke_total;
-            return aura::compiler::fn_from_void<BatchRenderFn>(resolved_fn)(args.data(), args.size());
+            return aura::compiler::fn_from_void<BatchRenderFn>(resolved_fn)(args.data(),
+                                                                            args.size());
         }
         if (abi == RenderFfiAbi::Nullary) {
             ++g_ffi_hot_path_stats.invoke_total;
