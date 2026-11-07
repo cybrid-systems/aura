@@ -18501,6 +18501,53 @@ public:
     // enter and exit are rolled back (see MutationRecord inverse).
     // Returns the popped checkpoint (or {0} if the stack is empty).
     MutationCheckpoint exit_mutation_boundary(bool success);
+    // Exit phases. Each helper is the original block, in the same order.
+    // Early `return cp` becomes ExitEarly so the caller still returns it.
+    struct ExitEarly {
+        bool stop = false;
+        MutationCheckpoint cp{};
+    };
+    struct ExitSuccessShare {
+        std::uint64_t nodes_changed = 0;
+        std::uint64_t audit_epoch = 0;
+        std::string_view audit_op = "structural";
+        aura::ast::NodeId audit_target = aura::ast::NULL_NODE;
+        std::uint64_t mid = 0;
+        std::int64_t fid = 0;
+        bool linear_hint = false;
+        bool batch_active = false;
+        bool composite = false;
+        bool hard_gate = false;
+        bool do_audit = false;
+        bool inv_ok = false;
+        bool recovered = false;
+        bool strict_sandbox = false;
+        aura::compiler::typed_audit::AuditStrategy strat{};
+    };
+    void invalidate_defuse_index_for_nested() noexcept;
+    void exit_failure_rollback(MutationCheckpoint& cp, bool nested_boundary,
+                               std::vector<aura::compiler::dirty::NodeId>& coerced_nodes_at_exit);
+    void exit_lightweight_checkpoint(MutationCheckpoint& cp, bool success);
+    void exit_record_failure_deny(const MutationCheckpoint& cp);
+    void exit_nested_observation(MutationCheckpoint& cp, bool success,
+                                 const std::vector<MutationCheckpoint>& stack);
+    bool exit_collect_provenance_miss(bool nested_boundary, bool success);
+    void exit_success_workspace(MutationCheckpoint& cp, bool nested_boundary, bool success,
+                                bool soft_only_below, bool provenance_miss, ExitEarly& early);
+    void exit_success_record_impact(MutationCheckpoint& cp, bool nested_boundary,
+                                    bool soft_only_below, ExitSuccessShare& st);
+    void exit_success_typed_audit(MutationCheckpoint& cp, bool nested_boundary,
+                                  bool soft_only_below, bool provenance_miss, ExitSuccessShare& st,
+                                  ExitEarly& early);
+    void exit_success_audit_decide(MutationCheckpoint& cp, bool nested_boundary,
+                                   bool provenance_miss, ExitSuccessShare& st, ExitEarly& early);
+    void exit_success_audit_recover(MutationCheckpoint& cp, bool nested_boundary,
+                                    ExitSuccessShare& st);
+    void exit_success_audit_force(MutationCheckpoint& cp, bool nested_boundary,
+                                  bool soft_only_below, ExitSuccessShare& st, ExitEarly& early);
+    void exit_success_reflect(MutationCheckpoint& cp, bool nested_boundary, ExitEarly& early);
+    void exit_reemit_on_boundary(bool nested_boundary, bool success,
+                                 std::uint64_t session_audit_mid);
 
     // Issue #2099: lightweight, Agent-visible HygieneCheckpoint for
     // what-if / self-evo rollback semantics. The struct definition
@@ -19827,6 +19874,11 @@ public:
         // Issue #3118: production cancel — unlock + clear depth after
         // abort_restore_dual_topology (single unlock site vs Phase-5).
         void force_release_hold_after_cancel_() noexcept;
+        // Destructor phases. Bodies are the original blocks, same order.
+        void guard_release_depth_slot(bool& success);
+        void guard_phase5_moving_compact(bool& success, int*& slot, bool& heap_slot_quiet);
+        void guard_phase5_pin_contract(bool& success, const bool& outermost, int*& slot,
+                                       bool& linear_ops_present_local);
 
         Evaluator* ev_;
         // Heap-mutate auto-guard (#3235) heap-allocates the Guard past the
