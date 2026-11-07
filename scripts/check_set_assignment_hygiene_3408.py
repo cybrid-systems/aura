@@ -139,7 +139,11 @@ def main() -> int:
     # AC3: NodeTag::Set must be in the infer_flat_partial affected_names
     # tag list. Use a unique anchor: the `affected_names.reserve(affected.size())`
     # line (only infer_flat_partial has this specific reserve + insert combo).
-    aff_reserve_pos = tci.find("affected_names.reserve(affected.size())")
+    aff_reserve_pos = tci.find("affected_names.reserve(st.affected.size())")
+    if aff_reserve_pos == -1:
+        # #2646/#3408 follow-up: infer_flat_partial was split into
+        # partial_* helpers that carry the locals on InferFlatPartialState.
+        aff_reserve_pos = tci.find("affected_names.reserve(affected.size())")
     if aff_reserve_pos == -1:
         fails.append(
             "AC3: infer_flat_partial affected_names.reserve(affected.size()) "

@@ -75,7 +75,12 @@ def main() -> int:
     must("ac3430_2_partial_entry", "AC2 test", ta)
     must("ac3430_2_live_effective_strict", "AC2 live", ta)
     must("ac3430_2_live_effective_strict", "AC2 live test_ir", tir)
-    must("engine.set_gradual_permissiveness(gradual_permissiveness_)", "AC2 partial plumb", impl)
+    plumb = "engine.set_gradual_permissiveness(st.gradual_permissiveness)"
+    if plumb not in impl:
+        # Pre-refactor shape: the locals lived on TypeChecker, not the
+        # InferFlatPartialState that the partial_* helpers now receive.
+        plumb = "engine.set_gradual_permissiveness(gradual_permissiveness_)"
+    must(plumb, "AC2 partial plumb", impl)
     must("TypeChecker::infer_flat_partial", "AC2 partial", impl)
 
     must("ac3430_3_soft_balanced_unify_true", "AC3 Soft Balanced", ta)
