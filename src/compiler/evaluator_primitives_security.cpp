@@ -868,7 +868,6 @@ void register_security_set_sandbox_mode(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "security:sandbox-mode?",
         [&ev](const auto&) -> EvalValue { return make_bool(ev.sandbox_mode()); });
-
 }
 
 void register_security_grant_capability(PrimRegistrar add, Evaluator& ev) {
@@ -1124,7 +1123,6 @@ void register_security_grant_capability(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
-
 }
 
 void register_query_audit_mid_fallback_slo(PrimRegistrar add, Evaluator& ev) {
@@ -1274,7 +1272,6 @@ void register_query_audit_mid_fallback_slo(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
-
 }
 
 void register_query_capability_effect_stats(PrimRegistrar add, Evaluator& ev) {
@@ -1282,15 +1279,16 @@ void register_query_capability_effect_stats(PrimRegistrar add, Evaluator& ev) {
     // #1876 folds sandbox-status fields into this existing surface
     // (no new public query name — primitive freeze #1448).
     ObservabilityPrims::register_stats_impl(
-        "query:capability-effect-stats", [&ev](const auto& args) -> EvalValue {
-            return build_capability_effect_stats(ev, args);
-        });
+        "query:capability-effect-stats",
+        [&ev](const auto& args) -> EvalValue { return build_capability_effect_stats(ev, args); });
 }
 
 // Base capability counters plus the #3143 audit-replay join.
 template <class Snap, class Metrics, class Sandbox, class Insert>
-static void publish_capability_effect_replay_join(Evaluator& ev, const Snap& snap, Metrics* m, const Sandbox& ss,
-                    std::span<const EvalValue> args, Insert& insert_kv) {
+static void publish_capability_effect_replay_join(Evaluator& ev, const Snap& snap, Metrics* m,
+                                                  const Sandbox& ss,
+                                                  std::span<const EvalValue> args,
+                                                  Insert& insert_kv) {
     using namespace aura::core::capability;
     using namespace aura::core::sandbox;
     insert_kv("schema", 1565);
@@ -1354,8 +1352,7 @@ static void publish_capability_effect_replay_join(Evaluator& ev, const Snap& sna
         // denies for the #3879 mutation_wal_append_miss stamp or a
         // #4695 denial-class reason (no kind/denied field on the
         // overflow row). No new query key.
-        const bool se_join_durable =
-            ::aura::compiler::typed_audit::production_hard_face_active();
+        const bool se_join_durable = ::aura::compiler::typed_audit::production_hard_face_active();
         if (se_count == 0 && se_join_durable) {
             auto& se_wal = ::aura::core::security_event_wal::g_security_event_wal();
             if (se_wal.is_enabled()) {
@@ -1375,8 +1372,7 @@ static void publish_capability_effect_replay_join(Evaluator& ev, const Snap& sna
                 if (const auto* ovr =
                         ::aura::core::security_event_wal::wal_overflow_find_by_mid(mid)) {
                     se_count = 1; // overflow join (#3109/#3780)
-                    if (ovr->reason ==
-                            ::aura::core::security_event::kMutationWalAppendMissReason ||
+                    if (ovr->reason == ::aura::core::security_event::kMutationWalAppendMissReason ||
                         ::aura::core::security_event_wal::se_wal_reason_names_deny_class(
                             ovr->reason))
                         ++se_deny_count;
@@ -1384,9 +1380,9 @@ static void publish_capability_effect_replay_join(Evaluator& ev, const Snap& sna
             }
         }
         insert_kv("replay-mid", static_cast<std::int64_t>(mid));
-        insert_kv("typed-mid-current",
-                  static_cast<std::int64_t>(
-                      typed_audit::last_type_linear_commit_proof_stamp_v_read()));
+        insert_kv(
+            "typed-mid-current",
+            static_cast<std::int64_t>(typed_audit::last_type_linear_commit_proof_stamp_v_read()));
         insert_kv("se-count", static_cast<std::int64_t>(se_count));
         insert_kv("se-deny-count", static_cast<std::int64_t>(se_deny_count));
         insert_kv("wal-enabled",
@@ -1399,23 +1395,24 @@ static void publish_capability_effect_replay_join(Evaluator& ev, const Snap& sna
         // Issue #3877: last matching SE wins; any
         // mutation_wal_append_miss Deny on the same mid forces
         // Deny (Agents must not stop at a preceding EffectAllow).
-        insert_kv("last-se-wins-verdict",
-                  static_cast<std::int64_t>(
-                      ::aura::core::security_event::forensic_effect_verdict_for_mid(
-                          mid, se_join_durable)));
-        insert_kv("wal-miss-deny",
-                  ::aura::core::security_event::forensic_mid_has_wal_append_miss(
-                      mid, se_join_durable)
-                      ? 1
-                      : 0);
+        insert_kv(
+            "last-se-wins-verdict",
+            static_cast<std::int64_t>(::aura::core::security_event::forensic_effect_verdict_for_mid(
+                mid, se_join_durable)));
+        insert_kv("wal-miss-deny", ::aura::core::security_event::forensic_mid_has_wal_append_miss(
+                                       mid, se_join_durable)
+                                       ? 1
+                                       : 0);
         insert_kv("issue-3877", 3877);
     }
 }
 
 // Sandbox status, effect denies, and production-default counters.
 template <class Snap, class Metrics, class Sandbox, class Insert>
-static void publish_capability_effect_sandbox_face(Evaluator& ev, const Snap& snap, Metrics* m, const Sandbox& ss,
-                    std::span<const EvalValue> args, Insert& insert_kv) {
+static void publish_capability_effect_sandbox_face(Evaluator& ev, const Snap& snap, Metrics* m,
+                                                   const Sandbox& ss,
+                                                   std::span<const EvalValue> args,
+                                                   Insert& insert_kv) {
     using namespace aura::core::capability;
     using namespace aura::core::sandbox;
     // Issue #3090: production grant refused when prov.mutation_id == 0
@@ -1438,27 +1435,23 @@ static void publish_capability_effect_sandbox_face(Evaluator& ev, const Snap& sn
     insert_kv("sandbox-strict", is_strict() || ev.effect_sandbox_mode() == 2 ? 1 : 0);
     insert_kv("effect-checks", static_cast<std::int64_t>(ss.effect_checks));
     insert_kv("effect-denials", static_cast<std::int64_t>(ss.effect_denials));
-    insert_kv("sandbox-violations",
-              m ? static_cast<std::int64_t>(
-                      m->sandbox_violations_total.load(std::memory_order_relaxed))
-                : 0);
+    insert_kv("sandbox-violations", m ? static_cast<std::int64_t>(m->sandbox_violations_total.load(
+                                            std::memory_order_relaxed))
+                                      : 0);
     insert_kv("denials-by-effect",
               m ? static_cast<std::int64_t>(
                       m->capability_denials_by_effect.load(std::memory_order_relaxed))
                 : 0);
-    insert_kv("denial-mutate",
-              m ? static_cast<std::int64_t>(
-                      m->capability_denial_mutate_total.load(std::memory_order_relaxed))
-                : 0);
-    insert_kv("denial-ffi",
-              m ? static_cast<std::int64_t>(
-                      m->capability_denial_ffi_total.load(std::memory_order_relaxed))
-                : 0);
+    insert_kv("denial-mutate", m ? static_cast<std::int64_t>(m->capability_denial_mutate_total.load(
+                                       std::memory_order_relaxed))
+                                 : 0);
+    insert_kv("denial-ffi", m ? static_cast<std::int64_t>(
+                                    m->capability_denial_ffi_total.load(std::memory_order_relaxed))
+                              : 0);
     // Issue #2136: Render effect deny / grant (batch + FFI matrix)
-    insert_kv("denial-render",
-              m ? static_cast<std::int64_t>(
-                      m->effect_denied_render_total.load(std::memory_order_relaxed))
-                : 0);
+    insert_kv("denial-render", m ? static_cast<std::int64_t>(m->effect_denied_render_total.load(
+                                       std::memory_order_relaxed))
+                                 : 0);
     insert_kv("render-effect-granted",
               m ? static_cast<std::int64_t>(
                       m->render_effect_granted_total.load(std::memory_order_relaxed))
@@ -1468,12 +1461,9 @@ static void publish_capability_effect_sandbox_face(Evaluator& ev, const Snap& sn
                       m->sandbox_provenance_records_total.load(std::memory_order_relaxed))
                 : 0);
     // Issue #2023: MacroSelfEvo expand gate observability
-    insert_kv("macro-self-evo-checks",
-              static_cast<std::int64_t>(snap.macro_self_evo_checks));
-    insert_kv("macro-self-evo-allowed",
-              static_cast<std::int64_t>(snap.macro_self_evo_allowed));
-    insert_kv("macro-self-evo-denied",
-              static_cast<std::int64_t>(snap.macro_self_evo_denied));
+    insert_kv("macro-self-evo-checks", static_cast<std::int64_t>(snap.macro_self_evo_checks));
+    insert_kv("macro-self-evo-allowed", static_cast<std::int64_t>(snap.macro_self_evo_allowed));
+    insert_kv("macro-self-evo-denied", static_cast<std::int64_t>(snap.macro_self_evo_denied));
     insert_kv("macro-self-evo-depth-clamps",
               static_cast<std::int64_t>(snap.macro_self_evo_depth_clamps));
     insert_kv("macro-self-evo-pass-clamps",
@@ -1490,17 +1480,16 @@ static void publish_capability_effect_sandbox_face(Evaluator& ev, const Snap& sn
                       m->mutate_force_effect_denied_total.load(std::memory_order_relaxed))
                 : 0);
     insert_kv("mutate-force-isolation-denied",
-              m ? static_cast<std::int64_t>(m->mutate_force_isolation_denied_total.load(
-                      std::memory_order_relaxed))
+              m ? static_cast<std::int64_t>(
+                      m->mutate_force_isolation_denied_total.load(std::memory_order_relaxed))
                 : 0);
     insert_kv("mutate-force-allowed",
               m ? static_cast<std::int64_t>(
                       m->mutate_force_effect_allowed_total.load(std::memory_order_relaxed))
                 : 0);
-    insert_kv(
-        "mutate-force-wired",
-        m ? static_cast<std::int64_t>(m->mutate_force_wired.load(std::memory_order_relaxed))
-          : 1);
+    insert_kv("mutate-force-wired",
+              m ? static_cast<std::int64_t>(m->mutate_force_wired.load(std::memory_order_relaxed))
+                : 1);
     insert_kv("schema-2052", 2052);
     insert_kv("issue-2052", 2052);
     // Issue #2053: production security defaults visibility
@@ -1511,11 +1500,9 @@ static void publish_capability_effect_sandbox_face(Evaluator& ev, const Snap& sn
         insert_kv("production-defaults-active", production_defaults_active() ? 1 : 0);
         insert_kv("typed-audit-strategy",
                   static_cast<std::int64_t>(static_cast<std::uint32_t>(get_strategy())));
-        insert_kv("typed-audit-sample-ratio",
-                  static_cast<std::int64_t>(get_sample_ratio()));
-        insert_kv(
-            "process-sandbox-mode",
-            static_cast<std::int64_t>(static_cast<std::uint8_t>(g_sandbox_state().mode)));
+        insert_kv("typed-audit-sample-ratio", static_cast<std::int64_t>(get_sample_ratio()));
+        insert_kv("process-sandbox-mode",
+                  static_cast<std::int64_t>(static_cast<std::uint8_t>(g_sandbox_state().mode)));
         insert_kv("wal-process-enabled", g_mutation_audit_wal().is_enabled() ? 1 : 0);
         insert_kv("schema-2053", 2053);
         insert_kv("issue-2053", 2053);
@@ -1528,8 +1515,7 @@ static void publish_capability_effect_sandbox_face(Evaluator& ev, const Snap& sn
             insert_kv("audit-wal-forced-total",
                       static_cast<std::int64_t>(wsnap.forced_by_multi_tenant));
             insert_kv("audit-wal-enabled", static_cast<std::int64_t>(wsnap.enabled));
-            insert_kv("audit-wal-default-dir",
-                      static_cast<std::int64_t>(wsnap.using_default_dir));
+            insert_kv("audit-wal-default-dir", static_cast<std::int64_t>(wsnap.using_default_dir));
             insert_kv("schema-2150", kAuditWalForceMultiTenantIssue);
             insert_kv("issue-2150", kAuditWalForceMultiTenantIssue);
             insert_kv("audit-wal-force-wired", 1);
@@ -1568,8 +1554,7 @@ static void publish_capability_effect_sandbox_face(Evaluator& ev, const Snap& sn
         using aura::core::capability::kHardFiberIsolationIssue;
         insert_kv("schema-2151", kHardFiberIsolationIssue);
         insert_kv("issue-2151", kHardFiberIsolationIssue);
-        insert_kv("hard-fiber-isolation",
-                  static_cast<std::int64_t>(snap.hard_fiber_isolation));
+        insert_kv("hard-fiber-isolation", static_cast<std::int64_t>(snap.hard_fiber_isolation));
         insert_kv("fiber-hard-deny", static_cast<std::int64_t>(snap.fiber_hard_deny));
         insert_kv("hard-fiber-isolation-wired", 1);
         // Issue #3076: fiber-mismatch Soft observe is not Hard deny
@@ -1588,8 +1573,7 @@ static void publish_capability_effect_sandbox_face(Evaluator& ev, const Snap& sn
         using aura::core::capability::kGrantEpochRetainWindowIssue;
         insert_kv("schema-2154", kGrantEpochRetainWindowIssue);
         insert_kv("issue-2154", kGrantEpochRetainWindowIssue);
-        insert_kv("grant-min-valid-epoch",
-                  static_cast<std::int64_t>(snap.grant_min_valid_epoch));
+        insert_kv("grant-min-valid-epoch", static_cast<std::int64_t>(snap.grant_min_valid_epoch));
         insert_kv("grant-epoch-retain-window",
                   static_cast<std::int64_t>(snap.grant_epoch_retain_window));
         insert_kv("grant-epoch-window-advance",
@@ -1600,8 +1584,10 @@ static void publish_capability_effect_sandbox_face(Evaluator& ev, const Snap& sn
 
 // Single-use, session, and durable grant lifecycle counters.
 template <class Snap, class Metrics, class Sandbox, class Insert>
-static void publish_capability_effect_grant_lifecycle(Evaluator& ev, const Snap& snap, Metrics* m, const Sandbox& ss,
-                    std::span<const EvalValue> args, Insert& insert_kv) {
+static void publish_capability_effect_grant_lifecycle(Evaluator& ev, const Snap& snap, Metrics* m,
+                                                      const Sandbox& ss,
+                                                      std::span<const EvalValue> args,
+                                                      Insert& insert_kv) {
     using namespace aura::core::capability;
     using namespace aura::core::sandbox;
     // Issue #2586: single-use / mutation-bound grant (auto-revoke
@@ -1655,8 +1641,7 @@ static void publish_capability_effect_grant_lifecycle(Evaluator& ev, const Snap&
         insert_kv("schema-2882", 2882);
         insert_kv("issue-2882", 2882);
         insert_kv("production-default-single-use-wired", 1);
-        insert_kv("high-risk-default-single-use-mask",
-                  static_cast<std::int64_t>(kHighRiskMask));
+        insert_kv("high-risk-default-single-use-mask", static_cast<std::int64_t>(kHighRiskMask));
         insert_kv("capability-high-risk-forced-single-use-total",
                   static_cast<std::int64_t>(snap.capability_high_risk_forced_single_use));
         insert_kv("capability-durable-high-risk-grant-total",
@@ -1713,8 +1698,10 @@ static void publish_capability_effect_grant_lifecycle(Evaluator& ev, const Snap&
 
 // Cross-tenant, fiber, and dispatch fence counters.
 template <class Snap, class Metrics, class Sandbox, class Insert>
-static void publish_capability_effect_tenant_fences(Evaluator& ev, const Snap& snap, Metrics* m, const Sandbox& ss,
-                    std::span<const EvalValue> args, Insert& insert_kv) {
+static void publish_capability_effect_tenant_fences(Evaluator& ev, const Snap& snap, Metrics* m,
+                                                    const Sandbox& ss,
+                                                    std::span<const EvalValue> args,
+                                                    Insert& insert_kv) {
     using namespace aura::core::capability;
     using namespace aura::core::sandbox;
     // Issue #2968: cross-tenant grant write path gate —
@@ -1764,9 +1751,8 @@ static void publish_capability_effect_tenant_fences(Evaluator& ev, const Snap& s
         const auto iso = snapshot_tenant_isolation_stats();
         insert_kv("schema-3040", 3040);
         insert_kv("issue-3040", 3040);
-        insert_kv(
-            "nodeid-only-entry-prevented-wired",
-            static_cast<std::int64_t>(::aura::compiler::kNodeIdOnlyEntryPreventedWired));
+        insert_kv("nodeid-only-entry-prevented-wired",
+                  static_cast<std::int64_t>(::aura::compiler::kNodeIdOnlyEntryPreventedWired));
         insert_kv("nodeid-only-entry-prevented-total",
                   static_cast<std::int64_t>(iso.nodeid_only_entry_prevented));
         // Issue #3630: undeclared multi-tenant autodetect posture.
@@ -1797,30 +1783,27 @@ static void publish_capability_effect_tenant_fences(Evaluator& ev, const Snap& s
         insert_kv("fiber-principal-mismatch-hard-deny-wired", 1);
         insert_kv("capability-fiber-principal-mismatch-hard-deny-total",
                   static_cast<std::int64_t>(snap.fiber_principal_mismatch_hard_deny));
-        insert_kv("tenant-scope-mismatch-hard-total",
-                  static_cast<std::int64_t>(
-                      aura::serve::Fiber::tenant_scope_mismatch_hard_total()));
+        insert_kv(
+            "tenant-scope-mismatch-hard-total",
+            static_cast<std::int64_t>(aura::serve::Fiber::tenant_scope_mismatch_hard_total()));
     }
     // Issue #2152: dispatch-level non-bypassable required_effects
     {
         using aura::compiler::kDispatchRequiredEffectsIssue;
         insert_kv("schema-2152", kDispatchRequiredEffectsIssue);
         insert_kv("issue-2152", kDispatchRequiredEffectsIssue);
-        insert_kv(
-            "dispatch-required-effects-check",
-            m ? static_cast<std::int64_t>(m->dispatch_required_effects_check_total.load(
-                    std::memory_order_relaxed))
-              : 0);
-        insert_kv(
-            "dispatch-required-effects-deny",
-            m ? static_cast<std::int64_t>(
-                    m->dispatch_required_effects_deny_total.load(std::memory_order_relaxed))
-              : 0);
-        insert_kv(
-            "dispatch-required-effects-inferred",
-            m ? static_cast<std::int64_t>(m->dispatch_required_effects_inferred_total.load(
-                    std::memory_order_relaxed))
-              : 0);
+        insert_kv("dispatch-required-effects-check",
+                  m ? static_cast<std::int64_t>(
+                          m->dispatch_required_effects_check_total.load(std::memory_order_relaxed))
+                    : 0);
+        insert_kv("dispatch-required-effects-deny",
+                  m ? static_cast<std::int64_t>(
+                          m->dispatch_required_effects_deny_total.load(std::memory_order_relaxed))
+                    : 0);
+        insert_kv("dispatch-required-effects-inferred",
+                  m ? static_cast<std::int64_t>(m->dispatch_required_effects_inferred_total.load(
+                          std::memory_order_relaxed))
+                    : 0);
         insert_kv("dispatch-required-effects-wired", 1);
     }
     // Issue #3971: process-level skip/refuse SE tenant=0 count.
@@ -1877,8 +1860,7 @@ EvalValue build_capability_effect_stats(Evaluator& ev, std::span<const EvalValue
     // No appended keys. Later batches still raise planned with
     // the keys. Capability-effect stays on the #3339 pin list.
     constexpr std::size_t kCapabilityEffectStatsPlannedKeys = 208;
-    auto* ht =
-        FlatHashTable::create(query_hash_capacity_for(kCapabilityEffectStatsPlannedKeys));
+    auto* ht = FlatHashTable::create(query_hash_capacity_for(kCapabilityEffectStatsPlannedKeys));
     if (!ht)
         return make_void();
     bool overflowed = false;
@@ -2171,7 +2153,6 @@ void register_security_set_tenant_principal(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
-
 }
 
 void register_query_nested_guard_atomic_stats(PrimRegistrar add, Evaluator& ev) {
@@ -2392,7 +2373,6 @@ void register_query_nested_guard_atomic_stats(PrimRegistrar add, Evaluator& ev) 
             };
             return build_hash(kv);
         });
-
 }
 
 void register_query_irsoa_incremental_stats(PrimRegistrar add, Evaluator& ev) {
@@ -2654,7 +2634,6 @@ void register_query_irsoa_incremental_stats(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
-
 }
 
 void register_query_primitives_governance_stats(PrimRegistrar add, Evaluator& ev) {
@@ -2912,8 +2891,6 @@ void register_query_primitives_governance_stats(PrimRegistrar add, Evaluator& ev
             };
             return build_hash(kv);
         });
-
-
 }
 
 void register_query_primitives_ai_native_stats(PrimRegistrar add, Evaluator& ev) {
@@ -3148,7 +3125,6 @@ void register_query_primitives_ai_native_stats(PrimRegistrar add, Evaluator& ev)
             };
             return build_hash(kv);
         });
-
 }
 
 void register_query_sv_structured_edsl_stats(PrimRegistrar add, Evaluator& ev) {
@@ -3370,7 +3346,6 @@ void register_query_sv_structured_edsl_stats(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
-
 }
 
 void register_query_sv_node_stats(PrimRegistrar add, Evaluator& ev) {
@@ -3601,7 +3576,6 @@ void register_query_sv_node_stats(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
-
 }
 
 void register_query_hardware_backend_stats(PrimRegistrar add, Evaluator& ev) {
@@ -3859,7 +3833,6 @@ void register_query_hardware_backend_stats(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
-
 }
 
 void register_query_sv_defuse_stats(PrimRegistrar add, Evaluator& ev) {
@@ -4140,7 +4113,6 @@ void register_query_sv_defuse_stats(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
-
 }
 
 void register_query_work_steal_stats(PrimRegistrar add, Evaluator& ev) {
@@ -4409,7 +4381,6 @@ void register_query_work_steal_stats(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
-
 }
 
 void register_query_hardware_backend_sv_closedloop_stats(PrimRegistrar add, Evaluator& ev) {
@@ -4658,7 +4629,6 @@ void register_query_hardware_backend_sv_closedloop_stats(PrimRegistrar add, Eval
             };
             return build_hash(kv);
         });
-
 }
 
 void register_query_linear_ownership_typed_mutate_stats(PrimRegistrar add, Evaluator& ev) {
@@ -4841,7 +4811,6 @@ void register_query_linear_ownership_typed_mutate_stats(PrimRegistrar add, Evalu
             };
             return build_hash(kv);
         });
-
 }
 
 void register_query_linear_ownership_enforcement_stats(PrimRegistrar add, Evaluator& ev) {
@@ -5094,7 +5063,6 @@ void register_query_linear_ownership_enforcement_stats(PrimRegistrar add, Evalua
             };
             return build_hash(kv);
         });
-
 }
 
 void register_query_shape_value_pass_stats(PrimRegistrar add, Evaluator& ev) {
@@ -5372,7 +5340,6 @@ void register_query_shape_value_pass_stats(PrimRegistrar add, Evaluator& ev) {
         }
         return make_bool(ev.enable_mutation_audit_wal(path));
     });
-
 }
 
 void register_query_audit_wal_stats(PrimRegistrar add, Evaluator& ev) {
@@ -5545,8 +5512,6 @@ void register_query_audit_wal_stats(PrimRegistrar add, Evaluator& ev) {
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
-
-
 }
 
 void register_query_mutation_audit_log(PrimRegistrar add, Evaluator& ev) {
@@ -5726,7 +5691,6 @@ void register_query_mutation_audit_log(PrimRegistrar add, Evaluator& ev) {
             }
             return result;
         });
-
 }
 
 static const char* security_audit_kind_name(SecurityEventKind k) {
@@ -5786,11 +5750,13 @@ static const char* security_audit_typed_outcome_name(AuditOutcome o) {
 }
 
 template <class Heap, class Pairs>
-static void security_audit_append_durable_miss(
-    Evaluator& ev, Heap& heap, Pairs& pairs, EvalValue& result, std::size_t& emitted,
-    bool filt_tenant, std::uint64_t want_tenant, bool filt_fiber, std::int64_t want_fiber,
-    bool filt_reason, std::string_view want_reason, bool filt_mid, std::uint64_t want_mid,
-    bool summary_scan_ok) {
+static void security_audit_append_durable_miss(Evaluator& ev, Heap& heap, Pairs& pairs,
+                                               EvalValue& result, std::size_t& emitted,
+                                               bool filt_tenant, std::uint64_t want_tenant,
+                                               bool filt_fiber, std::int64_t want_fiber,
+                                               bool filt_reason, std::string_view want_reason,
+                                               bool filt_mid, std::uint64_t want_mid,
+                                               bool summary_scan_ok) {
     using aura::compiler::typed_audit::AuditOutcome;
     using aura::compiler::typed_audit::AuditStrategy;
     using aura::compiler::typed_audit::get_strategy;
@@ -5832,21 +5798,21 @@ static void security_audit_append_durable_miss(
             wal_window_hit = true;
             if ((!filt_tenant || rec->tenant_id == want_tenant) &&
                 (!filt_fiber || rec->fiber_id == want_fiber) &&
-                (!filt_reason || std::string_view(rec->reason).find(want_reason) !=
-                                     std::string_view::npos)) {
+                (!filt_reason ||
+                 std::string_view(rec->reason).find(want_reason) != std::string_view::npos)) {
                 int typed_summary_from_wal = 0;
                 const char* typed_outcome_wal = "-";
                 const char* typed_kind_wal = "-";
                 if (g_mutation_audit_wal().is_enabled()) {
-                    auto ts = g_mutation_audit_wal().find_recent_typed_summary_by_mid(
-                        want_mid, win);
+                    auto ts =
+                        g_mutation_audit_wal().find_recent_typed_summary_by_mid(want_mid, win);
                     if (!ts)
-                        ts = g_mutation_audit_wal()
-                                 .find_typed_summary_by_mid_scan_all_segments(want_mid);
+                        ts = g_mutation_audit_wal().find_typed_summary_by_mid_scan_all_segments(
+                            want_mid);
                     if (ts) {
                         typed_summary_from_wal = 1;
-                        typed_outcome_wal =
-                            security_audit_typed_outcome_name(static_cast<AuditOutcome>(ts->outcome));
+                        typed_outcome_wal = security_audit_typed_outcome_name(
+                            static_cast<AuditOutcome>(ts->outcome));
                         typed_kind_wal =
                             security_audit_typed_kind_name(static_cast<MutationKind>(ts->kind));
                     }
@@ -5863,8 +5829,8 @@ static void security_audit_append_durable_miss(
                     rec->mutation_id, rec->epoch, rec->effect_bits, rec->op, rec->reason,
                     rec->denied ? 1 : 0, 0, "-", "-", kSecurityAuditUnifyIssue, 1,
                     static_cast<unsigned>(kTypedMutationAuditTrailSize),
-                    static_cast<unsigned>(kSecurityEventRingSize), 1,
-                    typed_summary_from_wal, typed_outcome_wal, typed_kind_wal);
+                    static_cast<unsigned>(kSecurityEventRingSize), 1, typed_summary_from_wal,
+                    typed_outcome_wal, typed_kind_wal);
                 line += std::format(" wal-full-scan-hit={} wal-segments-scanned={}",
                                     wal_full_scan_hit, wal_segments_scanned);
                 auto sidx = heap.mint(std::move(line));
@@ -5891,16 +5857,15 @@ static void security_audit_append_durable_miss(
         const char* typed_kind_wal = "-";
         if (g_mutation_audit_wal().is_enabled()) {
             const auto win = ::aura::core::wal_slo::wal_mid_lookup_segments();
-            auto ts =
-                g_mutation_audit_wal().find_recent_typed_summary_by_mid(want_mid, win);
+            auto ts = g_mutation_audit_wal().find_recent_typed_summary_by_mid(want_mid, win);
             if (!ts)
-                ts = g_mutation_audit_wal().find_typed_summary_by_mid_scan_all_segments(
-                    want_mid);
+                ts = g_mutation_audit_wal().find_typed_summary_by_mid_scan_all_segments(want_mid);
             if (ts) {
                 typed_summary_from_wal = 1;
                 typed_outcome_wal =
                     security_audit_typed_outcome_name(static_cast<AuditOutcome>(ts->outcome));
-                typed_kind_wal = security_audit_typed_kind_name(static_cast<MutationKind>(ts->kind));
+                typed_kind_wal =
+                    security_audit_typed_kind_name(static_cast<MutationKind>(ts->kind));
             }
         }
         if (wal_segments_scanned == 0)
@@ -5912,12 +5877,11 @@ static void security_audit_append_durable_miss(
             "typed-trail-size={} se-ring-size={} wal-replay-hint=1 "
             "typed-summary-from-wal={} typed-outcome-wal={} typed-kind-wal={} "
             "wal-lookup-window-miss={}",
-            want_mid, kSecurityAuditUnifyIssue,
-            static_cast<unsigned>(kTypedMutationAuditTrailSize),
+            want_mid, kSecurityAuditUnifyIssue, static_cast<unsigned>(kTypedMutationAuditTrailSize),
             static_cast<unsigned>(kSecurityEventRingSize), typed_summary_from_wal,
             typed_outcome_wal, typed_kind_wal, typed_summary_from_wal == 1 ? 0 : 1);
-        line += std::format(" wal-full-scan-hit={} wal-segments-scanned={}",
-                            wal_full_scan_hit, wal_segments_scanned);
+        line += std::format(" wal-full-scan-hit={} wal-segments-scanned={}", wal_full_scan_hit,
+                            wal_segments_scanned);
         auto sidx = heap.mint(std::move(line));
         auto pid = pairs.size();
         pairs.push_back({make_string(sidx), result});
@@ -6044,9 +6008,10 @@ void register_query_security_audit(PrimRegistrar add, Evaluator& ev) {
                     if (auto ts = g_mutation_audit_wal().find_recent_typed_summary_by_mid(
                             e.mutation_id, ::aura::core::wal_slo::wal_mid_lookup_segments())) {
                         typed_summary_from_wal = 1;
-                        typed_outcome_wal =
-                            security_audit_typed_outcome_name(static_cast<AuditOutcome>(ts->outcome));
-                        typed_kind_wal = security_audit_typed_kind_name(static_cast<MutationKind>(ts->kind));
+                        typed_outcome_wal = security_audit_typed_outcome_name(
+                            static_cast<AuditOutcome>(ts->outcome));
+                        typed_kind_wal =
+                            security_audit_typed_kind_name(static_cast<MutationKind>(ts->kind));
                     }
                 }
                 // Issue #3498: typed-trail-miss + production/Full + SE WAL
@@ -6080,9 +6045,9 @@ void register_query_security_audit(PrimRegistrar add, Evaluator& ev) {
                     "typed_outcome={} schema={} typed-trail-miss={} typed-trail-size={} "
                     "se-ring-size={} wal-replay-hint={} typed-summary-from-wal={} "
                     "typed-outcome-wal={} typed-kind-wal={} wal-lookup-window-miss=0",
-                    e.seq, security_audit_kind_name(e.kind), e.tenant_id, e.fiber_id, e.mutation_id, e.epoch,
-                    e.effect_bits, op_out, reason_out, e.denied ? 1 : 0, typed_seq, typed_kind,
-                    typed_outcome, kSecurityAuditUnifyIssue, typed_miss,
+                    e.seq, security_audit_kind_name(e.kind), e.tenant_id, e.fiber_id, e.mutation_id,
+                    e.epoch, e.effect_bits, op_out, reason_out, e.denied ? 1 : 0, typed_seq,
+                    typed_kind, typed_outcome, kSecurityAuditUnifyIssue, typed_miss,
                     static_cast<unsigned>(kTypedMutationAuditTrailSize),
                     static_cast<unsigned>(kSecurityEventRingSize), wal_hint, typed_summary_from_wal,
                     typed_outcome_wal, typed_kind_wal);
@@ -6094,13 +6059,12 @@ void register_query_security_audit(PrimRegistrar add, Evaluator& ev) {
                 result = make_pair(pid);
                 ++emitted;
             }
-            security_audit_append_durable_miss(
-                ev, ev.string_heap_, ev.pairs_, result, emitted, filt_tenant, want_tenant,
-                filt_fiber, want_fiber, filt_reason, want_reason, filt_mid, want_mid,
-                summary_scan_ok);
+            security_audit_append_durable_miss(ev, ev.string_heap_, ev.pairs_, result, emitted,
+                                               filt_tenant, want_tenant, filt_fiber, want_fiber,
+                                               filt_reason, want_reason, filt_mid, want_mid,
+                                               summary_scan_ok);
             return result;
         });
-
 }
 
 void register_query_security_audit_stats(PrimRegistrar add, Evaluator& ev) {
@@ -6321,7 +6285,6 @@ void register_query_security_audit_stats(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2075", 2075);
             return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
-
 }
 
 void register_query_security_posture(PrimRegistrar add, Evaluator& ev) {
@@ -6331,32 +6294,29 @@ void register_query_security_posture(PrimRegistrar add, Evaluator& ev) {
     // and *-stats. SSOT: this is the only register_stats_impl for the key
     // (obs_eval #2225 duplicate removed).
     ObservabilityPrims::register_stats_impl(
-        "query:security-posture", [&ev](const auto&) -> EvalValue {
-            return build_security_posture(ev);
-        });
+        "query:security-posture",
+        [&ev](const auto&) -> EvalValue { return build_security_posture(ev); });
 }
 
 // Posture mode, ring fill, and fiber-principal face.
 template <class Cap, class Iso, class Reg, class Ring, class Insert>
-static void publish_security_posture_mode_fiber(Evaluator& ev, const Cap& cap, const Iso& iso, const Reg& reg,
-                    const Ring& se_ring, std::uint64_t& se_total, Insert& insert_kv) {
+static void publish_security_posture_mode_fiber(Evaluator& ev, const Cap& cap, const Iso& iso,
+                                                const Reg& reg, const Ring& se_ring,
+                                                std::uint64_t& se_total, Insert& insert_kv) {
     insert_kv("sandbox-mode", static_cast<std::int64_t>(cap.sandbox_mode));
     insert_kv("security-event-wal-on", g_security_event_wal().is_enabled() ? 1 : 0);
     insert_kv("mutation-wal-on", g_mutation_audit_wal().is_enabled() ? 1 : 0);
     // Ring fill %: min(100, total % capacity * 100 / capacity) approx.
     se_total = se_ring.total.load(std::memory_order_relaxed);
     const auto se_cap = static_cast<std::uint64_t>(1024);
-    const auto se_fill =
-        se_cap == 0 ? 0 : (se_total >= se_cap ? 100 : (se_total * 100) / se_cap);
+    const auto se_fill = se_cap == 0 ? 0 : (se_total >= se_cap ? 100 : (se_total * 100) / se_cap);
     insert_kv("se-ring-fill-pct", static_cast<std::int64_t>(se_fill));
-    insert_kv("cap-audit-ring-size",
-              static_cast<std::int64_t>(CapabilityRegistry::kAuditRing));
+    insert_kv("cap-audit-ring-size", static_cast<std::int64_t>(CapabilityRegistry::kAuditRing));
     insert_kv("iso-audit-ring-size",
               static_cast<std::int64_t>(
                   ::aura::core::workspace_isolation::WorkspaceIsolationPolicy::kAuditRing));
     (void)iso; // isolation snapshot reserved for future fill%
-    insert_kv("grant-min-valid-epoch",
-              static_cast<std::int64_t>(reg.grant_min_valid_epoch));
+    insert_kv("grant-min-valid-epoch", static_cast<std::int64_t>(reg.grant_min_valid_epoch));
     insert_kv("grant-epoch-retain-window",
               static_cast<std::int64_t>(reg.grant_epoch_retain_window));
     insert_kv("hard-fiber-isolation", reg.hard_fiber_isolation ? 1 : 0);
@@ -6386,9 +6346,8 @@ static void publish_security_posture_mode_fiber(Evaluator& ev, const Cap& cap, c
     // NodeId-stamped require_effect_for_node_id surface.
     insert_kv("tenant-scope-mismatch-total",
               static_cast<std::int64_t>(aura::serve::Fiber::tenant_scope_mismatch_total()));
-    insert_kv(
-        "tenant-scope-mismatch-hard-total",
-        static_cast<std::int64_t>(aura::serve::Fiber::tenant_scope_mismatch_hard_total()));
+    insert_kv("tenant-scope-mismatch-hard-total",
+              static_cast<std::int64_t>(aura::serve::Fiber::tenant_scope_mismatch_hard_total()));
     insert_kv("fiber-principal-mismatch-hard-wired", 1);
     insert_kv("require-effect-for-node-id-wired", 1);
     insert_kv("schema-2839", 2839);
@@ -6430,13 +6389,12 @@ static void publish_security_posture_mode_fiber(Evaluator& ev, const Cap& cap, c
 
 // Posture WAL overflow, fail-closed, and hash-overflow face.
 template <class Cap, class Iso, class Reg, class Ring, class Insert>
-static void publish_security_posture_wal_gate(Evaluator& ev, const Cap& cap, const Iso& iso, const Reg& reg,
-                    const Ring& se_ring, std::uint64_t& se_total, Insert& insert_kv) {
+static void publish_security_posture_wal_gate(Evaluator& ev, const Cap& cap, const Iso& iso,
+                                              const Reg& reg, const Ring& se_ring,
+                                              std::uint64_t& se_total, Insert& insert_kv) {
     const auto checks = cap.checks == 0 ? 1 : cap.checks;
-    insert_kv("effect-deny-rate-bp",
-              static_cast<std::int64_t>((cap.denied * 10000) / checks));
-    insert_kv("provenance-mismatch-total",
-              static_cast<std::int64_t>(cap.provenance_mismatch));
+    insert_kv("effect-deny-rate-bp", static_cast<std::int64_t>((cap.denied * 10000) / checks));
+    insert_kv("provenance-mismatch-total", static_cast<std::int64_t>(cap.provenance_mismatch));
     insert_kv("epoch-fence-hits", static_cast<std::int64_t>(cap.epoch_fence_hits));
     insert_kv("schema-2534", 2534);
     insert_kv("issue-2534", 2534);
@@ -6459,9 +6417,8 @@ static void publish_security_posture_wal_gate(Evaluator& ev, const Cap& cap, con
         const bool prod = production_defaults_active();
         const auto d = evaluate_wal_append_fail_slo(make_wal_append_fail_slo_input(
             mut.append_fail, se.append_fail, mut.persisted, se.persisted,
-            g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled(),
-            prod, !prod || sandbox_off,
-            ::aura::core::wal_slo::force_wal_enable_failed() != 0));
+            g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled(), prod,
+            !prod || sandbox_off, ::aura::core::wal_slo::force_wal_enable_failed() != 0));
         insert_kv("wal-append-fail-breach", d.force_reason_code == 2 ? 1 : 0);
         insert_kv("wal-append-fail-slo-wired", 1);
         insert_kv("schema-3056", kWalAppendFailSloIssue);
@@ -6472,9 +6429,9 @@ static void publish_security_posture_wal_gate(Evaluator& ev, const Cap& cap, con
         insert_kv("wal-fail-closed-active",
                   static_cast<std::int64_t>(
                       ::aura::core::wal_slo::wal_append_fail_closed_active() ? 1 : 0));
-        insert_kv("wal-overflow-ring-depth",
-                  static_cast<std::int64_t>(
-                      ::aura::core::security_event_wal::wal_overflow_ring_depth()));
+        insert_kv(
+            "wal-overflow-ring-depth",
+            static_cast<std::int64_t>(::aura::core::security_event_wal::wal_overflow_ring_depth()));
         // Issue #3806: additive overflow wrap / full face (no rename
         // of wal-overflow-ring-depth). Soft / Off / WAL-off: wrap=0,
         // full=0 (push never runs).
@@ -6489,15 +6446,12 @@ static void publish_security_posture_wal_gate(Evaluator& ev, const Cap& cap, con
         insert_kv("issue-3806", ::aura::core::security_event_wal::kWalOverflowWrapIssue);
         // Issue #3838: refuse-on-wrap counter (production fail-closed).
         // Soft / Off / WAL-off: 0 (push never runs / Soft overwrites).
-        insert_kv(
-            "wal-overflow-wrap-refuse-total",
-            static_cast<std::int64_t>(
-                ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total()
-                    .load(std::memory_order_relaxed)));
-        insert_kv("schema-3838",
-                  ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
-        insert_kv("issue-3838",
-                  ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
+        insert_kv("wal-overflow-wrap-refuse-total",
+                  static_cast<std::int64_t>(
+                      ::aura::core::security_event_wal::wal_overflow_ring_wrap_refuse_total().load(
+                          std::memory_order_relaxed)));
+        insert_kv("schema-3838", ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
+        insert_kv("issue-3838", ::aura::core::security_event_wal::kWalOverflowWrapRefuseIssue);
         insert_kv("schema-3109", 3109);
         insert_kv("issue-3109", 3109);
         // Issue #3302: force_wal default-arms fail-closed. Additive.
@@ -6508,19 +6462,17 @@ static void publish_security_posture_wal_gate(Evaluator& ev, const Cap& cap, con
         insert_kv("issue-3302", ::aura::core::wal_slo::kWalAppendFailClosedForceWalIssue);
         // Issue #3338: mid lookup window + retention (same keys as
         // query:audit-wal-stats). Additive; 0 retention = unbounded.
+        insert_kv("wal-mid-lookup-segments",
+                  static_cast<std::int64_t>(::aura::core::wal_slo::wal_mid_lookup_segments()));
+        insert_kv("wal-max-segments-retention",
+                  static_cast<std::int64_t>(::aura::core::wal_slo::wal_max_segments_retention()));
         insert_kv(
-            "wal-mid-lookup-segments",
-            static_cast<std::int64_t>(::aura::core::wal_slo::wal_mid_lookup_segments()));
-        insert_kv(
-            "wal-max-segments-retention",
-            static_cast<std::int64_t>(::aura::core::wal_slo::wal_max_segments_retention()));
-        insert_kv("wal-segment-prune-total",
-                  static_cast<std::int64_t>(
-                      ::aura::core::audit_wal::g_audit_wal_metrics()
-                          .audit_wal_segment_prune_total.load(std::memory_order_relaxed) +
-                      ::aura::core::security_event_wal::g_security_event_wal_metrics()
-                          .security_event_wal_segment_prune_total.load(
-                              std::memory_order_relaxed)));
+            "wal-segment-prune-total",
+            static_cast<std::int64_t>(
+                ::aura::core::audit_wal::g_audit_wal_metrics().audit_wal_segment_prune_total.load(
+                    std::memory_order_relaxed) +
+                ::aura::core::security_event_wal::g_security_event_wal_metrics()
+                    .security_event_wal_segment_prune_total.load(std::memory_order_relaxed)));
         insert_kv("schema-3338", ::aura::core::wal_slo::kWalMidLookupWindowIssue);
         insert_kv("issue-3338", ::aura::core::wal_slo::kWalMidLookupWindowIssue);
     }
@@ -6534,12 +6486,11 @@ static void publish_security_posture_wal_gate(Evaluator& ev, const Cap& cap, con
         const auto tseq = trail_seq();
         insert_kv("typed-trail-wrap-risk",
                   (tseq > kTypedMutationAuditTrailSize && se_total > 0) ? 1 : 0);
-        insert_kv("typed-trail-wrap-total",
-                  static_cast<std::int64_t>(
-                      g_typed_mutation_audit_counters.typed_trail_wrap_total.load(
-                          std::memory_order_relaxed)));
-        insert_kv("typed-trail-window",
-                  static_cast<std::int64_t>(kTypedMutationAuditTrailSize));
+        insert_kv(
+            "typed-trail-wrap-total",
+            static_cast<std::int64_t>(g_typed_mutation_audit_counters.typed_trail_wrap_total.load(
+                std::memory_order_relaxed)));
+        insert_kv("typed-trail-window", static_cast<std::int64_t>(kTypedMutationAuditTrailSize));
         insert_kv("schema-3113", kTypedTrailWrapMissIssue);
         insert_kv("issue-3113", kTypedTrailWrapMissIssue);
     }
@@ -6551,9 +6502,8 @@ static void publish_security_posture_wal_gate(Evaluator& ev, const Cap& cap, con
         using ::aura::compiler::typed_audit::production_defaults_active;
         using ::aura::orch::kSecurityScheduleMetricsHashOverflowIssue;
         const bool prod = production_defaults_active();
-        const auto ov =
-            static_cast<std::int64_t>(::aura_engine_metrics_hash_overflow_total()) +
-            static_cast<std::int64_t>(::aura_query_hash_overflow_total());
+        const auto ov = static_cast<std::int64_t>(::aura_engine_metrics_hash_overflow_total()) +
+                        static_cast<std::int64_t>(::aura_query_hash_overflow_total());
         const bool breach = prod && ov > 0;
         insert_kv("metrics-hash-overflow-breach", breach ? 1 : 0);
         insert_kv("metrics-hash-overflow-total", ov);
@@ -6565,8 +6515,9 @@ static void publish_security_posture_wal_gate(Evaluator& ev, const Cap& cap, con
 
 // Posture WAL durability, production defaults, and soft grant.
 template <class Cap, class Iso, class Reg, class Ring, class Insert>
-static void publish_security_posture_durability(Evaluator& ev, const Cap& cap, const Iso& iso, const Reg& reg,
-                    const Ring& se_ring, std::uint64_t& se_total, Insert& insert_kv) {
+static void publish_security_posture_durability(Evaluator& ev, const Cap& cap, const Iso& iso,
+                                                const Reg& reg, const Ring& se_ring,
+                                                std::uint64_t& se_total, Insert& insert_kv) {
     // Issue #3499: merge schema-2225 WAL durability keys into the
     // production 2534 handler so last-wins does not drop
     // ring-wrap / persisted / audit-durable-gap. Additive; do
@@ -6585,8 +6536,8 @@ static void publish_security_posture_durability(Evaluator& ev, const Cap& cap, c
         insert_kv("ring-seq",
                   static_cast<std::int64_t>(se_ring.seq.load(std::memory_order_relaxed)));
         insert_kv("ring-total", static_cast<std::int64_t>(se_total));
-        insert_kv("ring-wrap-total", static_cast<std::int64_t>(se_ring.ring_wrap_total.load(
-                                         std::memory_order_relaxed)));
+        insert_kv("ring-wrap-total", static_cast<std::int64_t>(
+                                         se_ring.ring_wrap_total.load(std::memory_order_relaxed)));
         insert_kv("wal-persisted-total", static_cast<std::int64_t>(wal_snap.persisted));
         insert_kv("wal-replay-count", static_cast<std::int64_t>(wal_snap.replay_count));
         insert_kv("wal-crash-recovery-success",
@@ -6595,10 +6546,9 @@ static void publish_security_posture_durability(Evaluator& ev, const Cap& cap, c
         insert_kv("wal-rotate-total", static_cast<std::int64_t>(wal_snap.rotate_total));
         insert_kv("wal-bytes-written", static_cast<std::int64_t>(wal_snap.bytes_written));
         insert_kv("wal-segments", static_cast<std::int64_t>(wal_snap.segments));
-        insert_kv(
-            "mutation-wal-paired",
-            static_cast<std::int64_t>(
-                (wal_snap.enabled != 0 && g_mutation_audit_wal().is_enabled()) ? 1 : 0));
+        insert_kv("mutation-wal-paired",
+                  static_cast<std::int64_t>(
+                      (wal_snap.enabled != 0 && g_mutation_audit_wal().is_enabled()) ? 1 : 0));
         // Issue #4660: additive replay-window truncation marker on
         // the SE WAL key family (wal-replay-count and every other
         // existing key keep their meaning). 0/1; Soft / WAL-off 0.
@@ -6629,10 +6579,11 @@ static void publish_security_posture_durability(Evaluator& ev, const Cap& cap, c
                         ::aura::core::wal_slo::force_wal_enable_failed_observed() != 0))
                           ? 1
                           : 0));
-        insert_kv("force-wal-enable-fail-total",
-                  static_cast<std::int64_t>(
-                      ::aura::core::audit_wal::g_audit_wal_metrics()
-                          .force_wal_enable_fail_total.load(std::memory_order_relaxed)));
+        insert_kv(
+            "force-wal-enable-fail-total",
+            static_cast<std::int64_t>(
+                ::aura::core::audit_wal::g_audit_wal_metrics().force_wal_enable_fail_total.load(
+                    std::memory_order_relaxed)));
         insert_kv("schema-4005", ::aura::core::wal_slo::kWalForceWalEnableFailIssue);
         insert_kv("issue-4005", ::aura::core::wal_slo::kWalForceWalEnableFailIssue);
         // Issue #4016: production-defaults-active on posture (same
@@ -6861,7 +6812,6 @@ void register_query_security_correlated_trail(PrimRegistrar add, Evaluator& ev) 
             insert_kv("schema-2479", 2479);
             return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
         });
-
 }
 
 void register_query_evolution_audit_decision(PrimRegistrar add, Evaluator& ev) {
