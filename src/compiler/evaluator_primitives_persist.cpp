@@ -288,7 +288,7 @@ static void remap_define_mutation_targets(aura::ast::StringPool* pool, aura::ast
     }
 }
 
-void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
+void RegSplitParts::register_persist_serialize(PrimRegistrar add, Evaluator& ev) {
     // (serialize-workspace path) → #t / #f
     add("serialize-workspace", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
@@ -391,7 +391,9 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
         ofs.write(out.data(), static_cast<std::streamsize>(out.size()));
         return make_bool(static_cast<bool>(ofs));
     });
+}
 
+void RegSplitParts::register_persist_deserialize(PrimRegistrar add, Evaluator& ev) {
     // (deserialize-workspace path) → #t / #f
     add("deserialize-workspace", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
@@ -516,7 +518,9 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         return make_bool(true);
     });
+}
 
+void RegSplitParts::register_persist_info(PrimRegistrar add, Evaluator& ev) {
     // (workspace-persist-info path) → hash | #f
     add("workspace-persist-info", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
@@ -590,6 +594,12 @@ void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
     add("workspace-persist-format-version", [](const auto&) -> EvalValue {
         return make_int(static_cast<std::int64_t>(kFormatVersion));
     });
+}
+
+void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {
+    RegSplitParts::register_persist_serialize(add, ev);
+    RegSplitParts::register_persist_deserialize(add, ev);
+    RegSplitParts::register_persist_info(add, ev);
 }
 
 } // namespace aura::compiler::primitives_detail

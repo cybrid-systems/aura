@@ -383,8 +383,8 @@ std::size_t collect_pending_overlay_roots(std::vector<std::int64_t>& out) {
     return out.size() - before;
 }
 
-void register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> add,
-                                   Evaluator& ev) {
+void RegSplitParts::register_fiber_overlay_primitives(
+    std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev) {
     auto& reg = cow::registry<EvalValue>();
     const void* const owner = static_cast<const void*>(&ev);
     // Issue #4849: pending overlay writes are GC roots until commit (or
@@ -626,7 +626,10 @@ void register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> 
             s.active, s.read_conflicts);
         return make_string(ev.string_heap_.mint(out));
     });
+}
 
+void RegSplitParts::register_fiber_atomic_primitives(
+    std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev) {
     // Issue #4761: atomic read-modify-write primitives (see the note above
     // register_fiber_cow_primitives). Defined here: the evaluator fields are
     // reachable only from this friend entry point.
@@ -808,6 +811,12 @@ void register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> 
     add("atomic:counter-value", [counter_op](std::span<const EvalValue> a) -> EvalValue {
         return counter_op(a, "atomic:counter-value", false);
     });
+}
+
+void register_fiber_cow_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                   Evaluator& ev) {
+    RegSplitParts::register_fiber_overlay_primitives(add, ev);
+    RegSplitParts::register_fiber_atomic_primitives(add, ev);
 }
 
 } // namespace aura::compiler::primitives_detail

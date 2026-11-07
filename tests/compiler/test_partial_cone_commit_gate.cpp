@@ -1203,7 +1203,8 @@ static void ac3686_source_and_gate() {
     const auto call_pos = impl.find("affected_subtree_from_mutation(st.flat, extra)");
     CHECK(union_pos != std::string::npos && call_pos != std::string::npos &&
               cap_pos != std::string::npos && union_pos < call_pos && call_pos < cap_pos,
-          "3686: reuse affected_subtree_from_mutation(st.flat, extra) per record before the cone cap");
+          "3686: reuse affected_subtree_from_mutation(st.flat, extra) per record before the cone "
+          "cap");
     CHECK(ixx.find("extra_recs") != std::string::npos, "3686: extra_recs on dirty-txn entry");
     CHECK(etc.find("schema-3686") == std::string::npos &&
               impl.find("schema-3686") == std::string::npos &&
