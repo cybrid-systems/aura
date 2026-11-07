@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "tests" / "python"))
 
 from _aura_harness import AURA_BIN  # noqa: E402
 
-SUBS = ("new", "run", "test", "repl", "evo", "lsp", "soft", "help")
+SUBS = ("new", "demo", "run", "test", "repl", "evo", "lsp", "soft", "help")
 
 
 def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:

@@ -1,16 +1,32 @@
-;; main.aura — live-AST self-evolution with a gate and an HTML report (aura run).
+;; main.aura — one live definition, four fixed candidates. Each step snapshots
+;; the live AST, rebinds `guess`, evaluates, then keeps the change or restores
+;; the snapshot. Open this file to see the whole loop; gate.aura holds the rule.
 (require "gate")
-(require "evolve")
-(require "report")
 
-;; The evolving program lives in the live AST; mutate:rebind rewrites it.
-(set-code "(define params (quote (0 0)))")
+(set-code "(define (guess) 0)")
 (eval-current)
-(define (live-params) params)
 
-(define rows (reverse (evolve! 40)))
-(define keeps (length (filter (lambda (r) (equal? (cadr r) "KEEP")) rows)))
-(write-report! "out" rows (live-params))
-(display (format "evolved ~a steps: ~a KEEP, ~a ROLLBACK\n" (length rows) keeps (- (length rows) keeps)))
-(display (format "params ~a fitness ~a\n" (live-params) (fitness (live-params))))
-(display "report: out/report.html (audit: out/audit.tsv)\n")
+(define (live) (current-source :workspace :define-fn-sugar))
+
+;; Pad a column so the record lines up like a table.
+(define spaces "                    ")
+(define (pad s n)
+  (let ((k (- n (string-length s))))
+    (if (<= k 0) s (string-append s (substring spaces 0 k)))))
+
+(define (step i cand)
+  (let* ((live-value (guess))
+         (src (format "(define (guess) ~a)" cand))
+         (snap (ast:snapshot (format "step-~a" i)))
+         (ok (mutate:rebind "guess" src "evolve")))
+    (eval-current)
+    (if (and (eq? ok #t) (keep? live-value cand))
+        (display (format "~a ~a~a   live ~a\n" i (pad "KEEP" 10) (pad src 19) (live)))
+        (begin
+          (ast:restore snap)
+          (eval-current)
+          (display (format "~a ~a~a   live ~a\n" i (pad "ROLLBACK" 10) (pad src 19) (live)))))))
+
+(for-each (lambda (p) (step (car p) (cadr p)))
+          (list (list 1 10) (list 2 7) (list 3 2) (list 4 42)))
+(display (format "(guess) => ~a\n" (guess)))

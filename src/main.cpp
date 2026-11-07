@@ -855,6 +855,61 @@ static std::string project_channel_4913() {
 #include "cli_evo_4910.inc"
 #include "cli_lsp_4911.inc"
 
+// Write one template's files under dir, substituting {{name}} / {{channel}}.
+// Returns the file count, or -1 after printing the write error.
+static int write_template_4913(std::string_view tpl, const std::filesystem::path& dir,
+                               std::string_view name) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const auto channel = project_channel_4913();
+    int n = 0;
+    for (const auto& f : kTemplates4913) {
+        if (f.tpl != tpl)
+            continue;
+        std::string body(f.body);
+        for (std::size_t p = 0; (p = body.find("{{name}}", p)) != std::string::npos;)
+            body.replace(p, 8, name);
+        for (std::size_t p = 0; (p = body.find("{{channel}}", p)) != std::string::npos;)
+            body.replace(p, 11, channel);
+        const fs::path dst = dir / fs::path(f.path);
+        fs::create_directories(dst.parent_path(), ec);
+        std::ofstream out(dst, std::ios::binary);
+        out << body;
+        if (!out) {
+            std::println(std::cerr, "error: cannot write {}", dst.string());
+            return -1;
+        }
+        ++n;
+    }
+    return n;
+}
+
+// Temporary project for `aura demo`; removed on exit.
+static std::string g_demo_dir_4913;
+static void cleanup_demo_4913() {
+    if (!g_demo_dir_4913.empty()) {
+        std::error_code ec;
+        std::filesystem::remove_all(g_demo_dir_4913, ec);
+    }
+}
+
+// Materialise a template outside the user's tree so `aura demo` runs the
+// same source as `aura new <tpl> && aura run`.
+static std::optional<std::filesystem::path> make_demo_4913(std::string_view tpl) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const auto dir =
+        fs::temp_directory_path(ec) / std::format("aura-demo-{}", static_cast<long>(::getpid()));
+    if (ec)
+        return std::nullopt;
+    fs::remove_all(dir, ec);
+    if (write_template_4913(tpl, dir, "demo") < 0)
+        return std::nullopt;
+    g_demo_dir_4913 = dir.string();
+    std::atexit(cleanup_demo_4913);
+    return dir;
+}
+
 // `aura new [app|evolve|agent] <dir>`
 static int aura_new_4913(int argc, char** argv) {
     auto known = [](std::string_view t) {
@@ -881,8 +936,8 @@ static int aura_new_4913(int argc, char** argv) {
     }
     if (!known(tpl)) {
         std::println(std::cerr, "error: unknown template '{}'", tpl);
-        std::println(std::cerr, "hint: app (modules + tests), evolve (self-evolving program + "
-                                "report), agent (orch workflow)");
+        std::println(std::cerr, "hint: app (modules + tests), evolve (prints KEEP / ROLLBACK "
+                                "in the terminal), agent (two orch roles in a dialogue)");
         return 1;
     }
     namespace fs = std::filesystem;
@@ -894,26 +949,9 @@ static int aura_new_4913(int argc, char** argv) {
     auto name = fs::weakly_canonical(fs::absolute(dir, ec), ec).filename().string();
     if (name.empty())
         name = "aura-project";
-    const auto channel = project_channel_4913();
-    int n = 0;
-    for (const auto& f : kTemplates4913) {
-        if (f.tpl != tpl)
-            continue;
-        std::string body(f.body);
-        for (std::size_t p = 0; (p = body.find("{{name}}", p)) != std::string::npos;)
-            body.replace(p, 8, name);
-        for (std::size_t p = 0; (p = body.find("{{channel}}", p)) != std::string::npos;)
-            body.replace(p, 11, channel);
-        const fs::path dst = fs::path(dir) / fs::path(f.path);
-        fs::create_directories(dst.parent_path(), ec);
-        std::ofstream out(dst, std::ios::binary);
-        out << body;
-        if (!out) {
-            std::println(std::cerr, "error: cannot write {}", dst.string());
-            return 1;
-        }
-        ++n;
-    }
+    const int n = write_template_4913(tpl, fs::path(dir), name);
+    if (n < 0)
+        return 1;
     std::println("created {} ({} template, {} files)", dir, tpl, n);
     std::println("next: cd {} && {} run", dir, "aura");
     return 0;
@@ -1034,8 +1072,14 @@ inline constexpr SubHelp4935 kSubHelp4935[] = {
      "\n"
      "Scaffold a project in <dir> (must not exist or be empty).\n"
      "  app     modules + tests (default)\n"
-     "  evolve  self-evolving program + evo report\n"
+     "  evolve  live AST: each KEEP / ROLLBACK printed in the terminal\n"
      "  agent   orchestrated workflow\n"},
+    {"demo", "watch a definition evolve in the terminal",
+     "usage: aura demo [evolve|agent]\n"
+     "\n"
+     "Run the signature example from a temporary project (nothing to create):\n"
+     "  (no arg)  four fixed candidates: KEEP, ROLLBACK, and the live source\n"
+     "  agent     two roles propose and check a definition\n"},
     {"run", "run the project entry with its aura.toml preset",
      "usage: aura run [entry.aura] [options] [args…]\n"
      "\n"
@@ -1072,6 +1116,7 @@ static void print_top_help_4935() {
     std::println("aura {} — an AI-native Lisp", AURA_BUILD_VERSION);
     std::println("");
     std::println("usage: aura <command> [args]     project commands");
+    std::println("       aura demo                  watch a definition evolve in the terminal");
     std::println("       aura [options] file.aura   run one file (or stdin, or -e EXPR)");
     std::println("");
     std::println("Commands:");
@@ -1186,6 +1231,32 @@ static std::optional<int> front_door_4913(int& argc, char**& argv) {
     }
     if (sub == "new")
         return aura_new_4913(argc, argv);
+    if (sub == "demo") {
+        if (argc > 3) {
+            std::println(std::cerr, "usage: aura demo [evolve|agent]");
+            return 1;
+        }
+        const std::string_view tpl = argc == 3 ? argv[2] : "evolve";
+        if (tpl != "evolve" && tpl != "agent") {
+            std::println(std::cerr, "error: unknown demo '{}'", tpl);
+            std::println(std::cerr,
+                         "hint: evolve (KEEP / ROLLBACK worldline) or agent (two roles)");
+            return 1;
+        }
+        const auto dir = make_demo_4913(tpl);
+        if (!dir)
+            return 1;
+        std::error_code ec;
+        std::filesystem::current_path(*dir, ec);
+        if (ec) {
+            std::println(std::cerr, "error: cannot enter {}: {}", dir->string(), ec.message());
+            return 1;
+        }
+        // Same file face as `aura main.aura`, with the preset the template's
+        // aura.toml names, so the record matches `aura new … && aura run`.
+        rewrite({argv[0], "--preset", "dev", "main.aura"});
+        return std::nullopt;
+    }
     if (sub == "evo")
         return aura_evo_4910(argc, argv);
     if (sub == "lsp")
@@ -2811,6 +2882,10 @@ static void print_denseness_usage(const char*, std::ostream& out = std::cerr) {
     std::println(out,
                  "  {} test [--update] [tests/x.aura] run tests/*.aura against "
                  "tests/*.golden",
+                 prog);
+    std::println(out,
+                 "  {} demo [evolve|agent]            run the signature example in a "
+                 "temporary project",
                  prog);
     std::println(out, "  (require \"lib/x\") in a project resolves from the project root.");
     std::println(out, "Evolution (#4910):");
