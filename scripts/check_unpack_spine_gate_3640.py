@@ -43,7 +43,12 @@ def main() -> int:
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: gate single spine ───────────────────────────────────────────
-    must("unpack_stable_ref_arg](std::span<const EvalValue> a)", "AC1 gate captures unpack", mut)
+    # Issue #5033: the wrapper body was peeled into RegSplitParts helpers, so the
+    # gate may reach the shared unpack through the helper instead of a capture.
+    if "unpack_stable_ref_arg](std::span<const EvalValue> a)" not in mut and (
+        "RegSplitParts::mutate_unpack_stable_ref_arg(ev, a[0])" not in mut
+    ):
+        fails.append("AC1 gate captures unpack: missing packed unpack spine")
     must("Issue #3640", "AC1 gate cites #3640", mut)
     gate_idx = mut.find("Issue #3640")
     if gate_idx < 0:
@@ -59,10 +64,15 @@ def main() -> int:
         fails.append(f"AC1: shallow wrap-as-tenant parse still present (x{bare})")
 
     # ── AC2: resolve spine + #3396 lineage unchanged ─────────────────────
-    resolve_idx = mut.find("auto resolve_mutate_node_arg")
+    resolve_idx = mut.find("RegSplitParts::mutate_resolve_node_arg(")
+    if resolve_idx < 0:
+        resolve_idx = mut.find("auto resolve_mutate_node_arg")
     if resolve_idx < 0:
         fails.append("AC2: resolve_mutate_node_arg missing")
-    elif "if (auto packed = unpack_stable_ref_arg(arg))" not in mut[resolve_idx:]:
+    elif (
+        "if (auto packed = RegSplitParts::mutate_unpack_stable_ref_arg(ev, arg))" not in mut[resolve_idx:]
+        and "if (auto packed = unpack_stable_ref_arg(arg))" not in mut[resolve_idx:]
+    ):
         fails.append("AC2: resolve_mutate_node_arg unpack removed (#3415 regression)")
     must("auto walk_v2", "AC2 v2 spine walker present", mut)
     must("check_unpack_stable_ref_arg_v2_3396", "AC2 #3396 linter still wired", build)

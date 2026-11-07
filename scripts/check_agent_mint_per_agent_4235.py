@@ -124,7 +124,8 @@ def main() -> int:
     must("const auto fiber = agent_scoped_fiber_id();", "AC3 stamp routes the per-Agent resolution", ssr)
     msr = window(sec, "Evaluator::make_stamped_safe_ref", "stamp_stable_ref(ref);", "AC3 make_stamped_safe_ref")
     must("fiber_id != 0 ? fiber_id : agent_scoped_fiber_id()", "AC3 explicit fiber wins, else per-Agent", msr)
-    mres = window(mut, "auto resolve_mutate_node_arg", "is_int(arg))", "AC3 mutate resolve")
+    # Issue #5033: the resolver moved into RegSplitParts::mutate_resolve_node_arg.
+    mres = window(mut, "RegSplitParts::mutate_resolve_node_arg(", "is_int(arg))", "AC3 mutate resolve")
     must("ev.agent_scoped_fiber_id()", "AC3 resolve_mutate_node_arg rides the resolution", mres)
     hits = qws.count("ev.agent_scoped_fiber_id()")
     if hits < 2:

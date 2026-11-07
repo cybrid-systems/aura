@@ -29,6 +29,44 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
 
 
+def _peeled(src: str, names: tuple[str, ...]) -> str:
+    """Brace-matched bodies of peeled RegSplitParts helpers (Issue #5033)."""
+    out = ""
+    for name in names:
+        idx = src.find(f"RegSplitParts::{name}(")
+        if idx < 0:
+            continue
+        start = src.find("{", idx)
+        if start < 0:
+            continue
+        depth = 0
+        i = start
+        while i < len(src):
+            c = src[i]
+            if c == '"' or c == "'":
+                q = c
+                i += 1
+                while i < len(src):
+                    if src[i] == "\\":
+                        i += 2
+                        continue
+                    if src[i] == q:
+                        break
+                    i += 1
+            elif c == "/" and i + 1 < len(src) and src[i + 1] == "/":
+                j = src.find("\n", i)
+                i = len(src) if j < 0 else j
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    out += src[start : i + 1]
+                    break
+            i += 1
+    return out
+
+
 def _prim_win(src: str, name: str, n: int = 8000) -> str:
     key = f'add_mutate("{name}"'
     pos = src.find(key)
@@ -38,7 +76,11 @@ def _prim_win(src: str, name: str, n: int = 8000) -> str:
         pos = src.find(f"── {name} ")
     if pos < 0:
         pos = src.find(name)
-    return src[pos : pos + n] if pos >= 0 else ""
+    win = src[pos : pos + n] if pos >= 0 else ""
+    if name == "mutate:set-body":
+        # Issue #5033: the set-body rewrite was peeled into phase helpers.
+        win += _peeled(src, ("set_body_rewrite_define", "set_body_typecheck_and_validate"))
+    return win
 
 
 def main() -> int:

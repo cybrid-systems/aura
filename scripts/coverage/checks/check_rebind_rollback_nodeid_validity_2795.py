@@ -25,6 +25,44 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace")
 
 
+def _peeled(mut: str, names: tuple[str, ...]) -> str:
+    """Brace-matched bodies of peeled RegSplitParts helpers (Issue #5033)."""
+    out = ""
+    for name in names:
+        idx = mut.find(f"RegSplitParts::{name}(")
+        if idx < 0:
+            continue
+        start = mut.find("{", idx)
+        if start < 0:
+            continue
+        depth = 0
+        i = start
+        while i < len(mut):
+            c = mut[i]
+            if c == '"' or c == "'":
+                q = c
+                i += 1
+                while i < len(mut):
+                    if mut[i] == "\\":
+                        i += 2
+                        continue
+                    if mut[i] == q:
+                        break
+                    i += 1
+            elif c == "/" and i + 1 < len(mut) and mut[i + 1] == "/":
+                j = mut.find("\n", i)
+                i = len(mut) if j < 0 else j
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    out += mut[start : i + 1]
+                    break
+            i += 1
+    return out
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -46,6 +84,9 @@ def main() -> int:
     # procedure->non-procedure gate between parse and the old-body capture;
     # keep presence + ordering checks intact over the full body.
     win = mut[pos : pos + 28000] if pos >= 0 else ""
+    # Issue #5033: parse + resolve + old-body capture were peeled into phase
+    # helpers; append them in body order so the ordering rows still hold.
+    win += _peeled(mut, ("rebind_parse_value", "rebind_shape_and_hygiene", "rebind_link_new_body"))
 
     # AC1
     must("Issue #2795", "AC1", win)

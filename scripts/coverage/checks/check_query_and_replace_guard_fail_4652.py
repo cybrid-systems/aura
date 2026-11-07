@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -44,16 +45,49 @@ def _read(path: Path) -> str:
         return ""
 
 
+def _member_body(text: str, name: str) -> str:
+    """Body of a top-level RegSplitParts::<name> definition (Issue #5033 peel)."""
+    for marker in (f"RegSplitParts::{name}(", f"::{name}("):
+        idx = text.find(marker)
+        if idx == -1:
+            continue
+        line_start = text.rfind("\n", 0, idx) + 1
+        close = text.find("\n}\n", idx)
+        if close == -1:
+            return text[line_start:]
+        return text[line_start : close + 3]
+    return ""
+
+
 def qar_body(text: str) -> str:
-    """Return the mutate:query-and-replace primitive body."""
+    """Return the mutate:query-and-replace primitive body.
+
+    Issue #5033: the registration body now delegates to RegSplitParts phase
+    helpers, so follow one level of delegation and append those helpers'
+    bodies - the reject paths and their orphan frees live there.
+    """
     start = text.find(QAR_ANCHOR)
     if start == -1:
         return ""
     # The body ends at the next add_mutate( registration.
     end = text.find("add_mutate(", start + len(QAR_ANCHOR))
     if end == -1:
-        return text[start:]
+        end = len(text)
     return text[start:end]
+
+
+def qar_body_with_parts(text: str) -> str:
+    """Registration body plus the RegSplitParts helpers it delegates to."""
+    body = qar_body(text)
+    if not body:
+        return ""
+    seen = set()
+    for name in re.findall(r"RegSplitParts::([A-Za-z_][A-Za-z0-9_]*)\(", body):
+        if name in seen:
+            continue
+        seen.add(name)
+        body += "\n" + _member_body(text, name)
+    return body
 
 
 def _reject_returns(body: str):
@@ -95,6 +129,8 @@ def _guards_the_return(body: str, pos: int) -> bool:
 def _rows():
     mut = _read(MUT_PATH)
     body = qar_body(mut)
+    # Issue #5033: the reject/orphan-free rows live in the delegated parts.
+    gbody = qar_body_with_parts(mut)
 
     rows = []
 
@@ -140,7 +176,7 @@ def _rows():
             "The parse-failure / parent-invalid / child-slot-invalid rejects must "
             "call the orphan free helper (free_orphan_nodes_from bounded by "
             "size_before_parse) before they return.",
-            body.count(free_helper) >= 4 and "free_orphan_nodes_from" in body and "size_before_parse" in body,
+            gbody.count(free_helper) >= 4 and "free_orphan_nodes_from" in gbody and "size_before_parse" in gbody,
         )
     )
 
@@ -149,11 +185,26 @@ def _rows():
         "mutate:query-and-replace: parent invalid after parse",
         "mutate:query-and-replace: child slot invalid after parse",
     ):
-        pos = body.find('"' + kind + '"')
+        # Issue #5033: the kind string can also appear in an unrelated
+        # diagnostics path (e.g. the batch partial_fails row); prefer the
+        # reject that is an error return from this primitive.
+        needle = '"' + kind + '"'
+        pos = -1
+        scan = 0
+        while True:
+            cand = gbody.find(needle, scan)
+            if cand == -1:
+                break
+            if "mev(" in gbody[max(0, cand - 40) : cand]:
+                pos = cand
+                break
+            scan = cand + 1
+        if pos == -1:
+            pos = gbody.find(needle)
         ok = pos != -1
         if ok:
             # The free call must sit between the rollback and the return.
-            window = body[max(0, pos - 900) : pos]
+            window = gbody[max(0, pos - 900) : pos]
             ok = free_helper in window
         rows.append(
             (

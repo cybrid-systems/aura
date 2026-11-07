@@ -33,6 +33,44 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
 
 
+def _peeled(mut: str, names: tuple[str, ...]) -> str:
+    """Brace-matched bodies of peeled RegSplitParts helpers (Issue #5033)."""
+    out = ""
+    for name in names:
+        idx = mut.find(f"RegSplitParts::{name}(")
+        if idx < 0:
+            continue
+        start = mut.find("{", idx)
+        if start < 0:
+            continue
+        depth = 0
+        i = start
+        while i < len(mut):
+            c = mut[i]
+            if c == '"' or c == "'":
+                q = c
+                i += 1
+                while i < len(mut):
+                    if mut[i] == "\\":
+                        i += 2
+                        continue
+                    if mut[i] == q:
+                        break
+                    i += 1
+            elif c == "/" and i + 1 < len(mut) and mut[i + 1] == "/":
+                j = mut.find("\n", i)
+                i = len(mut) if j < 0 else j
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    out += mut[start : i + 1]
+                    break
+            i += 1
+    return out
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -57,6 +95,9 @@ def main() -> int:
         # Brace-match the lambda body: #3975-#3988, #4332, #4385 and #4910
         # each grew add_mutate and slid a fixed byte window off the anchors.
         win = lambda_body_after(mut, start)
+        # Issue #5033: fn(a) + the inbody hold-budget poll were peeled into
+        # RegSplitParts wrapper helpers; follow that delegation in body order.
+        win += _peeled(mut, ("mutate_wrapped_call", "mutate_wrapper_enter", "mutate_post_body_belt"))
         must("Issue #3480", "AC6 cite", win)
         must("auto result = fn(a);", "AC1 after fn(a)", win)
         fn = win.find("auto result = fn(a);")

@@ -137,6 +137,77 @@ def _blank_comments(text: str) -> str:
     return "".join(out)
 
 
+PART_DEF_RE = re.compile(r"RegSplitParts::(\w+)\s*\(")
+# A definition (not a call site): the signature starts at column 0 with a
+# return type, e.g. "std::optional<EvalValue> RegSplitParts::foo(".
+PART_DEF_ANCHORED = re.compile(r"^[A-Za-z_][A-Za-z0-9_:<>,\*& \t]*?RegSplitParts::(\w+)[ \t]*\(", re.MULTILINE)
+
+
+def _member_bodies(masked: str) -> dict[str, str]:
+    """name -> brace-matched body of every RegSplitParts::X( definition.
+
+    Issue #5033 peeled each mutate:* body into a part function, so the
+    registration-time body text alone no longer carries the hygiene gate.
+    """
+    out: dict[str, str] = {}
+    for m in PART_DEF_ANCHORED.finditer(masked):
+        i = m.end()
+        paren = 1  # m.end() is just past the opening '(' of the parameter list
+        while i < len(masked):
+            c = masked[i]
+            if c == "(":
+                paren += 1
+            elif c == ")":
+                paren -= 1
+            elif c == "{" and paren == 0:
+                break
+            i += 1
+        if i >= len(masked):
+            continue
+        start = i
+        depth = 0
+        while i < len(masked):
+            c = masked[i]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    i += 1
+                    break
+            i += 1
+        out.setdefault(m.group(1), masked[start:i])
+    return out
+
+
+def _expand_delegates(body: str, index: dict[str, str], depth: int = 3) -> str:
+    """Follow RegSplitParts::X(...) delegations (bounded) - Issue #5033.
+
+    A peeled body may delegate to part helpers; the hygiene gate must still be
+    reachable from the registration site, so widen across that chain instead of
+    dropping the assertion.
+    """
+    seen: set[str] = set()
+    text = body
+    frontier = [body]
+    for _ in range(depth):
+        nxt: list[str] = []
+        for chunk in frontier:
+            for m in PART_DEF_RE.finditer(chunk):
+                name = m.group(1)
+                if name in seen:
+                    continue
+                seen.add(name)
+                sub = index.get(name)
+                if sub:
+                    nxt.append(sub)
+                    text += sub
+        if not nxt:
+            break
+        frontier = nxt
+    return text
+
+
 def _merge_adjacent_literals(text: str) -> str:
     """Merge adjacent string literals so a clang-format split stays parseable."""
     prev = None
@@ -320,6 +391,12 @@ def check_text(text: str, *, repo_scope: bool, extra_reg_text: str = "") -> list
         # comment-only mention never counts as a gate).
         body = _blank_comments(regs[name])
         hits = [h for h in HYG_HELPERS if re.search(r"\b" + re.escape(h) + r"\s*\(", body)]
+        if policy == "Required" and not hits:
+            # Issue #5033: a peeled body delegates to RegSplitParts helpers -
+            # follow that chain so the gate stays anchored on the registration
+            # site instead of weakening to file proximity.
+            body = _blank_comments(_expand_delegates(regs[name], _member_bodies(masked)))
+            hits = [h for h in HYG_HELPERS if re.search(r"\b" + re.escape(h) + r"\s*\(", body)]
         if policy == "Required":
             if not hits:
                 fails.append(
