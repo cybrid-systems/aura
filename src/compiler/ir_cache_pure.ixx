@@ -24,7 +24,7 @@
 module;
 
 #include <atomic>
-#include <cassert>
+#include "core/cpp26_contract_stats.h"
 #include <cstddef>
 #include <cstdint>
 #include <bit>
@@ -670,7 +670,9 @@ assert_source_to_ir_map_consistent(const std::vector<aura::ir::IRFunction>& irs,
         // contract. Keep a side-channel assert for unit tests that
         // define AURA_ASSERT_SOURCE_TO_IR_HARD.
 #if defined(AURA_ASSERT_SOURCE_TO_IR_HARD)
-        assert(ok && "source_to_ir_map inconsistent with IR layout (#2045)");
+        // Opt-in internal invariant. Production NDEBUG keeps AURA_COLD_CONTRACT
+        // as a no-op, so fuzz that injects desync still sees the bool return.
+        AURA_COLD_CONTRACT(ok);
 #endif
         (void)ok;
     }
@@ -2021,7 +2023,9 @@ inline std::atomic<std::uint64_t>& incremental_soundness_mismatch_atomic() noexc
     } else {
         incremental_soundness_mismatch_atomic().fetch_add(1, std::memory_order_relaxed);
 #if defined(AURA_INCREMENTAL_SOUNDNESS_HARD)
-        assert(ok && "incremental soundness violation: partial IR != full IR (#2113)");
+        // Opt-in internal invariant. The mismatch counter above is the
+        // always-on signal. Production NDEBUG does not terminate here.
+        AURA_COLD_CONTRACT(ok);
 #endif
     }
     return ok;
