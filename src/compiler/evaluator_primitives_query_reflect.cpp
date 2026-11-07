@@ -161,15 +161,102 @@ extern std::atomic<std::uint64_t> g_occurrence_goals_live_total;
 extern std::atomic<std::uint64_t> g_occurrence_goals_live_truncated_total;
 extern std::atomic<std::uint32_t> g_occurrence_goals_live_wired;
 
-void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-                                       ::aura::compiler::LockedStringHeap& string_heap,
-                                       void*& type_registry, ModulePathResolver resolve_module_path,
-                                       Evaluator& ev) {
-    (void)pairs;
-    (void)string_heap;
-    (void)type_registry;
-    (void)resolve_module_path;
-    (void)ev;
+// --- Issue #5031: register_query_reflect_primitives phases --------------------
+// The single registration body outgrew the 300-line ceiling. Each phase below is
+// one responsibility family; register_query_reflect_primitives keeps the ordered
+// delegation so registration order, primitive names and lambda capture lifetimes
+// are unchanged.
+
+// Issue #5031: query:type-linear-commit-health downstream audit-face payload.
+// The fields after the #2613 core face are one responsibility: the typed-audit
+// lineage keys (#3030 onward). Order and key names are unchanged.
+template <typename Kv> void commit_health_insert_audit_faces(Kv& insert_kv) {
+    // Issue #3030: abort/restore clears TypeLinearCommitProof face.
+    insert_kv("type-linear-proof-cleared-on-abort-total",
+              static_cast<std::int64_t>(
+                  aura::compiler::typed_audit::type_linear_proof_cleared_on_abort_total_v_read()));
+    insert_kv(
+        "type-linear-proof-cleared-on-abort-observe-total",
+        static_cast<std::int64_t>(aura::compiler::typed_audit::
+                                      type_linear_proof_cleared_on_abort_observe_total_v_read()));
+    insert_kv("type-linear-proof-cleared-on-abort-wired",
+              static_cast<std::int64_t>(
+                  aura::compiler::typed_audit::g_type_linear_proof_cleared_on_abort_wired.load(
+                      std::memory_order_relaxed)));
+    insert_kv("schema-3030", aura::compiler::typed_audit::kTypeLinearProofClearedOnAbortIssue);
+    insert_kv("issue-3030", aura::compiler::typed_audit::kTypeLinearProofClearedOnAbortIssue);
+    // Issue #3031: pending_full_solve / locality residual at commit.
+    insert_kv("pending-full-solve-residual-last",
+              static_cast<std::int64_t>(
+                  aura::compiler::typed_audit::pending_full_solve_residual_last_v_read()));
+    insert_kv("pending-full-solve-residual-observe-total",
+              static_cast<std::int64_t>(
+                  aura::compiler::typed_audit::pending_full_solve_residual_observe_total_v_read()));
+    insert_kv(
+        "pending-full-solve-residual-escalate-total",
+        static_cast<std::int64_t>(
+            aura::compiler::typed_audit::pending_full_solve_residual_escalate_total_v_read()));
+    insert_kv("pending-full-solve-residual-reject-total",
+              static_cast<std::int64_t>(
+                  aura::compiler::typed_audit::pending_full_solve_residual_reject_total_v_read()));
+    insert_kv("pending-full-solve-residual-wired",
+              static_cast<std::int64_t>(
+                  aura::compiler::typed_audit::g_pending_full_solve_residual_wired.load(
+                      std::memory_order_relaxed)));
+    insert_kv("force-reason-pending-full-solve-residual", 16);
+    insert_kv("schema-3031", aura::compiler::typed_audit::kPendingFullSolveResidualIssue);
+    insert_kv("issue-3031", aura::compiler::typed_audit::kPendingFullSolveResidualIssue);
+    // Issue #3032: rehydrate-miss → proof-invalidate → deopt.
+    insert_kv("rehydrate-miss-invalidate-total",
+              static_cast<std::int64_t>(
+                  aura::compiler::typed_audit::rehydrate_miss_invalidate_total_v_read()));
+    insert_kv("rehydrate-miss-invalidate-observe-total",
+              static_cast<std::int64_t>(
+                  aura::compiler::typed_audit::rehydrate_miss_invalidate_observe_total_v_read()));
+    insert_kv("rehydrate-miss-force-deopt-total",
+              static_cast<std::int64_t>(
+                  aura::compiler::typed_audit::rehydrate_miss_force_deopt_total_v_read()));
+    insert_kv("rehydrate-miss-success-bind-total",
+              static_cast<std::int64_t>(
+                  aura::compiler::typed_audit::rehydrate_success_bind_total_v_read()));
+    insert_kv("rehydrate-miss-invalidate-wired",
+              static_cast<std::int64_t>(
+                  aura::compiler::typed_audit::g_rehydrate_miss_invalidate_wired.load(
+                      std::memory_order_relaxed)));
+    insert_kv("schema-3032", aura::compiler::typed_audit::kRehydrateMissInvalidateIssue);
+    insert_kv("issue-3032", aura::compiler::typed_audit::kRehydrateMissInvalidateIssue);
+    // Issue #3063: steal/densify success invalidate-before-restamp.
+    insert_kv("steal-densify-success-invalidate-total",
+              static_cast<std::int64_t>(
+                  aura::compiler::typed_audit::steal_densify_success_invalidate_total_v_read()));
+    insert_kv("steal-densify-success-invalidate-wired",
+              static_cast<std::int64_t>(
+                  aura::compiler::typed_audit::g_steal_densify_success_invalidate_wired.load(
+                      std::memory_order_relaxed)));
+    insert_kv("schema-3063", aura::compiler::typed_audit::kStealDensifySuccessInvalidateIssue);
+    insert_kv("issue-3063", aura::compiler::typed_audit::kStealDensifySuccessInvalidateIssue);
+    insert_kv("linear-fast-path-rehydrate-gen-elision-wired",
+              static_cast<std::int64_t>(
+                  aura::compiler::typed_audit::g_linear_fast_path_rehydrate_gen_elision_wired.load(
+                      std::memory_order_relaxed)));
+    insert_kv("schema-3085", aura::compiler::typed_audit::kLinearFastPathRehydrateGenElisionIssue);
+    insert_kv("issue-3085", aura::compiler::typed_audit::kLinearFastPathRehydrateGenElisionIssue);
+    insert_kv(
+        "linear-fast-path-steal-densify-clear-complete-wired",
+        static_cast<std::int64_t>(
+            aura::compiler::typed_audit::g_linear_fast_path_steal_densify_clear_complete_wired.load(
+                std::memory_order_relaxed)));
+    insert_kv("schema-3171",
+              aura::compiler::typed_audit::kLinearFastPathStealDensifyClearCompleteIssue);
+    insert_kv("issue-3171",
+              aura::compiler::typed_audit::kLinearFastPathStealDensifyClearCompleteIssue);
+}
+
+// Issue #5031: castop registration phase.
+void register_query_castop_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                 ::aura::compiler::LockedStringHeap& string_heap,
+                                 void*& type_registry, ModulePathResolver resolve_module_path,
+                                 Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:castop-density-stats",
         [&string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
@@ -289,6 +376,13 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             }
             return make_hash(hidx);
         });
+}
+
+// Issue #5031: commit_health registration phase.
+void register_query_commit_health_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                        ::aura::compiler::LockedStringHeap& string_heap,
+                                        void*& type_registry,
+                                        ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #2613: query:type-linear-commit-health — single Agent fold of
     // commit_readiness (#2553) × coercion SLO (#2558) × linear force (#2545/#2563)
@@ -507,102 +601,19 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 insert_kv("schema-2995", kOccurrenceCommitHealthIssue);
                 insert_kv("issue-2995", kOccurrenceCommitHealthIssue);
             }
-            // Issue #3030: abort/restore clears TypeLinearCommitProof face.
-            insert_kv(
-                "type-linear-proof-cleared-on-abort-total",
-                static_cast<std::int64_t>(aura::compiler::typed_audit::
-                                              type_linear_proof_cleared_on_abort_total_v_read()));
-            insert_kv("type-linear-proof-cleared-on-abort-observe-total",
-                      static_cast<std::int64_t>(
-                          aura::compiler::typed_audit::
-                              type_linear_proof_cleared_on_abort_observe_total_v_read()));
-            insert_kv(
-                "type-linear-proof-cleared-on-abort-wired",
-                static_cast<std::int64_t>(
-                    aura::compiler::typed_audit::g_type_linear_proof_cleared_on_abort_wired.load(
-                        std::memory_order_relaxed)));
-            insert_kv("schema-3030",
-                      aura::compiler::typed_audit::kTypeLinearProofClearedOnAbortIssue);
-            insert_kv("issue-3030",
-                      aura::compiler::typed_audit::kTypeLinearProofClearedOnAbortIssue);
-            // Issue #3031: pending_full_solve / locality residual at commit.
-            insert_kv("pending-full-solve-residual-last",
-                      static_cast<std::int64_t>(
-                          aura::compiler::typed_audit::pending_full_solve_residual_last_v_read()));
-            insert_kv(
-                "pending-full-solve-residual-observe-total",
-                static_cast<std::int64_t>(aura::compiler::typed_audit::
-                                              pending_full_solve_residual_observe_total_v_read()));
-            insert_kv(
-                "pending-full-solve-residual-escalate-total",
-                static_cast<std::int64_t>(aura::compiler::typed_audit::
-                                              pending_full_solve_residual_escalate_total_v_read()));
-            insert_kv(
-                "pending-full-solve-residual-reject-total",
-                static_cast<std::int64_t>(aura::compiler::typed_audit::
-                                              pending_full_solve_residual_reject_total_v_read()));
-            insert_kv("pending-full-solve-residual-wired",
-                      static_cast<std::int64_t>(
-                          aura::compiler::typed_audit::g_pending_full_solve_residual_wired.load(
-                              std::memory_order_relaxed)));
-            insert_kv("force-reason-pending-full-solve-residual", 16);
-            insert_kv("schema-3031", aura::compiler::typed_audit::kPendingFullSolveResidualIssue);
-            insert_kv("issue-3031", aura::compiler::typed_audit::kPendingFullSolveResidualIssue);
-            // Issue #3032: rehydrate-miss → proof-invalidate → deopt.
-            insert_kv("rehydrate-miss-invalidate-total",
-                      static_cast<std::int64_t>(
-                          aura::compiler::typed_audit::rehydrate_miss_invalidate_total_v_read()));
-            insert_kv(
-                "rehydrate-miss-invalidate-observe-total",
-                static_cast<std::int64_t>(
-                    aura::compiler::typed_audit::rehydrate_miss_invalidate_observe_total_v_read()));
-            insert_kv("rehydrate-miss-force-deopt-total",
-                      static_cast<std::int64_t>(
-                          aura::compiler::typed_audit::rehydrate_miss_force_deopt_total_v_read()));
-            insert_kv("rehydrate-miss-success-bind-total",
-                      static_cast<std::int64_t>(
-                          aura::compiler::typed_audit::rehydrate_success_bind_total_v_read()));
-            insert_kv("rehydrate-miss-invalidate-wired",
-                      static_cast<std::int64_t>(
-                          aura::compiler::typed_audit::g_rehydrate_miss_invalidate_wired.load(
-                              std::memory_order_relaxed)));
-            insert_kv("schema-3032", aura::compiler::typed_audit::kRehydrateMissInvalidateIssue);
-            insert_kv("issue-3032", aura::compiler::typed_audit::kRehydrateMissInvalidateIssue);
-            // Issue #3063: steal/densify success invalidate-before-restamp.
-            insert_kv(
-                "steal-densify-success-invalidate-total",
-                static_cast<std::int64_t>(
-                    aura::compiler::typed_audit::steal_densify_success_invalidate_total_v_read()));
-            insert_kv(
-                "steal-densify-success-invalidate-wired",
-                static_cast<std::int64_t>(
-                    aura::compiler::typed_audit::g_steal_densify_success_invalidate_wired.load(
-                        std::memory_order_relaxed)));
-            insert_kv("schema-3063",
-                      aura::compiler::typed_audit::kStealDensifySuccessInvalidateIssue);
-            insert_kv("issue-3063",
-                      aura::compiler::typed_audit::kStealDensifySuccessInvalidateIssue);
-            insert_kv(
-                "linear-fast-path-rehydrate-gen-elision-wired",
-                static_cast<std::int64_t>(
-                    aura::compiler::typed_audit::g_linear_fast_path_rehydrate_gen_elision_wired
-                        .load(std::memory_order_relaxed)));
-            insert_kv("schema-3085",
-                      aura::compiler::typed_audit::kLinearFastPathRehydrateGenElisionIssue);
-            insert_kv("issue-3085",
-                      aura::compiler::typed_audit::kLinearFastPathRehydrateGenElisionIssue);
-            insert_kv("linear-fast-path-steal-densify-clear-complete-wired",
-                      static_cast<std::int64_t>(
-                          aura::compiler::typed_audit::
-                              g_linear_fast_path_steal_densify_clear_complete_wired.load(
-                                  std::memory_order_relaxed)));
-            insert_kv("schema-3171",
-                      aura::compiler::typed_audit::kLinearFastPathStealDensifyClearCompleteIssue);
-            insert_kv("issue-3171",
-                      aura::compiler::typed_audit::kLinearFastPathStealDensifyClearCompleteIssue);
+
+            // Issue #5031: downstream typed-audit lineage fields.
+            commit_health_insert_audit_faces(insert_kv);
 
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #5031: evolution registration phase.
+void register_query_evolution_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                    ::aura::compiler::LockedStringHeap& string_heap,
+                                    void*& type_registry, ModulePathResolver resolve_module_path,
+                                    Evaluator& ev) {
 
     // Issue #2897: query:type-linear-evolution-snapshot — single atomic/
     // last-proof gauge poll for type×linear×occurrence self-evo loops
@@ -745,6 +756,13 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
 
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #5031: type_health registration phase.
+void register_query_type_health_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                      ::aura::compiler::LockedStringHeap& string_heap,
+                                      void*& type_registry, ModulePathResolver resolve_module_path,
+                                      Evaluator& ev) {
 
     // Issue #2350: query:type-system-health — single Agent score (basis points)
     // aggregating provenance completeness, timeout reject rate, linear pin miss
@@ -980,6 +998,14 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             }
             return make_hash(hidx);
         });
+}
+
+// Issue #5031: concurrency_health registration phase.
+void register_query_concurrency_health_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                             ::aura::compiler::LockedStringHeap& string_heap,
+                                             void*& type_registry,
+                                             ModulePathResolver resolve_module_path,
+                                             Evaluator& ev) {
 
     // Issue #2379: query:mutation-concurrency-health — single Agent score
     // for runtime mutation safety (hold + steal + residual + mailbox + densify).
@@ -1177,6 +1203,13 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             }
             return make_hash(hidx);
         });
+}
+
+// Issue #5031: hot_update_health registration phase.
+void register_query_hot_update_health_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                            ::aura::compiler::LockedStringHeap& string_heap,
+                                            void*& type_registry,
+                                            ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #2506: query:aot-hot-update-health — single Agent score for
     // JIT/AOT recovery gate (reload recovery + storm + remount + epoch).
@@ -1386,6 +1419,13 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
     };
     register_aot_hot_update_health("query:aot-hot-update-health");
     register_aot_hot_update_health("query:hot-update-health");
+}
+
+// Issue #5031: compact_policy registration phase.
+void register_query_compact_policy_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                         ::aura::compiler::LockedStringHeap& string_heap,
+                                         void*& type_registry,
+                                         ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #2500: query:compact-policy (+ aliases orch:compact-policy /
     // arena:recommend-compact) — pure recommendation over existing health /
@@ -1589,6 +1629,13 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
     register_compact_policy("query:compact-policy");
     register_compact_policy("orch:compact-policy");
     register_compact_policy("arena:recommend-compact");
+}
+
+// Issue #5031: linear_ownership registration phase.
+void register_query_linear_ownership_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                           ::aura::compiler::LockedStringHeap& string_heap,
+                                           void*& type_registry,
+                                           ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #574: query:coercion-elim-stats. Returns the sum of
     // 4 coercion elimination observability counters:
@@ -1803,6 +1850,13 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed);
             return make_int(static_cast<std::int64_t>(violations + deopt_mismatch + enforcements));
         });
+}
+
+// Issue #5031: gc_root_audit registration phase.
+void register_query_gc_root_audit_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                        ::aura::compiler::LockedStringHeap& string_heap,
+                                        void*& type_registry,
+                                        ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #1543: query:linear-gc-root-audit-log — read-only accessor for
     // the GC root registration consistency audit ring + counter snapshot.
@@ -1965,6 +2019,14 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             }
             return make_hash(hidx);
         });
+}
+
+// Issue #5031: boundary_consistency registration phase.
+void register_query_boundary_consistency_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                               ::aura::compiler::LockedStringHeap& string_heap,
+                                               void*& type_registry,
+                                               ModulePathResolver resolve_module_path,
+                                               Evaluator& ev) {
 
     // Issue #1568 / #1596 / #1606 / #1659 / #1895 / #1928:
     // query:linear-boundary-consistency-stats — unified mutation/compact/
@@ -2119,6 +2181,13 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             }
             return make_hash(hidx);
         });
+}
+
+// Issue #5031: postmutate registration phase.
+void register_query_postmutate_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                     ::aura::compiler::LockedStringHeap& string_heap,
+                                     void*& type_registry, ModulePathResolver resolve_module_path,
+                                     Evaluator& ev) {
 
     // Issue #800: query:linear-postmutate-fidelity-stats — linear ownership
     // post-mutate / rollback / steal / EnvFrame fidelity dashboard
@@ -2292,6 +2361,13 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             return make_int(static_cast<std::int64_t>(violations + deopt_mismatch +
                                                       enforcement_hits + deopt_invalidate));
         });
+}
+
+// Issue #5031: selfmod registration phase.
+void register_query_selfmod_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                  ::aura::compiler::LockedStringHeap& string_heap,
+                                  void*& type_registry, ModulePathResolver resolve_module_path,
+                                  Evaluator& ev) {
 
     // Issue #454: query:reflect-edsl-bridge-stats. Returns the
     // sum of 4 reflection-to-EDSL bridge observability counters:
@@ -2483,6 +2559,13 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             bump_reflection_schema_metrics(m, result);
         return make_bool(result.ok);
     });
+}
+
+// Issue #5031: hygiene_stats registration phase.
+void register_query_hygiene_stats_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                        ::aura::compiler::LockedStringHeap& string_heap,
+                                        void*& type_registry,
+                                        ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #2020: (engine:metrics "reflect:hygiene-stats" [node-id]) — Agent-visible live
     // hygiene snapshot for expand → diagnose → mutate/rollback closed loops.
@@ -2707,6 +2790,13 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             }
             return make_hash(hidx);
         });
+}
+
+// Issue #5031: provenance_blame registration phase.
+void register_query_provenance_blame_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                           ::aura::compiler::LockedStringHeap& string_heap,
+                                           void*& type_registry,
+                                           ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #2020: (reflect:provenance-blame node-id) — MacroIntroduced origin
     // / expansion-site provenance for a single node. Returns void (nil) when
@@ -2782,6 +2872,14 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
         }
         return make_hash(hidx);
     });
+}
+
+// Issue #5031: hygiene_diagnostic registration phase.
+void register_query_hygiene_diagnostic_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                             ::aura::compiler::LockedStringHeap& string_heap,
+                                             void*& type_registry,
+                                             ModulePathResolver resolve_module_path,
+                                             Evaluator& ev) {
 
     // Issue #2167: (query:hygiene-diagnostic node-id [:depth n] [:include-chain? #t])
     // Agent-visible structured hygiene + provenance blame for a single node
@@ -3014,7 +3112,45 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
         }
         return make_hash(hidx);
     });
+}
 
+void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                       ::aura::compiler::LockedStringHeap& string_heap,
+                                       void*& type_registry, ModulePathResolver resolve_module_path,
+                                       Evaluator& ev) {
+    (void)pairs;
+    (void)string_heap;
+    (void)type_registry;
+    (void)resolve_module_path;
+    (void)ev;
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_query_castop_parts(add, pairs, string_heap, type_registry, resolve_module_path, ev);
+    register_query_commit_health_parts(add, pairs, string_heap, type_registry, resolve_module_path,
+                                       ev);
+    register_query_evolution_parts(add, pairs, string_heap, type_registry, resolve_module_path, ev);
+    register_query_type_health_parts(add, pairs, string_heap, type_registry, resolve_module_path,
+                                     ev);
+    register_query_concurrency_health_parts(add, pairs, string_heap, type_registry,
+                                            resolve_module_path, ev);
+    register_query_hot_update_health_parts(add, pairs, string_heap, type_registry,
+                                           resolve_module_path, ev);
+    register_query_compact_policy_parts(add, pairs, string_heap, type_registry, resolve_module_path,
+                                        ev);
+    register_query_linear_ownership_parts(add, pairs, string_heap, type_registry,
+                                          resolve_module_path, ev);
+    register_query_gc_root_audit_parts(add, pairs, string_heap, type_registry, resolve_module_path,
+                                       ev);
+    register_query_boundary_consistency_parts(add, pairs, string_heap, type_registry,
+                                              resolve_module_path, ev);
+    register_query_postmutate_parts(add, pairs, string_heap, type_registry, resolve_module_path,
+                                    ev);
+    register_query_selfmod_parts(add, pairs, string_heap, type_registry, resolve_module_path, ev);
+    register_query_hygiene_stats_parts(add, pairs, string_heap, type_registry, resolve_module_path,
+                                       ev);
+    register_query_provenance_blame_parts(add, pairs, string_heap, type_registry,
+                                          resolve_module_path, ev);
+    register_query_hygiene_diagnostic_parts(add, pairs, string_heap, type_registry,
+                                            resolve_module_path, ev);
     // Issue #2167: (query:macro-provenance-chain node-id [:depth n])
     // Lightweight side-table walk of provenance_ origins. Returns hash with
     // chain-length + chain-0..chain-N + terminal flags (schema 2167).
