@@ -1000,7 +1000,7 @@ static void ac4451_opcall_does_not_publish_callee_refuse() {
     inner[2].ops[0] = 2;
     inner[2].ops[1] = 0;
     inner[2].ops[2] = 1;
-    inner[2].shape_id = aura::jit::SHAPE_INT;
+    inner[2].shape_id = aura::jit::kJitShapeInt;
     inner[3].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Return);
     inner[3].ops[0] = 2;
     auto* inner_fn = compile_ac4451(jit, "ac4451_inner", inner, 4, 3, 1);
@@ -1032,7 +1032,7 @@ static void ac4451_opcall_does_not_publish_callee_refuse() {
     ocall[4].ops[0] = 4;
     ocall[4].ops[1] = 3;
     ocall[4].ops[2] = 2;
-    ocall[4].shape_id = aura::jit::SHAPE_INT;
+    ocall[4].shape_id = aura::jit::kJitShapeInt;
     ocall[5].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Return);
     ocall[5].ops[0] = 4;
     auto* call_fn = compile_ac4451(jit, "ac4451_outer_call", ocall, 6, 5, 1);
@@ -1055,7 +1055,7 @@ static void ac4451_opcall_does_not_publish_callee_refuse() {
     oapply[4].ops[0] = 4;
     oapply[4].ops[1] = 2;
     oapply[4].ops[2] = 3;
-    oapply[4].shape_id = aura::jit::SHAPE_INT;
+    oapply[4].shape_id = aura::jit::kJitShapeInt;
     oapply[5].opcode = static_cast<std::uint32_t>(aura::ir::IROpcode::Return);
     oapply[5].ops[0] = 4;
     auto* apply_fn = compile_ac4451(jit, "ac4451_outer_apply", oapply, 6, 5, 1);
