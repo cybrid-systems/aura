@@ -1331,7 +1331,7 @@ void register_ast_primitives(PrimRegistrar add_in, Evaluator& ev,
         if (!ev.workspace_flat_ || !ev.workspace_pool_)
             return make_void();
 
-        std::size_t id;
+        std::size_t id = 0;
         if (a.empty() || !is_int(a[0])) {
             // Default to most recent snapshot
             if (ev.snapshot_sources_.empty())

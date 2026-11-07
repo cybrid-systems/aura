@@ -1867,7 +1867,7 @@ static std::uint32_t lower_flat_expr(
             // If a Cell binding exists, reuse it (no NewCell needed).
             auto existing = scope.find(std::string(name));
             bool has_cell = (existing != scope.end() && existing->second.kind == BindingKind::Cell);
-            std::uint32_t ci;
+            std::uint32_t ci = 0;
             if (has_cell) {
                 ci = existing->second.slot;
             } else {
