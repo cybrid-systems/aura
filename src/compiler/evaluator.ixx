@@ -2197,6 +2197,7 @@ namespace primitives_detail {
                                     Evaluator& ev);
     void register_security_primitives(std::function_ref<void(std::string, PrimFn)> add,
                                       Evaluator& ev);
+    types::EvalValue build_security_posture(Evaluator& ev);
     void register_security_set_sandbox_mode(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_security_grant_capability(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
     void register_query_audit_mid_fallback_slo(std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
@@ -2444,6 +2445,7 @@ export class Evaluator {
                                                   Evaluator& ev);
     friend void primitives_detail::register_security_primitives(
         std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
+    friend types::EvalValue primitives_detail::build_security_posture(Evaluator& ev);
     friend void primitives_detail::register_security_set_sandbox_mode(
         std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev);
     friend void primitives_detail::register_security_grant_capability(
