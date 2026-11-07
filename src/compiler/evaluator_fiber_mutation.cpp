@@ -37,7 +37,7 @@ module;
 #include "core/workspace_epoch.hh"     // Issue #2839: Mutation epoch mid for SE
 #include "core/capability_model.hh"    // Issue #3048: session grant steal/abort revoke
 #include <algorithm>                   // Issue #2189: remove_if for pin table invalidate
-#include <cassert>
+#include "core/cpp26_contract_stats.h"
 #include <chrono>
 #include <cstdio>   // Issue #2956: hard-abort fprintf
 #include <cstdlib>  // Issue #2956: hard-abort std::abort
@@ -1267,8 +1267,10 @@ bool aura::compiler::Evaluator::restore_post_yield_or_rollback() {
             (aura::serve::g_current_fiber != nullptr) ? aura::serve::g_current_fiber->id() : 0;
         int* slot = mutation_boundary_depth_slot(this, fid);
         const int depth_slot = slot ? *slot : 0;
-        assert(static_cast<std::size_t>(depth_slot) == current_bdepth ||
-               current_mdepth == cp.mutation_stack_depth);
+        // Internal post-restamp depth agreement. This block is !NDEBUG only.
+        // External steal/rollback still returns through the caller.
+        AURA_COLD_CONTRACT(static_cast<std::size_t>(depth_slot) == current_bdepth ||
+                           current_mdepth == cp.mutation_stack_depth);
     }
 #endif
     stack.pop_back();

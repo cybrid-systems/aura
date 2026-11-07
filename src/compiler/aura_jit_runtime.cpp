@@ -131,7 +131,7 @@ inline constexpr StringId NULL_STRING_ID = static_cast<StringId>(~0ULL);
 #include <cstring>
 #include <new>
 #include <atomic>
-#include <cassert>
+#include "core/cpp26_contract_stats.h"
 #include <chrono>
 #include <mutex>
 #include <shared_mutex>
@@ -1844,7 +1844,10 @@ static bool closure_vectors_consistent_unlocked() noexcept {
 
 #ifndef NDEBUG
 static void assert_closure_vectors_consistent() {
-    assert(closure_vectors_consistent_unlocked());
+    // Internal column-width invariant. Compiled out of NDEBUG, same as assert.
+    // AURA_COLD_CONTRACT is enforce in a debug build and a no-op if this
+    // function is ever compiled with contracts explicitly off.
+    AURA_COLD_CONTRACT(closure_vectors_consistent_unlocked());
 }
 #endif
 
