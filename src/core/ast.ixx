@@ -1458,6 +1458,8 @@ export class FlatAST {
         ~SoaSeqlockWriteSection() { epoch_.fetch_add(1, std::memory_order_release); }
         SoaSeqlockWriteSection(const SoaSeqlockWriteSection&) = delete;
         SoaSeqlockWriteSection& operator=(const SoaSeqlockWriteSection&) = delete;
+        SoaSeqlockWriteSection(SoaSeqlockWriteSection&&) = delete;
+        SoaSeqlockWriteSection& operator=(SoaSeqlockWriteSection&&) = delete;
 
     private:
         std::atomic<std::uint64_t>& epoch_;
@@ -8606,6 +8608,8 @@ private:
         }
         TypeFaceJournalLock(const TypeFaceJournalLock&) = delete;
         TypeFaceJournalLock& operator=(const TypeFaceJournalLock&) = delete;
+        TypeFaceJournalLock(TypeFaceJournalLock&&) = delete;
+        TypeFaceJournalLock& operator=(TypeFaceJournalLock&&) = delete;
         ~TypeFaceJournalLock() { f.type_face_journal_lock_.clear(std::memory_order_release); }
     };
 

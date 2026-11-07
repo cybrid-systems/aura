@@ -162,6 +162,8 @@ public:
     TypeRegistry();
     TypeRegistry(const TypeRegistry&) = delete;
     TypeRegistry& operator=(const TypeRegistry&) = delete;
+    TypeRegistry(TypeRegistry&&) = delete;
+    TypeRegistry& operator=(TypeRegistry&&) = delete;
     ~TypeRegistry();
 
     // ── 注册 ──
@@ -448,6 +450,8 @@ private:
         TypeRegistryLock() = default;
         TypeRegistryLock(const TypeRegistryLock&) = delete;
         TypeRegistryLock& operator=(const TypeRegistryLock&) = delete;
+        TypeRegistryLock(TypeRegistryLock&&) = delete;
+        TypeRegistryLock& operator=(TypeRegistryLock&&) = delete;
         ~TypeRegistryLock() = default;
         void lock();
         void unlock();

@@ -247,6 +247,8 @@ export struct LoweringState {
         ~SourceScope() { state.current_source_id = saved; }
         SourceScope(const SourceScope&) = delete;
         SourceScope& operator=(const SourceScope&) = delete;
+        SourceScope(SourceScope&&) = delete;
+        SourceScope& operator=(SourceScope&&) = delete;
     };
 
     explicit LoweringState(ast::ASTArena& a)

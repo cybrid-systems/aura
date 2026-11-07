@@ -97,6 +97,8 @@ namespace {
         }
         StealDecisionGuard(const StealDecisionGuard&) = delete;
         StealDecisionGuard& operator=(const StealDecisionGuard&) = delete;
+        StealDecisionGuard(StealDecisionGuard&&) = delete;
+        StealDecisionGuard& operator=(StealDecisionGuard&&) = delete;
     };
 
     // Issue #2929: bump dedicated StealInvariant failure counter.

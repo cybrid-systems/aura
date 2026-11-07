@@ -1474,7 +1474,7 @@ public:
         if (top_collect)
             begin_elim_cone_collect();
         bool any_change = false;
-        bool changed;
+        bool changed = false;
         do {
             changed = false;
             // Build slot → instruction index map once per

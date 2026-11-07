@@ -26,6 +26,8 @@ public:
 
     GitContext(const GitContext&) = delete;
     GitContext& operator=(const GitContext&) = delete;
+    GitContext(GitContext&&) = delete;
+    GitContext& operator=(GitContext&&) = delete;
 
     // Returns true if the repo is open and ready.
     bool is_open() const {

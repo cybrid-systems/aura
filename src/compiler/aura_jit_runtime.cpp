@@ -5597,6 +5597,8 @@ namespace {
         }
         NativeMovingCanary(const NativeMovingCanary&) = delete;
         NativeMovingCanary& operator=(const NativeMovingCanary&) = delete;
+        NativeMovingCanary(NativeMovingCanary&&) = delete;
+        NativeMovingCanary& operator=(NativeMovingCanary&&) = delete;
         ~NativeMovingCanary() noexcept {
             aura_unnote_temporary_moving_live_ptr(p);
             // #4124: unnote the BOUND addresses the ctor stored, not the

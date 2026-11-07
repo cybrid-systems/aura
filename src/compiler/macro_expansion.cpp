@@ -157,6 +157,8 @@ namespace {
         }
         InnerExpandCkptFrame(const InnerExpandCkptFrame&) = delete;
         InnerExpandCkptFrame& operator=(const InnerExpandCkptFrame&) = delete;
+        InnerExpandCkptFrame(InnerExpandCkptFrame&&) = delete;
+        InnerExpandCkptFrame& operator=(InnerExpandCkptFrame&&) = delete;
     };
 
     InnerExpandCkptFrame*& g_inner_expand_ckpt() noexcept {
@@ -2096,6 +2098,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         }
         ConcurrentCloneGuard(const ConcurrentCloneGuard&) = delete;
         ConcurrentCloneGuard& operator=(const ConcurrentCloneGuard&) = delete;
+        ConcurrentCloneGuard(ConcurrentCloneGuard&&) = delete;
+        ConcurrentCloneGuard& operator=(ConcurrentCloneGuard&&) = delete;
     } concurrent_guard{name_map, hygiene_depth, &target};
     // Issue #3756: shared name_map reject must abort like same-flat —
     // the ctor stamps reason 9 and releases claims, then returned
@@ -2195,6 +2199,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         }
         TopLevelMacroCapGuard(const TopLevelMacroCapGuard&) = delete;
         TopLevelMacroCapGuard& operator=(const TopLevelMacroCapGuard&) = delete;
+        TopLevelMacroCapGuard(TopLevelMacroCapGuard&&) = delete;
+        TopLevelMacroCapGuard& operator=(TopLevelMacroCapGuard&&) = delete;
         // Issue #3685: session policy captured at arm — the walk reads this,
         // not TLS (fiber-yield immunity; TLS mirrors stay diagnostics).
         CloneSessionPolicy session{};
@@ -2339,6 +2345,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         }
         NameMapCheckpoint(const NameMapCheckpoint&) = delete;
         NameMapCheckpoint& operator=(const NameMapCheckpoint&) = delete;
+        NameMapCheckpoint(NameMapCheckpoint&&) = delete;
+        NameMapCheckpoint& operator=(NameMapCheckpoint&&) = delete;
         ~NameMapCheckpoint() {
             if (!committed)
                 rollback();
@@ -2365,6 +2373,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         ExpandCheckpointGuard() = default;
         ExpandCheckpointGuard(const ExpandCheckpointGuard&) = delete;
         ExpandCheckpointGuard& operator=(const ExpandCheckpointGuard&) = delete;
+        ExpandCheckpointGuard(ExpandCheckpointGuard&&) = delete;
+        ExpandCheckpointGuard& operator=(ExpandCheckpointGuard&&) = delete;
         // Issue #3608: production no-Evaluator local rollback. The C-ABI save
         // cannot snapshot anything without a current Evaluator (weak stub /
         // null strong def), so the guard falls back to the #3608 FlatAST
@@ -4079,6 +4089,8 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
             }
             DepthPolicyGuard(const DepthPolicyGuard&) = delete;
             DepthPolicyGuard& operator=(const DepthPolicyGuard&) = delete;
+            DepthPolicyGuard(DepthPolicyGuard&&) = delete;
+            DepthPolicyGuard& operator=(DepthPolicyGuard&&) = delete;
         };
         // Issue #2101: min(hard, runtime, capability) — capability cannot loosen.
         int cap_d = 0;
@@ -4188,6 +4200,8 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
         ExpandCheckpointGuard() = default;
         ExpandCheckpointGuard(const ExpandCheckpointGuard&) = delete;
         ExpandCheckpointGuard& operator=(const ExpandCheckpointGuard&) = delete;
+        ExpandCheckpointGuard(ExpandCheckpointGuard&&) = delete;
+        ExpandCheckpointGuard& operator=(ExpandCheckpointGuard&&) = delete;
         // Issue #3608: local no-Evaluator rollback — mirrors the clone walk
         // guard (see clone_macro_body_at_depth): snapshot the bare flat's
         // node count when the C-ABI save cannot own a checkpoint, and

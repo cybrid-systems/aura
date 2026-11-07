@@ -63,6 +63,8 @@ struct ScopedProvider {
     }
     ScopedProvider(const ScopedProvider&) = delete;
     ScopedProvider& operator=(const ScopedProvider&) = delete;
+    ScopedProvider(ScopedProvider&&) = delete;
+    ScopedProvider& operator=(ScopedProvider&&) = delete;
 };
 
 // Appends every live provider's roots to `out`. Returns the number of

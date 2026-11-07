@@ -1102,6 +1102,8 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
         }
         RuntimeCallScope(const RuntimeCallScope&) = delete;
         RuntimeCallScope& operator=(const RuntimeCallScope&) = delete;
+        RuntimeCallScope(RuntimeCallScope&&) = delete;
+        RuntimeCallScope& operator=(RuntimeCallScope&&) = delete;
         ~RuntimeCallScope() { flag = false; }
     } runtime_call_scope(in_runtime_call_);
     if (auto blocked = ir_typed_entry_blocked_result(context_.metrics))
@@ -3497,6 +3499,8 @@ bool IRInterpreter::reclaim_unreachable_now() {
         }
         SweepGate4768(const SweepGate4768&) = delete;
         SweepGate4768& operator=(const SweepGate4768&) = delete;
+        SweepGate4768(SweepGate4768&&) = delete;
+        SweepGate4768& operator=(SweepGate4768&&) = delete;
     } sweep_gate_4768;
     if (!sweep_gate_4768.held)
         return false;
@@ -3540,6 +3544,8 @@ bool IRInterpreter::reclaim_unreachable_now() {
         }
         Guard(const Guard&) = delete;
         Guard& operator=(const Guard&) = delete;
+        Guard(Guard&&) = delete;
+        Guard& operator=(Guard&&) = delete;
         ~Guard() { flag = false; }
     } guard(reclaiming_);
 
