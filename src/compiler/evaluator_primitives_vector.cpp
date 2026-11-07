@@ -628,12 +628,11 @@ namespace {
 
 } // namespace
 
-void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-                                         ::aura::compiler::LockedStringHeap& string_heap,
-                                         std::vector<EvalValue>& error_values,
-                                         std::vector<std::vector<EvalValue>>& vector_heap,
-                                         std::atomic<std::uint64_t>* primitive_error_counter,
-                                         Evaluator& ev) {
+void RegSplitParts::register_vector_core_primitives(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
+    std::vector<std::vector<EvalValue>>& vector_heap,
+    std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
     using aura::compiler::mutate_general;
     using aura::compiler::pure_general;
     using aura::compiler::register_prim;
@@ -872,6 +871,17 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             return make_vector(idx);
         },
         pure_general(1, "(list) -> vector", "Convert a list to a vector."));
+}
+
+void RegSplitParts::register_vector_seq_primitives(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
+    std::vector<std::vector<EvalValue>>& vector_heap,
+    std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
     register_prim(
         add, ev, "vector->list",
         [&ev, &vector_heap, &string_heap, &error_values,
@@ -1027,6 +1037,16 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             return a[0];
         },
         mutate_general(2, "(vector any) -> vector", "Fill every slot of a vector with a value."));
+}
+
+void RegSplitParts::register_vector_mutate_primitives(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
+    std::vector<std::vector<EvalValue>>& vector_heap,
+    std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
 
     register_prim(
         add, ev, "hash",
@@ -1288,6 +1308,17 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             return make_void();
         },
         mutate_general(3, "(hash any any) -> void", "Insert or replace a hash entry."));
+}
+
+void RegSplitParts::register_hash_basic_primitives(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
+    std::vector<std::vector<EvalValue>>& vector_heap,
+    std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
     register_prim(
         add, ev, "hash-length",
         [&ev](std::span<const EvalValue> a) {
@@ -1422,6 +1453,17 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         },
         pure_general(3, "(immutable-hash any any) -> immutable-hash",
                      "Persistent insert: returns a new map, shares untouched nodes."));
+}
+
+void RegSplitParts::register_hash_mutate_primitives(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, std::vector<EvalValue>& error_values,
+    std::vector<std::vector<EvalValue>>& vector_heap,
+    std::atomic<std::uint64_t>* primitive_error_counter, Evaluator& ev) {
+    using aura::compiler::mutate_general;
+    using aura::compiler::pure_general;
+    using aura::compiler::register_prim;
+
     register_prim(
         add, ev, "ihash-remove",
         [&string_heap, &error_values, primitive_error_counter](std::span<const EvalValue> a) {
@@ -1591,6 +1633,24 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
             return make_bool(true);
         },
         mutate_general(2, "(hash any) -> bool", "Remove a key from a hash."));
+}
+
+void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                         ::aura::compiler::LockedStringHeap& string_heap,
+                                         std::vector<EvalValue>& error_values,
+                                         std::vector<std::vector<EvalValue>>& vector_heap,
+                                         std::atomic<std::uint64_t>* primitive_error_counter,
+                                         Evaluator& ev) {
+    RegSplitParts::register_vector_core_primitives(add, pairs, string_heap, error_values,
+                                                   vector_heap, primitive_error_counter, ev);
+    RegSplitParts::register_vector_seq_primitives(add, pairs, string_heap, error_values,
+                                                  vector_heap, primitive_error_counter, ev);
+    RegSplitParts::register_vector_mutate_primitives(add, pairs, string_heap, error_values,
+                                                     vector_heap, primitive_error_counter, ev);
+    RegSplitParts::register_hash_basic_primitives(add, pairs, string_heap, error_values,
+                                                  vector_heap, primitive_error_counter, ev);
+    RegSplitParts::register_hash_mutate_primitives(add, pairs, string_heap, error_values,
+                                                   vector_heap, primitive_error_counter, ev);
 }
 
 } // namespace aura::compiler::primitives_detail
