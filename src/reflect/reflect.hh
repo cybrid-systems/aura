@@ -845,14 +845,14 @@ template <typename T> void auto_serialize(std::vector<char>& buf, const T& obj) 
         switch (m.kind) {
             case MemberKind::Int8:
             case MemberKind::UInt8: {
-                char v;
+                char v = 0;
                 std::memcpy(&v, field, 1);
                 buf.push_back(v);
                 break;
             }
             case MemberKind::Int16:
             case MemberKind::UInt16: {
-                short v;
+                short v = 0;
                 std::memcpy(&v, field, 2);
                 serialize_detail::append_pod(buf, v);
                 break;

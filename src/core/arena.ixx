@@ -3076,7 +3076,8 @@ public:
             std::size_t stale_unremapped = 0;
             if (result.objects_moved > 0 && !external_roots_for_densify_.empty() &&
                 !this_window_remap.empty()) {
-                for (void* p : external_roots_for_densify_) {
+                // #4936: a count. Pointer-key order does not change the total.
+                for (void* p : external_roots_for_densify_ | std::views::all) {
                     if (p == nullptr)
                         continue;
                     if (this_window_remap.find(p) == this_window_remap.end())
@@ -4324,7 +4325,8 @@ public:
                 covered.insert(*slot);
         }
         std::size_t untracked = 0;
-        for (void* p : external_roots_for_densify_) {
+        // #4936: a count. Pointer-key order does not change the total.
+        for (void* p : external_roots_for_densify_ | std::views::all) {
             if (!p || covered.count(p))
                 continue;
             bool would_move = false;

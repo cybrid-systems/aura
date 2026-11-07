@@ -1817,7 +1817,7 @@ static int aura_main(int argc, char* argv[]) {
         if (ip) {
             Dl_info dlinfo;
             char line[512];
-            int ln;
+            int ln = 0;
             if (::dladdr(ip, &dlinfo) && dlinfo.dli_sname) {
                 std::ptrdiff_t off =
                     static_cast<char*>(ip) - static_cast<const char*>(dlinfo.dli_saddr);
@@ -1842,7 +1842,7 @@ static int aura_main(int argc, char* argv[]) {
         if (!stack_overflow && info && info->si_addr) {
             Dl_info dlinfo;
             char line[512];
-            int ln;
+            int ln = 0;
             void* bad = info->si_addr;
             if (::dladdr(bad, &dlinfo) && dlinfo.dli_sname) {
                 std::ptrdiff_t off =
