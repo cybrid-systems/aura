@@ -2115,6 +2115,1937 @@ static int run_sync_serve() {
     return 0;
 }
 
+static int emit_standalone_binary(int argc, char** argv) {
+    aura::compiler::CompilerService cs;
+    std::string input;
+    std::string out_path;
+
+    // ── Collect input: file args or stdin ─────────────────────
+    // Usage:
+    //   echo '(+ 1 2)' | ./aura --emit-binary myapp         (stdin)
+    //   ./aura --emit-binary '(+ 1 2)' myapp    (inline: expr,output)
+    //   ./aura --emit-binary file1 file2 out    (file: sources...,output)
+    //
+    if (argc > 3) {
+        // Decide mode: if argv[2] starts with '(', it's inline expression.
+        // Otherwise, all args from argv[2..argc-2] are files, argv[argc-1] is output.
+        if (argv[2][0] == '(') {
+            // Inline mode: ./aura --emit-binary '(+ 1 2)' myapp
+            // Issue #960: do not mutate main's argv/argc (keeps
+            // crash diagnostics and later argv reads correct).
+            input = argv[2];
+            out_path = argv[3];
+        } else {
+            // File mode: ./aura --emit-binary lib.aura main.aura out
+            for (int i = 2; i < argc - 1; ++i) {
+                std::ifstream f(argv[i]);
+                if (!f) {
+                    std::println(std::cerr, "error: cannot open '{}'", argv[i]);
+                    return 1;
+                }
+                input += std::string((std::istreambuf_iterator<char>(f)),
+                                     std::istreambuf_iterator<char>());
+                input += '\n';
+            }
+            out_path = argv[argc - 1];
+        }
+    } else {
+        // Stdin mode: echo '(+ 1 2)' | ./aura --emit-binary myapp
+        // Issue #4640: read the WHOLE stdin, not just its first
+        // line. The eval path reads all of stdin, so a program
+        // piped in with several lines was emitted with only its
+        // first line -- the AOT binary then disagreed with the
+        // evaluator by construction (every row after the first
+        // line was missing from the image).
+        {
+            std::ostringstream buf;
+            buf << std::cin.rdbuf();
+            input = buf.str();
+        }
+        out_path = argv[2];
+    }
+
+    if (input.empty()) {
+        std::println(std::cerr, "error: no input");
+        return 1;
+    }
+
+    // Issue #4640: the emit must resolve the SAME names as the
+    // evaluator. The oneshot eval path auto-loads the std modules
+    // the program can reference (build_lazy_oneshot_std_prelude),
+    // because assoc / foldr / zip / ... are std FUNCTIONS, not
+    // primitives: without the std module the IR path cannot call
+    // them and the emit died with "cannot call: assoc" while the
+    // evaluator answered. Prepend the same lazy prelude so the
+    // std module source is inlined by the import/require step
+    // below and the AOT image carries the same definitions.
+    {
+        std::string prelude = build_lazy_oneshot_std_prelude(input);
+        if (!prelude.empty())
+            input = prelude + input;
+    }
+
+    // ── Resolve import/require: prepend module source (recursive) ──
+    // Replace (import "std/name") / (require "std/name") with the
+    // module's source code so defines are processed inline by eval_ir.
+    // Recursively inline any nested requires too, so the prepended
+    // block is self-contained and doesn't re-execute requires at
+    // runtime (which would re-load modules, leak module arenas, and
+    // can segfault the IR pipeline on CI).
+    {
+        static const std::string std_root = aura::compiler::paths::resolve_stdlib_root();
+
+        // Find the matching close paren starting from an open paren,
+        // respecting string literals and nested parens.
+        auto find_matching_close = [](const std::string& s, std::size_t open_paren) {
+            std::size_t i = open_paren;
+            int depth = 0;
+            bool in_str = false;
+            while (i < s.size()) {
+                char c = s[i];
+                if (in_str) {
+                    if (c == '\\' && i + 1 < s.size()) {
+                        i += 2;
+                        continue;
+                    }
+                    if (c == '"')
+                        in_str = false;
+                } else {
+                    if (c == '"')
+                        in_str = true;
+                    else if (c == '(')
+                        depth++;
+                    else if (c == ')') {
+                        depth--;
+                        if (depth == 0)
+                            return i + 1;
+                    }
+                }
+                i++;
+            }
+            return std::string::npos;
+        };
+
+        // Strip (export ...) — finds the first '(' matching its ')'.
+        auto strip_export = [&](std::string& s) {
+            auto p = s.find("(export");
+            if (p == std::string::npos)
+                return;
+            auto end = find_matching_close(s, p);
+            if (end == std::string::npos)
+                return;
+            s.erase(p, end - p);
+        };
+
+        // Resolve "std/name" or sym-like-name to a file path.
+        // name is string_view — materialize before operator+ with literals.
+        auto resolve_path = [&](std::string_view name) -> std::string {
+            if (name.starts_with("std/"))
+                return std_root + std::string(name.substr(4)) + ".aura";
+            return std::string(name) + ".aura";
+        };
+
+        // Recursively inline a module file. Replaces nested
+        // (require X) / (import "X") forms with the inlined source
+        // of X (depth-first, cycle-safe via `visited`).
+        std::set<std::string> visited;
+        std::function<std::string(const std::string&)> inline_module;
+        inline_module = [&](const std::string& path) -> std::string {
+            if (visited.count(path))
+                return "";
+            visited.insert(path);
+            std::ifstream mf(path);
+            if (!mf) {
+                std::println(std::cerr, "warning: cannot open module '{}'", path);
+                return "";
+            }
+            std::string src((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
+            strip_export(src);
+            std::string out;
+            std::size_t pos = 0;
+            while (pos < src.size()) {
+                // Skip whitespace and comments at the top level
+                while (pos < src.size() &&
+                       (src[pos] == ' ' || src[pos] == '\n' || src[pos] == '\t' ||
+                        src[pos] == '\r' || src[pos] == ';')) {
+                    if (src[pos] == ';') {
+                        // line comment
+                        while (pos < src.size() && src[pos] != '\n')
+                            pos++;
+                    } else
+                        pos++;
+                }
+                if (pos >= src.size() || src[pos] != '(') {
+                    if (pos < src.size())
+                        out += src[pos++];
+                    else
+                        break;
+                    continue;
+                }
+                std::size_t form_start = pos;
+                std::size_t form_end = find_matching_close(src, pos);
+                if (form_end == std::string::npos) {
+                    out += src.substr(pos);
+                    break;
+                }
+                std::string form = src.substr(form_start, form_end - form_start);
+                // Inspect the form's head
+                std::string head;
+                std::size_t h = form_start + 1;
+                while (h < form_end &&
+                       (src[h] == ' ' || src[h] == '\n' || src[h] == '\t' || src[h] == '\r'))
+                    h++;
+                while (h < form_end && src[h] != ' ' && src[h] != '\n' && src[h] != '\t' &&
+                       src[h] != '\r' && src[h] != ')')
+                    head += src[h++];
+                if (head == "require" || head == "import" || head == "use") {
+                    // Extract first arg (a symbol or string)
+                    while (h < form_end &&
+                           (src[h] == ' ' || src[h] == '\n' || src[h] == '\t' || src[h] == '\r'))
+                        h++;
+                    std::string arg;
+                    bool in_str = false;
+                    while (h < form_end) {
+                        char c = src[h];
+                        if (in_str) {
+                            arg += c;
+                            if (c == '"')
+                                in_str = false;
+                        } else if (c == '"') {
+                            arg += c;
+                            in_str = true;
+                        } else if (c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == ')') {
+                            break;
+                        } else {
+                            arg += c;
+                        }
+                        h++;
+                    }
+                    // Strip surrounding quotes if present
+                    if (arg.size() >= 2 && arg.front() == '"' && arg.back() == '"')
+                        arg = arg.substr(1, arg.size() - 2);
+                    if (!arg.empty()) {
+                        std::string nested = resolve_path(arg);
+                        out += inline_module(nested);
+                        out += '\n';
+                    }
+                    // Skip the original form in src (don't copy it to out)
+                } else {
+                    out += form;
+                    out += '\n';
+                }
+                pos = form_end;
+            }
+            return out;
+        };
+
+        // Process the user input: for each top-level (import "X") or
+        // (require "X"), inline the module and replace the form.
+        std::string resolved;
+        std::size_t pos = 0;
+        while (pos < input.size()) {
+            auto imp = input.find("(import \"", pos);
+            auto req = input.find("(require \"", pos);
+            std::size_t found = std::string::npos;
+            bool has_imp = (imp != std::string::npos);
+            bool has_req = (req != std::string::npos);
+            if (!has_imp && !has_req) {
+                resolved += input.substr(pos);
+                break;
+            }
+            if (has_imp && (!has_req || imp < req))
+                found = imp;
+            else
+                found = req;
+            resolved += input.substr(pos, found - pos);
+            auto quote_start = input.find('"', found);
+            auto quote_end = input.find('"', quote_start + 1);
+            if (quote_start == std::string::npos || quote_end == std::string::npos) {
+                resolved += input.substr(found);
+                break;
+            }
+            auto module_name = input.substr(quote_start + 1, quote_end - quote_start - 1);
+            auto close_paren = input.find(')', quote_end);
+            if (close_paren == std::string::npos) {
+                resolved += input.substr(found);
+                break;
+            }
+            std::string module_path = resolve_path(module_name);
+            visited.clear();
+            resolved += inline_module(module_path);
+            resolved += '\n';
+            pos = close_paren + 1;
+        }
+        input = resolved;
+    }
+
+    // ── Step 1: Parse → Lower → Passes ──
+    // eval_ir now includes pre_exec_requires for module support.
+    auto eval_result = cs.eval_ir(input);
+    if (!eval_result) {
+        std::println(std::cerr, "error: {}", eval_result.error().format());
+        return 1;
+    }
+    auto& mod = cs.last_ir_module();
+    if (!mod || mod->functions.empty()) {
+        std::println(std::cerr, "no IR module generated");
+        return 1;
+    }
+
+    // ── Step 2: Convert IRModule functions to FlatFunction ────
+    // We need to keep all backing storage alive for the FlatFunction array.
+    // Each FlatFunction has pointers into our owned vectors.
+    //
+    // Storage layout:
+    //   instr_pool[batch_i][fn_i][block_i]  = vector of FlatInstruction
+    //   block_pool[batch_i][fn_i]           = vector of FlatBlock (points into instr_pool)
+    //   name_pool[batch_i]                  = string (flat_fn.name points here)
+    //   flat_fn_array                       = vector of FlatFunction (final array)
+
+    std::size_t num_fns = mod->functions.size();
+    std::vector<std::vector<std::vector<aura::jit::FlatInstruction>>> instr_pool;
+    std::vector<std::vector<aura::jit::FlatBlock>> block_pool;
+    std::deque<std::string> name_pool; // deque: stable pointers on push_back
+    std::vector<aura::jit::FlatFunction> flat_fn_array;
+    flat_fn_array.reserve(num_fns);
+    instr_pool.reserve(num_fns);
+    block_pool.reserve(num_fns);
+
+    for (auto& ir_fn : mod->functions) {
+        instr_pool.emplace_back();
+        block_pool.emplace_back();
+        name_pool.push_back(ir_fn.name);
+
+        auto& instrs = instr_pool.back();
+        auto& blocks = block_pool.back();
+
+        instrs.resize(ir_fn.blocks.size());
+        blocks.resize(ir_fn.blocks.size());
+
+        for (std::size_t bi = 0; bi < ir_fn.blocks.size(); ++bi) {
+            auto& block = ir_fn.blocks[bi];
+            for (auto& inst : block.instructions) {
+                instrs[bi].push_back(
+                    {static_cast<std::uint32_t>(inst.opcode),
+                     {inst.operands[0], inst.operands[1], inst.operands[2], inst.operands[3]}});
+            }
+            blocks[bi] = {block.id, instrs[bi].data(),
+                          static_cast<std::uint32_t>(instrs[bi].size())};
+        }
+
+        flat_fn_array.push_back({name_pool.back().c_str(), ir_fn.entry_block, ir_fn.local_count,
+                                 ir_fn.arg_count, blocks.data(),
+                                 static_cast<std::uint32_t>(blocks.size()),
+                                 nullptr, // func_id_map not used for AOT
+                                 0});
+    }
+
+    // ── Step 3: Generate primitive dispatch C code ───────────
+    // Build per-slot dispatch functions with the correct ABI:
+    // each function has signature (int64_t* args, int32_t argc)
+    // matching the PrimFn type used in aura_closure_call.
+    //
+    // The generated code creates one static function per primitive
+    // slot and registers each at its correct evaluator slot number.
+    // The slot numbers are matched at compile time.
+    {
+        auto& prims = cs.evaluator().primitives();
+        std::string code = "// Auto-generated by aura --emit-binary\n";
+        code += "#include <stdint.h>\n#include <stddef.h>\n#include <stdio.h>\n";
+        // Issue #4628: the AOT member wrapper compares the elements
+        // structurally (string content), so strcmp is needed.
+        code += "#include <string.h>\n\n";
+        // Issue #4502 F3: pairs are exactly low2 == 01. The old `x<0 ||`
+        // test matched every negative fixnum and every boxed float/string
+        // under #4482. Value ABI must match lib/runtime.c AURA_VALUE_ABI.
+        // #4502 step 1: every constant comes from lib/aura_value_abi.h.
+        code += "#define AURA_AOT_VALUE_ABI " AURA_ABI_STR(AURA_VALUE_ABI) "\n";
+        static_assert(AURA_VALUE_ABI == 4, "#4502: update the AOT preamble with the ABI");
+        code += "#define AURA_AOT_IS_PAIR(x) (((x)&3)==1)\n";
+        code += "#define AURA_AOT_FALSE " AURA_ABI_STR(AURA_V_FALSE) "\n";
+        code += "#define AURA_AOT_TRUE " AURA_ABI_STR(AURA_V_TRUE) "\n";
+        code += "#define AURA_AOT_VOID " AURA_ABI_STR(AURA_V_VOID) "\n";
+        code += "#define MAKE_STRING_SENTINEL(i) ((int64_t)(((uint64_t)(i) << " AURA_ABI_STR(
+            AURA_IMM_PAYLOAD_SHIFT) ") | " AURA_ABI_STR(AURA_STRING_LOW8) "))\n";
+        code += "int64_t aura_display_int(int64_t);\n";
+        code += "int64_t aura_alloc_pair(int64_t, int64_t);\n";
+        code += "int64_t aura_pair_car(int64_t);\n";
+        code += "int64_t aura_pair_cdr(int64_t);\n";
+        code += "int64_t aura_closure_call(int64_t, int64_t*, int64_t);\n";
+        // Issue #4628: the AOT face of the evaluator's equal? — content
+        // compare for strings, value compare for floats.
+        code += "const char* aura_string_ref(int64_t);\n";
+        code += "double aura_float_ref(int64_t);\n";
+        code += "\n";
+        code += "typedef int64_t (*PF)(int64_t*,int32_t);\n";
+        // Issue #4628: the AOT member wrapper compared raw words, so even
+        // two identical strings were identity-compared and a structurally
+        // equal pair was never found. This helper is the AOT face of the
+        // evaluator's equal? comparison (R7RS 6.4: member uses equal?).
+        code += "#define AURA_AOT_IS_STRING(x) ((((int64_t)(x)) & 0xFF) == " AURA_ABI_STR(
+            AURA_STRING_LOW8) ")\n";
+        code += "#define AURA_AOT_IS_FLOAT(x) ((((int64_t)(x)) & 0xFF) == " AURA_ABI_STR(
+            AURA_FLOAT_LOW8) ")\n";
+        code += "static inline int aura_aot_equal(int64_t a, int64_t b, int depth){\n";
+        code += "  if(a==b) return 1;\n";
+        code += "  if(depth>64) return 1;\n";
+        code += "  if(AURA_AOT_IS_PAIR(a)&&AURA_AOT_IS_PAIR(b)) return "
+                "aura_aot_equal(aura_pair_car(a),aura_pair_car(b),depth+1) && "
+                "aura_aot_equal(aura_pair_cdr(a),aura_pair_cdr(b),depth+1);\n";
+        code += "  if(AURA_AOT_IS_STRING(a)&&AURA_AOT_IS_STRING(b)) return "
+                "strcmp(aura_string_ref(a),aura_string_ref(b))==0;\n";
+        code += "  if(AURA_AOT_IS_FLOAT(a)&&AURA_AOT_IS_FLOAT(b)) return "
+                "aura_float_ref(a)==aura_float_ref(b);\n";
+        code += "  return 0;\n";
+        code += "}\n";
+        code += "\n";
+        code += "void aura_register_primitive_fn(int64_t, int64_t);\n";
+        code += "\n";
+
+        // Generate one wrapper function for each known primitive
+        for (std::size_t s = 0; s < prims.slot_count(); ++s) {
+            auto n = prims.name_for_slot(s);
+            if (n.empty())
+                continue;
+            code += "static int64_t prim_" + std::to_string(s) + "(int64_t* a, int32_t c) {\n";
+            if (n == "+")
+                code += "    int64_t r=0; for(int i=0;i<c;i++) r+=a[i]; return r;\n";
+            else if (n == "-")
+                code += "    if(c<1)return 0; if(c==1)return -a[0]; int64_t r=a[0]; for(int "
+                        "i=1;i<c;i++) r-=a[i]; return r;\n";
+            else if (n == "*")
+                code += "    int64_t r=1; for(int i=0;i<c;i++) r*=a[i]; return r;\n";
+            else if (n == "/")
+                code += "    if(c<1)return 1; int64_t r=a[0]; for(int "
+                        "i=1;i<c;i++){if(a[i]==0){r=0;break;}r/=a[i];} return r;\n";
+            else if (n == "=" || n == "eq?" || n == "eqv?")
+                // Issue #4640: a boolean result must be the TAGGED
+                // #t / #f (7 / 3), not a raw 1 / 0: the AOT display
+                // reads the low bits, and a raw 1 looks like a pair
+                // (low2 == 01) -- the image printed "(0)" / "(2)"
+                // instead of #t. The evaluator's booleans are the
+                // tagged specials (value_tags.h: kSpecialTrue 7,
+                // kSpecialFalse 3).
+                code += "    for(int i=0;i<c-1;i++) if(a[i]!=a[i+1]) return AURA_AOT_FALSE; "
+                        "return AURA_AOT_TRUE;\n";
+            else if (n == "equal?")
+                // Issue #4640: equal? is the STRUCTURAL comparison
+                // (R7RS 6.4): content compare for strings, value
+                // compare for numbers, structural compare for pairs
+                // -- the same walk member uses (#4628). The AOT face
+                // compared raw words, so two structurally equal lists
+                // were never equal and the std assoc (which compares
+                // the key with equal?) answered differently from the
+                // evaluator.
+                code += "    for(int i=0;i<c-1;i++) if(!aura_aot_equal(a[i],a[i+1],0)) "
+                        "return AURA_AOT_FALSE; return AURA_AOT_TRUE;\n";
+            else if (n == "<")
+                code += "    for(int i=0;i<c-1;i++) if(!(a[i]<a[i+1])) return AURA_AOT_FALSE; "
+                        "return AURA_AOT_TRUE;\n";
+            else if (n == ">")
+                code += "    for(int i=0;i<c-1;i++) if(!(a[i]>a[i+1])) return AURA_AOT_FALSE; "
+                        "return AURA_AOT_TRUE;\n";
+            else if (n == "<=")
+                code += "    for(int i=0;i<c-1;i++) if(!(a[i]<=a[i+1])) return AURA_AOT_FALSE; "
+                        "return AURA_AOT_TRUE;\n";
+            else if (n == ">=")
+                code += "    for(int i=0;i<c-1;i++) if(!(a[i]>=a[i+1])) return AURA_AOT_FALSE; "
+                        "return AURA_AOT_TRUE;\n";
+            else if (n == "not")
+                code += "    return "
+                        "(c<1||a[0]==AURA_AOT_FALSE)?AURA_AOT_TRUE:AURA_AOT_FALSE;\n"; // #4491:
+                                                                                       // only
+                                                                                       // #f is
+                                                                                       // false
+            else if (n == "append") {
+                code += "    if(c<1)return AURA_AOT_VOID; int64_t lst1=c>0?a[0]:0; int64_t "
+                        "lst2=c>1?a[1]:0;\n";
+                code += "    int64_t rev[1024]; int revc=0;\n";
+                code += "    "
+                        "while(AURA_AOT_IS_PAIR(lst1)&&revc<1024){rev[revc++]=aura_pair_car("
+                        "lst1); lst1=aura_pair_cdr(lst1);}\n";
+                code += "    int64_t r=lst2;\n";
+                code += "    for(int i=revc-1;i>=0;i--) r=aura_alloc_pair(rev[i],r);\n";
+                code += "    return r;\n";
+            } else if (n == "member") {
+                // Issue #4628: compare the elements structurally
+                // (equal? semantics), not by raw word identity, and answer
+                // #f when the element is not found — the evaluator's
+                // contract (R7RS 6.4 / #4491).
+                code += "    int64_t key=c>0?a[0]:0; int64_t lst=c>1?a[1]:0;\n";
+                code += "    while(AURA_AOT_IS_PAIR(lst)){if(aura_aot_equal(aura_pair_car(lst),"
+                        "key,0))return lst; lst=aura_pair_cdr(lst);}\n";
+                code += "    return AURA_AOT_FALSE;\n";
+            } else if (n == "map") {
+                code += "    int64_t fn=c>0?a[0]:0; int64_t lst=c>1?a[1]:0;\n";
+                code += "    int64_t rev[1024]; int revc=0;\n";
+                code += "    int64_t args[8];\n";
+                code += "    while(AURA_AOT_IS_PAIR(lst)&&revc<1024){args[0]=aura_pair_car(lst); "
+                        "rev[revc++]=aura_closure_call(fn,args,1); lst=aura_pair_cdr(lst);}\n";
+                code += "    int64_t r=AURA_AOT_VOID; for(int i=revc-1;i>=0;i--) "
+                        "r=aura_alloc_pair(rev[i],r);\n";
+                code += "    return r;\n";
+            } else if (n == "null?")
+                // Issue #4640: tagged #t / #f, not a raw 1 / 0 (see
+                // the comparison wrappers above).
+                // #4502: only '() is null -- not 0 or unspecified.
+                code += "    return "
+                        "(c>=1&&a[0]==AURA_AOT_VOID)?AURA_AOT_TRUE:AURA_AOT_FALSE;\n";
+            else if (n == "pair?")
+                // Issue #106 sub-task 4 (audit): the previous
+                // expression was (c>0&&(((a[0]&3)==1))||a[0]<0)
+                // which due to C precedence parses as
+                //   (c>0 && ((a[0]&3)==1)) || (a[0]<0)
+                // and reads a[0] when c==0 — a read of an
+                // out-of-range arg slot that can segfault on
+                // x86_64 emit-binary with certain call sites
+                // (the old -9000... string sentinel is no
+                // longer part of the pair tag; we just check
+                // the low-bit tag like IS_PAIR in the runtime).
+                // Issue #4640: tagged #t / #f, not a raw 1 / 0 (see
+                // the comparison wrappers above).
+                code += "    return (c>0 && ((a[0]&3)==1)) ? AURA_AOT_TRUE : AURA_AOT_FALSE;\n";
+            else if (n == "cons")
+                code += "    return aura_alloc_pair(c>0?a[0]:0,c>1?a[1]:0);\n";
+            else if (n == "car")
+                code += "    return (c>0)?aura_pair_car(a[0]):0;\n";
+            else if (n == "cdr")
+                code += "    return (c>0)?aura_pair_cdr(a[0]):0;\n";
+            else if (n == "length") {
+                code += "    int64_t v=c>0?a[0]:0; int64_t n=0;\n";
+                code += "    while(AURA_AOT_IS_PAIR(v)&&n<9999){n++;v=aura_pair_cdr(v);}\n";
+                code += "    return n;\n";
+            } else if (n == "list-ref") {
+                code += "    int64_t v=c>0?a[0]:0; int64_t i=c>1?a[1]:0;\n";
+                code += "    while(i>0&&AURA_AOT_IS_PAIR(v)){v=aura_pair_cdr(v);i--;}\n";
+                code += "    if(i==0&&AURA_AOT_IS_PAIR(v))return aura_pair_car(v); return 0;\n";
+            } else if (n == "reverse") {
+                code += "    int64_t v=c>0?a[0]:0; int64_t r=AURA_AOT_VOID;\n";
+                code += "    "
+                        "while(AURA_AOT_IS_PAIR(v)){r=aura_alloc_pair(aura_pair_car(v),r);v=aura_"
+                        "pair_cdr(v);}\n";
+                code += "    return r;\n";
+            } else if (n == "list") {
+                code += "    int64_t r=AURA_AOT_VOID;\n";
+                code += "    for(int i=c-1;i>=0;i--) r=aura_alloc_pair(a[i],r);\n";
+                code += "    return r;\n";
+            } else if (n == "display") {
+                code += "    if(c>0)aura_display_int(a[0]); fflush(stdout);\n";
+                code += "    return (c>0)?a[0]:0;\n";
+            } else if (n == "filter") {
+                code += "    int64_t pred=c>0?a[0]:0; int64_t lst=c>1?a[1]:0;\n";
+                code += "    int64_t rev[1024]; int revc=0;\n";
+                code += "    int64_t args[8];\n";
+                code += "    while(AURA_AOT_IS_PAIR(lst)&&revc<1024){int64_t v=aura_pair_car(lst); "
+                        "args[0]=v; if(aura_closure_call(pred,args,1)!=0)rev[revc++]=v; "
+                        "lst=aura_pair_cdr(lst);}\n";
+                code += "    int64_t r=AURA_AOT_VOID; for(int i=revc-1;i>=0;i--) "
+                        "r=aura_alloc_pair(rev[i],r);\n";
+                code += "    return r;\n";
+            } else if (n == "foldl") {
+                code += "    int64_t fn=c>0?a[0]:0; int64_t acc=c>1?a[1]:0; int64_t "
+                        "lst=c>2?a[2]:0;\n";
+                code += "    int64_t args[8];\n";
+                code += "    while(AURA_AOT_IS_PAIR(lst)){args[0]=acc; args[1]=aura_pair_car(lst); "
+                        "acc=aura_closure_call(fn,args,2); lst=aura_pair_cdr(lst);}\n";
+                code += "    return acc;\n";
+            } else {
+                // Unknown primitives (e.g. ADT constructors): build pair chain with tag string
+                code += "    int64_t r=AURA_AOT_VOID; for(int i=c-1;i>=0;i--) "
+                        "r=aura_alloc_pair(a[i],r);\n";
+                code += "    r=aura_alloc_pair(MAKE_STRING_SENTINEL(" + std::to_string(s) +
+                        "),r); return r;\n";
+            }
+            code += "}\n\n";
+        }
+
+        // Constructor: register each primitive function at its slot
+        code += "__attribute__((constructor)) void reg(void) {\n";
+        for (std::size_t s = 0; s < prims.slot_count(); ++s) {
+            auto n = prims.name_for_slot(s);
+            if (!n.empty()) {
+                code += "  aura_register_primitive_fn(" + std::to_string(s) + ",(int64_t)prim_" +
+                        std::to_string(s) + ");\n";
+            }
+        }
+        code += "}\n";
+        aura_set_prim_registration(code.c_str());
+    }
+
+    // Set string pool for OpConstString
+    {
+        auto& pool = mod->string_pool;
+        std::vector<const char*> raw_pool(pool.size());
+        for (std::size_t i = 0; i < pool.size(); ++i)
+            raw_pool[i] = pool[i].c_str();
+        aura_set_string_pool(raw_pool.data(), static_cast<unsigned>(raw_pool.size()));
+    }
+
+    // Issue #243 Phase 1 / #957: production defuse_version() for AOT
+    // mangle suffix + registration record (one acquire load).
+    aura_set_aot_defuse_version(cs.evaluator().defuse_version());
+
+    // ── Step 4: Compile via LLVM AOT pipeline ────────────────
+    bool compiled =
+        aura_emit_native_file(input.c_str(), out_path.c_str(), (const void*)flat_fn_array.data(),
+                              static_cast<unsigned int>(flat_fn_array.size()));
+    // Issue #62 Iter 1: AOT counters
+    if (compiled) {
+        cs.metrics().aot_emits.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        cs.metrics().aot_fallbacks.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // ── Step 4: Failure handling ──────────────────────────────
+    // Issue #237: distinguish two failure modes:
+    //
+    //   (A) flat_fn_array is non-empty AND AOT failed
+    //       → real AOT compile/link error (e.g. x86_64 PIE
+    //         mismatch, missing runtime.c, LLVM internal error).
+    //       The caller asked for a real native binary; giving
+    //       them a shell wrapper script that re-invokes aura
+    //       is not a native binary and breaks downstream
+    //       tooling (e.g. test_issue_237's is_elf() check).
+    //       → Return rc=1 with a clear error message.
+    //
+    //   (B) flat_fn_array is empty (all functions were
+    //       filtered out as Evolution-region) AND the C
+    //       wrapper fallback also failed
+    //       → no AOT was possible, C wrapper also failed.
+    //       Shell-wrapper fallback is the last resort for
+    //       this case so the user still gets a runnable
+    //       script (rare — requires no cc + no Evolution-
+    //       AOT to be possible).
+    if (!compiled) {
+        // Case A: real AOT failure with functions to AOT-compile.
+        // Bail out loudly with the LLVM/bridge stderr above.
+        if (!flat_fn_array.empty()) {
+            std::println(std::cerr,
+                         "AOT: failed to emit native binary for {} function(s). "
+                         "See AOT: errors above. Common causes: x86_64 PIE/PIC "
+                         "mismatch, missing lib/runtime.c, LLVM internal error. "
+                         "Not falling back to shell wrapper (--emit-binary "
+                         "contract is a real ELF executable).",
+                         flat_fn_array.size());
+            return 1;
+        }
+
+        // Case B: empty AOT batch + C wrapper failure.
+        // Fall back to shell wrapper as a last-resort script.
+        std::string self_path = std::string(argv[0]);
+        // Issue #237: log every step of the shell-wrapper fallback
+        // so CI can see exactly where the failure mode hits. The
+        // previous version silently fell through to rc=1 when the
+        // LLVM AOT + C-fallback both failed; this verbose trace
+        // makes the failure mode visible.
+        std::println(std::cerr, "[#237] AOT failed; entering shell wrapper fallback");
+        std::println(std::cerr, "[#237]   out_path={}", out_path);
+        std::println(std::cerr, "[#237]   self_path={}", self_path);
+        {
+            std::ofstream sf(out_path);
+            if (!sf) {
+                std::println(std::cerr, "[#237] ERROR: cannot open {} for write (rc=1)", out_path);
+                return 1;
+            }
+            sf << "#!/bin/bash\n";
+            sf << "# Aura compiled binary (shell wrapper fallback)\n";
+            sf << "exec " << self_path << " --load " << out_path << ".tmp.aura \"$@\"\n";
+            if (!sf) {
+                std::println(std::cerr, "[#237] ERROR: write to {} failed (rc=1)", out_path);
+                return 1;
+            }
+        }
+        std::filesystem::permissions(
+            out_path, std::filesystem::perms::owner_all | std::filesystem::perms::group_read |
+                          std::filesystem::perms::group_exec | std::filesystem::perms::others_read |
+                          std::filesystem::perms::others_exec);
+        // Save source for --load
+        {
+            std::ofstream sf(out_path + ".tmp.aura");
+            if (!sf) {
+                std::println(std::cerr, "[#237] ERROR: cannot open {}.tmp.aura for write (rc=1)",
+                             out_path);
+                return 1;
+            }
+            sf << input;
+        }
+        if (std::filesystem::exists(out_path)) {
+            std::println("emitted binary: {} (shell wrapper)", out_path);
+            return 0;
+        }
+        std::println(std::cerr, "[#237] ERROR: out_path {} does not exist after write (rc=1)",
+                     out_path);
+        std::println(std::cerr, "error: cannot create binary");
+        return 1;
+    }
+
+    std::println("emitted binary: {}", out_path);
+    return 0;
+}
+
+static int run_oneshot_or_file(int argc, char** argv) {
+    // ── Normal REPL / pipe / file / -e mode ─────────────────────
+    // Issue #2767: denseness span runners (Aether/Hephaestus/Hermes)
+    // hit two footguns that look like product bugs:
+    //   1. argv / -e printed bare "usage: echo … | ./aura" and exited
+    //   2. AURA_PIPELINE_STRICT production default needs =0 for soft denseness
+    // Issue #2772: multi-process child via (shell …) needs *exported*
+    // AURA_BIN (or rely on process-seed + (aura-executable-path)).
+    // Accept file paths and -e EXPR as sugar; keep stdin pipe default.
+    // Issue #4131: an ancestor that ignored SIGTERM (daemonized holder,
+    // nohup-style batch runner) leaks SIG_IGN into this image — POSIX
+    // carries ignored dispositions across execve, so a hung oneshot
+    // (pathological list recursion / while spin) then survives the
+    // host's timeout SIGTERM and only killpg(SIGKILL) reclaims it.
+    // Oneshot faces reset TERM to default here so `aura file.aura`
+    // always honors SIGTERM promptly. --serve/--serve-async return from
+    // earlier branches and manage their own lifecycle — untouched.
+    ::signal(SIGTERM, SIG_DFL);
+    auto print_denseness_usage = [&](const char*, std::ostream& out = std::cerr) {
+        const char* prog = "aura"; // #4935: never the libexec path
+        std::println(out, "usage: {} [options] [file.aura …]", prog);
+        std::println(out, "       {} -e '(+ 1 2)'", prog);
+        std::println(out, "       {} soft [--allow ffi,write] [--load] [file.aura …]", prog);
+        std::println(out, "       echo '(+ 1 2)' | {}", prog);
+        std::println(out, "       {} < file.aura", prog);
+        std::println(out, "");
+        std::println(out, "Projects (#4913):");
+        std::println(out,
+                     "  {} new [app|evolve|agent] <dir>  scaffold aura.toml, tests/, CI, "
+                     "README",
+                     prog);
+        std::println(out,
+                     "  {} run [entry.aura] [options]    run the project entry with its "
+                     "aura.toml preset",
+                     prog);
+        std::println(out,
+                     "  {} test [--update] [tests/x.aura] run tests/*.aura against "
+                     "tests/*.golden",
+                     prog);
+        std::println(out, "  (require \"lib/x\") in a project resolves from the project root.");
+        std::println(out, "Evolution (#4910):");
+        std::println(out,
+                     "  {} evo log [--json] [--run ID|last]  worldline: KEEP/ROLLBACK, reason, "
+                     "evidence, diff",
+                     prog);
+        std::println(out,
+                     "  {} evo report --html DIR             static HTML timeline, score curve, "
+                     "diffs",
+                     prog);
+        std::println(out, "REPL (#4911):");
+        std::println(out,
+                     "  {} repl [file.aura]   REPL; :load/:reload FILE, :ws, :worldline, "
+                     ":snapshot, :restore ID, :help",
+                     prog);
+        std::println(out,
+                     "  {} lsp                stdio language server (diagnostics, "
+                     "goto-definition); see docs/editor.md",
+                     prog);
+        std::println(out, "Options:");
+        std::println(out, "  -e, --eval EXPR     evaluate EXPR (repeatable)");
+        std::println(out, "  --load FILE         run FILE (same semantics as '{} FILE')", prog);
+        std::println(out, "  --keep-going        keep running forms after a top-level error");
+        std::println(out, "  --preset P, --grant CAPS, --deny CAPS, --quiet   capabilities "
+                          "(below)");
+        std::println(out, "  --no-arena, --worker-threads N, --health-port N");
+        std::println(out, "Tools (read code from the argument or stdin):");
+        std::println(out, "  --fmt [--check] | --unparse   format; --check exits 1 when not "
+                          "formatted");
+        std::println(out, "  --typecheck | --auto-fix      type diagnostics / suggested fixes");
+        std::println(out, "  --query Q | --query-and-fix   structural queries over the code");
+        std::println(out, "  --evo-explain                 explain an evolution step (AURA_OBS=1)");
+        std::println(out, "  --inspect [ir|…], --ir, --jit, --jit-session   compiler views");
+        std::println(out, "  --env, --env-json             runtime environment report");
+        std::println(out, "  --freeze, --emit-binary, --cache, --cache-open, --write   "
+                          "artifacts");
+        std::println(out, "  --serve, --serve-async, --health-server, --strategy, --hot-swap  "
+                          "services");
+        std::println(out, "");
+        std::println(out, "Programs are read from stdin when no file/-e is given.");
+        std::println(out, "A program file stops at its first top-level error (rc=1);");
+        std::println(out, "  --keep-going (or AURA_KEEP_GOING=1) runs the remaining forms too.");
+        std::println(out, "Capability presets (#4912):");
+        std::println(out,
+                     "  {} --preset dev file.aura   mutate + read + write (self-evolving "
+                     "programs)",
+                     prog);
+        std::println(out,
+                     "  {} --preset ci  file.aura   same as dev (write not yet "
+                     "path-scoped)",
+                     prog);
+        std::println(out, "  {} --preset prod file.aura  the Restricted default", prog);
+        std::println(out, "  --grant mutate,write,ffi,exec,network / --deny … adjust it; "
+                          "--quiet drops the caps line.");
+        std::println(out, "  Also AURA_PRESET=dev or preset = \"dev\" in aura.toml.");
+        std::println(out, "Soft experiments (#4575):");
+        std::println(out, "  {} soft file.aura              Restricted Mutate on this workspace",
+                     prog);
+        std::println(out, "  {} soft --allow ffi,write      explicit opt-in; never implied", prog);
+        std::println(out, "Denseness / span host env (soft multi-module probes):");
+        std::println(out, "  export AURA_BIN=…/build/aura   absolute path (#2772 multi-process)");
+        std::println(out, "  export AURA_PATH=…/lib[:extra] module search path");
+        std::println(out, "  export AURA_PIPELINE_STRICT=0  allow tree-walker fallback (#2213)");
+        std::println(out, "Multi-process: shell children inherit only exported vars.");
+        std::println(out, "  Prefer: (shell (string-append (getenv \"AURA_BIN\") \" …\"))");
+        std::println(out, "  Or:     (shell (string-append (aura-executable-path) \" …\"))");
+        std::println(out, "  (aura seeds AURA_BIN from self when unset — still export in runners)");
+        std::println(out, "Special modes: --serve, --serve-async, --ir, --jit, --help");
+    };
+
+    // Issue #2767: collect program source from -e / --eval / file args
+    // before falling through to REPL or pipe mode. Leave special flags
+    // (--serve, --ir, …) to earlier branches (they return).
+    std::string all_input;
+    bool source_from_argv = false;
+    // Issue #4909: a program file stops at its first uncaught top-level
+    // error (one diagnostic, rc=1) instead of running the rest of the file
+    // into a cascade of follow-on errors. --keep-going / AURA_KEEP_GOING=1
+    // restores the run-every-form contract (#4460/#4467). -e / stdin keep it.
+    bool from_file_4909 = false;
+    bool keep_going_4909 = [] {
+        const char* v = std::getenv("AURA_KEEP_GOING");
+        if (!v)
+            return false;
+        const std::string_view s(v);
+        return s == "1" || s == "true" || s == "yes";
+    }();
+    // Issue #4575: `aura soft` is the launcher. It is not an env var.
+    // `--allow` is recognized only after `soft`. Plain `aura --allow`
+    // stays an unknown option.
+    bool soft_launch = false;
+    std::uint16_t soft_extra = 0;
+    std::string soft_allow_list;
+    bool soft_allow_bad = false;
+    std::string soft_allow_bad_tok;
+    // Issue #4912: `write:<dir>/` grants Write under <dir> only; a bare
+    // `write` (or the dev preset) is every path and wins over the scope.
+    std::vector<std::string> write_dirs_4912;
+    bool write_unscoped_4912 = false;
+    auto take_allow = [&](std::string_view list) {
+        using aura::core::capability::Effect;
+        std::size_t p = 0;
+        while (p < list.size()) {
+            while (p < list.size() && (list[p] == ' ' || list[p] == ','))
+                ++p;
+            if (p >= list.size())
+                break;
+            auto j = p;
+            while (j < list.size() && list[j] != ',')
+                ++j;
+            auto tok = list.substr(p, j - p);
+            while (!tok.empty() && (tok.back() == ' ' || tok.back() == '\t'))
+                tok.remove_suffix(1);
+            p = j < list.size() ? j + 1 : j;
+            if (tok.empty())
+                continue;
+            if (tok == "mutate") // Issue #4912: always part of a soft/preset session
+                continue;
+            std::uint16_t bit = 0;
+            if (tok == "ffi")
+                bit = static_cast<std::uint16_t>(Effect::Ffi);
+            else if (tok == "write") {
+                bit = static_cast<std::uint16_t>(Effect::Write);
+                write_unscoped_4912 = true;
+            } else if (tok.starts_with("write:") && tok.size() > 6) {
+                bit = static_cast<std::uint16_t>(Effect::Write);
+                write_dirs_4912.emplace_back(tok.substr(6));
+            } else if (tok == "exec" || tok == "shell")
+                bit = static_cast<std::uint16_t>(Effect::Exec);
+            else if (tok == "network" || tok == "net")
+                bit = static_cast<std::uint16_t>(Effect::Network);
+            else if (tok == "read")
+                bit = static_cast<std::uint16_t>(Effect::Read);
+            else {
+                // mutate is the default, not an opt-in. tenant-admin,
+                // syscall, macro-self-evo, and unknown tokens fail closed.
+                soft_allow_bad = true;
+                soft_allow_bad_tok = std::string(tok);
+                return;
+            }
+            soft_extra = static_cast<std::uint16_t>(soft_extra | bit);
+            if (!soft_allow_list.empty())
+                soft_allow_list.push_back(',');
+            soft_allow_list.append(tok);
+        }
+    };
+    // Issue #4912: capability presets. `--preset dev|ci|prod` (or
+    // AURA_PRESET, or `preset = "..."` in ./aura.toml) picks the session;
+    // `--grant` / `--deny` adjust it; `--quiet` drops the caps banner.
+    std::string preset_4912;
+    bool preset_bad_4912 = false;
+    bool quiet_4912 = false;
+    bool grant_seen_4912 = false;
+    bool deny_mutate_4912 = false;
+    std::uint16_t deny_bits_4912 = 0;
+    std::string entry_path_4912;
+    auto take_deny_4912 = [&](std::string_view list) {
+        using aura::core::capability::Effect;
+        std::size_t p = 0;
+        while (p < list.size()) {
+            auto j = list.find(',', p);
+            if (j == std::string_view::npos)
+                j = list.size();
+            auto tok = list.substr(p, j - p);
+            p = j + 1;
+            while (!tok.empty() && tok.front() == ' ')
+                tok.remove_prefix(1);
+            while (!tok.empty() && tok.back() == ' ')
+                tok.remove_suffix(1);
+            if (tok.empty())
+                continue;
+            if (tok == "mutate")
+                deny_mutate_4912 = true;
+            else if (tok == "ffi")
+                deny_bits_4912 |= static_cast<std::uint16_t>(Effect::Ffi);
+            else if (tok == "write")
+                deny_bits_4912 |= static_cast<std::uint16_t>(Effect::Write);
+            else if (tok == "exec" || tok == "shell")
+                deny_bits_4912 |= static_cast<std::uint16_t>(Effect::Exec);
+            else if (tok == "network" || tok == "net")
+                deny_bits_4912 |= static_cast<std::uint16_t>(Effect::Network);
+            else {
+                soft_allow_bad = true;
+                soft_allow_bad_tok = std::string(tok);
+                return;
+            }
+        }
+    };
+    auto flag_value_4912 = [&](int& i, std::string_view a, std::string_view name,
+                               std::string_view& out) -> bool {
+        if (a == name) {
+            if (i + 1 >= argc)
+                return false;
+            out = argv[++i];
+            return true;
+        }
+        out = a.substr(name.size() + 1);
+        return true;
+    };
+    if (argc > 1) {
+        for (int i = 1; i < argc; ++i) {
+            const std::string_view a(argv[i]);
+            if (a == "--quiet") { // Issue #4912
+                quiet_4912 = true;
+                continue;
+            }
+            if (a == "--preset" || a.starts_with("--preset=")) { // Issue #4912
+                std::string_view v;
+                if (!flag_value_4912(i, a, "--preset", v) ||
+                    (v != "dev" && v != "ci" && v != "prod")) {
+                    preset_bad_4912 = true;
+                    preset_4912 = std::string(v);
+                    break;
+                }
+                preset_4912 = std::string(v);
+                continue;
+            }
+            if (a == "--grant" || a.starts_with("--grant=")) { // Issue #4912
+                std::string_view v;
+                if (!flag_value_4912(i, a, "--grant", v)) {
+                    soft_allow_bad = true;
+                    soft_allow_bad_tok = "--grant";
+                    break;
+                }
+                grant_seen_4912 = true;
+                take_allow(v);
+                if (soft_allow_bad)
+                    break;
+                continue;
+            }
+            if (a == "--deny" || a.starts_with("--deny=")) { // Issue #4912
+                std::string_view v;
+                if (!flag_value_4912(i, a, "--deny", v)) {
+                    soft_allow_bad = true;
+                    soft_allow_bad_tok = "--deny";
+                    break;
+                }
+                take_deny_4912(v);
+                if (soft_allow_bad)
+                    break;
+                continue;
+            }
+            if (a == "-h" || a == "--help" || a == "--help-all") {
+                print_denseness_usage(argv[0], std::cout);
+                return 0;
+            }
+            if (a == "-e" || a == "--eval") {
+                if (i + 1 >= argc) {
+                    std::println(std::cerr, "error: {} requires an expression argument", a);
+                    std::println(std::cerr, "hint: 'aura --help' for usage");
+                    return 1;
+                }
+                if (!all_input.empty())
+                    all_input += '\n';
+                all_input += argv[++i];
+                source_from_argv = true;
+                continue;
+            }
+            // Already consumed in the pre-parse loop (sets g_use_arena=false).
+            if (a == "--no-arena")
+                continue;
+            if (a == "--keep-going") { // Issue #4909
+                keep_going_4909 = true;
+                continue;
+            }
+            // Health / worker flags may appear before denseness source args.
+            if (a == "--worker-threads") {
+                if (i + 1 < argc)
+                    ++i; // skip value
+                continue;
+            }
+            if (a.starts_with("--worker-threads="))
+                continue;
+            if (a == "--health-port") {
+                if (i + 1 < argc)
+                    ++i;
+                continue;
+            }
+            if (a.starts_with("--health-port="))
+                continue;
+            // Issue #4575: first bare arg `soft` is the subcommand.
+            // `aura ./soft` remains a file. `--allow` is only valid here.
+            if (a == "soft" && i == 1 && !soft_launch) {
+                soft_launch = true;
+                continue;
+            }
+            if (soft_launch && (a == "--allow" || a.starts_with("--allow="))) {
+                std::string_view list;
+                if (a == "--allow") {
+                    if (i + 1 >= argc) {
+                        soft_allow_bad = true;
+                        soft_allow_bad_tok = "--allow";
+                        break;
+                    }
+                    list = argv[++i];
+                } else {
+                    list = a.substr(std::string_view("--allow=").size());
+                }
+                take_allow(list);
+                if (soft_allow_bad)
+                    break;
+                continue;
+            }
+            if (!a.empty() && a[0] == '-') {
+                std::println(std::cerr, "error: unknown option '{}'", a);
+                std::println(std::cerr, "hint: 'aura --help' for usage");
+                return 1;
+            }
+            // Bare path: read file contents (denseness sugar for `./aura < file`).
+            std::ifstream f(argv[i]);
+            if (!f) {
+                std::println(std::cerr, "error: cannot open program file '{}'", argv[i]);
+                std::println(std::cerr, "hint: programs default to stdin — try: aura < {}",
+                             argv[i]);
+                std::println(std::cerr, "hint: 'aura --help' for usage");
+                return 1;
+            }
+            if (!all_input.empty())
+                all_input += '\n';
+            std::string file_text((std::istreambuf_iterator<char>(f)),
+                                  std::istreambuf_iterator<char>());
+            // Issue #4916: exactly one program file is the entry file.
+            if (!source_from_argv) {
+                register_entry_file_4916(argv[i], file_text);
+                entry_path_4912 = argv[i];
+            } else
+                aura::diag::set_entry_source_file(0);
+            all_input += file_text;
+            source_from_argv = true;
+            from_file_4909 = true;
+        }
+    }
+    const bool stop_first_4909 = from_file_4909 && !keep_going_4909;
+    if (preset_bad_4912) {
+        std::println(std::cerr, "error: unknown --preset '{}'", preset_4912);
+        std::println(std::cerr, "hint: --preset dev | ci | prod");
+        return 1;
+    }
+    if (soft_allow_bad) {
+        std::println(std::cerr, "error: unknown capability token '{}'", soft_allow_bad_tok);
+        if (soft_allow_bad_tok == "macro-self-evo" || soft_allow_bad_tok == "tenant-admin" ||
+            soft_allow_bad_tok == "syscall")
+            std::println(std::cerr,
+                         "hint: {} is never granted from the command line (it stays a "
+                         "host-side grant; #4912)",
+                         soft_allow_bad_tok);
+        else
+            std::println(std::cerr, "hint: mutate, read, write, ffi, exec|shell, network|net");
+        std::println(std::cerr, "hint: 'aura --help' for usage");
+        return 1;
+    }
+    // Issue #4912: resolve the preset (flag > AURA_PRESET > ./aura.toml or
+    // the entry file's aura.toml) and fold it into the soft session.
+    // Issue #4911: `aura repl FILE` reads FILE's aura.toml preset; the REPL is
+    // a development face, so it defaults to dev (:reload needs mutate).
+    if (g_repl_4911 && entry_path_4912.empty())
+        entry_path_4912 = g_repl_file_4911;
+    if (preset_4912.empty()) {
+        if (const char* ev = std::getenv("AURA_PRESET"); ev && *ev)
+            preset_4912 = ev;
+        else
+            preset_4912 = read_toml_preset_4912(entry_path_4912);
+        if (preset_4912.empty() && g_repl_4911)
+            preset_4912 = "dev";
+        if (!preset_4912.empty() && preset_4912 != "dev" && preset_4912 != "ci" &&
+            preset_4912 != "prod") {
+            std::println(std::cerr, "error: unknown preset '{}' (AURA_PRESET / aura.toml)",
+                         preset_4912);
+            std::println(std::cerr, "hint: dev | ci | prod");
+            return 1;
+        }
+    }
+    if (preset_4912 == "prod" && grant_seen_4912) {
+        std::println(std::cerr, "error: --preset prod takes no --grant (it is the Restricted "
+                                "default)");
+        return 1;
+    }
+    const bool soft_explicit_4912 = soft_launch;
+    if (preset_4912 == "dev" || preset_4912 == "ci") {
+        soft_launch = true;
+        soft_extra = static_cast<std::uint16_t>(
+            soft_extra | static_cast<std::uint16_t>(aura::core::capability::Effect::Write));
+    }
+    // Issue #4912: ci = host paths read-only, Write only under the project's
+    // out directory (aura.toml `out`, default out/; `aura run` runs from the
+    // project root). dev / a bare `--grant write` keep Write on every path.
+    if (preset_4912 == "ci") {
+        auto out = read_toml_key_4913("aura.toml", "out");
+        write_dirs_4912.push_back(out.empty() ? std::string("out") : out);
+    }
+    if (preset_4912 == "dev")
+        write_unscoped_4912 = true;
+    if (!write_unscoped_4912 && !write_dirs_4912.empty())
+        aura::compiler::security::set_write_scope(write_dirs_4912);
+    if (grant_seen_4912 && preset_4912 != "prod")
+        soft_launch = true;
+    soft_extra = static_cast<std::uint16_t>(soft_extra & ~deny_bits_4912);
+    if (deny_mutate_4912)
+        soft_launch = false;
+    if (!soft_launch && !preset_4912.empty() && !quiet_4912)
+        std::println(std::cerr, "aura: preset={} sandbox=restricted caps=read (default)",
+                     preset_4912);
+
+    aura::compiler::CompilerService cs;
+    // Issue #4864: the oneshot file / expression face is the SAME script face
+    // as --load (#4848), not the production serve pipeline. The pack default
+    // (Forbidden) vetoed ordinary forms the IR path cannot express
+    // (let-bound closures, named let, set!, do, try, internal defines,
+    // hygienic macros), so `aura file.aura` rejected a program that
+    // `aura --load file.aura` ran. Take the same permissive walker face
+    // --load takes, exactly as --serve-async-bench does (#4844). Operators
+    // can still pin a face explicitly via AURA_PIPELINE_STRICT.
+    if (const char* strict = std::getenv("AURA_PIPELINE_STRICT"); !(strict && *strict))
+        aura::compiler::set_tree_walker_fallback_policy(
+            aura::compiler::TreeWalkerFallbackPolicy::Allow);
+    // Issue #4575: AURA_SANDBOX=off stays the dev hatch and says so once.
+    // --serve / --ir / --jit returned above. `aura soft` prints its own
+    // refuse line instead of this one.
+    if (!soft_launch) {
+        if (const char* sb = std::getenv("AURA_SANDBOX")) {
+            const std::string_view sv(sb);
+            if ((sv == "off" || sv == "OFF" || sv == "Off") &&
+                // Issue #4575 follow-up (asan-verify): the hatch note is for
+                // the human at a REPL. Piped runs (CI, case harnesses) merge
+                // stderr into the compared output — the banner on cerr fails
+                // every text comparison in tests/run-tests.sh (281 cases).
+                // Interactive faces keep the note; pipes stay clean.
+                // AURA_FORCE_HATCH=1 opts a piped harness back in (the plain-off
+                // "warning once" AC pins the once-semantics; default under
+                // pipes stays silent for the text-compare contracts).
+                (::isatty(::fileno(stderr)) || std::getenv("AURA_FORCE_HATCH") != nullptr))
+                std::println(std::cerr, "aura: sandbox=off (dev escape hatch)");
+        }
+    }
+    cs.set_session_id("default");
+    aura::compiler::CompilerService::register_session("default", &cs);
+    // Issue (lyapunov-fact demo 2026-07-28): use Repl for pipe mode too.
+    // The previous batch fallback (`buf << std::cin.rdbuf()`) blocked
+    // until stdin EOF, which never happens for the demo runner (it
+    // sends forms one at a time over a long-running subprocess PIPE
+    // and reads stdout incrementally). Repl::run() already uses C
+    // stdio fprintf + explicit fflush, so stdout flushes per line in
+    // pipe mode (line buffering via setvbuf at main() top). Banner is
+    // suppressed in non-TTY mode by Repl itself.
+    //
+    // Issue #2322: `bool interactive = (argc == 1)` was true for any
+    // no-arg invocation, including piped stdin from CI harnesses.
+    // Repl's pipe path reads stdin one line at a time via
+    // `std::getline`, which silently breaks multi-line expressions
+    // like `(define (loop n acc) ...body on next line...)` — only the
+    // first line is fed to the parser, the rest are parsed as
+    // separate (incomplete) S-expressions, and the failure cascades
+    // into "unbound variable" errors on subsequent lines + REPL
+    // swallowing eval failures (returns 0 instead of 1).
+    //
+    // Fix: only enter Repl when stdin is actually a TTY. When stdin
+    // is piped, fall through to the pipe-mode handler below, which
+    // reads the entire input, splits balanced S-expressions via paren
+    // depth tracking, evaluates each, and returns 1 on the first eval
+    // failure (line 2817). This restores correct behavior for
+    //   - issue_135_define_loop_n_acc (expected '5150')
+    //   - issue_135_define_sum_0_define (expected '210')
+    //   - err_unbound × 4 (expected exit 1)
+    // while preserving interactive TTY behavior unchanged.
+    // Issue #2767: never enter interactive REPL when -e / file supplied.
+    bool interactive = (argc == 1) && ::isatty(STDIN_FILENO) && !source_from_argv;
+    if (interactive || g_repl_4911) {
+        // Issue #4911: `aura repl` honours the preset / grants like a file run.
+        if (g_repl_4911 && soft_launch && cs.evaluator().effect_sandbox_mode() != 0) {
+            const auto st = cs.evaluator().enter_soft_session(soft_extra);
+            if (!quiet_4912)
+                std::println(std::cerr, "aura: repl preset={} soft auto-grant: {}",
+                             preset_4912.empty() ? "custom" : preset_4912,
+                             st.active ? "mutate,read" : "refused");
+        }
+        aura::Repl repl(cs);
+        if (g_repl_4911) {
+            // Interactive input can name any std binding (assq, string-join,
+            // …), so load the full prelude a file run would load lazily.
+            if (auto pre = cs.eval("(require \"std/list\" all:)(require \"std/string\" all:)"
+                                   "(require \"std/hash\" all:)(require \"std/math\" all:)");
+                !pre)
+                std::println(std::cerr, "aura: repl std prelude failed: {}",
+                             pre.error().format_with_source("prelude"));
+        }
+        if (!g_repl_file_4911.empty())
+            repl.load(g_repl_file_4911);
+        repl.run();
+        return 0;
+    }
+
+    // ── Pipe / file / -e mode: read all input, split into S-expressions ──
+    // Join all lines to support multi-line expressions. File/-e already
+    // filled all_input above (#2767).
+    if (!source_from_argv) {
+        std::ostringstream buf;
+        buf << std::cin.rdbuf();
+        all_input = buf.str();
+    }
+    if (all_input.empty()) {
+        // Issue #2767: explicit stdin-only hint (was bare usage only).
+        std::println(std::cerr, "error: no program source (stdin empty and no file/-e given)");
+        std::println(std::cerr, "hint: 'aura --help' for usage");
+        return 1;
+    }
+
+    // Issue #4575: mint only once we have a program. Refuse exits before
+    // any form runs. The banner is the one stderr line for this launch.
+    // Issue #4912: a preset under AURA_SANDBOX=off has nothing to grant.
+    if (soft_launch && !soft_explicit_4912 && cs.evaluator().effect_sandbox_mode() == 0) {
+        soft_launch = false;
+        if (!quiet_4912)
+            std::println(std::cerr, "aura: preset={} sandbox=off (every capability)",
+                         preset_4912.empty() ? "custom" : preset_4912);
+    }
+    if (soft_launch) {
+        const auto st = cs.evaluator().enter_soft_session(soft_extra);
+        if (!st.active) {
+            const char* word = "restricted";
+            if (cs.evaluator().effect_sandbox_mode() == 2)
+                word = "strict";
+            else if (cs.evaluator().effect_sandbox_mode() == 0)
+                word = "off (dev escape hatch)";
+            else if (const char* sb = std::getenv("AURA_SANDBOX")) {
+                const std::string_view sv(sb);
+                if (sv == "off" || sv == "OFF" || sv == "Off")
+                    word = "off (dev escape hatch)";
+                else if (sv == "strict" || sv == "STRICT" || sv == "Strict")
+                    word = "strict";
+            }
+            std::println(std::cerr, "aura: sandbox={}, soft auto-grant: refused", word);
+            return 1;
+        }
+        std::string line =
+            std::format("aura: sandbox=restricted, soft auto-grant: mutate(tenant={}, ws={}) "
+                        "token=soft-auto-grant",
+                        st.tenant, st.workspace_id);
+        if (!preset_4912.empty() || grant_seen_4912 || deny_bits_4912 != 0) {
+            // Issue #4912: one line naming the effective capability set.
+            using aura::core::capability::Effect;
+            std::string caps = "mutate,read";
+            const std::pair<Effect, const char*> names[] = {{Effect::Write, "write"},
+                                                            {Effect::Ffi, "ffi"},
+                                                            {Effect::Exec, "exec"},
+                                                            {Effect::Network, "network"}};
+            for (const auto& [e, n] : names)
+                if ((st.effects & static_cast<std::uint16_t>(e)) != 0) {
+                    caps += ',';
+                    caps += n;
+                    // Issue #4912: name the scope (write:out/).
+                    if (e == Effect::Write && aura::compiler::security::write_scope_active()) {
+                        caps += ':';
+                        caps += aura::compiler::security::write_scope_label();
+                    }
+                }
+            line = std::format("aura: preset={} sandbox=restricted caps={} (tenant={}, ws={})",
+                               preset_4912.empty() ? "custom" : preset_4912, caps, st.tenant,
+                               st.workspace_id);
+        } else if (!soft_allow_list.empty()) {
+            line.push_back(' ');
+            line += "allow=";
+            line += soft_allow_list;
+        }
+        if (!quiet_4912)
+            std::println(std::cerr, "{}", line);
+    }
+
+    // Split into balanced S-expressions by tracking paren balance
+    // Also track string literals to avoid counting parens inside strings
+    std::vector<std::string> exprs;
+    std::string current;
+    int depth = 0;
+    bool in_string = false;
+
+    for (std::size_t i = 0; i < all_input.size(); ++i) {
+        auto c = all_input[i];
+
+        if (in_string) {
+            current += c;
+            if (c == '\\' && i + 1 < all_input.size()) {
+                // Skip escaped character
+                ++i;
+                current += all_input[i];
+            } else if (c == '"') {
+                in_string = false;
+            }
+            continue;
+        }
+
+        // Issue #4622: a #\x character literal is one atomic token, so a
+        // delimiter inside it (#\( #\) #\" #\; #\[ #\]) is not a delimiter
+        // here either -- skip the whole literal instead of counting it.
+        if (c == '#') {
+            const std::size_t lit = character_literal_length(all_input, i);
+            if (lit > 0) {
+                current.append(all_input, i, lit);
+                i += lit - 1;
+                continue;
+            }
+        }
+
+        // Issue #4875: a (nested) #| block comment |# is not code: a ( or "
+        // inside it must not move the paren depth. Keep it verbatim inside
+        // a form (the reader skips it there); between forms it is just a
+        // separator. An unterminated one stays in the chunk so the reader
+        // reports it at its own position and nothing after it runs.
+        if (c == '#' && i + 1 < all_input.size() && all_input[i + 1] == '|') {
+            std::size_t j = i + 2;
+            int nest = 1;
+            while (j < all_input.size() && nest > 0) {
+                if (all_input[j] == '#' && j + 1 < all_input.size() && all_input[j + 1] == '|') {
+                    j += 2;
+                    ++nest;
+                } else if (all_input[j] == '|' && j + 1 < all_input.size() &&
+                           all_input[j + 1] == '#') {
+                    j += 2;
+                    --nest;
+                } else {
+                    ++j;
+                }
+            }
+            if (nest > 0 && depth == 0) {
+                // Between forms: the reader reports it at its own position
+                // after the complete prefix ran (#4875 direct contract).
+                current.append(all_input, i, std::string::npos);
+                break;
+            }
+            if (nest > 0) {
+                // Inside a form: same contract as an unclosed list (#4866),
+                // but name the real cause instead of a missing ')'.
+                std::size_t line = 1, col = 1;
+                for (std::size_t k = 0; k < i; ++k) {
+                    if (all_input[k] == '\n') {
+                        ++line;
+                        col = 1;
+                    } else {
+                        ++col;
+                    }
+                }
+                std::println(std::cerr,
+                             "error: {}:{}: parse error: unterminated block comment '#|'", line,
+                             col);
+                return 1;
+            }
+            if (depth > 0)
+                current.append(all_input, i, j - i);
+            else
+                current += ' ';
+            i = j - 1;
+            continue;
+        }
+
+        if (c == ';') {
+            // Line comment: skip to end of line
+            if (depth > 0)
+                current += ';';
+            while (i + 1 < all_input.size() && all_input[i + 1] != '\n') {
+                ++i;
+            }
+            continue;
+        }
+
+        if (c == '"') {
+            current += c;
+            in_string = true;
+            continue;
+        }
+
+        if (c == '(' || c == '[') {
+            if (depth == 0 && !current.empty()) {
+                // Prefix characters (' ` ,) before ( form a single expression
+                // e.g. '(+ 1 2), `(1 ,x 3), ,(+ 1 2)
+                bool is_prefix = false;
+                for (auto pc : current) {
+                    if (pc == '\'' || pc == '`' || pc == ',') {
+                        is_prefix = true;
+                        break;
+                    }
+                    if (!std::isspace(static_cast<unsigned char>(pc))) {
+                        is_prefix = false;
+                        break;
+                    }
+                }
+                if (!is_prefix) {
+                    // Start of a new expression while we had non-whitespace leftover?
+                    // Push current as complete
+                    auto trimmed = current;
+                    auto pos = trimmed.find_first_not_of(" \t\r\n");
+                    if (pos != std::string::npos) {
+                        trimmed = trimmed.substr(pos);
+                        auto end = trimmed.find_last_not_of(" \t\r\n");
+                        if (end != std::string::npos)
+                            trimmed = trimmed.substr(0, end + 1);
+                        exprs.push_back(trimmed);
+                    }
+                    current.clear();
+                }
+            }
+            current += c;
+            ++depth;
+            continue;
+        }
+
+        if ((c == ')' || c == ']') && depth == 0) {
+            // Issue #3917: extra close at file/form top level is a hard
+            // read error. Do not evaluate a already-split prefix — a
+            // truncated named-let would run with rewritten control flow
+            // (n becomes (1)/(), infinite back-off).
+            std::size_t line = 1, col = 1;
+            for (std::size_t k = 0; k < i; ++k) {
+                if (all_input[k] == '\n') {
+                    ++line;
+                    col = 1;
+                } else {
+                    ++col;
+                }
+            }
+            std::println(std::cerr, "error: {}:{}: parse error: unexpected '{}'", line, col, c);
+            return 1;
+        }
+        if ((c == ')' || c == ']') && depth > 0) {
+            current += c;
+            --depth;
+            if (depth == 0) {
+                // Complete expression found
+                auto trimmed = current;
+                auto pos = trimmed.find_first_not_of(" \t\r\n");
+                if (pos != std::string::npos) {
+                    trimmed = trimmed.substr(pos);
+                    auto end = trimmed.find_last_not_of(" \t\r\n");
+                    if (end != std::string::npos)
+                        trimmed = trimmed.substr(0, end + 1);
+                    exprs.push_back(trimmed);
+                }
+                current.clear();
+            }
+            continue;
+        }
+
+        current += c;
+    }
+
+    // If there's leftover text, try it as a complete expression
+    if (!current.empty()) {
+        auto trimmed = current;
+        auto pos = trimmed.find_first_not_of(" \t\r\n");
+        if (pos != std::string::npos) {
+            trimmed = trimmed.substr(pos);
+            auto end = trimmed.find_last_not_of(" \t\r\n");
+            if (end != std::string::npos)
+                trimmed = trimmed.substr(0, end + 1);
+            if (!trimmed.empty() && depth == 0)
+                exprs.push_back(trimmed);
+            else if (!trimmed.empty()) {
+                // Issue #4866: the direct-run path used to warn and then
+                // evaluate the complete prefix, exiting 0. Match --load:
+                // a missing ')' is a located parse error and no part of
+                // the file runs.
+                std::size_t line = 1, col = 1;
+                for (char ch : all_input) {
+                    if (ch == '\n') {
+                        ++line;
+                        col = 1;
+                    } else {
+                        ++col;
+                    }
+                }
+                std::println(
+                    std::cerr,
+                    "error: {}:{}: parse error: unclosed list: missing ')' before end of file",
+                    line, col);
+                return 1;
+            }
+        }
+    }
+
+    if (exprs.empty()) {
+        // Issue #2767: no balanced S-expression after split.
+        std::println(std::cerr, "error: no complete S-expression in program source");
+        std::println(std::cerr, "hint: 'aura --help' for usage");
+        return 1;
+    }
+
+    bool err = false;
+    // Issue #4356: hold the thread-fiber body mutex for this oneshot eval.
+    // read-line, read-byte, and fiber:join drop it while they block, then
+    // take it back before touching the Evaluator. Destroyed before ~cs
+    // drains still-running workers (they need the mutex to finish).
+    aura::messaging::CliMainEvalBodyLock cli_body_lock;
+    // Soft oneshot std prelude (#4178–#4219): auto-load Soft std list /
+    // string / hash / math so bare oneshot (`aura -e` / file / pipe) binds
+    // foldr, any/all, string-take/drop/pad/trim/split/replace/case,
+    // starts-with?/ends-with?/contains?, make-list, list-tail, last,
+    // hash-for-each/fold/empty?/->list, make-hash, even? — matching Soft
+    // std semantics. Prefer Soft std auto-load over aura-build soft_*.aura
+    // host fills (three-layer: Soft runtime/std, not gold host workarounds).
+    {
+        std::string prelude = build_lazy_oneshot_std_prelude(all_input);
+        if (!prelude.empty()) {
+            if (auto pre = cs.eval(prelude); !pre) {
+                std::println(std::cerr, "error: Soft oneshot std prelude failed: {}",
+                             pre.error().format_with_source(prelude));
+                return 1;
+            }
+            // Issue #4228: Soft TW std/math preds must resolve via TopCellLoad
+            // for native filter/map (IR MakeClosure stubs return empty).
+            cs.sync_soft_export_cells_for_ir();
+        }
+    }
+    // #3918 follow-up (CI cheap/medium red): evaluate the whole program in
+    // ONE cs.eval pass, matching the --load entry. Per-expression eval
+    // split pipeline state across calls and broke fiber:spawn parameter
+    // capture inside defines — issue_135_define_loop_n_acc printed 0 from
+    // stdin while the same source via --load printed 5150.
+    // Issue #4460: failed require is a located diagnostic. This loop then
+    // prints it once, runs forms after that location, and exits 1.
+    cs.set_require_failure_is_diagnostic(true);
+    // Issue #4865: force-soa lowers every top-level form before any of them
+    // runs, so a fiber/agent body captures a stale copy of a top-level value
+    // cell (set! / hash-set! / channel:send lost). Evaluate form by form under
+    // force-soa, exactly as --load does, so each define publishes its live
+    // cell before a later form's closure is lowered.
+    {
+        const char* strict_env2 = std::getenv("AURA_PIPELINE_STRICT");
+        const std::string_view strict_v2 =
+            strict_env2 ? std::string_view(strict_env2) : std::string_view{};
+        if (strict_v2 == "force-soa" || strict_v2 == "force_soa" || strict_v2 == "soa") {
+            // Issue #4865: same face as --load force-soa. A value define the
+            // IR path cannot lower (fiber:spawn / agent forms) must still run
+            // with correct semantics; block-forcing it would silently drop
+            // the body instead of executing it.
+            // Issue #4892 (string_ref_walk_4320 bench regression): Allow only for value defines
+            // (set per form below); everything else keeps ForceSoa so loops
+            // stay on the IR instead of the tree-walker.
+            aura::ast::ASTArena parse_arena;
+            auto parse_alloc = parse_arena.allocator();
+            aura::ast::StringPool parse_pool(parse_alloc);
+            aura::ast::FlatAST parse_flat(parse_alloc);
+            auto pr = aura::parser::parse_to_flat(all_input, parse_flat, parse_pool);
+            if (!pr.success || pr.root == aura::ast::NULL_NODE) {
+                std::println(std::cerr, "error: {}", pr.error.empty() ? "parse error" : pr.error);
+                return 1;
+            }
+            std::string last_out;
+            bool last_closure_4908 = false; // Issue #4908: see below
+            bool any_error = false;
+            std::vector<std::string> user_macros_4893;
+            for (auto& tf : split_top_level_forms_4865(all_input)) {
+                const std::string& form = tf.text;
+                bool uses_user_macro = false;
+                for (const auto& m : user_macros_4893) {
+                    if (form_mentions_symbol_4893(form, m)) {
+                        uses_user_macro = true;
+                        break;
+                    }
+                }
+                if (auto mname = user_macro_def_name_4893(form); !mname.empty())
+                    user_macros_4893.push_back(std::move(mname));
+                const bool value_define = is_value_define_form_4892(form) || uses_user_macro;
+                // Issue #4893: a macro / record / syntax definition registers in
+                // the evaluator's expander tables, which the IR does not lower.
+                // Under ForceSoa the walker escape is blocked and the
+                // registration was silently dropped (later forms: `cannot
+                // call` / `unbound variable`). Give every definitional form
+                // other than a plain procedure define the #4865 Allow face.
+                const bool special_define =
+                    form_head_is_definitional_4893(form) && !form.starts_with("(define ") &&
+                    !form.starts_with("(define\n") && !form.starts_with("(define\t") &&
+                    !form.starts_with("(begin");
+                aura::compiler::set_tree_walker_fallback_policy(
+                    value_define || special_define
+                        ? aura::compiler::TreeWalkerFallbackPolicy::Allow
+                        : aura::compiler::TreeWalkerFallbackPolicy::ForceSoa);
+                // Issue #4892 (string_ref_walk_4320 bench regression): a lone top-level form whose
+                // root is a primitive call — `(display ...)`, `(while ...)` —
+                // takes the #2213 registered-prim-root walker shortcut on
+                // every face, so `(while (< i n) ...)` ran in the tree-walker
+                // (the old whole-program eval had a Begin root and never hit
+                // it). Evaluate non-define list forms as a one-child Begin so
+                // they get the same sequential IR routing as before #4865.
+                // Forms that build closures or touch fibers / agents keep the
+                // exact #4865 face (their bodies must see live top-level
+                // cells; the walker shortcut is what gives them that).
+                const bool wrap_begin = !value_define && !form.empty() && form[0] == '(' &&
+                                        !form_head_is_definitional_4893(form) &&
+                                        !form_builds_closure_or_task_4892(form);
+                constexpr std::string_view kBeginPrefix4892 = "(begin ";
+                auto fr = cs.eval(positioned_form_4908(
+                    tf.line, tf.column, wrap_begin ? kBeginPrefix4892 : std::string_view{}, form,
+                    wrap_begin ? std::string_view{")"} : std::string_view{}));
+                bool loc_absolute = true; // Issue #4908: positioned eval
+                // Issue #4896: a Restricted dispatch deny that came back as
+                // the form's error VALUE (top-level `(set-car! q 5)`) was
+                // dropped here as an ordinary result: no diagnostic, rc=0.
+                // The whole-program face raises it; do the same.
+                // Issue #4899 follow-up: the same holds for EVERY error value
+                // a top-level form returns. The whole-program face turns a
+                // statement's error value into a located diagnostic (walker
+                // #4465, IR entry #4899); the per-form face only did so for
+                // effect-denied, so `(define x (car 5))` (the IR value-define
+                // bind returns the cell value) printed nothing and exited 0.
+                if (fr && aura::compiler::types::is_error(*fr) &&
+                    !aura::compiler::types::is_string(*fr)) {
+                    auto msg = cs.evaluator().soft_error_message(*fr);
+                    aura::diag::Diagnostic d{cs.evaluator().error_value_kind(*fr), std::move(msg)};
+                    // Issue #4909: a refusal without a recorded producer
+                    // still gets the form's location (it printed none).
+                    // Issue #4916: a producer inside a module keeps its file.
+                    // Issue #4908: the positioned eval made a recorded
+                    // producer location file-absolute (an earlier define's
+                    // body included), so keep it on every face.
+                    const auto el = cs.evaluator().error_location(*fr);
+                    if (recorded_loc_4908(el))
+                        d.location = *el;
+                    else {
+                        d.location = per_form_error_value_location_4899(form);
+                        loc_absolute = false;
+                    }
+                    fr = std::unexpected(std::move(d));
+                }
+                if (!fr && wrap_begin) {
+                    // Map the location back onto the unwrapped form text.
+                    auto& loc = fr.error().location;
+                    const std::uint32_t first_col = tf.column + kBeginPrefix4892.size();
+                    if (loc_absolute && loc.file_id == 0 && loc.line == tf.line &&
+                        loc.column >= first_col)
+                        loc.column -= static_cast<std::uint32_t>(kBeginPrefix4892.size());
+                }
+                if (!fr) {
+                    // Issue #4460/#4467: a failing top-level form is a located
+                    // diagnostic, not the end of the file — the whole-program
+                    // face prints it once, keeps running the forms after it,
+                    // and exits 1. Keep that contract on the form-by-form
+                    // force-soa face too (otherwise "after" is never printed
+                    // and later forms' arity diagnostics are lost).
+                    // Issue #4875: map the form-relative position back onto
+                    // the real file coordinates so the diagnostic points at
+                    // the actual line/column (e.g. after a block comment).
+                    auto& loc = fr.error().location;
+                    if (!loc_absolute && loc.valid() && loc.file_id == 0) {
+                        if (loc.line == 1 && loc.column > 0 && tf.column > 1)
+                            loc.column += tf.column - 1;
+                        loc.line += tf.line - 1;
+                    }
+                    std::string ctx(static_cast<std::size_t>(tf.line - 1), '\n');
+                    ctx.append(static_cast<std::size_t>(tf.column - 1), ' ');
+                    ctx += form;
+                    std::println(std::cerr, "error: {}", fr.error().format_with_source(ctx));
+                    print_module_backtrace_4916(loc, tf.line, tf.column, form); // #4916
+                    any_error = true;
+                    // Issue #4876: a refused user macro is fatal, as on the
+                    // whole-program face. Running on printed a cascade of
+                    // `unbound variable: <macro>` / `cannot call` for every
+                    // later use of the macro the deny never registered.
+                    if (fr.error().message.find("macro-self-evo not granted") != std::string::npos)
+                        break;
+                    if (stop_first_4909) { // Issue #4909: first error stops a file
+                        // The value of the form before the error is not the
+                        // program's value: print nothing (the default face).
+                        last_out.clear();
+                        last_closure_4908 = false;
+                        break;
+                    }
+                    continue;
+                }
+                // Mirror the whole-program face: only the LAST top-level
+                // form's value is printed, and a void last form prints
+                // nothing (an earlier non-void form must not leak out).
+                // Issue #4908: format_value warns "program returned an
+                // uncalled function" as it formats a closure, so formatting
+                // every form's value warned for an intermediate
+                // (eval-current) / lambda value the whole-program face never
+                // prints. Defer a top-level closure to the end.
+                last_closure_4908 = !is_void(*fr) && aura::compiler::types::is_closure(*fr);
+                last_out = is_void(*fr) || last_closure_4908 ? std::string{} : fmt_val(*fr, cs);
+                if (value_define || special_define)
+                    cs.sync_soft_export_cells_for_ir();
+            }
+            if (last_closure_4908) {
+                std::println(std::cerr, "⚠ program returned an uncalled function");
+                last_out = "#<procedure>";
+            }
+            if (!last_out.empty())
+                std::println("{}", last_out);
+            return (any_error || aura_displayed_error_count() > 0) ? 1 : 0;
+        }
+    }
+    if (auto r = cs.eval(all_input)) {
+        if (!is_void(*r))
+            std::println("{}", fmt_val(*r, cs));
+    } else {
+        // The single pass already ran every form before the failing one
+        // (display, set!, set-code). Re-walking those forms repeats side
+        // effects and, after set-code, rebuilds closures so later calls
+        // throw invalid closure (Issue #4355).
+        //
+        // Issue #4471: a runtime error inside a procedure is located at
+        // that body, which may be an earlier define. Resume after the
+        // top-level form that was executing (file_resume_form), not after
+        // the form that contains the diagnostic. Print the first diagnostic
+        // once against the whole program. Later forms are evaluated alone,
+        // so their locations are shifted back onto all_input. A parse
+        // failure happens before any form runs, so the historical
+        // per-expression walk still covers it (diag:parse-error-*).
+        struct FormAnchor {
+            std::size_t offset = std::string::npos;
+            std::uint32_t line = 1;
+            std::uint32_t col = 1;
+        };
+        std::vector<FormAnchor> anchors(exprs.size());
+        {
+            std::size_t search = 0;
+            for (std::size_t i = 0; i < exprs.size(); ++i) {
+                const auto pos = all_input.find(exprs[i], search);
+                if (pos == std::string::npos)
+                    break;
+                std::uint32_t ln = 1;
+                std::uint32_t cl = 1;
+                for (std::size_t k = 0; k < pos; ++k) {
+                    if (all_input[k] == '\n') {
+                        ++ln;
+                        cl = 1;
+                    } else {
+                        ++cl;
+                    }
+                }
+                anchors[i] = {pos, ln, cl};
+                search = pos + exprs[i].size();
+            }
+        }
+        auto offset_of = [&](aura::diag::SourceLocation loc) -> std::size_t {
+            if (!loc.valid())
+                return 0;
+            std::size_t off = 0;
+            std::uint32_t line = 1;
+            for (std::size_t k = 0; k < all_input.size() && line < loc.line; ++k) {
+                if (all_input[k] == '\n')
+                    ++line;
+                off = k + 1;
+            }
+            if (loc.column > 0)
+                off += static_cast<std::size_t>(loc.column - 1);
+            if (off > all_input.size())
+                off = all_input.size();
+            return off;
+        };
+        const auto& diag = r.error();
+        // Issue #4876: a capability deny during macro expansion is fatal for
+        // the program. Print it once and do not resume form-by-form: the
+        // unexpanded call would otherwise report a misleading unbound name.
+        const bool macro_deny = aura_hygiene_expand_deny_blocks_eval() != 0 ||
+                                diag.message.find("macro-self-evo") != std::string::npos;
+        if (macro_deny) {
+            std::println(std::cerr, "error: {}", diag.format_with_source(all_input));
+            err = true;
+        }
+        const bool parse_fail = diag.kind == aura::diag::ErrorKind::ParseError ||
+                                diag.kind == aura::diag::ErrorKind::UnexpectedToken ||
+                                diag.kind == aura::diag::ErrorKind::UnterminatedSExpr;
+        std::size_t resume_at = 0;
+        bool file_resume = false;
+        // Issue #4909: a runtime diagnostic without a location used to
+        // fall through to the recovery walk from form 0, so every form
+        // before the failure ran TWICE (output printed twice) and the
+        // error came out unlocated. The executing top-level form is
+        // stamped; when even that is missing, report once and stop.
+        // A location inside a required module (file_id != 0) says nothing
+        // about which entry form was running, so it cannot pick the resume
+        // point either.
+        const auto stamped_form = cs.evaluator().file_resume_form();
+        const bool entry_loc = diag.location.valid() && diag.location.file_id == 0;
+        // Issue #4909: the whole-file eval may run on the tree-walker (a
+        // sibling define is not known at gate time), whose C-stack guard
+        // stops non-tail recursion at 512 frames. That is a limit of the
+        // walker, not of the program: the per-form path runs the same code
+        // on the IR (heap frames, AURA_IR_MAX_CALL_DEPTH). This used to be
+        // recovered by silently re-running every form (output twice). Now:
+        // re-bind the earlier procedure defines (no side effects) on the
+        // per-form path and resume AT the failing form, reporting nothing.
+        bool walker_depth_resume = false;
+        if (!parse_fail && !macro_deny && diag.kind == aura::diag::ErrorKind::InternalError &&
+            diag.message.starts_with("recursion depth exceeded") &&
+            diag.message.find("fiber=") != std::string::npos &&
+            (entry_loc || stamped_form.valid())) {
+            const std::size_t err_off =
+                offset_of(stamped_form.valid() ? stamped_form : diag.location);
+            std::size_t failing = exprs.size();
+            for (std::size_t i = 0; i < exprs.size(); ++i) {
+                if (anchors[i].offset == std::string::npos)
+                    break;
+                if (anchors[i].offset <= err_off)
+                    failing = i;
+                else
+                    break;
+            }
+            if (failing < exprs.size()) {
+                const auto is_proc_define = [](std::string_view f) {
+                    const auto s = f.find_first_not_of(" \t\r\n");
+                    if (s == std::string_view::npos)
+                        return false;
+                    f.remove_prefix(s);
+                    if (f.starts_with("(define ("))
+                        return true;
+                    if (!f.starts_with("(define "))
+                        return false;
+                    f.remove_prefix(8);
+                    const auto e = f.find_first_of(" \t\r\n()");
+                    if (e == std::string_view::npos)
+                        return false;
+                    f.remove_prefix(e);
+                    const auto b = f.find_first_not_of(" \t\r\n");
+                    return b != std::string_view::npos && f.substr(b).starts_with("(lambda ");
+                };
+                for (std::size_t i = 0; i < failing; ++i) {
+                    if (is_proc_define(exprs[i]))
+                        (void)cs.eval(exprs[i]);
+                }
+                resume_at = failing;
+                walker_depth_resume = true;
+            }
+        }
+        if (!walker_depth_resume && !parse_fail && !macro_deny && !entry_loc &&
+            !stamped_form.valid()) {
+            std::println(std::cerr, "error: {}", diag.format_with_source(all_input));
+            err = true;
+            resume_at = exprs.size();
+        }
+        if (!walker_depth_resume && !parse_fail && !macro_deny &&
+            (entry_loc || stamped_form.valid())) {
+            auto resume_loc = diag.location;
+            const auto stamped = stamped_form;
+            if (stamped.valid())
+                resume_loc = stamped;
+            const std::size_t err_off = offset_of(resume_loc);
+            for (std::size_t i = 0; i < exprs.size(); ++i) {
+                if (anchors[i].offset == std::string::npos)
+                    break;
+                if (anchors[i].offset <= err_off)
+                    resume_at = i + 1;
+                else
+                    break;
+            }
+            auto shown = diag;
+            if (!shown.location.valid())
+                shown.location = stamped_form; // Issue #4909: never unlocated
+            std::println(std::cerr, "error: {}", shown.format_with_source(all_input));
+            if (resume_at > 0 && resume_at <= exprs.size() &&
+                anchors[resume_at - 1].offset != std::string::npos) {
+                const auto& a = anchors[resume_at - 1];
+                print_module_backtrace_4916(
+                    shown.location, a.line, a.col,
+                    std::string_view(all_input).substr(a.offset)); // Issue #4916
+            }
+            err = true;
+            file_resume = true;
+            if (stop_first_4909) // Issue #4909: first error stops a file
+                resume_at = exprs.size();
+        }
+        for (std::size_t i = resume_at; !macro_deny && i < exprs.size(); ++i) {
+            auto& e = exprs[i];
+            auto s = e.find_first_not_of(" \t\r\n");
+            if (s == std::string::npos)
+                continue;
+            e = e.substr(s);
+            auto r2 = cs.eval(e);
+            if (!r2) {
+                // Issue #4875: shift a form-relative location onto all_input
+                // for parse errors too (the recovery walk runs after a parse
+                // failure), not only for file_resume runtime errors.
+                if (anchors[i].offset != std::string::npos && r2.error().location.valid()) {
+                    auto d = r2.error();
+                    // Line 1 of a trimmed form is shifted by the form's
+                    // start column. Later lines keep their own columns.
+                    // Issue #4916: a module location is already in that
+                    // file's coordinates.
+                    if (d.location.file_id == 0) {
+                        if (d.location.line == 1 && d.location.column > 0 && anchors[i].col > 0)
+                            d.location.column += anchors[i].col - 1;
+                        d.location.line += anchors[i].line - 1;
+                    }
+                    std::println(std::cerr, "error: {}", d.format_with_source(all_input));
+                    print_module_backtrace_4916(d.location, anchors[i].line, anchors[i].col, e);
+                } else {
+                    std::println(std::cerr, "error: {}", r2.error().format_with_source(e));
+                }
+                err = true;
+                if (stop_first_4909) // Issue #4909: first error stops a file
+                    break;
+                // Issue #4875: a reader/parse error means the source at this
+                // point could not be read, so later-looking forms are not a
+                // trustworthy suffix (a bare '#' must stop the file). Runtime
+                // errors keep the #4460/#4467 resume contract.
+                const auto kind = r2.error().kind;
+                if (kind == aura::diag::ErrorKind::ParseError ||
+                    kind == aura::diag::ErrorKind::UnexpectedToken ||
+                    kind == aura::diag::ErrorKind::UnterminatedSExpr)
+                    break;
+            } else if (i + 1 == exprs.size() && !is_void(*r2))
+                std::println("{}", fmt_val(*r2, cs));
+        }
+    }
+    // Clear messaging bridge to prevent dangling pointer access during
+    // static destruction (the CompilerService captures 'this' in lambdas
+    // and is about to go out of scope).
+    aura::messaging::g_current_compiler_service = nullptr;
+    aura::messaging::g_messaging_bridge.send = nullptr;
+    aura::messaging::g_messaging_bridge.recv = nullptr;
+    aura::messaging::g_messaging_bridge.my_id = nullptr;
+    aura::messaging::g_mailbox_read = nullptr;
+    aura::messaging::g_mailbox_last_sender = nullptr;
+    aura::messaging::g_mailbox_count = nullptr;
+    aura::messaging::g_session_id = nullptr;
+    aura::messaging::g_session_exists = nullptr;
+    aura::messaging::g_reset_arena = nullptr;
+    aura::messaging::g_http_post_async = nullptr;
+    aura::messaging::g_fiber_spawn = {}; // std::function
+    aura::messaging::g_fiber_yield = nullptr;
+    aura::messaging::g_fiber_block = nullptr;
+    aura::messaging::g_session_create = nullptr;
+
+    // Issue #4497: an error consumed by display/write also fails the run.
+    return (err || aura_displayed_error_count() > 0) ? 1 : 0;
+}
+
 static int aura_main(int argc, char* argv[]) {
     // Issue #137: register an atexit handler that frees the
     // runtime's hash tables. The `hash` primitive in the
@@ -3565,682 +5496,8 @@ static int aura_main(int argc, char* argv[]) {
     //   4. Link .o files with runtime.c → standalone binary
     //
     // Falls back to shell wrapper when LLVM is unavailable.
-    if (argc > 2 && std::string_view(argv[1]) == "--emit-binary") {
-        aura::compiler::CompilerService cs;
-        std::string input;
-        std::string out_path;
-
-        // ── Collect input: file args or stdin ─────────────────────
-        // Usage:
-        //   echo '(+ 1 2)' | ./aura --emit-binary myapp         (stdin)
-        //   ./aura --emit-binary '(+ 1 2)' myapp    (inline: expr,output)
-        //   ./aura --emit-binary file1 file2 out    (file: sources...,output)
-        //
-        if (argc > 3) {
-            // Decide mode: if argv[2] starts with '(', it's inline expression.
-            // Otherwise, all args from argv[2..argc-2] are files, argv[argc-1] is output.
-            if (argv[2][0] == '(') {
-                // Inline mode: ./aura --emit-binary '(+ 1 2)' myapp
-                // Issue #960: do not mutate main's argv/argc (keeps
-                // crash diagnostics and later argv reads correct).
-                input = argv[2];
-                out_path = argv[3];
-            } else {
-                // File mode: ./aura --emit-binary lib.aura main.aura out
-                for (int i = 2; i < argc - 1; ++i) {
-                    std::ifstream f(argv[i]);
-                    if (!f) {
-                        std::println(std::cerr, "error: cannot open '{}'", argv[i]);
-                        return 1;
-                    }
-                    input += std::string((std::istreambuf_iterator<char>(f)),
-                                         std::istreambuf_iterator<char>());
-                    input += '\n';
-                }
-                out_path = argv[argc - 1];
-            }
-        } else {
-            // Stdin mode: echo '(+ 1 2)' | ./aura --emit-binary myapp
-            // Issue #4640: read the WHOLE stdin, not just its first
-            // line. The eval path reads all of stdin, so a program
-            // piped in with several lines was emitted with only its
-            // first line -- the AOT binary then disagreed with the
-            // evaluator by construction (every row after the first
-            // line was missing from the image).
-            {
-                std::ostringstream buf;
-                buf << std::cin.rdbuf();
-                input = buf.str();
-            }
-            out_path = argv[2];
-        }
-
-        if (input.empty()) {
-            std::println(std::cerr, "error: no input");
-            return 1;
-        }
-
-        // Issue #4640: the emit must resolve the SAME names as the
-        // evaluator. The oneshot eval path auto-loads the std modules
-        // the program can reference (build_lazy_oneshot_std_prelude),
-        // because assoc / foldr / zip / ... are std FUNCTIONS, not
-        // primitives: without the std module the IR path cannot call
-        // them and the emit died with "cannot call: assoc" while the
-        // evaluator answered. Prepend the same lazy prelude so the
-        // std module source is inlined by the import/require step
-        // below and the AOT image carries the same definitions.
-        {
-            std::string prelude = build_lazy_oneshot_std_prelude(input);
-            if (!prelude.empty())
-                input = prelude + input;
-        }
-
-        // ── Resolve import/require: prepend module source (recursive) ──
-        // Replace (import "std/name") / (require "std/name") with the
-        // module's source code so defines are processed inline by eval_ir.
-        // Recursively inline any nested requires too, so the prepended
-        // block is self-contained and doesn't re-execute requires at
-        // runtime (which would re-load modules, leak module arenas, and
-        // can segfault the IR pipeline on CI).
-        {
-            static const std::string std_root = aura::compiler::paths::resolve_stdlib_root();
-
-            // Find the matching close paren starting from an open paren,
-            // respecting string literals and nested parens.
-            auto find_matching_close = [](const std::string& s, std::size_t open_paren) {
-                std::size_t i = open_paren;
-                int depth = 0;
-                bool in_str = false;
-                while (i < s.size()) {
-                    char c = s[i];
-                    if (in_str) {
-                        if (c == '\\' && i + 1 < s.size()) {
-                            i += 2;
-                            continue;
-                        }
-                        if (c == '"')
-                            in_str = false;
-                    } else {
-                        if (c == '"')
-                            in_str = true;
-                        else if (c == '(')
-                            depth++;
-                        else if (c == ')') {
-                            depth--;
-                            if (depth == 0)
-                                return i + 1;
-                        }
-                    }
-                    i++;
-                }
-                return std::string::npos;
-            };
-
-            // Strip (export ...) — finds the first '(' matching its ')'.
-            auto strip_export = [&](std::string& s) {
-                auto p = s.find("(export");
-                if (p == std::string::npos)
-                    return;
-                auto end = find_matching_close(s, p);
-                if (end == std::string::npos)
-                    return;
-                s.erase(p, end - p);
-            };
-
-            // Resolve "std/name" or sym-like-name to a file path.
-            // name is string_view — materialize before operator+ with literals.
-            auto resolve_path = [&](std::string_view name) -> std::string {
-                if (name.starts_with("std/"))
-                    return std_root + std::string(name.substr(4)) + ".aura";
-                return std::string(name) + ".aura";
-            };
-
-            // Recursively inline a module file. Replaces nested
-            // (require X) / (import "X") forms with the inlined source
-            // of X (depth-first, cycle-safe via `visited`).
-            std::set<std::string> visited;
-            std::function<std::string(const std::string&)> inline_module;
-            inline_module = [&](const std::string& path) -> std::string {
-                if (visited.count(path))
-                    return "";
-                visited.insert(path);
-                std::ifstream mf(path);
-                if (!mf) {
-                    std::println(std::cerr, "warning: cannot open module '{}'", path);
-                    return "";
-                }
-                std::string src((std::istreambuf_iterator<char>(mf)),
-                                std::istreambuf_iterator<char>());
-                strip_export(src);
-                std::string out;
-                std::size_t pos = 0;
-                while (pos < src.size()) {
-                    // Skip whitespace and comments at the top level
-                    while (pos < src.size() &&
-                           (src[pos] == ' ' || src[pos] == '\n' || src[pos] == '\t' ||
-                            src[pos] == '\r' || src[pos] == ';')) {
-                        if (src[pos] == ';') {
-                            // line comment
-                            while (pos < src.size() && src[pos] != '\n')
-                                pos++;
-                        } else
-                            pos++;
-                    }
-                    if (pos >= src.size() || src[pos] != '(') {
-                        if (pos < src.size())
-                            out += src[pos++];
-                        else
-                            break;
-                        continue;
-                    }
-                    std::size_t form_start = pos;
-                    std::size_t form_end = find_matching_close(src, pos);
-                    if (form_end == std::string::npos) {
-                        out += src.substr(pos);
-                        break;
-                    }
-                    std::string form = src.substr(form_start, form_end - form_start);
-                    // Inspect the form's head
-                    std::string head;
-                    std::size_t h = form_start + 1;
-                    while (h < form_end &&
-                           (src[h] == ' ' || src[h] == '\n' || src[h] == '\t' || src[h] == '\r'))
-                        h++;
-                    while (h < form_end && src[h] != ' ' && src[h] != '\n' && src[h] != '\t' &&
-                           src[h] != '\r' && src[h] != ')')
-                        head += src[h++];
-                    if (head == "require" || head == "import" || head == "use") {
-                        // Extract first arg (a symbol or string)
-                        while (h < form_end && (src[h] == ' ' || src[h] == '\n' || src[h] == '\t' ||
-                                                src[h] == '\r'))
-                            h++;
-                        std::string arg;
-                        bool in_str = false;
-                        while (h < form_end) {
-                            char c = src[h];
-                            if (in_str) {
-                                arg += c;
-                                if (c == '"')
-                                    in_str = false;
-                            } else if (c == '"') {
-                                arg += c;
-                                in_str = true;
-                            } else if (c == ' ' || c == '\n' || c == '\t' || c == '\r' ||
-                                       c == ')') {
-                                break;
-                            } else {
-                                arg += c;
-                            }
-                            h++;
-                        }
-                        // Strip surrounding quotes if present
-                        if (arg.size() >= 2 && arg.front() == '"' && arg.back() == '"')
-                            arg = arg.substr(1, arg.size() - 2);
-                        if (!arg.empty()) {
-                            std::string nested = resolve_path(arg);
-                            out += inline_module(nested);
-                            out += '\n';
-                        }
-                        // Skip the original form in src (don't copy it to out)
-                    } else {
-                        out += form;
-                        out += '\n';
-                    }
-                    pos = form_end;
-                }
-                return out;
-            };
-
-            // Process the user input: for each top-level (import "X") or
-            // (require "X"), inline the module and replace the form.
-            std::string resolved;
-            std::size_t pos = 0;
-            while (pos < input.size()) {
-                auto imp = input.find("(import \"", pos);
-                auto req = input.find("(require \"", pos);
-                std::size_t found = std::string::npos;
-                bool has_imp = (imp != std::string::npos);
-                bool has_req = (req != std::string::npos);
-                if (!has_imp && !has_req) {
-                    resolved += input.substr(pos);
-                    break;
-                }
-                if (has_imp && (!has_req || imp < req))
-                    found = imp;
-                else
-                    found = req;
-                resolved += input.substr(pos, found - pos);
-                auto quote_start = input.find('"', found);
-                auto quote_end = input.find('"', quote_start + 1);
-                if (quote_start == std::string::npos || quote_end == std::string::npos) {
-                    resolved += input.substr(found);
-                    break;
-                }
-                auto module_name = input.substr(quote_start + 1, quote_end - quote_start - 1);
-                auto close_paren = input.find(')', quote_end);
-                if (close_paren == std::string::npos) {
-                    resolved += input.substr(found);
-                    break;
-                }
-                std::string module_path = resolve_path(module_name);
-                visited.clear();
-                resolved += inline_module(module_path);
-                resolved += '\n';
-                pos = close_paren + 1;
-            }
-            input = resolved;
-        }
-
-        // ── Step 1: Parse → Lower → Passes ──
-        // eval_ir now includes pre_exec_requires for module support.
-        auto eval_result = cs.eval_ir(input);
-        if (!eval_result) {
-            std::println(std::cerr, "error: {}", eval_result.error().format());
-            return 1;
-        }
-        auto& mod = cs.last_ir_module();
-        if (!mod || mod->functions.empty()) {
-            std::println(std::cerr, "no IR module generated");
-            return 1;
-        }
-
-        // ── Step 2: Convert IRModule functions to FlatFunction ────
-        // We need to keep all backing storage alive for the FlatFunction array.
-        // Each FlatFunction has pointers into our owned vectors.
-        //
-        // Storage layout:
-        //   instr_pool[batch_i][fn_i][block_i]  = vector of FlatInstruction
-        //   block_pool[batch_i][fn_i]           = vector of FlatBlock (points into instr_pool)
-        //   name_pool[batch_i]                  = string (flat_fn.name points here)
-        //   flat_fn_array                       = vector of FlatFunction (final array)
-
-        std::size_t num_fns = mod->functions.size();
-        std::vector<std::vector<std::vector<aura::jit::FlatInstruction>>> instr_pool;
-        std::vector<std::vector<aura::jit::FlatBlock>> block_pool;
-        std::deque<std::string> name_pool; // deque: stable pointers on push_back
-        std::vector<aura::jit::FlatFunction> flat_fn_array;
-        flat_fn_array.reserve(num_fns);
-        instr_pool.reserve(num_fns);
-        block_pool.reserve(num_fns);
-
-        for (auto& ir_fn : mod->functions) {
-            instr_pool.emplace_back();
-            block_pool.emplace_back();
-            name_pool.push_back(ir_fn.name);
-
-            auto& instrs = instr_pool.back();
-            auto& blocks = block_pool.back();
-
-            instrs.resize(ir_fn.blocks.size());
-            blocks.resize(ir_fn.blocks.size());
-
-            for (std::size_t bi = 0; bi < ir_fn.blocks.size(); ++bi) {
-                auto& block = ir_fn.blocks[bi];
-                for (auto& inst : block.instructions) {
-                    instrs[bi].push_back(
-                        {static_cast<std::uint32_t>(inst.opcode),
-                         {inst.operands[0], inst.operands[1], inst.operands[2], inst.operands[3]}});
-                }
-                blocks[bi] = {block.id, instrs[bi].data(),
-                              static_cast<std::uint32_t>(instrs[bi].size())};
-            }
-
-            flat_fn_array.push_back({name_pool.back().c_str(), ir_fn.entry_block, ir_fn.local_count,
-                                     ir_fn.arg_count, blocks.data(),
-                                     static_cast<std::uint32_t>(blocks.size()),
-                                     nullptr, // func_id_map not used for AOT
-                                     0});
-        }
-
-        // ── Step 3: Generate primitive dispatch C code ───────────
-        // Build per-slot dispatch functions with the correct ABI:
-        // each function has signature (int64_t* args, int32_t argc)
-        // matching the PrimFn type used in aura_closure_call.
-        //
-        // The generated code creates one static function per primitive
-        // slot and registers each at its correct evaluator slot number.
-        // The slot numbers are matched at compile time.
-        {
-            auto& prims = cs.evaluator().primitives();
-            std::string code = "// Auto-generated by aura --emit-binary\n";
-            code += "#include <stdint.h>\n#include <stddef.h>\n#include <stdio.h>\n";
-            // Issue #4628: the AOT member wrapper compares the elements
-            // structurally (string content), so strcmp is needed.
-            code += "#include <string.h>\n\n";
-            // Issue #4502 F3: pairs are exactly low2 == 01. The old `x<0 ||`
-            // test matched every negative fixnum and every boxed float/string
-            // under #4482. Value ABI must match lib/runtime.c AURA_VALUE_ABI.
-            // #4502 step 1: every constant comes from lib/aura_value_abi.h.
-            code += "#define AURA_AOT_VALUE_ABI " AURA_ABI_STR(AURA_VALUE_ABI) "\n";
-            static_assert(AURA_VALUE_ABI == 4, "#4502: update the AOT preamble with the ABI");
-            code += "#define AURA_AOT_IS_PAIR(x) (((x)&3)==1)\n";
-            code += "#define AURA_AOT_FALSE " AURA_ABI_STR(AURA_V_FALSE) "\n";
-            code += "#define AURA_AOT_TRUE " AURA_ABI_STR(AURA_V_TRUE) "\n";
-            code += "#define AURA_AOT_VOID " AURA_ABI_STR(AURA_V_VOID) "\n";
-            code += "#define MAKE_STRING_SENTINEL(i) ((int64_t)(((uint64_t)(i) << " AURA_ABI_STR(
-                AURA_IMM_PAYLOAD_SHIFT) ") | " AURA_ABI_STR(AURA_STRING_LOW8) "))\n";
-            code += "int64_t aura_display_int(int64_t);\n";
-            code += "int64_t aura_alloc_pair(int64_t, int64_t);\n";
-            code += "int64_t aura_pair_car(int64_t);\n";
-            code += "int64_t aura_pair_cdr(int64_t);\n";
-            code += "int64_t aura_closure_call(int64_t, int64_t*, int64_t);\n";
-            // Issue #4628: the AOT face of the evaluator's equal? — content
-            // compare for strings, value compare for floats.
-            code += "const char* aura_string_ref(int64_t);\n";
-            code += "double aura_float_ref(int64_t);\n";
-            code += "\n";
-            code += "typedef int64_t (*PF)(int64_t*,int32_t);\n";
-            // Issue #4628: the AOT member wrapper compared raw words, so even
-            // two identical strings were identity-compared and a structurally
-            // equal pair was never found. This helper is the AOT face of the
-            // evaluator's equal? comparison (R7RS 6.4: member uses equal?).
-            code += "#define AURA_AOT_IS_STRING(x) ((((int64_t)(x)) & 0xFF) == " AURA_ABI_STR(
-                AURA_STRING_LOW8) ")\n";
-            code += "#define AURA_AOT_IS_FLOAT(x) ((((int64_t)(x)) & 0xFF) == " AURA_ABI_STR(
-                AURA_FLOAT_LOW8) ")\n";
-            code += "static inline int aura_aot_equal(int64_t a, int64_t b, int depth){\n";
-            code += "  if(a==b) return 1;\n";
-            code += "  if(depth>64) return 1;\n";
-            code += "  if(AURA_AOT_IS_PAIR(a)&&AURA_AOT_IS_PAIR(b)) return "
-                    "aura_aot_equal(aura_pair_car(a),aura_pair_car(b),depth+1) && "
-                    "aura_aot_equal(aura_pair_cdr(a),aura_pair_cdr(b),depth+1);\n";
-            code += "  if(AURA_AOT_IS_STRING(a)&&AURA_AOT_IS_STRING(b)) return "
-                    "strcmp(aura_string_ref(a),aura_string_ref(b))==0;\n";
-            code += "  if(AURA_AOT_IS_FLOAT(a)&&AURA_AOT_IS_FLOAT(b)) return "
-                    "aura_float_ref(a)==aura_float_ref(b);\n";
-            code += "  return 0;\n";
-            code += "}\n";
-            code += "\n";
-            code += "void aura_register_primitive_fn(int64_t, int64_t);\n";
-            code += "\n";
-
-            // Generate one wrapper function for each known primitive
-            for (std::size_t s = 0; s < prims.slot_count(); ++s) {
-                auto n = prims.name_for_slot(s);
-                if (n.empty())
-                    continue;
-                code += "static int64_t prim_" + std::to_string(s) + "(int64_t* a, int32_t c) {\n";
-                if (n == "+")
-                    code += "    int64_t r=0; for(int i=0;i<c;i++) r+=a[i]; return r;\n";
-                else if (n == "-")
-                    code += "    if(c<1)return 0; if(c==1)return -a[0]; int64_t r=a[0]; for(int "
-                            "i=1;i<c;i++) r-=a[i]; return r;\n";
-                else if (n == "*")
-                    code += "    int64_t r=1; for(int i=0;i<c;i++) r*=a[i]; return r;\n";
-                else if (n == "/")
-                    code += "    if(c<1)return 1; int64_t r=a[0]; for(int "
-                            "i=1;i<c;i++){if(a[i]==0){r=0;break;}r/=a[i];} return r;\n";
-                else if (n == "=" || n == "eq?" || n == "eqv?")
-                    // Issue #4640: a boolean result must be the TAGGED
-                    // #t / #f (7 / 3), not a raw 1 / 0: the AOT display
-                    // reads the low bits, and a raw 1 looks like a pair
-                    // (low2 == 01) -- the image printed "(0)" / "(2)"
-                    // instead of #t. The evaluator's booleans are the
-                    // tagged specials (value_tags.h: kSpecialTrue 7,
-                    // kSpecialFalse 3).
-                    code += "    for(int i=0;i<c-1;i++) if(a[i]!=a[i+1]) return AURA_AOT_FALSE; "
-                            "return AURA_AOT_TRUE;\n";
-                else if (n == "equal?")
-                    // Issue #4640: equal? is the STRUCTURAL comparison
-                    // (R7RS 6.4): content compare for strings, value
-                    // compare for numbers, structural compare for pairs
-                    // -- the same walk member uses (#4628). The AOT face
-                    // compared raw words, so two structurally equal lists
-                    // were never equal and the std assoc (which compares
-                    // the key with equal?) answered differently from the
-                    // evaluator.
-                    code += "    for(int i=0;i<c-1;i++) if(!aura_aot_equal(a[i],a[i+1],0)) "
-                            "return AURA_AOT_FALSE; return AURA_AOT_TRUE;\n";
-                else if (n == "<")
-                    code += "    for(int i=0;i<c-1;i++) if(!(a[i]<a[i+1])) return AURA_AOT_FALSE; "
-                            "return AURA_AOT_TRUE;\n";
-                else if (n == ">")
-                    code += "    for(int i=0;i<c-1;i++) if(!(a[i]>a[i+1])) return AURA_AOT_FALSE; "
-                            "return AURA_AOT_TRUE;\n";
-                else if (n == "<=")
-                    code += "    for(int i=0;i<c-1;i++) if(!(a[i]<=a[i+1])) return AURA_AOT_FALSE; "
-                            "return AURA_AOT_TRUE;\n";
-                else if (n == ">=")
-                    code += "    for(int i=0;i<c-1;i++) if(!(a[i]>=a[i+1])) return AURA_AOT_FALSE; "
-                            "return AURA_AOT_TRUE;\n";
-                else if (n == "not")
-                    code += "    return "
-                            "(c<1||a[0]==AURA_AOT_FALSE)?AURA_AOT_TRUE:AURA_AOT_FALSE;\n"; // #4491:
-                                                                                           // only
-                                                                                           // #f is
-                                                                                           // false
-                else if (n == "append") {
-                    code += "    if(c<1)return AURA_AOT_VOID; int64_t lst1=c>0?a[0]:0; int64_t "
-                            "lst2=c>1?a[1]:0;\n";
-                    code += "    int64_t rev[1024]; int revc=0;\n";
-                    code += "    "
-                            "while(AURA_AOT_IS_PAIR(lst1)&&revc<1024){rev[revc++]=aura_pair_car("
-                            "lst1); lst1=aura_pair_cdr(lst1);}\n";
-                    code += "    int64_t r=lst2;\n";
-                    code += "    for(int i=revc-1;i>=0;i--) r=aura_alloc_pair(rev[i],r);\n";
-                    code += "    return r;\n";
-                } else if (n == "member") {
-                    // Issue #4628: compare the elements structurally
-                    // (equal? semantics), not by raw word identity, and answer
-                    // #f when the element is not found — the evaluator's
-                    // contract (R7RS 6.4 / #4491).
-                    code += "    int64_t key=c>0?a[0]:0; int64_t lst=c>1?a[1]:0;\n";
-                    code += "    while(AURA_AOT_IS_PAIR(lst)){if(aura_aot_equal(aura_pair_car(lst),"
-                            "key,0))return lst; lst=aura_pair_cdr(lst);}\n";
-                    code += "    return AURA_AOT_FALSE;\n";
-                } else if (n == "map") {
-                    code += "    int64_t fn=c>0?a[0]:0; int64_t lst=c>1?a[1]:0;\n";
-                    code += "    int64_t rev[1024]; int revc=0;\n";
-                    code += "    int64_t args[8];\n";
-                    code +=
-                        "    while(AURA_AOT_IS_PAIR(lst)&&revc<1024){args[0]=aura_pair_car(lst); "
-                        "rev[revc++]=aura_closure_call(fn,args,1); lst=aura_pair_cdr(lst);}\n";
-                    code += "    int64_t r=AURA_AOT_VOID; for(int i=revc-1;i>=0;i--) "
-                            "r=aura_alloc_pair(rev[i],r);\n";
-                    code += "    return r;\n";
-                } else if (n == "null?")
-                    // Issue #4640: tagged #t / #f, not a raw 1 / 0 (see
-                    // the comparison wrappers above).
-                    // #4502: only '() is null -- not 0 or unspecified.
-                    code += "    return "
-                            "(c>=1&&a[0]==AURA_AOT_VOID)?AURA_AOT_TRUE:AURA_AOT_FALSE;\n";
-                else if (n == "pair?")
-                    // Issue #106 sub-task 4 (audit): the previous
-                    // expression was (c>0&&(((a[0]&3)==1))||a[0]<0)
-                    // which due to C precedence parses as
-                    //   (c>0 && ((a[0]&3)==1)) || (a[0]<0)
-                    // and reads a[0] when c==0 — a read of an
-                    // out-of-range arg slot that can segfault on
-                    // x86_64 emit-binary with certain call sites
-                    // (the old -9000... string sentinel is no
-                    // longer part of the pair tag; we just check
-                    // the low-bit tag like IS_PAIR in the runtime).
-                    // Issue #4640: tagged #t / #f, not a raw 1 / 0 (see
-                    // the comparison wrappers above).
-                    code += "    return (c>0 && ((a[0]&3)==1)) ? AURA_AOT_TRUE : AURA_AOT_FALSE;\n";
-                else if (n == "cons")
-                    code += "    return aura_alloc_pair(c>0?a[0]:0,c>1?a[1]:0);\n";
-                else if (n == "car")
-                    code += "    return (c>0)?aura_pair_car(a[0]):0;\n";
-                else if (n == "cdr")
-                    code += "    return (c>0)?aura_pair_cdr(a[0]):0;\n";
-                else if (n == "length") {
-                    code += "    int64_t v=c>0?a[0]:0; int64_t n=0;\n";
-                    code += "    while(AURA_AOT_IS_PAIR(v)&&n<9999){n++;v=aura_pair_cdr(v);}\n";
-                    code += "    return n;\n";
-                } else if (n == "list-ref") {
-                    code += "    int64_t v=c>0?a[0]:0; int64_t i=c>1?a[1]:0;\n";
-                    code += "    while(i>0&&AURA_AOT_IS_PAIR(v)){v=aura_pair_cdr(v);i--;}\n";
-                    code += "    if(i==0&&AURA_AOT_IS_PAIR(v))return aura_pair_car(v); return 0;\n";
-                } else if (n == "reverse") {
-                    code += "    int64_t v=c>0?a[0]:0; int64_t r=AURA_AOT_VOID;\n";
-                    code +=
-                        "    "
-                        "while(AURA_AOT_IS_PAIR(v)){r=aura_alloc_pair(aura_pair_car(v),r);v=aura_"
-                        "pair_cdr(v);}\n";
-                    code += "    return r;\n";
-                } else if (n == "list") {
-                    code += "    int64_t r=AURA_AOT_VOID;\n";
-                    code += "    for(int i=c-1;i>=0;i--) r=aura_alloc_pair(a[i],r);\n";
-                    code += "    return r;\n";
-                } else if (n == "display") {
-                    code += "    if(c>0)aura_display_int(a[0]); fflush(stdout);\n";
-                    code += "    return (c>0)?a[0]:0;\n";
-                } else if (n == "filter") {
-                    code += "    int64_t pred=c>0?a[0]:0; int64_t lst=c>1?a[1]:0;\n";
-                    code += "    int64_t rev[1024]; int revc=0;\n";
-                    code += "    int64_t args[8];\n";
-                    code +=
-                        "    while(AURA_AOT_IS_PAIR(lst)&&revc<1024){int64_t v=aura_pair_car(lst); "
-                        "args[0]=v; if(aura_closure_call(pred,args,1)!=0)rev[revc++]=v; "
-                        "lst=aura_pair_cdr(lst);}\n";
-                    code += "    int64_t r=AURA_AOT_VOID; for(int i=revc-1;i>=0;i--) "
-                            "r=aura_alloc_pair(rev[i],r);\n";
-                    code += "    return r;\n";
-                } else if (n == "foldl") {
-                    code += "    int64_t fn=c>0?a[0]:0; int64_t acc=c>1?a[1]:0; int64_t "
-                            "lst=c>2?a[2]:0;\n";
-                    code += "    int64_t args[8];\n";
-                    code +=
-                        "    while(AURA_AOT_IS_PAIR(lst)){args[0]=acc; args[1]=aura_pair_car(lst); "
-                        "acc=aura_closure_call(fn,args,2); lst=aura_pair_cdr(lst);}\n";
-                    code += "    return acc;\n";
-                } else {
-                    // Unknown primitives (e.g. ADT constructors): build pair chain with tag string
-                    code += "    int64_t r=AURA_AOT_VOID; for(int i=c-1;i>=0;i--) "
-                            "r=aura_alloc_pair(a[i],r);\n";
-                    code += "    r=aura_alloc_pair(MAKE_STRING_SENTINEL(" + std::to_string(s) +
-                            "),r); return r;\n";
-                }
-                code += "}\n\n";
-            }
-
-            // Constructor: register each primitive function at its slot
-            code += "__attribute__((constructor)) void reg(void) {\n";
-            for (std::size_t s = 0; s < prims.slot_count(); ++s) {
-                auto n = prims.name_for_slot(s);
-                if (!n.empty()) {
-                    code += "  aura_register_primitive_fn(" + std::to_string(s) +
-                            ",(int64_t)prim_" + std::to_string(s) + ");\n";
-                }
-            }
-            code += "}\n";
-            aura_set_prim_registration(code.c_str());
-        }
-
-        // Set string pool for OpConstString
-        {
-            auto& pool = mod->string_pool;
-            std::vector<const char*> raw_pool(pool.size());
-            for (std::size_t i = 0; i < pool.size(); ++i)
-                raw_pool[i] = pool[i].c_str();
-            aura_set_string_pool(raw_pool.data(), static_cast<unsigned>(raw_pool.size()));
-        }
-
-        // Issue #243 Phase 1 / #957: production defuse_version() for AOT
-        // mangle suffix + registration record (one acquire load).
-        aura_set_aot_defuse_version(cs.evaluator().defuse_version());
-
-        // ── Step 4: Compile via LLVM AOT pipeline ────────────────
-        bool compiled = aura_emit_native_file(input.c_str(), out_path.c_str(),
-                                              (const void*)flat_fn_array.data(),
-                                              static_cast<unsigned int>(flat_fn_array.size()));
-        // Issue #62 Iter 1: AOT counters
-        if (compiled) {
-            cs.metrics().aot_emits.fetch_add(1, std::memory_order_relaxed);
-        } else {
-            cs.metrics().aot_fallbacks.fetch_add(1, std::memory_order_relaxed);
-        }
-
-        // ── Step 4: Failure handling ──────────────────────────────
-        // Issue #237: distinguish two failure modes:
-        //
-        //   (A) flat_fn_array is non-empty AND AOT failed
-        //       → real AOT compile/link error (e.g. x86_64 PIE
-        //         mismatch, missing runtime.c, LLVM internal error).
-        //       The caller asked for a real native binary; giving
-        //       them a shell wrapper script that re-invokes aura
-        //       is not a native binary and breaks downstream
-        //       tooling (e.g. test_issue_237's is_elf() check).
-        //       → Return rc=1 with a clear error message.
-        //
-        //   (B) flat_fn_array is empty (all functions were
-        //       filtered out as Evolution-region) AND the C
-        //       wrapper fallback also failed
-        //       → no AOT was possible, C wrapper also failed.
-        //       Shell-wrapper fallback is the last resort for
-        //       this case so the user still gets a runnable
-        //       script (rare — requires no cc + no Evolution-
-        //       AOT to be possible).
-        if (!compiled) {
-            // Case A: real AOT failure with functions to AOT-compile.
-            // Bail out loudly with the LLVM/bridge stderr above.
-            if (!flat_fn_array.empty()) {
-                std::println(std::cerr,
-                             "AOT: failed to emit native binary for {} function(s). "
-                             "See AOT: errors above. Common causes: x86_64 PIE/PIC "
-                             "mismatch, missing lib/runtime.c, LLVM internal error. "
-                             "Not falling back to shell wrapper (--emit-binary "
-                             "contract is a real ELF executable).",
-                             flat_fn_array.size());
-                return 1;
-            }
-
-            // Case B: empty AOT batch + C wrapper failure.
-            // Fall back to shell wrapper as a last-resort script.
-            std::string self_path = std::string(argv[0]);
-            // Issue #237: log every step of the shell-wrapper fallback
-            // so CI can see exactly where the failure mode hits. The
-            // previous version silently fell through to rc=1 when the
-            // LLVM AOT + C-fallback both failed; this verbose trace
-            // makes the failure mode visible.
-            std::println(std::cerr, "[#237] AOT failed; entering shell wrapper fallback");
-            std::println(std::cerr, "[#237]   out_path={}", out_path);
-            std::println(std::cerr, "[#237]   self_path={}", self_path);
-            {
-                std::ofstream sf(out_path);
-                if (!sf) {
-                    std::println(std::cerr, "[#237] ERROR: cannot open {} for write (rc=1)",
-                                 out_path);
-                    return 1;
-                }
-                sf << "#!/bin/bash\n";
-                sf << "# Aura compiled binary (shell wrapper fallback)\n";
-                sf << "exec " << self_path << " --load " << out_path << ".tmp.aura \"$@\"\n";
-                if (!sf) {
-                    std::println(std::cerr, "[#237] ERROR: write to {} failed (rc=1)", out_path);
-                    return 1;
-                }
-            }
-            std::filesystem::permissions(out_path, std::filesystem::perms::owner_all |
-                                                       std::filesystem::perms::group_read |
-                                                       std::filesystem::perms::group_exec |
-                                                       std::filesystem::perms::others_read |
-                                                       std::filesystem::perms::others_exec);
-            // Save source for --load
-            {
-                std::ofstream sf(out_path + ".tmp.aura");
-                if (!sf) {
-                    std::println(std::cerr,
-                                 "[#237] ERROR: cannot open {}.tmp.aura for write (rc=1)",
-                                 out_path);
-                    return 1;
-                }
-                sf << input;
-            }
-            if (std::filesystem::exists(out_path)) {
-                std::println("emitted binary: {} (shell wrapper)", out_path);
-                return 0;
-            }
-            std::println(std::cerr, "[#237] ERROR: out_path {} does not exist after write (rc=1)",
-                         out_path);
-            std::println(std::cerr, "error: cannot create binary");
-            return 1;
-        }
-
-        std::println("emitted binary: {}", out_path);
-        return 0;
-    }
+    if (argc > 2 && std::string_view(argv[1]) == "--emit-binary")
+        return emit_standalone_binary(argc, argv);
 
     // ── --inspect: eval with full runtime reflection dump ────────
     if (argc > 1 && std::string_view(argv[1]) == "--inspect") {
@@ -4410,1268 +5667,8 @@ static int aura_main(int argc, char* argv[]) {
         return 0;
     }
 
-    // ── Normal REPL / pipe / file / -e mode ─────────────────────
-    // Issue #2767: denseness span runners (Aether/Hephaestus/Hermes)
-    // hit two footguns that look like product bugs:
-    //   1. argv / -e printed bare "usage: echo … | ./aura" and exited
-    //   2. AURA_PIPELINE_STRICT production default needs =0 for soft denseness
-    // Issue #2772: multi-process child via (shell …) needs *exported*
-    // AURA_BIN (or rely on process-seed + (aura-executable-path)).
-    // Accept file paths and -e EXPR as sugar; keep stdin pipe default.
-    // Issue #4131: an ancestor that ignored SIGTERM (daemonized holder,
-    // nohup-style batch runner) leaks SIG_IGN into this image — POSIX
-    // carries ignored dispositions across execve, so a hung oneshot
-    // (pathological list recursion / while spin) then survives the
-    // host's timeout SIGTERM and only killpg(SIGKILL) reclaims it.
-    // Oneshot faces reset TERM to default here so `aura file.aura`
-    // always honors SIGTERM promptly. --serve/--serve-async return from
-    // earlier branches and manage their own lifecycle — untouched.
-    ::signal(SIGTERM, SIG_DFL);
-    auto print_denseness_usage = [&](const char*, std::ostream& out = std::cerr) {
-        const char* prog = "aura"; // #4935: never the libexec path
-        std::println(out, "usage: {} [options] [file.aura …]", prog);
-        std::println(out, "       {} -e '(+ 1 2)'", prog);
-        std::println(out, "       {} soft [--allow ffi,write] [--load] [file.aura …]", prog);
-        std::println(out, "       echo '(+ 1 2)' | {}", prog);
-        std::println(out, "       {} < file.aura", prog);
-        std::println(out, "");
-        std::println(out, "Projects (#4913):");
-        std::println(out,
-                     "  {} new [app|evolve|agent] <dir>  scaffold aura.toml, tests/, CI, "
-                     "README",
-                     prog);
-        std::println(out,
-                     "  {} run [entry.aura] [options]    run the project entry with its "
-                     "aura.toml preset",
-                     prog);
-        std::println(out,
-                     "  {} test [--update] [tests/x.aura] run tests/*.aura against "
-                     "tests/*.golden",
-                     prog);
-        std::println(out, "  (require \"lib/x\") in a project resolves from the project root.");
-        std::println(out, "Evolution (#4910):");
-        std::println(out,
-                     "  {} evo log [--json] [--run ID|last]  worldline: KEEP/ROLLBACK, reason, "
-                     "evidence, diff",
-                     prog);
-        std::println(out,
-                     "  {} evo report --html DIR             static HTML timeline, score curve, "
-                     "diffs",
-                     prog);
-        std::println(out, "REPL (#4911):");
-        std::println(out,
-                     "  {} repl [file.aura]   REPL; :load/:reload FILE, :ws, :worldline, "
-                     ":snapshot, :restore ID, :help",
-                     prog);
-        std::println(out,
-                     "  {} lsp                stdio language server (diagnostics, "
-                     "goto-definition); see docs/editor.md",
-                     prog);
-        std::println(out, "Options:");
-        std::println(out, "  -e, --eval EXPR     evaluate EXPR (repeatable)");
-        std::println(out, "  --load FILE         run FILE (same semantics as '{} FILE')", prog);
-        std::println(out, "  --keep-going        keep running forms after a top-level error");
-        std::println(out, "  --preset P, --grant CAPS, --deny CAPS, --quiet   capabilities "
-                          "(below)");
-        std::println(out, "  --no-arena, --worker-threads N, --health-port N");
-        std::println(out, "Tools (read code from the argument or stdin):");
-        std::println(out, "  --fmt [--check] | --unparse   format; --check exits 1 when not "
-                          "formatted");
-        std::println(out, "  --typecheck | --auto-fix      type diagnostics / suggested fixes");
-        std::println(out, "  --query Q | --query-and-fix   structural queries over the code");
-        std::println(out, "  --evo-explain                 explain an evolution step (AURA_OBS=1)");
-        std::println(out, "  --inspect [ir|…], --ir, --jit, --jit-session   compiler views");
-        std::println(out, "  --env, --env-json             runtime environment report");
-        std::println(out, "  --freeze, --emit-binary, --cache, --cache-open, --write   "
-                          "artifacts");
-        std::println(out, "  --serve, --serve-async, --health-server, --strategy, --hot-swap  "
-                          "services");
-        std::println(out, "");
-        std::println(out, "Programs are read from stdin when no file/-e is given.");
-        std::println(out, "A program file stops at its first top-level error (rc=1);");
-        std::println(out, "  --keep-going (or AURA_KEEP_GOING=1) runs the remaining forms too.");
-        std::println(out, "Capability presets (#4912):");
-        std::println(out,
-                     "  {} --preset dev file.aura   mutate + read + write (self-evolving "
-                     "programs)",
-                     prog);
-        std::println(out,
-                     "  {} --preset ci  file.aura   same as dev (write not yet "
-                     "path-scoped)",
-                     prog);
-        std::println(out, "  {} --preset prod file.aura  the Restricted default", prog);
-        std::println(out, "  --grant mutate,write,ffi,exec,network / --deny … adjust it; "
-                          "--quiet drops the caps line.");
-        std::println(out, "  Also AURA_PRESET=dev or preset = \"dev\" in aura.toml.");
-        std::println(out, "Soft experiments (#4575):");
-        std::println(out, "  {} soft file.aura              Restricted Mutate on this workspace",
-                     prog);
-        std::println(out, "  {} soft --allow ffi,write      explicit opt-in; never implied", prog);
-        std::println(out, "Denseness / span host env (soft multi-module probes):");
-        std::println(out, "  export AURA_BIN=…/build/aura   absolute path (#2772 multi-process)");
-        std::println(out, "  export AURA_PATH=…/lib[:extra] module search path");
-        std::println(out, "  export AURA_PIPELINE_STRICT=0  allow tree-walker fallback (#2213)");
-        std::println(out, "Multi-process: shell children inherit only exported vars.");
-        std::println(out, "  Prefer: (shell (string-append (getenv \"AURA_BIN\") \" …\"))");
-        std::println(out, "  Or:     (shell (string-append (aura-executable-path) \" …\"))");
-        std::println(out, "  (aura seeds AURA_BIN from self when unset — still export in runners)");
-        std::println(out, "Special modes: --serve, --serve-async, --ir, --jit, --help");
-    };
-
-    // Issue #2767: collect program source from -e / --eval / file args
-    // before falling through to REPL or pipe mode. Leave special flags
-    // (--serve, --ir, …) to earlier branches (they return).
-    std::string all_input;
-    bool source_from_argv = false;
-    // Issue #4909: a program file stops at its first uncaught top-level
-    // error (one diagnostic, rc=1) instead of running the rest of the file
-    // into a cascade of follow-on errors. --keep-going / AURA_KEEP_GOING=1
-    // restores the run-every-form contract (#4460/#4467). -e / stdin keep it.
-    bool from_file_4909 = false;
-    bool keep_going_4909 = [] {
-        const char* v = std::getenv("AURA_KEEP_GOING");
-        if (!v)
-            return false;
-        const std::string_view s(v);
-        return s == "1" || s == "true" || s == "yes";
-    }();
-    // Issue #4575: `aura soft` is the launcher. It is not an env var.
-    // `--allow` is recognized only after `soft`. Plain `aura --allow`
-    // stays an unknown option.
-    bool soft_launch = false;
-    std::uint16_t soft_extra = 0;
-    std::string soft_allow_list;
-    bool soft_allow_bad = false;
-    std::string soft_allow_bad_tok;
-    // Issue #4912: `write:<dir>/` grants Write under <dir> only; a bare
-    // `write` (or the dev preset) is every path and wins over the scope.
-    std::vector<std::string> write_dirs_4912;
-    bool write_unscoped_4912 = false;
-    auto take_allow = [&](std::string_view list) {
-        using aura::core::capability::Effect;
-        std::size_t p = 0;
-        while (p < list.size()) {
-            while (p < list.size() && (list[p] == ' ' || list[p] == ','))
-                ++p;
-            if (p >= list.size())
-                break;
-            auto j = p;
-            while (j < list.size() && list[j] != ',')
-                ++j;
-            auto tok = list.substr(p, j - p);
-            while (!tok.empty() && (tok.back() == ' ' || tok.back() == '\t'))
-                tok.remove_suffix(1);
-            p = j < list.size() ? j + 1 : j;
-            if (tok.empty())
-                continue;
-            if (tok == "mutate") // Issue #4912: always part of a soft/preset session
-                continue;
-            std::uint16_t bit = 0;
-            if (tok == "ffi")
-                bit = static_cast<std::uint16_t>(Effect::Ffi);
-            else if (tok == "write") {
-                bit = static_cast<std::uint16_t>(Effect::Write);
-                write_unscoped_4912 = true;
-            } else if (tok.starts_with("write:") && tok.size() > 6) {
-                bit = static_cast<std::uint16_t>(Effect::Write);
-                write_dirs_4912.emplace_back(tok.substr(6));
-            } else if (tok == "exec" || tok == "shell")
-                bit = static_cast<std::uint16_t>(Effect::Exec);
-            else if (tok == "network" || tok == "net")
-                bit = static_cast<std::uint16_t>(Effect::Network);
-            else if (tok == "read")
-                bit = static_cast<std::uint16_t>(Effect::Read);
-            else {
-                // mutate is the default, not an opt-in. tenant-admin,
-                // syscall, macro-self-evo, and unknown tokens fail closed.
-                soft_allow_bad = true;
-                soft_allow_bad_tok = std::string(tok);
-                return;
-            }
-            soft_extra = static_cast<std::uint16_t>(soft_extra | bit);
-            if (!soft_allow_list.empty())
-                soft_allow_list.push_back(',');
-            soft_allow_list.append(tok);
-        }
-    };
-    // Issue #4912: capability presets. `--preset dev|ci|prod` (or
-    // AURA_PRESET, or `preset = "..."` in ./aura.toml) picks the session;
-    // `--grant` / `--deny` adjust it; `--quiet` drops the caps banner.
-    std::string preset_4912;
-    bool preset_bad_4912 = false;
-    bool quiet_4912 = false;
-    bool grant_seen_4912 = false;
-    bool deny_mutate_4912 = false;
-    std::uint16_t deny_bits_4912 = 0;
-    std::string entry_path_4912;
-    auto take_deny_4912 = [&](std::string_view list) {
-        using aura::core::capability::Effect;
-        std::size_t p = 0;
-        while (p < list.size()) {
-            auto j = list.find(',', p);
-            if (j == std::string_view::npos)
-                j = list.size();
-            auto tok = list.substr(p, j - p);
-            p = j + 1;
-            while (!tok.empty() && tok.front() == ' ')
-                tok.remove_prefix(1);
-            while (!tok.empty() && tok.back() == ' ')
-                tok.remove_suffix(1);
-            if (tok.empty())
-                continue;
-            if (tok == "mutate")
-                deny_mutate_4912 = true;
-            else if (tok == "ffi")
-                deny_bits_4912 |= static_cast<std::uint16_t>(Effect::Ffi);
-            else if (tok == "write")
-                deny_bits_4912 |= static_cast<std::uint16_t>(Effect::Write);
-            else if (tok == "exec" || tok == "shell")
-                deny_bits_4912 |= static_cast<std::uint16_t>(Effect::Exec);
-            else if (tok == "network" || tok == "net")
-                deny_bits_4912 |= static_cast<std::uint16_t>(Effect::Network);
-            else {
-                soft_allow_bad = true;
-                soft_allow_bad_tok = std::string(tok);
-                return;
-            }
-        }
-    };
-    auto flag_value_4912 = [&](int& i, std::string_view a, std::string_view name,
-                               std::string_view& out) -> bool {
-        if (a == name) {
-            if (i + 1 >= argc)
-                return false;
-            out = argv[++i];
-            return true;
-        }
-        out = a.substr(name.size() + 1);
-        return true;
-    };
-    if (argc > 1) {
-        for (int i = 1; i < argc; ++i) {
-            const std::string_view a(argv[i]);
-            if (a == "--quiet") { // Issue #4912
-                quiet_4912 = true;
-                continue;
-            }
-            if (a == "--preset" || a.starts_with("--preset=")) { // Issue #4912
-                std::string_view v;
-                if (!flag_value_4912(i, a, "--preset", v) ||
-                    (v != "dev" && v != "ci" && v != "prod")) {
-                    preset_bad_4912 = true;
-                    preset_4912 = std::string(v);
-                    break;
-                }
-                preset_4912 = std::string(v);
-                continue;
-            }
-            if (a == "--grant" || a.starts_with("--grant=")) { // Issue #4912
-                std::string_view v;
-                if (!flag_value_4912(i, a, "--grant", v)) {
-                    soft_allow_bad = true;
-                    soft_allow_bad_tok = "--grant";
-                    break;
-                }
-                grant_seen_4912 = true;
-                take_allow(v);
-                if (soft_allow_bad)
-                    break;
-                continue;
-            }
-            if (a == "--deny" || a.starts_with("--deny=")) { // Issue #4912
-                std::string_view v;
-                if (!flag_value_4912(i, a, "--deny", v)) {
-                    soft_allow_bad = true;
-                    soft_allow_bad_tok = "--deny";
-                    break;
-                }
-                take_deny_4912(v);
-                if (soft_allow_bad)
-                    break;
-                continue;
-            }
-            if (a == "-h" || a == "--help" || a == "--help-all") {
-                print_denseness_usage(argv[0], std::cout);
-                return 0;
-            }
-            if (a == "-e" || a == "--eval") {
-                if (i + 1 >= argc) {
-                    std::println(std::cerr, "error: {} requires an expression argument", a);
-                    std::println(std::cerr, "hint: 'aura --help' for usage");
-                    return 1;
-                }
-                if (!all_input.empty())
-                    all_input += '\n';
-                all_input += argv[++i];
-                source_from_argv = true;
-                continue;
-            }
-            // Already consumed in the pre-parse loop (sets g_use_arena=false).
-            if (a == "--no-arena")
-                continue;
-            if (a == "--keep-going") { // Issue #4909
-                keep_going_4909 = true;
-                continue;
-            }
-            // Health / worker flags may appear before denseness source args.
-            if (a == "--worker-threads") {
-                if (i + 1 < argc)
-                    ++i; // skip value
-                continue;
-            }
-            if (a.starts_with("--worker-threads="))
-                continue;
-            if (a == "--health-port") {
-                if (i + 1 < argc)
-                    ++i;
-                continue;
-            }
-            if (a.starts_with("--health-port="))
-                continue;
-            // Issue #4575: first bare arg `soft` is the subcommand.
-            // `aura ./soft` remains a file. `--allow` is only valid here.
-            if (a == "soft" && i == 1 && !soft_launch) {
-                soft_launch = true;
-                continue;
-            }
-            if (soft_launch && (a == "--allow" || a.starts_with("--allow="))) {
-                std::string_view list;
-                if (a == "--allow") {
-                    if (i + 1 >= argc) {
-                        soft_allow_bad = true;
-                        soft_allow_bad_tok = "--allow";
-                        break;
-                    }
-                    list = argv[++i];
-                } else {
-                    list = a.substr(std::string_view("--allow=").size());
-                }
-                take_allow(list);
-                if (soft_allow_bad)
-                    break;
-                continue;
-            }
-            if (!a.empty() && a[0] == '-') {
-                std::println(std::cerr, "error: unknown option '{}'", a);
-                std::println(std::cerr, "hint: 'aura --help' for usage");
-                return 1;
-            }
-            // Bare path: read file contents (denseness sugar for `./aura < file`).
-            std::ifstream f(argv[i]);
-            if (!f) {
-                std::println(std::cerr, "error: cannot open program file '{}'", argv[i]);
-                std::println(std::cerr, "hint: programs default to stdin — try: aura < {}",
-                             argv[i]);
-                std::println(std::cerr, "hint: 'aura --help' for usage");
-                return 1;
-            }
-            if (!all_input.empty())
-                all_input += '\n';
-            std::string file_text((std::istreambuf_iterator<char>(f)),
-                                  std::istreambuf_iterator<char>());
-            // Issue #4916: exactly one program file is the entry file.
-            if (!source_from_argv) {
-                register_entry_file_4916(argv[i], file_text);
-                entry_path_4912 = argv[i];
-            } else
-                aura::diag::set_entry_source_file(0);
-            all_input += file_text;
-            source_from_argv = true;
-            from_file_4909 = true;
-        }
-    }
-    const bool stop_first_4909 = from_file_4909 && !keep_going_4909;
-    if (preset_bad_4912) {
-        std::println(std::cerr, "error: unknown --preset '{}'", preset_4912);
-        std::println(std::cerr, "hint: --preset dev | ci | prod");
-        return 1;
-    }
-    if (soft_allow_bad) {
-        std::println(std::cerr, "error: unknown capability token '{}'", soft_allow_bad_tok);
-        if (soft_allow_bad_tok == "macro-self-evo" || soft_allow_bad_tok == "tenant-admin" ||
-            soft_allow_bad_tok == "syscall")
-            std::println(std::cerr,
-                         "hint: {} is never granted from the command line (it stays a "
-                         "host-side grant; #4912)",
-                         soft_allow_bad_tok);
-        else
-            std::println(std::cerr, "hint: mutate, read, write, ffi, exec|shell, network|net");
-        std::println(std::cerr, "hint: 'aura --help' for usage");
-        return 1;
-    }
-    // Issue #4912: resolve the preset (flag > AURA_PRESET > ./aura.toml or
-    // the entry file's aura.toml) and fold it into the soft session.
-    // Issue #4911: `aura repl FILE` reads FILE's aura.toml preset; the REPL is
-    // a development face, so it defaults to dev (:reload needs mutate).
-    if (g_repl_4911 && entry_path_4912.empty())
-        entry_path_4912 = g_repl_file_4911;
-    if (preset_4912.empty()) {
-        if (const char* ev = std::getenv("AURA_PRESET"); ev && *ev)
-            preset_4912 = ev;
-        else
-            preset_4912 = read_toml_preset_4912(entry_path_4912);
-        if (preset_4912.empty() && g_repl_4911)
-            preset_4912 = "dev";
-        if (!preset_4912.empty() && preset_4912 != "dev" && preset_4912 != "ci" &&
-            preset_4912 != "prod") {
-            std::println(std::cerr, "error: unknown preset '{}' (AURA_PRESET / aura.toml)",
-                         preset_4912);
-            std::println(std::cerr, "hint: dev | ci | prod");
-            return 1;
-        }
-    }
-    if (preset_4912 == "prod" && grant_seen_4912) {
-        std::println(std::cerr, "error: --preset prod takes no --grant (it is the Restricted "
-                                "default)");
-        return 1;
-    }
-    const bool soft_explicit_4912 = soft_launch;
-    if (preset_4912 == "dev" || preset_4912 == "ci") {
-        soft_launch = true;
-        soft_extra = static_cast<std::uint16_t>(
-            soft_extra | static_cast<std::uint16_t>(aura::core::capability::Effect::Write));
-    }
-    // Issue #4912: ci = host paths read-only, Write only under the project's
-    // out directory (aura.toml `out`, default out/; `aura run` runs from the
-    // project root). dev / a bare `--grant write` keep Write on every path.
-    if (preset_4912 == "ci") {
-        auto out = read_toml_key_4913("aura.toml", "out");
-        write_dirs_4912.push_back(out.empty() ? std::string("out") : out);
-    }
-    if (preset_4912 == "dev")
-        write_unscoped_4912 = true;
-    if (!write_unscoped_4912 && !write_dirs_4912.empty())
-        aura::compiler::security::set_write_scope(write_dirs_4912);
-    if (grant_seen_4912 && preset_4912 != "prod")
-        soft_launch = true;
-    soft_extra = static_cast<std::uint16_t>(soft_extra & ~deny_bits_4912);
-    if (deny_mutate_4912)
-        soft_launch = false;
-    if (!soft_launch && !preset_4912.empty() && !quiet_4912)
-        std::println(std::cerr, "aura: preset={} sandbox=restricted caps=read (default)",
-                     preset_4912);
-
-    aura::compiler::CompilerService cs;
-    // Issue #4864: the oneshot file / expression face is the SAME script face
-    // as --load (#4848), not the production serve pipeline. The pack default
-    // (Forbidden) vetoed ordinary forms the IR path cannot express
-    // (let-bound closures, named let, set!, do, try, internal defines,
-    // hygienic macros), so `aura file.aura` rejected a program that
-    // `aura --load file.aura` ran. Take the same permissive walker face
-    // --load takes, exactly as --serve-async-bench does (#4844). Operators
-    // can still pin a face explicitly via AURA_PIPELINE_STRICT.
-    if (const char* strict = std::getenv("AURA_PIPELINE_STRICT"); !(strict && *strict))
-        aura::compiler::set_tree_walker_fallback_policy(
-            aura::compiler::TreeWalkerFallbackPolicy::Allow);
-    // Issue #4575: AURA_SANDBOX=off stays the dev hatch and says so once.
-    // --serve / --ir / --jit returned above. `aura soft` prints its own
-    // refuse line instead of this one.
-    if (!soft_launch) {
-        if (const char* sb = std::getenv("AURA_SANDBOX")) {
-            const std::string_view sv(sb);
-            if ((sv == "off" || sv == "OFF" || sv == "Off") &&
-                // Issue #4575 follow-up (asan-verify): the hatch note is for
-                // the human at a REPL. Piped runs (CI, case harnesses) merge
-                // stderr into the compared output — the banner on cerr fails
-                // every text comparison in tests/run-tests.sh (281 cases).
-                // Interactive faces keep the note; pipes stay clean.
-                // AURA_FORCE_HATCH=1 opts a piped harness back in (the plain-off
-                // "warning once" AC pins the once-semantics; default under
-                // pipes stays silent for the text-compare contracts).
-                (::isatty(::fileno(stderr)) || std::getenv("AURA_FORCE_HATCH") != nullptr))
-                std::println(std::cerr, "aura: sandbox=off (dev escape hatch)");
-        }
-    }
-    cs.set_session_id("default");
-    aura::compiler::CompilerService::register_session("default", &cs);
-    // Issue (lyapunov-fact demo 2026-07-28): use Repl for pipe mode too.
-    // The previous batch fallback (`buf << std::cin.rdbuf()`) blocked
-    // until stdin EOF, which never happens for the demo runner (it
-    // sends forms one at a time over a long-running subprocess PIPE
-    // and reads stdout incrementally). Repl::run() already uses C
-    // stdio fprintf + explicit fflush, so stdout flushes per line in
-    // pipe mode (line buffering via setvbuf at main() top). Banner is
-    // suppressed in non-TTY mode by Repl itself.
-    //
-    // Issue #2322: `bool interactive = (argc == 1)` was true for any
-    // no-arg invocation, including piped stdin from CI harnesses.
-    // Repl's pipe path reads stdin one line at a time via
-    // `std::getline`, which silently breaks multi-line expressions
-    // like `(define (loop n acc) ...body on next line...)` — only the
-    // first line is fed to the parser, the rest are parsed as
-    // separate (incomplete) S-expressions, and the failure cascades
-    // into "unbound variable" errors on subsequent lines + REPL
-    // swallowing eval failures (returns 0 instead of 1).
-    //
-    // Fix: only enter Repl when stdin is actually a TTY. When stdin
-    // is piped, fall through to the pipe-mode handler below, which
-    // reads the entire input, splits balanced S-expressions via paren
-    // depth tracking, evaluates each, and returns 1 on the first eval
-    // failure (line 2817). This restores correct behavior for
-    //   - issue_135_define_loop_n_acc (expected '5150')
-    //   - issue_135_define_sum_0_define (expected '210')
-    //   - err_unbound × 4 (expected exit 1)
-    // while preserving interactive TTY behavior unchanged.
-    // Issue #2767: never enter interactive REPL when -e / file supplied.
-    bool interactive = (argc == 1) && ::isatty(STDIN_FILENO) && !source_from_argv;
-    if (interactive || g_repl_4911) {
-        // Issue #4911: `aura repl` honours the preset / grants like a file run.
-        if (g_repl_4911 && soft_launch && cs.evaluator().effect_sandbox_mode() != 0) {
-            const auto st = cs.evaluator().enter_soft_session(soft_extra);
-            if (!quiet_4912)
-                std::println(std::cerr, "aura: repl preset={} soft auto-grant: {}",
-                             preset_4912.empty() ? "custom" : preset_4912,
-                             st.active ? "mutate,read" : "refused");
-        }
-        aura::Repl repl(cs);
-        if (g_repl_4911) {
-            // Interactive input can name any std binding (assq, string-join,
-            // …), so load the full prelude a file run would load lazily.
-            if (auto pre = cs.eval("(require \"std/list\" all:)(require \"std/string\" all:)"
-                                   "(require \"std/hash\" all:)(require \"std/math\" all:)");
-                !pre)
-                std::println(std::cerr, "aura: repl std prelude failed: {}",
-                             pre.error().format_with_source("prelude"));
-        }
-        if (!g_repl_file_4911.empty())
-            repl.load(g_repl_file_4911);
-        repl.run();
-        return 0;
-    }
-
-    // ── Pipe / file / -e mode: read all input, split into S-expressions ──
-    // Join all lines to support multi-line expressions. File/-e already
-    // filled all_input above (#2767).
-    if (!source_from_argv) {
-        std::ostringstream buf;
-        buf << std::cin.rdbuf();
-        all_input = buf.str();
-    }
-    if (all_input.empty()) {
-        // Issue #2767: explicit stdin-only hint (was bare usage only).
-        std::println(std::cerr, "error: no program source (stdin empty and no file/-e given)");
-        std::println(std::cerr, "hint: 'aura --help' for usage");
-        return 1;
-    }
-
-    // Issue #4575: mint only once we have a program. Refuse exits before
-    // any form runs. The banner is the one stderr line for this launch.
-    // Issue #4912: a preset under AURA_SANDBOX=off has nothing to grant.
-    if (soft_launch && !soft_explicit_4912 && cs.evaluator().effect_sandbox_mode() == 0) {
-        soft_launch = false;
-        if (!quiet_4912)
-            std::println(std::cerr, "aura: preset={} sandbox=off (every capability)",
-                         preset_4912.empty() ? "custom" : preset_4912);
-    }
-    if (soft_launch) {
-        const auto st = cs.evaluator().enter_soft_session(soft_extra);
-        if (!st.active) {
-            const char* word = "restricted";
-            if (cs.evaluator().effect_sandbox_mode() == 2)
-                word = "strict";
-            else if (cs.evaluator().effect_sandbox_mode() == 0)
-                word = "off (dev escape hatch)";
-            else if (const char* sb = std::getenv("AURA_SANDBOX")) {
-                const std::string_view sv(sb);
-                if (sv == "off" || sv == "OFF" || sv == "Off")
-                    word = "off (dev escape hatch)";
-                else if (sv == "strict" || sv == "STRICT" || sv == "Strict")
-                    word = "strict";
-            }
-            std::println(std::cerr, "aura: sandbox={}, soft auto-grant: refused", word);
-            return 1;
-        }
-        std::string line =
-            std::format("aura: sandbox=restricted, soft auto-grant: mutate(tenant={}, ws={}) "
-                        "token=soft-auto-grant",
-                        st.tenant, st.workspace_id);
-        if (!preset_4912.empty() || grant_seen_4912 || deny_bits_4912 != 0) {
-            // Issue #4912: one line naming the effective capability set.
-            using aura::core::capability::Effect;
-            std::string caps = "mutate,read";
-            const std::pair<Effect, const char*> names[] = {{Effect::Write, "write"},
-                                                            {Effect::Ffi, "ffi"},
-                                                            {Effect::Exec, "exec"},
-                                                            {Effect::Network, "network"}};
-            for (const auto& [e, n] : names)
-                if ((st.effects & static_cast<std::uint16_t>(e)) != 0) {
-                    caps += ',';
-                    caps += n;
-                    // Issue #4912: name the scope (write:out/).
-                    if (e == Effect::Write && aura::compiler::security::write_scope_active()) {
-                        caps += ':';
-                        caps += aura::compiler::security::write_scope_label();
-                    }
-                }
-            line = std::format("aura: preset={} sandbox=restricted caps={} (tenant={}, ws={})",
-                               preset_4912.empty() ? "custom" : preset_4912, caps, st.tenant,
-                               st.workspace_id);
-        } else if (!soft_allow_list.empty()) {
-            line.push_back(' ');
-            line += "allow=";
-            line += soft_allow_list;
-        }
-        if (!quiet_4912)
-            std::println(std::cerr, "{}", line);
-    }
-
-    // Split into balanced S-expressions by tracking paren balance
-    // Also track string literals to avoid counting parens inside strings
-    std::vector<std::string> exprs;
-    std::string current;
-    int depth = 0;
-    bool in_string = false;
-
-    for (std::size_t i = 0; i < all_input.size(); ++i) {
-        auto c = all_input[i];
-
-        if (in_string) {
-            current += c;
-            if (c == '\\' && i + 1 < all_input.size()) {
-                // Skip escaped character
-                ++i;
-                current += all_input[i];
-            } else if (c == '"') {
-                in_string = false;
-            }
-            continue;
-        }
-
-        // Issue #4622: a #\x character literal is one atomic token, so a
-        // delimiter inside it (#\( #\) #\" #\; #\[ #\]) is not a delimiter
-        // here either -- skip the whole literal instead of counting it.
-        if (c == '#') {
-            const std::size_t lit = character_literal_length(all_input, i);
-            if (lit > 0) {
-                current.append(all_input, i, lit);
-                i += lit - 1;
-                continue;
-            }
-        }
-
-        // Issue #4875: a (nested) #| block comment |# is not code: a ( or "
-        // inside it must not move the paren depth. Keep it verbatim inside
-        // a form (the reader skips it there); between forms it is just a
-        // separator. An unterminated one stays in the chunk so the reader
-        // reports it at its own position and nothing after it runs.
-        if (c == '#' && i + 1 < all_input.size() && all_input[i + 1] == '|') {
-            std::size_t j = i + 2;
-            int nest = 1;
-            while (j < all_input.size() && nest > 0) {
-                if (all_input[j] == '#' && j + 1 < all_input.size() && all_input[j + 1] == '|') {
-                    j += 2;
-                    ++nest;
-                } else if (all_input[j] == '|' && j + 1 < all_input.size() &&
-                           all_input[j + 1] == '#') {
-                    j += 2;
-                    --nest;
-                } else {
-                    ++j;
-                }
-            }
-            if (nest > 0 && depth == 0) {
-                // Between forms: the reader reports it at its own position
-                // after the complete prefix ran (#4875 direct contract).
-                current.append(all_input, i, std::string::npos);
-                break;
-            }
-            if (nest > 0) {
-                // Inside a form: same contract as an unclosed list (#4866),
-                // but name the real cause instead of a missing ')'.
-                std::size_t line = 1, col = 1;
-                for (std::size_t k = 0; k < i; ++k) {
-                    if (all_input[k] == '\n') {
-                        ++line;
-                        col = 1;
-                    } else {
-                        ++col;
-                    }
-                }
-                std::println(std::cerr,
-                             "error: {}:{}: parse error: unterminated block comment '#|'", line,
-                             col);
-                return 1;
-            }
-            if (depth > 0)
-                current.append(all_input, i, j - i);
-            else
-                current += ' ';
-            i = j - 1;
-            continue;
-        }
-
-        if (c == ';') {
-            // Line comment: skip to end of line
-            if (depth > 0)
-                current += ';';
-            while (i + 1 < all_input.size() && all_input[i + 1] != '\n') {
-                ++i;
-            }
-            continue;
-        }
-
-        if (c == '"') {
-            current += c;
-            in_string = true;
-            continue;
-        }
-
-        if (c == '(' || c == '[') {
-            if (depth == 0 && !current.empty()) {
-                // Prefix characters (' ` ,) before ( form a single expression
-                // e.g. '(+ 1 2), `(1 ,x 3), ,(+ 1 2)
-                bool is_prefix = false;
-                for (auto pc : current) {
-                    if (pc == '\'' || pc == '`' || pc == ',') {
-                        is_prefix = true;
-                        break;
-                    }
-                    if (!std::isspace(static_cast<unsigned char>(pc))) {
-                        is_prefix = false;
-                        break;
-                    }
-                }
-                if (!is_prefix) {
-                    // Start of a new expression while we had non-whitespace leftover?
-                    // Push current as complete
-                    auto trimmed = current;
-                    auto pos = trimmed.find_first_not_of(" \t\r\n");
-                    if (pos != std::string::npos) {
-                        trimmed = trimmed.substr(pos);
-                        auto end = trimmed.find_last_not_of(" \t\r\n");
-                        if (end != std::string::npos)
-                            trimmed = trimmed.substr(0, end + 1);
-                        exprs.push_back(trimmed);
-                    }
-                    current.clear();
-                }
-            }
-            current += c;
-            ++depth;
-            continue;
-        }
-
-        if ((c == ')' || c == ']') && depth == 0) {
-            // Issue #3917: extra close at file/form top level is a hard
-            // read error. Do not evaluate a already-split prefix — a
-            // truncated named-let would run with rewritten control flow
-            // (n becomes (1)/(), infinite back-off).
-            std::size_t line = 1, col = 1;
-            for (std::size_t k = 0; k < i; ++k) {
-                if (all_input[k] == '\n') {
-                    ++line;
-                    col = 1;
-                } else {
-                    ++col;
-                }
-            }
-            std::println(std::cerr, "error: {}:{}: parse error: unexpected '{}'", line, col, c);
-            return 1;
-        }
-        if ((c == ')' || c == ']') && depth > 0) {
-            current += c;
-            --depth;
-            if (depth == 0) {
-                // Complete expression found
-                auto trimmed = current;
-                auto pos = trimmed.find_first_not_of(" \t\r\n");
-                if (pos != std::string::npos) {
-                    trimmed = trimmed.substr(pos);
-                    auto end = trimmed.find_last_not_of(" \t\r\n");
-                    if (end != std::string::npos)
-                        trimmed = trimmed.substr(0, end + 1);
-                    exprs.push_back(trimmed);
-                }
-                current.clear();
-            }
-            continue;
-        }
-
-        current += c;
-    }
-
-    // If there's leftover text, try it as a complete expression
-    if (!current.empty()) {
-        auto trimmed = current;
-        auto pos = trimmed.find_first_not_of(" \t\r\n");
-        if (pos != std::string::npos) {
-            trimmed = trimmed.substr(pos);
-            auto end = trimmed.find_last_not_of(" \t\r\n");
-            if (end != std::string::npos)
-                trimmed = trimmed.substr(0, end + 1);
-            if (!trimmed.empty() && depth == 0)
-                exprs.push_back(trimmed);
-            else if (!trimmed.empty()) {
-                // Issue #4866: the direct-run path used to warn and then
-                // evaluate the complete prefix, exiting 0. Match --load:
-                // a missing ')' is a located parse error and no part of
-                // the file runs.
-                std::size_t line = 1, col = 1;
-                for (char ch : all_input) {
-                    if (ch == '\n') {
-                        ++line;
-                        col = 1;
-                    } else {
-                        ++col;
-                    }
-                }
-                std::println(
-                    std::cerr,
-                    "error: {}:{}: parse error: unclosed list: missing ')' before end of file",
-                    line, col);
-                return 1;
-            }
-        }
-    }
-
-    if (exprs.empty()) {
-        // Issue #2767: no balanced S-expression after split.
-        std::println(std::cerr, "error: no complete S-expression in program source");
-        std::println(std::cerr, "hint: 'aura --help' for usage");
-        return 1;
-    }
-
-    bool err = false;
-    // Issue #4356: hold the thread-fiber body mutex for this oneshot eval.
-    // read-line, read-byte, and fiber:join drop it while they block, then
-    // take it back before touching the Evaluator. Destroyed before ~cs
-    // drains still-running workers (they need the mutex to finish).
-    aura::messaging::CliMainEvalBodyLock cli_body_lock;
-    // Soft oneshot std prelude (#4178–#4219): auto-load Soft std list /
-    // string / hash / math so bare oneshot (`aura -e` / file / pipe) binds
-    // foldr, any/all, string-take/drop/pad/trim/split/replace/case,
-    // starts-with?/ends-with?/contains?, make-list, list-tail, last,
-    // hash-for-each/fold/empty?/->list, make-hash, even? — matching Soft
-    // std semantics. Prefer Soft std auto-load over aura-build soft_*.aura
-    // host fills (three-layer: Soft runtime/std, not gold host workarounds).
-    {
-        std::string prelude = build_lazy_oneshot_std_prelude(all_input);
-        if (!prelude.empty()) {
-            if (auto pre = cs.eval(prelude); !pre) {
-                std::println(std::cerr, "error: Soft oneshot std prelude failed: {}",
-                             pre.error().format_with_source(prelude));
-                return 1;
-            }
-            // Issue #4228: Soft TW std/math preds must resolve via TopCellLoad
-            // for native filter/map (IR MakeClosure stubs return empty).
-            cs.sync_soft_export_cells_for_ir();
-        }
-    }
-    // #3918 follow-up (CI cheap/medium red): evaluate the whole program in
-    // ONE cs.eval pass, matching the --load entry. Per-expression eval
-    // split pipeline state across calls and broke fiber:spawn parameter
-    // capture inside defines — issue_135_define_loop_n_acc printed 0 from
-    // stdin while the same source via --load printed 5150.
-    // Issue #4460: failed require is a located diagnostic. This loop then
-    // prints it once, runs forms after that location, and exits 1.
-    cs.set_require_failure_is_diagnostic(true);
-    // Issue #4865: force-soa lowers every top-level form before any of them
-    // runs, so a fiber/agent body captures a stale copy of a top-level value
-    // cell (set! / hash-set! / channel:send lost). Evaluate form by form under
-    // force-soa, exactly as --load does, so each define publishes its live
-    // cell before a later form's closure is lowered.
-    {
-        const char* strict_env2 = std::getenv("AURA_PIPELINE_STRICT");
-        const std::string_view strict_v2 =
-            strict_env2 ? std::string_view(strict_env2) : std::string_view{};
-        if (strict_v2 == "force-soa" || strict_v2 == "force_soa" || strict_v2 == "soa") {
-            // Issue #4865: same face as --load force-soa. A value define the
-            // IR path cannot lower (fiber:spawn / agent forms) must still run
-            // with correct semantics; block-forcing it would silently drop
-            // the body instead of executing it.
-            // Issue #4892 (string_ref_walk_4320 bench regression): Allow only for value defines
-            // (set per form below); everything else keeps ForceSoa so loops
-            // stay on the IR instead of the tree-walker.
-            aura::ast::ASTArena parse_arena;
-            auto parse_alloc = parse_arena.allocator();
-            aura::ast::StringPool parse_pool(parse_alloc);
-            aura::ast::FlatAST parse_flat(parse_alloc);
-            auto pr = aura::parser::parse_to_flat(all_input, parse_flat, parse_pool);
-            if (!pr.success || pr.root == aura::ast::NULL_NODE) {
-                std::println(std::cerr, "error: {}", pr.error.empty() ? "parse error" : pr.error);
-                return 1;
-            }
-            std::string last_out;
-            bool last_closure_4908 = false; // Issue #4908: see below
-            bool any_error = false;
-            std::vector<std::string> user_macros_4893;
-            for (auto& tf : split_top_level_forms_4865(all_input)) {
-                const std::string& form = tf.text;
-                bool uses_user_macro = false;
-                for (const auto& m : user_macros_4893) {
-                    if (form_mentions_symbol_4893(form, m)) {
-                        uses_user_macro = true;
-                        break;
-                    }
-                }
-                if (auto mname = user_macro_def_name_4893(form); !mname.empty())
-                    user_macros_4893.push_back(std::move(mname));
-                const bool value_define = is_value_define_form_4892(form) || uses_user_macro;
-                // Issue #4893: a macro / record / syntax definition registers in
-                // the evaluator's expander tables, which the IR does not lower.
-                // Under ForceSoa the walker escape is blocked and the
-                // registration was silently dropped (later forms: `cannot
-                // call` / `unbound variable`). Give every definitional form
-                // other than a plain procedure define the #4865 Allow face.
-                const bool special_define =
-                    form_head_is_definitional_4893(form) && !form.starts_with("(define ") &&
-                    !form.starts_with("(define\n") && !form.starts_with("(define\t") &&
-                    !form.starts_with("(begin");
-                aura::compiler::set_tree_walker_fallback_policy(
-                    value_define || special_define
-                        ? aura::compiler::TreeWalkerFallbackPolicy::Allow
-                        : aura::compiler::TreeWalkerFallbackPolicy::ForceSoa);
-                // Issue #4892 (string_ref_walk_4320 bench regression): a lone top-level form whose
-                // root is a primitive call — `(display ...)`, `(while ...)` —
-                // takes the #2213 registered-prim-root walker shortcut on
-                // every face, so `(while (< i n) ...)` ran in the tree-walker
-                // (the old whole-program eval had a Begin root and never hit
-                // it). Evaluate non-define list forms as a one-child Begin so
-                // they get the same sequential IR routing as before #4865.
-                // Forms that build closures or touch fibers / agents keep the
-                // exact #4865 face (their bodies must see live top-level
-                // cells; the walker shortcut is what gives them that).
-                const bool wrap_begin = !value_define && !form.empty() && form[0] == '(' &&
-                                        !form_head_is_definitional_4893(form) &&
-                                        !form_builds_closure_or_task_4892(form);
-                constexpr std::string_view kBeginPrefix4892 = "(begin ";
-                auto fr = cs.eval(positioned_form_4908(
-                    tf.line, tf.column, wrap_begin ? kBeginPrefix4892 : std::string_view{}, form,
-                    wrap_begin ? std::string_view{")"} : std::string_view{}));
-                bool loc_absolute = true; // Issue #4908: positioned eval
-                // Issue #4896: a Restricted dispatch deny that came back as
-                // the form's error VALUE (top-level `(set-car! q 5)`) was
-                // dropped here as an ordinary result: no diagnostic, rc=0.
-                // The whole-program face raises it; do the same.
-                // Issue #4899 follow-up: the same holds for EVERY error value
-                // a top-level form returns. The whole-program face turns a
-                // statement's error value into a located diagnostic (walker
-                // #4465, IR entry #4899); the per-form face only did so for
-                // effect-denied, so `(define x (car 5))` (the IR value-define
-                // bind returns the cell value) printed nothing and exited 0.
-                if (fr && aura::compiler::types::is_error(*fr) &&
-                    !aura::compiler::types::is_string(*fr)) {
-                    auto msg = cs.evaluator().soft_error_message(*fr);
-                    aura::diag::Diagnostic d{cs.evaluator().error_value_kind(*fr), std::move(msg)};
-                    // Issue #4909: a refusal without a recorded producer
-                    // still gets the form's location (it printed none).
-                    // Issue #4916: a producer inside a module keeps its file.
-                    // Issue #4908: the positioned eval made a recorded
-                    // producer location file-absolute (an earlier define's
-                    // body included), so keep it on every face.
-                    const auto el = cs.evaluator().error_location(*fr);
-                    if (recorded_loc_4908(el))
-                        d.location = *el;
-                    else {
-                        d.location = per_form_error_value_location_4899(form);
-                        loc_absolute = false;
-                    }
-                    fr = std::unexpected(std::move(d));
-                }
-                if (!fr && wrap_begin) {
-                    // Map the location back onto the unwrapped form text.
-                    auto& loc = fr.error().location;
-                    const std::uint32_t first_col = tf.column + kBeginPrefix4892.size();
-                    if (loc_absolute && loc.file_id == 0 && loc.line == tf.line &&
-                        loc.column >= first_col)
-                        loc.column -= static_cast<std::uint32_t>(kBeginPrefix4892.size());
-                }
-                if (!fr) {
-                    // Issue #4460/#4467: a failing top-level form is a located
-                    // diagnostic, not the end of the file — the whole-program
-                    // face prints it once, keeps running the forms after it,
-                    // and exits 1. Keep that contract on the form-by-form
-                    // force-soa face too (otherwise "after" is never printed
-                    // and later forms' arity diagnostics are lost).
-                    // Issue #4875: map the form-relative position back onto
-                    // the real file coordinates so the diagnostic points at
-                    // the actual line/column (e.g. after a block comment).
-                    auto& loc = fr.error().location;
-                    if (!loc_absolute && loc.valid() && loc.file_id == 0) {
-                        if (loc.line == 1 && loc.column > 0 && tf.column > 1)
-                            loc.column += tf.column - 1;
-                        loc.line += tf.line - 1;
-                    }
-                    std::string ctx(static_cast<std::size_t>(tf.line - 1), '\n');
-                    ctx.append(static_cast<std::size_t>(tf.column - 1), ' ');
-                    ctx += form;
-                    std::println(std::cerr, "error: {}", fr.error().format_with_source(ctx));
-                    print_module_backtrace_4916(loc, tf.line, tf.column, form); // #4916
-                    any_error = true;
-                    // Issue #4876: a refused user macro is fatal, as on the
-                    // whole-program face. Running on printed a cascade of
-                    // `unbound variable: <macro>` / `cannot call` for every
-                    // later use of the macro the deny never registered.
-                    if (fr.error().message.find("macro-self-evo not granted") != std::string::npos)
-                        break;
-                    if (stop_first_4909) { // Issue #4909: first error stops a file
-                        // The value of the form before the error is not the
-                        // program's value: print nothing (the default face).
-                        last_out.clear();
-                        last_closure_4908 = false;
-                        break;
-                    }
-                    continue;
-                }
-                // Mirror the whole-program face: only the LAST top-level
-                // form's value is printed, and a void last form prints
-                // nothing (an earlier non-void form must not leak out).
-                // Issue #4908: format_value warns "program returned an
-                // uncalled function" as it formats a closure, so formatting
-                // every form's value warned for an intermediate
-                // (eval-current) / lambda value the whole-program face never
-                // prints. Defer a top-level closure to the end.
-                last_closure_4908 = !is_void(*fr) && aura::compiler::types::is_closure(*fr);
-                last_out = is_void(*fr) || last_closure_4908 ? std::string{} : fmt_val(*fr, cs);
-                if (value_define || special_define)
-                    cs.sync_soft_export_cells_for_ir();
-            }
-            if (last_closure_4908) {
-                std::println(std::cerr, "⚠ program returned an uncalled function");
-                last_out = "#<procedure>";
-            }
-            if (!last_out.empty())
-                std::println("{}", last_out);
-            return (any_error || aura_displayed_error_count() > 0) ? 1 : 0;
-        }
-    }
-    if (auto r = cs.eval(all_input)) {
-        if (!is_void(*r))
-            std::println("{}", fmt_val(*r, cs));
-    } else {
-        // The single pass already ran every form before the failing one
-        // (display, set!, set-code). Re-walking those forms repeats side
-        // effects and, after set-code, rebuilds closures so later calls
-        // throw invalid closure (Issue #4355).
-        //
-        // Issue #4471: a runtime error inside a procedure is located at
-        // that body, which may be an earlier define. Resume after the
-        // top-level form that was executing (file_resume_form), not after
-        // the form that contains the diagnostic. Print the first diagnostic
-        // once against the whole program. Later forms are evaluated alone,
-        // so their locations are shifted back onto all_input. A parse
-        // failure happens before any form runs, so the historical
-        // per-expression walk still covers it (diag:parse-error-*).
-        struct FormAnchor {
-            std::size_t offset = std::string::npos;
-            std::uint32_t line = 1;
-            std::uint32_t col = 1;
-        };
-        std::vector<FormAnchor> anchors(exprs.size());
-        {
-            std::size_t search = 0;
-            for (std::size_t i = 0; i < exprs.size(); ++i) {
-                const auto pos = all_input.find(exprs[i], search);
-                if (pos == std::string::npos)
-                    break;
-                std::uint32_t ln = 1;
-                std::uint32_t cl = 1;
-                for (std::size_t k = 0; k < pos; ++k) {
-                    if (all_input[k] == '\n') {
-                        ++ln;
-                        cl = 1;
-                    } else {
-                        ++cl;
-                    }
-                }
-                anchors[i] = {pos, ln, cl};
-                search = pos + exprs[i].size();
-            }
-        }
-        auto offset_of = [&](aura::diag::SourceLocation loc) -> std::size_t {
-            if (!loc.valid())
-                return 0;
-            std::size_t off = 0;
-            std::uint32_t line = 1;
-            for (std::size_t k = 0; k < all_input.size() && line < loc.line; ++k) {
-                if (all_input[k] == '\n')
-                    ++line;
-                off = k + 1;
-            }
-            if (loc.column > 0)
-                off += static_cast<std::size_t>(loc.column - 1);
-            if (off > all_input.size())
-                off = all_input.size();
-            return off;
-        };
-        const auto& diag = r.error();
-        // Issue #4876: a capability deny during macro expansion is fatal for
-        // the program. Print it once and do not resume form-by-form: the
-        // unexpanded call would otherwise report a misleading unbound name.
-        const bool macro_deny = aura_hygiene_expand_deny_blocks_eval() != 0 ||
-                                diag.message.find("macro-self-evo") != std::string::npos;
-        if (macro_deny) {
-            std::println(std::cerr, "error: {}", diag.format_with_source(all_input));
-            err = true;
-        }
-        const bool parse_fail = diag.kind == aura::diag::ErrorKind::ParseError ||
-                                diag.kind == aura::diag::ErrorKind::UnexpectedToken ||
-                                diag.kind == aura::diag::ErrorKind::UnterminatedSExpr;
-        std::size_t resume_at = 0;
-        bool file_resume = false;
-        // Issue #4909: a runtime diagnostic without a location used to
-        // fall through to the recovery walk from form 0, so every form
-        // before the failure ran TWICE (output printed twice) and the
-        // error came out unlocated. The executing top-level form is
-        // stamped; when even that is missing, report once and stop.
-        // A location inside a required module (file_id != 0) says nothing
-        // about which entry form was running, so it cannot pick the resume
-        // point either.
-        const auto stamped_form = cs.evaluator().file_resume_form();
-        const bool entry_loc = diag.location.valid() && diag.location.file_id == 0;
-        // Issue #4909: the whole-file eval may run on the tree-walker (a
-        // sibling define is not known at gate time), whose C-stack guard
-        // stops non-tail recursion at 512 frames. That is a limit of the
-        // walker, not of the program: the per-form path runs the same code
-        // on the IR (heap frames, AURA_IR_MAX_CALL_DEPTH). This used to be
-        // recovered by silently re-running every form (output twice). Now:
-        // re-bind the earlier procedure defines (no side effects) on the
-        // per-form path and resume AT the failing form, reporting nothing.
-        bool walker_depth_resume = false;
-        if (!parse_fail && !macro_deny && diag.kind == aura::diag::ErrorKind::InternalError &&
-            diag.message.starts_with("recursion depth exceeded") &&
-            diag.message.find("fiber=") != std::string::npos &&
-            (entry_loc || stamped_form.valid())) {
-            const std::size_t err_off =
-                offset_of(stamped_form.valid() ? stamped_form : diag.location);
-            std::size_t failing = exprs.size();
-            for (std::size_t i = 0; i < exprs.size(); ++i) {
-                if (anchors[i].offset == std::string::npos)
-                    break;
-                if (anchors[i].offset <= err_off)
-                    failing = i;
-                else
-                    break;
-            }
-            if (failing < exprs.size()) {
-                const auto is_proc_define = [](std::string_view f) {
-                    const auto s = f.find_first_not_of(" \t\r\n");
-                    if (s == std::string_view::npos)
-                        return false;
-                    f.remove_prefix(s);
-                    if (f.starts_with("(define ("))
-                        return true;
-                    if (!f.starts_with("(define "))
-                        return false;
-                    f.remove_prefix(8);
-                    const auto e = f.find_first_of(" \t\r\n()");
-                    if (e == std::string_view::npos)
-                        return false;
-                    f.remove_prefix(e);
-                    const auto b = f.find_first_not_of(" \t\r\n");
-                    return b != std::string_view::npos && f.substr(b).starts_with("(lambda ");
-                };
-                for (std::size_t i = 0; i < failing; ++i) {
-                    if (is_proc_define(exprs[i]))
-                        (void)cs.eval(exprs[i]);
-                }
-                resume_at = failing;
-                walker_depth_resume = true;
-            }
-        }
-        if (!walker_depth_resume && !parse_fail && !macro_deny && !entry_loc &&
-            !stamped_form.valid()) {
-            std::println(std::cerr, "error: {}", diag.format_with_source(all_input));
-            err = true;
-            resume_at = exprs.size();
-        }
-        if (!walker_depth_resume && !parse_fail && !macro_deny &&
-            (entry_loc || stamped_form.valid())) {
-            auto resume_loc = diag.location;
-            const auto stamped = stamped_form;
-            if (stamped.valid())
-                resume_loc = stamped;
-            const std::size_t err_off = offset_of(resume_loc);
-            for (std::size_t i = 0; i < exprs.size(); ++i) {
-                if (anchors[i].offset == std::string::npos)
-                    break;
-                if (anchors[i].offset <= err_off)
-                    resume_at = i + 1;
-                else
-                    break;
-            }
-            auto shown = diag;
-            if (!shown.location.valid())
-                shown.location = stamped_form; // Issue #4909: never unlocated
-            std::println(std::cerr, "error: {}", shown.format_with_source(all_input));
-            if (resume_at > 0 && resume_at <= exprs.size() &&
-                anchors[resume_at - 1].offset != std::string::npos) {
-                const auto& a = anchors[resume_at - 1];
-                print_module_backtrace_4916(
-                    shown.location, a.line, a.col,
-                    std::string_view(all_input).substr(a.offset)); // Issue #4916
-            }
-            err = true;
-            file_resume = true;
-            if (stop_first_4909) // Issue #4909: first error stops a file
-                resume_at = exprs.size();
-        }
-        for (std::size_t i = resume_at; !macro_deny && i < exprs.size(); ++i) {
-            auto& e = exprs[i];
-            auto s = e.find_first_not_of(" \t\r\n");
-            if (s == std::string::npos)
-                continue;
-            e = e.substr(s);
-            auto r2 = cs.eval(e);
-            if (!r2) {
-                // Issue #4875: shift a form-relative location onto all_input
-                // for parse errors too (the recovery walk runs after a parse
-                // failure), not only for file_resume runtime errors.
-                if (anchors[i].offset != std::string::npos && r2.error().location.valid()) {
-                    auto d = r2.error();
-                    // Line 1 of a trimmed form is shifted by the form's
-                    // start column. Later lines keep their own columns.
-                    // Issue #4916: a module location is already in that
-                    // file's coordinates.
-                    if (d.location.file_id == 0) {
-                        if (d.location.line == 1 && d.location.column > 0 && anchors[i].col > 0)
-                            d.location.column += anchors[i].col - 1;
-                        d.location.line += anchors[i].line - 1;
-                    }
-                    std::println(std::cerr, "error: {}", d.format_with_source(all_input));
-                    print_module_backtrace_4916(d.location, anchors[i].line, anchors[i].col, e);
-                } else {
-                    std::println(std::cerr, "error: {}", r2.error().format_with_source(e));
-                }
-                err = true;
-                if (stop_first_4909) // Issue #4909: first error stops a file
-                    break;
-                // Issue #4875: a reader/parse error means the source at this
-                // point could not be read, so later-looking forms are not a
-                // trustworthy suffix (a bare '#' must stop the file). Runtime
-                // errors keep the #4460/#4467 resume contract.
-                const auto kind = r2.error().kind;
-                if (kind == aura::diag::ErrorKind::ParseError ||
-                    kind == aura::diag::ErrorKind::UnexpectedToken ||
-                    kind == aura::diag::ErrorKind::UnterminatedSExpr)
-                    break;
-            } else if (i + 1 == exprs.size() && !is_void(*r2))
-                std::println("{}", fmt_val(*r2, cs));
-        }
-    }
-    // Clear messaging bridge to prevent dangling pointer access during
-    // static destruction (the CompilerService captures 'this' in lambdas
-    // and is about to go out of scope).
-    aura::messaging::g_current_compiler_service = nullptr;
-    aura::messaging::g_messaging_bridge.send = nullptr;
-    aura::messaging::g_messaging_bridge.recv = nullptr;
-    aura::messaging::g_messaging_bridge.my_id = nullptr;
-    aura::messaging::g_mailbox_read = nullptr;
-    aura::messaging::g_mailbox_last_sender = nullptr;
-    aura::messaging::g_mailbox_count = nullptr;
-    aura::messaging::g_session_id = nullptr;
-    aura::messaging::g_session_exists = nullptr;
-    aura::messaging::g_reset_arena = nullptr;
-    aura::messaging::g_http_post_async = nullptr;
-    aura::messaging::g_fiber_spawn = {}; // std::function
-    aura::messaging::g_fiber_yield = nullptr;
-    aura::messaging::g_fiber_block = nullptr;
-    aura::messaging::g_session_create = nullptr;
-
-    // Issue #4497: an error consumed by display/write also fails the run.
-    return (err || aura_displayed_error_count() > 0) ? 1 : 0;
+    return run_oneshot_or_file(argc, argv);
 }
-
 // Issue #4936 (Core Guidelines E.12 / bugprone-exception-escape): an exception
 // that escapes main calls std::terminate with no message. Report it and exit
 // with EX_SOFTWARE (70) instead.
