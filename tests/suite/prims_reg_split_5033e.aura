@@ -1,0 +1,63 @@
+;; Issue #5033: register_mutate_primitives is peeled into per-responsibility
+;; RegSplitParts parts (pins/fingerprint, the typed mutation surface, the
+;; structural surfaces, the rebind/atomic-batch paths and the stats dashboards).
+;; Primitive names, registration order, guard scope and per-prim effects must not
+;; move.
+(require "std/io" all:)
+
+(define fails 0)
+(define (check pred msg)
+  (if pred
+      #t
+      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\\n" msg)))))
+
+;; ── fingerprint + stable-ref pin surface ─────────────────────────────
+(check (integer? (pin-table-size)) "pin-table-size")
+(check (integer? (mutate:set-agent-fingerprint 0)) "mutate:set-agent-fingerprint")
+(check (integer? (pin-table-size)) "pin-table-size after fingerprint")
+
+;; ── typed mutation surface (rebind / set-body / tweak-literal) ───────
+(set-code "(define m5033e 1)")
+(eval-current)
+(set-code "(define (f5033e x) (+ x 1))")
+(eval-current)
+(check (= (f5033e 1) 2) "f5033e before rebind")
+(check (eq? #t (mutate:rebind "f5033e" "(lambda (x) (+ x 2))" "5033e"))
+       "mutate:rebind")
+(eval-current)
+(check (= (f5033e 1) 3) "f5033e after rebind")
+(check (eq? #t (mutate:set-body "f5033e" "(+ x 7)")) "mutate:set-body")
+(eval-current)
+(check (= (f5033e 1) 8) "f5033e after set-body")
+
+;; error paths stay error paths (no metadata / bad node)
+(check (pair? (mutate:tweak-literal 999 1)) "mutate:tweak-literal bad node")
+(check (pair? (mutate:set-body "nope5033e" "(+ 1 2)")) "mutate:set-body missing")
+(check (pair? (mutate:replace-type 999 "int")) "mutate:replace-type bad node")
+
+;; ── node surface prims reachable (registration only) ────────────────
+(check (pair? (mutate:remove-node 999)) "mutate:remove-node bad node")
+(check (pair? (mutate:insert-child 999 "(+ 1 2)")) "mutate:insert-child bad node")
+
+;; ── stats dashboards moved with the registrations ───────────────────
+(define (stats-ok name)
+  (let ((v (stats:get name)))
+    (check (hash? v) name)))
+;; these three take the policy knob as their argument
+(check (string? (stats:get "query:stale-ref-policy" "soft")) "query:stale-ref-policy")
+(check (integer? (stats:get "query:stale-ref-stats" "plain")) "query:stale-ref-stats")
+(check (string? (stats:get "query:pattern-index-policy" "off")) "query:pattern-index-policy")
+(stats-ok "query:typed-mutation-audit-trail")
+(stats-ok "query:type-propagation-invariant-stats")
+(stats-ok "query:test-strategy-stats")
+(stats-ok "query:envframe-resolve-distinction-stats")
+(stats-ok "query:envframe-truncate-epoch-stats")
+(stats-ok "query:closure-view-lifetime-stats")
+(stats-ok "query:architectural-simplification-stats")
+(stats-ok "query:hot-update-registry-stats")
+(stats-ok "query:reload-recovery-playbook")
+(stats-ok "query:aot-hotupdate-audit-stats")
+
+(if (= fails 0)
+    (display "prims reg split 5033e ok\\n")
+    (error "prims reg split 5033e FAILED" fails))
