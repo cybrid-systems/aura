@@ -51,4 +51,12 @@ struct RegSplitParts {
                                               std::vector<EvalValue>& error_values,
                                               std::atomic<std::uint64_t>* primitive_error_counter,
                                               Evaluator& ev);
+    static void register_char_core_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_char_encoding_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_f64vector_core_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_f64vector_bytes_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_native_view_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_view_consistent_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_f64vector_bulk_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_handle_primitives(PrimRegistrar add, Evaluator& ev);
 };

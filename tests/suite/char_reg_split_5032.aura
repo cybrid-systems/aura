@@ -1,0 +1,16 @@
+;; Issue #5032: char/encoding/f64view registrations moved into RegSplitParts.
+;; The f64vector and native-view suites (f64vector_4503, native_views_handles_4556)
+;; cover the rest of the file.
+(define fails 0)
+(define (check pred msg)
+  (if pred #t (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+(check (= 65 (char->integer 65)) "char->integer")
+(check (equal? (list 65 66) (string->list "AB")) "string->list")
+(check (equal? "AB" (list->string (list 65 66))) "list->string")
+(check (equal? "aGk=" (%base64-encode "hi")) "base64 encode")
+(check (equal? "hi" (%base64-decode "aGk=")) "base64 decode")
+(check (equal? "6869" (%hex-encode "hi")) "hex encode")
+(check (equal? "hi" (%hex-decode "6869")) "hex decode")
+(if (> fails 0)
+    (error "char split regression")
+    (begin (display "char split ok") (newline)))
