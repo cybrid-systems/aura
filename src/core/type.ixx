@@ -252,7 +252,7 @@ public:
     static constexpr size_t kPredefinedCount = 9;
 
     // Lookup type by name (returns invalid TypeId if not found)
-    TypeId lookup_type(const std::string& name) const;
+    TypeId lookup_type(std::string_view name) const;
 
     // Issue #385: poly metrics pointers. 3
     // std::atomic<uint64_t>* addresses plumbed

@@ -845,14 +845,14 @@ void run_serve_async(int num_workers) {
 
     // Route by JSON "session" field (json_field accepts "k":"v" and "k": "v").
     // Fragile find("\"session\":\"name\"") missed spaced JSON → default stole lines.
-    auto line_for_session = [](const std::string& line, const std::string& sid) -> bool {
+    auto line_for_session = [](std::string_view line, std::string_view sid) -> bool {
         auto sess = json_field(line, "session");
         if (sid == "default")
             return sess.empty() || sess == "default";
         return sess == sid;
     };
 
-    auto take_session_line = [&stdin_lines, &line_for_session](const std::string& sid) {
+    auto take_session_line = [&stdin_lines, &line_for_session](std::string_view sid) {
         for (auto it = stdin_lines.begin(); it != stdin_lines.end(); ++it) {
             if (!line_for_session(*it, sid))
                 continue;

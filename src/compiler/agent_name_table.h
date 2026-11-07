@@ -150,7 +150,7 @@ struct AgentNameTable {
     // can hand the backlog to the replacement. nullptr when no slot / no
     // mailbox.
     std::shared_ptr<aura::serve::mf_mailbox::MultiFiberMailbox>
-    mailbox_of(const std::string& name) const {
+    mailbox_of(std::string_view name) const {
         std::scoped_lock<std::mutex> lock(impl_->mu_);
         auto it = impl_->agents_.find(name);
         if (it == impl_->agents_.end())
@@ -158,7 +158,7 @@ struct AgentNameTable {
         return it->second.mailbox;
     }
 
-    aura::orch::AgentHandle* find(const std::string& name) {
+    aura::orch::AgentHandle* find(std::string_view name) {
         std::scoped_lock<std::mutex> lock(impl_->mu_);
         auto it = impl_->agents_.find(name);
         if (it == impl_->agents_.end())
@@ -239,7 +239,7 @@ struct AgentNameTable {
     // kept for #4785 handover retires its Fiber in place — the table
     // mutex is not in the OwnedFibers rank chain and nothing under those
     // locks reaches back into this table.
-    bool retire_settled(const std::string& name) {
+    bool retire_settled(std::string_view name) {
         aura::orch::AgentHandle retired;
         {
             std::scoped_lock<std::mutex> lock(impl_->mu_);

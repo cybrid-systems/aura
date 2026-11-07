@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -96,12 +97,21 @@ namespace detail {
     // Extract a top-level string field from a flat JSON object.
     // Returns empty string if the field is missing.
     inline std::string json_field(std::string_view json, std::string_view field) {
-        // Try with space after colon, then without
-        std::string spaced = "\"" + std::string(field) + "\": \"";
+        // Try with space after colon, then without. The key is copied once;
+        // field itself is not stored.
+        auto make_key = [](std::string_view field, std::string_view tail) {
+            std::string key;
+            key.reserve(field.size() + tail.size() + 1);
+            key.push_back('"');
+            key.append(field);
+            key.append(tail);
+            return key;
+        };
+        const std::string spaced = make_key(field, "\": \"");
         auto pos = json.find(spaced);
         std::size_t key_len = spaced.size();
         if (pos == std::string_view::npos) {
-            std::string tight = "\"" + std::string(field) + "\":\"";
+            const std::string tight = make_key(field, "\":\"");
             pos = json.find(tight);
             key_len = tight.size();
         }
@@ -412,7 +422,7 @@ namespace detail {
     // result). An empty form list returns std::nullopt — the caller
     // reports "no complete form".
     template <typename EvalOne>
-    auto eval_top_level_forms(const std::vector<std::string>& forms, EvalOne&& eval_one)
+    auto eval_top_level_forms(std::span<const std::string> forms, EvalOne&& eval_one)
         -> std::optional<std::invoke_result_t<EvalOne, std::string_view>> {
         using R = std::invoke_result_t<EvalOne, std::string_view>;
         std::optional<R> last;

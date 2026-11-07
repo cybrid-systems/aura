@@ -13,6 +13,7 @@
 #include <cerrno>
 #include <cstring>
 #include <string>
+#include <string_view>
 #include <thread>
 
 namespace aura::serve::http {
@@ -23,12 +24,24 @@ namespace {
     std::atomic<bool> g_default_ready{true};
     HealthConfig g_cfg{};
 
-    std::string http_response(int code, const char* status, const std::string& body,
+    std::string http_response(int code, const char* status, std::string_view body,
                               const char* content_type) {
-        return "HTTP/1.1 " + std::to_string(code) + " " + status + "\r\n" +
-               "Content-Type: " + content_type + "\r\n" +
-               "Content-Length: " + std::to_string(body.size()) + "\r\n" +
-               "Connection: close\r\n\r\n" + body;
+        const std::string code_text = std::to_string(code);
+        const std::string len_text = std::to_string(body.size());
+        std::string out;
+        out.reserve(48 + code_text.size() + std::char_traits<char>::length(status) +
+                    std::char_traits<char>::length(content_type) + len_text.size() + body.size());
+        out.append("HTTP/1.1 ");
+        out.append(code_text);
+        out.push_back(' ');
+        out.append(status);
+        out.append("\r\nContent-Type: ");
+        out.append(content_type);
+        out.append("\r\nContent-Length: ");
+        out.append(len_text);
+        out.append("\r\nConnection: close\r\n\r\n");
+        out.append(body);
+        return out;
     }
 
     // Issue #4828: bound every client socket operation so a slow or
@@ -68,13 +81,14 @@ namespace {
             return;
         }
         buf[static_cast<std::size_t>(n)] = '\0';
-        std::string req(buf.data());
+        const std::string_view req(buf.data());
         const auto line_end = req.find("\r\n");
-        const std::string line = line_end == std::string::npos ? req : req.substr(0, line_end);
+        const std::string_view line =
+            line_end == std::string_view::npos ? req : req.substr(0, line_end);
         const auto sp1 = line.find(' ');
-        const auto sp2 = line.find(' ', sp1 == std::string::npos ? 0 : sp1 + 1);
-        std::string path = "/";
-        if (sp1 != std::string::npos && sp2 != std::string::npos && sp2 > sp1 + 1)
+        const auto sp2 = line.find(' ', sp1 == std::string_view::npos ? 0 : sp1 + 1);
+        std::string_view path = "/";
+        if (sp1 != std::string_view::npos && sp2 != std::string_view::npos && sp2 > sp1 + 1)
             path = line.substr(sp1 + 1, sp2 - sp1 - 1);
 
         std::string resp;

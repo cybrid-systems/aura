@@ -11144,7 +11144,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // lookup reads that symid entry, including a non-cell
                     // copy. set! must write the same entry.
                     if (auto* pool = const_cast<aura::ast::StringPool*>(eval_env.pool())) {
-                        const auto sid = pool->intern(std::string(name));
+                        const auto sid = pool->intern(name);
                         auto write_syms = [&](Env& e) -> bool {
                             auto& syms = e.bindings_symid_mut();
                             for (auto it = syms.rbegin(); it != syms.rend(); ++it) {
@@ -11173,10 +11173,10 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                     // named-let capture keeps the cell here after set-car!
                     // bumps defuse. Write that entry, cell or value.
                     if (auto* owner = eval_env.owner()) {
-                        const auto sid = eval_env.pool()
-                                             ? const_cast<aura::ast::StringPool*>(eval_env.pool())
-                                                   ->intern(std::string(name))
-                                             : aura::ast::INVALID_SYM;
+                        const auto sid =
+                            eval_env.pool()
+                                ? const_cast<aura::ast::StringPool*>(eval_env.pool())->intern(name)
+                                : aura::ast::INVALID_SYM;
                         auto write_frame = [&](EnvFrame& fr) -> bool {
                             for (auto& b : fr.bindings_) {
                                 if (b.first != name)

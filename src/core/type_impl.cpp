@@ -929,7 +929,7 @@ bool TypeRegistry::is_subtype_impl(TypeId sub, TypeId sup, int depth) {
     }
 }
 
-TypeId TypeRegistry::lookup_type(const std::string& name) const {
+TypeId TypeRegistry::lookup_type(std::string_view name) const {
     // Issue #4404: shared lock so compact's clear/rehash is not a race.
     // A generation mismatch is an empty TypeId, not the reused entry.
     std::shared_lock lock(type_registry_mutex_);
