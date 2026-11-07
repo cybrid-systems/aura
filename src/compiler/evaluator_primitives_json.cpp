@@ -466,8 +466,7 @@ EvalValue JsonParser::parse_object() {
     // stamp are one critical section now.
     std::size_t hidx = 0;
     {
-        std::scoped_lock hlock(ev.hash_tables_mutex());
-        std::scoped_lock slock(ev.alloc_storage_lock_);
+        std::scoped_lock hlock(ev.hash_tables_mutex(), ev.alloc_storage_lock_);
         hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         // Issue #4110: stamp the owner parallel to the table (SSOT helper;

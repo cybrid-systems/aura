@@ -9,6 +9,7 @@
 (check (= 42 (json-parse "42")) "parse int")
 (check (equal? (list 1 2 3) (json-parse "[1,2,3]")) "parse array")
 (check (equal? #t (json-parse "true")) "parse true")
+(check (= 1 (hash-ref (json-parse "{\"a\":1}") "a")) "parse object")
 (check (equal? "[1,2]" (json-encode (list 1 2))) "encode list")
 (check (equal? "b" (json-get-string "{\"a\":\"b\"}" "a")) "get-string")
 (if (> fails 0)
