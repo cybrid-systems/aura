@@ -6999,6 +6999,748 @@ EvalValue RegSplitParts::mutate_resolve_node_arg(Evaluator& ev, const MakeErrorV
     *ok = false;
     return mev("bad-arg", std::string("usage: (") + op + " node-id|stable-ref ...)");
 }
+// --- Issue #5033: mutate:atomic-batch registration phases --------------------
+// The atomic-batch registration body outgrew the 300-line ceiling.
+// Each phase below is one responsibility; the registration body keeps the
+// Guard, the sub-op loop and the commit hand-off so the ordering stays
+//   parse -> tenant gate -> snapshot -> Guard -> hygiene audit -> identity
+//   walk -> sub-ops -> commit/rollback
+// unchanged.
+
+using AtomicBatchOpFn = EvalResult (Evaluator::*)(std::span<const types::EvalValue>);
+
+// Issue #1899: one lockless dispatch row. Issue #3301: target_arg is the index
+// of the primary target node-id arg in the sub-op args; -1 = name/string-based
+// (no node-id arg - covered by the helper's own gate). New helpers MUST set
+// this so the batch-level audit backstops them even if they forget a gate.
+// Issue #3815: secondary MacroIntroduced spine arg (move-node new_parent at
+// index 1). -1 = none. Soft/Off: walk still gated by prod_sandbox; per-arg
+// is_macro_introduced is O(1).
+struct AtomicBatchOpEntry {
+    const char* name;
+    AtomicBatchOpFn fn;
+    int target_arg;
+    int parent_arg = -1;
+};
+
+// Issue #5033: parsed atomic-batch kwargs plus the ops list.
+struct AtomicBatchArgs {
+    bool want_snapshot = false;
+    std::uint64_t tenant_target = 0;
+    bool have_tenant_target = false;
+    bool batch_allow_macro = false;
+    bool sync_query_index = true;
+    EvalValue op_list = make_void();
+};
+
+// Issue #5033: batch-open rollback context (#2796 / #4361 / #4392).
+struct AtomicBatchAbortCtx {
+    Evaluator& ev;
+    std::uint64_t initial_log_size = 0;
+    bool* rebind_failed = nullptr;
+};
+
+// Issue #4392: sub-op records keep a unique mutation_id; the allow/deny
+// audit mid joins through composite_transaction_id only. Armed after the
+// identity gate so a pre-write deny does not tag a later mutation, and only
+// when the production peek is non-zero.
+struct AtomicBatchSeCompositeJoin {
+    aura::ast::FlatAST* flat = nullptr;
+    std::uint64_t prev = 0;
+    bool armed = false;
+    AtomicBatchSeCompositeJoin(aura::ast::FlatAST* f, bool production)
+        : flat(f) {
+        if (!production || flat == nullptr)
+            return;
+        const auto mid = aura::compiler::typed_audit::peek_audit_mutation_id(0);
+        if (mid == 0)
+            return;
+        prev = flat->mutation_composite_transaction_id();
+        flat->set_mutation_composite_transaction_id(mid);
+        armed = true;
+    }
+    ~AtomicBatchSeCompositeJoin() {
+        if (armed && flat != nullptr)
+            flat->set_mutation_composite_transaction_id(prev);
+    }
+    AtomicBatchSeCompositeJoin(const AtomicBatchSeCompositeJoin&) = delete;
+    AtomicBatchSeCompositeJoin& operator=(const AtomicBatchSeCompositeJoin&) = delete;
+    AtomicBatchSeCompositeJoin(AtomicBatchSeCompositeJoin&&) = delete;
+    AtomicBatchSeCompositeJoin& operator=(AtomicBatchSeCompositeJoin&&) = delete;
+};
+
+std::string RegSplitParts::mutate_atomic_batch_safe_str(Evaluator& ev, const EvalValue& v,
+                                                        std::string fallback) {
+    if (!is_string(v))
+        return fallback;
+    const auto i = as_string_idx(v);
+    if (i >= ev.string_heap_.size())
+        return fallback;
+    return ev.string_at(i);
+}
+
+void RegSplitParts::mutate_atomic_batch_restore_defines(Evaluator& ev) {
+    ev.rebind_workspace_defines_after_rollback();
+    ev.defines_bound_flat_ = ev.workspace_flat_;
+}
+
+RegSplitParts::AtomicBatchRebindRestore::~AtomicBatchRebindRestore() {
+    if (failed)
+        mutate_atomic_batch_restore_defines(ev);
+}
+
+std::span<const AtomicBatchOpEntry> RegSplitParts::mutate_atomic_batch_ops() {
+    // Issue #1899: single source of truth for supported batch ops.
+    static constexpr AtomicBatchOpEntry kAtomicBatchLocklessOps[] = {
+        {"mutate:rebind", &Evaluator::eval_flat_apply_mutate_rebind, -1},
+        {"mutate:replace-value", &Evaluator::eval_flat_apply_mutate_replace_value, 0},
+        {"mutate:tweak-literal", &Evaluator::eval_flat_apply_mutate_tweak_literal, 0},
+        {"mutate:remove-node", &Evaluator::eval_flat_apply_mutate_remove_node, 0},
+        {"mutate:insert-child", &Evaluator::eval_flat_apply_mutate_insert_child, 0},
+        {"mutate:set-body", &Evaluator::eval_flat_apply_mutate_set_body, -1},
+        {"mutate:replace-pattern", &Evaluator::eval_flat_apply_mutate_replace_pattern, -1},
+        {"mutate:replace-subtree", &Evaluator::eval_flat_apply_mutate_replace_subtree, 0},
+        {"mutate:splice", &Evaluator::eval_flat_apply_mutate_splice, 0},
+        {"mutate:wrap", &Evaluator::eval_flat_apply_mutate_wrap, 0},
+        {"mutate:rename-symbol", &Evaluator::eval_flat_apply_mutate_rename_symbol, -1},
+        {"mutate:move-node", &Evaluator::eval_flat_apply_mutate_move_node, 0, 1},
+        {"mutate:inline-call", &Evaluator::eval_flat_apply_mutate_inline_call, 0},
+    };
+    static constexpr std::size_t kAtomicBatchLocklessOpCount =
+        sizeof(kAtomicBatchLocklessOps) / sizeof(kAtomicBatchLocklessOps[0]);
+    static_assert(kAtomicBatchLocklessOpCount == 13, "atomic-batch lockless table size drift");
+    return kAtomicBatchLocklessOps;
+}
+
+std::vector<EvalValue> RegSplitParts::mutate_atomic_batch_list_to_vec(Evaluator& ev,
+                                                                      EvalValue list) {
+    std::vector<EvalValue> out;
+    while (is_pair(list)) {
+        auto pidx = as_pair_idx(list);
+        if (pidx >= ev.pairs_.size())
+            break;
+        out.push_back(ev.pairs_[pidx].car);
+        list = ev.pairs_[pidx].cdr;
+    }
+    return out;
+}
+
+EvalValue RegSplitParts::mutate_atomic_batch_pair_car(Evaluator& ev, EvalValue v) {
+    return ev.pairs_[as_pair_idx(v)].car;
+}
+
+EvalValue RegSplitParts::mutate_atomic_batch_pair_cdr(Evaluator& ev, EvalValue v) {
+    return ev.pairs_[as_pair_idx(v)].cdr;
+}
+
+// Issue #737: parse kwargs before the Guard (ast:snapshot also takes
+// workspace_mtx_; a nested acquire deadlocks).
+std::optional<EvalValue> RegSplitParts::mutate_atomic_batch_parse_args(Evaluator& ev,
+                                                                       const MakeErrorVal& mev,
+                                                                       std::span<const EvalValue> a,
+                                                                       AtomicBatchArgs& args) {
+    // Issue #737: parse args + optional pre-guard snapshot
+    // BEFORE acquiring MutationBoundaryGuard (ast:snapshot
+    // also takes workspace_mtx_; nested acquire deadlocks).
+    if (a.size() < 1) {
+        return mev("bad-arg", "usage: (mutate:atomic-batch (list ...) [\"summary\"] "
+                              "[:snapshot? #t] [:tenant-target N] "
+                              "[:sync-query-index? #t|#f] [:allow-macro? #t|#f])");
+    }
+    bool want_snapshot = false;
+    std::uint64_t tenant_target = 0;
+    bool have_tenant_target = false;
+    // Issue #3301: batch-form MacroIntroduced opt-out. #t skips the
+    // batch-level audit for the whole batch (per-sub-op :allow-macro?
+    // and the global flag still apply independently). Default #f.
+    bool batch_allow_macro = false;
+    // Issue #1913: default true — commit always refreshes index.
+    bool sync_query_index = ev.atomic_batch_sync_query_index_default();
+    for (std::size_t ai = 1; ai < a.size(); ++ai) {
+        if (is_keyword(a[ai])) {
+            auto kidx = as_keyword_idx(a[ai]);
+            if (kidx >= ev.keyword_table_.size())
+                return mev("bad-arg", "unknown keyword");
+            const auto& kw = ev.keyword_table_[kidx];
+            if (kw == ":snapshot?") {
+                want_snapshot = true;
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        want_snapshot = as_bool(a[ai + 1]);
+                    else
+                        want_snapshot = (as_int(a[ai + 1]) != 0);
+                    ++ai;
+                }
+            } else if (kw == ":tenant-target") {
+                // Issue #1878: multi-tenant batch destination.
+                if (ai + 1 >= a.size() || !is_int(a[ai + 1]))
+                    return mev("bad-arg", ":tenant-target requires an integer tenant id");
+                tenant_target = static_cast<std::uint64_t>(as_int(a[ai + 1]));
+                have_tenant_target = true;
+                ++ai;
+            } else if (kw == ":allow-macro?") {
+                // Issue #3301: batch-level opt-out — same parse shape as
+                // the per-prim :allow-macro? kwarg (default #f).
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        batch_allow_macro = as_bool(a[ai + 1]);
+                    else
+                        batch_allow_macro = (as_int(a[ai + 1]) != 0);
+                    ++ai;
+                } else {
+                    batch_allow_macro = true;
+                }
+            } else if (kw == ":sync-query-index?") {
+                // Issue #1913: opt out of post-commit index sync.
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        sync_query_index = as_bool(a[ai + 1]);
+                    else
+                        sync_query_index = (as_int(a[ai + 1]) != 0);
+                    ++ai;
+                } else {
+                    sync_query_index = true;
+                }
+            } else {
+                return mev("bad-arg", std::string("unknown mutate:atomic-batch keyword: ") + kw);
+            }
+        }
+    }
+    EvalValue op_list = a[0];
+    if (!is_pair(op_list) && !is_void(op_list))
+        return mev("bad-arg", "ops list must be a list (use (list) for empty)");
+    if (!ev.workspace_flat_)
+        return mev("no-workspace", "no FlatAST available");
+    args.want_snapshot = want_snapshot;
+    args.tenant_target = tenant_target;
+    args.have_tenant_target = have_tenant_target;
+    args.batch_allow_macro = batch_allow_macro;
+    args.sync_query_index = sync_query_index;
+    args.op_list = op_list;
+    return std::nullopt;
+}
+
+// Issue #1878: multi-tenant isolation at the batch root, before the Guard.
+std::optional<EvalValue> RegSplitParts::mutate_atomic_batch_check_isolation(
+    Evaluator& ev, const MakeErrorVal& mev, bool have_tenant_target, std::uint64_t tenant_target) {
+    // Issue #1878: multi-tenant isolation at batch root (before Guard).
+    // Under Strict sandbox (or when :tenant-target is set), refuse
+    // cross-tenant batches without a WorkspaceIsolationPolicy grant.
+    // This runs before snapshot/Guard so denials never half-open a batch.
+    {
+        using aura::compiler::security::kEffectMutate;
+        // Strict = effect sandbox mode 2 or process-wide sandbox Strict.
+        const bool strict = (ev.effect_sandbox_mode() == 2) || aura::core::sandbox::is_strict();
+        const auto self = ev.capability_tenant_id();
+        const auto target = have_tenant_target ? tenant_target : self;
+        // Always re-check with the batch-specific op name for audit trail.
+        if (strict || have_tenant_target) {
+            if (!ev.check_workspace_isolation(target, /*ref_tenant=*/0, kEffectMutate,
+                                              "mutate:atomic-batch")) {
+                ev.bump_atomic_batch_tenant_isolation_denial();
+                return mev("tenant-isolation-denied",
+                           "cross-tenant mutate:atomic-batch denied by "
+                           "WorkspaceIsolationPolicy under Strict (#1878)");
+            }
+        }
+        // Provenance: foreign last-hygiene tenant under Strict → deny.
+        if (strict && self != 0) {
+            const auto& hs = aura::core::provenance::g_provenance_tracker().last_hygiene;
+            if (hs.tenant_id != 0 && hs.tenant_id != self) {
+                if (!ev.check_workspace_isolation(self, hs.tenant_id, kEffectMutate,
+                                                  "mutate:atomic-batch-ref")) {
+                    ev.bump_atomic_batch_tenant_isolation_denial();
+                    return mev("tenant-isolation-denied",
+                               "atomic-batch blocked: MacroIntroduced hygiene stamp "
+                               "belongs to a foreign tenant (#1878)");
+                }
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+// Issue #737 / #820: pre-batch snapshot capture (before the Guard).
+std::int64_t RegSplitParts::mutate_atomic_batch_capture_snapshot(Evaluator& ev,
+                                                                 bool want_snapshot) {
+    std::int64_t batch_snap_id = -1;
+    if (want_snapshot) {
+        if (auto snap_fn = ev.primitives_.lookup("ast:snapshot")) {
+            auto snap_name_idx = ev.string_heap_.mint("atomic-batch-pre");
+            auto snap_result = (*snap_fn)({make_string(snap_name_idx)});
+            if (is_int(snap_result)) {
+                batch_snap_id = as_int(snap_result);
+                ev.record_atomic_batch_snapshot_capture(batch_snap_id);
+                ev.bump_mutate_batch_e2e_pinned_snapshot(); // Issue #820
+            }
+        }
+    }
+    return batch_snap_id;
+}
+
+// Issue #2796 / #2559: shared abort cleanup for all batch-fail paths.
+void RegSplitParts::mutate_atomic_batch_abort_workspace(const AtomicBatchAbortCtx& c) {
+    Evaluator& ev = c.ev;
+    // initial_log_size is the log length at batch open, not a
+    // mutation id. rollback_since compares mutation_id, so a
+    // pre-write deny inverted earlier committed removes whose
+    // ids are larger than that length (#4392).
+    ev.workspace_flat_->rollback_to_size(static_cast<std::size_t>(c.initial_log_size));
+    ev.workspace_flat_->rollback_atomic_batch();
+    ev.sync_atomic_batch_metadata_metrics();                  // #1893
+    ev.workspace_flat_->rebuild_parent_links_from_children(); // #1502
+    *c.rebind_failed = true;                                  // #4361
+    // #2796: no linear_post_mutate_enforce_all() on abort path
+    // (#2559 inventory: enforce remains on non-abort mutate paths)
+}
+
+std::optional<EvalValue> RegSplitParts::mutate_atomic_batch_pre_audit(
+    Evaluator& ev, const MakeErrorVal& mev, EvalValue op_list, bool batch_allow_macro,
+    std::int64_t batch_snap_id, const AtomicBatchAbortCtx& aborts, bool& guard_ok) {
+    auto abort_batch_workspace = [&]() { mutate_atomic_batch_abort_workspace(aborts); };
+    const std::span<const AtomicBatchOpEntry> ops = mutate_atomic_batch_ops();
+    // ── Issue #3301: batch-level MacroIntroduced fail-closed audit ──
+    // The dispatcher must not depend on every current AND future
+    // lockless helper carrying its own hygiene gate: a helper appended
+    // to kAtomicBatchLocklessOps without the gate would inherit a
+    // default-deny hole under production defaults (Restricted + Strict).
+    // Walk each sub-op's primary target node-id arg ONCE, before any
+    // sub-op runs, and deny the whole batch (atomic rollback) if a
+    // target is MacroIntroduced and no opt-out applies:
+    //   - global (hygiene:set-allow-macro-mutate! #t)
+    //   - batch form :allow-macro? #t (Issue #3301 new keyword)
+    //   - per sub-op :allow-macro? #t (Issue #3213 dual-track)
+    // Soft/Off stays zero-cost: the walk is gated to production
+    // sandbox (AC4 — Soft semantics remain owned by per-op gates).
+    // Deny face matches reject_structural_macro_hygiene: stamps
+    // kHygieneLimitReasonMacroIntroduced (AC3) + typed audit trail +
+    // bumps atomic_batch_domain_.hygiene_violations_total (the
+    // never-wired #790 counter — this is its planned batch-body site).
+    {
+        // Restricted on this Evaluator (sandbox_mode_) is enough:
+        // a process-wide Off leftover after apply_dev must not skip
+        // the fail-closed walk once the Agent armed Restricted.
+        const bool prod_sandbox = aura::core::sandbox::is_sandbox_active() ||
+                                  ev.effect_sandbox_mode() != 0 || ev.sandbox_mode();
+        // Issue #3652: the walk now runs under the production face even
+        // when a global/batch opt-out flag is set — the opt-out arm
+        // routes through the #3542 MSE gate instead of skipping.
+        if (prod_sandbox) {
+            EvalValue audit_list = op_list;
+            while (is_pair(audit_list)) {
+                EvalValue op = mutate_atomic_batch_pair_car(ev, audit_list);
+                audit_list = mutate_atomic_batch_pair_cdr(ev, audit_list);
+                if (!is_pair(op))
+                    break;
+                EvalValue op_name_ev = mutate_atomic_batch_pair_car(ev, op);
+                if (!is_string(op_name_ev))
+                    break;
+                std::vector<EvalValue> op_args =
+                    mutate_atomic_batch_list_to_vec(ev, mutate_atomic_batch_pair_cdr(ev, op));
+                std::string op_name = mutate_atomic_batch_safe_str(ev, op_name_ev);
+                // Issue #3652: per-sub-op opt-out no longer skips the
+                // walk — it selects the MSE arm below.
+                const bool op_opt_out = parse_allow_macro_opt_out(ev, op_args);
+                for (const auto& e : ops) {
+                    if (op_name != e.name)
+                        continue;
+                    // Issue #3815: check primary target_arg and optional
+                    // parent_arg (move-node new_parent). -1 skips.
+                    const int spine_args[2] = {e.target_arg, e.parent_arg};
+                    for (int arg_i : spine_args) {
+                        if (arg_i < 0)
+                            continue;
+                        if (static_cast<std::size_t>(arg_i) >= op_args.size() ||
+                            !is_int(op_args[arg_i]))
+                            break; // malformed; sub-op loop reports it
+                        auto node = static_cast<aura::ast::NodeId>(as_int(op_args[arg_i]));
+                        if (node == aura::ast::NULL_NODE || node >= ev.workspace_flat_->size() ||
+                            !ev.workspace_flat_->is_live_node(node))
+                            break;
+                        if (!ev.workspace_flat_->is_macro_introduced(node))
+                            continue; // #3815: still check parent_arg
+                        // Issue #3652: opt-out arms (global flag / batch
+                        // :allow-macro? / per-sub-op :allow-macro?) route
+                        // through the #3542 MSE gate — same face as the
+                        // public prims. Deny aborts the batch before any
+                        // sub-op; MSE granted falls through to per-op gates.
+                        if (op_opt_out || batch_allow_macro || ev.get_allow_macro_mutate()) {
+                            if (deny_macro_opt_out_without_mse(ev, node, mev)) {
+                                // Issue #4149: the deny helper now stamps
+                                // kHygieneLimitReasonCapabilityDeny (7); the
+                                // former caller-side MacroIntroduced (4)
+                                // stamp clobbered the unified allow-arm
+                                // face, so it is gone (last-writer-wins).
+                                ev.bump_atomic_batch_hygiene_violation();
+                                abort_batch_workspace();
+                                ev.atomic_batch_domain_.rollbacks++;
+                                ev.bump_edsl_nested_atomic_rollback();
+                                if (batch_snap_id >= 0 &&
+                                    ev.restore_workspace_snapshot_under_lock(
+                                        static_cast<std::size_t>(batch_snap_id)))
+                                    ev.bump_atomic_batch_snapshot_rollback();
+                                ev.rollback_atomic_batch_pinning();
+                                guard_ok = false;
+                                return ev.make_merr(
+                                    "hygiene-protected",
+                                    ("mutate:atomic-batch: target node " + std::to_string(node) +
+                                     " was produced by a hygienic macro expansion; the "
+                                     ":allow-macro? opt-out requires MacroSelfEvo "
+                                     "capability under the active sandbox face")
+                                        .c_str());
+                            }
+                            continue; // MSE granted — check remaining spine args
+                        }
+                        // Fail closed: deny the whole batch before any sub-op.
+                        ev.record_hygiene_violation_attempt();
+                        aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+                            aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
+                        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                            m->naked_macro_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
+                            m->macro_hygiene_provenance_hits_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            m->last_hygiene_blame_node = static_cast<std::uint32_t>(node);
+                            // Issue #4043: naked batch deny stores the join mid.
+                            m->last_hygiene_blame_mutation = typed_audit::join_audit_and_se_mid(0);
+                        }
+                        typed_audit::capture_macro_hygiene_audit(
+                            "hygiene-protected", typed_audit::AuditOutcome::Error,
+                            static_cast<std::uint32_t>(node),
+                            static_cast<std::int64_t>(aura_fiber_current_id()),
+                            ev.capability_tenant_id());
+                        ev.bump_atomic_batch_hygiene_violation(); // #790 wire-up (#3301)
+                        abort_batch_workspace();
+                        ev.atomic_batch_domain_.rollbacks++;
+                        ev.bump_edsl_nested_atomic_rollback();
+                        if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
+                                                      static_cast<std::size_t>(batch_snap_id)))
+                            ev.bump_atomic_batch_snapshot_rollback();
+                        ev.rollback_atomic_batch_pinning();
+                        guard_ok = false;
+                        return ev.make_merr(
+                            "hygiene-protected",
+                            ("mutate:atomic-batch: target node " + std::to_string(node) +
+                             " was produced by a hygienic macro expansion; pass "
+                             ":allow-macro? #t on the batch form or per sub-op, or call "
+                             "(hygiene:set-allow-macro-mutate! #t) to opt out")
+                                .c_str()); // #3683
+                    }
+                }
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<EvalValue> RegSplitParts::mutate_atomic_batch_resolve_writes(
+    Evaluator& ev, const MakeErrorVal& mev, EvalValue op_list, std::int64_t batch_snap_id,
+    const AtomicBatchAbortCtx& aborts, std::vector<std::vector<EvalValue>>& rewritten_args) {
+    auto abort_batch_workspace = [&]() { mutate_atomic_batch_abort_workspace(aborts); };
+    const std::span<const AtomicBatchOpEntry> ops = mutate_atomic_batch_ops();
+    // Issue #4392: lockless helpers write whatever occupant is at a
+    // bare int. Under production defaults, resolve every spine through
+    // resolve_mutate_node_arg before any sub-op write. A bare int is
+    // that resolver's stale-ref. Packed v2 / schema-2 keep the captured
+    // generation and go through require_effect_on_ref. Soft/Off stays
+    // on the historical int path (this walk does not run).
+    if (aura::compiler::typed_audit::production_defaults_active()) {
+        using aura::compiler::security::kEffectMutate;
+        // Pre-write: roll the batch back, but leave the boundary
+        // successful. #3697 replaces the body value with persist-reject
+        // when the outermost guard fails, which would hide stale-ref
+        // and tenant-isolation-denied. No sub-op has written.
+        auto fail_before_write = [&](EvalValue err) -> EvalValue {
+            abort_batch_workspace();
+            ev.atomic_batch_domain_.rollbacks++;
+            ev.bump_edsl_nested_atomic_rollback();
+            if (batch_snap_id >= 0 &&
+                ev.restore_workspace_snapshot_under_lock(static_cast<std::size_t>(batch_snap_id)))
+                ev.bump_atomic_batch_snapshot_rollback();
+            ev.rollback_atomic_batch_pinning();
+            return err;
+        };
+        EvalValue scan = op_list;
+        while (is_pair(scan)) {
+            EvalValue op = mutate_atomic_batch_pair_car(ev, scan);
+            scan = mutate_atomic_batch_pair_cdr(ev, scan);
+            if (!is_pair(op))
+                break;
+            EvalValue op_name_ev = mutate_atomic_batch_pair_car(ev, op);
+            if (!is_string(op_name_ev))
+                break;
+            std::vector<EvalValue> op_args =
+                mutate_atomic_batch_list_to_vec(ev, mutate_atomic_batch_pair_cdr(ev, op));
+            std::string op_name = mutate_atomic_batch_safe_str(ev, op_name_ev);
+            const AtomicBatchOpEntry* entry = nullptr;
+            for (const auto& e : ops) {
+                if (op_name == e.name) {
+                    entry = &e;
+                    break;
+                }
+            }
+            if (!entry) {
+                rewritten_args.emplace_back();
+                continue;
+            }
+            struct SpineSlot {
+                int arg_i = -1;
+                aura::ast::NodeId node = aura::ast::NULL_NODE;
+                StableNodeRef ref{};
+                std::uint64_t ref_tenant = 0;
+            };
+            SpineSlot slots[2];
+            int nresolved = 0;
+            const int spine_args[2] = {entry->target_arg, entry->parent_arg};
+            for (int arg_i : spine_args) {
+                if (nresolved >= 2)
+                    break;
+                if (arg_i < 0)
+                    continue;
+                if (static_cast<std::size_t>(arg_i) >= op_args.size())
+                    break;
+                const EvalValue& arg = op_args[static_cast<std::size_t>(arg_i)];
+                if (!is_int(arg) && !is_hash(arg) && !is_pair(arg))
+                    break;
+                // Resolve every spine of this op before any effect call,
+                // so a later bare-int sibling cannot emit EffectAllow.
+                const auto span =
+                    std::span<const EvalValue>(op_args).subspan(static_cast<std::size_t>(arg_i));
+                SpineSlot slot;
+                slot.arg_i = arg_i;
+                if (is_hash(arg)) {
+                    // Issue #4392 / #3991: caller-tenant freshness maps a
+                    // foreign schema-2 stamp onto stale-ref. Resolve with
+                    // tenant 0 so occupancy and wrap stay the freshness
+                    // check. Fiber stays the Agent id, so InvalidFiber is
+                    // still stale-ref. IsolationDeny is require_effect
+                    // below, the same string as a packed foreign stamp.
+                    using aura::compiler::query_result_decode::HashNodeKind;
+                    using aura::compiler::query_result_decode::parse_query_result_match_index;
+                    using aura::compiler::query_result_decode::resolve_query_result_match;
+                    auto hr = resolve_query_result_match(
+                        arg, ev.string_heap_, ev.pairs_, *ev.workspace_flat_,
+                        /*tenant=*/0, static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()),
+                        entry->name, parse_query_result_match_index(span, ev.keyword_table()));
+                    if (hr.kind != HashNodeKind::Ok)
+                        return fail_before_write(mev(hr.err_kind, hr.err_msg));
+                    slot.ref.id = hr.node;
+                    slot.ref.gen = hr.generation;
+                    slot.ref.wrap_epoch = hr.wrap_epoch;
+                    slot.ref.cow_epoch_at_capture = hr.cow_epoch_at_capture;
+                    slot.ref.tenant_id = hr.tenant_id;
+                    slot.ref.fiber_id = hr.fiber_id;
+                    slot.node = hr.node;
+                    slot.ref_tenant = hr.tenant_id;
+                } else {
+                    bool rok = true;
+                    aura::ast::NodeId node = aura::ast::NULL_NODE;
+                    EvalValue err = mutate_resolve_node_arg(ev, mev, *ev.workspace_flat_, span,
+                                                            entry->name, &rok, node);
+                    if (!rok)
+                        return fail_before_write(err);
+                    slot.node = node;
+                    if (auto packed = mutate_unpack_stable_ref_arg(ev, arg)) {
+                        slot.ref = *packed;
+                        slot.node = packed->id;
+                        slot.ref_tenant = packed->tenant_id;
+                    } else {
+                        return fail_before_write(
+                            mev("bad-arg",
+                                std::string(entry->name) + ": node identity did not resolve"));
+                    }
+                }
+                slots[nresolved++] = slot;
+            }
+            const bool strict_iso =
+                (ev.effect_sandbox_mode() == 2) || aura::core::sandbox::is_strict();
+            const bool restricted_iso = ev.effect_sandbox_mode() == 1;
+            const auto self = ev.capability_tenant_id();
+            for (int si = 0; si < nresolved; ++si) {
+                auto& slot = slots[si];
+                std::uint64_t ref_tenant = slot.ref_tenant;
+                if (ref_tenant == 0 && slot.node != 0 && (strict_iso || restricted_iso) &&
+                    self != 0 &&
+                    (strict_iso || aura::core::provenance::hard_capture_tenant_active() ||
+                     aura::core::provenance::multi_tenant_env_active())) {
+                    auto existing = aura::core::provenance::existing_stamp_for_node(
+                        static_cast<std::uint32_t>(slot.node));
+                    if (existing == 0) {
+                        const auto& hs =
+                            aura::core::provenance::g_provenance_tracker().last_hygiene;
+                        if (hs.tenant_id != 0 &&
+                            (hs.node_id == 0 ||
+                             hs.node_id == static_cast<std::uint32_t>(slot.node)))
+                            existing = hs.tenant_id;
+                    }
+                    if (existing != 0 && existing != self)
+                        ref_tenant = existing;
+                }
+                if (ref_tenant != 0 && slot.ref.tenant_id == 0)
+                    slot.ref.tenant_id = ref_tenant;
+                // Tenant 0 still goes through on_ref so the captured
+                // generation is checked. require_effect redirects that
+                // zero tenant to the occupancy consult after get_safe.
+                const bool effect_ok = ev.require_effect_on_ref(
+                    static_cast<std::uint16_t>(kEffectMutate), entry->name, slot.ref);
+                if (!effect_ok) {
+                    if (ref_tenant != 0 && ref_tenant != self) {
+                        ev.bump_atomic_batch_tenant_isolation_denial();
+                        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                            m->mutate_force_isolation_denied_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        return fail_before_write(mev("tenant-isolation-denied",
+                                                     std::string("cross-tenant ") + entry->name +
+                                                         " denied by WorkspaceIsolationPolicy "
+                                                         "(#1566/#2052/#2658/#2942)"));
+                    }
+                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                        m->mutate_force_effect_denied_total.fetch_add(1, std::memory_order_relaxed);
+                    return fail_before_write(
+                        mev("capability-denied",
+                            aura::compiler::security::format_deny_reason(
+                                kEffectMutate, ev.capability_tenant_id(), entry->name)));
+                }
+                aura::compiler::typed_audit::note_boundary_target_node(
+                    static_cast<std::uint32_t>(slot.node));
+                op_args[static_cast<std::size_t>(slot.arg_i)] =
+                    make_int(static_cast<std::int64_t>(slot.node));
+            }
+            if (nresolved > 0)
+                rewritten_args.push_back(std::move(op_args));
+            else
+                rewritten_args.emplace_back();
+        }
+    }
+    return std::nullopt;
+}
+
+// Issue #4362: post-mutate gate for a batch-level mutate:rebind sub-op. Arity
+// mismatch rejects in both modes; a type error rejects only under the hard
+// gate. Blame rides the batch-failed value; false means the batch must abort.
+template <typename GuardPtr>
+bool RegSplitParts::mutate_atomic_batch_rebind_gate(Evaluator& ev, GuardPtr& guard,
+                                                    std::string& blame) {
+    std::string threw;
+    bool tc_ok = true;
+    if (!guard->run_or_rollback([&] { tc_ok = ev.run_post_mutate_typecheck_no_lock(); }, &threw)) {
+        blame = "post-mutate typecheck threw: " + threw;
+        return false;
+    }
+    if (!tc_ok || !ev.last_mutate_error_.empty()) {
+        blame = ev.last_mutate_error_.empty() ? std::string("typecheck after mutate failed")
+                                              : ev.last_mutate_error_;
+        return false;
+    }
+    const std::uint64_t nchg =
+        ev.workspace_flat_ && ev.workspace_flat_->all_mutations().size() > 0 ? 1 : 0;
+    if (!ev.finish_mutate_hard_gate(nchg, /*linear=*/false, "mutate:rebind")) {
+        blame = ev.last_mutate_error_.empty() ? std::string("mutation rejected")
+                                              : ev.last_mutate_error_;
+        return false;
+    }
+    return true;
+}
+
+EvalValue RegSplitParts::mutate_atomic_batch_failed(Evaluator& ev,
+                                                    const AtomicBatchAbortCtx& aborts,
+                                                    std::int64_t batch_snap_id, bool& guard_ok,
+                                                    const std::string& batch_gate_blame) {
+    auto abort_batch_workspace = [&]() { mutate_atomic_batch_abort_workspace(aborts); };
+    // Issue #250 / #1502 / #2796: reverse MutationRecord inverses +
+    // rebuild parent_; skip linear_post_mutate_enforce_all (rollback
+    // noise on invariant_fail counters — see abort_batch_workspace).
+    abort_batch_workspace();
+    ev.atomic_batch_domain_.rollbacks++;
+    ev.bump_edsl_nested_atomic_rollback();
+    if (batch_snap_id >= 0 &&
+        ev.restore_workspace_snapshot_under_lock(static_cast<std::size_t>(batch_snap_id)))
+        ev.bump_atomic_batch_snapshot_rollback();
+    ev.rollback_atomic_batch_pinning();
+    // Issue #2790: belt-and-suspenders — mark_sub_op_failed already
+    // cleared guard_ok at the break site; re-assert here so any
+    // future break path that only sets ok still cannot commit.
+    guard_ok = false;
+    // Issue #250 / regression fix: the previous
+    // `make_bool(false)` return made the failure
+    // indistinguishable from a legitimate "all sub-ops
+    // succeeded but reported #f" outcome. Callers
+    // match against `(error-key . error-msg)` pairs
+    // (see `mutate:atomic-batch` docs), so we return
+    // an `ev.make_merr` pair instead. The legacy
+    // `batch-unsupported-op` path above already uses
+    // make_merr — this matches the convention.
+    std::string fail_msg =
+        "mutate:atomic-batch sub-op failed; batch rolled back to pre-batch state";
+    if (!batch_gate_blame.empty())
+        fail_msg += ": " + batch_gate_blame;
+    return ev.make_merr("batch-failed", fail_msg);
+}
+
+void RegSplitParts::mutate_atomic_batch_commit(Evaluator& ev, bool sync_query_index,
+                                               std::size_t op_count, bool in_fiber) {
+    // Issue #250: commit the batch. This performs the single
+    // generation bump (consolidated from the per-op bumps
+    // that were suppressed). Records the saved-bumps count.
+    std::uint64_t saved = ev.workspace_flat_->atomic_batch_bumps_saved();
+    ev.workspace_flat_->commit_atomic_batch();
+    ev.sync_atomic_batch_metadata_metrics(); // #1893
+    // Issue #1913: incremental tag_arity_index sync so query:pattern
+    // immediately sees consistent buckets (dirty-fraction policy).
+    // Default on; opt out with :sync-query-index? #f.
+    ev.tag_arity_index_sync_after_atomic_batch(sync_query_index);
+    ev.atomic_batch_domain_.count++;
+    ev.atomic_batch_domain_.ops_total += op_count;
+    ev.atomic_batch_domain_.bumps_saved_total += saved;
+    ev.commit_atomic_batch_pinning();
+    // Issue #1900 AC3 / #1878: each successful commit means the outer
+    // MutationBoundaryGuard serialized all concurrent mutators
+    // for the entire batch duration (workspace_mtx_ unique_lock
+    // held from Guard ctor through dtor). Bump interleaved +
+    // strong-atomicity counters (weak path is never taken here).
+    ev.bump_atomic_batch_interleaved_prevented();
+    ev.bump_atomic_batch_strong_atomicity_commit();
+    // Issue #396 Phase 3: track fiber-context commits for
+    // the "executed-under-concurrent-fiber" heuristic.
+    if (in_fiber) {
+        ev.atomic_batch_domain_.in_fiber_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+
+// (mutate:atomic-batch) — Issue #192 (P0) / #1900 / #1878 / #1899:
+// apply a list of mutate operations atomically (all-or-nothing).
+// The list is a sequence of sub-lists, each (op-name arg1 arg2 ...)
+// — same shape as the individual (mutate:rebind ...) primitives.
+// On any failure mid-batch, all mutations since the batch started
+// are rolled back via FlatAST::rollback_since.
+//
+// Example:
+//   (mutate:atomic-batch
+//      (list
+//         (list "mutate:rebind" "f" "(lambda (x) (* x 2))" "test")
+//         (list "mutate:rebind" "g" "(lambda (x) (* x 3))" "test"))
+//      "double rebind")
+//
+// Atomicity mode (Issue #1878 / #1899 Option A — STRONG default):
+//   outer MutationBoundaryGuard holds workspace_mtx_ unique_lock
+//   for the entire batch; all supported lockless helpers run under
+//   that lock so concurrent tenants/fibers cannot interleave
+//   mutations into the batch log (#1900). No inter-op fiber yield
+//   inside the sub-op loop. Weak atomicity is not used —
+//   atomic_batch_weak_atomicity_used stays 0.
+//
+// Issue #1899: sub-op dispatch is a data-driven table
+// (kAtomicBatchLocklessOps) — append one row to support a new
+// lockless helper (no if/else chain growth).
+// Keywords:
+//   :snapshot? #t — capture pre-batch snapshot (Issue #737)
+//   :tenant-target N — under Strict sandbox, require workspace
+//     isolation grant for target tenant N (Issue #1878 multi-tenant).
+//   :sync-query-index? #t — post-commit tag_arity_index dirty-fraction
+//     sync so query:pattern is immediately consistent (Issue #1913;
+//     default true via Evaluator::atomic_batch_sync_query_index_default).
+// Issue #213: MutationBoundaryGuard + batch rollback_since are
+// complementary (guard ok flag vs log rollback).
 template <typename Ctx> void RegSplitParts::register_mutate_atomic_batch_primitive(Ctx& cx) {
     auto& mev = cx.mev_ref;
     auto& safe_str = cx.safe_str_ref;
@@ -7006,40 +7748,6 @@ template <typename Ctx> void RegSplitParts::register_mutate_atomic_batch_primiti
     auto& resolve_mutate_node_arg = cx.resolve_mutate_node_arg_ref;
     auto& unpack_stable_ref_arg = cx.unpack_stable_ref_arg_ref;
     Evaluator& ev = cx.ev_ref;
-    // (mutate:atomic-batch) — Issue #192 (P0) / #1900 / #1878 / #1899:
-    // apply a list of mutate operations atomically (all-or-nothing).
-    // The list is a sequence of sub-lists, each (op-name arg1 arg2 ...)
-    // — same shape as the individual (mutate:rebind ...) primitives.
-    // On any failure mid-batch, all mutations since the batch started
-    // are rolled back via FlatAST::rollback_since.
-    //
-    // Example:
-    //   (mutate:atomic-batch
-    //      (list
-    //         (list "mutate:rebind" "f" "(lambda (x) (* x 2))" "test")
-    //         (list "mutate:rebind" "g" "(lambda (x) (* x 3))" "test"))
-    //      "double rebind")
-    //
-    // Atomicity mode (Issue #1878 / #1899 Option A — STRONG default):
-    //   outer MutationBoundaryGuard holds workspace_mtx_ unique_lock
-    //   for the entire batch; all supported lockless helpers run under
-    //   that lock so concurrent tenants/fibers cannot interleave
-    //   mutations into the batch log (#1900). No inter-op fiber yield
-    //   inside the sub-op loop. Weak atomicity is not used —
-    //   atomic_batch_weak_atomicity_used stays 0.
-    //
-    // Issue #1899: sub-op dispatch is a data-driven table
-    // (kAtomicBatchLocklessOps) — append one row to support a new
-    // lockless helper (no if/else chain growth).
-    // Keywords:
-    //   :snapshot? #t — capture pre-batch snapshot (Issue #737)
-    //   :tenant-target N — under Strict sandbox, require workspace
-    //     isolation grant for target tenant N (Issue #1878 multi-tenant).
-    //   :sync-query-index? #t — post-commit tag_arity_index dirty-fraction
-    //     sync so query:pattern is immediately consistent (Issue #1913;
-    //     default true via Evaluator::atomic_batch_sync_query_index_default).
-    // Issue #213: MutationBoundaryGuard + batch rollback_since are
-    // complementary (guard ok flag vs log rollback).
     add_mutate(
         "mutate:atomic-batch",
         [&ev, mev, safe_str, resolve_mutate_node_arg,
@@ -7047,147 +7755,29 @@ template <typename Ctx> void RegSplitParts::register_mutate_atomic_batch_primiti
             // Issue #737: parse args + optional pre-guard snapshot
             // BEFORE acquiring MutationBoundaryGuard (ast:snapshot
             // also takes workspace_mtx_; nested acquire deadlocks).
-            if (a.size() < 1) {
-                return mev("bad-arg", "usage: (mutate:atomic-batch (list ...) [\"summary\"] "
-                                      "[:snapshot? #t] [:tenant-target N] "
-                                      "[:sync-query-index? #t|#f] [:allow-macro? #t|#f])");
-            }
-            bool want_snapshot = false;
-            std::uint64_t tenant_target = 0;
-            bool have_tenant_target = false;
-            // Issue #3301: batch-form MacroIntroduced opt-out. #t skips the
-            // batch-level audit for the whole batch (per-sub-op :allow-macro?
-            // and the global flag still apply independently). Default #f.
-            bool batch_allow_macro = false;
-            // Issue #1913: default true — commit always refreshes index.
-            bool sync_query_index = ev.atomic_batch_sync_query_index_default();
-            for (std::size_t ai = 1; ai < a.size(); ++ai) {
-                if (is_keyword(a[ai])) {
-                    auto kidx = as_keyword_idx(a[ai]);
-                    if (kidx >= ev.keyword_table_.size())
-                        return mev("bad-arg", "unknown keyword");
-                    const auto& kw = ev.keyword_table_[kidx];
-                    if (kw == ":snapshot?") {
-                        want_snapshot = true;
-                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                            if (is_bool(a[ai + 1]))
-                                want_snapshot = as_bool(a[ai + 1]);
-                            else
-                                want_snapshot = (as_int(a[ai + 1]) != 0);
-                            ++ai;
-                        }
-                    } else if (kw == ":tenant-target") {
-                        // Issue #1878: multi-tenant batch destination.
-                        if (ai + 1 >= a.size() || !is_int(a[ai + 1]))
-                            return mev("bad-arg", ":tenant-target requires an integer tenant id");
-                        tenant_target = static_cast<std::uint64_t>(as_int(a[ai + 1]));
-                        have_tenant_target = true;
-                        ++ai;
-                    } else if (kw == ":allow-macro?") {
-                        // Issue #3301: batch-level opt-out — same parse shape as
-                        // the per-prim :allow-macro? kwarg (default #f).
-                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                            if (is_bool(a[ai + 1]))
-                                batch_allow_macro = as_bool(a[ai + 1]);
-                            else
-                                batch_allow_macro = (as_int(a[ai + 1]) != 0);
-                            ++ai;
-                        } else {
-                            batch_allow_macro = true;
-                        }
-                    } else if (kw == ":sync-query-index?") {
-                        // Issue #1913: opt out of post-commit index sync.
-                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                            if (is_bool(a[ai + 1]))
-                                sync_query_index = as_bool(a[ai + 1]);
-                            else
-                                sync_query_index = (as_int(a[ai + 1]) != 0);
-                            ++ai;
-                        } else {
-                            sync_query_index = true;
-                        }
-                    } else {
-                        return mev("bad-arg",
-                                   std::string("unknown mutate:atomic-batch keyword: ") + kw);
-                    }
-                }
-            }
-            EvalValue op_list = a[0];
-            if (!is_pair(op_list) && !is_void(op_list))
-                return mev("bad-arg", "ops list must be a list (use (list) for empty)");
-            if (!ev.workspace_flat_)
-                return mev("no-workspace", "no FlatAST available");
-
-            // Issue #1878: multi-tenant isolation at batch root (before Guard).
-            // Under Strict sandbox (or when :tenant-target is set), refuse
-            // cross-tenant batches without a WorkspaceIsolationPolicy grant.
-            // This runs before snapshot/Guard so denials never half-open a batch.
-            {
-                using aura::compiler::security::kEffectMutate;
-                // Strict = effect sandbox mode 2 or process-wide sandbox Strict.
-                const bool strict =
-                    (ev.effect_sandbox_mode() == 2) || aura::core::sandbox::is_strict();
-                const auto self = ev.capability_tenant_id();
-                const auto target = have_tenant_target ? tenant_target : self;
-                // Always re-check with the batch-specific op name for audit trail.
-                if (strict || have_tenant_target) {
-                    if (!ev.check_workspace_isolation(target, /*ref_tenant=*/0, kEffectMutate,
-                                                      "mutate:atomic-batch")) {
-                        ev.bump_atomic_batch_tenant_isolation_denial();
-                        return mev("tenant-isolation-denied",
-                                   "cross-tenant mutate:atomic-batch denied by "
-                                   "WorkspaceIsolationPolicy under Strict (#1878)");
-                    }
-                }
-                // Provenance: foreign last-hygiene tenant under Strict → deny.
-                if (strict && self != 0) {
-                    const auto& hs = aura::core::provenance::g_provenance_tracker().last_hygiene;
-                    if (hs.tenant_id != 0 && hs.tenant_id != self) {
-                        if (!ev.check_workspace_isolation(self, hs.tenant_id, kEffectMutate,
-                                                          "mutate:atomic-batch-ref")) {
-                            ev.bump_atomic_batch_tenant_isolation_denial();
-                            return mev("tenant-isolation-denied",
-                                       "atomic-batch blocked: MacroIntroduced hygiene stamp "
-                                       "belongs to a foreign tenant (#1878)");
-                        }
-                    }
-                }
-            }
+            // Issue #5033: the kwarg parse, tenant gate, snapshot capture,
+            // batch-entry hygiene audit and identity pre-write walk are
+            // peeled into RegSplitParts phases; this body keeps the Guard,
+            // the sub-op loop and the commit hand-off.
+            AtomicBatchArgs batch_args;
+            if (auto parse_err = mutate_atomic_batch_parse_args(ev, mev, a, batch_args))
+                return *parse_err;
+            bool want_snapshot = batch_args.want_snapshot;
+            bool batch_allow_macro = batch_args.batch_allow_macro;
+            bool sync_query_index = batch_args.sync_query_index;
+            EvalValue op_list = batch_args.op_list;
+            if (auto iso_err = mutate_atomic_batch_check_isolation(
+                    ev, mev, batch_args.have_tenant_target, batch_args.tenant_target))
+                return *iso_err;
 
             // Issue #820: e2e atomic-batch observability (refine #790).
             ev.bump_mutate_batch_e2e_started();
             ev.begin_atomic_batch_pinning();
-            std::int64_t batch_snap_id = -1;
-            if (want_snapshot) {
-                if (auto snap_fn = ev.primitives_.lookup("ast:snapshot")) {
-                    auto snap_name_idx = ev.string_heap_.mint("atomic-batch-pre");
-                    auto snap_result = (*snap_fn)({make_string(snap_name_idx)});
-                    if (is_int(snap_result)) {
-                        batch_snap_id = as_int(snap_result);
-                        ev.record_atomic_batch_snapshot_capture(batch_snap_id);
-                        ev.bump_mutate_batch_e2e_pinned_snapshot(); // Issue #820
-                    }
-                }
-            }
+            std::int64_t batch_snap_id = mutate_atomic_batch_capture_snapshot(ev, want_snapshot);
             bool guard_ok = true;
             // Issue #4361: the Guard dtor restores children after abort. This
             // object is declared first so its dtor rebinds top_env afterwards.
-            struct RebindAfterFailedBatch {
-                Evaluator& ev;
-                bool failed = false;
-                explicit RebindAfterFailedBatch(Evaluator& e)
-                    : ev(e) {}
-                ~RebindAfterFailedBatch() {
-                    if (failed) {
-                        ev.rebind_workspace_defines_after_rollback();
-                        ev.defines_bound_flat_ = ev.workspace_flat_;
-                    }
-                }
-                RebindAfterFailedBatch(const RebindAfterFailedBatch&) = delete;
-                RebindAfterFailedBatch& operator=(const RebindAfterFailedBatch&) = delete;
-                RebindAfterFailedBatch(RebindAfterFailedBatch&&) = delete;
-                RebindAfterFailedBatch& operator=(RebindAfterFailedBatch&&) = delete;
-            } rebind_after_failed_batch(ev);
+            AtomicBatchRebindRestore rebind_after_failed_batch(ev);
             // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
             auto guard_r =
                 aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &guard_ok);
@@ -7203,23 +7793,8 @@ template <typename Ctx> void RegSplitParts::register_mutate_atomic_batch_primiti
             std::uint64_t initial_log_size = ev.workspace_flat_->all_mutations().size();
             bool ok = true;
             std::size_t op_count = 0;
-            auto list_to_vec = [&ev, safe_str](EvalValue list) -> std::vector<EvalValue> {
-                std::vector<EvalValue> out;
-                while (is_pair(list)) {
-                    auto pidx = as_pair_idx(list);
-                    if (pidx >= ev.pairs_.size())
-                        break;
-                    out.push_back(ev.pairs_[pidx].car);
-                    list = ev.pairs_[pidx].cdr;
-                }
-                return out;
-            };
-            auto pair_car = [&ev, safe_str](EvalValue v) -> EvalValue {
-                return ev.pairs_[as_pair_idx(v)].car;
-            };
-            auto pair_cdr = [&ev, safe_str](EvalValue v) -> EvalValue {
-                return ev.pairs_[as_pair_idx(v)].cdr;
-            };
+            AtomicBatchAbortCtx abort_ctx{ev, initial_log_size, &rebind_after_failed_batch.failed};
+            const std::span<const AtomicBatchOpEntry> ops = mutate_atomic_batch_ops();
             // Issue #250 / #1893: begin the atomic batch. This sets
             // bump_generation_suppressed_ on the FlatAST, so all
             // per-op structural mutations (via the lockless helpers
@@ -7253,408 +7828,33 @@ template <typename Ctx> void RegSplitParts::register_mutate_atomic_batch_primiti
             // restore_children for full PCV topology (#1502 topology intent
             // preserved without metric pollution).
             auto abort_batch_workspace = [&]() {
-                // initial_log_size is the log length at batch open, not a
-                // mutation id. rollback_since compares mutation_id, so a
-                // pre-write deny inverted earlier committed removes whose
-                // ids are larger than that length (#4392).
-                ev.workspace_flat_->rollback_to_size(static_cast<std::size_t>(initial_log_size));
-                ev.workspace_flat_->rollback_atomic_batch();
-                ev.sync_atomic_batch_metadata_metrics();                  // #1893
-                ev.workspace_flat_->rebuild_parent_links_from_children(); // #1502
-                rebind_after_failed_batch.failed = true;                  // #4361
-                // #2796: no linear_post_mutate_enforce_all() on abort path
-                // (#2559 inventory: enforce remains on non-abort mutate paths)
+                // #2796: no linear_post_mutate_enforce_all() on abort path.
+                mutate_atomic_batch_abort_workspace(abort_ctx);
             };
-
-            // ── Issue #3301: batch-level MacroIntroduced fail-closed audit ──
-            // The dispatcher must not depend on every current AND future
-            // lockless helper carrying its own hygiene gate: a helper appended
-            // to kAtomicBatchLocklessOps without the gate would inherit a
-            // default-deny hole under production defaults (Restricted + Strict).
-            // Walk each sub-op's primary target node-id arg ONCE, before any
-            // sub-op runs, and deny the whole batch (atomic rollback) if a
-            // target is MacroIntroduced and no opt-out applies:
-            //   - global (hygiene:set-allow-macro-mutate! #t)
-            //   - batch form :allow-macro? #t (Issue #3301 new keyword)
-            //   - per sub-op :allow-macro? #t (Issue #3213 dual-track)
-            // Soft/Off stays zero-cost: the walk is gated to production
-            // sandbox (AC4 — Soft semantics remain owned by per-op gates).
-            // Deny face matches reject_structural_macro_hygiene: stamps
-            // kHygieneLimitReasonMacroIntroduced (AC3) + typed audit trail +
-            // bumps atomic_batch_domain_.hygiene_violations_total (the
-            // never-wired #790 counter — this is its planned batch-body site).
-            using AtomicBatchOpFn = EvalResult (Evaluator::*)(std::span<const types::EvalValue>);
-            struct AtomicBatchOpEntry {
-                const char* name;
-                AtomicBatchOpFn fn;
-                // Issue #3301: index of the primary target node-id arg in the
-                // sub-op args; -1 = name/string-based (no node-id arg — covered
-                // by the helper's own gate). New helpers MUST set this so the
-                // batch-level audit backstops them even if they forget a gate.
-                int target_arg;
-                // Issue #3815: secondary MacroIntroduced spine arg (move-node
-                // new_parent at index 1). -1 = none. Soft/Off: walk still gated
-                // by prod_sandbox above; per-arg is_macro_introduced is O(1).
-                int parent_arg = -1;
-            };
-            // Issue #1899: single source of truth for supported batch ops.
-            static constexpr AtomicBatchOpEntry kAtomicBatchLocklessOps[] = {
-                {"mutate:rebind", &Evaluator::eval_flat_apply_mutate_rebind, -1},
-                {"mutate:replace-value", &Evaluator::eval_flat_apply_mutate_replace_value, 0},
-                {"mutate:tweak-literal", &Evaluator::eval_flat_apply_mutate_tweak_literal, 0},
-                {"mutate:remove-node", &Evaluator::eval_flat_apply_mutate_remove_node, 0},
-                {"mutate:insert-child", &Evaluator::eval_flat_apply_mutate_insert_child, 0},
-                {"mutate:set-body", &Evaluator::eval_flat_apply_mutate_set_body, -1},
-                {"mutate:replace-pattern", &Evaluator::eval_flat_apply_mutate_replace_pattern, -1},
-                {"mutate:replace-subtree", &Evaluator::eval_flat_apply_mutate_replace_subtree, 0},
-                {"mutate:splice", &Evaluator::eval_flat_apply_mutate_splice, 0},
-                {"mutate:wrap", &Evaluator::eval_flat_apply_mutate_wrap, 0},
-                {"mutate:rename-symbol", &Evaluator::eval_flat_apply_mutate_rename_symbol, -1},
-                {"mutate:move-node", &Evaluator::eval_flat_apply_mutate_move_node, 0, 1},
-                {"mutate:inline-call", &Evaluator::eval_flat_apply_mutate_inline_call, 0},
-            };
-            static constexpr std::size_t kAtomicBatchLocklessOpCount =
-                sizeof(kAtomicBatchLocklessOps) / sizeof(kAtomicBatchLocklessOps[0]);
-            static_assert(kAtomicBatchLocklessOpCount == 13,
-                          "atomic-batch lockless table size drift");
-            {
-                // Restricted on this Evaluator (sandbox_mode_) is enough:
-                // a process-wide Off leftover after apply_dev must not skip
-                // the fail-closed walk once the Agent armed Restricted.
-                const bool prod_sandbox = aura::core::sandbox::is_sandbox_active() ||
-                                          ev.effect_sandbox_mode() != 0 || ev.sandbox_mode();
-                // Issue #3652: the walk now runs under the production face even
-                // when a global/batch opt-out flag is set — the opt-out arm
-                // routes through the #3542 MSE gate instead of skipping.
-                if (prod_sandbox) {
-                    EvalValue audit_list = op_list;
-                    while (is_pair(audit_list)) {
-                        EvalValue op = pair_car(audit_list);
-                        audit_list = pair_cdr(audit_list);
-                        if (!is_pair(op))
-                            break;
-                        EvalValue op_name_ev = pair_car(op);
-                        if (!is_string(op_name_ev))
-                            break;
-                        std::vector<EvalValue> op_args = list_to_vec(pair_cdr(op));
-                        std::string op_name = safe_str(op_name_ev);
-                        // Issue #3652: per-sub-op opt-out no longer skips the
-                        // walk — it selects the MSE arm below.
-                        const bool op_opt_out = parse_allow_macro_opt_out(ev, op_args);
-                        for (const auto& e : kAtomicBatchLocklessOps) {
-                            if (op_name != e.name)
-                                continue;
-                            // Issue #3815: check primary target_arg and optional
-                            // parent_arg (move-node new_parent). -1 skips.
-                            const int spine_args[2] = {e.target_arg, e.parent_arg};
-                            for (int arg_i : spine_args) {
-                                if (arg_i < 0)
-                                    continue;
-                                if (static_cast<std::size_t>(arg_i) >= op_args.size() ||
-                                    !is_int(op_args[arg_i]))
-                                    break; // malformed; sub-op loop reports it
-                                auto node = static_cast<aura::ast::NodeId>(as_int(op_args[arg_i]));
-                                if (node == aura::ast::NULL_NODE ||
-                                    node >= ev.workspace_flat_->size() ||
-                                    !ev.workspace_flat_->is_live_node(node))
-                                    break;
-                                if (!ev.workspace_flat_->is_macro_introduced(node))
-                                    continue; // #3815: still check parent_arg
-                                // Issue #3652: opt-out arms (global flag / batch
-                                // :allow-macro? / per-sub-op :allow-macro?) route
-                                // through the #3542 MSE gate — same face as the
-                                // public prims. Deny aborts the batch before any
-                                // sub-op; MSE granted falls through to per-op gates.
-                                if (op_opt_out || batch_allow_macro ||
-                                    ev.get_allow_macro_mutate()) {
-                                    if (deny_macro_opt_out_without_mse(ev, node, mev)) {
-                                        // Issue #4149: the deny helper now stamps
-                                        // kHygieneLimitReasonCapabilityDeny (7); the
-                                        // former caller-side MacroIntroduced (4)
-                                        // stamp clobbered the unified allow-arm
-                                        // face, so it is gone (last-writer-wins).
-                                        ev.bump_atomic_batch_hygiene_violation();
-                                        abort_batch_workspace();
-                                        ev.atomic_batch_domain_.rollbacks++;
-                                        ev.bump_edsl_nested_atomic_rollback();
-                                        if (batch_snap_id >= 0 &&
-                                            ev.restore_workspace_snapshot_under_lock(
-                                                static_cast<std::size_t>(batch_snap_id)))
-                                            ev.bump_atomic_batch_snapshot_rollback();
-                                        ev.rollback_atomic_batch_pinning();
-                                        guard_ok = false;
-                                        return ev.make_merr(
-                                            "hygiene-protected",
-                                            ("mutate:atomic-batch: target node " +
-                                             std::to_string(node) +
-                                             " was produced by a hygienic macro expansion; the "
-                                             ":allow-macro? opt-out requires MacroSelfEvo "
-                                             "capability under the active sandbox face")
-                                                .c_str());
-                                    }
-                                    continue; // MSE granted — check remaining spine args
-                                }
-                                // Fail closed: deny the whole batch before any sub-op.
-                                ev.record_hygiene_violation_attempt();
-                                aura::compiler::macro_exp::note_hygiene_last_limit_reason(
-                                    aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
-                                if (auto* m =
-                                        static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                                    m->naked_macro_mutate_attempt.fetch_add(
-                                        1, std::memory_order_relaxed);
-                                    m->macro_hygiene_provenance_hits_total.fetch_add(
-                                        1, std::memory_order_relaxed);
-                                    m->last_hygiene_blame_node = static_cast<std::uint32_t>(node);
-                                    // Issue #4043: naked batch deny stores the join mid.
-                                    m->last_hygiene_blame_mutation =
-                                        typed_audit::join_audit_and_se_mid(0);
-                                }
-                                typed_audit::capture_macro_hygiene_audit(
-                                    "hygiene-protected", typed_audit::AuditOutcome::Error,
-                                    static_cast<std::uint32_t>(node),
-                                    static_cast<std::int64_t>(aura_fiber_current_id()),
-                                    ev.capability_tenant_id());
-                                ev.bump_atomic_batch_hygiene_violation(); // #790 wire-up (#3301)
-                                abort_batch_workspace();
-                                ev.atomic_batch_domain_.rollbacks++;
-                                ev.bump_edsl_nested_atomic_rollback();
-                                if (batch_snap_id >= 0 &&
-                                    ev.restore_workspace_snapshot_under_lock(
-                                        static_cast<std::size_t>(batch_snap_id)))
-                                    ev.bump_atomic_batch_snapshot_rollback();
-                                ev.rollback_atomic_batch_pinning();
-                                guard_ok = false;
-                                return ev.make_merr(
-                                    "hygiene-protected",
-                                    ("mutate:atomic-batch: target node " + std::to_string(node) +
-                                     " was produced by a hygienic macro expansion; pass "
-                                     ":allow-macro? #t on the batch form or per sub-op, or call "
-                                     "(hygiene:set-allow-macro-mutate! #t) to opt out")
-                                        .c_str()); // #3683
-                            }
-                        }
-                    }
-                }
-            }
-            // Issue #4392: lockless helpers write whatever occupant is at a
-            // bare int. Under production defaults, resolve every spine through
-            // resolve_mutate_node_arg before any sub-op write. A bare int is
-            // that resolver's stale-ref. Packed v2 / schema-2 keep the captured
-            // generation and go through require_effect_on_ref. Soft/Off stays
-            // on the historical int path (this walk does not run).
+            // Issue #3301 / #3815 / #4392: the batch-entry MacroIntroduced
+            // audit and the production identity pre-write walk both run
+            // before any sub-op write.
+            if (auto audit_err = mutate_atomic_batch_pre_audit(ev, mev, op_list, batch_allow_macro,
+                                                               batch_snap_id, abort_ctx, guard_ok))
+                return *audit_err;
             std::vector<std::vector<EvalValue>> rewritten_args;
-            if (aura::compiler::typed_audit::production_defaults_active()) {
-                using aura::compiler::security::kEffectMutate;
-                // Pre-write: roll the batch back, but leave the boundary
-                // successful. #3697 replaces the body value with persist-reject
-                // when the outermost guard fails, which would hide stale-ref
-                // and tenant-isolation-denied. No sub-op has written.
-                auto fail_before_write = [&](EvalValue err) -> EvalValue {
-                    abort_batch_workspace();
-                    ev.atomic_batch_domain_.rollbacks++;
-                    ev.bump_edsl_nested_atomic_rollback();
-                    if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
-                                                  static_cast<std::size_t>(batch_snap_id)))
-                        ev.bump_atomic_batch_snapshot_rollback();
-                    ev.rollback_atomic_batch_pinning();
-                    return err;
-                };
-                EvalValue scan = op_list;
-                while (is_pair(scan)) {
-                    EvalValue op = pair_car(scan);
-                    scan = pair_cdr(scan);
-                    if (!is_pair(op))
-                        break;
-                    EvalValue op_name_ev = pair_car(op);
-                    if (!is_string(op_name_ev))
-                        break;
-                    std::vector<EvalValue> op_args = list_to_vec(pair_cdr(op));
-                    std::string op_name = safe_str(op_name_ev);
-                    const AtomicBatchOpEntry* entry = nullptr;
-                    for (const auto& e : kAtomicBatchLocklessOps) {
-                        if (op_name == e.name) {
-                            entry = &e;
-                            break;
-                        }
-                    }
-                    if (!entry) {
-                        rewritten_args.emplace_back();
-                        continue;
-                    }
-                    struct SpineSlot {
-                        int arg_i = -1;
-                        aura::ast::NodeId node = aura::ast::NULL_NODE;
-                        StableNodeRef ref{};
-                        std::uint64_t ref_tenant = 0;
-                    };
-                    SpineSlot slots[2];
-                    int nresolved = 0;
-                    const int spine_args[2] = {entry->target_arg, entry->parent_arg};
-                    for (int arg_i : spine_args) {
-                        if (nresolved >= 2)
-                            break;
-                        if (arg_i < 0)
-                            continue;
-                        if (static_cast<std::size_t>(arg_i) >= op_args.size())
-                            break;
-                        const EvalValue& arg = op_args[static_cast<std::size_t>(arg_i)];
-                        if (!is_int(arg) && !is_hash(arg) && !is_pair(arg))
-                            break;
-                        // Resolve every spine of this op before any effect call,
-                        // so a later bare-int sibling cannot emit EffectAllow.
-                        const auto span = std::span<const EvalValue>(op_args).subspan(
-                            static_cast<std::size_t>(arg_i));
-                        SpineSlot slot;
-                        slot.arg_i = arg_i;
-                        if (is_hash(arg)) {
-                            // Issue #4392 / #3991: caller-tenant freshness maps a
-                            // foreign schema-2 stamp onto stale-ref. Resolve with
-                            // tenant 0 so occupancy and wrap stay the freshness
-                            // check. Fiber stays the Agent id, so InvalidFiber is
-                            // still stale-ref. IsolationDeny is require_effect
-                            // below, the same string as a packed foreign stamp.
-                            using aura::compiler::query_result_decode::HashNodeKind;
-                            using aura::compiler::query_result_decode::
-                                parse_query_result_match_index;
-                            using aura::compiler::query_result_decode::resolve_query_result_match;
-                            auto hr = resolve_query_result_match(
-                                arg, ev.string_heap_, ev.pairs_, *ev.workspace_flat_,
-                                /*tenant=*/0,
-                                static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()), entry->name,
-                                parse_query_result_match_index(span, ev.keyword_table()));
-                            if (hr.kind != HashNodeKind::Ok)
-                                return fail_before_write(mev(hr.err_kind, hr.err_msg));
-                            slot.ref.id = hr.node;
-                            slot.ref.gen = hr.generation;
-                            slot.ref.wrap_epoch = hr.wrap_epoch;
-                            slot.ref.cow_epoch_at_capture = hr.cow_epoch_at_capture;
-                            slot.ref.tenant_id = hr.tenant_id;
-                            slot.ref.fiber_id = hr.fiber_id;
-                            slot.node = hr.node;
-                            slot.ref_tenant = hr.tenant_id;
-                        } else {
-                            bool rok = true;
-                            aura::ast::NodeId node = aura::ast::NULL_NODE;
-                            EvalValue err = resolve_mutate_node_arg(*ev.workspace_flat_, span,
-                                                                    entry->name, &rok, node);
-                            if (!rok)
-                                return fail_before_write(err);
-                            slot.node = node;
-                            if (auto packed = unpack_stable_ref_arg(arg)) {
-                                slot.ref = *packed;
-                                slot.node = packed->id;
-                                slot.ref_tenant = packed->tenant_id;
-                            } else {
-                                return fail_before_write(
-                                    mev("bad-arg", std::string(entry->name) +
-                                                       ": node identity did not resolve"));
-                            }
-                        }
-                        slots[nresolved++] = slot;
-                    }
-                    const bool strict_iso =
-                        (ev.effect_sandbox_mode() == 2) || aura::core::sandbox::is_strict();
-                    const bool restricted_iso = ev.effect_sandbox_mode() == 1;
-                    const auto self = ev.capability_tenant_id();
-                    for (int si = 0; si < nresolved; ++si) {
-                        auto& slot = slots[si];
-                        std::uint64_t ref_tenant = slot.ref_tenant;
-                        if (ref_tenant == 0 && slot.node != 0 && (strict_iso || restricted_iso) &&
-                            self != 0 &&
-                            (strict_iso || aura::core::provenance::hard_capture_tenant_active() ||
-                             aura::core::provenance::multi_tenant_env_active())) {
-                            auto existing = aura::core::provenance::existing_stamp_for_node(
-                                static_cast<std::uint32_t>(slot.node));
-                            if (existing == 0) {
-                                const auto& hs =
-                                    aura::core::provenance::g_provenance_tracker().last_hygiene;
-                                if (hs.tenant_id != 0 &&
-                                    (hs.node_id == 0 ||
-                                     hs.node_id == static_cast<std::uint32_t>(slot.node)))
-                                    existing = hs.tenant_id;
-                            }
-                            if (existing != 0 && existing != self)
-                                ref_tenant = existing;
-                        }
-                        if (ref_tenant != 0 && slot.ref.tenant_id == 0)
-                            slot.ref.tenant_id = ref_tenant;
-                        // Tenant 0 still goes through on_ref so the captured
-                        // generation is checked. require_effect redirects that
-                        // zero tenant to the occupancy consult after get_safe.
-                        const bool effect_ok = ev.require_effect_on_ref(
-                            static_cast<std::uint16_t>(kEffectMutate), entry->name, slot.ref);
-                        if (!effect_ok) {
-                            if (ref_tenant != 0 && ref_tenant != self) {
-                                ev.bump_atomic_batch_tenant_isolation_denial();
-                                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                                    m->mutate_force_isolation_denied_total.fetch_add(
-                                        1, std::memory_order_relaxed);
-                                return fail_before_write(
-                                    mev("tenant-isolation-denied",
-                                        std::string("cross-tenant ") + entry->name +
-                                            " denied by WorkspaceIsolationPolicy "
-                                            "(#1566/#2052/#2658/#2942)"));
-                            }
-                            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                                m->mutate_force_effect_denied_total.fetch_add(
-                                    1, std::memory_order_relaxed);
-                            return fail_before_write(
-                                mev("capability-denied",
-                                    aura::compiler::security::format_deny_reason(
-                                        kEffectMutate, ev.capability_tenant_id(), entry->name)));
-                        }
-                        aura::compiler::typed_audit::note_boundary_target_node(
-                            static_cast<std::uint32_t>(slot.node));
-                        op_args[static_cast<std::size_t>(slot.arg_i)] =
-                            make_int(static_cast<std::int64_t>(slot.node));
-                    }
-                    if (nresolved > 0)
-                        rewritten_args.push_back(std::move(op_args));
-                    else
-                        rewritten_args.emplace_back();
-                }
-            }
-            // Issue #4392: sub-op records keep a unique mutation_id. Join the
-            // allow/deny audit mid through composite_transaction_id only.
-            // Armed after the identity gate so a pre-write deny does not tag
-            // a later mutation, and only when production peek is non-zero.
-            struct BatchSeCompositeJoin {
-                aura::ast::FlatAST* flat = nullptr;
-                std::uint64_t prev = 0;
-                bool armed = false;
-                BatchSeCompositeJoin(aura::ast::FlatAST* f, bool production)
-                    : flat(f) {
-                    if (!production || flat == nullptr)
-                        return;
-                    const auto mid = aura::compiler::typed_audit::peek_audit_mutation_id(0);
-                    if (mid == 0)
-                        return;
-                    prev = flat->mutation_composite_transaction_id();
-                    flat->set_mutation_composite_transaction_id(mid);
-                    armed = true;
-                }
-                ~BatchSeCompositeJoin() {
-                    if (armed && flat != nullptr)
-                        flat->set_mutation_composite_transaction_id(prev);
-                }
-                BatchSeCompositeJoin(const BatchSeCompositeJoin&) = delete;
-                BatchSeCompositeJoin& operator=(const BatchSeCompositeJoin&) = delete;
-                BatchSeCompositeJoin(BatchSeCompositeJoin&&) = delete;
-                BatchSeCompositeJoin& operator=(BatchSeCompositeJoin&&) = delete;
-            } batch_se_join(ev.workspace_flat_,
-                            aura::compiler::typed_audit::production_defaults_active());
+            if (auto write_err = mutate_atomic_batch_resolve_writes(ev, mev, op_list, batch_snap_id,
+                                                                    abort_ctx, rewritten_args))
+                return *write_err;
+            AtomicBatchSeCompositeJoin batch_se_join(
+                ev.workspace_flat_, aura::compiler::typed_audit::production_defaults_active());
             // Issue #4362: blame from a rejected batch-rebind. Empty for
             // every other failure, so those batch-failed strings stay put.
             std::string batch_gate_blame;
             std::size_t prepared_i = 0;
             while (is_pair(op_list)) {
-                EvalValue op = pair_car(op_list);
-                op_list = pair_cdr(op_list);
+                EvalValue op = mutate_atomic_batch_pair_car(ev, op_list);
+                op_list = mutate_atomic_batch_pair_cdr(ev, op_list);
                 if (!is_pair(op)) {
                     mark_sub_op_failed(); // Issue #2790
                     break;
                 }
-                EvalValue op_name_ev = pair_car(op);
+                EvalValue op_name_ev = mutate_atomic_batch_pair_car(ev, op);
                 if (!is_string(op_name_ev)) {
                     mark_sub_op_failed(); // Issue #2790
                     break;
@@ -7663,7 +7863,8 @@ template <typename Ctx> void RegSplitParts::register_mutate_atomic_batch_primiti
                 if (prepared_i < rewritten_args.size() && !rewritten_args[prepared_i].empty())
                     op_args = std::move(rewritten_args[prepared_i]);
                 else
-                    op_args = list_to_vec(pair_cdr(op));
+                    op_args =
+                        mutate_atomic_batch_list_to_vec(ev, mutate_atomic_batch_pair_cdr(ev, op));
                 ++prepared_i;
                 std::string op_name = safe_str(op_name_ev);
                 // Issue #236: route through the lockless helpers
@@ -7682,7 +7883,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_atomic_batch_primiti
                 // workspace_mtx_ unique for the entire batch → STRONG
                 // atomicity (#1878/#1899).
                 AtomicBatchOpFn op_fn = nullptr;
-                for (const auto& e : kAtomicBatchLocklessOps) {
+                for (const auto& e : ops) {
                     if (op_name == e.name) {
                         op_fn = e.fn;
                         break;
@@ -7784,95 +7985,23 @@ template <typename Ctx> void RegSplitParts::register_mutate_atomic_batch_primiti
                 // error rejects only when the type gate is hard; Soft stays
                 // success. This path does not arm the light rebind, so the
                 // gate is not skipped. Blame rides the batch-failed value.
-                if (op_name == "mutate:rebind") {
-                    std::string threw;
-                    bool tc_ok = true;
-                    if (!guard->run_or_rollback(
-                            [&] { tc_ok = ev.run_post_mutate_typecheck_no_lock(); }, &threw)) {
-                        batch_gate_blame = "post-mutate typecheck threw: " + threw;
-                        mark_sub_op_failed();
-                        break;
-                    }
-                    if (!tc_ok || !ev.last_mutate_error_.empty()) {
-                        batch_gate_blame = ev.last_mutate_error_.empty()
-                                               ? std::string("typecheck after mutate failed")
-                                               : ev.last_mutate_error_;
-                        mark_sub_op_failed();
-                        break;
-                    }
-                    const std::uint64_t nchg =
-                        ev.workspace_flat_ && ev.workspace_flat_->all_mutations().size() > 0 ? 1
-                                                                                             : 0;
-                    if (!ev.finish_mutate_hard_gate(nchg, /*linear=*/false, "mutate:rebind")) {
-                        batch_gate_blame = ev.last_mutate_error_.empty()
-                                               ? std::string("mutation rejected")
-                                               : ev.last_mutate_error_;
-                        mark_sub_op_failed();
-                        break;
-                    }
+                if (op_name == "mutate:rebind" &&
+                    !mutate_atomic_batch_rebind_gate(ev, guard, batch_gate_blame)) {
+                    mark_sub_op_failed(); // Issue #2790
+                    break;
                 }
                 ev.pin_dirty_nodes_for_atomic_batch();
                 ++op_count;
             }
             if (!ok) {
-                // Issue #250 / #1502 / #2796: reverse MutationRecord inverses +
-                // rebuild parent_; skip linear_post_mutate_enforce_all (rollback
-                // noise on invariant_fail counters — see abort_batch_workspace).
-                abort_batch_workspace();
-                ev.atomic_batch_domain_.rollbacks++;
-                ev.bump_edsl_nested_atomic_rollback();
-                if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
-                                              static_cast<std::size_t>(batch_snap_id)))
-                    ev.bump_atomic_batch_snapshot_rollback();
-                ev.rollback_atomic_batch_pinning();
-                // Issue #2790: belt-and-suspenders — mark_sub_op_failed already
-                // cleared guard_ok at the break site; re-assert here so any
-                // future break path that only sets ok still cannot commit.
-                guard_ok = false;
-                // Issue #250 / regression fix: the previous
-                // `make_bool(false)` return made the failure
-                // indistinguishable from a legitimate "all sub-ops
-                // succeeded but reported #f" outcome. Callers
-                // match against `(error-key . error-msg)` pairs
-                // (see `mutate:atomic-batch` docs), so we return
-                // an `ev.make_merr` pair instead. The legacy
-                // `batch-unsupported-op` path above already uses
-                // make_merr — this matches the convention.
-                std::string fail_msg =
-                    "mutate:atomic-batch sub-op failed; batch rolled back to pre-batch state";
-                if (!batch_gate_blame.empty())
-                    fail_msg += ": " + batch_gate_blame;
-                return ev.make_merr("batch-failed", fail_msg);
+                return mutate_atomic_batch_failed(ev, abort_ctx, batch_snap_id, guard_ok,
+                                                  batch_gate_blame);
             }
-            // Issue #250: commit the batch. This performs the single
-            // generation bump (consolidated from the per-op bumps
-            // that were suppressed). Records the saved-bumps count.
-            std::uint64_t saved = ev.workspace_flat_->atomic_batch_bumps_saved();
-            ev.workspace_flat_->commit_atomic_batch();
-            ev.sync_atomic_batch_metadata_metrics(); // #1893
-            // Issue #1913: incremental tag_arity_index sync so query:pattern
-            // immediately sees consistent buckets (dirty-fraction policy).
-            // Default on; opt out with :sync-query-index? #f.
-            ev.tag_arity_index_sync_after_atomic_batch(sync_query_index);
-            ev.atomic_batch_domain_.count++;
-            ev.atomic_batch_domain_.ops_total += op_count;
-            ev.atomic_batch_domain_.bumps_saved_total += saved;
-            ev.commit_atomic_batch_pinning();
-            // Issue #1900 AC3 / #1878: each successful commit means the outer
-            // MutationBoundaryGuard serialized all concurrent mutators
-            // for the entire batch duration (workspace_mtx_ unique_lock
-            // held from Guard ctor through dtor). Bump interleaved +
-            // strong-atomicity counters (weak path is never taken here).
-            ev.bump_atomic_batch_interleaved_prevented();
-            ev.bump_atomic_batch_strong_atomicity_commit();
-            // Issue #396 Phase 3: track fiber-context commits for
-            // the "executed-under-concurrent-fiber" heuristic.
-            if (in_fiber) {
-                ev.atomic_batch_domain_.in_fiber_total.fetch_add(1, std::memory_order_relaxed);
-            }
+            mutate_atomic_batch_commit(ev, sync_query_index, op_count, in_fiber);
             return make_bool(true);
         });
 }
+
 
 template <typename Ctx> void RegSplitParts::register_mutate_structural_insert_primitives(Ctx& cx) {
     auto& add = cx.add_ref;

@@ -34,6 +34,12 @@ struct ReplacePatternMatch;
 // evaluator_primitives_mutate.cpp).
 struct MutateEffectTarget;
 
+// Issue #5033: mutate:atomic-batch phase state (defined in
+// evaluator_primitives_mutate.cpp).
+struct AtomicBatchOpEntry;
+struct AtomicBatchArgs;
+struct AtomicBatchAbortCtx;
+
 // Peeled register parts. The struct is a friend of Evaluator, same as
 // CompilePrims. Each function is one responsibility group.
 struct RegSplitParts {
@@ -783,6 +789,51 @@ struct RegSplitParts {
                                              aura::ast::FlatAST& flat,
                                              std::span<const EvalValue> a, const char* op,
                                              bool* ok, aura::ast::NodeId& out_node);
+    // Issue #5033: mutate:atomic-batch phases: args parse, tenant gate,
+    // snapshot capture, shared abort, batch-entry hygiene audit, identity
+    // pre-write walk, failure tail and commit hand-off.
+    // Issue #4361: restores top_env after a rolled-back batch. Declared
+    // before the Guard so its dtor rebinds after the Guard restore_children.
+    struct AtomicBatchRebindRestore {
+        Evaluator& ev;
+        bool failed = false;
+        explicit AtomicBatchRebindRestore(Evaluator& e)
+            : ev(e) {}
+        ~AtomicBatchRebindRestore();
+        AtomicBatchRebindRestore(const AtomicBatchRebindRestore&) = delete;
+        AtomicBatchRebindRestore& operator=(const AtomicBatchRebindRestore&) = delete;
+        AtomicBatchRebindRestore(AtomicBatchRebindRestore&&) = delete;
+        AtomicBatchRebindRestore& operator=(AtomicBatchRebindRestore&&) = delete;
+    };
+    static void mutate_atomic_batch_restore_defines(Evaluator& ev);
+    static std::string mutate_atomic_batch_safe_str(Evaluator& ev, const EvalValue& v,
+                                                    std::string fallback = {});
+    template <typename GuardPtr>
+    static bool mutate_atomic_batch_rebind_gate(Evaluator& ev, GuardPtr& guard,
+                                                std::string& blame);
+    static std::span<const AtomicBatchOpEntry> mutate_atomic_batch_ops();
+    static std::optional<EvalValue> mutate_atomic_batch_parse_args(
+        Evaluator& ev, const MakeErrorVal& mev, std::span<const EvalValue> a,
+        AtomicBatchArgs& args);
+    static std::optional<EvalValue> mutate_atomic_batch_check_isolation(
+        Evaluator& ev, const MakeErrorVal& mev, bool have_tenant_target,
+        std::uint64_t tenant_target);
+    static std::int64_t mutate_atomic_batch_capture_snapshot(Evaluator& ev, bool want_snapshot);
+    static void mutate_atomic_batch_abort_workspace(const AtomicBatchAbortCtx& ctx);
+    static std::optional<EvalValue> mutate_atomic_batch_pre_audit(
+        Evaluator& ev, const MakeErrorVal& mev, EvalValue op_list, bool batch_allow_macro,
+        std::int64_t batch_snap_id, const AtomicBatchAbortCtx& aborts, bool& guard_ok);
+    static std::optional<EvalValue> mutate_atomic_batch_resolve_writes(
+        Evaluator& ev, const MakeErrorVal& mev, EvalValue op_list, std::int64_t batch_snap_id,
+        const AtomicBatchAbortCtx& aborts, std::vector<std::vector<EvalValue>>& rewritten_args);
+    static EvalValue mutate_atomic_batch_failed(Evaluator& ev, const AtomicBatchAbortCtx& aborts,
+                                                std::int64_t batch_snap_id, bool& guard_ok,
+                                                const std::string& batch_gate_blame);
+    static void mutate_atomic_batch_commit(Evaluator& ev, bool sync_query_index,
+                                           std::size_t op_count, bool in_fiber);
+    static std::vector<EvalValue> mutate_atomic_batch_list_to_vec(Evaluator& ev, EvalValue list);
+    static EvalValue mutate_atomic_batch_pair_car(Evaluator& ev, EvalValue v);
+    static EvalValue mutate_atomic_batch_pair_cdr(Evaluator& ev, EvalValue v);
     // Issue #5033: query:typed-mutation-audit-trail insert phases.
     template <typename Kv>
     static void typed_audit_stats_snapshot_fields(
