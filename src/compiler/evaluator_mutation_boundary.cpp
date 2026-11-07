@@ -4270,7 +4270,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // Issue #3552: capture fiber_id for dtor / move consistency.
     fiber_id_ = (aura::serve::g_current_fiber != nullptr) ? aura::serve::g_current_fiber->id() : 0;
     int* slot = Evaluator::mutation_boundary_depth_slot(ev_, fiber_id_);
-    int prev;
+    int prev = 0;
     // Issue #3384: TLS slot is SSOT only off-fiber (main-thread fallback). On-fiber,
     // SSOT is per-fiber mutation_stack_storage_.size() — TLS write is skipped here
     // because TLS would be the victim worker's after steal (see #3384 AC1).

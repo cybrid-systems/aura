@@ -1054,11 +1054,11 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             ::write(in[1], body.data(), body.size());
             ::close(in[1]);
             std::array<char, 4096> fbuf;
-            ssize_t nr;
+            ssize_t nr = 0;
             while ((nr = ::read(out[0], fbuf.data(), fbuf.size())) > 0)
                 result.append(fbuf.data(), static_cast<std::size_t>(nr));
             ::close(out[0]);
-            int cstat;
+            int cstat = 0;
             ::waitpid(pid, &cstat, 0);
         }
 
