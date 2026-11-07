@@ -1573,9 +1573,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             auto kind = std::string(kind_name(diag.kind));
             auto diag_str = diag.format();
             auto combined = "[" + std::string(kind) + "] " + diag_str;
-            if (!captured.empty())
-                combined = combined + "\n" + captured;
-            captured = combined;
+            if (!captured.empty()) {
+                combined.push_back('\n');
+                combined.append(captured);
+            }
+            captured = std::move(combined);
         }
         const auto sidx = static_cast<std::uint64_t>(ev.push_string_heap(captured));
         return make_string(sidx);
