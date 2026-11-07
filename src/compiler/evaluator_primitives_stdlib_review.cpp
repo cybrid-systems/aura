@@ -107,13 +107,10 @@ namespace {
 
 } // namespace
 
-// Issues #923–#940: single Agent-visible dashboard for stdlib production review.
-// Friend of Evaluator; lambdas use public accessors where possible.
-void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
-    auto metrics = [&ev]() -> CompilerMetrics* {
-        return static_cast<CompilerMetrics*>(ev.compiler_metrics());
-    };
 
+// Issue #5033: one responsibility group of the stdlib production-review face.
+template <typename MetricsFn>
+void RegSplitParts::register_stdlib_review_dashboard_primitives(Evaluator& ev, MetricsFn metrics) {
     ObservabilityPrims::register_stats_impl(
         "query:stdlib-production-review-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
@@ -308,7 +305,11 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
     if (auto* m = metrics()) {
         m->stdlib_registry_domain_peels_total.store(37, std::memory_order_relaxed); // 29+8
     }
+}
 
+// Issue #5033: one responsibility group of the stdlib production-review face.
+template <typename MetricsFn>
+void RegSplitParts::register_self_evo_pipeline_primitives(Evaluator& ev, MetricsFn metrics) {
     // ── Issues #941–#954: self-evo / compiler-core pipeline dashboard ──
     ObservabilityPrims::register_stats_impl(
         "query:self-evo-pipeline-stats", [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
@@ -448,7 +449,11 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .doc = "Bump self-evo pipeline counter for issue N (#941–#954).",
                  .category = "general",
                  .schema = "(int) -> bool"});
+}
 
+// Issue #5033: one responsibility group of the stdlib production-review face.
+template <typename MetricsFn>
+void RegSplitParts::register_production_hardening_primitives(Evaluator& ev, MetricsFn metrics) {
     // ── Issues #985–#1013: production cache bounds + resource quota ──
     ObservabilityPrims::register_stats_impl(
         "query:production-hardening-985-1013-stats",
@@ -616,7 +621,11 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
             };
             return build_kv_hash(ev, kv);
         });
+}
 
+// Issue #5033: one responsibility group of the stdlib production-review face.
+template <typename MetricsFn>
+void RegSplitParts::register_open_issue_sweep_primitives(Evaluator& ev, MetricsFn metrics) {
     // ── Issues #1123–#1143: final open-issue sweep ──
     ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1123-1140-stats",
@@ -768,7 +777,11 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
             };
             return build_kv_hash(ev, kv);
         });
+}
 
+// Issue #5033: one responsibility group of the stdlib production-review face.
+template <typename MetricsFn>
+void RegSplitParts::register_lifetime_pin_primitives(Evaluator& ev, MetricsFn metrics) {
     // Issue #2000 Phase 2: real LifetimePin RAII pinning + generation stamp
     // + FFI handoff + restamp/invalidate. Reads from g_lifetime_pin_stats
     // (lifetime_pin module owns source of truth; per-CompilerMetrics
@@ -905,7 +918,11 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
             };
             return build_kv_hash(ev, kv);
         });
+}
 
+// Issue #5033: one responsibility group of the stdlib production-review face.
+template <typename MetricsFn>
+void RegSplitParts::register_production_sweep_a_primitives(Evaluator& ev, MetricsFn metrics) {
     // ── Issues #1241–#1245 Phase 1 ──
     ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1241-1245-stats",
@@ -1084,7 +1101,11 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
             };
             return build_kv_hash(ev, kv);
         });
+}
 
+// Issue #5033: one responsibility group of the stdlib production-review face.
+template <typename MetricsFn>
+void RegSplitParts::register_production_sweep_b_primitives(Evaluator& ev, MetricsFn metrics) {
     // ── Issues #1256–#1260 Phase 1 ──
     ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1256-1260-stats",
@@ -1307,7 +1328,11 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
             };
             return build_kv_hash(ev, kv);
         });
+}
 
+// Issue #5033: one responsibility group of the stdlib production-review face.
+template <typename MetricsFn>
+void RegSplitParts::register_dirty_provenance_primitives(Evaluator& ev, MetricsFn metrics) {
     // Issue #1283: query:dirty-provenance-stats — Agent-visible
     // aggregation of boundary provenance captures + dirty impact.
     ObservabilityPrims::register_stats_impl(
@@ -1480,7 +1505,11 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
             }
             return build_kv_hash(ev, kv);
         });
+}
 
+// Issue #5033: one responsibility group of the stdlib production-review face.
+template <typename MetricsFn>
+void RegSplitParts::register_production_sweep_c_primitives(Evaluator& ev, MetricsFn metrics) {
     // ── Issues #1286–#1290 Phase 1 ──
     ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1286-1290-stats",
@@ -1726,7 +1755,11 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
             };
             return build_kv_hash(ev, kv);
         });
+}
 
+// Issue #5033: one responsibility group of the stdlib production-review face.
+template <typename MetricsFn>
+void RegSplitParts::register_stats_alias_primitives(Evaluator& ev, MetricsFn metrics) {
     // ── Issues #1321–#1324 Phase 1 ──
     ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1321-1324-stats",
@@ -1901,7 +1934,11 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
             };
             return build_kv_hash(ev, kv);
         });
+}
 
+// Issue #5033: one responsibility group of the stdlib production-review face.
+template <typename MetricsFn>
+void RegSplitParts::register_production_sweep_d_primitives(Evaluator& ev, MetricsFn metrics) {
     // #2626: query:production-sweep-1331-1343-stats (TUI) retired with src/tui.
 
     // ── Issues #1336–#1341, #1344–#1348: type/AST production sweep ──
@@ -2062,5 +2099,26 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .category = "query",
                  .schema = "() -> int"});
 }
+
+// Issues #923–#940: single Agent-visible dashboard for stdlib production review.
+// Friend of Evaluator; lambdas use public accessors where possible.
+void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
+    auto metrics = [&ev]() -> CompilerMetrics* {
+        return static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    };
+
+    RegSplitParts::register_stdlib_review_dashboard_primitives(ev, metrics);
+    RegSplitParts::register_self_evo_pipeline_primitives(ev, metrics);
+    RegSplitParts::register_production_hardening_primitives(ev, metrics);
+    RegSplitParts::register_open_issue_sweep_primitives(ev, metrics);
+    RegSplitParts::register_lifetime_pin_primitives(ev, metrics);
+    RegSplitParts::register_production_sweep_a_primitives(ev, metrics);
+    RegSplitParts::register_production_sweep_b_primitives(ev, metrics);
+    RegSplitParts::register_dirty_provenance_primitives(ev, metrics);
+    RegSplitParts::register_production_sweep_c_primitives(ev, metrics);
+    RegSplitParts::register_stats_alias_primitives(ev, metrics);
+    RegSplitParts::register_production_sweep_d_primitives(ev, metrics);
+}
+
 
 } // namespace aura::compiler::primitives_detail
