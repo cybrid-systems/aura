@@ -380,4 +380,29 @@ struct RegSplitParts {
                                                        std::function<void()> destroy_defuse_index);
     static void register_memory_arena_threshold_primitives(PrimRegistrar add, Evaluator& ev);
     static void register_memory_closure_free_primitives(PrimRegistrar add, Evaluator& ev);
+    // Issue #5033: stdlib production-review registration parts (defined in
+    // evaluator_primitives_stdlib_review.cpp). Each part is one responsibility
+    // group; the metrics accessor stays with the orchestrator and is passed in.
+    template <typename MetricsFn>
+    static void register_stdlib_review_dashboard_primitives(Evaluator& ev, MetricsFn metrics);
+    template <typename MetricsFn>
+    static void register_self_evo_pipeline_primitives(Evaluator& ev, MetricsFn metrics);
+    template <typename MetricsFn>
+    static void register_production_hardening_primitives(Evaluator& ev, MetricsFn metrics);
+    template <typename MetricsFn>
+    static void register_open_issue_sweep_primitives(Evaluator& ev, MetricsFn metrics);
+    template <typename MetricsFn>
+    static void register_lifetime_pin_primitives(Evaluator& ev, MetricsFn metrics);
+    template <typename MetricsFn>
+    static void register_production_sweep_a_primitives(Evaluator& ev, MetricsFn metrics);
+    template <typename MetricsFn>
+    static void register_production_sweep_b_primitives(Evaluator& ev, MetricsFn metrics);
+    template <typename MetricsFn>
+    static void register_dirty_provenance_primitives(Evaluator& ev, MetricsFn metrics);
+    template <typename MetricsFn>
+    static void register_production_sweep_c_primitives(Evaluator& ev, MetricsFn metrics);
+    template <typename MetricsFn>
+    static void register_stats_alias_primitives(Evaluator& ev, MetricsFn metrics);
+    template <typename MetricsFn>
+    static void register_production_sweep_d_primitives(Evaluator& ev, MetricsFn metrics);
 };
