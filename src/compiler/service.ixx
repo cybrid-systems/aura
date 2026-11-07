@@ -18738,15 +18738,15 @@ private:
         }
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             switch (flat.get(id).tag) {
-            case aura::ast::NodeTag::LiteralInt:
-            case aura::ast::NodeTag::LiteralFloat:
-            case aura::ast::NodeTag::LiteralString:
-            case aura::ast::NodeTag::Variable:
-            case aura::ast::NodeTag::Call:
-                break;
-            default:
-                recyclable_eval_escaped_ = true;
-                return;
+                case aura::ast::NodeTag::LiteralInt:
+                case aura::ast::NodeTag::LiteralFloat:
+                case aura::ast::NodeTag::LiteralString:
+                case aura::ast::NodeTag::Variable:
+                case aura::ast::NodeTag::Call:
+                    break;
+                default:
+                    recyclable_eval_escaped_ = true;
+                    return;
             }
         }
     }
