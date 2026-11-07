@@ -25,6 +25,8 @@
 
 #include "compiler/mutate_dispatch.hh"
 
+#include <concepts>
+
 namespace aura::compiler {
 
 // Issue #3122: Agent-visible kind when Guard abort runs dual topology
@@ -43,7 +45,7 @@ inline constexpr const char* kTopologyRestoreReasonRestored = "restored";
 // `track_env_compact_violation`: when true, additionally bumps
 // mutation_boundary_violation_on_env_compact_total (Issue #1948
 // / #1949 path). Default false (most primitives are not env-compact).
-template <typename F>
+template <std::invocable F>
 types::EvalValue run_under_mutation_guard(Evaluator& ev, F&& body,
                                           types::EvalValue on_fail = types::make_bool(false),
                                           bool track_env_compact_violation = false) {

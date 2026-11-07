@@ -3812,7 +3812,7 @@ static int aura_main(int argc, char* argv[]) {
             while (pos < input.size()) {
                 auto imp = input.find("(import \"", pos);
                 auto req = input.find("(require \"", pos);
-                std::size_t found;
+                std::size_t found = std::string::npos;
                 bool has_imp = (imp != std::string::npos);
                 bool has_req = (req != std::string::npos);
                 if (!has_imp && !has_req) {
