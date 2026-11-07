@@ -43,6 +43,10 @@ public:
             linenoiseHistorySave(history_path_.c_str());
         g_repl_ = nullptr;
     }
+    Repl(const Repl&) = delete;
+    Repl& operator=(const Repl&) = delete;
+    Repl(Repl&&) = delete;
+    Repl& operator=(Repl&&) = delete;
 
     void eval_and_print_(const std::string& line) {
         auto r = cs_.eval(line);
