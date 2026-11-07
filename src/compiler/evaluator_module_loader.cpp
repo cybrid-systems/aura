@@ -121,7 +121,7 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
     auto* env = ::getenv("AURA_PATH");
     if (env) {
         std::string aura_path(env);
-        std::size_t start = 0, end;
+        std::size_t start = 0, end = std::string::npos;
         while ((end = aura_path.find(':', start)) != std::string::npos) {
             auto dir = aura_path.substr(start, end - start);
             if (!dir.empty()) {

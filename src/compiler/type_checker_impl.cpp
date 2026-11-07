@@ -2558,7 +2558,7 @@ SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_ou
     // (force-timeout / dirty==0 truncated reverify). Leftover-worklist
     // escalate inside impl sets production_escalated_ so this is one-shot.
     // Issue #2993: skip chrono + time fetch_add in Minimal (default).
-    SolveResult result;
+    SolveResult result = SolveResult::SOLVED;
     if (metrics_full()) {
         auto* m = static_cast<CompilerMetrics*>(metrics_);
         auto start = std::chrono::steady_clock::now();
@@ -4980,7 +4980,7 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
     if (fn.tag == NodeTag::Variable) {
         auto fn_name = pool.resolve(fn.sym_id);
         if (fn_name == "not" && cond.children.size() >= 2) {
-            bool m1, j1;
+            bool m1 = false, j1 = false;
             auto inner = analyze_predicate_flat(flat, pool, cond.child(1), reg, m1, j1);
             if (inner) {
                 meet_used |= m1;
@@ -5005,7 +5005,7 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
             // intersected via the conservative LUB rules.
             std::uint32_t combined_evidence = 0;
             for (std::size_t i = 1; i < cond.children.size(); i++) {
-                bool mi, ji;
+                bool mi = false, ji = false;
                 auto inner = analyze_predicate_flat(flat, pool, cond.child(i), reg, mi, ji);
                 meet_used |= mi;
                 join_used |= ji;
@@ -5076,7 +5076,7 @@ static std::optional<OccurrenceInfoFlat> analyze_predicate_flat(const FlatAST& f
             // (#279) — only the bitmask changes here.
             std::uint32_t combined_evidence = 0;
             for (std::size_t i = 1; i < cond.children.size(); i++) {
-                bool mi, ji;
+                bool mi = false, ji = false;
                 auto inner = analyze_predicate_flat(flat, pool, cond.child(i), reg, mi, ji);
                 meet_used |= mi;
                 join_used |= ji;
@@ -12395,7 +12395,7 @@ namespace {
             // Analyze the predicate to confirm it actually carries
             // narrowing. (Skip if not an if-context with a narrowing
             // predicate — avoids emitting spurious notes.)
-            bool m3, j3;
+            bool m3 = false, j3 = false;
             auto occ = analyze_predicate_flat(flat, pool, cond_id, reg, m3, j3);
             // Issue #338: meet/join counters aren't
             // bumped here — this is a static function
