@@ -974,88 +974,144 @@ void Evaluator::inject_cross_batch_linear_escape_for_test() noexcept {
 // succeeds: solve_delta_occurrence → linear revalidate → escape hard-block →
 // invariant audit → (Full) partial recovery, else reject.
 // Issue #2108: cross-batch linear escape never leaves live state (hard-block).
-bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view op_name,
-                                     std::uint32_t target_node, std::uint64_t before_epoch,
-                                     std::uint64_t after_epoch, bool nested, bool batch_active,
-                                     void* out_commit) noexcept {
+void Evaluator::composite_commit_recheck_exhaustiveness(
+    std::uint64_t after_epoch, aura::compiler::typed_audit::CompositeTxnCommitResult& cr) noexcept {
     using namespace aura::compiler::typed_audit;
-    CompositeTxnCommitResult cr{};
-    auto& c = g_typed_mutation_audit_counters;
-    c.composite_commit_revalidate_total.fetch_add(1, std::memory_order_relaxed);
-
-    // Issue #2545: unified linear force entry before composite audit /
-    // partial recovery. Synth sticky early-exits without re-running
-    // invariant linear walk (no double-count with linear_invariant_fail).
-    if (force_linear_rollback(op_name.empty() ? "composite-linear-force" : op_name)) {
-        cr.linear_ok = false;
-        cr.audit.linear_ok = false;
-        cr.committed = false;
-        if (out_commit)
-            *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;
-        return false;
-    }
-
-    // Issue #2644: batch-level TypeVar refined consistency (anti
-    // SOLVED-but-drift). When occurrence_goals_ has two live goals for
-    // the same var_rep whose refined types fail consistent_unify both
-    // directions, the composite is semantically drifted even if the
-    // final solve reports SOLVED. AC1 production/Full reject; AC2 Soft
-    // observe only. AC4 empty occurrence table → zero cost (helper
-    // short-circuits). Folded into composite_txn_commit so #2610
-    // empty-CS / auto_partial gates and #2221 commit-barrier are
-    // unchanged; this is an additive anti false-green check.
-    {
-        ConstraintSystem* cs_for_drift = nullptr;
-        if (commit_type_checker_opaque_) {
-            cs_for_drift =
-                &static_cast<TypeChecker*>(commit_type_checker_opaque_)->constraint_system();
+    // Issue #3236: Production/Full exhaustiveness recheck before
+    // TypeLinearCommitProof. Quiet: empty cone + empty ADT goals
+    // → two size reads. Soft: observe. Non-exhaustive → reject
+    // with reused force_reason solve (1).
+    // Issue #3317: outermost success persist
+    // (aura_outermost_success_persist_occurrence) runs a sibling
+    // complete recheck so concurrent under-seed cannot skip this
+    // composite_txn_commit walk.
+    ConstraintSystem* cs_ex = nullptr;
+    if (commit_type_checker_opaque_)
+        cs_ex = &static_cast<TypeChecker*>(commit_type_checker_opaque_)->constraint_system();
+    const bool goals =
+        cs_ex && (cs_ex->adt_match_goals_size() != 0 || cs_ex->adt_reverify_roots_size() != 0);
+    const bool cone = aura::compiler::dirty::type_ir_union_cone_nonempty();
+    if (goals || cone) {
+        const bool hard_ex = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+        if (!hard_ex) {
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->adt_exhaust_soft_observe_total.fetch_add(1, std::memory_order_relaxed);
+        } else if (workspace_flat_ && workspace_pool_) {
+            auto* treg = static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
+            bool exh_fail = false;
+            if (treg) {
+                for (aura::ast::NodeId id = 0; id < workspace_flat_->size(); ++id) {
+                    if (!workspace_flat_->has_match_info(id))
+                        continue;
+                    auto exh =
+                        check_match_exhaustiveness(*workspace_flat_, *workspace_pool_, *treg, id);
+                    const bool unproven = exh.via_dynamic || !exh.missing_constructors.empty() ||
+                                          (exh.checked && !exh.exhaustive);
+                    if (!unproven)
+                        continue;
+                    exh_fail = true;
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                        m->adt_exhaust_production_reject_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                        if (exh.via_dynamic)
+                            m->adt_exhaust_dynamic_slide_prevented_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    }
+                    mutate_type_gate::g_exhaustiveness_reject_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
+            if (exh_fail) {
+                cr.solve_ok = false;
+                (void)build_type_linear_commit_proof_from_live_with_outcome(
+                    after_epoch, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                    kProofLiveGoalCountHintAuto, 0, false,
+                    /*force_reason=*/1);
+                publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+            }
         }
-        if (cs_for_drift && !cs_for_drift->check_occurrence_refined_consistency()) {
-            const bool hard_drift = production_defaults_active() ||
-                                    get_strategy() == AuditStrategy::Full ||
-                                    aura::core::sandbox::is_strict();
-            // Issue #2911: also latch unified refined-consistency face so
-            // commit_readiness hard-gates half-green refined schemes even
-            // when composite_txn_commit is not the sole gate.
-            aura::compiler::typed_audit::note_refined_consistency_drift(hard_drift);
-            if (hard_drift) {
-                // AC1: production/Full reject commit with type_scheme_drift.
-                c.composite_type_scheme_drift_reject_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+bool Evaluator::composite_commit_required_type_ids(
+    bool expected_partial, void* out_commit,
+    aura::compiler::typed_audit::CompositeTxnCommitResult& cr) noexcept {
+    using namespace aura::compiler::typed_audit;
+    auto& c = g_typed_mutation_audit_counters;
+    const bool hard_req2983 = production_defaults_active() ||
+                              get_strategy() == AuditStrategy::Full ||
+                              aura::core::sandbox::is_strict();
+    const auto required0 = typed_audit::composite_required_solved_pending();
+    if (hard_req2983 && expected_partial && required0.empty()) {
+        std::vector<typed_audit::CompositeRequiredTypeId> filled;
+        filled.reserve(typed_audit::kCompositeRequiredTypeAutoFillCap);
+        bool more = false;
+        auto push_tid = [&](aura::core::TypeId t) {
+            if (!t.valid())
+                return;
+            if (filled.size() >= typed_audit::kCompositeRequiredTypeAutoFillCap) {
+                more = true;
+                return;
+            }
+            for (const auto& e : filled) {
+                if (e.index == t.index)
+                    return;
+            }
+            filled.push_back({t.index, t.generation});
+        };
+        auto* tc2983 = commit_type_checker_opaque_
+                           ? static_cast<TypeChecker*>(commit_type_checker_opaque_)
+                           : nullptr;
+        if (tc2983) {
+            for (const auto& t : tc2983->last_occurrence_vars())
+                push_tid(t);
+            for (const auto& g : tc2983->constraint_system().occurrence_goals_for_test())
+                push_tid(g.var);
+            for (const auto idx : tc2983->constraint_system().touched_roots())
+                push_tid(aura::core::TypeId{idx, 0});
+        }
+        if (commit_occurrence_vars_opaque_) {
+            auto* occ =
+                static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_.get());
+            for (const auto& t : *occ)
+                push_tid(t);
+        }
+        if (!filled.empty()) {
+            if (typed_audit::composite_required_reject_over_infer()) {
+                c.composite_required_type_reject_over_infer_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                cr.required_type_ok = false;
+                cr.required_type_fail_count = static_cast<std::uint32_t>(filled.size());
+                cr.solve_ok = false;
                 cr.rejected = true;
                 cr.committed = false;
+                c.composite_required_type_fail_total.fetch_add(1, std::memory_order_relaxed);
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->composite_required_type_fail_total.fetch_add(1, std::memory_order_relaxed);
+                c.composite_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
                 if (out_commit)
                     *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;
                 return false;
             }
-            // AC2: Soft observe only (allow commit, surface drift metric).
-            c.composite_type_scheme_drift_observe_total.fetch_add(1, std::memory_order_relaxed);
+            typed_audit::set_composite_required_solved(filled);
+            c.composite_required_type_auto_fill_total.fetch_add(1, std::memory_order_relaxed);
+            if (more)
+                c.composite_required_type_auto_fill_capped_total.fetch_add(
+                    1, std::memory_order_relaxed);
         }
     }
+    return true;
+}
 
-    // 1) solve_delta_occurrence (stable constraint surface #2028 / #2180).
-    // Prefer stashed post-infer_flat_partial CS + occurrence vars — never
-    // rely on a greenfield empty TypeChecker for production composite commit.
-    //
-    // Issue #2509: symmetric expected_partial ↔ commit_cs_has_work matrix
-    // at commit entry (anti false-green / false-empty):
-    //   expected|has_work | production hard path
-    //   true|false        | hard-miss (#2345)
-    //   true|true         | must run SDO; no vacuous SOLVED without SDO
-    //   false|false       | structural OK
-    //   false|true        | observe + still solve; never silent skip under Full
-    //
-    // Issue #2610: auto-detect expected_partial from dirty cone / CS work
-    // when Agents under-mark. Agent API (txn_dirty) unchanged; effective
-    // expected drives hard-miss + force-SDO under production/Full.
+void Evaluator::composite_commit_prepare_sdo(
+    bool& expected_partial, bool& has_work, bool& auto_partial_from_cone, bool& cone_dirty,
+    bool& require_sdo, aura::compiler::typed_audit::CompositeTxnCommitResult& cr) noexcept {
+    using namespace aura::compiler::typed_audit;
+    auto& c = g_typed_mutation_audit_counters;
     cr.solve_ok = true;
     cr.blame_ok = true;
-    bool sdo_provenance_continuity = true;
-    bool sdo_blame_complete = true;
-    bool sdo_blame_nonvacuous = false;
-    bool partial_cs_hard_empty = false; // Issue #2262 / #2345
-    bool sdo_entered = false;           // Issue #2509: SDO actually ran
     const bool agent_expected_partial = txn_dirty();
-    bool has_work = false;
+    has_work = false;
     if (commit_type_checker_opaque_) {
         auto* ctc0 = static_cast<TypeChecker*>(commit_type_checker_opaque_);
         has_work = ctc0->commit_cs_has_work() || commit_cs_live_;
@@ -1068,10 +1124,10 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     // leftover CastOp cannot grant commit_readiness. Soft persist empty
     // → 0 extra.
     (void)aura::compiler::dirty::force_residual_castop_undermark_into_cone();
-    const bool cone_dirty = aura::compiler::dirty::type_ir_union_cone_nonempty();
+    cone_dirty = aura::compiler::dirty::type_ir_union_cone_nonempty();
     const bool under_marked = !agent_expected_partial && (cone_dirty || has_work);
-    bool auto_partial_from_cone = false;
-    bool expected_partial = agent_expected_partial;
+    auto_partial_from_cone = false;
+    expected_partial = agent_expected_partial;
     if (under_marked) {
         // Treat as unexpected work (has_work already counted below; cone-only
         // also bumps unexpected so Agents see under-mark signal).
@@ -1149,337 +1205,506 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     // When has_work, force live-CS path even if commit_cs_live_ lagged.
     // Issue #2610: also force SDO when auto-partial under production and
     // cone dirty (even if CS empty — greenfield SDO then hard-miss).
-    const bool require_sdo =
-        has_work || (auto_partial_from_cone && (cone_dirty || expected_partial));
-    if (type_registry_ || commit_type_checker_opaque_ || require_sdo) {
-        try {
-            ConstraintSystem* cs_ptr = nullptr;
-            std::span<const aura::core::TypeId> occ_span{};
-            std::unique_ptr<TypeChecker> scratch_tc;
-            // Issue #2180 / #2509: reuse when opaque TC exists and work is live
-            // (or commit_cs_live_ from stash). has_work forces reuse so we never
-            // greenfield-empty when the long-lived CS already holds marks.
-            const bool reuse = commit_type_checker_opaque_ && (commit_cs_live_ || has_work);
-            if (reuse) {
+    require_sdo = has_work || (auto_partial_from_cone && (cone_dirty || expected_partial));
+}
+
+
+bool Evaluator::composite_commit_full_recover(
+    std::uint64_t mutation_id, std::uint32_t target_node, std::uint64_t before_epoch,
+    std::uint64_t after_epoch, bool nested, bool batch_active, void* out_commit,
+    const aura::compiler::typed_audit::InvariantAuditResult& audit,
+    aura::compiler::typed_audit::CompositeTxnCommitResult& cr) noexcept {
+    using namespace aura::compiler::typed_audit;
+    auto& c = g_typed_mutation_audit_counters;
+    c.partial_recovery_attempt_total.fetch_add(1, std::memory_order_relaxed);
+    c.composite_partial_recover_attempt_total.fetch_add(1, std::memory_order_relaxed);
+    if (!audit.linear_ok || audit.cross_batch_linear_escape) {
+        c.partial_recovery_linear_total.fetch_add(1, std::memory_order_relaxed);
+        c.composite_partial_recover_linear_total.fetch_add(1, std::memory_order_relaxed);
+        (void)linear_post_mutate_enforce_all();
+        (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
+                                                  /*mark_all_linear=*/true);
+    }
+    if ((!audit.type_ok || !cr.solve_ok) &&
+        !(aura::compiler::typed_audit::production_defaults_active() && !cr.solve_ok)) {
+        c.partial_recovery_type_total.fetch_add(1, std::memory_order_relaxed);
+        c.composite_partial_recover_type_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #2180: re-run solve_delta_occurrence on stashed CS.
+        // Partial type recovery must not paper over CONFLICT/TIMEOUT.
+        // Issue #3003: Production + !solve_ok skips recover-commit
+        // (fail-closed; no half-solution via Full recover).
+        if (commit_type_checker_opaque_ && commit_cs_live_) {
+            try {
                 auto* ctc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
-                cs_ptr = &ctc->constraint_system();
+                auto& cs = ctc->constraint_system();
+                if (mutation_id != 0)
+                    cs.set_active_mutation_id(mutation_id);
+                std::span<const aura::core::TypeId> occ_span{};
                 if (commit_occurrence_vars_opaque_) {
                     auto* occ = static_cast<std::vector<aura::core::TypeId>*>(
                         commit_occurrence_vars_opaque_.get());
                     occ_span = *occ;
                 }
-                c.composite_commit_solve_reuse_hit_total.fetch_add(1, std::memory_order_relaxed);
-                // Issue #2262 / #2345: reuse with empty work is a hard miss when
-                // partial was expected (silent SOLVED on empty CS forbidden).
-                // Issue #2509 AC2: when has_work, this cell is not empty-miss.
-                if (!has_work && expected_partial) {
-                    partial_cs_hard_empty = true;
-                    g_partial_cs_hard_empty_miss_total.fetch_add(1, std::memory_order_relaxed);
-                    c.composite_commit_solve_empty_cs_total.fetch_add(1, std::memory_order_relaxed);
-                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                        m->partial_cs_hard_empty_miss_total.fetch_add(1, std::memory_order_relaxed);
-                }
-            } else if (type_registry_) {
-                // Greenfield only when no partial was stashed (tests / no typecheck).
-                auto& reg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
-                scratch_tc = std::make_unique<TypeChecker>(reg);
-                if (compiler_metrics_)
-                    scratch_tc->set_metrics(compiler_metrics_);
-                cs_ptr = &scratch_tc->constraint_system();
-                c.composite_commit_solve_empty_cs_total.fetch_add(1, std::memory_order_relaxed);
-                // Issue #2262 / #2345: expected partial but empty CS → hard miss.
-                if (expected_partial) {
-                    partial_cs_hard_empty = true;
-                    g_partial_cs_hard_empty_miss_total.fetch_add(1, std::memory_order_relaxed);
-                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                        m->partial_cs_hard_empty_miss_total.fetch_add(1, std::memory_order_relaxed);
-                }
-            }
-            if (cs_ptr) {
-                if (mutation_id != 0)
-                    cs_ptr->set_active_mutation_id(mutation_id);
-                std::vector<Constraint> unresolved;
-                auto sdo = aura::compiler::solve_delta_occurrence(*cs_ptr, occ_span, &unresolved,
-                                                                  compiler_metrics_);
-                sdo_entered = true;
-                c.composite_commit_sdo_entered_total.fetch_add(1, std::memory_order_relaxed);
-                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                    m->composite_commit_sdo_entered_total.fetch_add(1, std::memory_order_relaxed);
+                auto sdo2 = aura::compiler::solve_delta_occurrence(cs, occ_span, nullptr,
+                                                                   compiler_metrics_);
                 using aura::compiler::SolveResult;
-                // Issue #2260: SOLVED alone is insufficient when reverify was
-                // truncated — partial type-proof must not commit under hard-gate.
-                c.boundary_solve_hard_gate_total.fetch_add(1, std::memory_order_relaxed);
-                if (sdo.truncated_reverify) {
+                // Issue #2260: reject truncated reverify on recovery re-solve.
+                if (sdo2.truncated_reverify)
                     c.boundary_solve_truncated_seen_total.fetch_add(1, std::memory_order_relaxed);
-                }
-                // Issue #2277 AC1: under production defaults a delta TIMEOUT is
-                // escalated to a one-shot full fixpoint (Option A). If still not
-                // SOLVED, solve_ok stays false here — never half-solved ship.
-                auto post_escalate = cs_ptr->escalate_if_production(sdo.status, &unresolved);
-                // Base: SOLVED after optional TIMEOUT escalate.
-                // Soft (#2458 AC1): truncated may still commit (observe only).
-                // Hard: require !truncated unless gate full-solve recovers.
-                const bool trunc_hard = aura::compiler::typed_audit::truncate_commit_hard_enabled();
-                cr.solve_ok = (post_escalate == SolveResult::SOLVED) &&
-                              (!sdo.truncated_reverify || !trunc_hard);
-                // Issue #2458: anti half-green — truncated reverify or incomplete
-                // non-vacuous blame under production/Full/HARD → full solve or reject.
-                // Soft Sampled: observe only (AC1); happy path skips full solve (AC4).
+                // Issue #2277 AC1: same production-default escalation on the
+                // partial-recovery re-solve path. If escalate returns
+                // TIMEOUT, solve_ok remains false (no half-solved ship).
+                auto post_escalate2 = cs.escalate_if_production(sdo2.status, nullptr);
+                const bool trunc_hard2 =
+                    aura::compiler::typed_audit::truncate_commit_hard_enabled();
+                cr.solve_ok = (post_escalate2 == SolveResult::SOLVED) &&
+                              (!sdo2.truncated_reverify || !trunc_hard2);
+                // Issue #2458: re-apply truncate-commit gate on recovery path
+                // so Full partial recovery cannot half-green after a soft
+                // SOLVED+truncated residual.
                 {
-                    SolveDeltaOccurrenceResult sdo_gate = sdo;
-                    sdo_gate.status = post_escalate;
-                    sdo_gate.truncated_reverify =
-                        sdo.truncated_reverify || cs_ptr->last_reverify_truncated();
-                    auto gate = aura::compiler::commit_ok_after_delta_snapshot(*cs_ptr, &sdo_gate,
-                                                                               &unresolved);
-                    if (gate.rejected) {
+                    SolveDeltaOccurrenceResult sdo2_gate = sdo2;
+                    sdo2_gate.status = post_escalate2;
+                    sdo2_gate.truncated_reverify =
+                        sdo2.truncated_reverify || cs.last_reverify_truncated();
+                    auto gate2 =
+                        aura::compiler::commit_ok_after_delta_snapshot(cs, &sdo2_gate, nullptr);
+                    if (gate2.rejected)
                         cr.solve_ok = false;
-                    } else if (gate.recovered) {
+                    else if (gate2.recovered)
                         cr.solve_ok = true;
-                        sdo.truncated_reverify = false;
-                    } else if (gate.observed && post_escalate == SolveResult::SOLVED) {
-                        // Soft: allow SOLVED even when truncated (AC1).
+                    else if (gate2.observed && post_escalate2 == SolveResult::SOLVED)
                         cr.solve_ok = true;
-                    }
                 }
-                // Issue #3236: Production/Full exhaustiveness recheck before
-                // TypeLinearCommitProof. Quiet: empty cone + empty ADT goals
-                // → two size reads. Soft: observe. Non-exhaustive → reject
-                // with reused force_reason solve (1).
-                // Issue #3317: outermost success persist
-                // (aura_outermost_success_persist_occurrence) runs a sibling
-                // complete recheck so concurrent under-seed cannot skip this
-                // composite_txn_commit walk.
+                // Issue #3031: same drain on Full recovery re-solve.
                 {
-                    ConstraintSystem* cs_ex = nullptr;
-                    if (commit_type_checker_opaque_)
-                        cs_ex = &static_cast<TypeChecker*>(commit_type_checker_opaque_)
-                                     ->constraint_system();
-                    const bool goals = cs_ex && (cs_ex->adt_match_goals_size() != 0 ||
-                                                 cs_ex->adt_reverify_roots_size() != 0);
-                    const bool cone = aura::compiler::dirty::type_ir_union_cone_nonempty();
-                    if (goals || cone) {
-                        const bool hard_ex =
-                            production_defaults_active() || get_strategy() == AuditStrategy::Full;
-                        if (!hard_ex) {
-                            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                                m->adt_exhaust_soft_observe_total.fetch_add(
-                                    1, std::memory_order_relaxed);
-                        } else if (workspace_flat_ && workspace_pool_) {
-                            auto* treg =
-                                static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
-                            bool exh_fail = false;
-                            if (treg) {
-                                for (aura::ast::NodeId id = 0; id < workspace_flat_->size(); ++id) {
-                                    if (!workspace_flat_->has_match_info(id))
-                                        continue;
-                                    auto exh = check_match_exhaustiveness(
-                                        *workspace_flat_, *workspace_pool_, *treg, id);
-                                    const bool unproven = exh.via_dynamic ||
-                                                          !exh.missing_constructors.empty() ||
-                                                          (exh.checked && !exh.exhaustive);
-                                    if (!unproven)
-                                        continue;
-                                    exh_fail = true;
-                                    if (auto* m =
-                                            static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                                        m->adt_exhaust_production_reject_total.fetch_add(
-                                            1, std::memory_order_relaxed);
-                                        if (exh.via_dynamic)
-                                            m->adt_exhaust_dynamic_slide_prevented_total.fetch_add(
-                                                1, std::memory_order_relaxed);
-                                    }
-                                    mutate_type_gate::g_exhaustiveness_reject_total.fetch_add(
-                                        1, std::memory_order_relaxed);
-                                }
-                            }
-                            if (exh_fail) {
-                                cr.solve_ok = false;
-                                (void)build_type_linear_commit_proof_from_live_with_outcome(
-                                    after_epoch, /*would_allow_commit=*/false, /*linear_ok=*/false,
-                                    kProofLiveGoalCountHintAuto, 0, false,
-                                    /*force_reason=*/1);
-                                publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
-                            }
-                        }
-                    }
-                }
-                // Issue #3031: pending_full_solve / locality residual must
-                // escalate before TypeLinearCommitProof stamp. Production/Full:
-                // drain → SOLVED or hard-reject (force_reason 16). Soft:
-                // observe allow. Quiet (empty residual): two size reads.
-                {
-                    auto drain = cs_ptr->drain_pending_full_solve_before_commit(&unresolved);
-                    if (drain != SolveResult::SOLVED) {
+                    auto drain2 = cs.drain_pending_full_solve_before_commit(nullptr);
+                    if (drain2 != SolveResult::SOLVED) {
                         cr.solve_ok = false;
                         const bool hard =
                             production_defaults_active() || get_strategy() == AuditStrategy::Full;
                         if (hard) {
                             (void)build_type_linear_commit_proof_from_live_with_outcome(
-                                after_epoch, /*would_allow_commit=*/false, /*linear_ok=*/false,
-                                kProofLiveGoalCountHintAuto, 0, false,
+                                after_epoch, /*would_allow_commit=*/false,
+                                /*linear_ok=*/false, kProofLiveGoalCountHintAuto, 0, false,
                                 /*force_reason=*/16);
                             publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
                         }
                     }
                 }
-                // Issue #3512: stage expected fp after SDO+drain SOLVED so
-                // outermost persist can pass #3431. Fail leaves 0 (unstaged).
-                if (cr.solve_ok)
-                    stage_expected_occurrence_snapshot_fp(
-                        aura_occurrence_goal_fingerprint_tc(commit_type_checker_opaque_));
-                // Issue #2262 / #2345: expected-partial + empty CS anti false-green.
-                // Production defaults / Full / AURA_COMPOSITE_EMPTY_CS_HARD=1 →
-                // hard-reject (solve_ok=false). Dev Sampled soft → observe only
-                // (commit may succeed). True vacuous batches (no txn_dirty /
-                // expected_partial=false) never set partial_cs_hard_empty.
-                // Strict sandbox also hard-rejects (production-like soundness).
-                if (partial_cs_hard_empty) {
-                    const bool hard = composite_empty_cs_hard_reject_enabled() ||
-                                      aura::core::sandbox::is_strict();
-                    if (hard) {
-                        cr.solve_ok = false;
-                        c.composite_commit_empty_cs_hard_miss_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                            m->composite_commit_empty_cs_hard_miss_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                    } else {
-                        c.composite_commit_empty_cs_observe_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                            m->composite_commit_empty_cs_observe_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                    }
-                }
-                // Issue #2284: compute blame_complete before the publish site
-                // so we can capture it on the repair surface.
-                const auto& blame = cs_ptr->last_blame_chain();
-                const bool blame_complete = blame.is_complete();
-                if (!cr.solve_ok) {
+                if (!cr.solve_ok)
                     c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
-                    c.boundary_solve_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
-                    // Issue #2284: publish the timeout repair surface so Agents
-                    // can self-repair without parsing free-form diagnostics.
-                    // (Captures sdo.unresolved + unresolved_affected_nodes +
-                    // truncated_reverify + blame_complete.) CompiledMetrics*
-                    // fetched from this->compiler_metrics_ (member).
-                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                        m->type_repair_last_timeout_status.store(
-                            static_cast<std::uint64_t>(sdo.status), std::memory_order_relaxed);
-                        m->type_repair_last_unresolved_count.store(sdo.unresolved.size(),
-                                                                   std::memory_order_relaxed);
-                        const std::size_t cap = std::min(sdo.unresolved_affected_nodes.size(),
-                                                         static_cast<std::size_t>(16));
-                        m->type_repair_last_unresolved_aff_nodes_count.store(
-                            cap, std::memory_order_relaxed);
-                        for (std::size_t i = 0; i < cap; ++i) {
-                            m->type_repair_last_unresolved_aff_nodes[i].store(
-                                sdo.unresolved_affected_nodes[i], std::memory_order_relaxed);
-                        }
-                        m->type_repair_last_truncated_reverify.store(
-                            sdo.truncated_reverify ? 1u : 0u, std::memory_order_relaxed);
-                        m->type_repair_last_blame_complete.store(blame_complete ? 1u : 0u,
-                                                                 std::memory_order_relaxed);
-                        m->type_repair_publish_total.fetch_add(1, std::memory_order_relaxed);
-                        // Issue #2343: re-mirror unresolved graph onto the durable
-                        // repair surface at publish time (production escalate /
-                        // soft TIMEOUT both land here when !cr.solve_ok).
-                        {
-                            using aura::compiler::kUnresolvedGraphEdgeQueryCap;
-                            using aura::compiler::kUnresolvedGraphSuggestedRootsCap;
-                            const std::size_t ec = sdo.unresolved_graph_edges.size();
-                            const std::size_t rc = sdo.suggested_roots.size();
-                            m->type_repair_unresolved_edge_count.store(ec,
-                                                                       std::memory_order_relaxed);
-                            m->type_repair_suggested_root_count.store(rc,
-                                                                      std::memory_order_relaxed);
-                            for (std::size_t i = 0; i < kUnresolvedGraphSuggestedRootsCap; ++i) {
-                                m->type_repair_suggested_roots[i].store(
-                                    i < rc ? sdo.suggested_roots[i] : 0u,
-                                    std::memory_order_relaxed);
-                                // Issue #2548: re-mirror structured reason + degree.
-                                const std::uint8_t why = i < sdo.suggested_root_reasons.size()
-                                                             ? sdo.suggested_root_reasons[i]
-                                                             : 0u;
-                                const std::uint32_t deg = i < sdo.suggested_root_degrees.size()
-                                                              ? sdo.suggested_root_degrees[i]
-                                                              : 0u;
-                                m->type_repair_suggested_root_reasons[i].store(
-                                    why, std::memory_order_relaxed);
-                                m->type_repair_suggested_root_degrees[i].store(
-                                    deg, std::memory_order_relaxed);
-                            }
-                            m->type_repair_occurrence_replay_miss_count.store(
-                                sdo.occurrence_replay_miss_count, std::memory_order_relaxed);
-                            m->type_repair_let_poly_suggested_count.store(
-                                sdo.let_poly_suggested_count, std::memory_order_relaxed);
-                            m->type_repair_occurrence_suggested_count.store(
-                                sdo.occurrence_suggested_count, std::memory_order_relaxed);
-                            for (std::size_t i = 0; i < kUnresolvedGraphEdgeQueryCap; ++i) {
-                                if (i < ec) {
-                                    const auto& e = sdo.unresolved_graph_edges[i];
-                                    m->type_repair_edge_var[i].store(e.var_rep,
-                                                                     std::memory_order_relaxed);
-                                    m->type_repair_edge_cix[i].store(e.constraint_index,
-                                                                     std::memory_order_relaxed);
-                                    m->type_repair_edge_kind[i].store(e.kind,
-                                                                      std::memory_order_relaxed);
-                                    m->type_repair_edge_lhs[i].store(e.lhs.index,
-                                                                     std::memory_order_relaxed);
-                                    m->type_repair_edge_rhs[i].store(e.rhs.index,
-                                                                     std::memory_order_relaxed);
-                                } else {
-                                    m->type_repair_edge_var[i].store(0, std::memory_order_relaxed);
-                                    m->type_repair_edge_cix[i].store(0, std::memory_order_relaxed);
-                                    m->type_repair_edge_kind[i].store(0, std::memory_order_relaxed);
-                                    m->type_repair_edge_lhs[i].store(0, std::memory_order_relaxed);
-                                    m->type_repair_edge_rhs[i].store(0, std::memory_order_relaxed);
-                                }
-                            }
-                        }
-                    }
+            } catch (...) {
+                // [SILENCE-PRIM]
+                cr.solve_ok = false;
+            }
+        }
+    }
+    if (!audit.provenance_ok) {
+        c.partial_recovery_provenance_total.fetch_add(1, std::memory_order_relaxed);
+        if (workspace_flat_)
+            workspace_flat_->restamp_all_node_generations();
+        (void)restamp_pinned_stable_refs();
+        (void)post_mutation_reflect_validate();
+    }
+    // Issue #2223: ADT renarrow / revalidate before re-audit.
+    if (!audit.adt_ok) {
+        c.partial_recovery_adt_total.fetch_add(1, std::memory_order_relaxed);
+        partial_recover_adt_exhaustiveness(mutation_id);
+    }
+    InvariantAuditResult after{};
+    const bool after_ok = run_typed_mutation_invariant_audit(
+        mutation_id, "composite-txn-partial-recover", target_node, before_epoch, after_epoch,
+        /*composite_mode=*/true, &after);
+    // Re-run escape hard-block after linear recover (must still be clean).
+    InvariantAuditResult esc_after{};
+    if (hard_block_cross_batch_linear_escape(esc_after)) {
+        after.cross_batch_linear_escape = true;
+        after.linear_ok = false;
+        c.linear_escape_commit_blocked_total.fetch_add(1, std::memory_order_relaxed);
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->linear_escape_commit_blocked_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #2180: require solve_ok after re-solve — type CONFLICT must reject.
+    // Issue #2221: incomplete blame under require-on must not ship via recovery
+    // (restamp does not synthesize a complete DeltaBlameChain).
+    if (!cr.blame_ok)
+        after.provenance_ok = false;
+    if (after_ok && after.all_ok() && !esc_after.cross_batch_linear_escape && cr.solve_ok &&
+        cr.blame_ok) {
+        c.partial_recovery_success_total.fetch_add(1, std::memory_order_relaxed);
+        c.composite_partial_recover_success_total.fetch_add(1, std::memory_order_relaxed);
+        c.composite_commit_ok_total.fetch_add(1, std::memory_order_relaxed);
+        record_composite_invariant_audit(nested, batch_active, after);
+        clear_txn_dirty();
+        cr.audit = after;
+        cr.audit_ok = true;
+        cr.partial_recovered = true;
+        cr.committed = true;
+        if (out_commit)
+            *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;
+        return true;
+    }
+    c.partial_recovery_fail_total.fetch_add(1, std::memory_order_relaxed);
+    cr.audit = after;
+    return false;
+}
+
+void Evaluator::composite_commit_solve_delta(
+    std::uint64_t mutation_id, std::uint64_t after_epoch, bool expected_partial, bool has_work,
+    bool& sdo_entered, aura::compiler::typed_audit::CompositeTxnCommitResult& cr) noexcept {
+    using namespace aura::compiler::typed_audit;
+    auto& c = g_typed_mutation_audit_counters;
+    bool sdo_provenance_continuity = true;
+    bool sdo_blame_complete = true;
+    bool sdo_blame_nonvacuous = false;
+    bool partial_cs_hard_empty = false;
+    try {
+        ConstraintSystem* cs_ptr = nullptr;
+        std::span<const aura::core::TypeId> occ_span{};
+        std::unique_ptr<TypeChecker> scratch_tc;
+        // Issue #2180 / #2509: reuse when opaque TC exists and work is live
+        // (or commit_cs_live_ from stash). has_work forces reuse so we never
+        // greenfield-empty when the long-lived CS already holds marks.
+        const bool reuse = commit_type_checker_opaque_ && (commit_cs_live_ || has_work);
+        if (reuse) {
+            auto* ctc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
+            cs_ptr = &ctc->constraint_system();
+            if (commit_occurrence_vars_opaque_) {
+                auto* occ = static_cast<std::vector<aura::core::TypeId>*>(
+                    commit_occurrence_vars_opaque_.get());
+                occ_span = *occ;
+            }
+            c.composite_commit_solve_reuse_hit_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2262 / #2345: reuse with empty work is a hard miss when
+            // partial was expected (silent SOLVED on empty CS forbidden).
+            // Issue #2509 AC2: when has_work, this cell is not empty-miss.
+            if (!has_work && expected_partial) {
+                partial_cs_hard_empty = true;
+                g_partial_cs_hard_empty_miss_total.fetch_add(1, std::memory_order_relaxed);
+                c.composite_commit_solve_empty_cs_total.fetch_add(1, std::memory_order_relaxed);
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->partial_cs_hard_empty_miss_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        } else if (type_registry_) {
+            // Greenfield only when no partial was stashed (tests / no typecheck).
+            auto& reg = *static_cast<aura::core::TypeRegistry*>(type_registry_);
+            scratch_tc = std::make_unique<TypeChecker>(reg);
+            if (compiler_metrics_)
+                scratch_tc->set_metrics(compiler_metrics_);
+            cs_ptr = &scratch_tc->constraint_system();
+            c.composite_commit_solve_empty_cs_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #2262 / #2345: expected partial but empty CS → hard miss.
+            if (expected_partial) {
+                partial_cs_hard_empty = true;
+                g_partial_cs_hard_empty_miss_total.fetch_add(1, std::memory_order_relaxed);
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->partial_cs_hard_empty_miss_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        if (cs_ptr) {
+            if (mutation_id != 0)
+                cs_ptr->set_active_mutation_id(mutation_id);
+            std::vector<Constraint> unresolved;
+            auto sdo = aura::compiler::solve_delta_occurrence(*cs_ptr, occ_span, &unresolved,
+                                                              compiler_metrics_);
+            sdo_entered = true;
+            c.composite_commit_sdo_entered_total.fetch_add(1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->composite_commit_sdo_entered_total.fetch_add(1, std::memory_order_relaxed);
+            using aura::compiler::SolveResult;
+            // Issue #2260: SOLVED alone is insufficient when reverify was
+            // truncated — partial type-proof must not commit under hard-gate.
+            c.boundary_solve_hard_gate_total.fetch_add(1, std::memory_order_relaxed);
+            if (sdo.truncated_reverify) {
+                c.boundary_solve_truncated_seen_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            // Issue #2277 AC1: under production defaults a delta TIMEOUT is
+            // escalated to a one-shot full fixpoint (Option A). If still not
+            // SOLVED, solve_ok stays false here — never half-solved ship.
+            auto post_escalate = cs_ptr->escalate_if_production(sdo.status, &unresolved);
+            // Base: SOLVED after optional TIMEOUT escalate.
+            // Soft (#2458 AC1): truncated may still commit (observe only).
+            // Hard: require !truncated unless gate full-solve recovers.
+            const bool trunc_hard = aura::compiler::typed_audit::truncate_commit_hard_enabled();
+            cr.solve_ok =
+                (post_escalate == SolveResult::SOLVED) && (!sdo.truncated_reverify || !trunc_hard);
+            // Issue #2458: anti half-green — truncated reverify or incomplete
+            // non-vacuous blame under production/Full/HARD → full solve or reject.
+            // Soft Sampled: observe only (AC1); happy path skips full solve (AC4).
+            {
+                SolveDeltaOccurrenceResult sdo_gate = sdo;
+                sdo_gate.status = post_escalate;
+                sdo_gate.truncated_reverify =
+                    sdo.truncated_reverify || cs_ptr->last_reverify_truncated();
+                auto gate =
+                    aura::compiler::commit_ok_after_delta_snapshot(*cs_ptr, &sdo_gate, &unresolved);
+                if (gate.rejected) {
+                    cr.solve_ok = false;
+                } else if (gate.recovered) {
+                    cr.solve_ok = true;
+                    sdo.truncated_reverify = false;
+                } else if (gate.observed && post_escalate == SolveResult::SOLVED) {
+                    // Soft: allow SOLVED even when truncated (AC1).
+                    cr.solve_ok = true;
                 }
-                // Issue #2221: blame-complete surface after solve_delta_occurrence.
-                // Vacuous empty greenfield (no frames, no roots) is exempt so
-                // test/no-typecheck commits stay green; non-vacuous incomplete
-                // chains are observe-counted and hard-reject under require-on.
-                sdo_provenance_continuity = sdo.provenance_continuity;
-                sdo_blame_complete = blame_complete;
-                sdo_blame_nonvacuous = reuse || !blame.frames.empty() || blame.complete ||
-                                       blame.partial || sdo.touched_roots > 0 ||
-                                       sdo.occurrence_priority_roots > 0 || sdo.let_poly_roots > 0;
-                if (sdo_blame_nonvacuous) {
-                    c.blame_commit_check_total.fetch_add(1, std::memory_order_relaxed);
-                    g_blame_commit_check_total.fetch_add(1, std::memory_order_relaxed);
-                    if (!sdo_blame_complete) {
-                        c.blame_commit_incomplete_observe_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        g_blame_commit_incomplete_observe_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        if (require_blame_complete_on_commit()) {
-                            cr.blame_ok = false;
-                            c.blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
-                            g_blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
-                            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                                m->blame_commit_reject_total.fetch_add(1,
-                                                                       std::memory_order_relaxed);
-                        }
-                    } else if (!sdo_provenance_continuity && require_blame_complete_on_commit()) {
-                        // Continuity miss with complete-looking chain still fails hard.
-                        cr.blame_ok = false;
-                        c.blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
-                        g_blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            composite_commit_recheck_exhaustiveness(after_epoch, cr);
+            // Issue #3031: pending_full_solve / locality residual must
+            // escalate before TypeLinearCommitProof stamp. Production/Full:
+            // drain → SOLVED or hard-reject (force_reason 16). Soft:
+            // observe allow. Quiet (empty residual): two size reads.
+            {
+                auto drain = cs_ptr->drain_pending_full_solve_before_commit(&unresolved);
+                if (drain != SolveResult::SOLVED) {
+                    cr.solve_ok = false;
+                    const bool hard =
+                        production_defaults_active() || get_strategy() == AuditStrategy::Full;
+                    if (hard) {
+                        (void)build_type_linear_commit_proof_from_live_with_outcome(
+                            after_epoch, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                            kProofLiveGoalCountHintAuto, 0, false,
+                            /*force_reason=*/16);
+                        publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
                     }
                 }
             }
-            scratch_tc.reset();
-        } catch (...) {
-            // [SILENCE-PRIM] solve path failure → treat as type fail.
-            cr.solve_ok = false;
-            c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3512: stage expected fp after SDO+drain SOLVED so
+            // outermost persist can pass #3431. Fail leaves 0 (unstaged).
+            if (cr.solve_ok)
+                stage_expected_occurrence_snapshot_fp(
+                    aura_occurrence_goal_fingerprint_tc(commit_type_checker_opaque_));
+            // Issue #2262 / #2345: expected-partial + empty CS anti false-green.
+            // Production defaults / Full / AURA_COMPOSITE_EMPTY_CS_HARD=1 →
+            // hard-reject (solve_ok=false). Dev Sampled soft → observe only
+            // (commit may succeed). True vacuous batches (no txn_dirty /
+            // expected_partial=false) never set partial_cs_hard_empty.
+            // Strict sandbox also hard-rejects (production-like soundness).
+            if (partial_cs_hard_empty) {
+                const bool hard =
+                    composite_empty_cs_hard_reject_enabled() || aura::core::sandbox::is_strict();
+                if (hard) {
+                    cr.solve_ok = false;
+                    c.composite_commit_empty_cs_hard_miss_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                        m->composite_commit_empty_cs_hard_miss_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                } else {
+                    c.composite_commit_empty_cs_observe_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                        m->composite_commit_empty_cs_observe_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                }
+            }
+            // Issue #2284: compute blame_complete before the publish site
+            // so we can capture it on the repair surface.
+            const auto& blame = cs_ptr->last_blame_chain();
+            const bool blame_complete = blame.is_complete();
+            if (!cr.solve_ok) {
+                c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
+                c.boundary_solve_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+                // Issue #2284: publish the timeout repair surface so Agents
+                // can self-repair without parsing free-form diagnostics.
+                // (Captures sdo.unresolved + unresolved_affected_nodes +
+                // truncated_reverify + blame_complete.) CompiledMetrics*
+                // fetched from this->compiler_metrics_ (member).
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                    m->type_repair_last_timeout_status.store(static_cast<std::uint64_t>(sdo.status),
+                                                             std::memory_order_relaxed);
+                    m->type_repair_last_unresolved_count.store(sdo.unresolved.size(),
+                                                               std::memory_order_relaxed);
+                    const std::size_t cap = std::min(sdo.unresolved_affected_nodes.size(),
+                                                     static_cast<std::size_t>(16));
+                    m->type_repair_last_unresolved_aff_nodes_count.store(cap,
+                                                                         std::memory_order_relaxed);
+                    for (std::size_t i = 0; i < cap; ++i) {
+                        m->type_repair_last_unresolved_aff_nodes[i].store(
+                            sdo.unresolved_affected_nodes[i], std::memory_order_relaxed);
+                    }
+                    m->type_repair_last_truncated_reverify.store(sdo.truncated_reverify ? 1u : 0u,
+                                                                 std::memory_order_relaxed);
+                    m->type_repair_last_blame_complete.store(blame_complete ? 1u : 0u,
+                                                             std::memory_order_relaxed);
+                    m->type_repair_publish_total.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #2343: re-mirror unresolved graph onto the durable
+                    // repair surface at publish time (production escalate /
+                    // soft TIMEOUT both land here when !cr.solve_ok).
+                    {
+                        using aura::compiler::kUnresolvedGraphEdgeQueryCap;
+                        using aura::compiler::kUnresolvedGraphSuggestedRootsCap;
+                        const std::size_t ec = sdo.unresolved_graph_edges.size();
+                        const std::size_t rc = sdo.suggested_roots.size();
+                        m->type_repair_unresolved_edge_count.store(ec, std::memory_order_relaxed);
+                        m->type_repair_suggested_root_count.store(rc, std::memory_order_relaxed);
+                        for (std::size_t i = 0; i < kUnresolvedGraphSuggestedRootsCap; ++i) {
+                            m->type_repair_suggested_roots[i].store(
+                                i < rc ? sdo.suggested_roots[i] : 0u, std::memory_order_relaxed);
+                            // Issue #2548: re-mirror structured reason + degree.
+                            const std::uint8_t why = i < sdo.suggested_root_reasons.size()
+                                                         ? sdo.suggested_root_reasons[i]
+                                                         : 0u;
+                            const std::uint32_t deg = i < sdo.suggested_root_degrees.size()
+                                                          ? sdo.suggested_root_degrees[i]
+                                                          : 0u;
+                            m->type_repair_suggested_root_reasons[i].store(
+                                why, std::memory_order_relaxed);
+                            m->type_repair_suggested_root_degrees[i].store(
+                                deg, std::memory_order_relaxed);
+                        }
+                        m->type_repair_occurrence_replay_miss_count.store(
+                            sdo.occurrence_replay_miss_count, std::memory_order_relaxed);
+                        m->type_repair_let_poly_suggested_count.store(sdo.let_poly_suggested_count,
+                                                                      std::memory_order_relaxed);
+                        m->type_repair_occurrence_suggested_count.store(
+                            sdo.occurrence_suggested_count, std::memory_order_relaxed);
+                        for (std::size_t i = 0; i < kUnresolvedGraphEdgeQueryCap; ++i) {
+                            if (i < ec) {
+                                const auto& e = sdo.unresolved_graph_edges[i];
+                                m->type_repair_edge_var[i].store(e.var_rep,
+                                                                 std::memory_order_relaxed);
+                                m->type_repair_edge_cix[i].store(e.constraint_index,
+                                                                 std::memory_order_relaxed);
+                                m->type_repair_edge_kind[i].store(e.kind,
+                                                                  std::memory_order_relaxed);
+                                m->type_repair_edge_lhs[i].store(e.lhs.index,
+                                                                 std::memory_order_relaxed);
+                                m->type_repair_edge_rhs[i].store(e.rhs.index,
+                                                                 std::memory_order_relaxed);
+                            } else {
+                                m->type_repair_edge_var[i].store(0, std::memory_order_relaxed);
+                                m->type_repair_edge_cix[i].store(0, std::memory_order_relaxed);
+                                m->type_repair_edge_kind[i].store(0, std::memory_order_relaxed);
+                                m->type_repair_edge_lhs[i].store(0, std::memory_order_relaxed);
+                                m->type_repair_edge_rhs[i].store(0, std::memory_order_relaxed);
+                            }
+                        }
+                    }
+                }
+            }
+            // Issue #2221: blame-complete surface after solve_delta_occurrence.
+            // Vacuous empty greenfield (no frames, no roots) is exempt so
+            // test/no-typecheck commits stay green; non-vacuous incomplete
+            // chains are observe-counted and hard-reject under require-on.
+            sdo_provenance_continuity = sdo.provenance_continuity;
+            sdo_blame_complete = blame_complete;
+            sdo_blame_nonvacuous = reuse || !blame.frames.empty() || blame.complete ||
+                                   blame.partial || sdo.touched_roots > 0 ||
+                                   sdo.occurrence_priority_roots > 0 || sdo.let_poly_roots > 0;
+            if (sdo_blame_nonvacuous) {
+                c.blame_commit_check_total.fetch_add(1, std::memory_order_relaxed);
+                g_blame_commit_check_total.fetch_add(1, std::memory_order_relaxed);
+                if (!sdo_blame_complete) {
+                    c.blame_commit_incomplete_observe_total.fetch_add(1, std::memory_order_relaxed);
+                    g_blame_commit_incomplete_observe_total.fetch_add(1, std::memory_order_relaxed);
+                    if (require_blame_complete_on_commit()) {
+                        cr.blame_ok = false;
+                        c.blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+                        g_blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                            m->blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+                    }
+                } else if (!sdo_provenance_continuity && require_blame_complete_on_commit()) {
+                    // Continuity miss with complete-looking chain still fails hard.
+                    cr.blame_ok = false;
+                    c.blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+                    g_blame_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        }
+        scratch_tc.reset();
+    } catch (...) {
+        // [SILENCE-PRIM] solve path failure → treat as type fail.
+        cr.solve_ok = false;
+        c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view op_name,
+                                     std::uint32_t target_node, std::uint64_t before_epoch,
+                                     std::uint64_t after_epoch, bool nested, bool batch_active,
+                                     void* out_commit) noexcept {
+    using namespace aura::compiler::typed_audit;
+    CompositeTxnCommitResult cr{};
+    auto& c = g_typed_mutation_audit_counters;
+    c.composite_commit_revalidate_total.fetch_add(1, std::memory_order_relaxed);
+
+    // Issue #2545: unified linear force entry before composite audit /
+    // partial recovery. Synth sticky early-exits without re-running
+    // invariant linear walk (no double-count with linear_invariant_fail).
+    if (force_linear_rollback(op_name.empty() ? "composite-linear-force" : op_name)) {
+        cr.linear_ok = false;
+        cr.audit.linear_ok = false;
+        cr.committed = false;
+        if (out_commit)
+            *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;
+        return false;
+    }
+
+    // Issue #2644: batch-level TypeVar refined consistency (anti
+    // SOLVED-but-drift). When occurrence_goals_ has two live goals for
+    // the same var_rep whose refined types fail consistent_unify both
+    // directions, the composite is semantically drifted even if the
+    // final solve reports SOLVED. AC1 production/Full reject; AC2 Soft
+    // observe only. AC4 empty occurrence table → zero cost (helper
+    // short-circuits). Folded into composite_txn_commit so #2610
+    // empty-CS / auto_partial gates and #2221 commit-barrier are
+    // unchanged; this is an additive anti false-green check.
+    {
+        ConstraintSystem* cs_for_drift = nullptr;
+        if (commit_type_checker_opaque_) {
+            cs_for_drift =
+                &static_cast<TypeChecker*>(commit_type_checker_opaque_)->constraint_system();
+        }
+        if (cs_for_drift && !cs_for_drift->check_occurrence_refined_consistency()) {
+            const bool hard_drift = production_defaults_active() ||
+                                    get_strategy() == AuditStrategy::Full ||
+                                    aura::core::sandbox::is_strict();
+            // Issue #2911: also latch unified refined-consistency face so
+            // commit_readiness hard-gates half-green refined schemes even
+            // when composite_txn_commit is not the sole gate.
+            aura::compiler::typed_audit::note_refined_consistency_drift(hard_drift);
+            if (hard_drift) {
+                // AC1: production/Full reject commit with type_scheme_drift.
+                c.composite_type_scheme_drift_reject_total.fetch_add(1, std::memory_order_relaxed);
+                cr.rejected = true;
+                cr.committed = false;
+                if (out_commit)
+                    *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;
+                return false;
+            }
+            // AC2: Soft observe only (allow commit, surface drift metric).
+            c.composite_type_scheme_drift_observe_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+
+    // 1) solve_delta_occurrence (stable constraint surface #2028 / #2180).
+    // Prefer stashed post-infer_flat_partial CS + occurrence vars — never
+    // rely on a greenfield empty TypeChecker for production composite commit.
+    //
+    // Issue #2509: symmetric expected_partial ↔ commit_cs_has_work matrix
+    // at commit entry (anti false-green / false-empty):
+    //   expected|has_work | production hard path
+    //   true|false        | hard-miss (#2345)
+    //   true|true         | must run SDO; no vacuous SOLVED without SDO
+    //   false|false       | structural OK
+    //   false|true        | observe + still solve; never silent skip under Full
+    //
+    // Issue #2610: auto-detect expected_partial from dirty cone / CS work
+    // when Agents under-mark. Agent API (txn_dirty) unchanged; effective
+    // expected drives hard-miss + force-SDO under production/Full.
+    bool expected_partial = false;
+    bool has_work = false;
+    bool auto_partial_from_cone = false;
+    bool cone_dirty = false;
+    bool require_sdo = false;
+    bool sdo_entered = false;
+    composite_commit_prepare_sdo(expected_partial, has_work, auto_partial_from_cone, cone_dirty,
+                                 require_sdo, cr);
+    if (type_registry_ || commit_type_checker_opaque_ || require_sdo)
+        composite_commit_solve_delta(mutation_id, after_epoch, expected_partial, has_work,
+                                     sdo_entered, cr);
     // Issue #2509 AC2/AC4: has_work (or expected+has_work) must enter SDO.
     // Vacuous SOLVED without solve_delta_occurrence is forbidden — never ship
     // a dirty/live CS as green by skipping the type-proof path. Also covers
@@ -1507,71 +1732,8 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     // Explicit non-empty span keeps #2898 semantics. Reject-over-infer
     // (env / test override) hard-rejects with force_reason required_type
     // instead of inferring.
-    {
-        const bool hard_req2983 = production_defaults_active() ||
-                                  get_strategy() == AuditStrategy::Full ||
-                                  aura::core::sandbox::is_strict();
-        const auto required0 = typed_audit::composite_required_solved_pending();
-        if (hard_req2983 && expected_partial && required0.empty()) {
-            std::vector<typed_audit::CompositeRequiredTypeId> filled;
-            filled.reserve(typed_audit::kCompositeRequiredTypeAutoFillCap);
-            bool more = false;
-            auto push_tid = [&](aura::core::TypeId t) {
-                if (!t.valid())
-                    return;
-                if (filled.size() >= typed_audit::kCompositeRequiredTypeAutoFillCap) {
-                    more = true;
-                    return;
-                }
-                for (const auto& e : filled) {
-                    if (e.index == t.index)
-                        return;
-                }
-                filled.push_back({t.index, t.generation});
-            };
-            auto* tc2983 = commit_type_checker_opaque_
-                               ? static_cast<TypeChecker*>(commit_type_checker_opaque_)
-                               : nullptr;
-            if (tc2983) {
-                for (const auto& t : tc2983->last_occurrence_vars())
-                    push_tid(t);
-                for (const auto& g : tc2983->constraint_system().occurrence_goals_for_test())
-                    push_tid(g.var);
-                for (const auto idx : tc2983->constraint_system().touched_roots())
-                    push_tid(aura::core::TypeId{idx, 0});
-            }
-            if (commit_occurrence_vars_opaque_) {
-                auto* occ = static_cast<std::vector<aura::core::TypeId>*>(
-                    commit_occurrence_vars_opaque_.get());
-                for (const auto& t : *occ)
-                    push_tid(t);
-            }
-            if (!filled.empty()) {
-                if (typed_audit::composite_required_reject_over_infer()) {
-                    c.composite_required_type_reject_over_infer_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    cr.required_type_ok = false;
-                    cr.required_type_fail_count = static_cast<std::uint32_t>(filled.size());
-                    cr.solve_ok = false;
-                    cr.rejected = true;
-                    cr.committed = false;
-                    c.composite_required_type_fail_total.fetch_add(1, std::memory_order_relaxed);
-                    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                        m->composite_required_type_fail_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-                    c.composite_commit_reject_total.fetch_add(1, std::memory_order_relaxed);
-                    if (out_commit)
-                        *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;
-                    return false;
-                }
-                typed_audit::set_composite_required_solved(filled);
-                c.composite_required_type_auto_fill_total.fetch_add(1, std::memory_order_relaxed);
-                if (more)
-                    c.composite_required_type_auto_fill_capped_total.fetch_add(
-                        1, std::memory_order_relaxed);
-            }
-        }
-    }
+    if (!composite_commit_required_type_ids(expected_partial, out_commit, cr))
+        return false;
 
     // Issue #2898: explicit required TypeId invariant set (anti under-mark
     // false-green). Agents stage TypeIds via set_composite_required_solved
@@ -1724,140 +1886,10 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     // 4) Full strategy: per-category partial recovery then re-audit (#2029).
     // Issue #2108 AC4: partial recovery linear success only if re-audit
     // all_ok (including !cross_batch_linear_escape); otherwise reject.
-    if (get_strategy() == AuditStrategy::Full) {
-        c.partial_recovery_attempt_total.fetch_add(1, std::memory_order_relaxed);
-        c.composite_partial_recover_attempt_total.fetch_add(1, std::memory_order_relaxed);
-        if (!audit.linear_ok || audit.cross_batch_linear_escape) {
-            c.partial_recovery_linear_total.fetch_add(1, std::memory_order_relaxed);
-            c.composite_partial_recover_linear_total.fetch_add(1, std::memory_order_relaxed);
-            (void)linear_post_mutate_enforce_all();
-            (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
-                                                      /*mark_all_linear=*/true);
-        }
-        if ((!audit.type_ok || !cr.solve_ok) &&
-            !(aura::compiler::typed_audit::production_defaults_active() && !cr.solve_ok)) {
-            c.partial_recovery_type_total.fetch_add(1, std::memory_order_relaxed);
-            c.composite_partial_recover_type_total.fetch_add(1, std::memory_order_relaxed);
-            // Issue #2180: re-run solve_delta_occurrence on stashed CS.
-            // Partial type recovery must not paper over CONFLICT/TIMEOUT.
-            // Issue #3003: Production + !solve_ok skips recover-commit
-            // (fail-closed; no half-solution via Full recover).
-            if (commit_type_checker_opaque_ && commit_cs_live_) {
-                try {
-                    auto* ctc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
-                    auto& cs = ctc->constraint_system();
-                    if (mutation_id != 0)
-                        cs.set_active_mutation_id(mutation_id);
-                    std::span<const aura::core::TypeId> occ_span{};
-                    if (commit_occurrence_vars_opaque_) {
-                        auto* occ = static_cast<std::vector<aura::core::TypeId>*>(
-                            commit_occurrence_vars_opaque_.get());
-                        occ_span = *occ;
-                    }
-                    auto sdo2 = aura::compiler::solve_delta_occurrence(cs, occ_span, nullptr,
-                                                                       compiler_metrics_);
-                    using aura::compiler::SolveResult;
-                    // Issue #2260: reject truncated reverify on recovery re-solve.
-                    if (sdo2.truncated_reverify)
-                        c.boundary_solve_truncated_seen_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-                    // Issue #2277 AC1: same production-default escalation on the
-                    // partial-recovery re-solve path. If escalate returns
-                    // TIMEOUT, solve_ok remains false (no half-solved ship).
-                    auto post_escalate2 = cs.escalate_if_production(sdo2.status, nullptr);
-                    const bool trunc_hard2 =
-                        aura::compiler::typed_audit::truncate_commit_hard_enabled();
-                    cr.solve_ok = (post_escalate2 == SolveResult::SOLVED) &&
-                                  (!sdo2.truncated_reverify || !trunc_hard2);
-                    // Issue #2458: re-apply truncate-commit gate on recovery path
-                    // so Full partial recovery cannot half-green after a soft
-                    // SOLVED+truncated residual.
-                    {
-                        SolveDeltaOccurrenceResult sdo2_gate = sdo2;
-                        sdo2_gate.status = post_escalate2;
-                        sdo2_gate.truncated_reverify =
-                            sdo2.truncated_reverify || cs.last_reverify_truncated();
-                        auto gate2 =
-                            aura::compiler::commit_ok_after_delta_snapshot(cs, &sdo2_gate, nullptr);
-                        if (gate2.rejected)
-                            cr.solve_ok = false;
-                        else if (gate2.recovered)
-                            cr.solve_ok = true;
-                        else if (gate2.observed && post_escalate2 == SolveResult::SOLVED)
-                            cr.solve_ok = true;
-                    }
-                    // Issue #3031: same drain on Full recovery re-solve.
-                    {
-                        auto drain2 = cs.drain_pending_full_solve_before_commit(nullptr);
-                        if (drain2 != SolveResult::SOLVED) {
-                            cr.solve_ok = false;
-                            const bool hard = production_defaults_active() ||
-                                              get_strategy() == AuditStrategy::Full;
-                            if (hard) {
-                                (void)build_type_linear_commit_proof_from_live_with_outcome(
-                                    after_epoch, /*would_allow_commit=*/false,
-                                    /*linear_ok=*/false, kProofLiveGoalCountHintAuto, 0, false,
-                                    /*force_reason=*/16);
-                                publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
-                            }
-                        }
-                    }
-                    if (!cr.solve_ok)
-                        c.composite_commit_solve_fail_total.fetch_add(1, std::memory_order_relaxed);
-                } catch (...) {
-                    // [SILENCE-PRIM]
-                    cr.solve_ok = false;
-                }
-            }
-        }
-        if (!audit.provenance_ok) {
-            c.partial_recovery_provenance_total.fetch_add(1, std::memory_order_relaxed);
-            if (workspace_flat_)
-                workspace_flat_->restamp_all_node_generations();
-            (void)restamp_pinned_stable_refs();
-            (void)post_mutation_reflect_validate();
-        }
-        // Issue #2223: ADT renarrow / revalidate before re-audit.
-        if (!audit.adt_ok) {
-            c.partial_recovery_adt_total.fetch_add(1, std::memory_order_relaxed);
-            partial_recover_adt_exhaustiveness(mutation_id);
-        }
-        InvariantAuditResult after{};
-        const bool after_ok = run_typed_mutation_invariant_audit(
-            mutation_id, "composite-txn-partial-recover", target_node, before_epoch, after_epoch,
-            /*composite_mode=*/true, &after);
-        // Re-run escape hard-block after linear recover (must still be clean).
-        InvariantAuditResult esc_after{};
-        if (hard_block_cross_batch_linear_escape(esc_after)) {
-            after.cross_batch_linear_escape = true;
-            after.linear_ok = false;
-            c.linear_escape_commit_blocked_total.fetch_add(1, std::memory_order_relaxed);
-            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                m->linear_escape_commit_blocked_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        // Issue #2180: require solve_ok after re-solve — type CONFLICT must reject.
-        // Issue #2221: incomplete blame under require-on must not ship via recovery
-        // (restamp does not synthesize a complete DeltaBlameChain).
-        if (!cr.blame_ok)
-            after.provenance_ok = false;
-        if (after_ok && after.all_ok() && !esc_after.cross_batch_linear_escape && cr.solve_ok &&
-            cr.blame_ok) {
-            c.partial_recovery_success_total.fetch_add(1, std::memory_order_relaxed);
-            c.composite_partial_recover_success_total.fetch_add(1, std::memory_order_relaxed);
-            c.composite_commit_ok_total.fetch_add(1, std::memory_order_relaxed);
-            record_composite_invariant_audit(nested, batch_active, after);
-            clear_txn_dirty();
-            cr.audit = after;
-            cr.audit_ok = true;
-            cr.partial_recovered = true;
-            cr.committed = true;
-            if (out_commit)
-                *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;
-            return true;
-        }
-        c.partial_recovery_fail_total.fetch_add(1, std::memory_order_relaxed);
-        cr.audit = after;
-    }
+    if (get_strategy() == AuditStrategy::Full &&
+        composite_commit_full_recover(mutation_id, target_node, before_epoch, after_epoch, nested,
+                                      batch_active, out_commit, audit, cr))
+        return true;
 
     // Reject: caller performs structural rollback. Never leave escaped
     // linear live (txn_dirty stays set; clear only on success).
