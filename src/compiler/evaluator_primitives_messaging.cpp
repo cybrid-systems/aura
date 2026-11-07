@@ -342,6 +342,8 @@ namespace {
         }
         CliBodyDoneScope(const CliBodyDoneScope&) = delete;
         CliBodyDoneScope& operator=(const CliBodyDoneScope&) = delete;
+        CliBodyDoneScope(CliBodyDoneScope&&) = delete;
+        CliBodyDoneScope& operator=(CliBodyDoneScope&&) = delete;
     };
 
     // Publish that a body has taken the body mutex over (the epoch bump
@@ -469,6 +471,8 @@ namespace {
         }
         CliBodyYieldHandoff(const CliBodyYieldHandoff&) = delete;
         CliBodyYieldHandoff& operator=(const CliBodyYieldHandoff&) = delete;
+        CliBodyYieldHandoff(CliBodyYieldHandoff&&) = delete;
+        CliBodyYieldHandoff& operator=(CliBodyYieldHandoff&&) = delete;
     };
 
     // RAII: temporarily release denseness body mutex around wait/yield.
@@ -518,6 +522,8 @@ namespace {
         }
         CliBodyLockJoinGuard(const CliBodyLockJoinGuard&) = delete;
         CliBodyLockJoinGuard& operator=(const CliBodyLockJoinGuard&) = delete;
+        CliBodyLockJoinGuard(CliBodyLockJoinGuard&&) = delete;
+        CliBodyLockJoinGuard& operator=(CliBodyLockJoinGuard&&) = delete;
     };
 
     // ── Issue #4700: fiber-cooperative channel waits ───────────────
@@ -1824,6 +1830,8 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 ~FiberBodyIdScope() noexcept { s_tls_fiber_body_id = prev; }
                 FiberBodyIdScope(const FiberBodyIdScope&) = delete;
                 FiberBodyIdScope& operator=(const FiberBodyIdScope&) = delete;
+                FiberBodyIdScope(FiberBodyIdScope&&) = delete;
+                FiberBodyIdScope& operator=(FiberBodyIdScope&&) = delete;
             } body_id_scope(fid_holder->load(std::memory_order_acquire));
             CliBodyDoneScope body_done_scope;
             // Issue #4717 (P4 keystone of #4707): the fiber body NO LONGER

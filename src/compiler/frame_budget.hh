@@ -485,6 +485,8 @@ struct FrameBudgetGuard {
     ~FrameBudgetGuard() noexcept { exit(); }
     FrameBudgetGuard(const FrameBudgetGuard&) = delete;
     FrameBudgetGuard& operator=(const FrameBudgetGuard&) = delete;
+    FrameBudgetGuard(FrameBudgetGuard&&) = delete;
+    FrameBudgetGuard& operator=(FrameBudgetGuard&&) = delete;
 };
 
 } // namespace aura::compiler::frame_budget

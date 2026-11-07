@@ -106,6 +106,8 @@ public:
     ~TrackerLockGuard() { lock_.unlock(); }
     TrackerLockGuard(const TrackerLockGuard&) = delete;
     TrackerLockGuard& operator=(const TrackerLockGuard&) = delete;
+    TrackerLockGuard(TrackerLockGuard&&) = delete;
+    TrackerLockGuard& operator=(TrackerLockGuard&&) = delete;
 
 private:
     const TrackerSpinLock& lock_;

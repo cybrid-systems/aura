@@ -4515,6 +4515,8 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
         ~RegisterOwnerGuard() noexcept { g_aot_register_owner_eval = prev; }
         RegisterOwnerGuard(const RegisterOwnerGuard&) = delete;
         RegisterOwnerGuard& operator=(const RegisterOwnerGuard&) = delete;
+        RegisterOwnerGuard(RegisterOwnerGuard&&) = delete;
+        RegisterOwnerGuard& operator=(RegisterOwnerGuard&&) = delete;
     } owner_guard(eval_ptr);
 
     const bool ok1 = aura_reload_aot_module_for_eval_once(eval_ptr, path, version);
@@ -5152,6 +5154,8 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         }
         SoftReemitBoundaryGuard(const SoftReemitBoundaryGuard&) = delete;
         SoftReemitBoundaryGuard& operator=(const SoftReemitBoundaryGuard&) = delete;
+        SoftReemitBoundaryGuard(SoftReemitBoundaryGuard&&) = delete;
+        SoftReemitBoundaryGuard& operator=(SoftReemitBoundaryGuard&&) = delete;
     } soft_guard;
     if (!hur.in_mutation_boundary_for_reemit()) {
         hur.on_reemit_outside_boundary();

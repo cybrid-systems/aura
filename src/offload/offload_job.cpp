@@ -46,6 +46,8 @@ namespace {
         }
         PrivateEvalScope(const PrivateEvalScope&) = delete;
         PrivateEvalScope& operator=(const PrivateEvalScope&) = delete;
+        PrivateEvalScope(PrivateEvalScope&&) = delete;
+        PrivateEvalScope& operator=(PrivateEvalScope&&) = delete;
     };
 
     std::string escape_lisp_string(std::string_view s) {

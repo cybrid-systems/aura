@@ -176,6 +176,8 @@ public:
     QueryEngine(aura::ast::FlatAST& ast, aura::ast::StringPool& pool);
     QueryEngine(const QueryEngine&) = delete;
     QueryEngine& operator=(const QueryEngine&) = delete;
+    QueryEngine(QueryEngine&&) = delete;
+    QueryEngine& operator=(QueryEngine&&) = delete;
     ~QueryEngine();
 
     // Parse a query S-expression into a QueryExpr tree

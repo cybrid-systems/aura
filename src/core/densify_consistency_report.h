@@ -638,6 +638,8 @@ struct DensifyInFlightGuard {
     ~DensifyInFlightGuard() { clear_densify_in_flight(eval_id); }
     DensifyInFlightGuard(const DensifyInFlightGuard&) = delete;
     DensifyInFlightGuard& operator=(const DensifyInFlightGuard&) = delete;
+    DensifyInFlightGuard(DensifyInFlightGuard&&) = delete;
+    DensifyInFlightGuard& operator=(DensifyInFlightGuard&&) = delete;
 };
 inline void note_last_densify_remap_pairing_forced(bool forced) noexcept {
     g_last_densify_remap_pairing_forced.store(forced ? 1 : 0, std::memory_order_relaxed);

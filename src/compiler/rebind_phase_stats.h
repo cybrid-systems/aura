@@ -73,6 +73,8 @@ struct Scope {
     }
     Scope(const Scope&) = delete;
     Scope& operator=(const Scope&) = delete;
+    Scope(Scope&&) = delete;
+    Scope& operator=(Scope&&) = delete;
 };
 
 } // namespace aura::compiler::phase_stats

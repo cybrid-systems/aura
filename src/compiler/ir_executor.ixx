@@ -426,6 +426,8 @@ private:
         ~ActiveInstanceGuard() { t_active() = prev; }
         ActiveInstanceGuard(const ActiveInstanceGuard&) = delete;
         ActiveInstanceGuard& operator=(const ActiveInstanceGuard&) = delete;
+        ActiveInstanceGuard(ActiveInstanceGuard&&) = delete;
+        ActiveInstanceGuard& operator=(ActiveInstanceGuard&&) = delete;
     };
 
     // M4 Linear ownership runtime heap

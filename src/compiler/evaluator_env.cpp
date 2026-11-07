@@ -332,6 +332,8 @@ struct EnvLookupDepthGuard {
     }
     EnvLookupDepthGuard(const EnvLookupDepthGuard&) = delete;
     EnvLookupDepthGuard& operator=(const EnvLookupDepthGuard&) = delete;
+    EnvLookupDepthGuard(EnvLookupDepthGuard&&) = delete;
+    EnvLookupDepthGuard& operator=(EnvLookupDepthGuard&&) = delete;
 };
 // Returns nullopt if depth budget exhausted (caller returns nullopt).
 [[nodiscard]] static bool env_lookup_enter() noexcept {
@@ -3658,6 +3660,8 @@ std::size_t Evaluator::compact_env_frames() {
         ~CompactDepthScope() { --d; }
         CompactDepthScope(const CompactDepthScope&) = delete;
         CompactDepthScope& operator=(const CompactDepthScope&) = delete;
+        CompactDepthScope(CompactDepthScope&&) = delete;
+        CompactDepthScope& operator=(CompactDepthScope&&) = delete;
     } compact_depth_scope(compact_depth);
     // Issue #2164: hold-pin gate — defer reclaim while any EnvFrameLifetimeGuard
     // is live (process-wide depth). Exit scan remains mandatory on Guard

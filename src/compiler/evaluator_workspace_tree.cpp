@@ -361,6 +361,8 @@ bool Evaluator::restore_panic_checkpoint() {
         }
         PanicReinstallScope(const PanicReinstallScope&) = delete;
         PanicReinstallScope& operator=(const PanicReinstallScope&) = delete;
+        PanicReinstallScope(PanicReinstallScope&&) = delete;
+        PanicReinstallScope& operator=(PanicReinstallScope&&) = delete;
         ~PanicReinstallScope() {
             auto& depth = aura::compiler::security::panic_checkpoint_reinstall_depth();
             if (depth > 0)

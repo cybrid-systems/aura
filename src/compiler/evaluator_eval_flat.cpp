@@ -1091,6 +1091,8 @@ struct TwPinResult {
     }
     TwPinResult(const TwPinResult&) = delete;
     TwPinResult& operator=(const TwPinResult&) = delete;
+    TwPinResult(TwPinResult&&) = delete;
+    TwPinResult& operator=(TwPinResult&&) = delete;
 };
 
 struct TwPinMany {
@@ -1101,6 +1103,8 @@ struct TwPinMany {
     }
     TwPinMany(const TwPinMany&) = delete;
     TwPinMany& operator=(const TwPinMany&) = delete;
+    TwPinMany(TwPinMany&&) = delete;
+    TwPinMany& operator=(TwPinMany&&) = delete;
 };
 // Issue #4599: a stack argument buffer is not a std::vector, so the
 // reclaim mark would miss it. Pin the span for the duration of the prim.
@@ -1121,6 +1125,8 @@ struct TwPinSpan {
     }
     TwPinSpan(const TwPinSpan&) = delete;
     TwPinSpan& operator=(const TwPinSpan&) = delete;
+    TwPinSpan(TwPinSpan&&) = delete;
+    TwPinSpan& operator=(TwPinSpan&&) = delete;
 };
 // Issue #4599 follow-up: tree-walker call arguments used to go through
 // three std::vector<EvalValue> allocations per call (provided / cargs /
@@ -1142,6 +1148,8 @@ struct TwSmallArgs {
     ~TwSmallArgs() = default;
     TwSmallArgs(const TwSmallArgs&) = delete;
     TwSmallArgs& operator=(const TwSmallArgs&) = delete;
+    TwSmallArgs(TwSmallArgs&&) = delete;
+    TwSmallArgs& operator=(TwSmallArgs&&) = delete;
 
     [[nodiscard]] std::size_t size() const noexcept { return spilled ? over.size() : n_in; }
     [[nodiscard]] bool empty() const noexcept { return size() == 0; }
@@ -1558,6 +1566,8 @@ bool Evaluator::reclaim_tw_unreachable_now() {
         }
         SweepGate4768(const SweepGate4768&) = delete;
         SweepGate4768& operator=(const SweepGate4768&) = delete;
+        SweepGate4768(SweepGate4768&&) = delete;
+        SweepGate4768& operator=(SweepGate4768&&) = delete;
     } sweep_gate_4768;
     if (!sweep_gate_4768.held)
         return false;
@@ -3349,6 +3359,8 @@ namespace {
         }
         LegacyMacroFrameGuard4775(const LegacyMacroFrameGuard4775&) = delete;
         LegacyMacroFrameGuard4775& operator=(const LegacyMacroFrameGuard4775&) = delete;
+        LegacyMacroFrameGuard4775(LegacyMacroFrameGuard4775&&) = delete;
+        LegacyMacroFrameGuard4775& operator=(LegacyMacroFrameGuard4775&&) = delete;
     };
 } // namespace
 
@@ -4390,6 +4402,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
                 , saved(t.pool()) {}
             RestoreTopPool(const RestoreTopPool&) = delete;
             RestoreTopPool& operator=(const RestoreTopPool&) = delete;
+            RestoreTopPool(RestoreTopPool&&) = delete;
+            RestoreTopPool& operator=(RestoreTopPool&&) = delete;
             ~RestoreTopPool() {
                 if (saved && saved != top.pool())
                     top.set_pool(saved);
@@ -6392,6 +6406,8 @@ namespace {
         ~FloatLocalArmGuard() { g_float_local_arm.pop(); }
         FloatLocalArmGuard(const FloatLocalArmGuard&) = delete;
         FloatLocalArmGuard& operator=(const FloatLocalArmGuard&) = delete;
+        FloatLocalArmGuard(FloatLocalArmGuard&&) = delete;
+        FloatLocalArmGuard& operator=(FloatLocalArmGuard&&) = delete;
     };
 
 } // namespace
@@ -7081,6 +7097,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
             }
             TwFrameReg(const TwFrameReg&) = delete;
             TwFrameReg& operator=(const TwFrameReg&) = delete;
+            TwFrameReg(TwFrameReg&&) = delete;
+            TwFrameReg& operator=(TwFrameReg&&) = delete;
         } tw_frame_reg(&current_env, &tail_env, &tco_pinned);
 
         // Issue #4599 phase 3: same-pool SymId chain read for a Variable
@@ -8300,6 +8318,8 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                     ~RequireSymReset() noexcept { ev->clear_sym_intern(); }
                                     RequireSymReset(const RequireSymReset&) = delete;
                                     RequireSymReset& operator=(const RequireSymReset&) = delete;
+                                    RequireSymReset(RequireSymReset&&) = delete;
+                                    RequireSymReset& operator=(RequireSymReset&&) = delete;
                                 } require_sym_reset(this);
                                 last = eval_flat(*iflat, *ipool, expanded_root, eval_env);
                                 if (!last) {
@@ -11967,6 +11987,8 @@ void Evaluator::rebind_workspace_defines_after_rollback() noexcept {
                 , saved(t.pool()) {}
             RestoreTopPool(const RestoreTopPool&) = delete;
             RestoreTopPool& operator=(const RestoreTopPool&) = delete;
+            RestoreTopPool(RestoreTopPool&&) = delete;
+            RestoreTopPool& operator=(RestoreTopPool&&) = delete;
             ~RestoreTopPool() {
                 if (saved && saved != top.pool())
                     top.set_pool(saved);
@@ -12131,6 +12153,8 @@ void Evaluator::rebind_workspace_defines_on_switch() noexcept {
                 , saved(t.pool()) {}
             RestoreTopPool(const RestoreTopPool&) = delete;
             RestoreTopPool& operator=(const RestoreTopPool&) = delete;
+            RestoreTopPool(RestoreTopPool&&) = delete;
+            RestoreTopPool& operator=(RestoreTopPool&&) = delete;
             ~RestoreTopPool() {
                 if (saved && saved != top.pool())
                     top.set_pool(saved);
