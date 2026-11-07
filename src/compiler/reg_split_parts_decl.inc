@@ -610,4 +610,48 @@ struct RegSplitParts {
                                         std::uint64_t steal_prov, std::uint64_t linear_prev,
                                         std::uint64_t cm_stable, std::uint64_t cm_steal,
                                         std::uint64_t cm_lin);
+    // Issue #5033: mutate:* registration parts (defined in
+    // evaluator_primitives_mutate.cpp). Each part is one responsibility group and
+    // re-binds the shared registration helpers; order is the original order.
+    template <typename Ctx> static void register_mutate_fingerprint_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_pin_primitives(Ctx& cx);
+    template <typename Ctx> static void register_mutate_replace_value_primitives(Ctx& cx);
+    template <typename Ctx> static void register_mutate_record_patch_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_query_replace_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_query_replace_batch_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_stable_ref_policy_primitives(Ctx& cx);
+    template <typename Ctx> static void register_mutate_pattern_index_policy_primitives(Ctx& cx);
+    template <typename Ctx> static void register_mutate_as_stable_ref_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_rebind_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_set_body_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_node_surface_primitives(Ctx& cx);
+    template <typename Ctx> static void register_mutate_tweak_literal_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_replace_pattern_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_replace_subtree_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_atomic_batch_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_structural_insert_primitives(Ctx& cx);
+    template <typename Ctx> static void register_mutate_wrap_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_refactor_extract_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_rename_symbol_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_move_node_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_extract_function_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_inline_call_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_hygiene_checkpoint_primitives(Ctx& cx);
+    template <typename Ctx> static void register_mutate_dispatch_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_typed_audit_stats_primitives(Ctx& cx);
+    template <typename Ctx> static void register_mutate_type_propagation_stats_primitives(Ctx& cx);
+    template <typename Ctx> static void register_mutate_envframe_stats_primitives(Ctx& cx);
+    template <typename Ctx> static void register_mutate_architecture_stats_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_hot_update_stats_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_reload_recovery_stats_primitive(Ctx& cx);
+    template <typename Ctx> static void register_mutate_aot_audit_stats_primitive(Ctx& cx);
+    // Issue #5033: query:typed-mutation-audit-trail insert phases.
+    template <typename Kv>
+    static void typed_audit_stats_snapshot_fields(
+        Kv& insert_kv, std::uint64_t considered, std::uint64_t skipped, std::uint64_t contextual,
+        std::uint64_t trail_sz, std::uint64_t rollbacks, std::uint64_t errors,
+        std::uint32_t strategy, std::uint32_t ratio);
+    template <typename Kv> static void typed_audit_stats_hard_gate_fields(Kv& insert_kv);
+    template <typename Kv>
+    static void typed_audit_stats_counter_fields(Kv& insert_kv, Evaluator& ev);
 };
