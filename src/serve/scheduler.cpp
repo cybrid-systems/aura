@@ -371,7 +371,7 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size, bool fifo_start) {
     }
 
     // Assign to a worker (load-aware when enabled, fallback to round-robin)
-    int wid;
+    int wid = 0;
     if (ptr->affinity() >= 0) {
         // Pinned fiber: respect affinity, clamp to valid range
         wid = std::min(ptr->affinity(), static_cast<int>(workers_.size()) - 1);
@@ -574,7 +574,7 @@ void Scheduler::drain_offload_completions() noexcept {
         }
         if (fiber->state() != FiberState::Waiting || fiber->is_queued())
             continue;
-        int wid;
+        int wid = 0;
         if (fiber->affinity() >= 0) {
             wid = std::min(fiber->affinity(), static_cast<int>(workers_.size()) - 1);
             if (wid < 0)
@@ -1423,7 +1423,7 @@ void Scheduler::run() {
                 auto enqueue_parked = [&](Fiber* fiber) {
                     if (!fiber || fiber->is_done() || fiber->is_queued())
                         return;
-                    int wid;
+                    int wid = 0;
                     if (fiber->affinity() >= 0) {
                         wid = std::min(fiber->affinity(), static_cast<int>(workers_.size()) - 1);
                         if (wid < 0)
@@ -1529,7 +1529,7 @@ void Scheduler::run() {
                 }
 
                 // Enqueue to a worker for resumption (respect affinity)
-                int wid;
+                int wid = 0;
                 if (fiber->affinity() >= 0) {
                     wid = std::min(fiber->affinity(), static_cast<int>(workers_.size()) - 1);
                     if (wid < 0)
@@ -1567,7 +1567,7 @@ void Scheduler::run() {
             for (auto* fiber : expired) {
                 if (fiber->is_done() || fiber->is_queued())
                     continue;
-                int wid;
+                int wid = 0;
                 if (fiber->affinity() >= 0) {
                     wid = std::min(fiber->affinity(), static_cast<int>(workers_.size()) - 1);
                     if (wid < 0)
