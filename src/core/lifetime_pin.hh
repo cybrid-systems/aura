@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -1473,8 +1474,11 @@ public:
     ~GeneralObjectPin() = default;
     GeneralObjectPin(const GeneralObjectPin&) = delete;
     GeneralObjectPin& operator=(const GeneralObjectPin&) = delete;
-    GeneralObjectPin(GeneralObjectPin&&) = default;
-    GeneralObjectPin& operator=(GeneralObjectPin&&) = default;
+    // LifetimePin's move transfers the registry slot and is noexcept.
+    // The defaulted move is therefore non-throwing; spelling noexcept
+    // keeps that part of the type. A later throwing member deletes it.
+    GeneralObjectPin(GeneralObjectPin&&) noexcept = default;
+    GeneralObjectPin& operator=(GeneralObjectPin&&) noexcept = default;
 
     // Pin buffer; returns false on null. Arena ownership (not FFI).
     // NOTE: replaces any prior ptr on this pin (LifetimePin::pin overwrites).
@@ -1497,6 +1501,11 @@ public:
 private:
     LifetimePin pin_;
 };
+
+static_assert(std::is_nothrow_move_constructible_v<GeneralObjectPin>);
+static_assert(std::is_nothrow_move_assignable_v<GeneralObjectPin>);
+static_assert(!std::is_copy_constructible_v<GeneralObjectPin>);
+static_assert(!std::is_copy_assignable_v<GeneralObjectPin>);
 
 // Issue #2337 / #2363: bump wire counter once per adopted create site.
 inline void note_general_object_pin_mutate_wire() noexcept {
