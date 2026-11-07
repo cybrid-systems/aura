@@ -57,8 +57,7 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
-void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
-
+void RegSplitParts::register_diagnose_primitive(PrimRegistrar add, Evaluator& ev) {
     // (diagnose error-string) — Analyze structured error and return fix strategy
     // Returns a pair ("root-cause" "target" "fix-type" "fix-data" "message")
     // or #f if no diagnosis available.
@@ -216,6 +215,9 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_bool(false);
     });
 
+}
+
+void RegSplitParts::register_apply_fix_primitive(PrimRegistrar add, Evaluator& ev) {
     // (apply-fix code-string diagnose-result) — Apply pre-built fix from diagnosis
     // Returns fixed code, or original code if no auto-fix applies.
     add("apply-fix", [&ev](std::span<const EvalValue> a) -> EvalValue {
@@ -308,7 +310,9 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
         auto sidx = ev.string_heap_.mint(result);
         return make_string(sidx);
     });
+}
 
+void RegSplitParts::register_check_preconditions_primitive(PrimRegistrar add, Evaluator& ev) {
     // (check-preconditions node-id (field-offset|new-type-str)) → true if valid
     // With int second arg: check field existence (0=int_val_, 1=type_id_)
     // With string second arg: check type compatibility (new type string)
@@ -403,7 +407,9 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
             ev.bump_verify_tool_dirty_propagation();
         return result;
     });
+}
 
+void RegSplitParts::register_agent_recover_primitive(PrimRegistrar add, Evaluator& ev) {
     // ═══════════════════════════════════════════════════════════════════════
     // Issue #2917: (agent:recover-from-error …) — closed-loop recovery
     //   error → diagnose → apply-fix under MutationBoundaryGuard → clear hold
@@ -604,6 +610,13 @@ void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
         ev.note_agent_recovery_result(1, true, had_hold, ckpt);
         return make_result(true, 1, cause, fix_type, fixed);
     });
+}
+
+void register_diagnostic_primitives(PrimRegistrar add, Evaluator& ev) {
+    RegSplitParts::register_diagnose_primitive(add, ev);
+    RegSplitParts::register_apply_fix_primitive(add, ev);
+    RegSplitParts::register_check_preconditions_primitive(add, ev);
+    RegSplitParts::register_agent_recover_primitive(add, ev);
 }
 
 } // namespace aura::compiler::primitives_detail
