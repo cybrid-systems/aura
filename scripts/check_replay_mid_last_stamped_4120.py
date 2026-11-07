@@ -82,8 +82,10 @@ def main() -> int:
 
     # AC2 — typed-mid-current keeps the proof stamp.
     tail = prim[rm_at:] if rm_at >= 0 else ""
+    # clang-format may wrap the key onto its own line; compare squashed.
+    tail_n = " ".join(tail.split())
     good = (
-        'insert_kv("typed-mid-current"' in tail
+        'insert_kv( "typed-mid-current"' in tail_n
         and "last_type_linear_commit_proof_stamp_v_read()" in tail
         and 'insert_kv("replay-mid"' in prim
     )
