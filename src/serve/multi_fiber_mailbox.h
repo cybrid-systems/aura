@@ -59,6 +59,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <concepts>
 #include <cstdint>
 #include <cstdlib>
 #include <deque>
@@ -1711,7 +1712,8 @@ public:
     // messages so the consumer's recv() path is forced through the
     // handoff gate instead of silently delivering a stale StableNodeRef
     // (Issue #3565: maybe_clear_stale_held_ref_on_recv).
-    template <typename Fn> void for_each_pending_held_ref_for_fiber(Fiber* fiber, Fn&& fn) {
+    template <std::invocable<MailMessage&> Fn>
+    void for_each_pending_held_ref_for_fiber(Fiber* fiber, Fn&& fn) {
         if (!fiber)
             return;
         ::aura::compiler::lock_order::AuditScope mailbox_rank(
