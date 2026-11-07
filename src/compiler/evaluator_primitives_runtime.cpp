@@ -723,8 +723,19 @@ bool values_equal(Evaluator& ev, const EvalValue& x, const EvalValue& y, std::st
 }
 
 void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
+    // Issue #5033: registration order is the original single-function order.
+    RegSplitParts::register_exit_primitive(add, ev);
+    RegSplitParts::register_equal_primitive(add, ev);
+    RegSplitParts::register_symbol_primitives(add, ev);
+    RegSplitParts::register_apply_primitive(add, ev);
+    RegSplitParts::register_print_primitives(add, ev);
+    RegSplitParts::register_format_primitive(add, ev);
+    RegSplitParts::register_error_primitives(add, ev);
+    RegSplitParts::install_jit_error_hooks(ev);
+}
 
-
+// Issue #5033: (exit [code]) process termination.
+void RegSplitParts::register_exit_primitive(PrimRegistrar add, Evaluator& ev) {
     // Issue #4496: (exit [code]) ends the process with that status
     // (default 0; #t => 0, #f => 1). Refused under a sandbox so a hosted
     // program cannot stop the server.
@@ -751,7 +762,10 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         ev.quiesce_before_exit();
         std::exit(code);
     });
+}
 
+// Issue #5033: (equal? a b) structural comparison.
+void RegSplitParts::register_equal_primitive(PrimRegistrar add, Evaluator& ev) {
     add("equal?", [&ev](std::span<const EvalValue> a) {
         if (a.size() < 2)
             return make_bool(true);
@@ -772,7 +786,10 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
                                         ev.primitive_error_counter_ptr());
         return make_bool(eq_res);
     });
+}
 
+// Issue #5033: gensym / symbol-append symbol surface.
+void RegSplitParts::register_symbol_primitives(PrimRegistrar add, Evaluator& ev) {
 
     add("gensym", [&ev](std::span<const EvalValue> a) -> EvalValue {
         static std::atomic<std::int64_t> gs_counter_{0};
@@ -822,7 +839,10 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(result))));
     });
+}
 
+// Issue #5033: (apply fn args) dispatch.
+void RegSplitParts::register_apply_primitive(PrimRegistrar add, Evaluator& ev) {
     add("apply", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2)
             return make_void();
@@ -876,7 +896,10 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return make_void();
     });
+}
 
+// Issue #5033: display / write / newline stdout surface.
+void RegSplitParts::register_print_primitives(PrimRegistrar add, Evaluator& ev) {
     add("display", [&ev](std::span<const EvalValue> a) {
         if (a.empty())
             return make_void();
@@ -992,7 +1015,10 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         std::fflush(stdout);
         return make_void();
     });
+}
 
+// Issue #5033: (format template args) string formatting.
+void RegSplitParts::register_format_primitive(PrimRegistrar add, Evaluator& ev) {
     // Issue #1138: bad args return void (format contract is string|void), not #f.
     add("format", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
@@ -1098,7 +1124,10 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(result))));
     });
+}
 
+// Issue #5033: error values plus the assert/check surface.
+void RegSplitParts::register_error_primitives(PrimRegistrar add, Evaluator& ev) {
     add("error", [&ev](std::span<const EvalValue> a) -> EvalValue {
         // Ensure ev.error_values_[0] always exists for default errors
         if (ev.error_values_.empty())
@@ -1271,7 +1300,10 @@ void register_runtime_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         return make_bool(false);
     });
+}
 
+// Issue #5033: JIT hooks sharing the display / hash-ref error shapes.
+void RegSplitParts::install_jit_error_hooks(Evaluator& ev) {
     // Issue #4603: JIT-inlined display/write (aura_display_value) has no
     // error arm; an error value escaping native code printed its raw
     // RefError word. Route it through the same #4497 body the display prim

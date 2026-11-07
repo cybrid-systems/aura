@@ -250,4 +250,16 @@ struct RegSplitParts {
     static void register_file_entry_primitives(PrimRegistrar add, Evaluator& ev);
     static void register_exec_primitives(PrimRegistrar add, Evaluator& ev);
     static void register_directory_list_primitive(PrimRegistrar add, Evaluator& ev);
+
+    // Issue #5033: core runtime / value / IO registration parts (defined in
+    // evaluator_primitives_runtime.cpp). Each part is one primitive family and
+    // register_runtime_primitives calls them in the original order.
+    static void register_exit_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_equal_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_symbol_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_apply_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_print_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_format_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_error_primitives(PrimRegistrar add, Evaluator& ev);
+    static void install_jit_error_hooks(Evaluator& ev);
 };
