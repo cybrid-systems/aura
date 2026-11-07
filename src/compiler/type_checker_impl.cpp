@@ -2377,7 +2377,7 @@ SolveResult ConstraintSystem::solve(std::vector<Constraint>* unresolved_out) {
         worklist.clear();
         for (auto idx : current) {
             auto& c = constraints_[idx];
-            bool ok;
+            bool ok = false;
             // Issue #2195 / #2607: route by goal kind.
             if (c.kind == Constraint::EQUAL)
                 ok = unify(c.lhs, c.rhs);
@@ -2978,7 +2978,7 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
             if (idx < seen.size())
                 seen[idx] = true; // #1528: track processed for partial clean
             auto& c = constraints_[idx];
-            bool ok;
+            bool ok = false;
             // Issue #2195 / #2607: SUBTYPE / INSTANCE goals (zero extra
             // work when no such dirty goals on the worklist).
             if (c.kind == Constraint::EQUAL)
@@ -3255,7 +3255,7 @@ ConstraintSystem::try_instance_repair_before_full(std::vector<Constraint>* unres
             if (idx < seen.size())
                 seen[idx] = true;
             auto& cons = constraints_[idx];
-            bool ok;
+            bool ok = false;
             if (cons.kind == Constraint::EQUAL)
                 ok = unify(cons.lhs, cons.rhs);
             else if (cons.kind == Constraint::SUBTYPE)

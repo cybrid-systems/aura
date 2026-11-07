@@ -4070,9 +4070,12 @@ private:
         if (!prev_remap.empty()) {
             std::unordered_set<void*> live_new;
             live_new.reserve(last_object_remap_.size() * 2);
-            for (const auto& [old_ptr, new_ptr] : last_object_remap_) {
+            // #4936: membership only. Pointer-key order must not change the set.
+            for (void* old_ptr : last_object_remap_ | std::views::keys) {
                 if (old_ptr)
                     live_new.insert(old_ptr);
+            }
+            for (void* new_ptr : last_object_remap_ | std::views::values) {
                 if (new_ptr)
                     live_new.insert(new_ptr);
             }
