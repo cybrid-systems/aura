@@ -186,4 +186,49 @@ struct RegSplitParts {
                                     const std::function<void()>& destroy_defuse_index);
     static void ast_restore_finalize(Evaluator& ev, AstRestoreState& state);
     static EvalValue ast_restore_source_fallback(Evaluator& ev, std::size_t id);
+
+    // Issue #5032: eval / typecheck / EDSL registration parts. The eval TU owns
+    // one file, but its parts read Evaluator's private workspace, typechecker
+    // and heap state, so they live here with the other #909 peeled register
+    // parts. Each part is one responsibility and stays under the 300-line
+    // ceiling; register_eval_primitives calls them in the original order.
+    using MakeErrorVal = std::function<EvalValue(const std::string&, const std::string&)>;
+    // Issue #4266: structured status shared by (typecheck-current) and
+    // (typecheck-status); ok is what Agents branch on, report is text.
+    struct WorkspaceTypecheckResult {
+        bool ok = false;
+        std::string report;
+    };
+    static std::optional<WorkspaceTypecheckResult> run_workspace_typecheck(Evaluator& ev);
+    // Issue #5032: the set-code install phase, peeled out of the registration.
+    static std::optional<EvalValue>
+    set_code_install_workspace(Evaluator& ev, const MakeErrorVal& mev, const std::string& src,
+                               bool& ok, std::string& set_code_src,
+                               const std::function<void()>& destroy_defuse_index,
+                               const std::function<void()>& republish_workspace_define_sources);
+    // Issue #5032: the #4598 dirty-focus IR bind phase of (eval-current).
+    static void eval_current_bind_dirty_lambdas(Evaluator& ev);
+    // Issue #5032: (datum->string) reader-syntax printer (Issue #4746 limits).
+    static std::optional<std::string> datum_print(Evaluator& ev, const EvalValue& v, int depth);
+    static void register_set_code_primitive(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
+                                            std::function<void()> destroy_defuse_index);
+    static void register_ir_cache_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev);
+    static void register_eval_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_load_primitive(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev,
+                                        std::function<void()> destroy_defuse_index);
+    static void register_source_inspection_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_api_reference_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_eval_current_primitive(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev);
+    static void register_eval_current_output_primitive(PrimRegistrar add, Evaluator& ev,
+                                                       MakeErrorVal mev);
+    static void register_eval_async_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_offload_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev);
+    static void register_typecheck_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_mutate_check_primitive(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev);
+    static void register_typecheck_incremental_primitive(PrimRegistrar add, Evaluator& ev);
+    static void register_type_introspection_primitives(PrimRegistrar add, Evaluator& ev,
+                                                       MakeErrorVal mev);
+    static void register_annotate_functions_primitive(PrimRegistrar add, Evaluator& ev,
+                                                      MakeErrorVal mev);
+    static void register_datum_io_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev);
 };
