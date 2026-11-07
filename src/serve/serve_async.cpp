@@ -408,391 +408,12 @@ static void load_soft_session_prelude(aura::compiler::CompilerService& cs) {
 using SoftSessionPreludeFn = void (*)(aura::compiler::CompilerService&);
 static SoftSessionPreludeFn soft_session_prelude_4887 = &load_soft_session_prelude;
 
-// ── run_serve_async ─────────────────────────────────────
 
-void run_serve_async(int num_workers) {
-    // Issue #4231: serve-async writes protocol status lines to stdout for
-    // the lifetime of the session. A client-side reader close (host
-    // restart thrash, timed-out reader) turns the next ::write into
-    // SIGPIPE, whose default disposition silently kills the holder: the
-    // Soft serve.sock vanished and the holder PID changed mid set-code
-    // scoring batch. Ignore SIGPIPE so a dead reader degrades to an EPIPE
-    // write failure on the explicit-error path while the holder stays up
-    // for the remaining explorers of the batch.
-    ::signal(SIGPIPE, SIG_IGN);
+namespace {
 
-    // 1. Set stdin to non-blocking
-    int flags = ::fcntl(STDIN_FILENO, F_GETFL);
-    ::fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
-
-    // Register fiber blocking callback for CompilerService::pop_message
-    aura::messaging::g_fiber_block = []() {
-        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
-        aura::serve::Fiber::yield();
-    };
-
-    // 2. Create thread pool for blocking operations
-    // Issue #4880/#4881: the old per-fiber pool wiring is gone; the isolated
-    // offload pool is rebuilt in #4881/#4882 and wired in #4883.
-    // Issue #4887: eval:async runs on that isolated pool. The snapshot is a
-    // private CompilerService created BEFORE the session: the pool job never
-    // enters the session service, so the parked fiber's eval/body mutexes do
-    // not matter. Consequence (documented): eval:async cannot see session
-    // defines; it evaluates in a fresh private context.
-    auto eval_async_snapshot =
-        std::make_shared<const aura::offload::SnapshotInput>(aura::offload::SnapshotInput{});
-    {
-        // Issue #4887: the snapshot service has its own evaluator; do not let
-        // its construction republish the global stats impl table.
-        const bool prev_suppress = aura::compiler::set_stats_registration_suppressed(true);
-        aura::compiler::CompilerService private_snapshot;
-        soft_session_prelude_4887(private_snapshot);
-        eval_async_snapshot =
-            std::make_shared<const aura::offload::SnapshotInput>(aura::offload::SnapshotInput{
-                private_snapshot.evaluator().authoritative_workspace_source(), 0});
-        aura::compiler::set_stats_registration_suppressed(prev_suppress);
-    }
-    // Issue #4887: publish the OffloadEval adapter and install the private
-    // session source. The evaluator module only sees the header-only
-    // interface; the adapter owns the pool/CompilerService dependency.
-    aura::offload::set_offload_eval_source(eval_async_snapshot->source);
-    aura::messaging::g_offload_eval = &aura::offload::offload_eval_instance();
-
-    // 2. Create scheduler with worker threads
-    Scheduler sched(num_workers);
-    // Issue #4883: start the completion channel before any fiber can submit.
-    aura::offload::OffloadService::instance().start(&sched);
-    // Issue #4854 safety: do not early-retire Done fibers on the long-lived
-    // serve scheduler (see Scheduler::set_retire_done_fibers_disabled).
-    sched.set_retire_done_fibers_disabled(true);
-
-    // Register fiber:spawn callback (captures scheduler for actual fiber creation).
-    // Issue #4048: denseness fibers share the session Evaluator (complete_fiber
-    // captures &ev). Migrating parent/child across workers under Soft Ready
-    // multi-worker corrupts TLS / heap and hangs the session after join.
-    // Inherit the parent's worker affinity (and default to worker 0) so
-    // spawn+join denseness stays on one worker — same serialization as
-    // --worker-threads 1, which passes acceptance. Steal already skips
-    // other-affinity fibers.
-    aura::messaging::g_fiber_spawn = [&sched](std::function<void()> fn) -> int64_t {
-        int aff = 0;
-        if (aura::serve::g_current_fiber) {
-            const int parent_aff = aura::serve::g_current_fiber->affinity();
-            if (parent_aff >= 0)
-                aff = parent_aff;
-            else {
-                // Pin parent too so subsequent wakes/spawns stay together.
-                aura::serve::g_current_fiber->set_affinity(0);
-                aff = 0;
-            }
-        }
-        // Issue #4698: the pending body closure is a tree-walker temporary
-        // that fiber:spawn drops on return; without the pin the
-        // tree-walker reclaim erases it before the worker applies it (the
-        // body never runs and fiber:join returns void - 7 of 8 spawned
-        // fibers lost their results under aura --serve-async).
-        // spawn_with_pinned_body takes the pin BEFORE the fiber exists
-        // and releases it once the body has been applied.
-        return aura::serve::spawn_with_pinned_body(sched, current_session_evaluator(),
-                                                   std::move(fn), aff);
-    };
-
-    // Issue #119: register fiber-by-id lookup so the evaluator
-    // can find the Fiber* for a given fiber ID. Used by the
-    // proper-blocking fiber:join path (joiner registers itself
-    // on the target's completion; the lookup is needed first to
-    // check if the target is already done).
-    aura::messaging::g_fiber_lookup = +[](int64_t fid) -> void* {
-        return static_cast<void*>(aura::serve::g_scheduler ? aura::serve::g_scheduler->fiber_by_id(
-                                                                 static_cast<std::uint64_t>(fid))
-                                                           : nullptr);
-    };
-
-    // Register fiber:yield callback (non-blocking yield, fiber stays Ready)
-    aura::messaging::g_fiber_yield = []() {
-        if (auto* f = aura::serve::g_current_fiber) {
-            // Issue #4862: inside the soft orch agent-body window the yield
-            // was rejected, so a polling body hot-spun and pinned its worker
-            // (the parked asker of orch:agent-ask then never resumed ->
-            // permanent hang). The flag lets this one yield hand the turn
-            // back; it is restored right after.
-            const bool prev = f->soft_window_yield_allowed();
-            f->set_soft_window_yield_allowed(true);
-            aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
-            f->set_soft_window_yield_allowed(prev);
-        }
-    };
-
-    // Register mutation boundary yield callback (Issue #31):
-    // Called by mutate:* and eval-current before/after mutation operations.
-    //
-    // Issue #362: when this callback is called INSIDE an active
-    // MutationBoundaryGuard (i.e., the fiber currently holds the
-    // exclusive workspace_mtx_), yielding would let another
-    // fiber take over and try to acquire the same lock —
-    // classic deadlock (the holder can''t release because it''s
-    // yielded away; the waiter can''t acquire because it''s
-    // held by the holder). The pre-#362 behavior was to yield
-    // unconditionally, relying on Fiber::yield''s
-    // mutation_boundary_held_ check to detect it (assert in
-    // debug, warn + continue in release). The release path was
-    // the bug: the warning fired but the yield still happened,
-    // causing the deadlock in production.
-    //
-    // Fix: when g_mutation_boundary_held reports true, skip
-    // the yield. The mutation work proceeds uninterrupted and
-    // the fiber will yield at the NEXT safe point (after the
-    // Guard''s dtor releases workspace_mtx_). This converts the
-    // unconditional yield into a safe yield-point hint that
-    // respects the lock-ownership protocol.
-    aura::messaging::g_fiber_yield_mutation_boundary = []() {
-        // Skip yield if a MutationBoundaryGuard is currently
-        // active on this fiber. The bridge function is null
-        // when no Evaluator is wired (test-binary path), in
-        // which case we also skip the safety check.
-        if (aura::messaging::g_mutation_boundary_held &&
-            aura::messaging::g_mutation_boundary_held()) {
-            // Debug: log to stderr so the skip is visible in CI.
-            // In release builds the warning the old code emitted
-            // is replaced by an info-level skip notice.
-            std::fprintf(stderr, "[#362] yield_mutation_boundary skipped: "
-                                 "MutationBoundaryGuard is alive (yield would "
-                                 "deadlock under workspace_mtx_)\n");
-            return;
-        }
-        if (aura::serve::g_current_fiber) {
-            aura::serve::Fiber::yield(aura::serve::YieldReason::MutationBoundary);
-        }
-    };
-
-    // Issue #396 Phase 1: lightweight yield-reason setter for
-    // (mutate:atomic-batch) Guard entry. Sets the current fiber's
-    // last_yield_reason_ to MutationBoundary WITHOUT actually
-    // yielding — this lets work-stealing decisions
-    // (is_stealable(snap) / is_steal_candidate) see the fiber as being
-    // at a mutation boundary, but doesn't suspend it. Used by
-    // atomic-batch to make per-op mutations look like a single atomic
-    // mutation boundary to the scheduler.
-    aura::messaging::g_fiber_set_yield_reason_mutation_boundary = []() {
-        if (aura::serve::g_current_fiber) {
-            aura::serve::g_current_fiber->set_yield_reason(
-                aura::serve::YieldReason::MutationBoundary);
-        }
-    };
-
-    // Register scheduler metrics callback (Issue #32):
-    // Agents can call (orch:metrics) to get real-time scheduler stats.
-    aura::messaging::g_get_scheduler_metrics = [&sched]() -> std::string {
-        return with_offload_section(sched.metrics().to_json());
-    };
-    aura::messaging::g_reset_scheduler_metrics = [&sched]() {
-        // Issue #4827: zero counters in place; workers hold raw
-        // pointers to these objects, so never clear/replace them.
-        sched.metrics().reset_workers();
-    };
-
-    // Fiber affinity — pin current fiber to a specific worker (P2)
-    aura::messaging::g_fiber_set_affinity = [](int worker_id) {
-        auto fb = aura::serve::g_current_fiber;
-        if (fb) {
-            fb->set_affinity(worker_id);
-        }
-    };
-
-    // Issue #4053 / #956: restore async http-post for long-lived Soft Ready
-    // --serve-async JSON sessions (regression: a373092 / #4047 B dropped the
-    // assignment from run_serve_async; only run_serve_async_bench kept it).
-    // In-process libcurl + detached thread + eventfd wake + Fiber::yield —
-    // same path as bench. Soft denseness bodies take this via
-    // evaluator_primitives_io.cpp; DensenessBodyLockWaitGuard unlocks the
-    // #4048 body mutex across the yield so N denseness HTTP can overlap.
-    // Issue #4054: park with Waiting, then consume a completion that raced
-    // ahead of yield (EPOLLET: write-before-park loses the edge). Always
-    // drain eventfd after wake so a leftover counter cannot confuse the next
-    // wait on this denseness fiber / recycled wake path.
-    aura::messaging::g_http_post_async = [](const std::string& url, const std::string& body,
-                                            const std::string& auth) -> std::string {
-        auto* fiber = aura::serve::g_current_fiber;
-        if (!fiber)
-            return {};
-        auto evfd = fiber->eventfd();
-        if (evfd < 0)
-            return {};
-
-        auto result = std::make_shared<std::string>();
-        std::thread t([evfd, url, body, auth, result]() {
-            *result = http_post_in_process(url, body, auth);
-            uint64_t v = 1;
-            ::write(evfd, &v, sizeof(v));
-        });
-        t.detach();
-
-        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
-        uint64_t primed = 0;
-        const ssize_t early = ::read(evfd, &primed, sizeof(primed));
-        if (early != static_cast<ssize_t>(sizeof(primed))) {
-            aura::serve::Fiber::yield();
-            uint64_t val = 0;
-            while (::read(evfd, &val, sizeof(val)) > 0) {
-            }
-        }
-        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Running);
-        return std::move(*result);
-    };
-
-    // GC root flush — routes through the current session's Evaluator.
-    // The g_gc_flush_root_set callback is called by the GC collector
-    // (gc_coordinator.cpp) during the root collection phase. It passes
-    // us a `void*` that is actually a `aura::serve::GCRootSet*`; we
-    // cast it and call the active Evaluator's `flush_gc_roots` to
-    // walk its vector heaps and populate the root set.
-    //
-    // For multi-session setups, each session's Evaluator has its own
-    // vector heaps, so a single flush only captures the active
-    // session. The full multi-session integration would call
-    // GCCollector::register_root_source(worker_id, evaluator.flush_fn)
-    // once per session; that's a future iteration (see #113 closing
-    // doc for the remaining work).
-    aura::messaging::g_gc_flush_root_set = [&sched](void* root_set_out) {
-        auto* svc = static_cast<aura::compiler::CompilerService*>(
-            aura::messaging::g_current_compiler_service);
-        if (!svc)
-            return;
-        if (!root_set_out)
-            return;
-        svc->evaluator().flush_gc_roots(root_set_out);
-    };
-
-    // #4936: the void* aura::messaging::g_gc_sweep hook is gone. Nothing
-    // called it (the collector uses the typed register_sweep_fn below) and
-    // it handed out a heap-allocated GCSweepResultMsg nobody freed.
-
-    // Register the sweep callback with the GC collector. The
-    // collector invokes it during `collect()` after the mark phase.
-    // Note: only one sweep_fn_ per scheduler (not per session).
-    // The callback grabs the active CompilerService via
-    // g_current_compiler_service (same as the root-flush path)
-    // and rebuilds a GCSweepBuffers view from the mark vectors.
-    // We pass through the active evaluator's sweep method.
-
-    // ── Wire the arena-alloc-path GC hooks (Issue #113 Phase 4) ──
-    // The arena's allocate_raw() now calls gc_hooks::safepoint_check()
-    // and gc_hooks::record_alloc() on every allocation. The
-    // safepoint hook is Fiber::check_gc_safepoint (lets compute-heavy
-    // fibers be interrupted by GC). The record_alloc hook bumps
-    // the GC's alloc counter so the collector knows when to fire.
-    // Both are null by default (stdin mode), so the arena is a
-    // no-op when the scheduler isn't running.
-    aura::gc_hooks::g_arena_safepoint_check.store(
-        +[]() noexcept { aura::serve::Fiber::check_gc_safepoint(); });
-    // The record_alloc hook captures `sched`, but std::atomic<fn_ptr>
-    // doesn't accept a capture lambda. We resolve `sched` to its
-    // collector at hook-set time and pass a plain function pointer
-    // that the GC collector exposes for this purpose. The collector's
-    // record_alloc is a static method, but we need to bind it to
-    // this specific scheduler. We use a thread_local indirection:
-    // set a thread_local gc_collector_ptr, then have the hook
-    // dereference it. This is a tiny extra indirection on the
-    // alloc hot path but keeps the API simple.
-    thread_local aura::serve::GCCollector* tls_gc_collector = nullptr;
-    tls_gc_collector = sched.gc_collector();
-    aura::gc_hooks::g_arena_record_alloc.store(+[]() noexcept {
-        if (auto* gc = tls_gc_collector)
-            gc->record_alloc();
-    });
-    // Issue #604: let ASTArena::compact()/defrag() detect a fiber
-    // context so a compaction requested from inside a fiber bumps
-    // the yield-check counter and cooperates with the GC safepoint.
-    aura::gc_hooks::g_fiber_active.store(
-        +[]() noexcept { return aura::serve::g_current_fiber != nullptr; });
-    sched.gc_collector()->register_sweep_fn(
-        [&sched](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
-            auto* svc = static_cast<aura::compiler::CompilerService*>(
-                aura::messaging::g_current_compiler_service);
-            if (!svc)
-                return {};
-            // Reconstruct a view that compact_sweep can consume.
-            // We use a stack-allocated stub with the same shape
-            // as GCSweepBuffers so we can pass it through the
-            // void* API without exposing the gc_coordinator.h
-            // type across module boundaries.
-            // Issue #963 / #1732: PassThru in; typed CompactSweepResult out
-            // (no void* cast of the result).
-            aura::messaging::GCSweepPassThru holder{bufs.string_marks, bufs.pair_marks,
-                                                    bufs.closure_marks};
-            auto r = svc->evaluator().compact_sweep(&holder);
-            return aura::serve::GCSweepResult{r.strings_freed, r.pairs_freed, r.closures_freed,
-                                              r.fiber_results_freed};
-        });
-
-    // GC collect — triggers a GC cycle via the GC collector.
-    // Called from (gc-heap) primitives.
-    aura::messaging::g_gc_collect = [&sched]() -> bool {
-        auto* gc = sched.gc_collector();
-        if (!gc)
-            return false;
-        gc->set_alloc_threshold(1);
-        gc->reset_alloc_counter();
-        gc->record_alloc();
-        return gc->request() && gc->collect();
-    };
-
-    // Issue #205: env-walk callback. The Evaluator's
-    // env_frames_ SoA arena is walked (linear pass, O(frames))
-    // to discover pair/closure refs reachable through env
-    // bindings. This replaces the old pointer-chasing Env*
-    // walk with a single linear pass — 3-5x mark-phase
-    // speedup for large workspaces (per Issue #172).
-    //
-    // The callback reads g_current_compiler_service to get
-    // the active Evaluator (set per-session on the IO
-    // thread). The GC is called from the IO thread via
-    // (gc-heap), so the active service is the session's.
-    sched.gc_collector()->register_env_walk_fn([](aura::serve::EnvFrameRoots& out) {
-        auto* svc = static_cast<aura::compiler::CompilerService*>(
-            aura::messaging::g_current_compiler_service);
-        if (!svc)
-            return;
-        // CompilerService exposes the Evaluator; walk
-        // the Evaluator's env_frames_ arena. The walk
-        // is read-only and SoA-friendly (no allocations
-        // in the hot path; only pair/closure indices
-        // are appended to the output vectors).
-        svc->evaluator().walk_env_frame_roots(out.pair_roots, out.closure_roots);
-    });
-
-    // Issue #2084: register a size-provider callback so the GC can size
-    // its MarkBitVectors to the actual current heap extent (string_heap_,
-    // pairs_, closures_), not just max root index + 1. Without this,
-    // high-water dead slots above any live root never enter the mark
-    // vector and the live_mask walk silently under-covers the heap.
-    // Same lookup pattern as the env-walk callback above (active service
-    // via g_current_compiler_service); returns (0,0,0) when no active
-    // service to preserve the pre-#2084 root-derived sizing fallback.
-    sched.gc_collector()->register_size_fn(
-        []() -> std::tuple<std::size_t, std::size_t, std::size_t> {
-            auto* svc = static_cast<aura::compiler::CompilerService*>(
-                aura::messaging::g_current_compiler_service);
-            if (!svc)
-                return {0, 0, 0};
-            const auto& ev = svc->evaluator();
-            return {ev.string_heap_size(), ev.pairs_size(), ev.closures_size()};
-        });
-
-    // 3. Shared state between stdin_reader and session fibers
-    // Soft (#4047 B async): named sessions may share one CompilerService
-    // graph (parity with Soft sync --serve). Production keeps isolation.
-    const bool soft_shared_graph = !production_abi_selfcheck_required();
-    if (soft_shared_graph) {
-        static bool soft_async_b_logged = false;
-        if (!soft_async_b_logged) {
-            soft_async_b_logged = true;
-            std::println(std::cerr, "aura: Soft shared_workspace (#4047 B): --serve-async named "
-                                    "sessions share one CompilerService + workspace_tree — "
-                                    "orch→project bindings visible. NOT production isolation.");
-        }
-    }
-
+    // Session bookkeeping for one --serve-async process. The objects live in
+    // run_serve_async until sched.run() returns. Fibers hold references to them
+    // and do not own them.
     struct Session {
         std::string id;
         Fiber* fiber = nullptr;
@@ -801,14 +422,28 @@ void run_serve_async(int num_workers) {
         bool active = true;
     };
 
-    std::deque<std::string> stdin_lines; // complete JSON lines from stdin
-    bool stdin_eof = false;
+    using SessionMap = std::unordered_map<std::string, std::unique_ptr<Session>,
+                                          aura::core::TransparentStringHash, std::equal_to<>>;
 
-    // Declared before stdin fiber so push path can wake Waiting session fibers
-    // (producer-consumer race: session parks after stdin push+park → hang without wake).
-    std::unordered_map<std::string, std::unique_ptr<Session>, aura::core::TransparentStringHash,
-                       std::equal_to<>>
-        sessions;
+    // Route by JSON "session" field (json_field accepts "k":"v" and "k": "v").
+    // Fragile find("\"session\":\"name\"") missed spaced JSON → default stole lines.
+    bool line_for_session(std::string_view line, std::string_view sid) {
+        auto sess = json_field(line, "session");
+        if (sid == "default")
+            return sess.empty() || sess == "default";
+        return sess == sid;
+    }
+
+    std::string take_session_line(std::deque<std::string>& stdin_lines, std::string_view sid) {
+        for (auto it = stdin_lines.begin(); it != stdin_lines.end(); ++it) {
+            if (!line_for_session(*it, sid))
+                continue;
+            std::string got = std::move(*it);
+            stdin_lines.erase(it);
+            return got;
+        }
+        return std::string{};
+    }
 
     // Issue #4079: the stdin epoll turn enqueues the Waiting session
     // before the reader pushes the line. Worker LIFO runs the session
@@ -817,7 +452,7 @@ void run_serve_async(int num_workers) {
     // the JSON status sits until the next stdin byte — a 30s client
     // consumes it as the following exec. Enqueue the parked session on
     // its worker directly once the line is in the deque.
-    auto wake_waiting_session_fibers = [&sessions, &sched]() {
+    void wake_waiting_session_fibers(SessionMap& sessions, Scheduler& sched) {
         for (auto& [id, sess] : sessions) {
             (void)id;
             Fiber* f = sess ? sess->fiber : nullptr;
@@ -841,32 +476,12 @@ void run_serve_async(int num_workers) {
             if (auto* w = sched.worker(wid))
                 w->enqueue(f);
         }
-    };
+    }
 
-    // Route by JSON "session" field (json_field accepts "k":"v" and "k": "v").
-    // Fragile find("\"session\":\"name\"") missed spaced JSON → default stole lines.
-    auto line_for_session = [](std::string_view line, std::string_view sid) -> bool {
-        auto sess = json_field(line, "session");
-        if (sid == "default")
-            return sess.empty() || sess == "default";
-        return sess == sid;
-    };
-
-    auto take_session_line = [&stdin_lines, &line_for_session](std::string_view sid) {
-        for (auto it = stdin_lines.begin(); it != stdin_lines.end(); ++it) {
-            if (!line_for_session(*it, sid))
-                continue;
-            std::string got = std::move(*it);
-            stdin_lines.erase(it);
-            return got;
-        }
-        return std::string{};
-    };
-
-    // 4. Spawn stdin_reader fiber
-
-    auto* stdin_fiber = sched.spawn([&sched, &stdin_lines, &stdin_eof,
-                                     &wake_waiting_session_fibers]() {
+    // Stdin reader fiber body. The deque, eof flag, and session map are the
+    // locals in run_serve_async; this function does not store them.
+    void read_serve_async_stdin(Scheduler& sched, std::deque<std::string>& stdin_lines,
+                                bool& stdin_eof, SessionMap& sessions) {
         std::string buf;
         bool local_eof = false;
         while (!local_eof) {
@@ -928,7 +543,7 @@ void run_serve_async(int num_workers) {
 
             // Wake session fibers that may have parked before seeing the line.
             if (pushed)
-                wake_waiting_session_fibers();
+                wake_waiting_session_fibers(sessions, sched);
 
             if (local_eof) {
                 // EOF — remove stdin from epoll so it doesn't keep firing
@@ -936,7 +551,7 @@ void run_serve_async(int num_workers) {
                 ::epoll_ctl(sched.epoll_fd(), EPOLL_CTL_DEL, STDIN_FILENO, nullptr);
 #endif
                 stdin_eof = true;
-                wake_waiting_session_fibers();
+                wake_waiting_session_fibers(sessions, sched);
                 break;
             }
 
@@ -948,11 +563,758 @@ void run_serve_async(int num_workers) {
             // If got_data == true, loop back to try reading more
             // (allows consuming chained pipe data in one quantum)
         }
+    }
+
+    // Private eval:async snapshot. The returned pointer keeps the source bytes
+    // alive for the rest of run_serve_async; set_offload_eval_source may retain
+    // a view of them.
+    [[nodiscard]] std::shared_ptr<const aura::offload::SnapshotInput>
+    publish_eval_async_snapshot() {
+        // Issue #4880/#4881: the old per-fiber pool wiring is gone; the isolated
+        // offload pool is rebuilt in #4881/#4882 and wired in #4883.
+        // Issue #4887: eval:async runs on that isolated pool. The snapshot is a
+        // private CompilerService created BEFORE the session: the pool job never
+        // enters the session service, so the parked fiber's eval/body mutexes do
+        // not matter. Consequence (documented): eval:async cannot see session
+        // defines; it evaluates in a fresh private context.
+        auto eval_async_snapshot =
+            std::make_shared<const aura::offload::SnapshotInput>(aura::offload::SnapshotInput{});
+        {
+            // Issue #4887: the snapshot service has its own evaluator; do not let
+            // its construction republish the global stats impl table.
+            const bool prev_suppress = aura::compiler::set_stats_registration_suppressed(true);
+            aura::compiler::CompilerService private_snapshot;
+            soft_session_prelude_4887(private_snapshot);
+            eval_async_snapshot =
+                std::make_shared<const aura::offload::SnapshotInput>(aura::offload::SnapshotInput{
+                    private_snapshot.evaluator().authoritative_workspace_source(), 0});
+            aura::compiler::set_stats_registration_suppressed(prev_suppress);
+        }
+        // Issue #4887: publish the OffloadEval adapter and install the private
+        // session source. The evaluator module only sees the header-only
+        // interface; the adapter owns the pool/CompilerService dependency.
+        aura::offload::set_offload_eval_source(eval_async_snapshot->source);
+        aura::messaging::g_offload_eval = &aura::offload::offload_eval_instance();
+        return eval_async_snapshot;
+    }
+
+    // Fiber messaging bridges. Lambdas that name `sched` capture that Scheduler
+    // object (the reference parameter), which is the local in run_serve_async.
+    void install_serve_async_fiber_bridges(Scheduler& sched) {
+        // Register fiber:spawn callback (captures scheduler for actual fiber creation).
+        // Issue #4048: denseness fibers share the session Evaluator (complete_fiber
+        // captures &ev). Migrating parent/child across workers under Soft Ready
+        // multi-worker corrupts TLS / heap and hangs the session after join.
+        // Inherit the parent's worker affinity (and default to worker 0) so
+        // spawn+join denseness stays on one worker — same serialization as
+        // --worker-threads 1, which passes acceptance. Steal already skips
+        // other-affinity fibers.
+        aura::messaging::g_fiber_spawn = [&sched](std::function<void()> fn) -> int64_t {
+            int aff = 0;
+            if (aura::serve::g_current_fiber) {
+                const int parent_aff = aura::serve::g_current_fiber->affinity();
+                if (parent_aff >= 0)
+                    aff = parent_aff;
+                else {
+                    // Pin parent too so subsequent wakes/spawns stay together.
+                    aura::serve::g_current_fiber->set_affinity(0);
+                    aff = 0;
+                }
+            }
+            // Issue #4698: the pending body closure is a tree-walker temporary
+            // that fiber:spawn drops on return; without the pin the
+            // tree-walker reclaim erases it before the worker applies it (the
+            // body never runs and fiber:join returns void - 7 of 8 spawned
+            // fibers lost their results under aura --serve-async).
+            // spawn_with_pinned_body takes the pin BEFORE the fiber exists
+            // and releases it once the body has been applied.
+            return aura::serve::spawn_with_pinned_body(sched, current_session_evaluator(),
+                                                       std::move(fn), aff);
+        };
+
+        // Issue #119: register fiber-by-id lookup so the evaluator
+        // can find the Fiber* for a given fiber ID. Used by the
+        // proper-blocking fiber:join path (joiner registers itself
+        // on the target's completion; the lookup is needed first to
+        // check if the target is already done).
+        aura::messaging::g_fiber_lookup = +[](int64_t fid) -> void* {
+            return static_cast<void*>(
+                aura::serve::g_scheduler
+                    ? aura::serve::g_scheduler->fiber_by_id(static_cast<std::uint64_t>(fid))
+                    : nullptr);
+        };
+
+        // Register fiber:yield callback (non-blocking yield, fiber stays Ready)
+        aura::messaging::g_fiber_yield = []() {
+            if (auto* f = aura::serve::g_current_fiber) {
+                // Issue #4862: inside the soft orch agent-body window the yield
+                // was rejected, so a polling body hot-spun and pinned its worker
+                // (the parked asker of orch:agent-ask then never resumed ->
+                // permanent hang). The flag lets this one yield hand the turn
+                // back; it is restored right after.
+                const bool prev = f->soft_window_yield_allowed();
+                f->set_soft_window_yield_allowed(true);
+                aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit);
+                f->set_soft_window_yield_allowed(prev);
+            }
+        };
+
+        // Register mutation boundary yield callback (Issue #31):
+        // Called by mutate:* and eval-current before/after mutation operations.
+        //
+        // Issue #362: when this callback is called INSIDE an active
+        // MutationBoundaryGuard (i.e., the fiber currently holds the
+        // exclusive workspace_mtx_), yielding would let another
+        // fiber take over and try to acquire the same lock —
+        // classic deadlock (the holder can''t release because it''s
+        // yielded away; the waiter can''t acquire because it''s
+        // held by the holder). The pre-#362 behavior was to yield
+        // unconditionally, relying on Fiber::yield''s
+        // mutation_boundary_held_ check to detect it (assert in
+        // debug, warn + continue in release). The release path was
+        // the bug: the warning fired but the yield still happened,
+        // causing the deadlock in production.
+        //
+        // Fix: when g_mutation_boundary_held reports true, skip
+        // the yield. The mutation work proceeds uninterrupted and
+        // the fiber will yield at the NEXT safe point (after the
+        // Guard''s dtor releases workspace_mtx_). This converts the
+        // unconditional yield into a safe yield-point hint that
+        // respects the lock-ownership protocol.
+        aura::messaging::g_fiber_yield_mutation_boundary = []() {
+            // Skip yield if a MutationBoundaryGuard is currently
+            // active on this fiber. The bridge function is null
+            // when no Evaluator is wired (test-binary path), in
+            // which case we also skip the safety check.
+            if (aura::messaging::g_mutation_boundary_held &&
+                aura::messaging::g_mutation_boundary_held()) {
+                // Debug: log to stderr so the skip is visible in CI.
+                // In release builds the warning the old code emitted
+                // is replaced by an info-level skip notice.
+                std::fprintf(stderr, "[#362] yield_mutation_boundary skipped: "
+                                     "MutationBoundaryGuard is alive (yield would "
+                                     "deadlock under workspace_mtx_)\n");
+                return;
+            }
+            if (aura::serve::g_current_fiber) {
+                aura::serve::Fiber::yield(aura::serve::YieldReason::MutationBoundary);
+            }
+        };
+
+        // Issue #396 Phase 1: lightweight yield-reason setter for
+        // (mutate:atomic-batch) Guard entry. Sets the current fiber's
+        // last_yield_reason_ to MutationBoundary WITHOUT actually
+        // yielding — this lets work-stealing decisions
+        // (is_stealable(snap) / is_steal_candidate) see the fiber as being
+        // at a mutation boundary, but doesn't suspend it. Used by
+        // atomic-batch to make per-op mutations look like a single atomic
+        // mutation boundary to the scheduler.
+        aura::messaging::g_fiber_set_yield_reason_mutation_boundary = []() {
+            if (aura::serve::g_current_fiber) {
+                aura::serve::g_current_fiber->set_yield_reason(
+                    aura::serve::YieldReason::MutationBoundary);
+            }
+        };
+
+        // Register scheduler metrics callback (Issue #32):
+        // Agents can call (orch:metrics) to get real-time scheduler stats.
+        aura::messaging::g_get_scheduler_metrics = [&sched]() -> std::string {
+            return with_offload_section(sched.metrics().to_json());
+        };
+        aura::messaging::g_reset_scheduler_metrics = [&sched]() {
+            // Issue #4827: zero counters in place; workers hold raw
+            // pointers to these objects, so never clear/replace them.
+            sched.metrics().reset_workers();
+        };
+
+        // Fiber affinity — pin current fiber to a specific worker (P2)
+        aura::messaging::g_fiber_set_affinity = [](int worker_id) {
+            auto fb = aura::serve::g_current_fiber;
+            if (fb) {
+                fb->set_affinity(worker_id);
+            }
+        };
+
+        // Issue #4053 / #956: restore async http-post for long-lived Soft Ready
+        // --serve-async JSON sessions (regression: a373092 / #4047 B dropped the
+        // assignment from run_serve_async; only run_serve_async_bench kept it).
+        // In-process libcurl + detached thread + eventfd wake + Fiber::yield —
+        // same path as bench. Soft denseness bodies take this via
+        // evaluator_primitives_io.cpp; DensenessBodyLockWaitGuard unlocks the
+        // #4048 body mutex across the yield so N denseness HTTP can overlap.
+        // Issue #4054: park with Waiting, then consume a completion that raced
+        // ahead of yield (EPOLLET: write-before-park loses the edge). Always
+        // drain eventfd after wake so a leftover counter cannot confuse the next
+        // wait on this denseness fiber / recycled wake path.
+        aura::messaging::g_http_post_async = [](const std::string& url, const std::string& body,
+                                                const std::string& auth) -> std::string {
+            auto* fiber = aura::serve::g_current_fiber;
+            if (!fiber)
+                return {};
+            auto evfd = fiber->eventfd();
+            if (evfd < 0)
+                return {};
+
+            auto result = std::make_shared<std::string>();
+            std::thread t([evfd, url, body, auth, result]() {
+                *result = http_post_in_process(url, body, auth);
+                uint64_t v = 1;
+                ::write(evfd, &v, sizeof(v));
+            });
+            t.detach();
+
+            aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
+            uint64_t primed = 0;
+            const ssize_t early = ::read(evfd, &primed, sizeof(primed));
+            if (early != static_cast<ssize_t>(sizeof(primed))) {
+                aura::serve::Fiber::yield();
+                uint64_t val = 0;
+                while (::read(evfd, &val, sizeof(val)) > 0) {
+                }
+            }
+            aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Running);
+            return std::move(*result);
+        };
+    }
+
+    // GC hooks for this scheduler. The record_alloc thread_local is set only on
+    // the thread that calls this function, matching the previous function-local
+    // thread_local in run_serve_async: other threads still see a null collector.
+    void install_serve_async_gc(Scheduler& sched) {
+        // GC root flush — routes through the current session's Evaluator.
+        // The g_gc_flush_root_set callback is called by the GC collector
+        // (gc_coordinator.cpp) during the root collection phase. It passes
+        // us a `void*` that is actually a `aura::serve::GCRootSet*`; we
+        // cast it and call the active Evaluator's `flush_gc_roots` to
+        // walk its vector heaps and populate the root set.
+        //
+        // For multi-session setups, each session's Evaluator has its own
+        // vector heaps, so a single flush only captures the active
+        // session. The full multi-session integration would call
+        // GCCollector::register_root_source(worker_id, evaluator.flush_fn)
+        // once per session; that's a future iteration (see #113 closing
+        // doc for the remaining work).
+        aura::messaging::g_gc_flush_root_set = [&sched](void* root_set_out) {
+            auto* svc = static_cast<aura::compiler::CompilerService*>(
+                aura::messaging::g_current_compiler_service);
+            if (!svc)
+                return;
+            if (!root_set_out)
+                return;
+            svc->evaluator().flush_gc_roots(root_set_out);
+        };
+
+        // #4936: the void* aura::messaging::g_gc_sweep hook is gone. Nothing
+        // called it (the collector uses the typed register_sweep_fn below) and
+        // it handed out a heap-allocated GCSweepResultMsg nobody freed.
+
+        // Register the sweep callback with the GC collector. The
+        // collector invokes it during `collect()` after the mark phase.
+        // Note: only one sweep_fn_ per scheduler (not per session).
+        // The callback grabs the active CompilerService via
+        // g_current_compiler_service (same as the root-flush path)
+        // and rebuilds a GCSweepBuffers view from the mark vectors.
+        // We pass through the active evaluator's sweep method.
+
+        // ── Wire the arena-alloc-path GC hooks (Issue #113 Phase 4) ──
+        // The arena's allocate_raw() now calls gc_hooks::safepoint_check()
+        // and gc_hooks::record_alloc() on every allocation. The
+        // safepoint hook is Fiber::check_gc_safepoint (lets compute-heavy
+        // fibers be interrupted by GC). The record_alloc hook bumps
+        // the GC's alloc counter so the collector knows when to fire.
+        // Both are null by default (stdin mode), so the arena is a
+        // no-op when the scheduler isn't running.
+        aura::gc_hooks::g_arena_safepoint_check.store(
+            +[]() noexcept { aura::serve::Fiber::check_gc_safepoint(); });
+        // The record_alloc hook captures `sched`, but std::atomic<fn_ptr>
+        // doesn't accept a capture lambda. We resolve `sched` to its
+        // collector at hook-set time and pass a plain function pointer
+        // that the GC collector exposes for this purpose. The collector's
+        // record_alloc is a static method, but we need to bind it to
+        // this specific scheduler. We use a thread_local indirection:
+        // set a thread_local gc_collector_ptr, then have the hook
+        // dereference it. This is a tiny extra indirection on the
+        // alloc hot path but keeps the API simple.
+        thread_local aura::serve::GCCollector* tls_gc_collector = nullptr;
+        tls_gc_collector = sched.gc_collector();
+        aura::gc_hooks::g_arena_record_alloc.store(+[]() noexcept {
+            if (auto* gc = tls_gc_collector)
+                gc->record_alloc();
+        });
+        // Issue #604: let ASTArena::compact()/defrag() detect a fiber
+        // context so a compaction requested from inside a fiber bumps
+        // the yield-check counter and cooperates with the GC safepoint.
+        aura::gc_hooks::g_fiber_active.store(
+            +[]() noexcept { return aura::serve::g_current_fiber != nullptr; });
+        sched.gc_collector()->register_sweep_fn(
+            [&sched](const aura::serve::GCSweepBuffers& bufs) -> aura::serve::GCSweepResult {
+                auto* svc = static_cast<aura::compiler::CompilerService*>(
+                    aura::messaging::g_current_compiler_service);
+                if (!svc)
+                    return {};
+                // Reconstruct a view that compact_sweep can consume.
+                // We use a stack-allocated stub with the same shape
+                // as GCSweepBuffers so we can pass it through the
+                // void* API without exposing the gc_coordinator.h
+                // type across module boundaries.
+                // Issue #963 / #1732: PassThru in; typed CompactSweepResult out
+                // (no void* cast of the result).
+                aura::messaging::GCSweepPassThru holder{bufs.string_marks, bufs.pair_marks,
+                                                        bufs.closure_marks};
+                auto r = svc->evaluator().compact_sweep(&holder);
+                return aura::serve::GCSweepResult{r.strings_freed, r.pairs_freed, r.closures_freed,
+                                                  r.fiber_results_freed};
+            });
+
+        // GC collect — triggers a GC cycle via the GC collector.
+        // Called from (gc-heap) primitives.
+        aura::messaging::g_gc_collect = [&sched]() -> bool {
+            auto* gc = sched.gc_collector();
+            if (!gc)
+                return false;
+            gc->set_alloc_threshold(1);
+            gc->reset_alloc_counter();
+            gc->record_alloc();
+            return gc->request() && gc->collect();
+        };
+
+        // Issue #205: env-walk callback. The Evaluator's
+        // env_frames_ SoA arena is walked (linear pass, O(frames))
+        // to discover pair/closure refs reachable through env
+        // bindings. This replaces the old pointer-chasing Env*
+        // walk with a single linear pass — 3-5x mark-phase
+        // speedup for large workspaces (per Issue #172).
+        //
+        // The callback reads g_current_compiler_service to get
+        // the active Evaluator (set per-session on the IO
+        // thread). The GC is called from the IO thread via
+        // (gc-heap), so the active service is the session's.
+        sched.gc_collector()->register_env_walk_fn([](aura::serve::EnvFrameRoots& out) {
+            auto* svc = static_cast<aura::compiler::CompilerService*>(
+                aura::messaging::g_current_compiler_service);
+            if (!svc)
+                return;
+            // CompilerService exposes the Evaluator; walk
+            // the Evaluator's env_frames_ arena. The walk
+            // is read-only and SoA-friendly (no allocations
+            // in the hot path; only pair/closure indices
+            // are appended to the output vectors).
+            svc->evaluator().walk_env_frame_roots(out.pair_roots, out.closure_roots);
+        });
+
+        // Issue #2084: register a size-provider callback so the GC can size
+        // its MarkBitVectors to the actual current heap extent (string_heap_,
+        // pairs_, closures_), not just max root index + 1. Without this,
+        // high-water dead slots above any live root never enter the mark
+        // vector and the live_mask walk silently under-covers the heap.
+        // Same lookup pattern as the env-walk callback above (active service
+        // via g_current_compiler_service); returns (0,0,0) when no active
+        // service to preserve the pre-#2084 root-derived sizing fallback.
+        sched.gc_collector()->register_size_fn(
+            []() -> std::tuple<std::size_t, std::size_t, std::size_t> {
+                auto* svc = static_cast<aura::compiler::CompilerService*>(
+                    aura::messaging::g_current_compiler_service);
+                if (!svc)
+                    return {0, 0, 0};
+                const auto& ev = svc->evaluator();
+                return {ev.string_heap_size(), ev.pairs_size(), ev.closures_size()};
+            });
+    }
+
+    template <class CsFor>
+    void run_named_session_body(const std::string& nsid, Session& sess, bool& stdin_eof,
+                                std::deque<std::string>& stdin_lines, CsFor& cs_for) {
+        sess.mailbox.attach(aura::serve::g_current_fiber);
+        sess.service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
+        while (sess.active) {
+            std::string sl = take_session_line(stdin_lines, nsid);
+            if (sl.empty()) {
+                if (stdin_eof)
+                    break;
+                // Issue #4079: same-turn reader push vs park.
+                aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
+                sl = take_session_line(stdin_lines, nsid);
+                if (sl.empty()) {
+                    // Same stdin hand-off race as the default session
+                    // loop below: bound the park so a wake that lands
+                    // between the second look and the park cannot
+                    // strand the queued request.
+                    aura::serve::g_current_fiber->set_park_deadline_ms(100);
+                    aura::serve::Fiber::yield();
+                    aura::serve::g_current_fiber->clear_park_deadline();
+                    continue;
+                }
+                aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Running);
+            }
+            auto c = json_field(sl, "cmd");
+            if (c == "exec") {
+                auto code = json_field(sl, "code");
+                if (!code.empty()) {
+                    auto& cs = cs_for(sess);
+                    aura::messaging::g_current_compiler_service = &cs;
+                    // Issue #4176: a C++ exception escaping exec (e.g.
+                    // fiber spawn failure at fd exhaustion) must emit a
+                    // status error line and keep the session fiber
+                    // alive — an unwound session fiber stops replying
+                    // forever (host polls the sock with no reply: the
+                    // permanent-stall shape this issue reports).
+                    // Issue #4702: split the chunk into its top-level
+                    // forms and evaluate them one at a time. A
+                    // multi-form chunk used to be evaluated as ONE
+                    // program: the compiler lowers a multi-form
+                    // program (Begin root) to IR, where the
+                    // top-level defines become IR-local cells that
+                    // die with the IR module — so the defines never
+                    // reached the session env and the NEXT exec
+                    // failed with "unbound variable". One form per
+                    // eval makes every top-level define a
+                    // single-form program, which the compiler binds
+                    // in the session env. An unbalanced chunk is
+                    // rejected before anything runs (it used to be
+                    // accepted silently and to swallow the forms
+                    // after it).
+                    auto split = detail::split_top_level_forms(code);
+                    if (!split.ok()) {
+                        emit_status_line(status_line_error(nsid, split.error, ""));
+                        continue;
+                    }
+                    try {
+                        auto captured = capture_stdout_during([&] {
+                            return detail::eval_top_level_forms(
+                                split.forms,
+                                [&](std::string_view form) { return cs.exec_with_cache(form); });
+                        });
+                        if (!captured) {
+                            // Issue #4229: capture setup failed —
+                            // explicit transient error; the exec did
+                            // NOT run, so the client can retry.
+                            emit_status_line(status_line_error(
+                                nsid, "serve stdout capture unavailable (transient)", ""));
+                        } else {
+                            auto [r, display] = std::move(*captured);
+                            if (!r) {
+                                // The chunk held no top-level form.
+                                emit_status_line(status_line_error(
+                                    nsid, "parse error: no complete form in exec chunk", display));
+                            } else if (!*r) {
+                                emit_status_line(
+                                    status_line_error(nsid, (*r).error().format(), display));
+                            } else {
+                                emit_exec_result(nsid, **r, display, cs);
+                            }
+                        }
+                    } catch (const std::exception& e) {
+                        emit_status_line(status_line_error(
+                            nsid, std::string("exec exception: ") + e.what(), ""));
+                    }
+                }
+            }
+        }
+    }
+
+    // Soft shared graph pins named sessions to worker 0 with the default session.
+    // Production isolation pins by name hash. The fiber captures the session
+    // object, the stdin deque, and the cs_for lambda by reference; those objects
+    // belong to run_serve_async and outlive sched.run().
+    template <class CsFor>
+    Fiber* spawn_named_session_fiber(Scheduler& sched, bool& stdin_eof,
+                                     std::deque<std::string>& stdin_lines, CsFor& cs_for,
+                                     bool soft_shared_graph, const std::string& nsid,
+                                     Session& sess) {
+        const int aff =
+            soft_shared_graph
+                ? 0
+                : static_cast<int>(std::hash<std::string>{}(nsid) %
+                                   static_cast<std::size_t>(std::max(1, sched.num_workers())));
+        return sched.spawn_with_affinity(
+            [nsid, &sess, &stdin_eof, &stdin_lines, &cs_for]() {
+                run_named_session_body(nsid, sess, stdin_eof, stdin_lines, cs_for);
+            },
+            aff);
+    }
+
+    template <class CsFor, class Emplace>
+    void run_default_session_body(const std::string& sid, Session& sess, bool& stdin_eof,
+                                  SessionMap& sessions, std::deque<std::string>& stdin_lines,
+                                  CsFor& cs_for, Emplace& emplace_named_session) {
+        // Attach mailbox to this fiber
+        sess.mailbox.attach(g_current_fiber);
+
+        while (sess.active) {
+            // Try to pop a line from stdin.
+            std::string line = take_session_line(stdin_lines, sid);
+
+            if (line.empty()) {
+                // No lines for us — check mailbox
+                auto msg = sess.mailbox.pop(false);
+                if (!msg.empty()) {
+                    // Got a message from another session
+                    std::println("{{\"session\":\"{}\",\"status\":\"msg\",\"data\":\"{}\"}}",
+                                 json_escape(sid), json_escape(msg));
+                    std::fflush(stdout);
+                    continue;
+                }
+
+                // Nothing to do
+                if (stdin_eof)
+                    break;
+                // Issue #4079: epoll wakes this fiber before the
+                // stdin reader pushes. Park only after a second
+                // look, and let the reader's direct enqueue
+                // resume us once the line is actually queued.
+                g_current_fiber->set_state(FiberState::Waiting);
+                line = take_session_line(stdin_lines, sid);
+                if (line.empty()) {
+                    // stdin hand-off race: a line pushed between the
+                    // second look above and the park is lost — the
+                    // reader's wake skips a fiber that is still in
+                    // resume (is_queued), so the parked session never
+                    // sees the queued request (ci/p0: the two-fiber
+                    // join request was never answered; any later
+                    // stdin byte woke it and the pending line ran).
+                    // Arm a bounded park deadline: the scheduler
+                    // re-queues an expired timed park, so the loop
+                    // re-checks instead of sleeping forever.
+                    g_current_fiber->set_park_deadline_ms(100);
+                    Fiber::yield();
+                    g_current_fiber->clear_park_deadline();
+                    continue;
+                }
+                g_current_fiber->set_state(FiberState::Running);
+            }
+
+            // Parse and execute
+            auto cmd = json_field(line, "cmd");
+            if (cmd.empty()) {
+                std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"missing cmd\"}}",
+                             json_escape(sid));
+                std::fflush(stdout);
+                continue;
+            }
+
+            if (cmd == "exec") {
+                auto code = json_field(line, "code");
+                if (code.empty()) {
+                    std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":"
+                                 "\"missing code\"}}",
+                                 json_escape(sid));
+                    std::fflush(stdout);
+                    continue;
+                }
+                auto& cs = cs_for(sess);
+                aura::messaging::g_current_compiler_service = &cs;
+                // Issue #4176: same session-survival contract as the
+                // named-session loop above — an exception escaping
+                // exec must surface as a status error, never unwind
+                // the session fiber.
+                // Issue #4702: split the chunk into its top-level
+                // forms and evaluate them one at a time. A
+                // multi-form chunk used to be evaluated as ONE
+                // program: the compiler lowers a multi-form program
+                // (Begin root) to IR, where the top-level defines
+                // become IR-local cells that die with the IR module
+                // — so the defines never reached the session env
+                // and the NEXT exec failed with "unbound variable".
+                // One form per eval makes every top-level define a
+                // single-form program, which the compiler binds in
+                // the session env. An unbalanced chunk is rejected
+                // before anything runs (it used to be accepted
+                // silently and to swallow the forms after it).
+                auto split = detail::split_top_level_forms(code);
+                if (!split.ok()) {
+                    emit_status_line(status_line_error(sid, split.error, ""));
+                    continue;
+                }
+                try {
+                    auto captured = capture_stdout_during([&] {
+                        return detail::eval_top_level_forms(
+                            split.forms,
+                            [&](std::string_view form) { return cs.exec_with_cache(form); });
+                    });
+                    if (!captured) {
+                        // Issue #4229: capture setup failed —
+                        // explicit transient error; the exec did
+                        // NOT run, so the client can retry.
+                        emit_status_line(status_line_error(
+                            sid, "serve stdout capture unavailable (transient)", ""));
+                    } else {
+                        auto [result, display] = std::move(*captured);
+                        if (!result) {
+                            // The chunk held no top-level form.
+                            emit_status_line(status_line_error(
+                                sid, "parse error: no complete form in exec chunk", display));
+                        } else if (!*result) {
+                            auto& d = (*result).error();
+                            emit_status_line(status_line_error(sid, d.format(), display));
+                        } else {
+                            try {
+                                auto& v = **result;
+                                // Check if closure
+                                if (is_closure(v)) {
+                                    if (display.empty()) {
+                                        emit_status_line(std::format(
+                                            "{{\"session\":\"{}\",\"status\":\"closure\","
+                                            "\"value\":\"#<procedure>\"}}",
+                                            json_escape(sid)));
+                                    } else {
+                                        emit_status_line(std::format(
+                                            "{{\"session\":\"{}\",\"status\":\"closure\","
+                                            "\"value\":\"#<procedure>\",\"display\":\"{}\"}"
+                                            "}",
+                                            json_escape(sid), json_escape(display)));
+                                    }
+                                } else {
+                                    emit_exec_result(sid, v, display, cs);
+                                }
+                            } catch (const std::bad_alloc&) {
+                                emit_status_line(status_line_error(sid, "out of memory", display));
+                            }
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    emit_status_line(
+                        status_line_error(sid, std::string("exec exception: ") + e.what(), ""));
+                }
+
+            } else if (cmd == "session") {
+                auto action = json_field(line, "action");
+                auto name = json_field(line, "name");
+                // Soft/sync parity: missing action + name ⇒ create-or-activate.
+                if (action.empty() && !name.empty())
+                    action = "create";
+                if (action == "create") {
+                    if (name.empty()) {
+                        std::println("{{\"session\":\"{}\","
+                                     "\"status\":\"error\",\"msg\":\"missing name\"}}",
+                                     json_escape(sid));
+                        std::fflush(stdout);
+                    } else if (sessions.count(name) > 0) {
+                        // Already exists — ok (sync-style activate)
+                        std::println("{{\"session\":\"{}\","
+                                     "\"status\":\"ok\",\"name\":\"{}\"}}",
+                                     json_escape(sid), json_escape(name));
+                        std::fflush(stdout);
+                    } else if (emplace_named_session(name)) {
+                        std::println("{{\"session\":\"{}\","
+                                     "\"status\":\"created\",\"name\":\"{}\"}}",
+                                     json_escape(sid), json_escape(name));
+                        std::fflush(stdout);
+                    } else {
+                        std::println("{{\"session\":\"{}\","
+                                     "\"status\":\"error\",\"msg\":\"already exists\"}}",
+                                     json_escape(sid));
+                        std::fflush(stdout);
+                    }
+                } else {
+                    std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"unknown "
+                                 "action: {}\"}}",
+                                 json_escape(sid), json_escape(action));
+                    std::fflush(stdout);
+                }
+
+            } else if (cmd == "session-send") {
+                auto target = json_field(line, "target");
+                auto data = json_field(line, "data");
+                if (!target.empty() && !data.empty()) {
+                    auto it = sessions.find(target);
+                    if (it != sessions.end() && it->second->active) {
+                        it->second->mailbox.push(data);
+                        std::println("{{\"session\":\"{}\",\"status\":\"sent\",\"target\":\"{}\"}}",
+                                     json_escape(sid), json_escape(target));
+                    } else {
+                        std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":"
+                                     "\"session not found\"}}",
+                                     json_escape(sid));
+                    }
+                }
+                std::fflush(stdout);
+
+            } else if (cmd == "session-recv") {
+                auto msg = sess.mailbox.pop(true); // blocking pop (yields)
+                if (!msg.empty()) {
+                    std::println("{{\"session\":\"{}\",\"status\":\"msg\",\"data\":\"{}\"}}",
+                                 json_escape(sid), json_escape(msg));
+                } else {
+                    std::println("{{\"session\":\"{}\",\"status\":\"timeout\"}}", json_escape(sid));
+                }
+                std::fflush(stdout);
+
+            } else {
+                std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"unknown "
+                             "cmd: {}\"}}",
+                             json_escape(sid), json_escape(cmd));
+                std::fflush(stdout);
+            }
+        }
+    }
+
+} // namespace
+
+// ── run_serve_async ─────────────────────────────────────
+
+void run_serve_async(int num_workers) {
+    // Issue #4231: serve-async writes protocol status lines to stdout for
+    // the lifetime of the session. A client-side reader close (host
+    // restart thrash, timed-out reader) turns the next ::write into
+    // SIGPIPE, whose default disposition silently kills the holder: the
+    // Soft serve.sock vanished and the holder PID changed mid set-code
+    // scoring batch. Ignore SIGPIPE so a dead reader degrades to an EPIPE
+    // write failure on the explicit-error path while the holder stays up
+    // for the remaining explorers of the batch.
+    ::signal(SIGPIPE, SIG_IGN);
+
+    // 1. Set stdin to non-blocking
+    int flags = ::fcntl(STDIN_FILENO, F_GETFL);
+    ::fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+
+    // Register fiber blocking callback for CompilerService::pop_message
+    aura::messaging::g_fiber_block = []() {
+        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
+        aura::serve::Fiber::yield();
+    };
+
+    // 2. Create thread pool for blocking operations
+    // The snapshot shared_ptr stays in this frame so its source bytes live
+    // until the scheduler returns.
+    auto eval_async_snapshot = publish_eval_async_snapshot();
+    (void)eval_async_snapshot;
+
+    Scheduler sched(num_workers);
+    // Issue #4883: start the completion channel before any fiber can submit.
+    aura::offload::OffloadService::instance().start(&sched);
+    // Issue #4854 safety: do not early-retire Done fibers on the long-lived
+    // serve scheduler (see Scheduler::set_retire_done_fibers_disabled).
+    sched.set_retire_done_fibers_disabled(true);
+
+    install_serve_async_fiber_bridges(sched);
+    install_serve_async_gc(sched);
+
+    // 3. Shared state between stdin_reader and session fibers
+    // Soft (#4047 B async): named sessions may share one CompilerService
+    // graph (parity with Soft sync --serve). Production keeps isolation.
+    const bool soft_shared_graph = !production_abi_selfcheck_required();
+    if (soft_shared_graph) {
+        static bool soft_async_b_logged = false;
+        if (!soft_async_b_logged) {
+            soft_async_b_logged = true;
+            std::println(std::cerr, "aura: Soft shared_workspace (#4047 B): --serve-async named "
+                                    "sessions share one CompilerService + workspace_tree — "
+                                    "orch→project bindings visible. NOT production isolation.");
+        }
+    }
+
+    std::deque<std::string> stdin_lines;
+    bool stdin_eof = false;
+    // Declared before stdin fiber so push path can wake Waiting session fibers
+    // (producer-consumer race: session parks after stdin push+park → hang without wake).
+    SessionMap sessions;
+
+    auto* stdin_fiber = sched.spawn([&sched, &stdin_lines, &stdin_eof, &sessions]() {
+        read_serve_async_stdin(sched, stdin_lines, stdin_eof, sessions);
     });
     sched.set_stdin_fiber(stdin_fiber);
 
     // 5. Create default session with compiler service
-
     // Shared workspace tree: all sessions see the same workspace hierarchy.
     // Created before any sessions so we can inject it into each one.
     void* shared_workspace_tree = aura::compiler::Evaluator::create_workspace_tree();
@@ -997,116 +1359,8 @@ void run_serve_async(int num_workers) {
         register_session_root(*sessions["default"], 0);
     }
 
-    // Helper: spawn a named-session fiber that drains stdin_lines for `nsid`.
-    // Soft shared graph (#4047 B / #4048): pin named sessions to worker 0 with
-    // the default session so shared Evaluator denseness never migrates.
-    // Production isolation: pin by name hash across workers.
-    auto spawn_named_session_fiber = [&sched, &stdin_eof, &sessions, &cs_for, &take_session_line,
-                                      soft_shared_graph](const std::string& nsid,
-                                                         Session& sess) -> Fiber* {
-        const int aff =
-            soft_shared_graph
-                ? 0
-                : (static_cast<int>(std::hash<std::string>{}(nsid) %
-                                    static_cast<std::size_t>(std::max(1, sched.num_workers()))));
-        return sched.spawn_with_affinity(
-            [nsid, &sess, &stdin_eof, &cs_for, &take_session_line]() {
-                sess.mailbox.attach(aura::serve::g_current_fiber);
-                sess.service.set_wake_eventfd(aura::serve::g_current_fiber->eventfd());
-                while (sess.active) {
-                    std::string sl = take_session_line(nsid);
-                    if (sl.empty()) {
-                        if (stdin_eof)
-                            break;
-                        // Issue #4079: same-turn reader push vs park.
-                        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Waiting);
-                        sl = take_session_line(nsid);
-                        if (sl.empty()) {
-                            // Same stdin hand-off race as the default session
-                            // loop below: bound the park so a wake that lands
-                            // between the second look and the park cannot
-                            // strand the queued request.
-                            aura::serve::g_current_fiber->set_park_deadline_ms(100);
-                            aura::serve::Fiber::yield();
-                            aura::serve::g_current_fiber->clear_park_deadline();
-                            continue;
-                        }
-                        aura::serve::g_current_fiber->set_state(aura::serve::FiberState::Running);
-                    }
-                    auto c = json_field(sl, "cmd");
-                    if (c == "exec") {
-                        auto code = json_field(sl, "code");
-                        if (!code.empty()) {
-                            auto& cs = cs_for(sess);
-                            aura::messaging::g_current_compiler_service = &cs;
-                            // Issue #4176: a C++ exception escaping exec (e.g.
-                            // fiber spawn failure at fd exhaustion) must emit a
-                            // status error line and keep the session fiber
-                            // alive — an unwound session fiber stops replying
-                            // forever (host polls the sock with no reply: the
-                            // permanent-stall shape this issue reports).
-                            // Issue #4702: split the chunk into its top-level
-                            // forms and evaluate them one at a time. A
-                            // multi-form chunk used to be evaluated as ONE
-                            // program: the compiler lowers a multi-form
-                            // program (Begin root) to IR, where the
-                            // top-level defines become IR-local cells that
-                            // die with the IR module — so the defines never
-                            // reached the session env and the NEXT exec
-                            // failed with "unbound variable". One form per
-                            // eval makes every top-level define a
-                            // single-form program, which the compiler binds
-                            // in the session env. An unbalanced chunk is
-                            // rejected before anything runs (it used to be
-                            // accepted silently and to swallow the forms
-                            // after it).
-                            auto split = detail::split_top_level_forms(code);
-                            if (!split.ok()) {
-                                emit_status_line(status_line_error(nsid, split.error, ""));
-                                continue;
-                            }
-                            try {
-                                auto captured = capture_stdout_during([&] {
-                                    return detail::eval_top_level_forms(
-                                        split.forms, [&](std::string_view form) {
-                                            return cs.exec_with_cache(form);
-                                        });
-                                });
-                                if (!captured) {
-                                    // Issue #4229: capture setup failed —
-                                    // explicit transient error; the exec did
-                                    // NOT run, so the client can retry.
-                                    emit_status_line(status_line_error(
-                                        nsid, "serve stdout capture unavailable (transient)", ""));
-                                } else {
-                                    auto [r, display] = std::move(*captured);
-                                    if (!r) {
-                                        // The chunk held no top-level form.
-                                        emit_status_line(status_line_error(
-                                            nsid, "parse error: no complete form in exec chunk",
-                                            display));
-                                    } else if (!*r) {
-                                        emit_status_line(status_line_error(
-                                            nsid, (*r).error().format(), display));
-                                    } else {
-                                        emit_exec_result(nsid, **r, display, cs);
-                                    }
-                                }
-                            } catch (const std::exception& e) {
-                                emit_status_line(status_line_error(
-                                    nsid, std::string("exec exception: ") + e.what(), ""));
-                            }
-                        }
-                    }
-                }
-            },
-            aff);
-    };
-
     // Register / create named session (Soft: alias CS to default).
-    auto emplace_named_session = [&sessions, &sched, shared_workspace_tree, soft_shared_graph,
-                                  gc_collect, &register_session_root,
-                                  &spawn_named_session_fiber](const std::string& name) -> bool {
+    auto emplace_named_session = [&](const std::string& name) -> bool {
         if (sessions.count(name) > 0)
             return false;
         auto [it, created] = sessions.try_emplace(name, std::make_unique<Session>());
@@ -1130,11 +1384,13 @@ void run_serve_async(int num_workers) {
                 register_session_root(*it->second, wid);
             }
         }
-        it->second->fiber = spawn_named_session_fiber(name, *it->second);
+        it->second->fiber = spawn_named_session_fiber(sched, stdin_eof, stdin_lines, cs_for,
+                                                      soft_shared_graph, name, *it->second);
         return true;
     };
 
-    // Register session:create for Aura code (primitive in evaluator)
+    // Register session:create for Aura code (primitive in evaluator).
+    // g_session_create points at this object, so it stays in this frame.
     std::function<aura::messaging::SessionCreateFn> sc_fn =
         [&emplace_named_session](const std::string& name) -> bool {
         return emplace_named_session(name);
@@ -1149,225 +1405,9 @@ void run_serve_async(int num_workers) {
         // denseness spawn/join inherits affinity and never migrates Evaluators.
         auto* fiber = sched.spawn_with_affinity(
             [sid = sid, &sess = *sess, &stdin_eof, &sessions, &sched, &shared_workspace_tree,
-             &take_session_line, &cs_for, &emplace_named_session, soft_shared_graph]() {
-                // Attach mailbox to this fiber
-                sess.mailbox.attach(g_current_fiber);
-
-                while (sess.active) {
-                    // Try to pop a line from stdin.
-                    std::string line = take_session_line(sid);
-
-                    if (line.empty()) {
-                        // No lines for us — check mailbox
-                        auto msg = sess.mailbox.pop(false);
-                        if (!msg.empty()) {
-                            // Got a message from another session
-                            std::println(
-                                "{{\"session\":\"{}\",\"status\":\"msg\",\"data\":\"{}\"}}",
-                                json_escape(sid), json_escape(msg));
-                            std::fflush(stdout);
-                            continue;
-                        }
-
-                        // Nothing to do
-                        if (stdin_eof)
-                            break;
-                        // Issue #4079: epoll wakes this fiber before the
-                        // stdin reader pushes. Park only after a second
-                        // look, and let the reader's direct enqueue
-                        // resume us once the line is actually queued.
-                        g_current_fiber->set_state(FiberState::Waiting);
-                        line = take_session_line(sid);
-                        if (line.empty()) {
-                            // stdin hand-off race: a line pushed between the
-                            // second look above and the park is lost — the
-                            // reader's wake skips a fiber that is still in
-                            // resume (is_queued), so the parked session never
-                            // sees the queued request (ci/p0: the two-fiber
-                            // join request was never answered; any later
-                            // stdin byte woke it and the pending line ran).
-                            // Arm a bounded park deadline: the scheduler
-                            // re-queues an expired timed park, so the loop
-                            // re-checks instead of sleeping forever.
-                            g_current_fiber->set_park_deadline_ms(100);
-                            Fiber::yield();
-                            g_current_fiber->clear_park_deadline();
-                            continue;
-                        }
-                        g_current_fiber->set_state(FiberState::Running);
-                    }
-
-                    // Parse and execute
-                    auto cmd = json_field(line, "cmd");
-                    if (cmd.empty()) {
-                        std::println(
-                            "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"missing cmd\"}}",
-                            json_escape(sid));
-                        std::fflush(stdout);
-                        continue;
-                    }
-
-                    if (cmd == "exec") {
-                        auto code = json_field(line, "code");
-                        if (code.empty()) {
-                            std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":"
-                                         "\"missing code\"}}",
-                                         json_escape(sid));
-                            std::fflush(stdout);
-                            continue;
-                        }
-                        auto& cs = cs_for(sess);
-                        aura::messaging::g_current_compiler_service = &cs;
-                        // Issue #4176: same session-survival contract as the
-                        // named-session loop above — an exception escaping
-                        // exec must surface as a status error, never unwind
-                        // the session fiber.
-                        // Issue #4702: split the chunk into its top-level
-                        // forms and evaluate them one at a time. A
-                        // multi-form chunk used to be evaluated as ONE
-                        // program: the compiler lowers a multi-form program
-                        // (Begin root) to IR, where the top-level defines
-                        // become IR-local cells that die with the IR module
-                        // — so the defines never reached the session env
-                        // and the NEXT exec failed with "unbound variable".
-                        // One form per eval makes every top-level define a
-                        // single-form program, which the compiler binds in
-                        // the session env. An unbalanced chunk is rejected
-                        // before anything runs (it used to be accepted
-                        // silently and to swallow the forms after it).
-                        auto split = detail::split_top_level_forms(code);
-                        if (!split.ok()) {
-                            emit_status_line(status_line_error(sid, split.error, ""));
-                            continue;
-                        }
-                        try {
-                            auto captured = capture_stdout_during([&] {
-                                return detail::eval_top_level_forms(
-                                    split.forms, [&](std::string_view form) {
-                                        return cs.exec_with_cache(form);
-                                    });
-                            });
-                            if (!captured) {
-                                // Issue #4229: capture setup failed —
-                                // explicit transient error; the exec did
-                                // NOT run, so the client can retry.
-                                emit_status_line(status_line_error(
-                                    sid, "serve stdout capture unavailable (transient)", ""));
-                            } else {
-                                auto [result, display] = std::move(*captured);
-                                if (!result) {
-                                    // The chunk held no top-level form.
-                                    emit_status_line(status_line_error(
-                                        sid, "parse error: no complete form in exec chunk",
-                                        display));
-                                } else if (!*result) {
-                                    auto& d = (*result).error();
-                                    emit_status_line(status_line_error(sid, d.format(), display));
-                                } else {
-                                    try {
-                                        auto& v = **result;
-                                        // Check if closure
-                                        if (is_closure(v)) {
-                                            if (display.empty()) {
-                                                emit_status_line(std::format(
-                                                    "{{\"session\":\"{}\",\"status\":\"closure\","
-                                                    "\"value\":\"#<procedure>\"}}",
-                                                    json_escape(sid)));
-                                            } else {
-                                                emit_status_line(std::format(
-                                                    "{{\"session\":\"{}\",\"status\":\"closure\","
-                                                    "\"value\":\"#<procedure>\",\"display\":\"{}\"}"
-                                                    "}",
-                                                    json_escape(sid), json_escape(display)));
-                                            }
-                                        } else {
-                                            emit_exec_result(sid, v, display, cs);
-                                        }
-                                    } catch (const std::bad_alloc&) {
-                                        emit_status_line(
-                                            status_line_error(sid, "out of memory", display));
-                                    }
-                                }
-                            }
-                        } catch (const std::exception& e) {
-                            emit_status_line(status_line_error(
-                                sid, std::string("exec exception: ") + e.what(), ""));
-                        }
-
-                    } else if (cmd == "session") {
-                        auto action = json_field(line, "action");
-                        auto name = json_field(line, "name");
-                        // Soft/sync parity: missing action + name ⇒ create-or-activate.
-                        if (action.empty() && !name.empty())
-                            action = "create";
-                        if (action == "create") {
-                            if (name.empty()) {
-                                std::println("{{\"session\":\"{}\","
-                                             "\"status\":\"error\",\"msg\":\"missing name\"}}",
-                                             json_escape(sid));
-                                std::fflush(stdout);
-                            } else if (sessions.count(name) > 0) {
-                                // Already exists — ok (sync-style activate)
-                                std::println("{{\"session\":\"{}\","
-                                             "\"status\":\"ok\",\"name\":\"{}\"}}",
-                                             json_escape(sid), json_escape(name));
-                                std::fflush(stdout);
-                            } else if (emplace_named_session(name)) {
-                                std::println("{{\"session\":\"{}\","
-                                             "\"status\":\"created\",\"name\":\"{}\"}}",
-                                             json_escape(sid), json_escape(name));
-                                std::fflush(stdout);
-                            } else {
-                                std::println("{{\"session\":\"{}\","
-                                             "\"status\":\"error\",\"msg\":\"already exists\"}}",
-                                             json_escape(sid));
-                                std::fflush(stdout);
-                            }
-                        } else {
-                            std::println(
-                                "{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"unknown "
-                                "action: {}\"}}",
-                                json_escape(sid), json_escape(action));
-                            std::fflush(stdout);
-                        }
-
-                    } else if (cmd == "session-send") {
-                        auto target = json_field(line, "target");
-                        auto data = json_field(line, "data");
-                        if (!target.empty() && !data.empty()) {
-                            auto it = sessions.find(target);
-                            if (it != sessions.end() && it->second->active) {
-                                it->second->mailbox.push(data);
-                                std::println(
-                                    "{{\"session\":\"{}\",\"status\":\"sent\",\"target\":\"{}\"}}",
-                                    json_escape(sid), json_escape(target));
-                            } else {
-                                std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":"
-                                             "\"session not found\"}}",
-                                             json_escape(sid));
-                            }
-                        }
-                        std::fflush(stdout);
-
-                    } else if (cmd == "session-recv") {
-                        auto msg = sess.mailbox.pop(true); // blocking pop (yields)
-                        if (!msg.empty()) {
-                            std::println(
-                                "{{\"session\":\"{}\",\"status\":\"msg\",\"data\":\"{}\"}}",
-                                json_escape(sid), json_escape(msg));
-                        } else {
-                            std::println("{{\"session\":\"{}\",\"status\":\"timeout\"}}",
-                                         json_escape(sid));
-                        }
-                        std::fflush(stdout);
-
-                    } else {
-                        std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"unknown "
-                                     "cmd: {}\"}}",
-                                     json_escape(sid), json_escape(cmd));
-                        std::fflush(stdout);
-                    }
-                }
+             &stdin_lines, &cs_for, &emplace_named_session, soft_shared_graph]() {
+                run_default_session_body(sid, sess, stdin_eof, sessions, stdin_lines, cs_for,
+                                         emplace_named_session);
             },
             0);
 
