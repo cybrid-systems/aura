@@ -1196,14 +1196,14 @@ static void ac3686_source_and_gate() {
     CHECK(etc.find("log.size() - enter) > 1") != std::string::npos,
           "3686 AC2: single-op extra empty (O(delta))");
     CHECK(impl.find("Issue #3686") != std::string::npos, "3686: impl cites #3686");
-    CHECK(impl.find("affected_subtree_from_mutation(flat, extra)") != std::string::npos,
-          "3686: reuse affected_subtree_from_mutation per record");
     CHECK(impl.find("extra_recs.size() * 2") != std::string::npos,
           "3686 AC4: extra targets are cone-cap seeds");
     const auto cap_pos = impl.find("Issue #2560: partial cone soft/hard SLA");
     const auto union_pos = impl.find("Issue #3686: Production/Full post-mutate unions");
-    CHECK(union_pos != std::string::npos && cap_pos != std::string::npos && union_pos < cap_pos,
-          "3686 AC4: union before #2560 cone cap (TIMEOUT escalate unchanged)");
+    const auto call_pos = impl.find("affected_subtree_from_mutation(st.flat, extra)");
+    CHECK(union_pos != std::string::npos && call_pos != std::string::npos &&
+              cap_pos != std::string::npos && union_pos < call_pos && call_pos < cap_pos,
+          "3686: reuse affected_subtree_from_mutation(st.flat, extra) per record before the cone cap");
     CHECK(ixx.find("extra_recs") != std::string::npos, "3686: extra_recs on dirty-txn entry");
     CHECK(etc.find("schema-3686") == std::string::npos &&
               impl.find("schema-3686") == std::string::npos &&

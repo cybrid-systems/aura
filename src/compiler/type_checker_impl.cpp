@@ -1281,28 +1281,7 @@ bool ConstraintSystem::constraint_references_touched(const Constraint& c) const 
     return refs_touched(c.lhs) || refs_touched(c.rhs);
 }
 
-bool ConstraintSystem::reverify_clean_constraints_for_touched() {
-    // Issue #2939: empty seeds (incl. pending) → zero cost.
-    if (touched_roots_.empty() && occurrence_priority_roots_.empty() &&
-        let_poly_dirty_roots_.empty() && pending_full_solve_roots_.empty())
-        return true;
-
-    // Issue #1873: reset truncation markers for this reverify pass.
-    last_reverify_truncated_ = false;
-    last_reverify_unscanned_ = 0;
-
-    const bool saved_record = delta_record_mode_;
-    delta_record_mode_ = false;
-
-    const auto scan_limit = effective_reverify_limit();
-    last_reverify_limit_used_ = scan_limit; // Issue #2146 Agent surface
-
-    // Issue #2939: bounded dependency closure over var_to_constraints_ +
-    // UF reps — not an unbounded collect of all clean constraints on seeds
-    // that can explode under dense AI mutate and force anti-starve full solve.
-    // Seed = touched ∪ occurrence ∪ let-poly ∪ pending_full_solve.
-    // BFS expands constraint→endpoint-rep edges; hard cap = scan_limit.
-    // Cap hit → remaining frontier roots enter pending_full_solve (no silent drop).
+std::unordered_set<std::size_t> ConstraintSystem::collect_reverify_closure(std::size_t scan_limit) {
     std::unordered_set<std::size_t> to_check;
     to_check.reserve(std::min(scan_limit, static_cast<std::size_t>(64)));
     std::vector<std::uint32_t> frontier;
@@ -1471,6 +1450,36 @@ bool ConstraintSystem::reverify_clean_constraints_for_touched() {
         auto* m = static_cast<struct CompilerMetrics*>(metrics_);
         m->constraint_reverify_timeout_prevented_total.fetch_add(1, std::memory_order_relaxed);
     }
+    return to_check;
+}
+
+bool ConstraintSystem::reverify_clean_constraints_for_touched() {
+    // Issue #2939: empty seeds (incl. pending) → zero cost.
+    if (touched_roots_.empty() && occurrence_priority_roots_.empty() &&
+        let_poly_dirty_roots_.empty() && pending_full_solve_roots_.empty())
+        return true;
+
+    // Issue #1873: reset truncation markers for this reverify pass.
+    last_reverify_truncated_ = false;
+    last_reverify_unscanned_ = 0;
+
+    const bool saved_record = delta_record_mode_;
+    delta_record_mode_ = false;
+
+    const auto scan_limit = effective_reverify_limit();
+    last_reverify_limit_used_ = scan_limit; // Issue #2146 Agent surface
+
+    // Issue #2939: bounded dependency closure over var_to_constraints_ +
+    // UF reps — not an unbounded collect of all clean constraints on seeds
+    // that can explode under dense AI mutate and force anti-starve full solve.
+    // Seed = touched ∪ occurrence ∪ let-poly ∪ pending_full_solve.
+    // BFS expands constraint→endpoint-rep edges; hard cap = scan_limit.
+    // Cap hit → remaining frontier roots enter pending_full_solve (no silent drop).
+    auto to_check = collect_reverify_closure(scan_limit);
+    // Closure-cap flag. collect_reverify_closure writes it onto
+    // last_reverify_truncated_ (cleared just above) and later passes may
+    // change that member; this local stays the cap result.
+    const bool truncated = last_reverify_truncated_;
 
     std::vector<std::pair<int, std::size_t>> ordered;
     ordered.reserve(to_check.size());
@@ -2604,93 +2613,7 @@ SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_ou
 // above can wrap it cleanly. The actual algorithm is unchanged
 // from Issue #148 Phase 2 — only the structure is different
 // (moved into a private impl method).
-SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolved_out) {
-    // Issue #4682: live constraint gauge (regression guard for the
-    // per-rebind accumulation fixed by the solve_delta retract).
-    if (metrics_) {
-        static_cast<struct CompilerMetrics*>(metrics_)->solve_delta_constraints_live.store(
-            constraints_.size(), std::memory_order_relaxed);
-    }
-    // Issue #2913: reset locality residual snapshot for this delta.
-    last_locality_pruned_ = 0;
-    // Issue #3003: one escalate cycle per solve_delta (wrapper skips
-    // leftover-worklist re-escalate via production_escalated_).
-    production_escalated_ = false;
-    forced_timeout_this_call_ = false;
-    // Issue #3757: production #3169 partial-clear zeros the worklist so
-    // query:type cannot see leftover roots, but unsolved EQUALs stay in
-    // constraints_. Without this latch the dirty_count_==0 path vacuous-
-    // SOLVEs the next empty delta. Consume on leftover SOLVED only —
-    // CONFLICT / TIMEOUT keep the latch so a later empty delta cannot
-    // stamp green. Soft never sets the flag (helper no-op). Live
-    // occurrence goals still fall through to #2647 after leftover SOLVED.
-    if (pending_full_after_partial_clear_) {
-        if (!constraints_.empty()) {
-            const SolveResult leftover = solve(unresolved_out);
-            if (leftover != SolveResult::SOLVED)
-                return leftover;
-            pending_full_after_partial_clear_ = false;
-            mark_clean();
-        } else {
-            pending_full_after_partial_clear_ = false;
-        }
-    }
-    // Issue #2647: empty dirty worklist is NOT proof of SOLVED when live
-    // OccurrenceGoals (or residual priority roots) still need revalidation
-    // against Union-Find. Vacuous green after clear_blame_context left goals
-    // while constraint_dirty_ was zero — force goal-priority reverify first.
-    if (dirty_count_ == 0) {
-        const auto cur_epoch = current_epoch();
-        bool live_goals = false;
-        for (const auto& g : occurrence_goals_) {
-            if (!g.var.valid())
-                continue;
-            if (g.epoch > 0 && g.epoch < cur_epoch)
-                continue; // stale (same filter as solve_delta_occurrence)
-            live_goals = true;
-            break;
-        }
-        const bool have_roots = !occurrence_priority_roots_.empty() ||
-                                !let_poly_dirty_roots_.empty() ||
-                                !pending_full_solve_roots_.empty() || !touched_roots_.empty();
-        if (!live_goals && !have_roots)
-            return SolveResult::SOLVED; // AC4: zero extra reverify
-
-        if (metrics_full()) {
-            auto* m = static_cast<CompilerMetrics*>(metrics_);
-            m->occurrence_goal_forced_reverify_total.fetch_add(1, std::memory_order_relaxed);
-            if (live_goals) {
-                m->occurrence_goal_vacuous_solve_prevented_total.fetch_add(
-                    1, std::memory_order_relaxed);
-            }
-        }
-        // Clear stale truncate markers for this reverify-only pass.
-        last_reverify_truncated_ = false;
-        last_reverify_unscanned_ = 0;
-        const bool recovered = try_goal_priority_reverify_before_full();
-        if (recovered)
-            return SolveResult::SOLVED;
-        // Conflict during reverify: try_goal_priority returns false with
-        // truncate cleared when unify failed — escalate to full solve so
-        // Agents get CONFLICT + unresolved (not silent SOLVED).
-        if (!last_reverify_truncated_) {
-            // Conflict path inside reverify_clean (returned false, no truncate).
-            return solve(unresolved_out);
-        }
-        // Truncated reverify under goals pressure: TIMEOUT + anti-starve
-        // gate on the outer solve_delta wrapper (#2318 / #2508 / #2277).
-        if (unresolved_out && unresolved_out->empty()) {
-            // Export residual unscanned signal via last_reverify_* already set.
-        }
-        return SolveResult::TIMEOUT;
-    }
-
-    // Issue #1873: truncation markers are only meaningful for the
-    // reverify pass of this solve; clear so dirty-worklist conflicts
-    // don't inherit a stale truncated_reverify flag.
-    last_reverify_truncated_ = false;
-    last_reverify_unscanned_ = 0;
-
+ConstraintSystem::DeltaWorklist ConstraintSystem::build_delta_worklist() {
     // Build the delta worklist from constraint_dirty_.
     // Issue #409: reverse-map path collects dirty constraints
     // referenced by at least one var rep.
@@ -2858,47 +2781,20 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         for (std::size_t k = 0; k < keyed.size(); ++k)
             worklist[k] = keyed[k].second;
     }
+    DeltaWorklist out;
+    out.worklist = std::move(worklist);
+    out.seen = std::move(seen);
+    out.pruned = pruned;
+    out.have_local_roots = have_local_roots;
+    return out;
+}
 
-    // Issue #2107: synthetic TIMEOUT for Agent self-repair tests —
-    // export the built worklist as unresolved without processing.
-    if (force_next_delta_timeout_) {
-        force_next_delta_timeout_ = false;
-        if (unresolved_out) {
-            for (auto idx : worklist) {
-                if (idx < constraints_.size())
-                    unresolved_out->push_back(constraints_[idx]);
-            }
-        }
-        // Documented cap path: if worklist empty, report remaining dirty
-        // as unscanned so Agents still get a machine-readable expand set.
-        if (worklist.empty() && dirty_count_ > 0) {
-            last_reverify_truncated_ = true;
-            last_reverify_unscanned_ = dirty_count_;
-            last_blame_chain_.truncated_reverify = true;
-            last_blame_chain_.unscanned_constraint_count = dirty_count_;
-            last_blame_chain_.partial = true;
-            if (unresolved_out) {
-                for (std::size_t i = 0; i < constraints_.size(); ++i) {
-                    if (i < constraint_dirty_.size() && constraint_dirty_[i])
-                        unresolved_out->push_back(constraints_[i]);
-                }
-            }
-        }
-        clear_touched_roots();
-        forced_timeout_this_call_ = true;
-        return SolveResult::TIMEOUT;
-    }
-
-    // Process the delta worklist. Same pass-limit heuristic as
-    // solve() — the delta set is small, so 10 passes is enough
-    // for fixpoint in practice. If a delta is large enough to
-    // need more, the caller can re-invoke solve() for a full pass.
-    // Issue #409: bump the processed counter for the metric.
-    // The counter is plumbed via metrics_ to
-    // CompilerMetrics::delta_constraints_processed_total
-    // by the caller (CompilerService). Pre-#409 the
-    // counter didn't exist; the worklist size was the
-    // signal but not surfaced.
+std::optional<SolveResult>
+ConstraintSystem::run_delta_worklist(DeltaWorklist& dw, std::vector<Constraint>* unresolved_out) {
+    auto& worklist = dw.worklist;
+    auto& seen = dw.seen;
+    const auto pruned = dw.pruned;
+    const bool have_local_roots = dw.have_local_roots;
     // Issue #2913: snapshot pruned residual for locality SLO (post-delta).
     last_locality_pruned_ = pruned;
     if (metrics_full()) {
@@ -3064,6 +2960,140 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
             }
         }
     }
+    return std::nullopt;
+}
+
+SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolved_out) {
+    // Issue #4682: live constraint gauge (regression guard for the
+    // per-rebind accumulation fixed by the solve_delta retract).
+    if (metrics_) {
+        static_cast<struct CompilerMetrics*>(metrics_)->solve_delta_constraints_live.store(
+            constraints_.size(), std::memory_order_relaxed);
+    }
+    // Issue #2913: reset locality residual snapshot for this delta.
+    last_locality_pruned_ = 0;
+    // Issue #3003: one escalate cycle per solve_delta (wrapper skips
+    // leftover-worklist re-escalate via production_escalated_).
+    production_escalated_ = false;
+    forced_timeout_this_call_ = false;
+    // Issue #3757: production #3169 partial-clear zeros the worklist so
+    // query:type cannot see leftover roots, but unsolved EQUALs stay in
+    // constraints_. Without this latch the dirty_count_==0 path vacuous-
+    // SOLVEs the next empty delta. Consume on leftover SOLVED only —
+    // CONFLICT / TIMEOUT keep the latch so a later empty delta cannot
+    // stamp green. Soft never sets the flag (helper no-op). Live
+    // occurrence goals still fall through to #2647 after leftover SOLVED.
+    if (pending_full_after_partial_clear_) {
+        if (!constraints_.empty()) {
+            const SolveResult leftover = solve(unresolved_out);
+            if (leftover != SolveResult::SOLVED)
+                return leftover;
+            pending_full_after_partial_clear_ = false;
+            mark_clean();
+        } else {
+            pending_full_after_partial_clear_ = false;
+        }
+    }
+    // Issue #2647: empty dirty worklist is NOT proof of SOLVED when live
+    // OccurrenceGoals (or residual priority roots) still need revalidation
+    // against Union-Find. Vacuous green after clear_blame_context left goals
+    // while constraint_dirty_ was zero — force goal-priority reverify first.
+    if (dirty_count_ == 0) {
+        const auto cur_epoch = current_epoch();
+        bool live_goals = false;
+        for (const auto& g : occurrence_goals_) {
+            if (!g.var.valid())
+                continue;
+            if (g.epoch > 0 && g.epoch < cur_epoch)
+                continue; // stale (same filter as solve_delta_occurrence)
+            live_goals = true;
+            break;
+        }
+        const bool have_roots = !occurrence_priority_roots_.empty() ||
+                                !let_poly_dirty_roots_.empty() ||
+                                !pending_full_solve_roots_.empty() || !touched_roots_.empty();
+        if (!live_goals && !have_roots)
+            return SolveResult::SOLVED; // AC4: zero extra reverify
+
+        if (metrics_full()) {
+            auto* m = static_cast<CompilerMetrics*>(metrics_);
+            m->occurrence_goal_forced_reverify_total.fetch_add(1, std::memory_order_relaxed);
+            if (live_goals) {
+                m->occurrence_goal_vacuous_solve_prevented_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+        // Clear stale truncate markers for this reverify-only pass.
+        last_reverify_truncated_ = false;
+        last_reverify_unscanned_ = 0;
+        const bool recovered = try_goal_priority_reverify_before_full();
+        if (recovered)
+            return SolveResult::SOLVED;
+        // Conflict during reverify: try_goal_priority returns false with
+        // truncate cleared when unify failed — escalate to full solve so
+        // Agents get CONFLICT + unresolved (not silent SOLVED).
+        if (!last_reverify_truncated_) {
+            // Conflict path inside reverify_clean (returned false, no truncate).
+            return solve(unresolved_out);
+        }
+        // Truncated reverify under goals pressure: TIMEOUT + anti-starve
+        // gate on the outer solve_delta wrapper (#2318 / #2508 / #2277).
+        if (unresolved_out && unresolved_out->empty()) {
+            // Export residual unscanned signal via last_reverify_* already set.
+        }
+        return SolveResult::TIMEOUT;
+    }
+
+    // Issue #1873: truncation markers are only meaningful for the
+    // reverify pass of this solve; clear so dirty-worklist conflicts
+    // don't inherit a stale truncated_reverify flag.
+    last_reverify_truncated_ = false;
+    last_reverify_unscanned_ = 0;
+
+    auto delta_work = build_delta_worklist();
+
+    // Issue #2107: synthetic TIMEOUT for Agent self-repair tests —
+    // export the built worklist as unresolved without processing.
+    if (force_next_delta_timeout_) {
+        force_next_delta_timeout_ = false;
+        if (unresolved_out) {
+            for (auto idx : delta_work.worklist) {
+                if (idx < constraints_.size())
+                    unresolved_out->push_back(constraints_[idx]);
+            }
+        }
+        // Documented cap path: if worklist empty, report remaining dirty
+        // as unscanned so Agents still get a machine-readable expand set.
+        if (delta_work.worklist.empty() && dirty_count_ > 0) {
+            last_reverify_truncated_ = true;
+            last_reverify_unscanned_ = dirty_count_;
+            last_blame_chain_.truncated_reverify = true;
+            last_blame_chain_.unscanned_constraint_count = dirty_count_;
+            last_blame_chain_.partial = true;
+            if (unresolved_out) {
+                for (std::size_t i = 0; i < constraints_.size(); ++i) {
+                    if (i < constraint_dirty_.size() && constraint_dirty_[i])
+                        unresolved_out->push_back(constraints_[i]);
+                }
+            }
+        }
+        clear_touched_roots();
+        forced_timeout_this_call_ = true;
+        return SolveResult::TIMEOUT;
+    }
+
+    // Process the delta worklist. Same pass-limit heuristic as
+    // solve() — the delta set is small, so 10 passes is enough
+    // for fixpoint in practice. If a delta is large enough to
+    // need more, the caller can re-invoke solve() for a full pass.
+    // Issue #409: bump the processed counter for the metric.
+    // The counter is plumbed via metrics_ to
+    // CompilerMetrics::delta_constraints_processed_total
+    // by the caller (CompilerService). Pre-#409 the
+    // counter didn't exist; the worklist size was the
+    // signal but not surfaced.
+    if (auto stopped = run_delta_worklist(delta_work, unresolved_out))
+        return *stopped;
 
     // Issue #466: lightweight re-verify of clean constraints
     // whose vars intersect touched_roots_. Catches cross-delta
@@ -3107,9 +3137,9 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
     // worklist pruned non-local dirty constraints, only clear
     // the indices we actually processed (seen[]), so pruned
     // dirty bits remain for a later full/local solve.
-    if (pruned > 0) {
+    if (delta_work.pruned > 0) {
         for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
-            if (constraint_dirty_[i] && i < seen.size() && seen[i]) {
+            if (constraint_dirty_[i] && i < delta_work.seen.size() && delta_work.seen[i]) {
                 constraint_dirty_[i] = false;
                 if (dirty_count_ > 0)
                     --dirty_count_;
@@ -3120,9 +3150,9 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
         mark_clean();
     }
 
-    if (!worklist.empty()) {
+    if (!delta_work.worklist.empty()) {
         if (unresolved_out) {
-            for (auto idx : worklist) {
+            for (auto idx : delta_work.worklist) {
                 if (idx < constraints_.size())
                     unresolved_out->push_back(constraints_[idx]);
             }
