@@ -167,9 +167,40 @@ static std::optional<types::EvalValue> production_gc_reset_deny(Evaluator& ev,
     return types::make_error(eidx);
 }
 
-void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
-                                std::function<void()> destroy_defuse_index) {
 
+// Issue #3269: the shared compact-idle gate. It lives on RegSplitParts
+// because it reads the evaluator mutation-boundary state; the functor below
+// keeps the primitive call shape (with_arena_compact_idle([&] { ... })).
+// Issue #3269: close check-then-act TOCTOU on arena compact/defrag.
+// TLS any_active_mutation_boundary skips same-fiber compact-under-Guard
+// (workspace unique is non-recursive). Otherwise unique-lock workspace
+// so in-flight Guards drain and new Guards cannot enter during compact.
+// Uncontended unique is one atomic (quiet path zero extra vs racing).
+// Re-check mutation_boundary_held_ after the lock; non-zero raced
+// counter means exclusive was missed (should stay 0).
+template <typename F> EvalValue RegSplitParts::with_arena_compact_idle(Evaluator& ev, F&& body) {
+    if (ev.any_active_mutation_boundary()) {
+        ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
+        return make_int(0);
+    }
+    Evaluator::WorkspaceUniqueIfNeeded compact_hold(ev);
+    (void)compact_hold;
+    if (ev.mutation_boundary_held()) {
+        ev.compaction_boundary_raced_after_check_.fetch_add(1, std::memory_order_relaxed);
+        return make_int(0);
+    }
+    return body();
+}
+
+struct ArenaCompactIdle {
+    Evaluator& ev;
+    template <typename F> EvalValue operator()(F&& body) const {
+        return RegSplitParts::with_arena_compact_idle(ev, static_cast<F&&>(body));
+    }
+};
+
+void RegSplitParts::register_memory_coverage_gc_primitives(
+    PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
     // ── coverage-report — 编译器路径覆盖率 ──────────────────
     ObservabilityPrims::register_stats_impl(
         "coverage-report", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
@@ -287,7 +318,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
 
         return types::make_bool(!saved_src.empty());
     });
+}
 
+void RegSplitParts::register_memory_heap_reset_primitives(
+    PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
     // (gc-heap-reset!) — Issue #4816: the destructive heap reset that
     // (gc-heap) used to be without a live collector (--load / stdin). It
     // clears every heap vector plus module / workspace state, so every live
@@ -494,7 +528,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         };
         return build_kv_hash_4816(ev, kv);
     });
+}
 
+void RegSplitParts::register_memory_gc_lifecycle_primitives(
+    PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
     // (gc-freeze) — Mark current closure generation as "root".
     // The while loop's predicate/body closures are created before this
     // call (in persistent arena when in_task_context_=false).
@@ -647,7 +684,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         "gc-module-count", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
             return make_int(static_cast<std::int64_t>(ev.modules_.size()));
         });
+}
 
+void RegSplitParts::register_memory_type_registry_primitives(
+    PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
     // (type-registry-stats) — Issue #78: TypeRegistry observability.
     // Returns a hash with current size, generation, and predefined count.
     // Use this to monitor TypeRegistry growth in long-running sessions.
@@ -709,26 +749,8 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             return make_hash(hidx);
         });
 
-    // Issue #3269: close check-then-act TOCTOU on arena compact/defrag.
-    // TLS any_active_mutation_boundary skips same-fiber compact-under-Guard
-    // (workspace unique is non-recursive). Otherwise unique-lock workspace
-    // so in-flight Guards drain and new Guards cannot enter during compact.
-    // Uncontended unique is one atomic (quiet path zero extra vs racing).
-    // Re-check mutation_boundary_held_ after the lock; non-zero raced
-    // counter means exclusive was missed (should stay 0).
-    auto with_arena_compact_idle = [&](auto&& body) -> EvalValue {
-        if (ev.any_active_mutation_boundary()) {
-            ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
-            return make_int(0);
-        }
-        Evaluator::WorkspaceUniqueIfNeeded compact_hold(ev);
-        (void)compact_hold;
-        if (ev.mutation_boundary_held()) {
-            ev.compaction_boundary_raced_after_check_.fetch_add(1, std::memory_order_relaxed);
-            return make_int(0);
-        }
-        return body();
-    };
+
+    ArenaCompactIdle with_arena_compact_idle{ev};
 
     // (type-registry-compact) — Issue #78: reclaim all non-predefined
     // entries. Bumps the TypeRegistry generation so any TypeId from the
@@ -749,7 +771,11 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 return make_int(static_cast<std::int64_t>(reclaimed));
             });
         });
+}
 
+void RegSplitParts::register_memory_arena_compact_primitives(
+    PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
+    ArenaCompactIdle with_arena_compact_idle{ev};
     // (arena:compact) — Issue #187 (P0): conservative arena buffer
     // compaction. Reclaims the unused tail of the main arena's pmr
     // buffer by rebuilding it at used-size + 25% headroom. Returns
@@ -892,6 +918,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                             return make_int(marked);
                         });
                     });
+}
+
+void RegSplitParts::register_memory_densify_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #2935: (arena:recover-moving-sticky-densify [retry?])
     // Agent recovery after sticky densify-off: re-register known roots,
     // clear sticky, optionally one-shot Moving densify. Optional bool arg
@@ -1022,7 +1051,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             return make_int(0);
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->mutation_count()));
     });
+}
 
+void RegSplitParts::register_memory_dispatch_stats_primitives(PrimRegistrar add, Evaluator& ev) {
     // ── Issue #1356: HotTierTable dispatch stats ──
     ObservabilityPrims::register_stats_impl(
         "query:prim-dispatch-stats", [&ev](const auto&) -> EvalValue {
@@ -1145,7 +1176,11 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             return make_int(
                 static_cast<std::int64_t>(ft.total_frames.load(std::memory_order_relaxed)));
         });
+}
 
+void RegSplitParts::register_memory_arena_policy_primitives(
+    PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
+    ArenaCompactIdle with_arena_compact_idle{ev};
     // (arena:defrag-requested?) — query the defrag request flag.
     // Returns #t if a defrag was requested and not yet acted on,
     // #f otherwise. Foundation for fiber-coordinated defrag —
@@ -1288,6 +1323,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 return make_int(0);
             return make_int(static_cast<std::int64_t>(ev.arena_->compact_estimate()));
         });
+}
+
+void RegSplitParts::register_memory_defrag_stats_primitives(
+    PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
     // (arena:defrag-stats) — Issue #300 (P1): live-object
     // defragmentation observability. Returns a 5-tuple:
     //   (compaction-count
@@ -1381,6 +1420,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             auto sidx = ev.string_heap_.mint(out);
             return types::make_string(sidx);
         });
+}
+
+void RegSplitParts::register_memory_string_pool_primitives(
+    PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
     // (string-pool:compact) — Issue #187 (P0): rehash the workspace's
     // StringPool to the smallest power-of-2 capacity that still
     // holds all live entries. Reclaims hash_tbl_ memory. Returns
@@ -1462,7 +1505,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             };
             return build_hash(kv);
         });
+}
 
+void RegSplitParts::register_memory_dirty_primitives(PrimRegistrar add, Evaluator& ev,
+                                                     std::function<void()> destroy_defuse_index) {
     // (dirty:reasons node-id) — Issue #188: return the per-node
     // dirty-reason bitmask. Useful for the type checker to decide
     // which targeted re-analysis pass to run, and for diagnostics
@@ -1608,7 +1654,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             };
             return build_hash(kv);
         });
+}
 
+void RegSplitParts::register_memory_dirty_summary_primitives(
+    PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
     // Issue #278 follow-up #2: (dirty:summary reason-mask) —
     // return a compact per-reason summary of dirty nodes, where
     // reason-mask is a bitmask of the reason bits the caller
@@ -1746,6 +1795,10 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             }
             return make_hash(hidx);
         });
+}
+
+void RegSplitParts::register_memory_pressure_primitives(
+    PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
     // (memory-pressure) — Assess overall memory pressure and suggest actions.
     //
     //   Returns hash:
@@ -1903,7 +1956,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         }
         return make_hash(hidx);
     });
+}
 
+void RegSplitParts::register_memory_arena_threshold_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #623: production-harden arena auto-compact threshold.
     //
     // (arena:auto-compact-threshold) — read the current
@@ -1955,7 +2010,9 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         ev.arena_group_->set_compact_threshold(static_cast<double>(clamped) / 100.0);
         return make_int(static_cast<std::int64_t>(prev * 100.0));
     });
+}
 
+void RegSplitParts::register_memory_closure_free_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #1361 / #1665: free closure by id.
     // - int id → JIT runtime table (aura_free_closure + g_closure_freed)
     // - Closure value → tree-walker Evaluator::closures_ erase (#1665
@@ -2032,5 +2089,25 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         return make_hash(hidx);
     });
 }
+
+void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
+                                std::function<void()> destroy_defuse_index) {
+    RegSplitParts::register_memory_coverage_gc_primitives(add, ev, destroy_defuse_index);
+    RegSplitParts::register_memory_heap_reset_primitives(add, ev, destroy_defuse_index);
+    RegSplitParts::register_memory_gc_lifecycle_primitives(add, ev, destroy_defuse_index);
+    RegSplitParts::register_memory_type_registry_primitives(add, ev, destroy_defuse_index);
+    RegSplitParts::register_memory_arena_compact_primitives(add, ev, destroy_defuse_index);
+    RegSplitParts::register_memory_densify_mutation_primitives(add, ev);
+    RegSplitParts::register_memory_dispatch_stats_primitives(add, ev);
+    RegSplitParts::register_memory_arena_policy_primitives(add, ev, destroy_defuse_index);
+    RegSplitParts::register_memory_defrag_stats_primitives(add, ev, destroy_defuse_index);
+    RegSplitParts::register_memory_string_pool_primitives(add, ev, destroy_defuse_index);
+    RegSplitParts::register_memory_dirty_primitives(add, ev, destroy_defuse_index);
+    RegSplitParts::register_memory_dirty_summary_primitives(add, ev, destroy_defuse_index);
+    RegSplitParts::register_memory_pressure_primitives(add, ev, destroy_defuse_index);
+    RegSplitParts::register_memory_arena_threshold_primitives(add, ev);
+    RegSplitParts::register_memory_closure_free_primitives(add, ev);
+}
+
 
 } // namespace aura::compiler::primitives_detail

@@ -350,4 +350,34 @@ struct RegSplitParts {
     static void register_messaging_channel_primitives(PrimRegistrar add, Evaluator& ev,
                                                       const MessagingChannelCodec& codec);
     static void register_messaging_agent_list_primitive(PrimRegistrar add, Evaluator& ev);
+    // Issue #5033: memory / arena registration parts (defined in
+    // evaluator_primitives_memory.cpp). The #3269 compact-idle gate is a part
+    // helper because it reads the mutation-boundary state.
+    template <typename F> static EvalValue with_arena_compact_idle(Evaluator& ev, F&& body);
+    static void register_memory_coverage_gc_primitives(PrimRegistrar add, Evaluator& ev,
+                                                       std::function<void()> destroy_defuse_index);
+    static void register_memory_heap_reset_primitives(PrimRegistrar add, Evaluator& ev,
+                                                       std::function<void()> destroy_defuse_index);
+    static void register_memory_gc_lifecycle_primitives(PrimRegistrar add, Evaluator& ev,
+                                                       std::function<void()> destroy_defuse_index);
+    static void register_memory_type_registry_primitives(PrimRegistrar add, Evaluator& ev,
+                                                       std::function<void()> destroy_defuse_index);
+    static void register_memory_arena_compact_primitives(PrimRegistrar add, Evaluator& ev,
+                                                       std::function<void()> destroy_defuse_index);
+    static void register_memory_densify_mutation_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_memory_dispatch_stats_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_memory_arena_policy_primitives(PrimRegistrar add, Evaluator& ev,
+                                                       std::function<void()> destroy_defuse_index);
+    static void register_memory_defrag_stats_primitives(PrimRegistrar add, Evaluator& ev,
+                                                       std::function<void()> destroy_defuse_index);
+    static void register_memory_string_pool_primitives(PrimRegistrar add, Evaluator& ev,
+                                                       std::function<void()> destroy_defuse_index);
+    static void register_memory_dirty_primitives(PrimRegistrar add, Evaluator& ev,
+                                                       std::function<void()> destroy_defuse_index);
+    static void register_memory_dirty_summary_primitives(PrimRegistrar add, Evaluator& ev,
+                                                       std::function<void()> destroy_defuse_index);
+    static void register_memory_pressure_primitives(PrimRegistrar add, Evaluator& ev,
+                                                       std::function<void()> destroy_defuse_index);
+    static void register_memory_arena_threshold_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_memory_closure_free_primitives(PrimRegistrar add, Evaluator& ev);
 };
