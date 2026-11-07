@@ -193,23 +193,234 @@ std::unordered_map<std::string, std::string> top_define_texts_4776(const std::st
     return true;
 }
 
+// Issue #4778: see WorldlineDriver4778.
+EvalValue RegSplitParts::workspace_worldline_driver_error_4778(Evaluator& ev, std::string_view op,
+                                                               std::uint64_t holder) {
+    return make_primitive_error(
+        ev.string_heap_, ev.error_values_,
+        std::format("{}: the active worldline is driven by fiber {}; a parallel fiber body "
+                    "must not switch workspaces - use per-fiber overlays (#4715) instead "
+                    "(#4778)",
+                    op, holder),
+        ev.primitive_error_counter_ptr());
+}
+
+// Helper: get a workspace's source code by ID (Issue #5033: shared by the
+// sync / merge / conflict parts).
+std::string RegSplitParts::workspace_ws_source(Evaluator& ev, std::uint32_t ws_id) {
+    auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+    if (!tree || ws_id >= tree->size())
+        return "";
+    auto& ws = tree->nodes_[ws_id];
+    if (!ws.flat || !ws.pool)
+        return "";
+    // Switch to this workspace temporarily to get source
+    auto saved_flat = ev.workspace_flat_;
+    auto saved_pool = ev.workspace_pool_;
+    ev.workspace_flat_ = ws.flat;
+    ev.workspace_pool_ = ws.pool;
+
+    auto src_fn = ev.primitives_.lookup("current-source");
+    std::string source;
+    if (src_fn) {
+        // Issue #135: pass :workspace keyword so current-source
+        // reads the workspace flat (ev.workspace_flat_) rather than
+        // the per-eval current flat (current_flat_). The latter
+        // would return the script being evaluated, not the
+        // workspace's saved source — causing merge/discard/
+        // conflicts-with to operate on the wrong data.
+        std::uint64_t ws_kw = ev.intern_keyword_slot(":workspace");
+        auto src = (*src_fn)({types::make_keyword(ws_kw)});
+        if (is_string(src)) {
+            auto sidx = as_string_idx(src);
+            if (sidx < ev.string_heap_.size())
+                source = ev.string_at(sidx);
+        }
+    }
+    ev.workspace_flat_ = saved_flat;
+    ev.workspace_pool_ = saved_pool;
+    return source;
+}
+
+// Issue #4369 / #4352: EnvFrame::pool_ is the pool its SymIds were
+// interned in. A COW child pool is freed by delete/discard; the
+// mutation-boundary dual-path walk then resolve()s through that
+// pointer. Drop the pointer first. String bindings stay authoritative.
+void RegSplitParts::workspace_detach_frames_from_pool(Evaluator& ev,
+                                                      const aura::ast::StringPool* dying) {
+    if (!dying)
+        return;
+    if (ev.top_env().pool() == dying) {
+        if (ev.workspace_pool_ && ev.workspace_pool_ != dying)
+            ev.top_env().set_pool(ev.workspace_pool_);
+        else
+            ev.top_env().set_pool(nullptr);
+    }
+    std::array<std::unique_lock<std::shared_mutex>, Evaluator::kEnvFramesShardCount> wlock;
+    for (std::size_t i = 0; i < Evaluator::kEnvFramesShardCount; ++i)
+        wlock[i] = std::unique_lock<std::shared_mutex>(ev.env_frame_shard_mu(i));
+    for (auto& fr : ev.env_frames_) {
+        if (fr.pool_ == dying)
+            fr.pool_ = nullptr;
+    }
+}
+
 void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                                    std::function<void()> destroy_defuse_index) {
-    // Issue #4778: see WorldlineDriver4778.
-    auto worldline_driver_error_4778 = [&ev](std::string_view op,
-                                             std::uint64_t holder) -> EvalValue {
-        return make_primitive_error(
-            ev.string_heap_, ev.error_values_,
-            std::format("{}: the active worldline is driven by fiber {}; a parallel fiber body "
-                        "must not switch workspaces - use per-fiber overlays (#4715) instead "
-                        "(#4778)",
-                        op, holder),
-            ev.primitive_error_counter_ptr());
-    };
-
     // Issue #2628: private PrimFn table for op-dispatch (not public names).
     auto w_impls = std::make_shared<std::unordered_map<std::string, PrimFn>>();
 
+    // Issue #5033: registration order is the original single-function order.
+    // One part per workspace responsibility group; bodies are unchanged.
+    RegSplitParts::register_workspace_snapshot_primitives(add, ev);
+    RegSplitParts::register_workspace_layering_primitives(add, ev, w_impls);
+    RegSplitParts::register_workspace_inspection_primitives(add, ev);
+    RegSplitParts::register_workspace_lifecycle_primitives(add, ev, w_impls, destroy_defuse_index);
+    RegSplitParts::register_workspace_memory_primitives(add, ev);
+    RegSplitParts::register_workspace_delete_primitives(add, ev, destroy_defuse_index);
+    RegSplitParts::register_workspace_lock_primitives(add, ev, w_impls);
+    RegSplitParts::register_workspace_sync_primitives(add, ev);
+    RegSplitParts::register_workspace_discard_primitives(add, ev, destroy_defuse_index);
+    RegSplitParts::register_workspace_merge_primitives(add, ev, w_impls, destroy_defuse_index);
+    RegSplitParts::register_workspace_conflict_primitives(add, ev);
+    RegSplitParts::register_workspace_dispatch_primitive(add, ev, w_impls);
+
+    // Issue #2628: core workspace:* public aliases removed (use (workspace :op)).
+}
+
+// Issue #5033: one report row of the (workspace :merge) splice.
+struct WorkspaceMergeReport {
+    std::string name;
+    bool want_merged = false;
+    bool conflict = false; // Issue #4776
+};
+
+// Issue #5033: top-level form scan shared by the (workspace :merge) phases.
+struct WorkspaceTopForm {
+    std::string name;
+    aura::ast::NodeId id = aura::ast::NULL_NODE;
+    bool is_define = false;
+};
+
+std::vector<WorkspaceTopForm>
+RegSplitParts::workspace_collect_top(const aura::ast::FlatAST& flat,
+                                     const aura::ast::StringPool& pool, aura::ast::NodeId root) {
+    std::vector<WorkspaceTopForm> forms;
+    auto add = [&](auto& self, aura::ast::NodeId id) -> void {
+        if (id == aura::ast::NULL_NODE || id >= flat.size())
+            return;
+        auto v = flat.get(id);
+        if (v.tag == aura::ast::NodeTag::Begin) {
+            for (auto c : v.children)
+                self(self, c);
+            return;
+        }
+        WorkspaceTopForm form;
+        form.id = id;
+        if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
+            form.name = std::string(pool.resolve(v.sym_id));
+            form.is_define = !form.name.empty();
+        }
+        forms.push_back(std::move(form));
+    };
+    add(add, root);
+    return forms;
+}
+
+// Issue #5033: splice phase of (workspace :merge) — the parent/child
+// top-level form walk split out of the registration lambda.
+void RegSplitParts::workspace_merge_splice(
+    bool parent_parsed, const std::string& parent_source, const aura::ast::FlatAST& parent_flat,
+    const aura::ast::StringPool& parent_pool, const std::vector<std::string>& child_order,
+    std::unordered_map<std::string, std::string>& child_text,
+    const std::shared_ptr<const std::unordered_map<std::string, std::string>>& merge_base_4776,
+    std::vector<WorkspaceMergeReport>& reports, std::string& merged) {
+    auto append_form = [&merged](const std::string& text) {
+        if (text.empty())
+            return;
+        if (!merged.empty())
+            merged.push_back('\n');
+        merged += text;
+    };
+    if (!parent_parsed) {
+        // Cannot splice. Do not append the child after the parent.
+        for (const auto& name : child_order)
+            reports.push_back(WorkspaceMergeReport{name, false});
+    } else {
+        std::unordered_set<std::string> emitted;
+        if (!parent_source.empty()) {
+            auto parent_forms =
+                RegSplitParts::workspace_collect_top(parent_flat, parent_pool, parent_flat.root);
+            for (const auto& form : parent_forms) {
+                if (!form.is_define) {
+                    append_form(unparse_node(parent_flat, parent_pool, form.id, 0));
+                    continue;
+                }
+                if (!emitted.insert(form.name).second)
+                    continue;
+                auto parent_text = unparse_node(parent_flat, parent_pool, form.id, 0);
+                auto it = child_text.find(form.name);
+                if (it == child_text.end()) {
+                    append_form(parent_text);
+                    continue;
+                }
+                if (it->second.empty() || it->second == parent_text) {
+                    append_form(parent_text);
+                    if (it->second.empty())
+                        reports.push_back(WorkspaceMergeReport{form.name, false});
+                    continue;
+                }
+                // Issue #4776: three-way (base / root / child). A child
+                // text equal to the fork base is not a child edit: keep
+                // root's (possibly newer) define. Both sides edited
+                // since the fork -> conflict.
+                if (merge_base_4776) {
+                    auto bit = merge_base_4776->find(form.name);
+                    const bool child_edited =
+                        bit == merge_base_4776->end() || bit->second != it->second;
+                    const bool root_edited =
+                        bit == merge_base_4776->end() || bit->second != parent_text;
+                    if (!child_edited) {
+                        append_form(parent_text);
+                        continue;
+                    }
+                    if (root_edited) {
+                        append_form(parent_text);
+                        reports.push_back(WorkspaceMergeReport{form.name, false, true});
+                        continue;
+                    }
+                }
+                append_form(it->second);
+                reports.push_back(WorkspaceMergeReport{form.name, true});
+            }
+        }
+        for (const auto& name : child_order) {
+            if (emitted.count(name))
+                continue;
+            const auto& text = child_text[name];
+            if (text.empty()) {
+                reports.push_back(WorkspaceMergeReport{name, false});
+                continue;
+            }
+            // Issue #4776: a name in the base but gone from root was
+            // deleted on root after the fork. An unchanged child copy
+            // stays deleted; an edited one conflicts.
+            if (merge_base_4776) {
+                auto bit = merge_base_4776->find(name);
+                if (bit != merge_base_4776->end()) {
+                    if (bit->second != text)
+                        reports.push_back(WorkspaceMergeReport{name, false, true});
+                    continue;
+                }
+            }
+            append_form(text);
+            reports.push_back(WorkspaceMergeReport{name, true});
+        }
+    }
+}
+
+// Issue #5033: workspace snapshots + rollback surfaces.
+void RegSplitParts::register_workspace_snapshot_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #737: (workspace:snapshot name) → snapshot ID.
     // Named convenience wrapper over (ast:snapshot name) for
     // AI Agent multi-round edit loops.
@@ -412,6 +623,11 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         }
         return make_int(0);
     });
+}
+
+// Issue #5033: COW workspace layering (create + mutation count).
+void RegSplitParts::register_workspace_layering_primitives(PrimRegistrar add, Evaluator& ev,
+                                                           std::shared_ptr<ImplTable> w_impls) {
 
     // (workspace:mutation-count) → total mutations recorded
     ObservabilityPrims::register_stats_impl(
@@ -484,6 +700,10 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             wt->nodes_[id].merge_base = std::move(fork_base_4776); // Issue #4776
         return make_int(static_cast<std::int64_t>(id));
     }};
+}
+
+// Issue #5033: cross-layer resolve + define lookup.
+void RegSplitParts::register_workspace_inspection_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #276: (workspace:resolve-stable-ref from-layer node-id gen [to-layer])
     // Remaps a StableNodeRef captured in one workspace layer to the
@@ -591,10 +811,15 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             return make_void();
         return make_int(static_cast<std::int64_t>(*found));
     });
+}
+
+// Issue #5033: workspace switch/current/list lifecycle.
+void RegSplitParts::register_workspace_lifecycle_primitives(
+    PrimRegistrar add, Evaluator& ev, std::shared_ptr<ImplTable> w_impls,
+    std::function<void()> destroy_defuse_index) {
 
     // (workspace :switch id) → #t
-    (*w_impls)["workspace:switch"] = PrimFn{[&ev, destroy_defuse_index,
-                                             worldline_driver_error_4778](
+    (*w_impls)["workspace:switch"] = PrimFn{[&ev, destroy_defuse_index](
                                                 std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
             return make_bool(false);
@@ -613,7 +838,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             if (d.tree != ev.workspace_tree_)
                 d = WorldlineDriver4778{ev.workspace_tree_, 0};
             if (caller_4778 != 0 && d.fiber != 0 && d.fiber != caller_4778)
-                return worldline_driver_error_4778("workspace :switch", d.fiber);
+                return RegSplitParts::workspace_worldline_driver_error_4778(ev, "workspace :switch",
+                                                                            d.fiber);
             prev_claim_4778 = d;
             d.fiber = (caller_4778 != 0 && idx != 0) ? caller_4778 : 0;
         }
@@ -719,6 +945,10 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         }
         return result;
     }};
+}
+
+// Issue #5033: workspace memory budget + concurrency policy.
+void RegSplitParts::register_workspace_memory_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #97 Action 3: per-workspace memory primitives
     // (workspace:memory-used) → bytes used by current workspace
@@ -796,6 +1026,11 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         return make_int(
             static_cast<std::int64_t>(static_cast<std::uint8_t>(ev.concurrent_mutation_policy())));
     });
+}
+
+// Issue #5033: workspace delete (+ COW refusal telemetry).
+void RegSplitParts::register_workspace_delete_primitives(
+    PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
 
     // (workspace:cow-refused-count) → COW refusals for this workspace
     ObservabilityPrims::register_stats_impl(
@@ -808,87 +1043,70 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                 return make_int(0);
             return make_int(static_cast<std::int64_t>(n->cow_refused_count));
         });
-    // Issue #4369 / #4352: EnvFrame::pool_ is the pool its SymIds were
-    // interned in. A COW child pool is freed by delete/discard; the
-    // mutation-boundary dual-path walk then resolve()s through that
-    // pointer. Drop the pointer first. String bindings stay authoritative.
-    auto detach_frames_from_pool = [&ev](const aura::ast::StringPool* dying) {
-        if (!dying)
-            return;
-        if (ev.top_env().pool() == dying) {
-            if (ev.workspace_pool_ && ev.workspace_pool_ != dying)
-                ev.top_env().set_pool(ev.workspace_pool_);
-            else
-                ev.top_env().set_pool(nullptr);
-        }
-        std::array<std::unique_lock<std::shared_mutex>, Evaluator::kEnvFramesShardCount> wlock;
-        for (std::size_t i = 0; i < Evaluator::kEnvFramesShardCount; ++i)
-            wlock[i] = std::unique_lock<std::shared_mutex>(ev.env_frame_shard_mu(i));
-        for (auto& fr : ev.env_frames_) {
-            if (fr.pool_ == dying)
-                fr.pool_ = nullptr;
-        }
-    };
     // (workspace:delete id) → #t
     // Issue #2789: delete_child recursively tombstones the whole subtree
     // (descendants before parent). Rebind evaluator if active is under idx.
-    add("workspace:delete",
-        [&ev, destroy_defuse_index, worldline_driver_error_4778,
-         detach_frames_from_pool](std::span<const EvalValue> a) -> EvalValue {
-            // Issue #4778: another fiber body drives the worldline.
-            if (const auto h4778 = worldline_foreign_driver_4778(
-                    &ev, ev.workspace_tree_, static_cast<std::uint64_t>(fiber_body_id_4778()));
-                h4778 != 0)
-                return worldline_driver_error_4778("workspace:delete", h4778);
-            if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
-                return make_bool(false);
-            // Issue #1294 Phase 1: capability gate for workspace control.
-            if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWorkspace) &&
-                !ev.has_capability(aura::compiler::security::kCapWildcard)) {
-                ev.bump_capability_denial();
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "capability denied: workspace required",
-                                            ev.primitive_error_counter_ptr());
+    add("workspace:delete", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
+        // Issue #4778: another fiber body drives the worldline.
+        if (const auto h4778 = worldline_foreign_driver_4778(
+                &ev, ev.workspace_tree_, static_cast<std::uint64_t>(fiber_body_id_4778()));
+            h4778 != 0)
+            return RegSplitParts::workspace_worldline_driver_error_4778(ev, "workspace:delete",
+                                                                        h4778);
+        if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
+            return make_bool(false);
+        // Issue #1294 Phase 1: capability gate for workspace control.
+        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWorkspace) &&
+            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+            ev.bump_capability_denial();
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        "capability denied: workspace required",
+                                        ev.primitive_error_counter_ptr());
+        }
+        auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+        auto idx = static_cast<std::uint32_t>(as_int(a[0]));
+        // Issue #1292 (P0) / #2789: if we delete the active workspace OR any
+        // ancestor of the active workspace, free of owned flat/pool would
+        // leave ev.workspace_flat_ dangling. Capture before recursive delete.
+        const bool need_rebind = wt->is_under(wt->active_idx(), idx);
+        for (std::uint32_t i = 1; i < wt->size(); ++i) {
+            if (!wt->is_under(i, idx))
+                continue;
+            auto& n = wt->nodes_[i];
+            if (n.has_own_flat && n.flat && n.flat != n.parent_flat_) {
+                RegSplitParts::workspace_detach_frames_from_pool(ev, n.pool);
+                // Issue #4378: expire closures holding this flat BEFORE
+                // delete_child frees it (heap-use-after-free in the
+                // expire_stale_live_closures_ walk otherwise).
+                (void)ev.expire_closures_with_flat(n.flat);
             }
-            auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-            auto idx = static_cast<std::uint32_t>(as_int(a[0]));
-            // Issue #1292 (P0) / #2789: if we delete the active workspace OR any
-            // ancestor of the active workspace, free of owned flat/pool would
-            // leave ev.workspace_flat_ dangling. Capture before recursive delete.
-            const bool need_rebind = wt->is_under(wt->active_idx(), idx);
-            for (std::uint32_t i = 1; i < wt->size(); ++i) {
-                if (!wt->is_under(i, idx))
-                    continue;
-                auto& n = wt->nodes_[i];
-                if (n.has_own_flat && n.flat && n.flat != n.parent_flat_) {
-                    detach_frames_from_pool(n.pool);
-                    // Issue #4378: expire closures holding this flat BEFORE
-                    // delete_child frees it (heap-use-after-free in the
-                    // expire_stale_live_closures_ walk otherwise).
-                    (void)ev.expire_closures_with_flat(n.flat);
-                }
+        }
+        if (!wt->delete_child(idx))
+            return make_bool(false);
+        if (need_rebind) {
+            wt->set_active(0);
+            auto* ws = wt->active();
+            if (ws) {
+                ev.workspace_flat_ = ws->flat;
+                ev.workspace_pool_ = ws->pool;
+                ev.workspace_read_only_ = ws->read_only;
+                if (ws->flat)
+                    ws->flat->set_workspace_cow_epoch(ws->cow_epoch);
+            } else {
+                ev.workspace_flat_ = nullptr;
+                ev.workspace_pool_ = nullptr;
+                ev.workspace_read_only_ = false;
             }
-            if (!wt->delete_child(idx))
-                return make_bool(false);
-            if (need_rebind) {
-                wt->set_active(0);
-                auto* ws = wt->active();
-                if (ws) {
-                    ev.workspace_flat_ = ws->flat;
-                    ev.workspace_pool_ = ws->pool;
-                    ev.workspace_read_only_ = ws->read_only;
-                    if (ws->flat)
-                        ws->flat->set_workspace_cow_epoch(ws->cow_epoch);
-                } else {
-                    ev.workspace_flat_ = nullptr;
-                    ev.workspace_pool_ = nullptr;
-                    ev.workspace_read_only_ = false;
-                }
-                // ASAN fix #107: drop def-use index bound to freed flat.
-                destroy_defuse_index();
-            }
-            return make_bool(true);
-        });
+            // ASAN fix #107: drop def-use index bound to freed flat.
+            destroy_defuse_index();
+        }
+        return make_bool(true);
+    });
+}
+
+// Issue #5033: workspace lock/unlock + write permission.
+void RegSplitParts::register_workspace_lock_primitives(PrimRegistrar add, Evaluator& ev,
+                                                       std::shared_ptr<ImplTable> w_impls) {
 
     // (workspace :lock id [read-only?])
     //   → #t on success. Sets/clears read-only flag.
@@ -944,6 +1162,10 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             idx = static_cast<std::uint32_t>(as_int(a[0]));
         return make_bool(__tw2->can_write(idx));
     });
+}
+
+// Issue #5033: workspace:sync-from.
+void RegSplitParts::register_workspace_sync_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // ═══════════════════════════════════════════════════════════════
     //
@@ -951,41 +1173,6 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     // P13 P2: Workspace sync-from, discard, merge
     // ═══════════════════════════════════════════════════════════════
 
-    // Helper: get a workspace's source code by ID
-    auto get_ws_source = [&ev](std::uint32_t ws_id) -> std::string {
-        auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-        if (!tree || ws_id >= tree->size())
-            return "";
-        auto& ws = tree->nodes_[ws_id];
-        if (!ws.flat || !ws.pool)
-            return "";
-        // Switch to this workspace temporarily to get source
-        auto saved_flat = ev.workspace_flat_;
-        auto saved_pool = ev.workspace_pool_;
-        ev.workspace_flat_ = ws.flat;
-        ev.workspace_pool_ = ws.pool;
-
-        auto src_fn = ev.primitives_.lookup("current-source");
-        std::string source;
-        if (src_fn) {
-            // Issue #135: pass :workspace keyword so current-source
-            // reads the workspace flat (ev.workspace_flat_) rather than
-            // the per-eval current flat (current_flat_). The latter
-            // would return the script being evaluated, not the
-            // workspace's saved source — causing merge/discard/
-            // conflicts-with to operate on the wrong data.
-            std::uint64_t ws_kw = ev.intern_keyword_slot(":workspace");
-            auto src = (*src_fn)({types::make_keyword(ws_kw)});
-            if (is_string(src)) {
-                auto sidx = as_string_idx(src);
-                if (sidx < ev.string_heap_.size())
-                    source = ev.string_at(sidx);
-            }
-        }
-        ev.workspace_flat_ = saved_flat;
-        ev.workspace_pool_ = saved_pool;
-        return source;
-    };
 
     // (workspace:sync-from source-id symbol-name)
     //   → #t on success, #f if symbol not found or source workspace invalid
@@ -995,7 +1182,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     // Issue #2784 lineage stamp for query/linter surfaces.
     constexpr int kWorkspaceSyncFromBodyIssue = 2784;
     (void)kWorkspaceSyncFromBodyIssue;
-    add("workspace:sync-from", [&ev, get_ws_source](const auto& a) -> EvalValue {
+    add("workspace:sync-from", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !ev.workspace_tree_)
             return make_bool(false);
         auto src_id = static_cast<std::uint32_t>(as_int(a[0]));
@@ -1005,7 +1192,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         auto sym_name = ev.string_at(sym_idx);
 
         // Get source from the source workspace
-        auto source = get_ws_source(src_id);
+        auto source = RegSplitParts::workspace_ws_source(ev, src_id);
         if (source.empty())
             return make_bool(false);
 
@@ -1082,18 +1269,23 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         // Fail closed: do not claim success when rebind rejected / errored.
         return make_bool(false);
     });
+}
+
+// Issue #5033: workspace:discard.
+void RegSplitParts::register_workspace_discard_primitives(
+    PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
 
     // (workspace:discard id)
     //   → #t on success
     //   Discards a child workspace's local changes, resetting to parent state.
     add("workspace:discard",
-        [&ev, destroy_defuse_index, worldline_driver_error_4778,
-         detach_frames_from_pool](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
             // Issue #4778: another fiber body drives the worldline.
             if (const auto h4778 = worldline_foreign_driver_4778(
                     &ev, ev.workspace_tree_, static_cast<std::uint64_t>(fiber_body_id_4778()));
                 h4778 != 0)
-                return worldline_driver_error_4778("workspace:discard", h4778);
+                return RegSplitParts::workspace_worldline_driver_error_4778(ev, "workspace:discard",
+                                                                            h4778);
             if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
                 return make_bool(false);
             auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -1126,7 +1318,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
                     held_guard = std::move(*gr);
                 }
                 if (ws.pool && ws.pool != ws.parent_pool_) {
-                    detach_frames_from_pool(ws.pool);
+                    RegSplitParts::workspace_detach_frames_from_pool(ev, ws.pool);
                 }
                 // Issue #4378: expire closures holding the doomed flat before
                 // the delete (heap-use-after-free in the expire walk).
@@ -1149,19 +1341,23 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             }
             return make_bool(true);
         });
+}
 
-    // (workspace :merge child-id)
-    //   Child definitions override parent for conflicting symbols.
-    //   Issue #4589: the root keeps one define per name. A child text
-    //   that differs replaces the parent; an unchanged name is omitted.
-    //   set-code failure reports "rejected", never "merged".
-    (*w_impls)["workspace:merge"] = PrimFn{[&ev, get_ws_source, worldline_driver_error_4778,
-                                            destroy_defuse_index](const auto& a) -> EvalValue {
+// (workspace :merge child-id)
+//   Child definitions override parent for conflicting symbols.
+//   Issue #4589: the root keeps one define per name. A child text
+//   that differs replaces the parent; an unchanged name is omitted.
+//   set-code failure reports "rejected", never "merged".
+void RegSplitParts::register_workspace_merge_primitives(
+    PrimRegistrar add, Evaluator& ev, std::shared_ptr<ImplTable> w_impls,
+    std::function<void()> destroy_defuse_index) {
+    (*w_impls)["workspace:merge"] = PrimFn{[&ev, destroy_defuse_index](const auto& a) -> EvalValue {
         // Issue #4778: another fiber body drives the worldline.
         if (const auto h4778 = worldline_foreign_driver_4778(
                 &ev, ev.workspace_tree_, static_cast<std::uint64_t>(fiber_body_id_4778()));
             h4778 != 0)
-            return worldline_driver_error_4778("workspace :merge", h4778);
+            return RegSplitParts::workspace_worldline_driver_error_4778(ev, "workspace :merge",
+                                                                        h4778);
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
             return make_bool(false);
         auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -1180,7 +1376,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         const auto merge_base_4776 = tree->nodes_[child_idx].merge_base;
 
         // Get child's source
-        auto child_source = get_ws_source(child_idx);
+        auto child_source = RegSplitParts::workspace_ws_source(ev, child_idx);
         if (child_source.empty())
             return make_bool(false);
 
@@ -1197,34 +1393,6 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
 
         // Issue #4589: top-level defines only. A define inside a lambda
         // is not a workspace symbol. Nested begin is the multi-form root.
-        struct TopForm {
-            std::string name;
-            aura::ast::NodeId id = aura::ast::NULL_NODE;
-            bool is_define = false;
-        };
-        auto collect_top = [](const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
-                              aura::ast::NodeId root) {
-            std::vector<TopForm> forms;
-            auto add = [&](auto& self, aura::ast::NodeId id) -> void {
-                if (id == aura::ast::NULL_NODE || id >= flat.size())
-                    return;
-                auto v = flat.get(id);
-                if (v.tag == aura::ast::NodeTag::Begin) {
-                    for (auto c : v.children)
-                        self(self, c);
-                    return;
-                }
-                TopForm form;
-                form.id = id;
-                if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
-                    form.name = std::string(pool.resolve(v.sym_id));
-                    form.is_define = !form.name.empty();
-                }
-                forms.push_back(std::move(form));
-            };
-            add(add, root);
-            return forms;
-        };
 
         aura::ast::StringPool child_pool;
         aura::ast::FlatAST child_flat;
@@ -1251,7 +1419,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         // Last child define of a name is the one to promote.
         std::unordered_map<std::string, std::string> child_text;
         std::vector<std::string> child_order;
-        for (const auto& form : collect_top(child_flat, child_pool, child_flat.root)) {
+        for (const auto& form :
+             RegSplitParts::workspace_collect_top(child_flat, child_pool, child_flat.root)) {
             if (!form.is_define)
                 continue;
             auto text = unparse_node(child_flat, child_pool, form.id, 0);
@@ -1260,20 +1429,8 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             child_text[form.name] = std::move(text);
         }
 
-        struct MergeReport {
-            std::string name;
-            bool want_merged = false;
-            bool conflict = false; // Issue #4776
-        };
-        std::vector<MergeReport> reports;
+        std::vector<WorkspaceMergeReport> reports;
         std::string merged;
-        auto append_form = [&](const std::string& text) {
-            if (text.empty())
-                return;
-            if (!merged.empty())
-                merged.push_back('\n');
-            merged += text;
-        };
 
         bool parent_parsed = parent_source.empty();
         aura::ast::StringPool parent_pool;
@@ -1284,81 +1441,9 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             if (parent_parsed)
                 parent_flat.root = parent_pr.root;
         }
-
-        if (!parent_parsed) {
-            // Cannot splice. Do not append the child after the parent.
-            for (const auto& name : child_order)
-                reports.push_back(MergeReport{name, false});
-        } else {
-            std::unordered_set<std::string> emitted;
-            if (!parent_source.empty()) {
-                auto parent_forms = collect_top(parent_flat, parent_pool, parent_flat.root);
-                for (const auto& form : parent_forms) {
-                    if (!form.is_define) {
-                        append_form(unparse_node(parent_flat, parent_pool, form.id, 0));
-                        continue;
-                    }
-                    if (!emitted.insert(form.name).second)
-                        continue;
-                    auto parent_text = unparse_node(parent_flat, parent_pool, form.id, 0);
-                    auto it = child_text.find(form.name);
-                    if (it == child_text.end()) {
-                        append_form(parent_text);
-                        continue;
-                    }
-                    if (it->second.empty() || it->second == parent_text) {
-                        append_form(parent_text);
-                        if (it->second.empty())
-                            reports.push_back(MergeReport{form.name, false});
-                        continue;
-                    }
-                    // Issue #4776: three-way (base / root / child). A child
-                    // text equal to the fork base is not a child edit: keep
-                    // root's (possibly newer) define. Both sides edited
-                    // since the fork -> conflict.
-                    if (merge_base_4776) {
-                        auto bit = merge_base_4776->find(form.name);
-                        const bool child_edited =
-                            bit == merge_base_4776->end() || bit->second != it->second;
-                        const bool root_edited =
-                            bit == merge_base_4776->end() || bit->second != parent_text;
-                        if (!child_edited) {
-                            append_form(parent_text);
-                            continue;
-                        }
-                        if (root_edited) {
-                            append_form(parent_text);
-                            reports.push_back(MergeReport{form.name, false, true});
-                            continue;
-                        }
-                    }
-                    append_form(it->second);
-                    reports.push_back(MergeReport{form.name, true});
-                }
-            }
-            for (const auto& name : child_order) {
-                if (emitted.count(name))
-                    continue;
-                const auto& text = child_text[name];
-                if (text.empty()) {
-                    reports.push_back(MergeReport{name, false});
-                    continue;
-                }
-                // Issue #4776: a name in the base but gone from root was
-                // deleted on root after the fork. An unchanged child copy
-                // stays deleted; an edited one conflicts.
-                if (merge_base_4776) {
-                    auto bit = merge_base_4776->find(name);
-                    if (bit != merge_base_4776->end()) {
-                        if (bit->second != text)
-                            reports.push_back(MergeReport{name, false, true});
-                        continue;
-                    }
-                }
-                append_form(text);
-                reports.push_back(MergeReport{name, true});
-            }
-        }
+        RegSplitParts::workspace_merge_splice(parent_parsed, parent_source, parent_flat,
+                                              parent_pool, child_order, child_text, merge_base_4776,
+                                              reports, merged);
 
         // set-code installs the spliced source on the active root.
         // A non-bool or #f result did not apply the child text.
@@ -1465,6 +1550,10 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         destroy_defuse_index();
         return make_string(ri);
     }};
+}
+
+// Issue #5033: conflict detection + 3-way merge.
+void RegSplitParts::register_workspace_conflict_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #98 Action 1: Workspace conflict detection & 3-way merge
     // Phase 2.5.0: tmp_pool stays separate from canonical_pool.
@@ -1500,60 +1589,59 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
     //   that exist in BOTH parent (root, id=0) and child.
     //   Returns an unordered list of strings, or () if no conflicts.
     //   Dry run - does NOT modify either workspace.
-    add("workspace:conflicts-with",
-        [&ev, get_ws_source, extract_defines](const auto& a) -> EvalValue {
-            if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
-                return make_void();
-            auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-            auto child_idx = static_cast<std::uint32_t>(as_int(a[0]));
-            if (child_idx == 0 || child_idx >= tree->size())
-                return make_void();
-            auto child_source = get_ws_source(child_idx);
-            if (child_source.empty())
-                return make_void();
-            auto& parent = tree->nodes_[0];
-            if (parent.read_only)
-                return make_void();
-            ev.workspace_flat_ = parent.flat;
-            ev.workspace_pool_ = parent.pool;
-            tree->set_active(0);
-            auto src_fn = ev.primitives_.lookup("current-source");
-            std::string parent_source;
-            if (src_fn) {
-                // Issue #135: pass :workspace so we read the parent
-                // workspace's saved flat, not the per-eval current flat.
-                std::uint64_t ws_kw = ev.intern_keyword_slot(":workspace");
-                auto src = (*src_fn)({types::make_keyword(ws_kw)});
-                if (is_string(src)) {
-                    auto sidx = as_string_idx(src);
-                    if (sidx < ev.string_heap_.size())
-                        parent_source = ev.string_at(sidx);
-                }
+    add("workspace:conflicts-with", [&ev, extract_defines](const auto& a) -> EvalValue {
+        if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
+            return make_void();
+        auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+        auto child_idx = static_cast<std::uint32_t>(as_int(a[0]));
+        if (child_idx == 0 || child_idx >= tree->size())
+            return make_void();
+        auto child_source = RegSplitParts::workspace_ws_source(ev, child_idx);
+        if (child_source.empty())
+            return make_void();
+        auto& parent = tree->nodes_[0];
+        if (parent.read_only)
+            return make_void();
+        ev.workspace_flat_ = parent.flat;
+        ev.workspace_pool_ = parent.pool;
+        tree->set_active(0);
+        auto src_fn = ev.primitives_.lookup("current-source");
+        std::string parent_source;
+        if (src_fn) {
+            // Issue #135: pass :workspace so we read the parent
+            // workspace's saved flat, not the per-eval current flat.
+            std::uint64_t ws_kw = ev.intern_keyword_slot(":workspace");
+            auto src = (*src_fn)({types::make_keyword(ws_kw)});
+            if (is_string(src)) {
+                auto sidx = as_string_idx(src);
+                if (sidx < ev.string_heap_.size())
+                    parent_source = ev.string_at(sidx);
             }
-            auto parent_names = extract_defines(parent_source);
-            auto child_names = extract_defines(child_source);
-            std::vector<std::string> conflicts;
-            for (auto& n : child_names) {
-                if (parent_names.count(n))
-                    conflicts.push_back(n);
-            }
-            std::sort(conflicts.begin(), conflicts.end());
-            EvalValue result = make_void();
-            for (auto it = conflicts.rbegin(); it != conflicts.rend(); ++it) {
-                auto sidx = ev.string_heap_.mint(*it);
-                auto pidx = ev.pairs_.size();
-                ev.pairs_.push_back({make_string(sidx), result});
-                result = make_pair(pidx);
-            }
-            return result;
-        });
+        }
+        auto parent_names = extract_defines(parent_source);
+        auto child_names = extract_defines(child_source);
+        std::vector<std::string> conflicts;
+        for (auto& n : child_names) {
+            if (parent_names.count(n))
+                conflicts.push_back(n);
+        }
+        std::sort(conflicts.begin(), conflicts.end());
+        EvalValue result = make_void();
+        for (auto it = conflicts.rbegin(); it != conflicts.rend(); ++it) {
+            auto sidx = ev.string_heap_.mint(*it);
+            auto pidx = ev.pairs_.size();
+            ev.pairs_.push_back({make_string(sidx), result});
+            result = make_pair(pidx);
+        }
+        return result;
+    });
 
     // (workspace:merge-3way base-id ours-id theirs-id [strategy: ...]) -> #t
     //   Source-level 3-way merge. The merged source combines all 3.
     //   Conflict resolution: "ours" wins by default; "theirs" makes theirs
     //   win. For 3-way structural merge (with base as ancestor), see
     //   docs/issue-closings/98-closing.md.
-    add("workspace:merge-3way", [&ev, get_ws_source](const auto& a) -> EvalValue {
+    add("workspace:merge-3way", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !ev.workspace_tree_)
             return make_bool(false);
         auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -1568,9 +1656,9 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
             if (sidx < ev.string_heap_.size())
                 strategy = ev.string_at(sidx);
         }
-        auto base_source = get_ws_source(base_id);
-        auto ours_source = get_ws_source(ours_id);
-        auto theirs_source = get_ws_source(theirs_id);
+        auto base_source = RegSplitParts::workspace_ws_source(ev, base_id);
+        auto ours_source = RegSplitParts::workspace_ws_source(ev, ours_id);
+        auto theirs_source = RegSplitParts::workspace_ws_source(ev, theirs_id);
         std::string merged;
         if (!base_source.empty())
             merged += base_source;
@@ -1600,6 +1688,11 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
         }
         return make_bool(false);
     });
+}
+
+// Issue #5033: the (workspace :op) dispatcher and ws:try-mutation.
+void RegSplitParts::register_workspace_dispatch_primitive(PrimRegistrar add, Evaluator& ev,
+                                                          std::shared_ptr<ImplTable> w_impls) {
 
     // Issue #295 Phase 0: (ws:try-mutation expr-string)
     // — run expr-string in a sandboxed workspace. On success,
@@ -1713,9 +1806,7 @@ void register_workspace_primitives(PrimRegistrar add, Evaluator& ev,
 
         return make_void(); // unknown op
     });
+}
 
-    // Issue #2628: core workspace:* public aliases removed (use (workspace :op)).
-
-} // register_workspace_primitives
 
 } // namespace aura::compiler::primitives_detail

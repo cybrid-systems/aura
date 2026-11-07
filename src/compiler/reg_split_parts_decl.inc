@@ -1,3 +1,7 @@
+// Issue #5033: workspace part state (defined in evaluator_primitives_workspace.cpp).
+struct WorkspaceTopForm;
+struct WorkspaceMergeReport;
+
 // Issue #5032: ast:restore phase state (defined in evaluator_primitives_ast.cpp).
 struct AstRestoreState;
 struct AstRestoreCapture;
@@ -284,4 +288,44 @@ struct RegSplitParts {
     static void register_atomic_batch_stats_primitive(PrimRegistrar add, Evaluator& ev);
     static void register_atomic_batch_sv_stats_primitive(PrimRegistrar add, Evaluator& ev);
     static void register_atomic_batch_snapshot_stats_primitive(PrimRegistrar add, Evaluator& ev);
+    // Issue #5033: workspace primitive registration parts (defined in
+    // evaluator_primitives_workspace.cpp) plus the helpers the parts share.
+    // WorkspaceTopForm / WorkspaceMergeReport are defined in that TU; only
+    // incomplete types are needed here.
+    using ImplTable = std::unordered_map<std::string, PrimFn>;
+    static EvalValue workspace_worldline_driver_error_4778(Evaluator& ev, std::string_view op,
+                                                           std::uint64_t holder);
+    static std::string workspace_ws_source(Evaluator& ev, std::uint32_t ws_id);
+    static void workspace_detach_frames_from_pool(Evaluator& ev,
+                                                  const aura::ast::StringPool* dying);
+    static std::vector<WorkspaceTopForm> workspace_collect_top(const aura::ast::FlatAST& flat,
+                                                               const aura::ast::StringPool& pool,
+                                                               aura::ast::NodeId root);
+    static void workspace_merge_splice(
+        bool parent_parsed, const std::string& parent_source, const aura::ast::FlatAST& parent_flat,
+        const aura::ast::StringPool& parent_pool, const std::vector<std::string>& child_order,
+        std::unordered_map<std::string, std::string>& child_text,
+        const std::shared_ptr<const std::unordered_map<std::string, std::string>>& merge_base_4776,
+        std::vector<WorkspaceMergeReport>& reports, std::string& merged);
+    static void register_workspace_snapshot_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_workspace_layering_primitives(PrimRegistrar add, Evaluator& ev,
+                                                       std::shared_ptr<ImplTable> w_impls);
+    static void register_workspace_inspection_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_workspace_lifecycle_primitives(PrimRegistrar add, Evaluator& ev,
+                                                        std::shared_ptr<ImplTable> w_impls,
+                                                        std::function<void()> destroy_defuse_index);
+    static void register_workspace_memory_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_workspace_delete_primitives(PrimRegistrar add, Evaluator& ev,
+                                                     std::function<void()> destroy_defuse_index);
+    static void register_workspace_lock_primitives(PrimRegistrar add, Evaluator& ev,
+                                                   std::shared_ptr<ImplTable> w_impls);
+    static void register_workspace_sync_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_workspace_discard_primitives(PrimRegistrar add, Evaluator& ev,
+                                                      std::function<void()> destroy_defuse_index);
+    static void register_workspace_merge_primitives(PrimRegistrar add, Evaluator& ev,
+                                                    std::shared_ptr<ImplTable> w_impls,
+                                                    std::function<void()> destroy_defuse_index);
+    static void register_workspace_conflict_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_workspace_dispatch_primitive(PrimRegistrar add, Evaluator& ev,
+                                                      std::shared_ptr<ImplTable> w_impls);
 };

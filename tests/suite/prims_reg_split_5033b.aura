@@ -1,0 +1,74 @@
+;; Issue #5033: the mutation and workspace registrations moved into peeled
+;; RegSplitParts parts (mutation: one part per mutation / rollback /
+;; atomic-batch surface; workspace: one part per workspace responsibility,
+;; plus the (workspace :merge) splice phase). Primitive names, registration
+;; order and behavior must not move.
+(require "std/io" all:)
+
+(define fails 0)
+(define (check pred msg)
+  (if pred
+      #t
+      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+
+;; ── mutation parts: counters / log summary / diff / pressure ──────────
+(set-code "(define f (lambda (x) 1))") (eval-current)
+(check (integer? (engine:metrics "mutation-count")) "mutation-count")
+(check (hash? (mutation-log:summary)) "mutation-log:summary")
+(check (list? (mutation-log:diff 0 -1)) "mutation-log:diff")
+(check (hash? (engine:metrics "query:mutation-log-pressure")) "mutation-log-pressure")
+(check (hash? (engine:metrics "query:mutation-log-compact-stats")) "mutation-log-compact-stats")
+(check (list? (engine:metrics "mutation-history" 0)) "mutation-history")
+(check (hash? (engine:metrics "query:safepoint-mutation-stats")) "safepoint stats")
+(check (hash? (engine:metrics "query:atomic-batch-stats-hash")) "atomic-batch stats hash")
+(check (hash? (engine:metrics "query:atomic-batch-sv-stats-hash")) "atomic-batch sv stats")
+(check (hash? (engine:metrics "query:atomic-batch-snapshot-stats-hash")) "atomic-batch snapshot stats")
+(check (eq? #f (rollback 999999)) "rollback: unknown mid -> #f")
+(check (integer? (rollback-since 1)) "rollback-since")
+
+(mutate:rebind "f" "(lambda (x) 2)" "5033b rebind") (eval-current)
+(check (> (engine:metrics "mutation-count") 0) "mutation-count after rebind")
+(check (> (hash-ref (mutation-log:summary) "total") 0) "summary total after rebind")
+(check (pair? (mutation-log:diff 0 -1)) "diff after rebind")
+
+;; ── workspace parts: snapshots / layering / lifecycle / policy ────────
+(check (integer? (workspace:snapshot "s5033b")) "workspace:snapshot")
+(check (eq? #t (workspace:rollback-to "s5033b")) "workspace:rollback-to")
+(check (integer? (workspace :create "c5033b")) "workspace :create")
+(check (list? (workspace :list)) "workspace :list")
+(check (= 0 (workspace :current)) "workspace :current")
+(check (eq? #t (workspace:can-write? 0)) "workspace:can-write?")
+(check (eq? #t (workspace :lock 1)) "workspace :lock")
+(check (eq? #t (workspace :unlock 1)) "workspace :unlock")
+(check (integer? (workspace:memory-used)) "workspace:memory-used")
+(check (integer? (workspace:memory-limit)) "workspace:memory-limit")
+(check (eq? #t (workspace:set-concurrent-mutation-policy 1)) "set-concurrent-mutation-policy")
+(check (= 1 (workspace:concurrent-mutation-policy)) "concurrent-mutation-policy")
+(check (integer? (engine:metrics "workspace:cow-refused-count")) "workspace:cow-refused-count")
+(check (integer? (engine:metrics "workspace:mutation-count")) "workspace:mutation-count")
+
+;; ── the (workspace :op) dispatcher ───────────────────────────────────
+(check (= 0 (workspace :current)) "dispatcher :current")
+(check (list? (workspace :list)) "dispatcher :list")
+(check (integer? (workspace :snapshot "s5033b-dispatch")) "dispatcher :snapshot")
+(check (void? (workspace :not-an-op)) "dispatcher unknown op -> void")
+
+;; ── sync-from / conflicts-with / merge / discard / delete ────────────
+(define child (workspace :create "child5033b"))
+(workspace :switch child) (eval-current)
+(mutate:rebind "f" "(lambda (x) 5)" "5033b child") (eval-current)
+(workspace :switch 0) (eval-current)
+(check (pair? (workspace:conflicts-with child)) "workspace:conflicts-with")
+(check (boolean? (workspace:sync-from child "f")) "workspace:sync-from")
+(check (string? (workspace :merge child)) "workspace :merge report")
+(check (eq? #t (workspace:merge-3way 0 0 child)) "workspace:merge-3way")
+(check (eq? #t (workspace :discard child)) "workspace :discard")
+(check (eq? #t (workspace :delete child)) "workspace :delete")
+
+;; ── ws:try-mutation sandbox rollback ─────────────────────────────────
+(define tm (ws:try-mutation "(+ 1 2)"))
+(check (and (pair? tm) (= 3 (car tm))) "ws:try-mutation result")
+
+(if (> fails 0)
+    (error "prims reg split 5033b regression")
+    (begin (display "prims reg split 5033b ok") (newline)))
