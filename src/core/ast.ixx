@@ -6891,7 +6891,7 @@ public:
         // rollback consumer); structural child ops restore through the
         // Guard's children_ snapshot and their orphaned slots stay
         // recyclable (#2412 AC1).
-        const auto is_rebind_record = [](const std::string& op) {
+        const auto is_rebind_record = [](std::string_view op) {
             return op == "rebind" || op == "batch-rebind";
         };
         // A committed log record's body ref is only worth keeping while the

@@ -22,8 +22,8 @@ public:
     void attach(Fiber* owner) { owner_ = owner; }
 
     // Push a message and wake the waiting fiber (if any)
-    void push(const std::string& msg) {
-        queue_.push_back(msg);
+    void push(std::string msg) {
+        queue_.push_back(std::move(msg));
         notify_owner();
     }
 

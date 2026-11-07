@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <print>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <memory>
 #include <chrono>
@@ -217,7 +218,11 @@ struct GlobalMetrics {
     std::string to_json() const {
         std::string json = "{\n";
         auto append = [&](const char* key, auto val) {
-            json += "  \"" + std::string(key) + "\": " + std::to_string(val) + ",\n";
+            json.append("  \"");
+            json.append(key);
+            json.append("\": ");
+            json.append(std::to_string(val));
+            json.append(",\n");
         };
 
         append("fibers_spawned", fibers_spawned.load(std::memory_order_acquire));
@@ -233,15 +238,18 @@ struct GlobalMetrics {
             steal_s += w->steal_successes.load(std::memory_order_acquire);
         }
         append("steal_attempts", steal_a);
-        steal_s < steal_a ? (json += "  \"steal_successes\": " + std::to_string(steal_s) + ",\n")
-                          : (json += "  \"steal_successes\": " + std::to_string(steal_s) + ",\n");
+        append("steal_successes", steal_s);
 
         json += "  \"workers\": [\n";
         for (size_t i = 0; i < workers.size(); ++i) {
             const auto& w = workers[i];
             json += "    {\n";
             auto wj = [&](const char* k, auto v) {
-                json += "      \"" + std::string(k) + "\": " + std::to_string(v) + ",\n";
+                json.append("      \"");
+                json.append(k);
+                json.append("\": ");
+                json.append(std::to_string(v));
+                json.append(",\n");
             };
             wj("id", i);
             wj("fibers_executed", w->fibers_executed.load(std::memory_order_acquire));
@@ -272,29 +280,33 @@ struct GlobalMetrics {
     // Issue #677: Prometheus text exposition for /metrics scrape.
     std::string to_prometheus() const {
         std::string out;
-        auto append_counter = [&](const std::string& name, std::uint64_t val) {
-            out += "# TYPE " + name + " counter\n" + name + " " + std::to_string(val) + "\n";
+        auto append_counter = [&](std::string_view name, std::uint64_t val) {
+            out.append("# TYPE ");
+            out.append(name);
+            out.append(" counter\n");
+            out.append(name);
+            out.push_back(' ');
+            out.append(std::to_string(val));
+            out.push_back('\n');
         };
-        append_counter(std::string("aura_fibers_spawned"),
-                       fibers_spawned.load(std::memory_order_acquire));
-        append_counter(std::string("aura_fibers_completed"),
-                       fibers_completed.load(std::memory_order_acquire));
-        append_counter(std::string("aura_io_events_processed"),
+        append_counter("aura_fibers_spawned", fibers_spawned.load(std::memory_order_acquire));
+        append_counter("aura_fibers_completed", fibers_completed.load(std::memory_order_acquire));
+        append_counter("aura_io_events_processed",
                        io_events_processed.load(std::memory_order_acquire));
-        append_counter(std::string("aura_io_stdin_events"),
-                       io_stdin_events.load(std::memory_order_acquire));
-        append_counter(std::string("aura_schedule_errors"),
-                       schedule_errors.load(std::memory_order_acquire));
+        append_counter("aura_io_stdin_events", io_stdin_events.load(std::memory_order_acquire));
+        append_counter("aura_schedule_errors", schedule_errors.load(std::memory_order_acquire));
         std::uint64_t steal_a = 0, steal_s = 0;
         for (const auto& w : workers) {
             steal_a += w->steal_attempts.load(std::memory_order_acquire);
             steal_s += w->steal_successes.load(std::memory_order_acquire);
         }
-        append_counter(std::string("aura_steal_attempts"), steal_a);
-        append_counter(std::string("aura_steal_successes"), steal_s);
+        append_counter("aura_steal_attempts", steal_a);
+        append_counter("aura_steal_successes", steal_s);
         for (std::size_t i = 0; i < workers.size(); ++i) {
             const auto& w = workers[i];
-            const std::string prefix = "aura_worker_" + std::to_string(i) + "_";
+            std::string prefix = "aura_worker_";
+            prefix.append(std::to_string(i));
+            prefix.push_back('_');
             append_counter(prefix + "fibers_executed",
                            w->fibers_executed.load(std::memory_order_acquire));
             append_counter(prefix + "fibers_yielded",

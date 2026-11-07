@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 #include "shape.h"
@@ -39,10 +40,10 @@ public:
                                             uint32_t arg_count, uint32_t local_count);
 
     // Check if a specialized version exists for a function+shape combo.
-    bool has_specialization(const std::string& fn_name, ShapeID shape) const;
+    bool has_specialization(std::string_view fn_name, ShapeID shape) const;
 
     // Get the specialized function pointer.
-    aura::jit::ScalarFn get_specialized(const std::string& fn_name, ShapeID shape) const;
+    aura::jit::ScalarFn get_specialized(std::string_view fn_name, ShapeID shape) const;
 
     // Issue #2276 / #2370: install a successful specialization. The entry
     // is stamped with effective_shape_version() — process-global under
@@ -50,7 +51,7 @@ public:
     // under PerEval (#2370). get_specialized / has_specialization treat
     // an entry whose stamped version != current effective version as a
     // miss so storm enter invalidates generation-behind specialized code.
-    void install_specialization(const std::string& fn_name, ShapeID shape,
+    void install_specialization(std::string_view fn_name, ShapeID shape,
                                 aura::jit::ScalarFn fn_ptr);
 
     // Issue #2370: bind this controller to an eval owner key (typically
@@ -66,7 +67,7 @@ public:
     [[nodiscard]] std::uint64_t effective_shape_version() const noexcept;
 
     // Invalidate all specializations for a function.
-    void invalidate(const std::string& fn_name);
+    void invalidate(std::string_view fn_name);
 
     // Clear all cached specializations.
     void clear();

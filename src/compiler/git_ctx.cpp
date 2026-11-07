@@ -278,7 +278,7 @@ int GitContext::commit(const std::string& message) {
     return err ? -1 : 0;
 }
 
-int GitContext::stage(const std::vector<std::string>& paths) {
+int GitContext::stage(std::span<const std::string> paths) {
     if (!repo_ || paths.empty())
         return -1;
     git_index* index = nullptr;
@@ -289,8 +289,9 @@ int GitContext::stage(const std::vector<std::string>& paths) {
             err = -1;
             break;
         }
-        // Build strarray from paths (libgit2 takes char**)
-        std::vector<std::string> path_storage = paths; // keep alive
+        // libgit2's git_strarray is char**, so the paths are copied into
+        // mutable storage for this call. The span itself is not stored.
+        std::vector<std::string> path_storage(paths.begin(), paths.end());
         std::vector<char*> path_ptrs;
         for (auto& p : path_storage)
             path_ptrs.push_back(p.data());
@@ -327,7 +328,7 @@ std::string GitContext::rev_parse_short() const {
 int GitContext::commit(const std::string&) {
     return -1;
 }
-int GitContext::stage(const std::vector<std::string>&) {
+int GitContext::stage(std::span<const std::string>) {
     return -1;
 }
 
