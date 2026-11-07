@@ -6857,7 +6857,7 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
         if ((xi || xf) && (yi || yf) && (xf || yf)) {
             const double dx = xf ? as_float(x) : static_cast<double>(as_int(x));
             const double dy = yf ? as_float(y) : static_cast<double>(as_int(y));
-            double r;
+            double r = 0.0;
             if (cname[0] == '+') {
                 r = 0.0 + dx;
                 r = r + dy;
@@ -9025,7 +9025,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
                                         xf ? as_float(x) : static_cast<double>(as_int(x));
                                     const double dy =
                                         yf ? as_float(y) : static_cast<double>(as_int(y));
-                                    double r;
+                                    double r = 0.0;
                                     if (cname[0] == '+') {
                                         r = 0.0 + dx; // sum_pure seed: (0.0 + x) + y
                                         r = r + dy;

@@ -435,7 +435,7 @@ namespace tenant_exec_detail {
         struct statx sx{};
         const void* blob = &st;
         std::size_t blob_n = sizeof st;
-        long rc;
+        long rc = 0;
         if (is_statx) {
             rc = ::syscall(SYS_statx, src, "", AT_EMPTY_PATH, mask, &sx);
             blob = &sx;
