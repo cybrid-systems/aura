@@ -1,0 +1,115 @@
+;; Issue #5031: register_query_tail_primitives / register_query_primitives /
+;; register_query_reflect_primitives are peeled into per-responsibility phases.
+;; Primitive names, registration order, lambda capture lifetimes and every
+;; stats payload key must not move.
+(require "std/io" all:)
+
+(define fails 0)
+(define (check pred msg)
+  (if pred
+      #t
+      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+
+(define (hget h k) (hash-ref h k))
+
+;; ── query.cpp: module export / index / observability phase ──────────
+(check (list? (query:module-exports "tests/suite/edsl.aura")) "query:module-exports")
+(check (hash? (stats:get "query:module-export-cache-stats")) "module-export-cache-stats")
+(check (integer? (stats:get "query:jit-fallback-stats")) "jit-fallback-stats")
+(check (hash? (stats:get "query:ir-marker-stats")) "ir-marker-stats")
+(check (hash? (stats:get "query:hygiene-checkpoint-stats")) "hygiene-checkpoint-stats")
+(check (integer? (stats:get "query:query-stats")) "query:query-stats")
+(check (integer? (orchestration:tune-gc-frequency)) "orchestration:tune-gc-frequency")
+
+;; ── query.cpp: stable-ref / lifecycle / scheduler phase ─────────────
+(check (hash? (stats:get "query:stable-ref-stats-hash")) "stable-ref-stats-hash")
+(check (hash? (stats:get "query:stable-ref-boundary-stats-hash")) "stable-ref-boundary-stats-hash")
+(check (hash? (stats:get "query:stable-ref-lifecycle-stats")) "stable-ref-lifecycle-stats")
+(check (hash? (stats:get "query:stable-ref-provenance-sv-stats-hash")) "stable-ref-provenance-sv")
+(check (hash? (stats:get "query:scheduler-mutation-coord-stats")) "scheduler-mutation-coord")
+(check (integer? (stats:get "query:tw-root-reclaims")) "tw-root-reclaims")
+(check (integer? (stats:get "query:fiber-migration-stats")) "fiber-migration-stats")
+(check (integer? (stats:get "query:gc-safepoint-stats")) "gc-safepoint-stats")
+
+;; ── query.cpp: ai-closedloop-readiness-stats (ClosedloopReadiness) ──
+(define cl (stats:get "query:ai-closedloop-readiness-stats"))
+(check (hash? cl) "ai-closedloop hash")
+(check (= 1613 (hget cl "schema")) "ai-closedloop schema")
+(check (= 1613 (hget cl "issue")) "ai-closedloop issue")
+(check (= 70 (hget cl "slo-threshold")) "ai-closedloop slo-threshold")
+(check (integer? (hget cl "health-score")) "ai-closedloop health-score")
+(check (integer? (hget cl "recommendation")) "ai-closedloop recommendation")
+(check (integer? (hget cl "action")) "ai-closedloop action")
+(check (integer? (hget cl "orch-health-score")) "ai-closedloop orch-health")
+(check (integer? (hget cl "macro-health-score")) "ai-closedloop macro-health")
+(check (= 1 (hget cl "macro-hygiene-submodule-wired")) "ai-closedloop macro wired")
+(check (integer? (hget cl "avg-join-latency-us")) "ai-closedloop avg-join")
+(check (integer? (hget cl "mutation-stack-depth-hist-sum")) "ai-closedloop depth-hist")
+(check (>= (hget cl "samples-total") 1) "ai-closedloop samples")
+
+;; ── query_tail.cpp: feedback / adt / typed-budget phase ─────────────
+(check (string? (stats:get "query:type-feedback")) "query:type-feedback")
+(check (list? (query:mutations-since 0)) "query:mutations-since")
+(check (list? (stats:get "query:last-mutation-blame")) "query:last-mutation-blame")
+(check (integer? (stats:get "query:adt-exhaustiveness-stats")) "adt-exhaustiveness-stats")
+(check (integer? (stats:get "query:adt-match-exhaust-stats")) "adt-match-exhaust-stats")
+(check (list? (stats:get "query:match-exhaustiveness-notes")) "match-exhaustiveness-notes")
+(check (hash? (stats:get "query:closure-env-safety-stats")) "closure-env-safety-stats")
+(check (integer? (stats:get "query:tag-arity-count")) "tag-arity-count")
+
+;; ── query_tail.cpp: propagation / hot-update phase ──────────────────
+(check (hash? (stats:get "query:eda-verification-stats")) "eda-verification-stats")
+(check (integer? (stats:get "query:dirty-reason-propagation-stats")) "dirty-reason-propagation")
+(check (integer? (stats:get "query:mutation-coordination-stats")) "mutation-coordination")
+(check (integer? (stats:get "query:envframe-dualpath-stats")) "envframe-dualpath-stats")
+(check (integer? (stats:get "query:mutation-guard-coverage")) "mutation-guard-coverage")
+(check (integer? (stats:get "query:aot-hot-update-stats")) "aot-hot-update-stats")
+
+;; ── query_tail.cpp: schema / occurrence / pass-pipeline phase ───────
+(check (integer? (mutate:validate-reflected)) "mutate:validate-reflected")
+(check (boolean? (query:schema "int")) "query:schema")
+(check (boolean? (stats:get "mutate:validate-against-schema" "(+ 1 2)" "int")) "validate-against-schema")
+(check (hash? (stats:get "query:pass-pipeline-incremental-stats-hash")) "pass-pipeline hash")
+(check (integer? (stats:get "query:occurrence-stats")) "occurrence-stats")
+(check (integer? (stats:get "query:occurrence-stale-count")) "occurrence-stale-count")
+(check (integer? (stats:get "query:bidirectional-narrow-stats")) "bidirectional-narrow-stats")
+
+;; ── query_reflect.cpp: health / hot-update / compact phase ──────────
+(check (hash? (stats:get "query:castop-density-stats")) "castop-density-stats")
+(check (hash? (stats:get "query:type-linear-evolution-snapshot")) "evolution-snapshot")
+(check (hash? (stats:get "query:type-system-health")) "type-system-health")
+(check (hash? (stats:get "query:mutation-concurrency-health")) "mutation-concurrency-health")
+(check (hash? (stats:get "query:aot-hot-update-health")) "aot-hot-update-health")
+(check (hash? (stats:get "query:hot-update-health")) "hot-update-health")
+(check (hash? (stats:get "query:compact-policy")) "query:compact-policy")
+(check (hash? (stats:get "orch:compact-policy")) "orch:compact-policy")
+(check (hash? (stats:get "arena:recommend-compact")) "arena:recommend-compact")
+
+;; ── query_reflect.cpp: type-linear-commit-health core + audit face ──
+(define tc (stats:get "query:type-linear-commit-health"))
+(check (hash? tc) "commit-health hash")
+(check (= 2613 (hget tc "schema-2613")) "commit-health schema-2613")
+(check (= 2613 (hget tc "issue-2613")) "commit-health issue-2613")
+(check (= 3030 (hget tc "schema-3030")) "commit-health schema-3030")
+(check (= 3031 (hget tc "issue-3031")) "commit-health issue-3031")
+(check (= 3063 (hget tc "issue-3063")) "commit-health issue-3063")
+(check (= 3171 (hget tc "schema-3171")) "commit-health schema-3171")
+(check (= 1 (hget tc "linear-compact-root-mismatch-wired")) "commit-health wired")
+(check (integer? (hget tc "readiness-bp")) "commit-health readiness-bp")
+(check (integer? (hget tc "audit-mid")) "commit-health audit-mid")
+
+;; ── query_reflect.cpp: linear ownership / selfmod / hygiene phase ───
+(check (integer? (stats:get "query:coercion-elim-stats")) "coercion-elim-stats")
+(check (integer? (stats:get "query:linear-ownership-incremental-stats")) "linear-incr")
+(check (hash? (stats:get "query:mutate-invalidate-stats")) "mutate-invalidate-stats")
+(check (hash? (stats:get "query:linear-gc-root-audit-log")) "linear-gc-root-audit-log")
+(check (hash? (stats:get "query:linear-boundary-consistency-stats")) "boundary-consistency")
+(check (hash? (stats:get "query:linear-postmutate-fidelity-stats")) "postmutate-fidelity")
+(check (hash? (stats:get "query:reflect-postmutate-stats")) "reflect-postmutate-stats")
+(check (hash? (stats:get "reflect:hygiene-stats")) "reflect:hygiene-stats")
+(check (boolean? (reflect:validate-macro-body 5)) "reflect:validate-macro-body")
+(check (boolean? (reflect:validate-edsl 5)) "reflect:validate-edsl")
+
+(if (= fails 0)
+    (display "prims reg split 5031q1 ok\n")
+    (error "prims reg split 5031q1 FAILED" fails))
