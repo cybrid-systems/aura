@@ -192,7 +192,7 @@ namespace aura::serve {
 inline constexpr std::uint64_t kUnsetTenant = ~std::uint64_t{0};
 
 // Forward declare (full type in scheduler.h) — used by Fiber owner back-pointer.
-struct Scheduler;
+class Scheduler;
 
 // Issue #3369: forward declare (full type in multi_fiber_mailbox.h) —
 // used by Fiber::mailbox_ back-pointer so the steal-complete strong def
@@ -1905,7 +1905,7 @@ extern thread_local WorkerContext* g_worker_ctx;
 
 // ── Global scheduler reference ─────────────────────────
 // Set during --serve-async init. Used for fiber spawn.
-struct Scheduler;
+class Scheduler;
 extern Scheduler* g_scheduler;
 extern thread_local Fiber* g_current_fiber;
 
