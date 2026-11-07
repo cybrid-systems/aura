@@ -219,6 +219,7 @@ jobs:
     - uses: ./.github/actions/ci-krb5
 
     - uses: ./.github/actions/clang-scan-deps
+      id: clang-scan-deps
 
     - uses: actions/cache@v6
       with:
@@ -253,7 +254,7 @@ jobs:
       run: >
         cmake -S . -B build_clang -G Ninja -Wno-author
         -DCMAKE_CXX_COMPILER=clang++
-        -DCMAKE_CXX_COMPILER_CLANG_SCAN_DEPS=/usr/local/bin/clang-scan-deps
+        -DCMAKE_CXX_COMPILER_CLANG_SCAN_DEPS=${{ steps.clang-scan-deps.outputs.path }}
         -DCMAKE_BUILD_TYPE=RelWithDebInfo
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
@@ -504,12 +505,13 @@ jobs:
     - uses: ./.github/actions/ci-krb5
 
     - uses: ./.github/actions/clang-scan-deps
+      id: clang-scan-deps
 
     - name: Configure Clang module build (#4837)
       run: >
         cmake -S . -B build_clang -G Ninja -Wno-author
         -DCMAKE_CXX_COMPILER=clang++
-        -DCMAKE_CXX_COMPILER_CLANG_SCAN_DEPS=/usr/local/bin/clang-scan-deps
+        -DCMAKE_CXX_COMPILER_CLANG_SCAN_DEPS=${{ steps.clang-scan-deps.outputs.path }}
         -DCMAKE_BUILD_TYPE=RelWithDebInfo
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
