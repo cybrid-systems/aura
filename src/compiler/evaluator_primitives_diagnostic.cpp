@@ -214,7 +214,6 @@ void RegSplitParts::register_diagnose_primitive(PrimRegistrar add, Evaluator& ev
 
         return make_bool(false);
     });
-
 }
 
 void RegSplitParts::register_apply_fix_primitive(PrimRegistrar add, Evaluator& ev) {
