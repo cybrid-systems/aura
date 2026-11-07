@@ -2596,7 +2596,15 @@ void CompilePrims::register_compile_p26(PrimRegistrar add, Evaluator& ev) {
 
 // Issue #909 compile part 27 (orig 2073-2131)
 void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
+    // Issue #5033: registration order is the original single-function order.
+    RegSplitParts::register_compile_instruction_dirty_primitives(add, ev);
+    RegSplitParts::register_compile_incremental_stats_primitives(add, ev);
+    RegSplitParts::register_compile_safety_stats_primitives(add, ev);
+}
 
+// Issue #5033: per-instruction dirty queries/markers of the named define's IR cache.
+void RegSplitParts::register_compile_instruction_dirty_primitives(PrimRegistrar add,
+                                                                  Evaluator& ev) {
     // Issue #460: (compile:is-instruction-dirty? name func-idx
     // block-idx instr-idx) — per-instruction dirty query
     // (mirrors is-block-dirty? for the per-instruction level).
@@ -2687,6 +2695,11 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             return make_bool(ev.clear_instruction_dirty_fn_(name, func_idx, block_idx, instr_idx));
         });
     });
+}
+
+// Issue #5033: incremental-relower and primitive-guard stats queries.
+void RegSplitParts::register_compile_incremental_stats_primitives(PrimRegistrar add,
+                                                                  Evaluator& ev) {
     // Issue #460: (query:compiler-incremental-stats) — return
     // the current partial-relower / impact-scope counters.
     // P0 ship: returns the partial_relower_count as an int.
@@ -2765,7 +2778,10 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
             }
             return make_hash(hidx);
         });
+}
 
+// Issue #5033: mutation-systemic-guard and raw-pointer safety stats queries.
+void RegSplitParts::register_compile_safety_stats_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #1897 / #1950 / #1931 / #1953: query:mutation-systemic-guard-stats —
     // audit inventory for systemic MutationBoundaryGuard enforcement.
     // Schema lineage **1897**; **schema-1931** closes hot-update zero-downtime

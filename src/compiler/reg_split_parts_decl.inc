@@ -262,4 +262,12 @@ struct RegSplitParts {
     static void register_format_primitive(PrimRegistrar add, Evaluator& ev);
     static void register_error_primitives(PrimRegistrar add, Evaluator& ev);
     static void install_jit_error_hooks(Evaluator& ev);
+
+    // Issue #5033: compile p27 parts (defined in evaluator_primitives_compile.cpp).
+    // They are Evaluator friends like the #909 CompilePrims parts, but the
+    // declarations live here so the compile TU splits its registration without
+    // touching evaluator.ixx.
+    static void register_compile_instruction_dirty_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_compile_incremental_stats_primitives(PrimRegistrar add, Evaluator& ev);
+    static void register_compile_safety_stats_primitives(PrimRegistrar add, Evaluator& ev);
 };
