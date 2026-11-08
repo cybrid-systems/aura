@@ -13,15 +13,14 @@
 // The contract: an Evaluator never hands a capture caller NULL_ENV_ID
 // because the arena is full. The #4459 freelist is consulted first; when it
 // is empty the arena is genuinely exhausted (every slot is a live capture
-// frame) and the process terminates with an explicit message naming the
-// arena, the live frame count and kMaxSlots. There is no third outcome —
-// in particular, no silent NULL.
+// frame) and fail() raises the typed Exhausted error. The evaluation
+// boundary turns that into an OutOfMemory diagnostic naming the arena, the
+// live frame count and kMaxSlots (#5057), so an Aura handler can catch it.
+// There is no third outcome — in particular, no silent NULL and no abort().
 //
-// Test seam: g_throw_on_exhaustion makes fail() throw Exhausted instead of
-// aborting, so the #4790 test can drive a real Evaluator to kMaxSlots and
-// assert the failure without killing the test runner. Production never sets
-// it (default false; the switch is flipped before the driving loop starts,
-// so relaxed ordering is enough).
+// g_throw_on_exhaustion is retained for the #4790 regression test's explicit
+// switch; #5057 made the throw unconditional, so production takes the same
+// path.
 #pragma once
 
 #include <atomic>
@@ -42,9 +41,10 @@ struct Exhausted : std::runtime_error {
     std::size_t max_slots = 0;
 
     Exhausted(std::size_t live, std::size_t max_slots_in)
-        : std::runtime_error("aura: fatal: EnvFrame arena exhausted (" + std::to_string(live) +
+        : std::runtime_error("EnvFrame arena exhausted (" + std::to_string(live) +
                              " live capture frames, kMaxSlots=" + std::to_string(max_slots_in) +
-                             "); a capture would otherwise be silently dropped")
+                             "); no capture slot can be reclaimed - a program that keeps" +
+                             " this many live closures must release some or use a larger arena")
         , live_frames(live)
         , max_slots(max_slots_in) {}
 };
@@ -61,19 +61,20 @@ inline std::atomic<std::uint64_t> g_exhausted_total{0};
 // empty and the store refused the append. Never returns.
 [[noreturn]] inline void fail(std::size_t live_frames, std::size_t max_slots) {
     g_exhausted_total.fetch_add(1, std::memory_order_relaxed);
-    if (g_throw_on_exhaustion.load(std::memory_order_relaxed))
-        throw Exhausted(live_frames, max_slots);
-    // Loud, and specific about the cause: the old behaviour (return
-    // NULL_ENV_ID) surfaced as "unbound variable: <name>" at an unrelated
-    // call site. This message names the arena instead.
-    std::fprintf(stderr,
-                 "aura: fatal: EnvFrame arena exhausted (%zu live capture frames, "
-                 "kMaxSlots=%zu). Every slot is a live capture frame; the #4459 "
-                 "reuse freelist is empty. This is not a silent capture: the "
-                 "allocation site refuses.\n",
-                 live_frames, max_slots);
-    std::fflush(stderr);
-    std::abort();
+    // Issue #5057: the exhaustion exit is CATCHABLE in production, not an
+    // abort(). #4790 made the silent captureless closure loud by killing the
+    // process; that left the host no way to handle a legitimate program whose
+    // live capture-frame set is larger than kMaxSlots (a list holding >1M
+    // closures). Exhausted unwinds to the evaluation boundary, which turns it
+    // into an ordinary language-level error (see eval_flat), so an Aura
+    // (try ... (catch (e) ...)) can observe it and a top-level program gets a
+    // diagnostic instead of SIGABRT. The allocation site still refuses: no
+    // caller ever receives NULL_ENV_ID, so the #4787 captureless closure
+    // cannot come back.
+    //
+    // g_throw_on_exhaustion is kept for the #4790 regression test;
+    // production now takes the same throw path.
+    throw Exhausted(live_frames, max_slots);
 }
 
 } // namespace aura::compiler::env_frame_arena

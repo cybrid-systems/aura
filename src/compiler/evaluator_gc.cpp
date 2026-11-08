@@ -1699,38 +1699,70 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         if (m)
             push_env(*m);
     }
-    // Issue #4790 (item 3): in FILE mode every frame is a root, by design.
-    //
-    // The tree-walker reclaim seeds its frame mark from the live Env stack
-    // plus the closure table (live closure -> env_id -> parent chain). This
-    // path has neither:
-    //   * it runs at an IR instruction boundary that can be nested inside a
-    //     live tree-walked evaluation (#4481 / #4617). That evaluator's Env
-    //     stack is C++ locals on the fiber stack;
-    //     collect_tw_inflight_roots hands over their BINDINGS (values),
-    //     never the EnvIds, and FileModeReclaimView carries cells and
-    //     closure env vectors, not env-frame ids;
-    //   * an Env can hold a frame id (parent_id_ / cap_snapshot
-    //     source_frame) while no closure value reaches it, and the
-    //     EnvFrameLifetimeGuard registry does not cover every Env.
-    // Freelisting such a frame lets the next capture restamp it under the
-    // holder (#4459 reuse) - silent aliasing of a live lexical binding.
-    // Until an EnvId root set exists for this path, rooting every frame is
-    // the only safe rule. Consequence: a dead capture frame keeps its
-    // bindings (and their cells/pairs/strings) alive until compact or
-    // truncate renumbers. Frame recycling for the CLI/serve path is the
-    // tree-walker sweep (#4459 / #4787), not this one.
+    // Issue #5057 AC3: FILE mode marks capture frames exactly like the
+    // tree-walker sweep instead of rooting every frame. #4790 item 3 rooted
+    // all frames because this path had no EnvId root set, which made a dead
+    // capture frame survive until compact/truncate: the arena's budget was
+    // cumulative allocation, not live frames. The root set here is:
+    //   * frame 0 and the top / module / require-inject parent chains,
+    //   * every live tree-walker Env on this thread (tw_frames: current,
+    //     tail, pinned) plus its cap-snapshot source frames - the same
+    //     hand-off #4481 / #4617 use for VALUES, now carrying EnvIds,
+    //   * the env ids of the closures the mark reaches (absorbed below).
+    // Foreign fiber bodies stand this sweep down before it starts, so the
+    // frame snapshot cannot be raced by another allocator.
+    std::size_t n_frames = 0;
     {
         std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
         for (std::size_t i = 0; i < kEnvFramesShardCount; ++i)
             rlock[i] = std::shared_lock<std::shared_mutex>(env_frame_shards_[i].mu);
-        for (const auto& fr : env_frames_) {
-            for (const auto& b : fr.bindings_)
-                roots.push_back(b.second);
-            for (const auto& b : fr.bindings_symid_)
-                roots.push_back(b.second);
-        }
+        n_frames = env_frames_.size();
     }
+    std::vector<std::uint8_t> live_frame(n_frames, 0);
+    std::vector<std::uint8_t> frame_scanned(n_frames, 0);
+    std::vector<EnvId> pending_frames;
+    auto note_frame = [&](EnvId id) {
+        if (id != NULL_ENV_ID)
+            pending_frames.push_back(id);
+    };
+    auto note_env_chain = [&](const Env* root) {
+        const Env* cur = root;
+        const Env* seen_ptr[64]{};
+        int hops = 0;
+        while (cur && hops < 64) {
+            bool cycle = false;
+            for (int h = 0; h < hops; ++h) {
+                if (seen_ptr[h] == cur) {
+                    cycle = true;
+                    break;
+                }
+            }
+            if (cycle)
+                break;
+            seen_ptr[hops++] = cur;
+            note_frame(cur->parent_id());
+            if (const auto& snap = cur->cap_snapshot()) {
+                int sh = 0;
+                for (auto sp = snap; sp && sh < 32; sp = sp->parent, ++sh) {
+                    note_frame(sp->source_frame);
+                    note_frame(sp->parent_id);
+                }
+            }
+            cur = cur->parent();
+        }
+    };
+    if (n_frames > 0)
+        note_frame(static_cast<EnvId>(0));
+    note_env_chain(&top_);
+    if (require_inject_env_)
+        note_env_chain(require_inject_env_);
+    for (Env* m : modules_)
+        if (m)
+            note_env_chain(m);
+    for (const Env* e : view.live_envs)
+        if (e)
+            note_env_chain(e);
+
     // Issue #4790: the capture-snapshot cache is NOT an additional root
     // here. A snapshot is an exact copy of its source frame's bindings
     // (cap_snap_for_frame copies them under the frame's shard lock), every
@@ -1821,18 +1853,80 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     // slot) taken under the mark's own hash lock. The release compares
     // the slot's table against it, so a table re-minted (or grown)
     // between the mark and the release is left alone.
+    // Issue #5057 AC3: fixed point over values, frame bindings and closure
+    // env ids - the same loop reclaim_tw_unreachable runs. A frame marked
+    // here keeps its bindings; a closure the mark reaches contributes its
+    // env_id, whose frame and parent chain become live.
     std::vector<FlatHashTable*> hash_at_mark;
+    std::unordered_set<std::uint64_t> expanded;
     {
-        // hash_tables_mutex is the outer lock car uses before alloc. Trace
-        // holds it alone, then drops it before the closures / alloc locks.
         std::scoped_lock hash_lock(hash_tables_mtx_);
         seen_hash.assign(g_hash_tables.size(), 0);
         hash_at_mark.assign(g_hash_tables.begin(), g_hash_tables.end());
-        for (std::size_t wi = 0; wi < work.size(); ++wi) {
-            file_reclaim_mark_value(work[wi], work, seen_pair, seen_vec, seen_hash, seen_ev_cell,
-                                    seen_err, seen_ir, live_tw, view, pairs_, vector_heap_, cells_,
-                                    error_values_, seen_opaque, opaque_gen, seen_string,
-                                    live_channel_ids);
+    }
+    auto absorb = [&](std::vector<EnvId>& ids) {
+        if (ids.empty())
+            return;
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
+        for (std::size_t i = 0; i < kEnvFramesShardCount; ++i)
+            rlock[i] = std::shared_lock<std::shared_mutex>(env_frame_shards_[i].mu);
+        std::vector<EnvId> queue;
+        queue.swap(ids);
+        for (std::size_t qi = 0; qi < queue.size(); ++qi) {
+            const EnvId id = queue[qi];
+            if (id == NULL_ENV_ID || static_cast<std::size_t>(id) >= n_frames)
+                continue;
+            if (frame_scanned[id])
+                continue;
+            frame_scanned[id] = 1;
+            live_frame[id] = 1;
+            const EnvFrame& fr = env_frames_[id];
+            for (const auto& b : fr.bindings_)
+                work.push_back(b.second);
+            for (const auto& b : fr.bindings_symid_)
+                work.push_back(b.second);
+            const EnvId parent = fr.parent_id;
+            if (parent != NULL_ENV_ID && static_cast<std::size_t>(parent) < n_frames &&
+                !frame_scanned[parent])
+                queue.push_back(parent);
+        }
+    };
+    absorb(pending_frames);
+    {
+        std::size_t traced = 0;
+        for (int guard = 0; guard < 1000000; ++guard) {
+            {
+                std::scoped_lock hash_lock(hash_tables_mtx_);
+                while (traced < work.size()) {
+                    file_reclaim_mark_value(work[traced++], work, seen_pair, seen_vec, seen_hash,
+                                            seen_ev_cell, seen_err, seen_ir, live_tw, view, pairs_,
+                                            vector_heap_, cells_, error_values_, seen_opaque,
+                                            opaque_gen, seen_string, live_channel_ids);
+                }
+            }
+            std::vector<EnvId> more;
+            {
+                std::array<std::shared_lock<std::shared_mutex>, kClosuresShardCount> cl_lock;
+                for (std::size_t cl_i = 0; cl_i < kClosuresShardCount; ++cl_i)
+                    cl_lock[cl_i] = std::shared_lock<std::shared_mutex>(closures_shards_[cl_i].mu);
+                for (const auto& cl_sh : closures_shards_) {
+                    for (const auto& kv : cl_sh.map) {
+                        const auto id = kv.first;
+                        const bool keep = id < gc_safe_closure_id() || live_tw.contains(id) ||
+                                          seen_ir.contains(id);
+                        if (!keep || !expanded.insert(id).second)
+                            continue;
+                        if (kv.second.env_id != NULL_ENV_ID)
+                            more.push_back(kv.second.env_id);
+                    }
+                }
+            }
+            if (more.empty())
+                break;
+            const auto work_mark = work.size();
+            absorb(more);
+            if (work.size() == work_mark)
+                break;
         }
     }
 
@@ -1859,6 +1953,48 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
                 it = cl_sh.map.erase(it);
             }
         }
+    }
+
+    // Issue #5057 AC3: reclaim the frames the mark did not reach. Same
+    // snapshot rule as the tree-walker sweep: a frame allocated after the
+    // mark (>= n_frames) is another fiber's newborn and is kept.
+    std::vector<EnvId> dead_snaps;
+    {
+        std::array<std::unique_lock<std::shared_mutex>, kEnvFramesShardCount> ef_barrier;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            ef_barrier[ef_i] = std::unique_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu);
+        std::unique_lock<std::shared_mutex> wlock(env_frames_mtx_);
+        if (env_frame_on_freelist_.size() < env_frames_.size())
+            env_frame_on_freelist_.resize(env_frames_.size(), 0);
+        std::vector<EnvId> rebuilt;
+        rebuilt.reserve(env_frames_.size());
+        for (std::size_t i = 0; i < env_frames_.size(); ++i) {
+            const bool live = i < live_frame.size() && live_frame[i] != 0;
+            const bool newborn = i >= n_frames;
+            if (live || newborn) {
+                env_frame_on_freelist_[i] = 0;
+                continue;
+            }
+            if (!env_frame_on_freelist_[i]) {
+                EnvFrame& fr = env_frames_[i];
+                fr.bindings_.clear();
+                fr.bindings_symid_.clear();
+                fr.bindings_linear_ownership_state_.clear();
+                fr.pool_ = nullptr;
+                fr.version_ = INVALID_VERSION;
+            }
+            env_frame_on_freelist_[i] = 1;
+            const auto id = static_cast<EnvId>(i);
+            rebuilt.push_back(id);
+            dead_snaps.push_back(id);
+        }
+        env_frame_reclaimed_total_.fetch_add(rebuilt.size(), std::memory_order_relaxed);
+        env_frame_reuse_ = std::move(rebuilt);
+    }
+    {
+        std::scoped_lock<std::mutex> snap_lock(cap_snap_mtx_);
+        for (const EnvId id : dead_snaps)
+            cap_snap_cache_.erase(id);
     }
 
     // Issue #4608: release the string slots the mark found
@@ -2357,6 +2493,8 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
             rebuilt.push_back(id);
             dead_snaps.push_back(id);
         }
+        // Issue #5057 AC4: count the frames this sweep handed back.
+        env_frame_reclaimed_total_.fetch_add(rebuilt.size(), std::memory_order_relaxed);
         env_frame_reuse_ = std::move(rebuilt);
     }
     {

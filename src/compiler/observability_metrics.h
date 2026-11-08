@@ -9301,6 +9301,14 @@ struct CompilerMetrics {
     // cost.
     std::atomic<std::uint64_t> env_frames_size_total{0};
     std::atomic<std::uint64_t> env_frames_stale_count{0};
+    // Issue #5057 AC4: frame-arena pressure. live = slots - freelist; high
+    // water is the append-only slot ceiling; hit/miss is the #4459 reuse
+    // freelist; reclaimed counts frames the sweeps handed back.
+    std::atomic<std::uint64_t> env_frames_live_total{0};
+    std::atomic<std::uint64_t> env_frames_high_water{0};
+    std::atomic<std::uint64_t> env_frame_reuse_hits_total{0};
+    std::atomic<std::uint64_t> env_frame_reuse_misses_total{0};
+    std::atomic<std::uint64_t> env_frames_reclaimed_total{0};
     std::atomic<std::uint64_t> ast_arena_bytes_in_use{0};
     std::atomic<std::uint64_t> ast_arena_upstream_bytes{0};
 

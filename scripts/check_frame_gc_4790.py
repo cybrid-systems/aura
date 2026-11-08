@@ -58,9 +58,18 @@ Landed shape:
       is an exact copy of its source frame's bindings, every frame is
       rooted, and this path never clears a frame, so the #4608 cache root
       is subsumed (it only made every file-mode mark walk the whole cache).
-      run_4790_file_mode_reclaim_is_conservative pins both halves: the
-      file-mode sweep recycles no frame, and the tree-walker sweep on the
-      same Evaluator still does (#4787 row stays green).
+      run_4790_file_mode_reclaim_is_conservative pinned both halves: the
+      file-mode sweep recycled no frame, and the tree-walker sweep on the
+      same Evaluator still did (#4787 row stays green).
+
+  #5057 update (supersedes the AC3 paragraph above): the file-mode reclaim
+      now marks capture frames from an EnvId root set - frame 0 / top /
+      module / require-inject parent chains, every live tw_frames Env
+      (current / tail / pinned) and its cap-snapshot source frames, plus the
+      env ids of the closures the mark reaches - and freelists the unmarked
+      frames. The capture-snapshot cache is still not a root; it only drops
+      entries for the frames the sweep reclaimed. The same runtime door now
+      pins that a fresh batch after a file-mode reclaim REUSES slots.
   AC4 Wiring: tests/compiler/test_envframe_epoch_batch.cpp defines and
       registers the three run_4790_* doors; build.py registers this
       linter; scripts/coverage/root_check_allowlist.txt lists it; no
@@ -167,18 +176,21 @@ def main() -> int:
         "AC2: the message names the arena and the cap",
     )
 
-    # AC3: file-mode frame conservatism is documented; the cache is not a root.
+    # AC3: Issue #5057 replaced the frame-conservative rule with a real EnvId
+    # root set. The path must still document that rule, that the EnvIds come
+    # from the #4481 / #4617 hand-off, and that the capture-snapshot cache is
+    # still not a root (it now only drops entries for reclaimed frames).
     fm = _between(
         gc,
         "bool Evaluator::reclaim_file_mode_unreachable(",
         "bool Evaluator::reclaim_tw_unreachable(",
     )
     must(bool(fm), "AC3: reclaim_file_mode_unreachable is locatable")
-    must("Issue #4790" in fm, "AC3: the conservatism cites #4790")
-    must("every frame is a root" in fm, "AC3: the root rule is stated")
-    must("#4481" in fm and "#4617" in fm, "AC3: the missing EnvId root set is cited")
+    must("Issue #5057 AC3" in fm, "AC3: the file-mode frame rule cites #5057")
+    must("EnvId root set" in fm, "AC3: the root rule is stated")
+    must("#4481" in fm and "#4617" in fm, "AC3: the EnvId hand-off is cited")
     must(
-        "cap_snap_cache_" not in fm,
+        "capture-snapshot cache is NOT an additional root" in fm,
         "AC3: the capture-snapshot cache is not a file-mode root (subsumed, #4787)",
     )
 

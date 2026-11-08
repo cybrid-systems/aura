@@ -2295,6 +2295,20 @@ void register_metrics_facade_engine_metrics(PrimRegistrar add, Evaluator& ev) {
                           make_int(static_cast<std::int64_t>(m->env_frames_size_total.load()))});
             ck.push_back({"env_frames_stale_count",
                           make_int(static_cast<std::int64_t>(m->env_frames_stale_count.load()))});
+            // Issue #5057 AC4: frame-arena pressure beside the slot count.
+            ck.push_back({"env_frames_live_total",
+                          make_int(static_cast<std::int64_t>(m->env_frames_live_total.load()))});
+            ck.push_back({"env_frames_high_water",
+                          make_int(static_cast<std::int64_t>(m->env_frames_high_water.load()))});
+            ck.push_back(
+                {"env_frame_reuse_hits_total",
+                 make_int(static_cast<std::int64_t>(m->env_frame_reuse_hits_total.load()))});
+            ck.push_back(
+                {"env_frame_reuse_misses_total",
+                 make_int(static_cast<std::int64_t>(m->env_frame_reuse_misses_total.load()))});
+            ck.push_back(
+                {"env_frames_reclaimed_total",
+                 make_int(static_cast<std::int64_t>(m->env_frames_reclaimed_total.load()))});
             ck.push_back({"ast_arena_bytes_in_use",
                           make_int(static_cast<std::int64_t>(m->ast_arena_bytes_in_use.load()))});
             ck.push_back({"ast_arena_upstream_bytes",
