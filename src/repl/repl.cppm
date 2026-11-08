@@ -15,6 +15,10 @@ module;
 #include <unistd.h>
 #include "../linenoise/linenoise.h"
 
+#ifndef AURA_BUILD_VERSION
+#define AURA_BUILD_VERSION "dev"
+#endif
+
 export module aura.repl;
 
 import std;
@@ -102,7 +106,10 @@ public:
         std::filesystem::create_directories(std::filesystem::path(history_path_).parent_path());
         linenoiseHistoryLoad(history_path_.c_str());
 
-        std::fprintf(stdout, "Aura v0.2 \u2014 LLVM JIT / Sound Gradual Typing / C FFI\n");
+        // Issue #5036: the banner carries the same version token as
+        // `aura --version` and the same tagline as `aura --help`. The old
+        // hand-written "v0.2" never moved with AURA_BUILD_VERSION.
+        std::fprintf(stdout, "aura %s \u2014 an AI-native Lisp\n", AURA_BUILD_VERSION);
         std::fprintf(stdout, "  (quit) to exit, Ctrl+D for EOF, :help for REPL commands\n");
         std::fflush(stdout);
 
