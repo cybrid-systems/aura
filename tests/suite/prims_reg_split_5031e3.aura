@@ -1,0 +1,134 @@
+;; Issue #5031: register_eval_p22 / register_eval_p47 / register_eval_p94 /
+;; register_eval_p103 / register_eval_p104 are peeled into per-responsibility
+;; phases (one helper per registered stats surface, delegated in order). Primitive
+;; names, registration order, lambda capture lifetimes and every stats payload
+;; key must not move — this exercises the head, middle and tail keys of each
+;; peeled payload so a dropped or reordered phase shows up.
+(require "std/io" all:)
+
+(define fails 0)
+(define (check pred msg)
+  (if pred
+      #t
+      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+
+(define (hget h k) (hash-ref h k))
+
+;; ── p22: gc safepoint / compact / mark-size / envframe lifetime ─────
+(define gd (stats:get "query:gc-safepoint-deferral-stats"))
+(check (hash? gd) "gc-safepoint-deferral-stats")
+(check (= 646 (hget gd "schema")) "gc-safepoint-deferral schema")
+(check (integer? (hget gd "outermost-deferral")) "gc-safepoint-deferral outermost (head)")
+(check (integer? (hget gd "backoff-trigger")) "gc-safepoint-deferral backoff (tail)")
+
+(define gc (stats:get "query:gc-compact-stats"))
+(check (hash? gc) "gc-compact-stats")
+(check (= 2001 (hget gc "schema")) "gc-compact schema")
+(check (integer? (hget gc "strings-compacted")) "gc-compact strings-compacted (head)")
+(check (= 2087 (hget gc "schema-2087")) "gc-compact schema-2087 (mid)")
+(check (integer? (hget gc "mark-size-provider-wired")) "gc-compact provider-wired (tail)")
+
+(define ms (stats:get "query:gc-mark-size-stats"))
+(check (hash? ms) "gc-mark-size-stats")
+(check (= 2084 (hget ms "schema")) "gc-mark-size schema")
+(check (= 2084 (hget ms "issue-2084")) "gc-mark-size issue-2084")
+(check (integer? (hget ms "mark-bitvector-atomic-wired")) "gc-mark-size atomic wired (mid)")
+(check (= 2117 (hget ms "schema-2117")) "gc-mark-size schema-2117 (tail)")
+
+(define el (stats:get "query:envframe-lifetime-stats"))
+(check (hash? el) "envframe-lifetime-stats")
+(check (= 2003 (hget el "schema")) "envframe-lifetime schema")
+(check (integer? (hget el "guards-constructed")) "envframe-lifetime guards (head)")
+(check (integer? (hget el "phase")) "envframe-lifetime phase (mid)")
+(check (= 2164 (hget el "schema-2164")) "envframe-lifetime schema-2164")
+(check (= 3535 (hget el "schema-3535")) "envframe-lifetime schema-3535 (tail)")
+
+;; ── p47: value dispatch / mutation boundary coverage / steal ────────
+(define vd (stats:get "query:value-dispatch-stats"))
+(check (hash? vd) "value-dispatch-stats")
+(check (integer? (hget vd "dispatch-calls")) "value-dispatch dispatch-calls (head)")
+(check (= 2259 (hget vd "schema-2259")) "value-dispatch schema-2259 (mid)")
+(check (integer? (hget vd "value-tag-hotpath-ban-2616-wired")) "value-dispatch ban wired")
+(check (= 1622 (hget vd "schema")) "value-dispatch schema (tail)")
+
+(define mb (stats:get "query:mutation-boundary-coverage-stats"))
+(check (hash? mb) "mutation-boundary-coverage-stats")
+(check (integer? (hget mb "naked-mutate-attempt")) "mutation-boundary naked attempt (head)")
+(check (= 2986 (hget mb "schema-2986")) "mutation-boundary schema-2986")
+(check (integer? (hget mb "boundary-depth")) "mutation-boundary boundary-depth (mid)")
+(check (= 1638 (hget mb "schema")) "mutation-boundary schema (tail)")
+
+(define os (stats:get "query:orchestration-steal-stats"))
+(check (hash? os) "orchestration-steal-stats")
+(check (integer? (hget os "mutation-bias-hits")) "orchestration-steal bias hits (head)")
+(check (= 2115 (hget os "schema-2115")) "orchestration-steal schema-2115")
+(check (= 2200 (hget os "schema-2200")) "orchestration-steal schema-2200 (mid)")
+(check (= 1633 (hget os "schema")) "orchestration-steal schema (tail)")
+
+;; ── p94: SoA adoption / SoA view enforcement ────────────────────────
+(define sa (stats:get "query:soa-adoption-stats"))
+(check (hash? sa) "soa-adoption-stats")
+(check (integer? (hget sa "soa-functions-visited")) "soa-adoption functions visited (head)")
+(check (integer? (hget sa "concept-enforcement-hits")) "soa-adoption concept hits")
+(check (= 2520 (hget sa "schema-2520")) "soa-adoption schema-2520 (mid)")
+(check (= 2618 (hget sa "schema-2618")) "soa-adoption schema-2618")
+(check (= 1629 (hget sa "schema")) "soa-adoption schema (tail)")
+
+(define sv (stats:get "query:soa-view-enforcement-stats"))
+(check (hash? sv) "soa-view-enforcement-stats")
+(check (integer? (hget sv "soa-view-hits")) "soa-view-enforcement view hits (head)")
+(check (= 2434 (hget sv "schema-2434")) "soa-view-enforcement schema-2434 (mid)")
+(check (= 3315 (hget sv "issue-3315")) "soa-view-enforcement issue-3315")
+(check (= 1619 (hget sv "schema")) "soa-view-enforcement schema (tail)")
+
+;; ── p103: closure stats / macro fiber hygiene ───────────────────────
+(define cs (stats:get "query:closure-stats"))
+(check (hash? cs) "closure-stats")
+(check (integer? (hget cs "calls-total")) "closure-stats calls-total (head)")
+(check (integer? (hget cs "bridge-epoch-drift-pct")) "closure-stats drift pct (mid)")
+(check (= 2238 (hget cs "schema-2238")) "closure-stats schema-2238")
+(check (= 2238 (hget cs "issue-2238")) "closure-stats issue-2238 (tail)")
+
+(define fh (stats:get "query:macro-fiber-hygiene"))
+(check (hash? fh) "macro-fiber-hygiene")
+(check (= 2174 (hget fh "schema")) "macro-fiber-hygiene schema")
+(check (integer? (hget fh "fiber-id")) "macro-fiber-hygiene fiber-id")
+(check (integer? (hget fh "filtered-entries")) "macro-fiber-hygiene filtered-entries (tail)")
+(check (integer? (hget fh "fiber-violation-deny-total")) "macro-fiber-hygiene deny total (tail)")
+
+;; ── p104: pass concepts / render / opt passes / cascade / epoch ─────
+(define pc (stats:get "query:pass-concepts-stats"))
+(check (hash? pc) "pass-concepts-stats")
+(check (integer? (hget pc "phase")) "pass-concepts phase (head)")
+(check (integer? (hget pc "concept-count")) "pass-concepts concept-count (mid)")
+(check (= 1577 (hget pc "schema")) "pass-concepts schema (tail)")
+
+(define ri (stats:get "query:render-pass-incremental-stats"))
+(check (hash? ri) "render-pass-incremental-stats")
+(check (integer? (hget ri "phase")) "render-pass phase (head)")
+(check (integer? (hget ri "blocks-processed")) "render-pass blocks-processed (mid)")
+(check (= 1578 (hget ri "schema")) "render-pass schema (tail)")
+
+(define op (stats:get "query:optimization-passes-stats"))
+(check (hash? op) "optimization-passes-stats")
+(check (integer? (hget op "pass-runs")) "optimization-passes pass-runs (head)")
+(check (= 2025 (hget op "schema-2025")) "optimization-passes schema-2025")
+(check (= 2834 (hget op "schema-2834")) "optimization-passes schema-2834 (mid)")
+(check (= 2130 (hget op "schema")) "optimization-passes schema (tail)")
+
+(define dc (stats:get "query:dirty-cascade-stats"))
+(check (hash? dc) "dirty-cascade-stats")
+(check (integer? (hget dc "cascade-skip-subtree-total")) "dirty-cascade skip total (head)")
+(check (= 2063 (hget dc "schema-2063")) "dirty-cascade schema-2063")
+(check (= 2106 (hget dc "schema-2106")) "dirty-cascade schema-2106")
+(check (= 2191 (hget dc "schema")) "dirty-cascade schema (tail)")
+
+(define ce (stats:get "query:closure-epoch-concurrency-stats"))
+(check (hash? ce) "closure-epoch-concurrency-stats")
+(check (integer? (hget ce "stale-epoch-on-steal")) "closure-epoch stale (head)")
+(check (integer? (hget ce "fence-enforced")) "closure-epoch fence (mid)")
+(check (= 739 (hget ce "schema")) "closure-epoch schema (tail)")
+
+(if (= fails 0)
+    (display "obs-eval p22/p47/p94/p103/p104 split ok\n")
+    (error "obs-eval p22/p47/p94/p103/p104 split FAILED" fails))
