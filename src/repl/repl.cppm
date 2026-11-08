@@ -1,4 +1,5 @@
 module;
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -27,6 +28,56 @@ import aura.compiler.evaluator;
 import aura.compiler.value;
 
 export namespace aura {
+
+// Issue #5039: a phrase is still open while a ( / [ or a string is
+// unterminated. Comments (`;` to end of line and `#| … |#`) and character
+// literals (`#\x`) are skipped, so a paren inside them does not count.
+bool repl_phrase_incomplete(std::string_view src) {
+    int depth = 0;
+    bool in_string = false;
+    for (std::size_t i = 0; i < src.size(); ++i) {
+        const char c = src[i];
+        if (in_string) {
+            if (c == '\\' && i + 1 < src.size()) {
+                ++i;
+                continue;
+            }
+            if (c == '"')
+                in_string = false;
+            continue;
+        }
+        if (c == ';') {
+            while (i < src.size() && src[i] != '\n')
+                ++i;
+            continue;
+        }
+        if (c == '#' && i + 1 < src.size() && src[i + 1] == '|') {
+            for (i += 2; i + 1 < src.size() && !(src[i] == '|' && src[i + 1] == '#'); ++i) {
+            }
+            if (i + 1 < src.size())
+                ++i; // consume '|#'
+            continue;
+        }
+        if (c == '#' && i + 1 < src.size() && src[i + 1] == '\\') {
+            i += 2; // the character literal's payload
+            continue;
+        }
+        if (c == '"') {
+            in_string = true;
+            continue;
+        }
+        if (c == '(' || c == '[') {
+            ++depth;
+            continue;
+        }
+        if (c == ')' || c == ']') {
+            if (depth > 0)
+                --depth;
+            continue;
+        }
+    }
+    return in_string || depth > 0;
+}
 
 class Repl {
 public:
@@ -121,25 +172,44 @@ public:
         std::fprintf(stdout, "  (quit) to exit, Ctrl+D for EOF, :help for REPL commands\n");
         std::fflush(stdout);
 
+        // Issue #5039: keep reading while the phrase is open, with a `..`
+        // prompt, and evaluate the joined lines once. Ctrl-C (errno EAGAIN)
+        // drops the open phrase; Ctrl-D keeps its end-of-file meaning.
+        std::string pending;
         while (true) {
-            char* raw = linenoise("> ");
-            if (!raw)
+            errno = 0;
+            char* raw = linenoise(pending.empty() ? "> " : ".. ");
+            if (!raw) {
+                if (errno == EAGAIN) {
+                    pending.clear();
+                    continue;
+                }
                 break;
+            }
 
             std::string line(raw);
             std::free(raw);
 
-            if (line == "(quit)" || line == "(exit)")
+            if (pending.empty() && (line == "(quit)" || line == "(exit)"))
                 break;
-            if (line.empty())
+            if (pending.empty() && line.empty())
                 continue;
-
-            linenoiseHistoryAdd(line.c_str());
-            if (line.front() == ':') {
+            if (pending.empty() && line.front() == ':') {
+                linenoiseHistoryAdd(line.c_str());
                 command_(line);
                 continue;
             }
-            eval_and_print_(line);
+
+            pending += line;
+            pending += '\n';
+            if (repl_phrase_incomplete(pending))
+                continue;
+            while (!pending.empty() && (pending.back() == '\n' || pending.back() == '\r'))
+                pending.pop_back();
+            std::string phrase = pending;
+            pending.clear();
+            linenoiseHistoryAdd(phrase.c_str());
+            eval_and_print_(phrase);
         }
         std::fprintf(stdout, "\n");
         std::fflush(stdout);
