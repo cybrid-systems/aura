@@ -1,0 +1,59 @@
+{
+  "issue": 5055,
+  "title": "Issue #5055: the CLI fiber backend runs bodies concurrently — the execution model is documented and the fiber:yield comment matches the code.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "docs/stdlib/fiber-spawn.md",
+      "contains": [
+        "Execution model: concurrent bodies in the CLI backend (Issue #5055)",
+        "its own OS thread",
+        "read-modify-write",
+        "fiber:overlay-begin",
+        "Reproducibility"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "Issue #5055: since #4717 the CLI thread backend runs each fiber",
+        "does NOT hand the turn to a sibling",
+        "docs/stdlib/fiber-spawn.md documents the execution model"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "Issue #2738 -> #4717: this was the WHOLE-BODY serialization mutex",
+        "bodies run concurrently"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "Issue #5053",
+        "AgentPublishGate"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "Issue #5054",
+        "g_get_scheduler_metrics",
+        "g_reset_scheduler_metrics"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "register_stats_impl(\"orch:metrics\"",
+        "g_get_scheduler_metrics"
+      ]
+    }
+  ]
+}
