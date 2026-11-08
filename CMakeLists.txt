@@ -1219,6 +1219,14 @@ set_source_files_properties(src/core/contract_stub.cpp PROPERTIES COMPILE_FLAGS 
 target_link_libraries(test_gc_evaluator_integration PRIVATE pthread stdc++ stdc++exp aura-reflect)
 add_test(NAME gc_evaluator_integration COMMAND ./test_gc_evaluator_integration)
 
+# Issue #5041: key-by-key tests of the REPL line editor's state machine.
+# Header-only core, no modules: the test compiles in seconds and needs no
+# terminal.
+add_executable(test_linenoise_core tests/core/test_linenoise_core.cpp)
+aura_test_compile_options(test_linenoise_core)
+target_include_directories(test_linenoise_core PRIVATE src)
+add_test(NAME linenoise_core COMMAND ./test_linenoise_core)
+
 # Link JIT for test_gc_evaluator_integration when LLVM is available
 if(LLVM_FOUND)
     target_sources(test_gc_evaluator_integration PRIVATE
