@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.1
+
+Patch release on the 0.1 channel. The API is still not stable; this version installs and runs the shipped examples.
+
+- `aura demo` runs the evolve example in one command: one definition, four fixed candidates, and the live source after each KEEP or ROLLBACK. `aura demo agent` is the two-role version (a proposer and a checker); `aura new evolve demo` is the same program as an editable project.
+- The `aura repl` banner prints the binary's own version and the product tagline instead of a hard-coded `Aura v0.2`: the same `AURA_BUILD_VERSION` token `aura --version` reports and the same `an AI-native Lisp` line `aura --help` prints. Piped `aura repl` still prints no banner.
+- The REPL prints the cause of an error value instead of a bare `<error>`: `(car 5)` prints `car: not a pair`, and an ungranted `set-code` prints `effect-denied: mutate not granted tenant=0 op=set-code`. It is still one stdout line per form with nothing on stderr.
+- Bare `aura` on a TTY is the same interactive face as `aura repl`: the same soft session and grant line, the same std prelude, the same `dev` preset default. `(set-code ...)` succeeds there and `std/list` names resolve. A piped bare `aura` keeps the oneshot face.
+- C++26 / Core Guidelines modernization (#4936): a single mutex is now a hard `std::scoped_lock` rule (P6), address-sized FFI/JIT casts go through `ffi_addr.hh`, and the remaining R4 / T7 / F2 / F6 / P2 / P3 items stay review-level guidance in `docs/cpp-style.md`.
+- Install and smoke coverage is unchanged: Ubuntu 24.04, Ubuntu 26.10, Debian 12, Rocky Linux 9, and openEuler 24.03 LTS SP4, on x86_64 and arm64.
+- `AURA_VERSION=v0.1.1` selects the GitHub Release asset `aura-0.1.1-linux-<arch>.tar.gz`; the default install remains nightly. Images: `ghcr.io/cybrid-systems/aura:0.1.1`, `:0.1`, and `:latest`. `:nightly` stays the rolling build from `main`.
+- A binary whose version is `X.Y.Z` makes `aura new` pin that channel. `0.1.1` writes `ghcr.io/cybrid-systems/aura:0.1.1`. `dev` and `nightly` write `:nightly`. `:latest` is never written into a new project.
+- A tag release runs the chaos SOAK (300s, 8 workers, 256 fibers) and the production concurrency gate before assets are uploaded.
+
+Not in this version:
+
+- The REPL answers each form with one stdout line and still represents a refused form with an empty line; the per-form record is #5043.
+- macOS, Windows, and other Linux distributions.
+- The evolve-strategy kit is not pinned to this tag yet.
+
 ## 0.1.0
 
 First stable channel. The API is not stable. This version installs and runs the shipped examples.
