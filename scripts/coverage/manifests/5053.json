@@ -1,0 +1,38 @@
+{
+  "issue": 5053,
+  "title": "Issue #5053: an agent body must not run before the spawn published the handle in the name table.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "AgentPublishGate",
+        "Issue #5053"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "publish_gate",
+        "Issue #5053"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "publish_gate",
+        "Issue #5053"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/orch/test_agent_ask.cpp",
+      "contains": [
+        "5053: the body waits until the handle is published",
+        "5053: a cancelled spawn never runs its body"
+      ]
+    }
+  ]
+}

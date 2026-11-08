@@ -4430,6 +4430,13 @@ EvalValue RegSplitParts::spawn_agent_body(Evaluator& ev, std::span<const EvalVal
     // Issue #3803 / #3728: stamp AgentSpec.region_key so AgentScope
     // join observe + fiber TLS apply see the same key (0 = Serialized).
     spec.region_key = region_key;
+    // Issue #5053: the body must not run before this prim published the
+    // handle in the name table — a worker that looks itself up by name
+    // (orch:agent-recv "<own name>") would otherwise race the registration
+    // and fail with "unknown agent". The gate is released right after the
+    // put (run) or on the deny paths (cancel).
+    auto publish_gate = std::make_shared<aura::orch::AgentPublishGate>();
+    spec.publish_gate = publish_gate;
     auto handle = aura::orch::spawn_agent_with_mailbox(orch_scheduler(), std::move(spec));
     handle.body_outcome = body_outcome;
     // Issue #2009: move-only handle; snapshot then put on success.
@@ -4458,8 +4465,16 @@ EvalValue RegSplitParts::spawn_agent_body(Evaluator& ev, std::span<const EvalVal
             ok = false;
             put_refused = true;
             aura::orch::release_refused_spawn(handle);
+            // Issue #5053: a refused spawn must not run its body.
+            publish_gate->release(false);
         }
+    } else {
+        // Issue #5053: the spawn itself was refused — no body may run.
+        publish_gate->release(false);
     }
+    // Issue #5053: the handle is published — the body may run now.
+    if (ok)
+        publish_gate->release(true);
     // Issue #4785: same-name respawn used to return ok while the
     // old mailbox's queued messages vanished with it. The
     // replacement now takes the backlog over (FIFO, ahead of any
