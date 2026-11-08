@@ -1049,6 +1049,19 @@ private:
                              failed.empty() ? "" : " (some failed)");
                 events_.push_back("restore " + arg + " [" + (list.empty() ? "-" : list) + "]");
             }
+        } else if (cmd == ":doc") {
+            // Issue #5037: the description a primitive already carries.
+            const auto& prims = cs_.evaluator().primitives();
+            const auto slot = prims.slot_for_name(arg);
+            if (arg.empty()) {
+                std::fprintf(stdout, ":doc: usage: :doc NAME\n");
+            } else if (slot >= prims.slot_count()) {
+                std::fprintf(stdout, ":doc %s: no such primitive (try :type)\n", arg.c_str());
+            } else if (const auto& doc = prims.meta_for_slot(slot).doc; doc.empty()) {
+                std::fprintf(stdout, ":doc %s: no description (try :type)\n", arg.c_str());
+            } else {
+                std::fprintf(stdout, "%s\n", doc.c_str());
+            }
         } else if (cmd == ":type") {
             // Issue #5038: ask the checker only; the argument is never run.
             if (arg.empty()) {
@@ -1072,7 +1085,8 @@ private:
                          "  :worldline      mutation-log summary + snapshots (:history)\n"
                          "  :snapshot [LBL] remember every tracked define\n"
                          "  :restore ID     put changed defines back as of snapshot ID\n"
-                         "  :type EXPR      print EXPR's type without running it\n");
+                         "  :type EXPR      print EXPR's type without running it\n"
+                         "  :doc NAME       print a primitive's description\n");
         }
         // Pipe drivers read one response line per input line.
         std::fflush(stdout);

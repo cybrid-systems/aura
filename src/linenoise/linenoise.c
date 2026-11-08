@@ -498,6 +498,7 @@ enum KEY_ACTION{
 	ENTER = 13,         /* Enter */
 	CTRL_N = 14,        /* Ctrl-n */
 	CTRL_P = 16,        /* Ctrl-p */
+	CTRL_R = 18,        /* Ctrl-r */
 	CTRL_T = 20,        /* Ctrl-t */
 	CTRL_U = 21,        /* Ctrl+u */
 	CTRL_W = 23,        /* Ctrl+w */
@@ -2154,6 +2155,47 @@ char *linenoiseEditFeed(struct linenoiseState *l) {
         ln_core_kill_word_back(&ln_core_state);
         ln_core_store(l);
         break;
+    case CTRL_R: { /* Issue #5037: reverse search over the input history. */
+        char query[128];
+        size_t qlen = 0;
+        int match = -1;
+        query[0] = 0;
+        for (;;) {
+            char tag[512];
+            const int n = snprintf(tag, sizeof tag, "\r\x1b[0K(reverse-i-search) [%s]: %s", query,
+                                   match >= 0 ? history[match] : "");
+            if (n > 0 && write(l->ofd, tag, (size_t)n) < 0) break;
+            char k;
+            if (read(l->ifd, &k, 1) != 1) break;
+            if (k == ENTER) {
+                if (match >= 0) {
+                    size_t hl = strlen(history[match]);
+                    if (hl >= l->buflen) hl = l->buflen - 1;
+                    memcpy(l->buf, history[match], hl);
+                    l->buf[hl] = 0;
+                    l->len = hl;
+                    l->pos = hl;
+                }
+                break;
+            }
+            if (k == CTRL_C || k == 7 /* C-g */ || k == ESC) break;
+            if (k == BACKSPACE || k == 8) {
+                if (qlen > 0) query[--qlen] = 0;
+            } else if (k == CTRL_R) {
+                if (match > 0) {
+                    const int older = ln_core_search_prev(history, history_len, match - 1, query);
+                    if (older >= 0) match = older;
+                }
+                continue;
+            } else if (k >= 32 && qlen + 1 < sizeof query) {
+                query[qlen++] = k;
+                query[qlen] = 0;
+            }
+            match = ln_core_search_prev(history, history_len, history_len - 1, query);
+        }
+        refreshLine(l);
+        break;
+    }
     case CTRL_X: /* ctrl+x, prefix for C-x C-u */
         ln_core_pending_cx = 1;
         break;
