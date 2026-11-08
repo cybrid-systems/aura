@@ -201,6 +201,10 @@ if(AURA_BUILD_GIT_SHA STREQUAL "")
 endif()
 set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS
     "AURA_BUILD_VERSION=\"${AURA_BUILD_VERSION}\"" "AURA_BUILD_GIT_SHA=\"${AURA_BUILD_GIT_SHA}\"")
+# Issue #5036: the REPL banner prints the same version token as
+# `aura --version`, so the REPL TU needs the same definition.
+set_property(SOURCE src/repl/repl.cppm APPEND PROPERTY COMPILE_DEFINITIONS
+    "AURA_BUILD_VERSION=\"${AURA_BUILD_VERSION}\"")
 set_property(TARGET aura PROPERTY CXX_MODULE_STD ON)
 
 aura_target_cxx_modules(aura WITH_REPL)
