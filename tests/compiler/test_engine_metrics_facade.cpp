@@ -900,13 +900,14 @@ int main() {
         // AC2/AC3: default-path priority order must be present (typed >
         // ring > WAL > 0). The unconditional < 3 → 3 bump must be scoped
         // to the want_durable keyword path (Issue #3205), not the default.
-        CHECK(eps.find("if (typed_hit) {\n                forensic_source = 1;") !=
-                  std::string::npos,
+        // The chain was reindented (4 spaces) when the security prims were
+        // split (#5027); the source-cite has to follow the source.
+        CHECK(eps.find("if (typed_hit) {\n        forensic_source = 1;") != std::string::npos,
               "3371 AC2/AC3: default-path typed_hit → 1 first");
-        CHECK(eps.find("} else if (se_ring_has_mid) {\n                forensic_source = 2;") !=
+        CHECK(eps.find("} else if (se_ring_has_mid) {\n        forensic_source = 2;") !=
                   std::string::npos,
               "3371 AC2: default-path ring hit → 2 (NOT 3)");
-        CHECK(eps.find("} else if (wal_enabled) {\n                forensic_source = 3;") !=
+        CHECK(eps.find("} else if (wal_enabled) {\n        forensic_source = 3;") !=
                   std::string::npos,
               "3371 AC3: default-path ring miss + WAL on → 3");
         CHECK(eps.find("// Issue #3371: priority order — typed > ring > WAL > 0.") !=
