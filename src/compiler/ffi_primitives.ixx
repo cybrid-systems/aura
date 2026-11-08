@@ -196,14 +196,17 @@ public:
     // responsibility group and needs this class's private tables, so they stay
     // members; register_primitives calls them in the original registration
     // order (defined in ffi_primitives_impl.cpp).
-    void register_library_primitives(RegisterFn add, ::aura::compiler::LockedStringHeap* sh,
-                                     std::vector<void*>* oh,
+    // Issue #5033: declarations use >=3-character parameter names so the
+    // clang-tidy readability-identifier-length baseline stays put.
+    void register_library_primitives(RegisterFn add,
+                                     ::aura::compiler::LockedStringHeap* string_heap,
+                                     std::vector<void*>* opaque_heap,
                                      std::array<std::uint64_t, 16>* coverage_counters);
-    void register_opaque_primitives(RegisterFn add, ::aura::compiler::LockedStringHeap* sh,
-                                    std::vector<void*>* oh,
+    void register_opaque_primitives(RegisterFn add, ::aura::compiler::LockedStringHeap* string_heap,
+                                    std::vector<void*>* opaque_heap,
                                     std::array<std::uint64_t, 16>* coverage_counters);
-    void register_struct_primitives(RegisterFn add, ::aura::compiler::LockedStringHeap* sh,
-                                    std::vector<void*>* oh,
+    void register_struct_primitives(RegisterFn add, ::aura::compiler::LockedStringHeap* string_heap,
+                                    std::vector<void*>* opaque_heap,
                                     std::array<std::uint64_t, 16>* coverage_counters);
     void register_pin_primitives(RegisterFn add);
 

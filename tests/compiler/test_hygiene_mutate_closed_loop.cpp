@@ -51,6 +51,66 @@ import aura.core.ast;
 #define AURA_QUERY_RESULT_DECODE_FRESHNESS_ONLY
 #include "compiler/query_result_decode.hh"
 
+// Issue #5033: registration bodies now delegate to peeled RegSplitParts
+// helpers, so a source window that stops at the next add_mutate( misses the
+// statements the pins below look for. window_at() takes the enclosing part
+// body and appends the bodies of the parts it references (bounded recursion).
+static std::string part_body_at(const std::string& full, const std::string& name) {
+    const std::string marker = "RegSplitParts::" + name + "(";
+    const auto dp = full.find(marker);
+    if (dp == std::string::npos)
+        return {};
+    const auto ls = full.rfind('\n', dp);
+    const auto close = full.find("\n}\n", dp);
+    if (close == std::string::npos)
+        return {};
+    return full.substr(ls + 1, close + 3 - (ls + 1));
+}
+
+static std::string expand_parts(const std::string& full, const std::string& win, int depth);
+
+static std::string window_at(const std::string& full, std::size_t pos) {
+    const auto dp = full.rfind("RegSplitParts::", pos);
+    if (dp == std::string::npos)
+        return {};
+    const auto ls = full.rfind('\n', dp);
+    const auto close = full.find("\n}\n", dp);
+    if (close == std::string::npos)
+        return {};
+    return expand_parts(full, full.substr(ls + 1, close + 3 - (ls + 1)), 3);
+}
+
+static std::string expand_parts(const std::string& full, const std::string& win, int depth) {
+    static constexpr std::string_view kMarker = "RegSplitParts::";
+    std::string extra;
+    std::size_t scan = 0;
+    while (true) {
+        const auto pos = win.find(kMarker, scan);
+        if (pos == std::string::npos)
+            break;
+        auto begin = pos + kMarker.size();
+        auto end = begin;
+        while (end < win.size()) {
+            const char c = win[end];
+            const bool ident = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                               (c >= '0' && c <= '9') || c == '_';
+            if (!ident)
+                break;
+            ++end;
+        }
+        if (end > begin && depth > 0) {
+            const std::string body = part_body_at(full, win.substr(begin, end - begin));
+            if (!body.empty()) {
+                extra += body;
+                extra += expand_parts(full, body, depth - 1);
+            }
+        }
+        scan = end;
+    }
+    return win + extra;
+}
+
+
 namespace {
 
 using aura::compiler::CompilerService;
@@ -667,9 +727,7 @@ static void ac2961_1_source_guard_hygiene_restamp() {
         auto pos = mut.find(key);
         if (pos == std::string::npos)
             return {};
-        auto nxt = mut.find("add_mutate(", pos + key.size());
-        auto end = (nxt != std::string::npos) ? nxt : pos + 32000;
-        return mut.substr(pos, end - pos);
+        return window_at(mut, pos);
     };
     auto rwin = prim_win("mutate:rename-symbol");
     auto pwin = prim_win("mutate:replace-pattern");
@@ -2645,11 +2703,15 @@ static void ac3192_2_all_structural_primitives_acquire() {
         auto pos = find_mutate_registration(mut, prim);
         CHECK(pos != std::string::npos, std::format("3192 AC2: {} registered", prim));
         if (pos != std::string::npos) {
-            auto body = mut.find(std::string("(") + prim + " ");
-            if (body == std::string::npos)
-                body = pos;
-            // atomic-batch parses kwargs before acquire (~110 lines).
-            const auto block = mut.substr(body, 16000);
+            // Issue #5033: structural prims share the static dispatch table, so
+            // their acquire lives in the dispatcher rather than in the
+            // registration part; accept either location.
+            auto block = window_at(mut, pos);
+            if (block.find("mutate_dispatch_try_acquire") == std::string::npos) {
+                const auto dispatch = mut.find("mutate_dispatch_try_acquire");
+                if (dispatch != std::string::npos)
+                    block += window_at(mut, dispatch);
+            }
             CHECK(block.find("mutate_dispatch_try_acquire") != std::string::npos,
                   std::format("3192 AC2: {} uses mutate_dispatch_try_acquire", prim));
         }
@@ -7751,13 +7813,13 @@ static void ac4406_displaced_child_default_reject() {
     const auto reb = mut.find("add_mutate(\"mutate:rebind\"");
     const auto sb = mut.find("add_mutate(\"mutate:set-body\"");
     CHECK(reb != std::string::npos && sb != std::string::npos && reb < sb, "4406: prim order");
-    const auto rwin = mut.substr(reb, sb - reb);
+    const auto rwin = window_at(mut, reb);
     const auto old_probe = rwin.find("first_macro_introduced_in_subtree(flat, old_value_node)");
     const auto rset = rwin.find("flat.set_child(old_define, 0, new_value)");
     CHECK(old_probe != std::string::npos && rset != std::string::npos && old_probe < rset,
           "4406: public rebind probes the old child before set_child");
     const auto sb_next = mut.find("add_mutate(", sb + 20);
-    const auto swin = mut.substr(sb, sb_next > sb ? sb_next - sb : std::string::npos);
+    const auto swin = window_at(mut, sb);
     const auto sb_cite = swin.find("Issue #4406");
     const auto sb_set = swin.find("flat.set_child(lambda_id, 0, body_to_set)");
     CHECK(sb_cite != std::string::npos && sb_set != std::string::npos && sb_cite < sb_set,
@@ -7905,7 +7967,7 @@ static void ac4434_unlink_macro_child_default_reject() {
         const auto nxt = mut.find("add_mutate(", pos == std::string::npos ? 0 : pos + 20);
         if (pos == std::string::npos)
             return std::string();
-        return mut.substr(pos, nxt > pos ? nxt - pos : std::string::npos);
+        return window_at(mut, pos);
     };
     auto flat_win = [&](const std::string& fn) {
         const auto pos = efl.find("Evaluator::" + fn + "(");
