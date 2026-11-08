@@ -622,17 +622,30 @@ static std::string brace_block_after(const std::string& text, std::size_t from) 
     return {};
 }
 
+// Issue #5033: the add_mutate wrapper is peeled — mutate_wrapper_enter holds
+// the RO fence and the acquire, mutate_wrapped_call runs fn(a) — so the
+// window is both bodies; fall back to the pre-split lambda when present.
+static std::string wrapper_body(const std::string& mut) {
+    const auto enter = mut.find("RegSplitParts::mutate_wrapper_enter(");
+    const auto call = mut.find("RegSplitParts::mutate_wrapped_call(");
+    if (enter != std::string::npos && call != std::string::npos) {
+        auto body = brace_block_after(mut, enter);
+        body += "\n";
+        body += brace_block_after(mut, call);
+        if (!body.empty())
+            return body;
+    }
+    const auto lam = mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt");
+    return lam == std::string::npos ? std::string{} : brace_block_after(mut, lam);
+}
+
 static void ac3423_1_acquire_before_fn() {
     std::println("\n--- #3423 AC1: add_mutate acquire textually before fn(a) ---");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     const auto disp = read_file("src/compiler/mutate_dispatch.hh");
     CHECK(disp.find("kAddMutateAcquireBeforeBodyIssue = 3423") != std::string::npos, "AC1 stamp");
     CHECK(mut.find("Issue #3423") != std::string::npos, "AC1 cite");
-    const auto lam = mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt");
-    CHECK(lam != std::string::npos, "AC1 add_mutate lambda");
-    // Window = brace-matched lambda body (drift-proof: the fixed
-    // 14000/20000/28000 windows all broke on benign comment/param inserts).
-    const auto body = brace_block_after(mut, lam);
+    const auto body = wrapper_body(mut);
     CHECK(!body.empty(), "AC1 add_mutate lambda body (brace-matched)");
     const auto ro = body.find("workspace_read_only_");
     const auto acq = body.find("mutate_dispatch_try_acquire");
@@ -660,8 +673,7 @@ static void ac3423_2_production_rebind_and_reject_kind() {
     CHECK(m->naked_mutate_fail_closed_total.load(std::memory_order_relaxed) == naked0,
           "AC2 happy path is not naked-mutate");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
-    const auto lam = mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt");
-    const auto body = brace_block_after(mut, lam);
+    const auto body = wrapper_body(mut);
     CHECK(!body.empty(), "AC2 add_mutate lambda body (brace-matched)");
     const auto rej = body.find("guard-reject");
     const auto fna = body.find("auto result = fn(a)");
