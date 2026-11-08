@@ -16,11 +16,15 @@
 //   #2865 AC4: linter + extend this test per #81967
 #include "test_harness.hpp"
 
+#include <arpa/inet.h>
 #include <cstdlib>
 #include <fstream>
+#include <netinet/in.h>
 #include <print>
 #include <string>
 #include <string_view>
+#include <sys/socket.h>
+#include <unistd.h>
 
 import std;
 import aura.compiler.evaluator;
@@ -226,6 +230,48 @@ static void ac2865_3_no_recursive_wrappers() {
     CHECK(sock.find("Issue #2865") != std::string::npos, "2865 AC3: cites #2865");
 }
 
+// Optional host keeps the one-arg denseness bind on loopback and lets a
+// program name an IPv4 literal, including 0.0.0.0, without a new primitive.
+static void ac_optional_ipv4_host() {
+    std::println("\n--- tcp-listen optional IPv4 host ---");
+    set_lib_path();
+    auto bound = [](std::string_view expr, in_addr_t expect) {
+        CompilerService cs;
+        install_socket_prims(cs);
+        auto r = cs.eval(expr);
+        if (!(r && aura::compiler::types::is_int(*r)))
+            return false;
+        const int fd = static_cast<int>(aura::compiler::types::as_int(*r));
+        sockaddr_in addr{};
+        socklen_t len = sizeof(addr);
+        const bool ok = ::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len) == 0 &&
+                        addr.sin_addr.s_addr == expect;
+        ::close(fd);
+        return ok;
+    };
+    CHECK(bound("(tcp-listen 0)", htonl(INADDR_LOOPBACK)), "one-arg tcp-listen binds 127.0.0.1");
+    CHECK(bound("(tcp-listen 0 \"127.0.0.1\")", htonl(INADDR_LOOPBACK)),
+          "explicit 127.0.0.1 binds loopback");
+    CHECK(bound("(tcp-listen 0 \"0.0.0.0\")", htonl(INADDR_ANY)),
+          "0.0.0.0 binds every IPv4 interface");
+    CompilerService cs;
+    install_socket_prims(cs);
+    CHECK(eval_bool(cs, "(not (integer? (tcp-listen 0 \"not-an-ip\")))"),
+          "a hostname is not an IPv4 literal");
+    CHECK(eval_bool(cs, "(not (integer? (tcp-listen 0 \"127.0.0.1\" 9)))"),
+          "three arguments do not return a listener");
+    CompilerService required;
+    CHECK(eval_bool(required, R"AURA(
+(begin
+  (require "std/socket" all:)
+  (let ((L (tcp-listen 0 "0.0.0.0")))
+    (let ((ok (integer? L)))
+      (when ok (tcp-close L))
+      ok)))
+)AURA"),
+          "require std/socket accepts (tcp-listen port host)");
+}
+
 static void ac2865_4_linter() {
     std::println("\n--- #2865 AC4: linter + no docs/design ---");
     const auto build = read_file("build.py");
@@ -251,6 +297,7 @@ int run_test_tcp_listen_accept() {
     ac2865_2_require_loopback();
     ac2865_3_no_recursive_wrappers();
     ac2865_4_linter();
+    ac_optional_ipv4_host();
     std::println("\n=== #2771+#2865: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
