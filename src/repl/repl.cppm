@@ -2,6 +2,7 @@ module;
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <iostream>
@@ -225,6 +226,13 @@ public:
                 for (auto& s : g_repl_->completion_(buf))
                     linenoiseAddCompletion(lc, s.c_str());
         });
+        // Issue #5038: the grey hint after the line names the word's type or
+        // the primitive's arity. linenoise owns no user data, so route it
+        // through the active instance.
+        linenoiseSetHintsCallback([](const char* buf, int* color, int* bold) -> char* {
+            return g_repl_ ? g_repl_->hint_(buf, color, bold) : nullptr;
+        });
+        linenoiseSetFreeHintsCallback([](void* p) { std::free(p); });
     }
 
     ~Repl() {
@@ -237,6 +245,47 @@ public:
     Repl(Repl&&) = delete;
     Repl& operator=(Repl&&) = delete;
 
+    // Issue #5038: a grey hint for the word being typed at the end of the
+    // buffer: the primitive's arity, else the binding's type. Cached per
+    // word so a keystroke does not re-run the checker for the same text.
+    char* hint_(const char* buf, int* color, int* bold) {
+        if (!buf)
+            return nullptr;
+        const std::string_view line(buf);
+        const std::size_t end = line.size();
+        std::size_t start = end;
+        auto ident = [](char c) {
+            const auto u = static_cast<unsigned char>(c);
+            return std::isalnum(u) != 0 || c == '-' || c == '?' || c == '!' || c == '*' ||
+                   c == '/' || c == '>' || c == '<' || c == '=' || c == '_';
+        };
+        while (start > 0 && ident(line[start - 1]))
+            --start;
+        if (start == end)
+            return nullptr;
+        const std::string word(line.substr(start, end - start));
+        if (const auto hit = hint_cache_.find(word); hit != hint_cache_.end())
+            return hit->second.empty() ? nullptr : ::strdup(hit->second.c_str());
+        std::string hint;
+        const auto& prims = cs_.evaluator().primitives();
+        const auto slot = prims.slot_for_name(word);
+        if (slot < prims.slot_count()) {
+            const auto arity = prims.meta_for_slot(slot).arity;
+            hint = arity == 255 ? "  " + word + "/*" : "  " + word + "/" + std::to_string(arity);
+        } else if (defs_.contains(word)) {
+            // Only names this session defined: a bare unknown word must not
+            // draw a checker guess.
+            if (const auto ty = type_of_(word); ty != "unknown")
+                hint = "  : " + ty;
+        }
+        if (color)
+            *color = 90; // bright black
+        if (bold)
+            *bold = 0;
+        hint_cache_[word] = hint;
+        return hint.empty() ? nullptr : ::strdup(hint.c_str());
+    }
+
     // Issue #5043: the type the checker reports for this phrase, or
     // "unknown" when it cannot give one. No new inference here.
     std::string type_of_(std::string_view code) {
@@ -247,8 +296,10 @@ public:
         const auto nl = tr.output.find('\n');
         const auto end = nl == std::string::npos ? tr.output.size() : nl;
         std::string t = tr.output.substr(tag.size(), end - tag.size());
-        // An unresolved type variable (__tNNN) is not a type the user can use.
-        if (t.empty() || t.find("__t") != std::string::npos)
+        // A lone unresolved type variable (__tNNN) is not a type the user can
+        // use; inside a compound type it is an ordinary polymorphic variable.
+        const bool bare_var = t.starts_with("__t") && t.find_first_of(" ()[]->") == std::string::npos;
+        if (t.empty() || bare_var)
             return "unknown";
         return t;
     }
@@ -339,7 +390,21 @@ public:
                 val = aura::compiler::format_value(
                     *r, cs_.evaluator().primitives().string_heap(), cs_.evaluator().pairs(), 0,
                     &cs_.evaluator().primitives(), cs_.evaluator().keyword_table());
-            std::fprintf(stdout, "%s\n", val.c_str());
+            // Issue #5038: the TTY prints the checker's type with the value,
+            // in the OCaml shape: "- : Int = 3".
+            const auto names = repl_defined_names(line);
+            if (!names.empty() &&
+                !(aura::compiler::types::is_error(*r) &&
+                  !aura::compiler::types::is_string(*r))) {
+                // A define answers with its name, not the bound cell value.
+                const std::string ty = type_of_(names.front());
+                if (ty == "unknown")
+                    std::fprintf(stdout, "\n");
+                else
+                    std::fprintf(stdout, "- : %s = %s\n", ty.c_str(), names.front().c_str());
+            } else {
+                std::fprintf(stdout, "- : %s = %s\n", type_of_(line).c_str(), val.c_str());
+            }
             std::fflush(stdout);
         } else {
             // Void result (e.g. `define`, `set!`): still emit an empty line
@@ -984,6 +1049,20 @@ private:
                              failed.empty() ? "" : " (some failed)");
                 events_.push_back("restore " + arg + " [" + (list.empty() ? "-" : list) + "]");
             }
+        } else if (cmd == ":type") {
+            // Issue #5038: ask the checker only; the argument is never run.
+            if (arg.empty()) {
+                std::fprintf(stdout, ":type: usage: :type EXPR\n");
+            } else {
+                const auto& prims = cs_.evaluator().primitives();
+                const auto slot = prims.slot_for_name(arg);
+                if (slot < prims.slot_count()) {
+                    const auto arity = prims.meta_for_slot(slot).arity;
+                    std::printf("- : %s/%s\n", arg.c_str(), arity == 255 ? "*" : std::to_string(arity).c_str());
+                } else {
+                    std::fprintf(stdout, "- : %s\n", type_of_(arg).c_str());
+                }
+            }
         } else {
             std::fprintf(stdout,
                          "REPL commands:\n"
@@ -992,7 +1071,8 @@ private:
                          "  :ws             list live definitions and where they came from\n"
                          "  :worldline      mutation-log summary + snapshots (:history)\n"
                          "  :snapshot [LBL] remember every tracked define\n"
-                         "  :restore ID     put changed defines back as of snapshot ID\n");
+                         "  :restore ID     put changed defines back as of snapshot ID\n"
+                         "  :type EXPR      print EXPR's type without running it\n");
         }
         // Pipe drivers read one response line per input line.
         std::fflush(stdout);
@@ -1019,6 +1099,7 @@ private:
     CompletionCallback completion_;
     std::string history_path_;
     bool pipe_mode_ = false; // Issue #5043: pipe answers with a record
+    std::unordered_map<std::string, std::string> hint_cache_; // Issue #5038
     static inline Repl* g_repl_ = nullptr;
 };
 
