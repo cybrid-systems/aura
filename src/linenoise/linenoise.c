@@ -501,8 +501,11 @@ enum KEY_ACTION{
 	CTRL_T = 20,        /* Ctrl-t */
 	CTRL_U = 21,        /* Ctrl+u */
 	CTRL_W = 23,        /* Ctrl+w */
+	CTRL_X = 24,        /* Ctrl+x (prefix for C-x C-u) */
+	CTRL_Y = 25,        /* Ctrl+y */
 	ESC = 27,           /* Escape */
-	BACKSPACE =  127    /* Backspace */
+	BACKSPACE =  127,   /* Backspace */
+	CTRL_UNDO = 31      /* Ctrl+_ */
 };
 
 static void linenoiseAtExit(void);
@@ -511,6 +514,42 @@ int linenoiseHistoryAdd(const char *line);
 #define REFRESH_WRITE (1<<1)    // Rewrite the prompt on the screen.
 #define REFRESH_ALL (REFRESH_CLEAN|REFRESH_WRITE) // Do both.
 static void refreshLine(struct linenoiseState *l);
+
+/* Issue #5041: readline's emacs-mode editing state. The buffer arithmetic for
+ * word motion, the kill ring, transposition and undo lives in
+ * linenoise_core.h so it can be tested key by key; this file keeps only the
+ * rendering. The kill ring survives lines.
+ */
+#include "linenoise_core.h"
+
+static struct ln_core ln_core_state;
+static int ln_core_ready = 0;
+static int ln_core_pending_cx = 0;
+
+static void ln_core_load(struct linenoiseState *l) {
+    if (!ln_core_ready) {
+        ln_core_init(&ln_core_state);
+        ln_core_ready = 1;
+    }
+    ln_core_set(&ln_core_state, l->buf);
+    ln_core_state.pos = l->pos;
+}
+
+static void ln_core_store(struct linenoiseState *l) {
+    memcpy(l->buf, ln_core_state.buf, ln_core_state.len + 1);
+    l->len = ln_core_state.len;
+    l->pos = ln_core_state.pos;
+    linenoiseFoldClear(l);
+    refreshLine(l);
+}
+
+static void ln_core_word_move(struct linenoiseState *l, int forward) {
+    ln_core_load(l);
+    ln_core_state.pos = forward ? ln_core_word_right(&ln_core_state, ln_core_state.pos)
+                                : ln_core_word_left(&ln_core_state, ln_core_state.pos);
+    ln_core_store(l);
+}
+
 
 /* Debugging macro. */
 #if 0
@@ -1898,6 +1937,8 @@ char *linenoiseEditFeed(struct linenoiseState *l) {
         c = retval;
     }
 
+    const int was_cx = ln_core_pending_cx;
+    ln_core_pending_cx = 0;
     switch(c) {
     case ENTER:    /* enter */
         history_len--;
@@ -1967,6 +2008,36 @@ char *linenoiseEditFeed(struct linenoiseState *l) {
          * Use two calls to handle slow terminals returning the two
          * chars at different times. */
         if (read(l->ifd,seq,1) == -1) break;
+
+        /* Issue #5041: a Meta key is ESC plus one byte. Do not read the
+         * second byte here: it is the key's own, and reading it ahead would
+         * swallow the next keystroke. */
+        const int meta = (unsigned char)seq[0];
+        if (meta != '[' && meta != 'O') {
+            if (meta == 'b') {
+                ln_core_word_move(l, 0);
+            } else if (meta == 'f') {
+                ln_core_word_move(l, 1);
+            } else if (meta == 'd') {
+                ln_core_load(l);
+                ln_core_kill_word_forward(&ln_core_state);
+                ln_core_store(l);
+            } else if (meta == 127 || meta == 8) {
+                ln_core_load(l);
+                ln_core_kill_word_back(&ln_core_state);
+                ln_core_store(l);
+            } else if (meta == 'y') {
+                ln_core_load(l);
+                ln_core_yank_prev(&ln_core_state);
+                ln_core_store(l);
+            } else if (meta == 't') {
+                ln_core_load(l);
+                ln_core_transpose_words(&ln_core_state);
+                ln_core_store(l);
+            }
+            break;
+        }
+
         if (read(l->ifd,seq+1,1) == -1) break;
 
         /* ESC [ sequences. */
@@ -1980,7 +2051,7 @@ char *linenoiseEditFeed(struct linenoiseState *l) {
                 while (plen < sizeof(param)) {
                     char p;
                     if (read(l->ifd,&p,1) != 1) break;
-                    if (p >= '0' && p <= '9') {
+                    if ((p >= '0' && p <= '9') || p == ';') {
                         param[plen++] = p;
                     } else {
                         final = p;
@@ -1993,6 +2064,12 @@ char *linenoiseEditFeed(struct linenoiseState *l) {
                     } else if (plen == 3 && memcmp(param,"200",3) == 0) {
                         linenoiseEditPaste(l);
                     }
+                } else if (plen == 3 && memcmp(param, "1;5", 3) == 0) {
+                    /* Issue #5041: C-Left / C-Right move by word. */
+                    if (final == 'D')
+                        ln_core_word_move(l, 0);
+                    else if (final == 'C')
+                        ln_core_word_move(l, 1);
                 }
             } else {
                 switch(seq[1]) {
@@ -2048,17 +2125,19 @@ char *linenoiseEditFeed(struct linenoiseState *l) {
             if (linenoiseEditInsert(l, utf8, utf8len)) return NULL;
         }
         break;
-    case CTRL_U: /* Ctrl+u, delete the whole line. */
-        l->buf[0] = '\0';
-        l->pos = l->len = 0;
-        linenoiseFoldClear(l);
-        refreshLine(l);
+    case CTRL_U: /* Issue #5041: Ctrl+u kills to the line start (readline
+                  * emacs mode); C-x C-u undoes the last edit. */
+        ln_core_load(l);
+        if (was_cx)
+            ln_core_restore_undo(&ln_core_state);
+        else
+            ln_core_kill_to_start(&ln_core_state);
+        ln_core_store(l);
         break;
-    case CTRL_K: /* Ctrl+k, delete from current to end of line. */
-        linenoiseAdjustFoldsAfterDelete(l,l->pos,l->len-l->pos);
-        l->buf[l->pos] = '\0';
-        l->len = l->pos;
-        refreshLine(l);
+    case CTRL_K: /* Issue #5041: Ctrl+k kills to the end into the kill ring. */
+        ln_core_load(l);
+        ln_core_kill_to_end(&ln_core_state);
+        ln_core_store(l);
         break;
     case CTRL_A: /* Ctrl+a, go to the start of the line */
         linenoiseEditMoveHome(l);
@@ -2070,8 +2149,23 @@ char *linenoiseEditFeed(struct linenoiseState *l) {
         linenoiseClearScreen();
         refreshLine(l);
         break;
-    case CTRL_W: /* ctrl+w, delete previous word */
-        linenoiseEditDeletePrevWord(l);
+    case CTRL_W: /* Issue #5041: ctrl+w kills the previous word into the ring */
+        ln_core_load(l);
+        ln_core_kill_word_back(&ln_core_state);
+        ln_core_store(l);
+        break;
+    case CTRL_X: /* ctrl+x, prefix for C-x C-u */
+        ln_core_pending_cx = 1;
+        break;
+    case CTRL_Y: /* ctrl+y, yank the newest kill */
+        ln_core_load(l);
+        ln_core_yank(&ln_core_state);
+        ln_core_store(l);
+        break;
+    case 31: /* ctrl+_, undo the last edit of this line */
+        ln_core_load(l);
+        ln_core_restore_undo(&ln_core_state);
+        ln_core_store(l);
         break;
     }
     return linenoiseEditMore;
