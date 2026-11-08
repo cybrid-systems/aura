@@ -258,6 +258,38 @@ public:
     Repl(Repl&&) = delete;
     Repl& operator=(Repl&&) = delete;
 
+    // Issue #5045: one value carrying what the next round needs.
+    std::string context_line_() {
+        const auto name = focus_ ? focus_ : last_src_name_;
+        std::string src;
+        if (name) {
+            src = live_source_of_(*name);
+            if (src.empty() && defs_.contains(*name))
+                src = defs_.at(*name).src;
+        }
+        std::string out = "(hash \"name\" ";
+        out += name ? quote_name_(*name) : "#f";
+        out += " \"source\" ";
+        out += src.empty() ? "#f" : ("\"" + repl_record_escape(src) + "\"");
+        out += " \"error\" ";
+        out += last_error_.empty() ? "#f" : ("\"" + repl_record_escape(last_error_) + "\"");
+        out += " \"worldline\" (list";
+        std::vector<std::array<std::string, 3>> steps;
+        for (const auto& d : decisions_)
+            if (!name || d[0] == *name)
+                steps.push_back(d);
+        const std::size_t first = steps.size() > 5 ? steps.size() - 5 : 0;
+        for (std::size_t i = first; i < steps.size(); ++i) {
+            out += " (hash \"decision\" \"";
+            out += repl_record_escape(steps[i][2]);
+            out += "\" \"source\" \"";
+            out += repl_record_escape(steps[i][1]);
+            out += "\")";
+        }
+        out += "))";
+        return out;
+    }
+
     // Issue #5047: walk the focus name's worldline one step back or forward.
     void undo_redo_(const std::string& arg, int dir) {
         const auto name = arg.empty() ? focus_name_() : std::optional<std::string>(arg);
@@ -296,6 +328,8 @@ public:
         focus_ = *name;
         focus_steps_[*name] += 1;
         const char* decision = dir < 0 ? "undo" : "redo";
+        last_src_name_ = *name;
+        decisions_.push_back({*name, after, decision});
         if (pipe_mode_) {
             std::string rec = "(hash \"status\" \"ok\" \"value\" \"\" \"type\" \"void\" \"wrote\" () \"focus\" ";
             rec += quote_name_(*name);
@@ -494,8 +528,10 @@ public:
         }
         const std::string after = ok ? live_source_of_(name) : before;
         focus_ = name;
+        last_src_name_ = name;
         worldline_push_(name, before, after);
         focus_steps_[name] += 1;
+        decisions_.push_back({name, after, ok ? "KEEP" : "ROLLBACK"});
         if (pipe_mode_) {
             std::string rec = "(hash \"status\" \"ok\" \"value\" \"\" \"type\" \"void\" \"wrote\" (";
             rec += quote_name_(name);
@@ -880,6 +916,11 @@ public:
     void eval_and_print_(const std::string& line) {
         note_requires_(line);
         auto r = cs_.eval(line);
+        // Issue #5045: the last round's message, for :context.
+        if (r)
+            last_error_.clear();
+        else
+            last_error_ = r.error().message;
         // Issue #5043: the pipe face answers one evaluation with exactly one
         // record on stdout and nothing on stderr. A TTY keeps the human line
         // and adds the record only under AURA_REPL_RECORD.
@@ -1590,6 +1631,9 @@ private:
                              failed.empty() ? "" : " (some failed)");
                 events_.push_back("restore " + arg + " [" + (list.empty() ? "-" : list) + "]");
             }
+        } else if (cmd == ":context") {
+            std::fprintf(stdout, "%s\n", context_line_().c_str());
+            std::fflush(stdout);
         } else if (cmd == ":undo") {
             undo_redo_(arg, -1);
         } else if (cmd == ":redo") {
@@ -1601,6 +1645,7 @@ private:
             if (!name) {
                 std::fprintf(stdout, "no-focus\n");
             } else {
+                last_src_name_ = *name;
                 const auto src = live_source_of_(*name);
                 std::fprintf(stdout, "%s\n", src.empty() ? "no-workspace" : src.c_str());
             }
@@ -1711,6 +1756,9 @@ private:
     std::map<std::string, std::vector<std::string>> worldline_;
     std::map<std::string, std::size_t> wl_pos_;
     std::map<std::string, int> focus_steps_; // Issue #5048: steps shown in the prompt
+    std::string last_error_;                               // Issue #5045
+    std::vector<std::array<std::string, 3>> decisions_; // {name, source, decision}
+    std::optional<std::string> last_src_name_;             // Issue #5045
     std::string gate_;                            // Issue #5042
     long fuel_ = 100000;                          // Issue #5042
     std::unordered_map<std::string, std::string> hint_cache_; // Issue #5038
