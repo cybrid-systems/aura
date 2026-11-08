@@ -256,4 +256,17 @@ static void ln_core_transpose_words(ln_core* e) {
     e->buf[e->len] = 0;
 }
 
+/* Issue #5037: the newest history entry at or before `from` that contains
+ * `query`. Returns -1 when nothing matches; an empty query matches nothing. */
+static int ln_core_search_prev(char* const* history, int count, int from, const char* query) {
+    if (!history || !query || *query == 0)
+        return -1;
+    if (from >= count)
+        from = count - 1;
+    for (int i = from; i >= 0; --i)
+        if (history[i] && strstr(history[i], query))
+            return i;
+    return -1;
+}
+
 #endif

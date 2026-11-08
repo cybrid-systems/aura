@@ -90,6 +90,20 @@ static void test_transpose_words() {
     expect(e, "two one", 3, "M-t inside the gap swaps the same pair");
 }
 
+static void test_history_search() {
+    char* h[] = {(char*)"alpha", (char*)"beta", (char*)"car list", (char*)"gamma"};
+    check(ln_core_search_prev(h, 4, 3, "car") == 2, "search finds the newest match",
+          std::to_string(ln_core_search_prev(h, 4, 3, "car")).c_str(), "2");
+    check(ln_core_search_prev(h, 4, 3, "zzz") == -1, "search misses",
+          std::to_string(ln_core_search_prev(h, 4, 3, "zzz")).c_str(), "-1");
+    check(ln_core_search_prev(h, 4, 3, "") == -1, "empty query matches nothing",
+          std::to_string(ln_core_search_prev(h, 4, 3, "")).c_str(), "-1");
+    check(ln_core_search_prev(h, 4, 1, "car") == -1, "search only walks older entries",
+          std::to_string(ln_core_search_prev(h, 4, 1, "car")).c_str(), "-1");
+    check(ln_core_search_prev(h, 4, 3, "alpha") == 0, "search reaches the oldest entry",
+          std::to_string(ln_core_search_prev(h, 4, 3, "alpha")).c_str(), "0");
+}
+
 static void test_undo() {
     ln_core e;
     ln_core_init(&e);
@@ -123,6 +137,7 @@ int main() {
     test_kill_and_yank();
     test_kill_ring_walk();
     test_transpose_words();
+    test_history_search();
     test_undo();
     test_delete_and_insert_middle();
     if (failures) {
