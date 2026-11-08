@@ -1,0 +1,41 @@
+{
+  "issue": 5056,
+  "title": "Issue #5056: soft REPL reports no false type warnings for (if (and …)) / (format …) into mutate:rebind, and each diagnostic prints once.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "Issue #5056: an if condition is a truthiness position",
+        "Issue #5056: truthiness position"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "register_primitive(\"format\", {String, Dyn}, String, true)",
+        "Issue #5056: (mutate:rebind name code [summary]",
+        "optional_max = 4;"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "printed_type_warnings",
+        "Issue #5056"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/python/test_issue_5056.py",
+      "contains": [
+        "test_if_and_or_conditions_are_quiet",
+        "test_format_into_rebind_is_quiet",
+        "test_a_real_mismatch_prints_once",
+        "test_runtime_truthiness_unchanged"
+      ]
+    }
+  ]
+}

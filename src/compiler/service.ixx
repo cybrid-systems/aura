@@ -14464,9 +14464,16 @@ public:
             tc_pass.check_before_lowering(flat, pool, expanded_root, type_registry_, diags,
                                           aura::core::current_mutation_epoch(), &metrics_);
             bool has_type_error = false;
+            // Issue #5056: check_before_lowering runs infer_flat and then the
+            // pure check over the same tree, both reporting into this
+            // collector — so one diagnostic is collected twice. Print each
+            // distinct message once (the collector itself keeps both).
+            std::unordered_set<std::string> printed_type_warnings;
             for (auto& d : diags.diagnostics()) {
                 if (d.kind == aura::diag::ErrorKind::TypeError) {
-                    std::println(std::cerr, "type warning ({}): {}", name_str, d.format());
+                    auto text = d.format();
+                    if (printed_type_warnings.insert(text).second)
+                        std::println(std::cerr, "type warning ({}): {}", name_str, text);
                     has_type_error = true;
                 }
             }
