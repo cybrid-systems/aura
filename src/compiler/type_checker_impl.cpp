@@ -6477,6 +6477,17 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                 if (p_top == reg_.dynamic_type() && !reg_.is_var(a_top) &&
                     reg_.linear_of(a_top) == nullptr)
                     arg_exp_unify = true;
+                else if (a_top == reg_.dynamic_type() && !reg_.is_var(p_top) &&
+                         p_top != reg_.dynamic_type() && reg_.linear_of(p_top) == nullptr)
+                    // Issue #5056 follow-up: a Dynamic VALUE passed to a
+                    // statically-typed parameter is a gradual boundary, not a
+                    // type error. Accept it and let the deferred CoercionNode
+                    // below add the runtime check — the hard face still
+                    // fail-closes on annotations and call returns (#3622 /
+                    // #4009); only the argument position is a checked
+                    // boundary. Linear targets stay rejected (#117): the
+                    // ownership invariant may not cross Any.
+                    arg_exp_unify = true;
                 else
                     arg_exp_unify = cs_.consistent_unify(arg_type, ft.args[i]);
             }

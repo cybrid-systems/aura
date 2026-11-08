@@ -33,8 +33,17 @@
       "contains": [
         "test_if_and_or_conditions_are_quiet",
         "test_format_into_rebind_is_quiet",
+        "test_dynamic_argument_is_a_checked_boundary",
         "test_a_real_mismatch_prints_once",
         "test_runtime_truthiness_unchanged"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "Issue #5056 follow-up: a Dynamic VALUE passed to a",
+        "arg_exp_unify = true;"
       ]
     }
   ]
