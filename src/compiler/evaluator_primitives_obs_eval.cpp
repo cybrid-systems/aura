@@ -1487,9 +1487,15 @@ void ObservabilityPrims::register_eval_p10(PrimRegistrar add, Evaluator& ev) {
         });
 }
 
-// Issue #909 part 11 (orig lines 2222-2348)
-void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
+// --- Issue #5031: register_eval_p11 phases ---------------------------------
+// The p11 registration body outgrew the 300-line ceiling (three arena
+// compaction payloads). Each phase below is one registration responsibility
+// family; register_eval_p11 keeps the ordered delegation so registration
+// order, primitive names, lambda capture lifetimes and every stats payload
+// key stay identical.
 
+// Issue #5031: (query:arena-auto-compaction-stats) registration phase.
+void register_eval_p11_arena_auto_compaction(Evaluator& ev, auto& string_heap) {
     // Issue #642: query:arena-auto-compaction-stats —
     // Agent-discoverable structured dashboard for the Arena
     // Auto-Compaction + Fiber/GC Safepoint Coordination
@@ -1559,7 +1565,7 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
     // path + needs the 10k+ mutate + 20+ fibers + TSan/ASan
     // coverage from the issue body — separate follow-ups.
     ObservabilityPrims::register_stats_impl(
-        "query:arena-auto-compaction-stats", [&ev](const auto&) -> EvalValue {
+        "query:arena-auto-compaction-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             // auto-trigger: new foundation atomic
             // (0 until AC1 allocate_raw auto-trigger wire-up).
             const std::uint64_t auto_trigger =
@@ -1599,7 +1605,7 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -1613,9 +1619,12 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("live-move-yield", static_cast<std::int64_t>(live_move_yield));
             insert_kv("guard-defrag", static_cast<std::int64_t>(guard_defrag));
             insert_kv("schema", 642);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: (arena:live-compact) registration phase.
+void register_eval_p11_live_compact(Evaluator& ev, auto& string_heap) {
     // Issue #2004: explicit live_compact primitive — invokes Evaluator::live_compact
     // (delegates to arena_group_->live_compact, which iterates every managed
     // arena). Returns a hash with bytes_reclaimed / slots_recycled / new_gen /
@@ -1630,7 +1639,7 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
     // (mirror #3677/#3742/#3809). This primitive stays a thin obs face — no
     // duplicate restamp / no Moving window publish from Soft.
     ObservabilityPrims::register_stats_impl(
-        "arena:live-compact", [&ev](const auto& args) -> EvalValue {
+        "arena:live-compact", [&ev, &string_heap](const auto& args) -> EvalValue {
             aura::ast::LiveCompactMode mode = aura::ast::LiveCompactMode::Soft;
             if (!args.empty()) {
                 const std::int64_t m = as_int(args[0]);
@@ -1660,7 +1669,7 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -1712,44 +1721,325 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             // Issue #2856: moving-unified hard-fail counters (moving_unified_fail)
             // are exposed via the obs_jit engine:metrics surface — see
             // evaluator_primitives_obs_jit.cpp g_moving_unified_fail_total.
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: (query:arena-live-compact-stats) compact/pin payload phases.
+// The payload is one ordered insert stream; field names match the original
+// locals, so every key line below stays verbatim and the phases replay in the
+// original order.
+struct ArenaLiveCompactStats {
+    Evaluator& ev;
+    std::uint64_t soft_count = 0, force_count = 0, reclaimed = 0, hits = 0, restamps = 0,
+                  invalidated = 0, moving_count = 0, objects_moved = 0, moving_blocked = 0,
+                  remapped_pins = 0, pin_contract_fail = 0, root_remap_sr = 0,
+                  root_remap_sr_fail = 0, root_remap_cc = 0, root_remap_cc_fail = 0;
+    void collect();
+    template <typename Insert> void emit_compact_core_fields(Insert& insert_kv) const;
+    template <typename Insert> void emit_root_remap_fields(Insert& insert_kv) const;
+    template <typename Insert> void emit_general_object_pin_fields(Insert& insert_kv) const;
+    template <typename Insert>
+    void emit_general_object_pin_enforcement_fields(Insert& insert_kv) const;
+};
+
+void ArenaLiveCompactStats::collect() {
+    if (ev.compiler_metrics()) {
+        auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+        soft_count = m->arena_live_compact_soft_count.load(std::memory_order_relaxed);
+        force_count = m->arena_live_compact_force_count.load(std::memory_order_relaxed);
+        reclaimed = m->arena_live_compact_reclaimed_bytes_total.load(std::memory_order_relaxed);
+        hits = m->arena_live_compact_freelist_hits_total.load(std::memory_order_relaxed);
+        restamps = m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
+        invalidated = m->arena_live_compact_invalidated_pins_total.load(std::memory_order_relaxed);
+        moving_count = m->arena_live_compact_moving_count.load(std::memory_order_relaxed);
+        objects_moved = m->arena_objects_moved_total.load(std::memory_order_relaxed);
+        moving_blocked = m->arena_moving_blocked_precondition_total.load(std::memory_order_relaxed);
+        remapped_pins = m->arena_live_compact_remapped_pins_total.load(std::memory_order_relaxed);
+        pin_contract_fail =
+            m->moving_compact_pin_contract_fail_total.load(std::memory_order_relaxed);
+        root_remap_sr = m->root_remap_stable_ref_total.load(std::memory_order_relaxed);
+        root_remap_sr_fail = m->root_remap_stable_ref_fail_total.load(std::memory_order_relaxed);
+        root_remap_cc = m->root_remap_closure_capture_total.load(std::memory_order_relaxed);
+        root_remap_cc_fail =
+            m->root_remap_closure_capture_fail_total.load(std::memory_order_relaxed);
+    }
+}
+
+template <typename Insert>
+void ArenaLiveCompactStats::emit_compact_core_fields(Insert& insert_kv) const {
+    insert_kv("soft-count", static_cast<std::int64_t>(soft_count));
+    insert_kv("force-count", static_cast<std::int64_t>(force_count));
+    insert_kv("reclaimed-bytes-total", static_cast<std::int64_t>(reclaimed));
+    insert_kv("freelist-hits-total", static_cast<std::int64_t>(hits));
+    insert_kv("gen-restamps-total", static_cast<std::int64_t>(restamps));
+    insert_kv("invalidated-pins-total", static_cast<std::int64_t>(invalidated));
+    // Issue #2265 Phase 3: # LifetimePins whose ptr_ was remapped to a
+    // new address under Moving densify (preserved + gen-bumped vs invalidated).
+    insert_kv("remapped-pins-total", static_cast<std::int64_t>(remapped_pins));
+    // Issue #2266: # Moving compact runs where the pin-or-remap contract
+    // failed (a live pin still pointed at an old densified address after
+    // the remap walk). Surfaced for Agent dashboards to flag false-safety
+    // regressions under sustained AI multi-round self-mod + Moving.
+    insert_kv("moving-compact-pin-contract-fail-total",
+              static_cast<std::int64_t>(pin_contract_fail));
+    insert_kv("schema", 2166);
+    // Issue #2157: Force hard-mutex blocked counters (process-wide).
+    insert_kv("force-blocked-by-pin-total",
+              static_cast<std::int64_t>(
+                  aura::ast::g_force_compact_blocked_by_pin_total.load(std::memory_order_relaxed)));
+    insert_kv(
+        "force-blocked-by-envframe-guard-total",
+        static_cast<std::int64_t>(aura::ast::g_force_compact_blocked_by_envframe_guard_total.load(
+            std::memory_order_relaxed)));
+    insert_kv("schema-2157", aura::ast::kForceCompactHardMutexIssue);
+    insert_kv("issue-2157", aura::ast::kForceCompactHardMutexIssue);
+    insert_kv("force-hard-mutex-wired", 1);
+    // Issue #2166: Moving densify counters (prefer process-wide totals).
+    insert_kv("live-compact-moving-count",
+              static_cast<std::int64_t>(
+                  aura::ast::g_live_compact_moving_count.load(std::memory_order_relaxed) > 0
+                      ? aura::ast::g_live_compact_moving_count.load(std::memory_order_relaxed)
+                      : moving_count));
+    insert_kv("objects-moved-total",
+              static_cast<std::int64_t>(
+                  aura::ast::g_objects_moved_total.load(std::memory_order_relaxed) > 0
+                      ? aura::ast::g_objects_moved_total.load(std::memory_order_relaxed)
+                      : objects_moved));
+    insert_kv(
+        "moving-blocked-precondition-total",
+        static_cast<std::int64_t>(
+            aura::ast::g_moving_blocked_precondition_total.load(std::memory_order_relaxed) > 0
+                ? aura::ast::g_moving_blocked_precondition_total.load(std::memory_order_relaxed)
+                : moving_blocked));
+    insert_kv("moving-compact-enabled", aura::ast::moving_compact_enabled());
+    // Issue #2905 AC2: sticky densify-off visibility on arena-live-compact
+    // surface (aliases match moving-densify-health schema-2905).
+    {
+        const auto sticky_on = aura::ast::moving_incomplete_remap_sticky_densify_off() ? 1 : 0;
+        const auto sticky_tot = static_cast<std::int64_t>(
+            aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.load(
+                std::memory_order_relaxed));
+        insert_kv("sticky-densify-off", sticky_on);
+        insert_kv("sticky-densify-off-total", sticky_tot);
+        insert_kv("moving-sticky-densify-off", sticky_on);
+        insert_kv("moving-sticky-densify-off-total", sticky_tot);
+        insert_kv("schema-2905", 2905);
+        insert_kv("issue-2905", 2905);
+    }
+    insert_kv("schema-2166", aura::ast::kMovingCompactIssue);
+    insert_kv("issue-2166", aura::ast::kMovingCompactIssue);
+    insert_kv("moving-compact-wired", 1);
+}
+
+template <typename Insert>
+void ArenaLiveCompactStats::emit_root_remap_fields(Insert& insert_kv) const {
+    // Issue #2267: RootRemapPass per-arena counters (mirrors the
+    // process-level g_root_remap_* atomics for query visibility).
+    insert_kv("root-remap-stable-ref-total", static_cast<std::int64_t>(root_remap_sr));
+    insert_kv("root-remap-stable-ref-fail-total", static_cast<std::int64_t>(root_remap_sr_fail));
+    insert_kv("root-remap-closure-capture-total", static_cast<std::int64_t>(root_remap_cc));
+    insert_kv("root-remap-closure-capture-fail-total",
+              static_cast<std::int64_t>(root_remap_cc_fail));
+    // Issue #2339: RootRemapPass auto-register / auto-unregister
+    // counters (#2294 lineage). Bumped per-call-site that uses
+    // auto_register_root_remap_*_slot instead of manual
+    // register_root_remap_*_slot. Keeps schema-2294 keys.
+    insert_kv("root-remap-auto-register-total",
+              static_cast<std::int64_t>(aura::compiler::root_remap_auto_register_total()));
+    insert_kv("root_remap_auto_register_total",
+              static_cast<std::int64_t>(aura::compiler::root_remap_auto_register_total()));
+    insert_kv(
+        "root-remap-auto-register-unregister-total",
+        static_cast<std::int64_t>(aura::compiler::root_remap_auto_register_unregister_total()));
+    insert_kv("root-remap-auto-register-wired", 1);
+    insert_kv("schema-2339", 2339);
+    insert_kv("issue-2339", 2339);
+    // Issue #2265 Phase 3: LifetimePin::remap() + remap_pins_pointing_to()
+    // wire-up at densify site. Schema additive — no break.
+    insert_kv("schema-2265", 2265);
+    insert_kv("issue-2265", 2265);
+    insert_kv("lifetime-pin-remap-wired", 1);
+}
+
+template <typename Insert>
+void ArenaLiveCompactStats::emit_general_object_pin_fields(Insert& insert_kv) const {
+    // Issue #2298: non-render general object pin-or-remap protocol.
+    {
+        using aura::core::lifetime::g_lifetime_pin_stats;
+        insert_kv("general-object-pin-total",
+                  static_cast<std::int64_t>(g_lifetime_pin_stats.general_object_pin_total));
+        insert_kv(
+            "general-object-pin-validate-fail-total",
+            static_cast<std::int64_t>(g_lifetime_pin_stats.general_object_pin_validate_fail_total));
+        insert_kv(
+            "general-object-pin-remap-ok-total",
+            static_cast<std::int64_t>(g_lifetime_pin_stats.general_object_pin_remap_ok_total));
+        insert_kv("general-object-pin-wired", 1);
+        insert_kv("schema-2298", 2298);
+        insert_kv("issue-2298", 2298);
+    }
+    // Issue #2337 / #2363: GeneralObjectPin adoption in mutate/agent/
+    // scratch create paths. Wire-up counter is per-call-site that
+    // wraps GeneralObjectPin(s) around intermediate create buffers
+    // (wire_general_object_create_pair). #2363 completes the
+    // inventory (kGeneralObjectPinAdoptSiteCount sites).
+    {
+        using aura::core::lifetime::g_lifetime_pin_stats;
+        using aura::core::lifetime::kGeneralObjectPinAdoptSiteCount;
+        insert_kv(
+            "general-object-pin-mutate-wire-total",
+            static_cast<std::int64_t>(g_lifetime_pin_stats.general_object_pin_mutate_wire_total));
+        insert_kv(
+            "general_object_pin_mutate_wire_total",
+            static_cast<std::int64_t>(g_lifetime_pin_stats.general_object_pin_mutate_wire_total));
+        insert_kv("general-object-pin-mutate-wired", 1);
+        insert_kv("schema-2337", 2337);
+        insert_kv("issue-2337", 2337);
+        // Issue #2363: complete adopt inventory + schema.
+        insert_kv("general-object-pin-adopt-site-count",
+                  static_cast<std::int64_t>(kGeneralObjectPinAdoptSiteCount));
+        insert_kv("general_object_pin_adopt_site_count",
+                  static_cast<std::int64_t>(kGeneralObjectPinAdoptSiteCount));
+        insert_kv("general-object-pin-adopt-complete-wired", 1);
+        insert_kv("schema-2363", 2363);
+        insert_kv("issue-2363", 2363);
+    }
+}
+
+template <typename Insert>
+void ArenaLiveCompactStats::emit_general_object_pin_enforcement_fields(Insert& insert_kv) const {
+    // Issue #2665: production-default required-mode fail-closed
+    // counter (Agent-visible). Bumped when
+    // g_general_object_pin_required_pref > 0 (production-default
+    // locked via #2597 step 15 — env unset under production) AND
+    // wire_general_object_create_pair fails to pin either side.
+    // Soft / dev_off / unset (pref <= 0) stays observe-only.
+    // Additive schema — no break.
+    {
+        using aura::core::lifetime::g_general_object_pin_required_enforced_total;
+        using aura::core::lifetime::g_general_object_pin_required_pref;
+        insert_kv("general-object-pin-required-enforced-total",
+                  static_cast<std::int64_t>(g_general_object_pin_required_enforced_total.load(
+                      std::memory_order_relaxed)));
+        insert_kv("general_object_pin_required_enforced_total",
+                  static_cast<std::int64_t>(g_general_object_pin_required_enforced_total.load(
+                      std::memory_order_relaxed)));
+        insert_kv("general-object-pin-required-wired",
+                  g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0 ? 1 : 0);
+        insert_kv("schema-2665", 2665);
+        insert_kv("issue-2665", 2665);
+        // Issue #2840: densify fail-closed on required pin breach.
+        using aura::core::lifetime::g_general_object_pin_required_breach_densify_fail_total;
+        using aura::core::lifetime::general_object_pin_required_breach_active;
+        insert_kv("general-object-pin-required-breach",
+                  general_object_pin_required_breach_active() ? 1 : 0);
+        insert_kv(
+            "general-object-pin-required-breach-densify-fail-total",
+            static_cast<std::int64_t>(g_general_object_pin_required_breach_densify_fail_total.load(
+                std::memory_order_relaxed)));
+        insert_kv("general-object-pin-required-prod-default-wired", 1);
+        insert_kv("schema-2840", 2840);
+        insert_kv("issue-2840", 2840);
+    }
+    // Issue #2709: GeneralObjectPin mandatory coverage beyond
+    // inventory-of-7. Closes the partial-adoption gap by replacing
+    // the static kGeneralObjectPinAdoptSiteCount = 7 with a dynamic
+    // count (auto_wire + exempt). New create paths that call
+    // wire_general_object_create_pair_or_exempt(..., nullptr) bump
+    // auto_wire; with non-null exempt_reason bump exempt (skip wire).
+    // Existing #2496 / #2597 / #2665 keys preserved (regression).
+    // Soft / dev_off / unset (pref <= 0) stays zero-cost — only
+    // counter reads, no atomic ops on the quiet path.
+    {
+        using aura::core::lifetime::general_object_pin_adopt_site_count_v_read;
+        using aura::core::lifetime::general_object_pin_auto_wire_total_v_read;
+        using aura::core::lifetime::general_object_pin_exempt_total_v_read;
+        insert_kv("general-object-pin-auto-wire-total",
+                  static_cast<std::int64_t>(general_object_pin_auto_wire_total_v_read()));
+        insert_kv("general_object_pin_auto_wire_total",
+                  static_cast<std::int64_t>(general_object_pin_auto_wire_total_v_read()));
+        insert_kv("general-object-pin-exempt-total",
+                  static_cast<std::int64_t>(general_object_pin_exempt_total_v_read()));
+        insert_kv("general_object_pin_exempt_total",
+                  static_cast<std::int64_t>(general_object_pin_exempt_total_v_read()));
+        insert_kv("general-object-pin-adopt-site-count",
+                  static_cast<std::int64_t>(general_object_pin_adopt_site_count_v_read()));
+        insert_kv("general_object_pin_adopt_site_count",
+                  static_cast<std::int64_t>(general_object_pin_adopt_site_count_v_read()));
+        insert_kv("schema-2709", 2709);
+        insert_kv("issue-2709", 2709);
+        // Issue #2971: production-required create auto-wire +
+        // pre-move densify gate. Existing auto-wire / required-
+        // enforced / breach-densify-fail keys (above) stay the
+        // success signals; this block is additive only.
+        using aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read;
+        using aura::core::lifetime::kGeneralObjectPinCreateDensifyIssue;
+        insert_kv(
+            "general-object-pin-pre-move-unpinned-block-total",
+            static_cast<std::int64_t>(general_object_pin_pre_move_unpinned_block_total_v_read()));
+        insert_kv("general-object-pin-create-densify-wired", 1);
+        insert_kv("schema-2971", kGeneralObjectPinCreateDensifyIssue);
+        insert_kv("issue-2971", kGeneralObjectPinCreateDensifyIssue);
+        // Issue #3022: FFI opaque/native pin-or-remap (or EXEMPT).
+        using aura::core::lifetime::kFfiOpaquePinOrRemapIssue;
+        using aura::core::lifetime::kFfiOpaquePinOrRemapResidualIssue;
+        using aura::core::lifetime::kOpaqueHeapPinRequiredIssue;
+        insert_kv("ffi-opaque-pin-or-remap-wired", 1);
+        insert_kv("ffi-owned-blocks-reclaim-wired", 1);
+        insert_kv("schema-3022", kFfiOpaquePinOrRemapIssue);
+        insert_kv("issue-3022", kFfiOpaquePinOrRemapIssue);
+        // Issue #3057: densify-tracked FFI opaque_heap_ aliases
+        // are slot-covered at known-root walk (not observe-only).
+        insert_kv("ffi-opaque-slot-cover-wired", 1);
+        insert_kv("schema-3057", kFfiOpaquePinOrRemapResidualIssue);
+        insert_kv("issue-3057", kFfiOpaquePinOrRemapResidualIssue);
+        // Issue #3533: production-required opaque_heap_ create
+        // without a live slot fail-closes. Additive keys.
+        using aura::core::densify_consistency::opaque_heap_pin_required_fail_total_v_read;
+        insert_kv("opaque-heap-pin-required-fail-total",
+                  static_cast<std::int64_t>(opaque_heap_pin_required_fail_total_v_read()));
+        insert_kv("opaque-heap-pin-required-wired", 1);
+        insert_kv("schema-3533", kOpaqueHeapPinRequiredIssue);
+        insert_kv("issue-3533", kOpaqueHeapPinRequiredIssue);
+        // Issue #3534: runtime GOP coverage inventory. Additive
+        // keys on existing query:arena-live-compact-stats. Floor=7
+        // keys above are unchanged.
+        using aura::core::lifetime::general_object_pin_inventory_count_v_read;
+        using aura::core::lifetime::kGeneralObjectPinInventoryIssue;
+        insert_kv("general-object-pin-inventory-count",
+                  static_cast<std::int64_t>(general_object_pin_inventory_count_v_read()));
+        insert_kv("general-object-pin-inventory-wired", 1);
+        insert_kv("schema-3534", kGeneralObjectPinInventoryIssue);
+        insert_kv("issue-3534", kGeneralObjectPinInventoryIssue);
+    }
+    // Issue #2266: verify_pins_under_moving_compact fail-closed change.
+    // Schema additive — no break. Driver (Phase 5 in
+    // evaluator_mutation_boundary.cpp) gates success metrics + bumps
+    // moving-compact-pin-contract-fail-total on contract failure.
+    insert_kv("schema-2266", 2266);
+    insert_kv("issue-2266", 2266);
+    insert_kv("moving-pin-contract-wired", 1);
+    // Issue #2267: RootRemapPass minimal slice — StableNodeRef + Closure
+    // captures under Moving densify. Schema additive — no break.
+    // Driver (Phase 5 in evaluator_mutation_boundary.cpp) fires the
+    // pass via the RootRemapCallback installed in arena.ixx; per-arena
+    // RootRemapPass counters are merged into the global atomics above.
+    insert_kv("schema-2267", 2267);
+    insert_kv("issue-2267", 2267);
+    insert_kv("root-remap-pass-wired", 1);
+}
+
+// Issue #5031: (query:arena-live-compact-stats) registration phase.
+void register_eval_p11_arena_live_compact_stats(Evaluator& ev, auto& string_heap) {
     // Issue #2004 / Issue #3906: live_compact observability primitive — SSOT
     // (single register_stats_impl; memory.cpp duplicate removed). Surfaces the 6 new
     // per-CompilerMetrics counters (soft / force counts, reclaimed bytes total,
     // freelist hits total, gen restamps total, invalidated pins total).
     ObservabilityPrims::register_stats_impl(
-        "query:arena-live-compact-stats", [&ev](const auto&) -> EvalValue {
-            std::uint64_t soft_count = 0, force_count = 0, reclaimed = 0, hits = 0, restamps = 0,
-                          invalidated = 0, moving_count = 0, objects_moved = 0, moving_blocked = 0,
-                          remapped_pins = 0, pin_contract_fail = 0, root_remap_sr = 0,
-                          root_remap_sr_fail = 0, root_remap_cc = 0, root_remap_cc_fail = 0;
-            if (ev.compiler_metrics()) {
-                auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
-                soft_count = m->arena_live_compact_soft_count.load(std::memory_order_relaxed);
-                force_count = m->arena_live_compact_force_count.load(std::memory_order_relaxed);
-                reclaimed =
-                    m->arena_live_compact_reclaimed_bytes_total.load(std::memory_order_relaxed);
-                hits = m->arena_live_compact_freelist_hits_total.load(std::memory_order_relaxed);
-                restamps = m->arena_live_compact_gen_restamps_total.load(std::memory_order_relaxed);
-                invalidated =
-                    m->arena_live_compact_invalidated_pins_total.load(std::memory_order_relaxed);
-                moving_count = m->arena_live_compact_moving_count.load(std::memory_order_relaxed);
-                objects_moved = m->arena_objects_moved_total.load(std::memory_order_relaxed);
-                moving_blocked =
-                    m->arena_moving_blocked_precondition_total.load(std::memory_order_relaxed);
-                remapped_pins =
-                    m->arena_live_compact_remapped_pins_total.load(std::memory_order_relaxed);
-                pin_contract_fail =
-                    m->moving_compact_pin_contract_fail_total.load(std::memory_order_relaxed);
-                root_remap_sr = m->root_remap_stable_ref_total.load(std::memory_order_relaxed);
-                root_remap_sr_fail =
-                    m->root_remap_stable_ref_fail_total.load(std::memory_order_relaxed);
-                root_remap_cc = m->root_remap_closure_capture_total.load(std::memory_order_relaxed);
-                root_remap_cc_fail =
-                    m->root_remap_closure_capture_fail_total.load(std::memory_order_relaxed);
-            }
+        "query:arena-live-compact-stats", [&ev, &string_heap](const auto&) -> EvalValue {
+            ArenaLiveCompactStats stats{ev};
+            stats.collect();
             // Capacity 128: schema-2004 + #2157 Force + #2166 Moving densify
             // + #2298/#2337/#2363 general-object pin adopt keys (was 64;
             // load approached capacity and dropped tail inserts).
@@ -1770,7 +2060,7 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -1780,264 +2070,22 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
 
                 overflowed = true;
             };
-            insert_kv("soft-count", static_cast<std::int64_t>(soft_count));
-            insert_kv("force-count", static_cast<std::int64_t>(force_count));
-            insert_kv("reclaimed-bytes-total", static_cast<std::int64_t>(reclaimed));
-            insert_kv("freelist-hits-total", static_cast<std::int64_t>(hits));
-            insert_kv("gen-restamps-total", static_cast<std::int64_t>(restamps));
-            insert_kv("invalidated-pins-total", static_cast<std::int64_t>(invalidated));
-            // Issue #2265 Phase 3: # LifetimePins whose ptr_ was remapped to a
-            // new address under Moving densify (preserved + gen-bumped vs invalidated).
-            insert_kv("remapped-pins-total", static_cast<std::int64_t>(remapped_pins));
-            // Issue #2266: # Moving compact runs where the pin-or-remap contract
-            // failed (a live pin still pointed at an old densified address after
-            // the remap walk). Surfaced for Agent dashboards to flag false-safety
-            // regressions under sustained AI multi-round self-mod + Moving.
-            insert_kv("moving-compact-pin-contract-fail-total",
-                      static_cast<std::int64_t>(pin_contract_fail));
-            insert_kv("schema", 2166);
-            // Issue #2157: Force hard-mutex blocked counters (process-wide).
-            insert_kv(
-                "force-blocked-by-pin-total",
-                static_cast<std::int64_t>(aura::ast::g_force_compact_blocked_by_pin_total.load(
-                    std::memory_order_relaxed)));
-            insert_kv("force-blocked-by-envframe-guard-total",
-                      static_cast<std::int64_t>(
-                          aura::ast::g_force_compact_blocked_by_envframe_guard_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv("schema-2157", aura::ast::kForceCompactHardMutexIssue);
-            insert_kv("issue-2157", aura::ast::kForceCompactHardMutexIssue);
-            insert_kv("force-hard-mutex-wired", 1);
-            // Issue #2166: Moving densify counters (prefer process-wide totals).
-            insert_kv(
-                "live-compact-moving-count",
-                static_cast<std::int64_t>(
-                    aura::ast::g_live_compact_moving_count.load(std::memory_order_relaxed) > 0
-                        ? aura::ast::g_live_compact_moving_count.load(std::memory_order_relaxed)
-                        : moving_count));
-            insert_kv("objects-moved-total",
-                      static_cast<std::int64_t>(
-                          aura::ast::g_objects_moved_total.load(std::memory_order_relaxed) > 0
-                              ? aura::ast::g_objects_moved_total.load(std::memory_order_relaxed)
-                              : objects_moved));
-            insert_kv(
-                "moving-blocked-precondition-total",
-                static_cast<std::int64_t>(aura::ast::g_moving_blocked_precondition_total.load(
-                                              std::memory_order_relaxed) > 0
-                                              ? aura::ast::g_moving_blocked_precondition_total.load(
-                                                    std::memory_order_relaxed)
-                                              : moving_blocked));
-            insert_kv("moving-compact-enabled", aura::ast::moving_compact_enabled());
-            // Issue #2905 AC2: sticky densify-off visibility on arena-live-compact
-            // surface (aliases match moving-densify-health schema-2905).
-            {
-                const auto sticky_on =
-                    aura::ast::moving_incomplete_remap_sticky_densify_off() ? 1 : 0;
-                const auto sticky_tot = static_cast<std::int64_t>(
-                    aura::ast::g_moving_incomplete_remap_sticky_densify_off_total.load(
-                        std::memory_order_relaxed));
-                insert_kv("sticky-densify-off", sticky_on);
-                insert_kv("sticky-densify-off-total", sticky_tot);
-                insert_kv("moving-sticky-densify-off", sticky_on);
-                insert_kv("moving-sticky-densify-off-total", sticky_tot);
-                insert_kv("schema-2905", 2905);
-                insert_kv("issue-2905", 2905);
-            }
-            insert_kv("schema-2166", aura::ast::kMovingCompactIssue);
-            insert_kv("issue-2166", aura::ast::kMovingCompactIssue);
-            insert_kv("moving-compact-wired", 1);
-            // Issue #2267: RootRemapPass per-arena counters (mirrors the
-            // process-level g_root_remap_* atomics for query visibility).
-            insert_kv("root-remap-stable-ref-total", static_cast<std::int64_t>(root_remap_sr));
-            insert_kv("root-remap-stable-ref-fail-total",
-                      static_cast<std::int64_t>(root_remap_sr_fail));
-            insert_kv("root-remap-closure-capture-total", static_cast<std::int64_t>(root_remap_cc));
-            insert_kv("root-remap-closure-capture-fail-total",
-                      static_cast<std::int64_t>(root_remap_cc_fail));
-            // Issue #2339: RootRemapPass auto-register / auto-unregister
-            // counters (#2294 lineage). Bumped per-call-site that uses
-            // auto_register_root_remap_*_slot instead of manual
-            // register_root_remap_*_slot. Keeps schema-2294 keys.
-            insert_kv("root-remap-auto-register-total",
-                      static_cast<std::int64_t>(aura::compiler::root_remap_auto_register_total()));
-            insert_kv("root_remap_auto_register_total",
-                      static_cast<std::int64_t>(aura::compiler::root_remap_auto_register_total()));
-            insert_kv("root-remap-auto-register-unregister-total",
-                      static_cast<std::int64_t>(
-                          aura::compiler::root_remap_auto_register_unregister_total()));
-            insert_kv("root-remap-auto-register-wired", 1);
-            insert_kv("schema-2339", 2339);
-            insert_kv("issue-2339", 2339);
-            // Issue #2265 Phase 3: LifetimePin::remap() + remap_pins_pointing_to()
-            // wire-up at densify site. Schema additive — no break.
-            insert_kv("schema-2265", 2265);
-            insert_kv("issue-2265", 2265);
-            insert_kv("lifetime-pin-remap-wired", 1);
-            // Issue #2298: non-render general object pin-or-remap protocol.
-            {
-                using aura::core::lifetime::g_lifetime_pin_stats;
-                insert_kv("general-object-pin-total",
-                          static_cast<std::int64_t>(g_lifetime_pin_stats.general_object_pin_total));
-                insert_kv("general-object-pin-validate-fail-total",
-                          static_cast<std::int64_t>(
-                              g_lifetime_pin_stats.general_object_pin_validate_fail_total));
-                insert_kv("general-object-pin-remap-ok-total",
-                          static_cast<std::int64_t>(
-                              g_lifetime_pin_stats.general_object_pin_remap_ok_total));
-                insert_kv("general-object-pin-wired", 1);
-                insert_kv("schema-2298", 2298);
-                insert_kv("issue-2298", 2298);
-            }
-            // Issue #2337 / #2363: GeneralObjectPin adoption in mutate/agent/
-            // scratch create paths. Wire-up counter is per-call-site that
-            // wraps GeneralObjectPin(s) around intermediate create buffers
-            // (wire_general_object_create_pair). #2363 completes the
-            // inventory (kGeneralObjectPinAdoptSiteCount sites).
-            {
-                using aura::core::lifetime::g_lifetime_pin_stats;
-                using aura::core::lifetime::kGeneralObjectPinAdoptSiteCount;
-                insert_kv("general-object-pin-mutate-wire-total",
-                          static_cast<std::int64_t>(
-                              g_lifetime_pin_stats.general_object_pin_mutate_wire_total));
-                insert_kv("general_object_pin_mutate_wire_total",
-                          static_cast<std::int64_t>(
-                              g_lifetime_pin_stats.general_object_pin_mutate_wire_total));
-                insert_kv("general-object-pin-mutate-wired", 1);
-                insert_kv("schema-2337", 2337);
-                insert_kv("issue-2337", 2337);
-                // Issue #2363: complete adopt inventory + schema.
-                insert_kv("general-object-pin-adopt-site-count",
-                          static_cast<std::int64_t>(kGeneralObjectPinAdoptSiteCount));
-                insert_kv("general_object_pin_adopt_site_count",
-                          static_cast<std::int64_t>(kGeneralObjectPinAdoptSiteCount));
-                insert_kv("general-object-pin-adopt-complete-wired", 1);
-                insert_kv("schema-2363", 2363);
-                insert_kv("issue-2363", 2363);
-            }
-            // Issue #2665: production-default required-mode fail-closed
-            // counter (Agent-visible). Bumped when
-            // g_general_object_pin_required_pref > 0 (production-default
-            // locked via #2597 step 15 — env unset under production) AND
-            // wire_general_object_create_pair fails to pin either side.
-            // Soft / dev_off / unset (pref <= 0) stays observe-only.
-            // Additive schema — no break.
-            {
-                using aura::core::lifetime::g_general_object_pin_required_enforced_total;
-                using aura::core::lifetime::g_general_object_pin_required_pref;
-                insert_kv(
-                    "general-object-pin-required-enforced-total",
-                    static_cast<std::int64_t>(g_general_object_pin_required_enforced_total.load(
-                        std::memory_order_relaxed)));
-                insert_kv(
-                    "general_object_pin_required_enforced_total",
-                    static_cast<std::int64_t>(g_general_object_pin_required_enforced_total.load(
-                        std::memory_order_relaxed)));
-                insert_kv(
-                    "general-object-pin-required-wired",
-                    g_general_object_pin_required_pref.load(std::memory_order_relaxed) > 0 ? 1 : 0);
-                insert_kv("schema-2665", 2665);
-                insert_kv("issue-2665", 2665);
-                // Issue #2840: densify fail-closed on required pin breach.
-                using aura::core::lifetime::g_general_object_pin_required_breach_densify_fail_total;
-                using aura::core::lifetime::general_object_pin_required_breach_active;
-                insert_kv("general-object-pin-required-breach",
-                          general_object_pin_required_breach_active() ? 1 : 0);
-                insert_kv("general-object-pin-required-breach-densify-fail-total",
-                          static_cast<std::int64_t>(
-                              g_general_object_pin_required_breach_densify_fail_total.load(
-                                  std::memory_order_relaxed)));
-                insert_kv("general-object-pin-required-prod-default-wired", 1);
-                insert_kv("schema-2840", 2840);
-                insert_kv("issue-2840", 2840);
-            }
-            // Issue #2709: GeneralObjectPin mandatory coverage beyond
-            // inventory-of-7. Closes the partial-adoption gap by replacing
-            // the static kGeneralObjectPinAdoptSiteCount = 7 with a dynamic
-            // count (auto_wire + exempt). New create paths that call
-            // wire_general_object_create_pair_or_exempt(..., nullptr) bump
-            // auto_wire; with non-null exempt_reason bump exempt (skip wire).
-            // Existing #2496 / #2597 / #2665 keys preserved (regression).
-            // Soft / dev_off / unset (pref <= 0) stays zero-cost — only
-            // counter reads, no atomic ops on the quiet path.
-            {
-                using aura::core::lifetime::general_object_pin_auto_wire_total_v_read;
-                using aura::core::lifetime::general_object_pin_exempt_total_v_read;
-                using aura::core::lifetime::general_object_pin_adopt_site_count_v_read;
-                insert_kv("general-object-pin-auto-wire-total",
-                          static_cast<std::int64_t>(general_object_pin_auto_wire_total_v_read()));
-                insert_kv("general_object_pin_auto_wire_total",
-                          static_cast<std::int64_t>(general_object_pin_auto_wire_total_v_read()));
-                insert_kv("general-object-pin-exempt-total",
-                          static_cast<std::int64_t>(general_object_pin_exempt_total_v_read()));
-                insert_kv("general_object_pin_exempt_total",
-                          static_cast<std::int64_t>(general_object_pin_exempt_total_v_read()));
-                insert_kv("general-object-pin-adopt-site-count",
-                          static_cast<std::int64_t>(general_object_pin_adopt_site_count_v_read()));
-                insert_kv("general_object_pin_adopt_site_count",
-                          static_cast<std::int64_t>(general_object_pin_adopt_site_count_v_read()));
-                insert_kv("schema-2709", 2709);
-                insert_kv("issue-2709", 2709);
-                // Issue #2971: production-required create auto-wire +
-                // pre-move densify gate. Existing auto-wire / required-
-                // enforced / breach-densify-fail keys (above) stay the
-                // success signals; this block is additive only.
-                using aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read;
-                using aura::core::lifetime::kGeneralObjectPinCreateDensifyIssue;
-                insert_kv("general-object-pin-pre-move-unpinned-block-total",
-                          static_cast<std::int64_t>(
-                              general_object_pin_pre_move_unpinned_block_total_v_read()));
-                insert_kv("general-object-pin-create-densify-wired", 1);
-                insert_kv("schema-2971", kGeneralObjectPinCreateDensifyIssue);
-                insert_kv("issue-2971", kGeneralObjectPinCreateDensifyIssue);
-                // Issue #3022: FFI opaque/native pin-or-remap (or EXEMPT).
-                using aura::core::lifetime::kFfiOpaquePinOrRemapIssue;
-                using aura::core::lifetime::kFfiOpaquePinOrRemapResidualIssue;
-                using aura::core::lifetime::kOpaqueHeapPinRequiredIssue;
-                insert_kv("ffi-opaque-pin-or-remap-wired", 1);
-                insert_kv("ffi-owned-blocks-reclaim-wired", 1);
-                insert_kv("schema-3022", kFfiOpaquePinOrRemapIssue);
-                insert_kv("issue-3022", kFfiOpaquePinOrRemapIssue);
-                // Issue #3057: densify-tracked FFI opaque_heap_ aliases
-                // are slot-covered at known-root walk (not observe-only).
-                insert_kv("ffi-opaque-slot-cover-wired", 1);
-                insert_kv("schema-3057", kFfiOpaquePinOrRemapResidualIssue);
-                insert_kv("issue-3057", kFfiOpaquePinOrRemapResidualIssue);
-                // Issue #3533: production-required opaque_heap_ create
-                // without a live slot fail-closes. Additive keys.
-                using aura::core::densify_consistency::opaque_heap_pin_required_fail_total_v_read;
-                insert_kv("opaque-heap-pin-required-fail-total",
-                          static_cast<std::int64_t>(opaque_heap_pin_required_fail_total_v_read()));
-                insert_kv("opaque-heap-pin-required-wired", 1);
-                insert_kv("schema-3533", kOpaqueHeapPinRequiredIssue);
-                insert_kv("issue-3533", kOpaqueHeapPinRequiredIssue);
-                // Issue #3534: runtime GOP coverage inventory. Additive
-                // keys on existing query:arena-live-compact-stats. Floor=7
-                // keys above are unchanged.
-                using aura::core::lifetime::general_object_pin_inventory_count_v_read;
-                using aura::core::lifetime::kGeneralObjectPinInventoryIssue;
-                insert_kv("general-object-pin-inventory-count",
-                          static_cast<std::int64_t>(general_object_pin_inventory_count_v_read()));
-                insert_kv("general-object-pin-inventory-wired", 1);
-                insert_kv("schema-3534", kGeneralObjectPinInventoryIssue);
-                insert_kv("issue-3534", kGeneralObjectPinInventoryIssue);
-            }
-            // Issue #2266: verify_pins_under_moving_compact fail-closed change.
-            // Schema additive — no break. Driver (Phase 5 in
-            // evaluator_mutation_boundary.cpp) gates success metrics + bumps
-            // moving-compact-pin-contract-fail-total on contract failure.
-            insert_kv("schema-2266", 2266);
-            insert_kv("issue-2266", 2266);
-            insert_kv("moving-pin-contract-wired", 1);
-            // Issue #2267: RootRemapPass minimal slice — StableNodeRef + Closure
-            // captures under Moving densify. Schema additive — no break.
-            // Driver (Phase 5 in evaluator_mutation_boundary.cpp) fires the
-            // pass via the RootRemapCallback installed in arena.ixx; per-arena
-            // RootRemapPass counters are merged into the global atomics above.
-            insert_kv("schema-2267", 2267);
-            insert_kv("issue-2267", 2267);
-            insert_kv("root-remap-pass-wired", 1);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            stats.emit_compact_core_fields(insert_kv);
+            stats.emit_root_remap_fields(insert_kv);
+            stats.emit_general_object_pin_fields(insert_kv);
+            stats.emit_general_object_pin_enforcement_fields(insert_kv);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #909 part 11 (orig lines 2222-2348)
+void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
+    (void)add;
+    auto& string_heap = ev.string_heap_;
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_eval_p11_arena_auto_compaction(ev, string_heap);
+    register_eval_p11_live_compact(ev, string_heap);
+    register_eval_p11_arena_live_compact_stats(ev, string_heap);
 }
 
 // Issue #909 part 12 (orig lines 2349-2569)
@@ -11105,9 +11153,15 @@ void ObservabilityPrims::register_eval_p64(PrimRegistrar add, Evaluator& ev) {
         });
 }
 
-// Issue #909 part 65 (orig lines 7709-7777)
-void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
+// --- Issue #5031: register_eval_p65 phases ---------------------------------
+// The p65 registration body outgrew the 300-line ceiling (five closed-loop
+// observability payloads). Each phase below is one registration responsibility
+// family; register_eval_p65 keeps the ordered delegation so registration
+// order, primitive names, lambda capture lifetimes and every stats payload
+// key stay identical.
 
+// Issue #5031: (query:stable-ref-cross-cow-provenance-stats) registration phase.
+void register_eval_p65_stable_ref_cross_cow_provenance(Evaluator& ev, auto& string_heap) {
     // Issue #818: query:stable-ref-cross-cow-provenance-stats — full
     // StableNodeRef provenance enforcement + cross-COW/sub-workspace
     // auto-resolve dashboard (Task1-review follow-up; non-duplicative
@@ -11122,7 +11176,8 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
     //   - steal-auto-refresh-hits           stable_ref_steal_auto_refresh_total
     //   - schema == 818
     ObservabilityPrims::register_stats_impl(
-        "query:stable-ref-cross-cow-provenance-stats", [&ev](const auto&) -> EvalValue {
+        "query:stable-ref-cross-cow-provenance-stats",
+        [&ev, &string_heap](const auto&) -> EvalValue {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
             const std::int64_t provenance_enforced =
                 m ? static_cast<std::int64_t>(
@@ -11158,7 +11213,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -11173,9 +11228,284 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("fiber-workspace-mismatch-prevented", fiber_ws_mismatch);
             insert_kv("steal-auto-refresh-hits", steal_auto_refresh);
             insert_kv("schema", 818);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: (query:post-steal-closed-loop-stats) refresh / macro / bridge /
+// migration payload phase. Each read stays adjacent to the keys it feeds.
+void insert_post_steal_refresh_fields(auto& insert_kv, Evaluator& ev, const CompilerMetrics* m) {
+    const std::int64_t refresh_count = static_cast<std::int64_t>(ev.get_post_steal_refresh_count());
+    const std::int64_t mismatch =
+        m ? static_cast<std::int64_t>(
+                m->envframe_version_mismatch_post_steal_total.load(std::memory_order_relaxed))
+          : 0;
+    insert_kv("post-steal-refresh-count", refresh_count);
+    // #1608 AC4 names (underscore form)
+    insert_kv("post_steal_refresh_count", refresh_count);
+    insert_kv("stable-ref-steal-auto-refresh-total",
+              static_cast<std::int64_t>(ev.get_stable_ref_steal_auto_refresh()));
+    insert_kv("boundary-pinned-refresh-count",
+              static_cast<std::int64_t>(ev.get_boundary_pinned_refresh_count()));
+    const std::int64_t linear_enf =
+        m ? static_cast<std::int64_t>(
+                m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed))
+          : 0;
+    const std::int64_t linear_enf_alt =
+        m ? static_cast<std::int64_t>(
+                m->linear_post_mutate_enforcements.load(std::memory_order_relaxed))
+          : 0;
+    insert_kv("linear-post-mutate-enforcements", linear_enf > 0 ? linear_enf : linear_enf_alt);
+    insert_kv("envframe-version-mismatch-post-steal", mismatch);
+    // #1608 AC4: stale_frame_prevented == version/bridge drift detections
+    insert_kv("stale_frame_prevented", mismatch);
+    insert_kv("envframe-dualpath-repair",
+              m ? static_cast<std::int64_t>(
+                      m->envframe_dualpath_repair_total.load(std::memory_order_relaxed))
+                : 0);
+    insert_kv("resume-path-wired", 1); // Fiber::resume → complete_post_resume_steal_refresh
+    insert_kv("refresh-stale-frames-helper-wired", 1);
+    insert_kv("linear-probe-repin-wired", 1);
+    insert_kv("post-resume-refresh-hook-wired", 1);
+    // #1612 AC: MacroIntroduced marker / provenance on resume/steal/GC
+    const std::int64_t macro_stale =
+        m ? static_cast<std::int64_t>(
+                m->macro_stale_ref_prevented_total.load(std::memory_order_relaxed))
+          : 0;
+    const std::int64_t macro_repin =
+        m ? static_cast<std::int64_t>(
+                m->macro_provenance_repin_total.load(std::memory_order_relaxed))
+          : 0;
+    const std::int64_t macro_invoke =
+        static_cast<std::int64_t>(ev.get_macro_refresh_invoke_count());
+    insert_kv("macro_stale_ref_prevented", macro_stale);
+    insert_kv("macro-stale-ref-prevented", macro_stale);
+    insert_kv("macro_provenance_repin_total", macro_repin);
+    insert_kv("macro-provenance-repin-total", macro_repin);
+    insert_kv("macro-refresh-invoke-count", macro_invoke);
+    insert_kv("macro-refresh-helper-wired", 1);
+    insert_kv("macro-provenance-probe-wired", 1);
+    insert_kv("gc-compact-macro-refresh-wired", 1);
+    // #1631 AC: mandated resume refresh + bridge drift / deopt walk
+    const std::int64_t resume_forced =
+        m ? static_cast<std::int64_t>(
+                m->resume_forced_refresh_total.load(std::memory_order_relaxed))
+          : 0;
+    const std::int64_t bridge_drift =
+        m ? static_cast<std::int64_t>(
+                m->bridge_epoch_drift_post_steal_total.load(std::memory_order_relaxed))
+          : 0;
+    const std::int64_t bridge_deopt =
+        m ? static_cast<std::int64_t>(
+                m->bridge_epoch_deopt_walk_post_steal_total.load(std::memory_order_relaxed))
+          : 0;
+    insert_kv("resume_forced_refresh_total", resume_forced);
+    insert_kv("resume-forced-refresh-total", resume_forced);
+    insert_kv("bridge_epoch_drift_post_steal", bridge_drift);
+    insert_kv("bridge-epoch-drift-post-steal", bridge_drift);
+    insert_kv("bridge_epoch_deopt_walk_post_steal", bridge_deopt);
+    insert_kv("bridge-epoch-deopt-walk-post-steal", bridge_deopt);
+    // Issue #2194: unified refresh_after_fiber_migration metrics
+    const std::int64_t mig_refresh =
+        m ? static_cast<std::int64_t>(
+                m->fiber_migration_refresh_total.load(std::memory_order_relaxed))
+          : 0;
+    const std::int64_t mig_gc_cleared =
+        m ? static_cast<std::int64_t>(
+                m->fiber_migration_gc_defer_cleared_total.load(std::memory_order_relaxed))
+          : 0;
+    const std::int64_t orphan_cleared =
+        m ? static_cast<std::int64_t>(
+                m->gc_defer_orphan_cleared_total.load(std::memory_order_relaxed))
+          : 0;
+    insert_kv("fiber_migration_refresh_total", mig_refresh);
+    insert_kv("fiber-migration-refresh-total", mig_refresh);
+    insert_kv("fiber_migration_gc_defer_cleared_total", mig_gc_cleared);
+    insert_kv("fiber-migration-gc-defer-cleared-total", mig_gc_cleared);
+    insert_kv("gc_defer_orphan_cleared_total", orphan_cleared);
+    insert_kv("fiber-migration-refresh-wired", 1);
+    insert_kv("schema-2194", 2194);
+    insert_kv("issue-2194", 2194);
+}
+
+// Issue #5031: (query:post-steal-closed-loop-stats) linear-provenance
+// enforcement payload phase (#2197 / #2026 / #2103 / #2182 / #2207 / #2222 /
+// #2675 / #2677 / #2779).
+void insert_post_steal_linear_provenance_fields(auto& insert_kv, const CompilerMetrics* m) {
+    // Issue #2197: post-steal / GC-window linear×type provenance revalidate.
+    // Agent branches on hard_fail / force-audit-armed under Strict.
+    {
+        const std::int64_t reval =
+            m ? static_cast<std::int64_t>(
+                    m->post_steal_linear_revalidate_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t hard =
+            m ? static_cast<std::int64_t>(
+                    m->post_steal_linear_hard_fail_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t soft_inc =
+            m ? static_cast<std::int64_t>(
+                    m->post_steal_linear_soft_incomplete_total.load(std::memory_order_relaxed))
+              : 0;
+        const std::int64_t armed =
+            m ? static_cast<std::int64_t>(
+                    m->post_steal_linear_force_audit_armed.load(std::memory_order_relaxed))
+              : 0;
+        insert_kv("post-steal-linear-revalidate-total", reval);
+        insert_kv("post_steal_linear_revalidate_total", reval);
+        insert_kv("post-steal-linear-hard-fail-total", hard);
+        insert_kv("post_steal_linear_hard_fail_total", hard);
+        insert_kv("post-steal-linear-soft-incomplete-total", soft_inc);
+        insert_kv("post_steal_linear_soft_incomplete_total", soft_inc);
+        insert_kv("post-steal-linear-force-audit-armed", armed);
+        insert_kv("post_steal_linear_force_audit_armed", armed);
+        insert_kv("post-steal-linear-revalidate-wired", 1);
+        insert_kv("schema-2197", 2197);
+        insert_kv("issue-2197", 2197);
+    }
+    insert_kv("fiber-lifecycle-mandate-active", 1);
+    insert_kv("resume-pre-swap-migration-wired", 1);
+    insert_kv("resume-post-swap-validate-wired", 1);
+    // Issue #2026: linear ownership × provenance consistency closed-loop
+    // (post-steal / GC / boundary / IR shared validate_linear_provenance).
+    {
+        using aura::core::provenance::g_provenance_enforcement;
+        using aura::core::provenance::linear_provenance_consistency_bp;
+        auto& pe = g_provenance_enforcement();
+        const auto checks = static_cast<std::int64_t>(
+            pe.linear_provenance_checks_total.load(std::memory_order_relaxed));
+        const auto ok = static_cast<std::int64_t>(
+            pe.linear_provenance_ok_total.load(std::memory_order_relaxed));
+        const auto lp_mismatch = static_cast<std::int64_t>(
+            pe.linear_provenance_mismatch_total.load(std::memory_order_relaxed));
+        const auto moved = static_cast<std::int64_t>(
+            pe.linear_provenance_moved_live_total.load(std::memory_order_relaxed));
+        const auto incomplete = static_cast<std::int64_t>(
+            pe.linear_provenance_incomplete_total.load(std::memory_order_relaxed));
+        const auto deopt = static_cast<std::int64_t>(
+            pe.linear_provenance_deopt_total.load(std::memory_order_relaxed));
+        const auto steal_c = static_cast<std::int64_t>(
+            pe.linear_provenance_steal_checks_total.load(std::memory_order_relaxed));
+        const auto gc_c = static_cast<std::int64_t>(
+            pe.linear_provenance_gc_checks_total.load(std::memory_order_relaxed));
+        const auto ratio = static_cast<std::int64_t>(linear_provenance_consistency_bp());
+        insert_kv("linear-provenance-checks", checks);
+        insert_kv("linear-provenance-ok", ok);
+        insert_kv("linear-provenance-mismatch", lp_mismatch);
+        insert_kv("linear-provenance-moved-live", moved);
+        insert_kv("linear-provenance-incomplete", incomplete);
+        insert_kv("linear-provenance-deopt", deopt);
+        insert_kv("linear-provenance-steal-checks", steal_c);
+        insert_kv("linear-provenance-gc-checks", gc_c);
+        insert_kv("linear-provenance-consistency-bp", ratio);
+        insert_kv("linear-provenance-consistency-ratio-bp", ratio);
+        insert_kv("linear-provenance-wired", 1);
+        insert_kv("schema-2026", 2026);
+        insert_kv("issue-2026", 2026);
+        // Issue #2103 / #2182 / #2207: Soft/Strict linear enforce mode +
+        // hard-fail totals. Process default Strict (#2207).
+        using aura::core::provenance::g_linear_soft_incomplete_continue_total;
+        using aura::core::provenance::g_linear_strict_hard_fail_total;
+        using aura::core::provenance::linear_enforce_mode;
+        using aura::core::provenance::LinearEnforceMode;
+        const auto mode = linear_enforce_mode();
+        const auto hard_fail = static_cast<std::int64_t>(
+            g_linear_strict_hard_fail_total.load(std::memory_order_relaxed));
+        insert_kv("linear-enforce-mode",
+                  static_cast<std::int64_t>(static_cast<std::uint8_t>(mode)));
+        insert_kv("linear_enforce_mode",
+                  static_cast<std::int64_t>(static_cast<std::uint8_t>(mode)));
+        insert_kv("linear-enforce-strict", mode == LinearEnforceMode::Strict ? 1 : 0);
+        insert_kv("linear-strict-hard-fail-total", hard_fail);
+        // Issue #2207 AC4: canonical hard-fail name + Soft retain.
+        insert_kv("linear-provenance-hard-fail-total", hard_fail);
+        insert_kv("linear_provenance_hard_fail_total", hard_fail);
+        insert_kv("linear-soft-incomplete-continue-total",
+                  static_cast<std::int64_t>(
+                      g_linear_soft_incomplete_continue_total.load(std::memory_order_relaxed)));
+        insert_kv("linear-enforce-mode-wired", 1);
+        insert_kv("schema-2103", 2103);
+        insert_kv("issue-2103", 2103);
+        // Issue #2182: production defaults surface (Strict under
+        // apply_production_security_defaults; Soft when AURA_SANDBOX=off).
+        insert_kv("production-defaults-linear-strict", mode == LinearEnforceMode::Strict ? 1 : 0);
+        insert_kv("linear-enforce-production-defaults-wired", 1);
+        insert_kv("schema-2182", 2182);
+        insert_kv("issue-2182", 2182);
+        // Issue #2207: process-default Strict + hard-fail surface.
+        insert_kv("linear-enforce-strict-default", 1);
+        insert_kv("schema-2207", 2207);
+        insert_kv("issue-2207", 2207);
+        // Issue #2222: boundary Strict hold + Soft process alignment.
+        using aura::core::provenance::force_strict_on_mutation_boundary;
+        using aura::core::provenance::g_linear_enforce_mode_forced_boundary_total;
+        using aura::core::provenance::linear_enforce_boundary_strict_active;
+        using aura::core::provenance::linear_enforce_effective_mode;
+        const auto eff = linear_enforce_effective_mode();
+        insert_kv("linear-enforce-effective-mode",
+                  static_cast<std::int64_t>(static_cast<std::uint8_t>(eff)));
+        insert_kv("linear-enforce-boundary-strict-active",
+                  linear_enforce_boundary_strict_active() ? 1 : 0);
+        insert_kv("force-strict-on-mutation-boundary", force_strict_on_mutation_boundary() ? 1 : 0);
+        insert_kv("linear-enforce-mode-forced-boundary-total",
+                  static_cast<std::int64_t>(
+                      g_linear_enforce_mode_forced_boundary_total.load(std::memory_order_relaxed)));
+        insert_kv("linear-enforce-boundary-align-wired", 1);
+        insert_kv("schema-2222", 2222);
+        // Issue #2675: linear-enforce-effective single-pure-API surface.
+        // Exposes the result of `effective_linear_enforce(production_defaults,
+        // fiber_boundary_hold, env_force_strict)` (now the single source
+        // of truth for AST audit / IR execute / MutationBoundary force
+        // classification). Replaces per-call-site split checks; matches
+        // decision table comment in linear_occurrence_mutate_stats.h.
+        // soft=0 / strict=1 — same wire format as linear-enforce-mode so
+        // existing dashboards parse without schema break.
+        {
+            using aura::core::provenance::effective_linear_enforce;
+            using aura::core::provenance::LinearEnforceEffective;
+            const bool eff_strict =
+                effective_linear_enforce(
+                    /*production_defaults=*/mode == LinearEnforceMode::Strict,
+                    /*fiber_boundary_hold=*/linear_enforce_boundary_strict_active(),
+                    /*env_force_strict=*/false) == LinearEnforceEffective::Strict;
+            insert_kv("linear-enforce-effective", eff_strict ? 1 : 0);
+            insert_kv("linear-enforce-effective-pure-api-wired", 1);
+            insert_kv("schema-2675", 2675);
+            insert_kv("issue-2675", 2675);
+        }
+        // Issue #2677: resume-invariants consolidated query surface.
+        // Single-agent schema key for the consolidated
+        // MutationSafetySnapshot (ticket) + LayoutStamp (fence) check
+        // now wired at Fiber::resume (single call site). Surfaces
+        // the per-CompilerMetrics layout-stamp-resume-mismatch-total
+        // (already exposed via query:linear-enforce-effective-mode in
+        // evaluator_primitives_query.cpp) + the new process-wide
+        // Fiber static counter as a parallel key, so dashboards can
+        // distinguish per-Evaluator mismatch vs aggregate drift.
+        // schema-2677 wraps the AC5 metrics (ticket-mismatch +
+        // force-deopt + hard-fail + layout-stamp-mismatch) under
+        // one Issue-anchor for Agent navigation.
+        {
+            insert_kv("resume-invariants-consolidated", 1);
+            insert_kv("layout-stamp-resume-mismatch-fiber-total",
+                      static_cast<std::int64_t>(
+                          aura::serve::Fiber::layout_stamp_resume_mismatch_total()));
+            insert_kv("schema-2677", 2677);
+            insert_kv("issue-2677", 2677);
+            // Issue #2779: aggregate of the three resume fence
+            // counters (one alert for the shared playbook).
+            insert_kv("resume-fence-fail-total",
+                      static_cast<std::int64_t>(aura::serve::Fiber::resume_fence_fail_total()));
+            insert_kv("resume-fence-fail-wired", 1);
+            insert_kv("schema-2779", aura::serve::kResumeFenceFailAggregateIssue);
+            insert_kv("issue-2779", aura::serve::kResumeFenceFailAggregateIssue);
+        }
+        insert_kv("issue-2222", 2222);
+    }
+}
+
+// Issue #5031: (query:post-steal-closed-loop-stats) registration phase.
+void register_eval_p65_post_steal_closed_loop(Evaluator& ev, auto& string_heap) {
     // Issue #1592 / #1608 / #1612 / #1631: unified post-steal / resume
     // closed-loop dashboard. EnvFrame refresh + linear repin + MacroIntroduced
     // hygiene + mandated Fiber::resume refresh (#1631).
@@ -11183,7 +11513,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
     //   resume_forced_refresh_total, bridge_epoch_drift_post_steal,
     //   post_steal_refresh_count (monotonic)
     ObservabilityPrims::register_stats_impl(
-        "query:post-steal-closed-loop-stats", [&ev](const auto&) -> EvalValue {
+        "query:post-steal-closed-loop-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
             // #1660 lineage + #1916 + #2026 linear-provenance keys → 256 slots.
             auto* ht = FlatHashTable::create(query_hash_capacity_for(105));
@@ -11203,7 +11533,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -11213,278 +11543,16 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
 
                 overflowed = true;
             };
-            const std::int64_t refresh_count =
-                static_cast<std::int64_t>(ev.get_post_steal_refresh_count());
-            const std::int64_t mismatch =
-                m ? static_cast<std::int64_t>(m->envframe_version_mismatch_post_steal_total.load(
-                        std::memory_order_relaxed))
-                  : 0;
-            insert_kv("post-steal-refresh-count", refresh_count);
-            // #1608 AC4 names (underscore form)
-            insert_kv("post_steal_refresh_count", refresh_count);
-            insert_kv("stable-ref-steal-auto-refresh-total",
-                      static_cast<std::int64_t>(ev.get_stable_ref_steal_auto_refresh()));
-            insert_kv("boundary-pinned-refresh-count",
-                      static_cast<std::int64_t>(ev.get_boundary_pinned_refresh_count()));
-            const std::int64_t linear_enf =
-                m ? static_cast<std::int64_t>(
-                        m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t linear_enf_alt =
-                m ? static_cast<std::int64_t>(
-                        m->linear_post_mutate_enforcements.load(std::memory_order_relaxed))
-                  : 0;
-            insert_kv("linear-post-mutate-enforcements",
-                      linear_enf > 0 ? linear_enf : linear_enf_alt);
-            insert_kv("envframe-version-mismatch-post-steal", mismatch);
-            // #1608 AC4: stale_frame_prevented == version/bridge drift detections
-            insert_kv("stale_frame_prevented", mismatch);
-            insert_kv("envframe-dualpath-repair",
-                      m ? static_cast<std::int64_t>(
-                              m->envframe_dualpath_repair_total.load(std::memory_order_relaxed))
-                        : 0);
-            insert_kv("resume-path-wired", 1); // Fiber::resume → complete_post_resume_steal_refresh
-            insert_kv("refresh-stale-frames-helper-wired", 1);
-            insert_kv("linear-probe-repin-wired", 1);
-            insert_kv("post-resume-refresh-hook-wired", 1);
-            // #1612 AC: MacroIntroduced marker / provenance on resume/steal/GC
-            const std::int64_t macro_stale =
-                m ? static_cast<std::int64_t>(
-                        m->macro_stale_ref_prevented_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t macro_repin =
-                m ? static_cast<std::int64_t>(
-                        m->macro_provenance_repin_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t macro_invoke =
-                static_cast<std::int64_t>(ev.get_macro_refresh_invoke_count());
-            insert_kv("macro_stale_ref_prevented", macro_stale);
-            insert_kv("macro-stale-ref-prevented", macro_stale);
-            insert_kv("macro_provenance_repin_total", macro_repin);
-            insert_kv("macro-provenance-repin-total", macro_repin);
-            insert_kv("macro-refresh-invoke-count", macro_invoke);
-            insert_kv("macro-refresh-helper-wired", 1);
-            insert_kv("macro-provenance-probe-wired", 1);
-            insert_kv("gc-compact-macro-refresh-wired", 1);
-            // #1631 AC: mandated resume refresh + bridge drift / deopt walk
-            const std::int64_t resume_forced =
-                m ? static_cast<std::int64_t>(
-                        m->resume_forced_refresh_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t bridge_drift =
-                m ? static_cast<std::int64_t>(
-                        m->bridge_epoch_drift_post_steal_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t bridge_deopt =
-                m ? static_cast<std::int64_t>(
-                        m->bridge_epoch_deopt_walk_post_steal_total.load(std::memory_order_relaxed))
-                  : 0;
-            insert_kv("resume_forced_refresh_total", resume_forced);
-            insert_kv("resume-forced-refresh-total", resume_forced);
-            insert_kv("bridge_epoch_drift_post_steal", bridge_drift);
-            insert_kv("bridge-epoch-drift-post-steal", bridge_drift);
-            insert_kv("bridge_epoch_deopt_walk_post_steal", bridge_deopt);
-            insert_kv("bridge-epoch-deopt-walk-post-steal", bridge_deopt);
-            // Issue #2194: unified refresh_after_fiber_migration metrics
-            const std::int64_t mig_refresh =
-                m ? static_cast<std::int64_t>(
-                        m->fiber_migration_refresh_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t mig_gc_cleared =
-                m ? static_cast<std::int64_t>(
-                        m->fiber_migration_gc_defer_cleared_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t orphan_cleared =
-                m ? static_cast<std::int64_t>(
-                        m->gc_defer_orphan_cleared_total.load(std::memory_order_relaxed))
-                  : 0;
-            insert_kv("fiber_migration_refresh_total", mig_refresh);
-            insert_kv("fiber-migration-refresh-total", mig_refresh);
-            insert_kv("fiber_migration_gc_defer_cleared_total", mig_gc_cleared);
-            insert_kv("fiber-migration-gc-defer-cleared-total", mig_gc_cleared);
-            insert_kv("gc_defer_orphan_cleared_total", orphan_cleared);
-            insert_kv("fiber-migration-refresh-wired", 1);
-            insert_kv("schema-2194", 2194);
-            insert_kv("issue-2194", 2194);
-            // Issue #2197: post-steal / GC-window linear×type provenance revalidate.
-            // Agent branches on hard_fail / force-audit-armed under Strict.
-            {
-                const std::int64_t reval =
-                    m ? static_cast<std::int64_t>(
-                            m->post_steal_linear_revalidate_total.load(std::memory_order_relaxed))
-                      : 0;
-                const std::int64_t hard =
-                    m ? static_cast<std::int64_t>(
-                            m->post_steal_linear_hard_fail_total.load(std::memory_order_relaxed))
-                      : 0;
-                const std::int64_t soft_inc =
-                    m ? static_cast<std::int64_t>(m->post_steal_linear_soft_incomplete_total.load(
-                            std::memory_order_relaxed))
-                      : 0;
-                const std::int64_t armed =
-                    m ? static_cast<std::int64_t>(
-                            m->post_steal_linear_force_audit_armed.load(std::memory_order_relaxed))
-                      : 0;
-                insert_kv("post-steal-linear-revalidate-total", reval);
-                insert_kv("post_steal_linear_revalidate_total", reval);
-                insert_kv("post-steal-linear-hard-fail-total", hard);
-                insert_kv("post_steal_linear_hard_fail_total", hard);
-                insert_kv("post-steal-linear-soft-incomplete-total", soft_inc);
-                insert_kv("post_steal_linear_soft_incomplete_total", soft_inc);
-                insert_kv("post-steal-linear-force-audit-armed", armed);
-                insert_kv("post_steal_linear_force_audit_armed", armed);
-                insert_kv("post-steal-linear-revalidate-wired", 1);
-                insert_kv("schema-2197", 2197);
-                insert_kv("issue-2197", 2197);
-            }
-            insert_kv("fiber-lifecycle-mandate-active", 1);
-            insert_kv("resume-pre-swap-migration-wired", 1);
-            insert_kv("resume-post-swap-validate-wired", 1);
-            // Issue #2026: linear ownership × provenance consistency closed-loop
-            // (post-steal / GC / boundary / IR shared validate_linear_provenance).
-            {
-                using aura::core::provenance::g_provenance_enforcement;
-                using aura::core::provenance::linear_provenance_consistency_bp;
-                auto& pe = g_provenance_enforcement();
-                const auto checks = static_cast<std::int64_t>(
-                    pe.linear_provenance_checks_total.load(std::memory_order_relaxed));
-                const auto ok = static_cast<std::int64_t>(
-                    pe.linear_provenance_ok_total.load(std::memory_order_relaxed));
-                const auto lp_mismatch = static_cast<std::int64_t>(
-                    pe.linear_provenance_mismatch_total.load(std::memory_order_relaxed));
-                const auto moved = static_cast<std::int64_t>(
-                    pe.linear_provenance_moved_live_total.load(std::memory_order_relaxed));
-                const auto incomplete = static_cast<std::int64_t>(
-                    pe.linear_provenance_incomplete_total.load(std::memory_order_relaxed));
-                const auto deopt = static_cast<std::int64_t>(
-                    pe.linear_provenance_deopt_total.load(std::memory_order_relaxed));
-                const auto steal_c = static_cast<std::int64_t>(
-                    pe.linear_provenance_steal_checks_total.load(std::memory_order_relaxed));
-                const auto gc_c = static_cast<std::int64_t>(
-                    pe.linear_provenance_gc_checks_total.load(std::memory_order_relaxed));
-                const auto ratio = static_cast<std::int64_t>(linear_provenance_consistency_bp());
-                insert_kv("linear-provenance-checks", checks);
-                insert_kv("linear-provenance-ok", ok);
-                insert_kv("linear-provenance-mismatch", lp_mismatch);
-                insert_kv("linear-provenance-moved-live", moved);
-                insert_kv("linear-provenance-incomplete", incomplete);
-                insert_kv("linear-provenance-deopt", deopt);
-                insert_kv("linear-provenance-steal-checks", steal_c);
-                insert_kv("linear-provenance-gc-checks", gc_c);
-                insert_kv("linear-provenance-consistency-bp", ratio);
-                insert_kv("linear-provenance-consistency-ratio-bp", ratio);
-                insert_kv("linear-provenance-wired", 1);
-                insert_kv("schema-2026", 2026);
-                insert_kv("issue-2026", 2026);
-                // Issue #2103 / #2182 / #2207: Soft/Strict linear enforce mode +
-                // hard-fail totals. Process default Strict (#2207).
-                using aura::core::provenance::g_linear_soft_incomplete_continue_total;
-                using aura::core::provenance::g_linear_strict_hard_fail_total;
-                using aura::core::provenance::linear_enforce_mode;
-                using aura::core::provenance::LinearEnforceMode;
-                const auto mode = linear_enforce_mode();
-                const auto hard_fail = static_cast<std::int64_t>(
-                    g_linear_strict_hard_fail_total.load(std::memory_order_relaxed));
-                insert_kv("linear-enforce-mode",
-                          static_cast<std::int64_t>(static_cast<std::uint8_t>(mode)));
-                insert_kv("linear_enforce_mode",
-                          static_cast<std::int64_t>(static_cast<std::uint8_t>(mode)));
-                insert_kv("linear-enforce-strict", mode == LinearEnforceMode::Strict ? 1 : 0);
-                insert_kv("linear-strict-hard-fail-total", hard_fail);
-                // Issue #2207 AC4: canonical hard-fail name + Soft retain.
-                insert_kv("linear-provenance-hard-fail-total", hard_fail);
-                insert_kv("linear_provenance_hard_fail_total", hard_fail);
-                insert_kv("linear-soft-incomplete-continue-total",
-                          static_cast<std::int64_t>(g_linear_soft_incomplete_continue_total.load(
-                              std::memory_order_relaxed)));
-                insert_kv("linear-enforce-mode-wired", 1);
-                insert_kv("schema-2103", 2103);
-                insert_kv("issue-2103", 2103);
-                // Issue #2182: production defaults surface (Strict under
-                // apply_production_security_defaults; Soft when AURA_SANDBOX=off).
-                insert_kv("production-defaults-linear-strict",
-                          mode == LinearEnforceMode::Strict ? 1 : 0);
-                insert_kv("linear-enforce-production-defaults-wired", 1);
-                insert_kv("schema-2182", 2182);
-                insert_kv("issue-2182", 2182);
-                // Issue #2207: process-default Strict + hard-fail surface.
-                insert_kv("linear-enforce-strict-default", 1);
-                insert_kv("schema-2207", 2207);
-                insert_kv("issue-2207", 2207);
-                // Issue #2222: boundary Strict hold + Soft process alignment.
-                using aura::core::provenance::force_strict_on_mutation_boundary;
-                using aura::core::provenance::g_linear_enforce_mode_forced_boundary_total;
-                using aura::core::provenance::linear_enforce_boundary_strict_active;
-                using aura::core::provenance::linear_enforce_effective_mode;
-                const auto eff = linear_enforce_effective_mode();
-                insert_kv("linear-enforce-effective-mode",
-                          static_cast<std::int64_t>(static_cast<std::uint8_t>(eff)));
-                insert_kv("linear-enforce-boundary-strict-active",
-                          linear_enforce_boundary_strict_active() ? 1 : 0);
-                insert_kv("force-strict-on-mutation-boundary",
-                          force_strict_on_mutation_boundary() ? 1 : 0);
-                insert_kv(
-                    "linear-enforce-mode-forced-boundary-total",
-                    static_cast<std::int64_t>(g_linear_enforce_mode_forced_boundary_total.load(
-                        std::memory_order_relaxed)));
-                insert_kv("linear-enforce-boundary-align-wired", 1);
-                insert_kv("schema-2222", 2222);
-                // Issue #2675: linear-enforce-effective single-pure-API surface.
-                // Exposes the result of `effective_linear_enforce(production_defaults,
-                // fiber_boundary_hold, env_force_strict)` (now the single source
-                // of truth for AST audit / IR execute / MutationBoundary force
-                // classification). Replaces per-call-site split checks; matches
-                // decision table comment in linear_occurrence_mutate_stats.h.
-                // soft=0 / strict=1 — same wire format as linear-enforce-mode so
-                // existing dashboards parse without schema break.
-                {
-                    using aura::core::provenance::effective_linear_enforce;
-                    using aura::core::provenance::LinearEnforceEffective;
-                    const bool eff_strict =
-                        effective_linear_enforce(
-                            /*production_defaults=*/mode == LinearEnforceMode::Strict,
-                            /*fiber_boundary_hold=*/linear_enforce_boundary_strict_active(),
-                            /*env_force_strict=*/false) == LinearEnforceEffective::Strict;
-                    insert_kv("linear-enforce-effective", eff_strict ? 1 : 0);
-                    insert_kv("linear-enforce-effective-pure-api-wired", 1);
-                    insert_kv("schema-2675", 2675);
-                    insert_kv("issue-2675", 2675);
-                }
-                // Issue #2677: resume-invariants consolidated query surface.
-                // Single-agent schema key for the consolidated
-                // MutationSafetySnapshot (ticket) + LayoutStamp (fence) check
-                // now wired at Fiber::resume (single call site). Surfaces
-                // the per-CompilerMetrics layout-stamp-resume-mismatch-total
-                // (already exposed via query:linear-enforce-effective-mode in
-                // evaluator_primitives_query.cpp) + the new process-wide
-                // Fiber static counter as a parallel key, so dashboards can
-                // distinguish per-Evaluator mismatch vs aggregate drift.
-                // schema-2677 wraps the AC5 metrics (ticket-mismatch +
-                // force-deopt + hard-fail + layout-stamp-mismatch) under
-                // one Issue-anchor for Agent navigation.
-                {
-                    insert_kv("resume-invariants-consolidated", 1);
-                    insert_kv("layout-stamp-resume-mismatch-fiber-total",
-                              static_cast<std::int64_t>(
-                                  aura::serve::Fiber::layout_stamp_resume_mismatch_total()));
-                    insert_kv("schema-2677", 2677);
-                    insert_kv("issue-2677", 2677);
-                    // Issue #2779: aggregate of the three resume fence
-                    // counters (one alert for the shared playbook).
-                    insert_kv(
-                        "resume-fence-fail-total",
-                        static_cast<std::int64_t>(aura::serve::Fiber::resume_fence_fail_total()));
-                    insert_kv("resume-fence-fail-wired", 1);
-                    insert_kv("schema-2779", aura::serve::kResumeFenceFailAggregateIssue);
-                    insert_kv("issue-2779", aura::serve::kResumeFenceFailAggregateIssue);
-                }
-                insert_kv("issue-2222", 2222);
-            }
+            insert_post_steal_refresh_fields(insert_kv, ev, m);
+            insert_post_steal_linear_provenance_fields(insert_kv, m);
             insert_kv("issue", 1631);
             insert_kv("schema", 1631); // lineage 1612 / 1608 / 1592 / 1490 (+ #2026 / #2103)
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: (query:epoch-apply-hotpath-stats) registration phase.
+void register_eval_p65_epoch_apply_hotpath(Evaluator& ev, auto& string_heap) {
     // Issue #1598 / #1604 / #1626 / #1632 / #1660: apply_closure / JIT /
     // post-steal / invalidate dual-epoch hotpath closed-loop dashboard.
     // #1632 mandate: live_closure_stale_prevented + bridge_epoch_mismatch_fallback
@@ -11492,7 +11560,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
     // #1660 mandate: unified closure_is_epoch_or_env_stale + EnvFrame SoA
     // (version_ / parent_id_) + distinct epoch/env/linear stale metrics.
     ObservabilityPrims::register_stats_impl(
-        "query:epoch-apply-hotpath-stats", [&ev](const auto&) -> EvalValue {
+        "query:epoch-apply-hotpath-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
             // Capacity must be power-of-two (open-address mask hcap-1).
             // #1660 AC aliases + #2371 soft-migrate keys.
@@ -11513,7 +11581,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -11689,13 +11757,16 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("issue-1916", 1916);
             insert_kv("issue", 1660);
             insert_kv("schema", 1660); // lineage 1632 / 1627 / 1626 / 1607 / 1604 / 1598 → 1916
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: (query:join-linear-enforcement-stats) registration phase.
+void register_eval_p65_join_linear_enforcement(Evaluator& ev, auto& string_heap) {
     // Issue #1595: Fiber::join / MultiFiberMailbox / parallel_intend linear
     // ownership + StableNodeRef enforcement dashboard.
     ObservabilityPrims::register_stats_impl(
-        "query:join-linear-enforcement-stats", [&ev](const auto&) -> EvalValue {
+        "query:join-linear-enforcement-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
             auto* ht = FlatHashTable::create(query_hash_capacity_for(17));
             if (!ht)
@@ -11714,7 +11785,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -11744,16 +11815,19 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("parallel-intend-path-wired", 1);
             insert_kv("issue", 1595);
             insert_kv("schema", 1595);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: (query:stable-ref-provenance-stats) registration phase.
+void register_eval_p65_stable_ref_provenance(Evaluator& ev, auto& string_heap) {
     // Issue #1564 / #1630: unified StableNodeRef full-provenance enforcement.
     // Contract: all holders of StableNodeRef must call ensure_valid_or_refresh
     // (or validate_or_refresh) on query/mutate/GC/steal/JIT boundaries.
     // Schema **1630** (lineage 1564): fiber mismatch prevented, boundary-pinned
     // auto-restamp, cross-COW provenance enforced.
     ObservabilityPrims::register_stats_impl(
-        "query:stable-ref-provenance-stats", [&ev](const auto&) -> EvalValue {
+        "query:stable-ref-provenance-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
             const auto snap = aura::core::provenance::snapshot_provenance_enforcement();
             if (m) {
@@ -11807,7 +11881,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -11882,9 +11956,20 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("stable-ref-export-wired", 1);
             insert_kv("stable-ref-export-hard-reject",
                       aura::core::provenance::stable_ref_export_hard_reject() ? 1 : 0);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #909 part 65 (orig lines 7709-7777)
+void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
+    (void)add;
+    auto& string_heap = ev.string_heap_;
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_eval_p65_stable_ref_cross_cow_provenance(ev, string_heap);
+    register_eval_p65_post_steal_closed_loop(ev, string_heap);
+    register_eval_p65_epoch_apply_hotpath(ev, string_heap);
+    register_eval_p65_join_linear_enforcement(ev, string_heap);
+    register_eval_p65_stable_ref_provenance(ev, string_heap);
     // Issue #3881: query:tenant-isolation-stats and query:security-posture
     // are registered only in register_security_primitives (schema 1566 /
     // 2534 SSOT). The obs_eval duplicates (#2224 / #2225) last-write-won
@@ -14717,205 +14802,178 @@ void ObservabilityPrims::register_eval_p90(PrimRegistrar add, Evaluator& ev) {
 }
 
 // Issue #909 part 91 (orig lines 10543-10617)
-void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
+// --- Issue #5031: register_eval_p91 phases ---------------------------------
+// The p91 registration body outgrew the 300-line ceiling (two AOT observability
+// payloads). Each phase below is one registration responsibility family;
+// register_eval_p91 keeps the ordered delegation so registration order,
+// primitive names, lambda capture lifetimes and every stats payload key stay
+// identical.
 
-    // (query:aot-stats) — Issue #452 / #2012: AOT hot-update + region
-    // filtering observability. Hash fields:
-    //   - aot-stale-reject-count: aura_reload_aot_module rejections
-    //     due to aot_emit_version mismatch
-    //   - aot-region-mismatch-count: region_filter mismatches
-    //   - aot-hot-update-success-count: successful atomic table swaps
-    //   - aot-hot-update-rollback-count: failed reload paths that
-    //     discarded staged registrations (#2012)
-    //
-    // This is the AI Agent's signal for "is the AOT
-    // hot-update pipeline behaving correctly?". A rising
-    // stale-reject / rollback count without rising success =
-    // version drift or partial-load recovery (#452 / #2012).
-    ObservabilityPrims::register_stats_impl("query:aot-stats", [&ev](const auto&) -> EvalValue {
-        std::uint64_t stale_rej = 0;
-        std::uint64_t region_mismatch = 0;
-        std::uint64_t hot_update_ok = 0;
-        std::uint64_t hot_update_rb = 0;
-        // Issue #2094: unified StormLevel facade result.
-        std::uint64_t storm_level = 0;
-        // Issue #2093: per-reason reload-failure breakdown.
-        std::uint64_t fail_dlopen = 0;
-        std::uint64_t fail_version = 0;
-        std::uint64_t fail_region = 0;
-        std::uint64_t fail_defuse = 0;
-        std::uint64_t fail_env = 0;
-        std::uint64_t fail_linear = 0;
-        std::uint64_t fail_staging = 0;
-        std::uint64_t fail_other = 0;
-        // Issue #2165: auto reemit+retry recovery counters.
-        std::uint64_t auto_retry = 0;
-        std::uint64_t auto_retry_ok = 0;
-        std::uint64_t auto_retry_exh = 0;
-        // Issue #2232: multi-round policy attempt + JIT-only fall-back.
-        std::uint64_t auto_retry_policy_attempt = 0;
-        std::uint64_t auto_retry_fall_back_jit = 0;
-        std::uint64_t region_staging_retry = 0;           // #2249
-        std::uint64_t region_staging_exhausted = 0;       // #2249
-        std::uint64_t slot_invalidate_total = 0;          // #2271
-        std::uint64_t slot_invalidate_calls_total = 0;    // #2271
-        std::uint64_t slot_invalidate_last_eval = 0;      // #2299
-        std::uint64_t slot_invalidate_per_eval_calls = 0; // #2299
-        std::uint64_t min_dirty_attempt = 0;              // #2544
-        std::uint64_t min_dirty_success = 0;              // #2544
-        std::uint64_t min_dirty_fail = 0;                 // #2544
-        std::uint64_t min_dirty_storm_skip = 0;           // #2544
-        std::uint64_t min_dirty_retry_total = 0;          // #2601
-        std::uint64_t min_dirty_retry_success = 0;        // #2601
-        std::uint64_t min_dirty_retry_storm_skip = 0;     // #2601
-        std::uint64_t min_dirty_retry_cap_hit = 0;        // #2601
-        std::uint64_t auto_drain_total = 0;               // #2604
-        std::uint64_t auto_drain_ok = 0;                  // #2604
-        std::uint64_t auto_drain_throttled = 0;           // #2604
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            stale_rej = m->aot_stale_reject_count_.load(std::memory_order_relaxed);
-            region_mismatch = m->aot_region_mismatch_.load(std::memory_order_relaxed);
-            hot_update_ok = m->aot_hot_update_success_.load(std::memory_order_relaxed);
-            hot_update_rb = m->aot_hot_update_atomic_rollback.load(std::memory_order_relaxed);
-            // Issue #2093: per-reason reload-failure reads.
-            fail_dlopen = m->aot_reload_fail_dlopen_total.load(std::memory_order_relaxed);
-            fail_version = m->aot_reload_fail_version_total.load(std::memory_order_relaxed);
-            fail_region = m->aot_reload_fail_region_total.load(std::memory_order_relaxed);
-            fail_defuse = m->aot_reload_fail_defuse_total.load(std::memory_order_relaxed);
-            fail_env = m->aot_reload_fail_env_total.load(std::memory_order_relaxed);
-            fail_linear = m->aot_reload_fail_linear_total.load(std::memory_order_relaxed);
-            fail_staging = m->aot_reload_fail_staging_total.load(std::memory_order_relaxed);
-            fail_other = m->aot_reload_fail_other_total.load(std::memory_order_relaxed);
-            auto_retry = m->aot_reload_auto_retry_total.load(std::memory_order_relaxed);
-            auto_retry_ok = m->aot_reload_auto_retry_success_total.load(std::memory_order_relaxed);
-            auto_retry_exh =
-                m->aot_reload_auto_retry_exhausted_total.load(std::memory_order_relaxed);
-            // Issue #2604: outermost MutationBoundary exit auto-drain
-            // deferred reemit + one region-filtered pass (clones the
-            // "visible but unhealed" stale window without unbounded reemit).
-            auto_drain_total =
-                m->reemit_auto_drain_on_boundary_exit_total.load(std::memory_order_relaxed);
-            auto_drain_ok = m->reemit_auto_drain_success_total.load(std::memory_order_relaxed);
-            auto_drain_throttled =
-                m->reemit_auto_drain_throttled_total.load(std::memory_order_relaxed);
-            // Issue #2232: reason-driven multi-round retry policy
-            // metrics (per-attempt counter + exhausted-fall-back-to-JIT).
-            auto_retry_policy_attempt =
-                m->aot_reload_policy_attempt_total.load(std::memory_order_relaxed);
-            auto_retry_fall_back_jit =
-                m->aot_reload_fall_back_jit_only_total.load(std::memory_order_relaxed);
-            // Issue #2249: Region | Staging retry + exhausted counters
-            region_staging_retry =
-                m->aot_reload_region_staging_retry_total.load(std::memory_order_relaxed);
-            region_staging_exhausted =
-                m->aot_reload_region_staging_exhausted_total.load(std::memory_order_relaxed);
-            // Issue #2271: physical invalidate of generation-behind
-            // AOT slots on fall_back_jit_only exhaustion (close #2232
-            // follow-up). Read inside the if-block so the `m` pointer
-            // is in scope (the previous placement outside broke build).
-            slot_invalidate_total =
-                m->aot_reload_fall_back_slot_invalidate_total.load(std::memory_order_relaxed);
-            slot_invalidate_calls_total =
-                m->aot_reload_fall_back_slot_invalidate_calls_total.load(std::memory_order_relaxed);
-            // Issue #2299: last-eval + per-eval call counters.
-            slot_invalidate_last_eval =
-                m->aot_reload_fall_back_slot_invalidate_last_eval.load(std::memory_order_relaxed);
-            slot_invalidate_per_eval_calls =
-                m->aot_reload_fall_back_slot_invalidate_per_eval_calls_total.load(
-                    std::memory_order_relaxed);
-            // Issue #2544: exhausted min-dirty reemit recovery.
-            min_dirty_attempt = m->aot_reload_exhausted_min_dirty_reemit_attempt_total.load(
+// Issue #5031: (query:aot-stats) reload/storm/retry payload phases.
+// The reload/epoch key sequence is one ordered insert stream; field names match
+// the original locals, so every key line below stays verbatim and emit() replays
+// the phases in the original order.
+struct AotStats {
+    Evaluator& ev;
+    std::uint64_t stale_rej = 0;
+    std::uint64_t region_mismatch = 0;
+    std::uint64_t hot_update_ok = 0;
+    std::uint64_t hot_update_rb = 0;
+    // Issue #2094: unified StormLevel facade result.
+    std::uint64_t storm_level = 0;
+    // Issue #2093: per-reason reload-failure breakdown.
+    std::uint64_t fail_dlopen = 0;
+    std::uint64_t fail_version = 0;
+    std::uint64_t fail_region = 0;
+    std::uint64_t fail_defuse = 0;
+    std::uint64_t fail_env = 0;
+    std::uint64_t fail_linear = 0;
+    std::uint64_t fail_staging = 0;
+    std::uint64_t fail_other = 0;
+    // Issue #2165: auto reemit+retry recovery counters.
+    std::uint64_t auto_retry = 0;
+    std::uint64_t auto_retry_ok = 0;
+    std::uint64_t auto_retry_exh = 0;
+    // Issue #2232: multi-round policy attempt + JIT-only fall-back.
+    std::uint64_t auto_retry_policy_attempt = 0;
+    std::uint64_t auto_retry_fall_back_jit = 0;
+    std::uint64_t region_staging_retry = 0;           // #2249
+    std::uint64_t region_staging_exhausted = 0;       // #2249
+    std::uint64_t slot_invalidate_total = 0;          // #2271
+    std::uint64_t slot_invalidate_calls_total = 0;    // #2271
+    std::uint64_t slot_invalidate_last_eval = 0;      // #2299
+    std::uint64_t slot_invalidate_per_eval_calls = 0; // #2299
+    std::uint64_t min_dirty_attempt = 0;              // #2544
+    std::uint64_t min_dirty_success = 0;              // #2544
+    std::uint64_t min_dirty_fail = 0;                 // #2544
+    std::uint64_t min_dirty_storm_skip = 0;           // #2544
+    std::uint64_t min_dirty_retry_total = 0;          // #2601
+    std::uint64_t min_dirty_retry_success = 0;        // #2601
+    std::uint64_t min_dirty_retry_storm_skip = 0;     // #2601
+    std::uint64_t min_dirty_retry_cap_hit = 0;        // #2601
+    std::uint64_t auto_drain_total = 0;               // #2604
+    std::uint64_t auto_drain_ok = 0;                  // #2604
+    std::uint64_t auto_drain_throttled = 0;           // #2604
+    // Issue #2046 / #2095: joint versioning + reemit fail locals.
+    std::uint64_t joint_bump = 0;
+    std::uint64_t region_ver_bump = 0;
+    std::uint64_t region_stale_mark = 0;
+    std::uint64_t slot_stale_rej = 0;
+    std::uint64_t forced_recompile = 0;
+    std::uint64_t cascade_joint = 0;
+    std::uint64_t cascade_names = 0;
+    // Issue #2095: per-reason fail counter + keep-fail env-gated
+    // observability for the default-LLVM reemit path.
+    std::uint64_t reemit_fail = 0;
+    int keep_fail_enabled = 0;
+    void collect();
+    template <typename Kv> void emit_reload_outcome_fields(Kv& kv) const;
+    template <typename Kv> void emit_epoch_invariant_fields(Kv& kv) const;
+    template <typename Kv, typename Heap>
+    void emit_joint_version_fields(Kv& kv, Heap& string_heap) const;
+    template <typename Heap> std::vector<std::pair<std::string, EvalValue>> emit(Heap& string_heap);
+};
+
+void AotStats::collect() {
+    if (ev.compiler_metrics()) {
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        stale_rej = m->aot_stale_reject_count_.load(std::memory_order_relaxed);
+        region_mismatch = m->aot_region_mismatch_.load(std::memory_order_relaxed);
+        hot_update_ok = m->aot_hot_update_success_.load(std::memory_order_relaxed);
+        hot_update_rb = m->aot_hot_update_atomic_rollback.load(std::memory_order_relaxed);
+        // Issue #2093: per-reason reload-failure reads.
+        fail_dlopen = m->aot_reload_fail_dlopen_total.load(std::memory_order_relaxed);
+        fail_version = m->aot_reload_fail_version_total.load(std::memory_order_relaxed);
+        fail_region = m->aot_reload_fail_region_total.load(std::memory_order_relaxed);
+        fail_defuse = m->aot_reload_fail_defuse_total.load(std::memory_order_relaxed);
+        fail_env = m->aot_reload_fail_env_total.load(std::memory_order_relaxed);
+        fail_linear = m->aot_reload_fail_linear_total.load(std::memory_order_relaxed);
+        fail_staging = m->aot_reload_fail_staging_total.load(std::memory_order_relaxed);
+        fail_other = m->aot_reload_fail_other_total.load(std::memory_order_relaxed);
+        auto_retry = m->aot_reload_auto_retry_total.load(std::memory_order_relaxed);
+        auto_retry_ok = m->aot_reload_auto_retry_success_total.load(std::memory_order_relaxed);
+        auto_retry_exh = m->aot_reload_auto_retry_exhausted_total.load(std::memory_order_relaxed);
+        // Issue #2604: outermost MutationBoundary exit auto-drain
+        // deferred reemit + one region-filtered pass (clones the
+        // "visible but unhealed" stale window without unbounded reemit).
+        auto_drain_total =
+            m->reemit_auto_drain_on_boundary_exit_total.load(std::memory_order_relaxed);
+        auto_drain_ok = m->reemit_auto_drain_success_total.load(std::memory_order_relaxed);
+        auto_drain_throttled = m->reemit_auto_drain_throttled_total.load(std::memory_order_relaxed);
+        // Issue #2232: reason-driven multi-round retry policy
+        // metrics (per-attempt counter + exhausted-fall-back-to-JIT).
+        auto_retry_policy_attempt =
+            m->aot_reload_policy_attempt_total.load(std::memory_order_relaxed);
+        auto_retry_fall_back_jit =
+            m->aot_reload_fall_back_jit_only_total.load(std::memory_order_relaxed);
+        // Issue #2249: Region | Staging retry + exhausted counters
+        region_staging_retry =
+            m->aot_reload_region_staging_retry_total.load(std::memory_order_relaxed);
+        region_staging_exhausted =
+            m->aot_reload_region_staging_exhausted_total.load(std::memory_order_relaxed);
+        // Issue #2271: physical invalidate of generation-behind
+        // AOT slots on fall_back_jit_only exhaustion (close #2232
+        // follow-up). Read inside the if-block so the `m` pointer
+        // is in scope (the previous placement outside broke build).
+        slot_invalidate_total =
+            m->aot_reload_fall_back_slot_invalidate_total.load(std::memory_order_relaxed);
+        slot_invalidate_calls_total =
+            m->aot_reload_fall_back_slot_invalidate_calls_total.load(std::memory_order_relaxed);
+        // Issue #2299: last-eval + per-eval call counters.
+        slot_invalidate_last_eval =
+            m->aot_reload_fall_back_slot_invalidate_last_eval.load(std::memory_order_relaxed);
+        slot_invalidate_per_eval_calls =
+            m->aot_reload_fall_back_slot_invalidate_per_eval_calls_total.load(
                 std::memory_order_relaxed);
-            min_dirty_success = m->aot_reload_exhausted_min_dirty_reemit_success_total.load(
-                std::memory_order_relaxed);
-            min_dirty_fail =
-                m->aot_reload_exhausted_min_dirty_reemit_fail_total.load(std::memory_order_relaxed);
-            min_dirty_storm_skip = m->aot_reload_exhausted_min_dirty_reemit_storm_skip_total.load(
-                std::memory_order_relaxed);
-            // Issue #2601: exhausted min-dirty retry closed loop.
-            min_dirty_retry_total =
-                m->aot_exhausted_min_dirty_retry_total.load(std::memory_order_relaxed);
-            min_dirty_retry_success =
-                m->aot_exhausted_min_dirty_retry_success_total.load(std::memory_order_relaxed);
-            min_dirty_retry_storm_skip =
-                m->aot_exhausted_min_dirty_retry_storm_skip_total.load(std::memory_order_relaxed);
-            min_dirty_retry_cap_hit =
-                m->aot_exhausted_min_dirty_retry_cap_hit_total.load(std::memory_order_relaxed);
-        }
-        // Issue #2094: read the unified StormLevel facade OUTSIDE the
-        // metrics if-block since aura_hot_update_current_storm_level() is
-        // a file-scope C function that doesn't need the CompilerMetrics*
-        // (the catalog was previously skipping the read when
-        // ev.compiler_metrics_ was null — agents still want the live value).
-        storm_level = static_cast<std::uint64_t>(::aura_hot_update_current_storm_level());
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            // Capacity 256: #2046/#2093/#2095/#2165/#2271/#2299/#2366 keys
-            // (power-of-2 probe; 64 was >80% load after #2299).
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(131));
-            if (!ht)
-                return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                auto kidx = ev.string_heap_.mint(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
-                        break;
-                    }
-                }
-                if (!inserted) {
-                    overflowed = true;
-                    break;
-                }
-            }
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
-        };
-        std::uint64_t joint_bump = 0;
-        std::uint64_t region_ver_bump = 0;
-        std::uint64_t region_stale_mark = 0;
-        std::uint64_t slot_stale_rej = 0;
-        std::uint64_t forced_recompile = 0;
-        std::uint64_t cascade_joint = 0;
-        std::uint64_t cascade_names = 0;
-        // Issue #2095: per-reason fail counter + keep-fail env-gated
-        // observability for the default-LLVM reemit path.
-        std::uint64_t reemit_fail = 0;
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-            joint_bump = m->aot_joint_epoch_bump_total.load(std::memory_order_relaxed);
-            region_ver_bump = m->aot_region_version_bump_total.load(std::memory_order_relaxed);
-            region_stale_mark = m->aot_region_stale_mark_total.load(std::memory_order_relaxed);
-            slot_stale_rej = m->aot_slot_stale_reject_total.load(std::memory_order_relaxed);
-            forced_recompile =
-                m->aot_forced_recompile_on_mismatch_total.load(std::memory_order_relaxed);
-            cascade_joint =
-                m->aot_cascade_joint_epoch_observe_total.load(std::memory_order_relaxed);
-            cascade_names = m->aot_cascade_region_stale_names_total.load(std::memory_order_relaxed);
-            // Issue #2095: default-LLVM incremental reemit fail counter.
-            reemit_fail = m->aot_incremental_llvm_emit_fail_total.load(std::memory_order_relaxed);
-        }
-        // Issue #2095: keep-fail env state read OUTSIDE the metrics
-        // if-block since aura_reemit_keep_fail_enabled() is a file-scope
-        // C function (mirrors #2094 storm_level pattern — agents want
-        // the live value even when compiler_metrics_ is null).
-        const int keep_fail_enabled = ::aura_reemit_keep_fail_enabled();
-        std::vector<std::pair<std::string, EvalValue>> kv = {
+        // Issue #2544: exhausted min-dirty reemit recovery.
+        min_dirty_attempt =
+            m->aot_reload_exhausted_min_dirty_reemit_attempt_total.load(std::memory_order_relaxed);
+        min_dirty_success =
+            m->aot_reload_exhausted_min_dirty_reemit_success_total.load(std::memory_order_relaxed);
+        min_dirty_fail =
+            m->aot_reload_exhausted_min_dirty_reemit_fail_total.load(std::memory_order_relaxed);
+        min_dirty_storm_skip = m->aot_reload_exhausted_min_dirty_reemit_storm_skip_total.load(
+            std::memory_order_relaxed);
+        // Issue #2601: exhausted min-dirty retry closed loop.
+        min_dirty_retry_total =
+            m->aot_exhausted_min_dirty_retry_total.load(std::memory_order_relaxed);
+        min_dirty_retry_success =
+            m->aot_exhausted_min_dirty_retry_success_total.load(std::memory_order_relaxed);
+        min_dirty_retry_storm_skip =
+            m->aot_exhausted_min_dirty_retry_storm_skip_total.load(std::memory_order_relaxed);
+        min_dirty_retry_cap_hit =
+            m->aot_exhausted_min_dirty_retry_cap_hit_total.load(std::memory_order_relaxed);
+    }
+    // Issue #2094: read the unified StormLevel facade OUTSIDE the
+    // metrics if-block since aura_hot_update_current_storm_level() is
+    // a file-scope C function that doesn't need the CompilerMetrics*
+    // (the catalog was previously skipping the read when
+    // ev.compiler_metrics_ was null — agents still want the live value).
+    storm_level = static_cast<std::uint64_t>(::aura_hot_update_current_storm_level());
+    if (ev.compiler_metrics()) {
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        joint_bump = m->aot_joint_epoch_bump_total.load(std::memory_order_relaxed);
+        region_ver_bump = m->aot_region_version_bump_total.load(std::memory_order_relaxed);
+        region_stale_mark = m->aot_region_stale_mark_total.load(std::memory_order_relaxed);
+        slot_stale_rej = m->aot_slot_stale_reject_total.load(std::memory_order_relaxed);
+        forced_recompile =
+            m->aot_forced_recompile_on_mismatch_total.load(std::memory_order_relaxed);
+        cascade_joint = m->aot_cascade_joint_epoch_observe_total.load(std::memory_order_relaxed);
+        cascade_names = m->aot_cascade_region_stale_names_total.load(std::memory_order_relaxed);
+        // Issue #2095: default-LLVM incremental reemit fail counter.
+        reemit_fail = m->aot_incremental_llvm_emit_fail_total.load(std::memory_order_relaxed);
+    }
+    // Issue #2095: keep-fail env state read OUTSIDE the metrics
+    // if-block since aura_reemit_keep_fail_enabled() is a file-scope
+    // C function (mirrors #2094 storm_level pattern — agents want
+    // the live value even when compiler_metrics_ is null).
+    keep_fail_enabled = ::aura_reemit_keep_fail_enabled();
+}
+
+template <typename Kv> void AotStats::emit_reload_outcome_fields(Kv& kv) const {
+    kv.insert(
+        kv.end(),
+        {
             {"aot-stale-reject-count", make_int(static_cast<std::int64_t>(stale_rej))},
             {"aot-region-mismatch-count", make_int(static_cast<std::int64_t>(region_mismatch))},
             {"aot-hot-update-success-count", make_int(static_cast<std::int64_t>(hot_update_ok))},
@@ -14946,8 +15004,7 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             // (additive to #2165 / #2232 / #2249).
             {"reemit-auto-drain-on-boundary-exit-total",
              make_int(static_cast<std::int64_t>(auto_drain_total))},
-            {"reemit-auto-drain-success-total",
-             make_int(static_cast<std::int64_t>(auto_drain_ok))},
+            {"reemit-auto-drain-success-total", make_int(static_cast<std::int64_t>(auto_drain_ok))},
             {"reemit-auto-drain-throttled-total",
              make_int(static_cast<std::int64_t>(auto_drain_throttled))},
             {"reemit-auto-drain-wired", make_int(1)},
@@ -15019,6 +15076,13 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"issue-2601", make_int(2601)},
             {"schema-2544", make_int(2544)},
             {"issue-2544", make_int(2544)},
+        });
+}
+
+template <typename Kv> void AotStats::emit_epoch_invariant_fields(Kv& kv) const {
+    kv.insert(
+        kv.end(),
+        {
             // Issue #2304 / #2366: post-bump epoch invariant walk
             // (per-entry AOT/IR/closure MustDeopt). Soft metric-only;
             // hard aborts. Mode + counters process-level.
@@ -15043,106 +15107,108 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             // Issue #3540: sid-stale axis on the existing epoch-invariant
             // walk (additive; no new query:*).
             {"epoch-invariant-sid-stale-total",
-             make_int(static_cast<std::int64_t>(
-                 aura_epoch_invariant_sid_stale_total_v_read()))},
+             make_int(static_cast<std::int64_t>(aura_epoch_invariant_sid_stale_total_v_read()))},
             {"epoch-invariant-sid-stale-wired", make_int(1)},
             {"schema-3540", make_int(3540)},
             {"issue-3540", make_int(3540)},
             {"schema-2541", make_int(2541)},
             {"issue-2541", make_int(2541)},
             {"epoch-invariant-soft-prod-wired", make_int(1)},
-                // Issue #2640: production Restricted default periodic
-                // epoch-invariant soft walk (extends #2541/#2366 surfaces
-                // — additive, no break).
-                {"epoch-invariant-periodic-walks-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_invariant_periodic_walks_total_v_read()))},
-                {"epoch-invariant-periodic-skipped-off-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_invariant_periodic_skipped_off_total_v_read()))},
-                {"epoch-invariant-periodic-skipped-wrong-mode-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_invariant_periodic_skipped_wrong_mode_total_v_read()))},
-                {"epoch-invariant-periodic-skipped-rate-limited-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_invariant_periodic_skipped_rate_limited_total_v_read()))},
-                {"epoch-invariant-periodic-skipped-disabled-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_invariant_periodic_skipped_disabled_total_v_read()))},
-                {"epoch-invariant-periodic-last-walk-at-ms",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_invariant_periodic_last_walk_at_ms_v_read()))},
-                {"epoch-invariant-periodic-period-ms",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_invariant_periodic_period_ms_v_read()))},
-                {"epoch-invariant-periodic-wired", make_int(1)},
-                {"schema-2640", make_int(2640)},
-                {"issue-2640", make_int(2640)},
-                // Issue #2668: event-driven soft walk on commit_func_table_swap
-                // / aura_aot_bump_func_table_epoch (extends #2640 periodic
-                // with event-driven complement — closes the burst-mutation
-                // window that pure periodic Soft leaves open). Shares
-                // last_walk_at_ms atomic with periodic path so double-walk
-                // on boundary+swap in the same ms is amortized.
-                {"epoch-invariant-event-walks-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_invariant_event_walks_total_v_read()))},
-                {"epoch-invariant-event-skipped-off-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_invariant_event_skipped_off_total_v_read()))},
-                {"epoch-invariant-event-skipped-wrong-mode-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_invariant_event_skipped_wrong_mode_total_v_read()))},
-                {"epoch-invariant-event-wired", make_int(1)},
-                {"schema-2668", make_int(2668)},
-                {"issue-2668", make_int(2668)},
-                // Issue #2980: event-walk + residual remount merged heal.
-                {"epoch-residual-merged-heal-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_residual_merged_heal_total_v_read()))},
-                {"epoch-residual-merged-heal-wired", make_int(1)},
-                {"schema-2980", make_int(2980)},
-                {"issue-2980", make_int(2980)},
-                // Issue #2693: Soft epoch-invariant consecutive-dirty fuse
-                // (refine #2640 / #2668 — bumps
-                // epoch_invariant_soft_fuse_total after K consecutive Soft
-                // walks that left behind slots uncleared). K defaults to 3
-                // (env AURA_EPOCH_INVARIANT_SOFT_FUSE_K; 0 disables).
-                {"epoch-invariant-soft-fuse-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_invariant_soft_fuse_total_v_read()))},
-                {"epoch-invariant-consecutive-dirty-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_invariant_consecutive_dirty_total_v_read()))},
-                {"epoch-invariant-soft-fuse-k-default",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_invariant_soft_fuse_k_default()))},
-                {"epoch-invariant-soft-fuse-wired", make_int(1)},
-                {"schema-2693", make_int(2693)},
-                {"issue-2693", make_int(2693)},
-                // Issue #2712: Soft fuse → bounded physical heal (close
-                // #2693 residual). Production + Soft + consec >= K
-                // drives the heal body — invalidates stale slots via
-                // reemit-owner TLS + must-deopt stale live closures.
-                // epoch_invariant_soft_fuse_heal_total bumps only when
-                // the heal body actually runs (production + Soft +
-                // consec >= K). Soft / K=0 / mode=Off → no heal body,
-                // counter stays at 0. Bounded: consec resets to 0
-                // after heal so the next heal requires K fresh stuck
-                // walks (per AC3). #2693 / #2668 / #2640 / #2541
-                // surfaces preserved (additive only).
-                {"epoch-invariant-soft-fuse-heal-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_invariant_soft_fuse_heal_total_v_read()))},
-                {"epoch-invariant-soft-fuse-heal-wired", make_int(1)},
-                {"schema-2712", make_int(2712)},
-                // Issue #2747: multi-eval Soft heal with reemit-owner unset.
-                {"epoch-invariant-soft-fuse-heal-no-owner-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura_epoch_invariant_soft_fuse_heal_no_owner_total_v_read()))},
-                {"schema-2747", make_int(2747)},
-                {"issue-2747", make_int(2747)},
-                {"issue-2712", make_int(2712)},
+            // Issue #2640: production Restricted default periodic
+            // epoch-invariant soft walk (extends #2541/#2366 surfaces
+            // — additive, no break).
+            {"epoch-invariant-periodic-walks-total",
+             make_int(
+                 static_cast<std::int64_t>(aura_epoch_invariant_periodic_walks_total_v_read()))},
+            {"epoch-invariant-periodic-skipped-off-total",
+             make_int(static_cast<std::int64_t>(
+                 aura_epoch_invariant_periodic_skipped_off_total_v_read()))},
+            {"epoch-invariant-periodic-skipped-wrong-mode-total",
+             make_int(static_cast<std::int64_t>(
+                 aura_epoch_invariant_periodic_skipped_wrong_mode_total_v_read()))},
+            {"epoch-invariant-periodic-skipped-rate-limited-total",
+             make_int(static_cast<std::int64_t>(
+                 aura_epoch_invariant_periodic_skipped_rate_limited_total_v_read()))},
+            {"epoch-invariant-periodic-skipped-disabled-total",
+             make_int(static_cast<std::int64_t>(
+                 aura_epoch_invariant_periodic_skipped_disabled_total_v_read()))},
+            {"epoch-invariant-periodic-last-walk-at-ms",
+             make_int(static_cast<std::int64_t>(
+                 aura_epoch_invariant_periodic_last_walk_at_ms_v_read()))},
+            {"epoch-invariant-periodic-period-ms",
+             make_int(static_cast<std::int64_t>(aura_epoch_invariant_periodic_period_ms_v_read()))},
+            {"epoch-invariant-periodic-wired", make_int(1)},
+            {"schema-2640", make_int(2640)},
+            {"issue-2640", make_int(2640)},
+            // Issue #2668: event-driven soft walk on commit_func_table_swap
+            // / aura_aot_bump_func_table_epoch (extends #2640 periodic
+            // with event-driven complement — closes the burst-mutation
+            // window that pure periodic Soft leaves open). Shares
+            // last_walk_at_ms atomic with periodic path so double-walk
+            // on boundary+swap in the same ms is amortized.
+            {"epoch-invariant-event-walks-total",
+             make_int(static_cast<std::int64_t>(aura_epoch_invariant_event_walks_total_v_read()))},
+            {"epoch-invariant-event-skipped-off-total",
+             make_int(
+                 static_cast<std::int64_t>(aura_epoch_invariant_event_skipped_off_total_v_read()))},
+            {"epoch-invariant-event-skipped-wrong-mode-total",
+             make_int(static_cast<std::int64_t>(
+                 aura_epoch_invariant_event_skipped_wrong_mode_total_v_read()))},
+            {"epoch-invariant-event-wired", make_int(1)},
+            {"schema-2668", make_int(2668)},
+            {"issue-2668", make_int(2668)},
+            // Issue #2980: event-walk + residual remount merged heal.
+            {"epoch-residual-merged-heal-total",
+             make_int(static_cast<std::int64_t>(aura_epoch_residual_merged_heal_total_v_read()))},
+            {"epoch-residual-merged-heal-wired", make_int(1)},
+            {"schema-2980", make_int(2980)},
+            {"issue-2980", make_int(2980)},
+            // Issue #2693: Soft epoch-invariant consecutive-dirty fuse
+            // (refine #2640 / #2668 — bumps
+            // epoch_invariant_soft_fuse_total after K consecutive Soft
+            // walks that left behind slots uncleared). K defaults to 3
+            // (env AURA_EPOCH_INVARIANT_SOFT_FUSE_K; 0 disables).
+            {"epoch-invariant-soft-fuse-total",
+             make_int(static_cast<std::int64_t>(aura_epoch_invariant_soft_fuse_total_v_read()))},
+            {"epoch-invariant-consecutive-dirty-total",
+             make_int(
+                 static_cast<std::int64_t>(aura_epoch_invariant_consecutive_dirty_total_v_read()))},
+            {"epoch-invariant-soft-fuse-k-default",
+             make_int(static_cast<std::int64_t>(aura_epoch_invariant_soft_fuse_k_default()))},
+            {"epoch-invariant-soft-fuse-wired", make_int(1)},
+            {"schema-2693", make_int(2693)},
+            {"issue-2693", make_int(2693)},
+            // Issue #2712: Soft fuse → bounded physical heal (close
+            // #2693 residual). Production + Soft + consec >= K
+            // drives the heal body — invalidates stale slots via
+            // reemit-owner TLS + must-deopt stale live closures.
+            // epoch_invariant_soft_fuse_heal_total bumps only when
+            // the heal body actually runs (production + Soft +
+            // consec >= K). Soft / K=0 / mode=Off → no heal body,
+            // counter stays at 0. Bounded: consec resets to 0
+            // after heal so the next heal requires K fresh stuck
+            // walks (per AC3). #2693 / #2668 / #2640 / #2541
+            // surfaces preserved (additive only).
+            {"epoch-invariant-soft-fuse-heal-total",
+             make_int(
+                 static_cast<std::int64_t>(aura_epoch_invariant_soft_fuse_heal_total_v_read()))},
+            {"epoch-invariant-soft-fuse-heal-wired", make_int(1)},
+            {"schema-2712", make_int(2712)},
+            // Issue #2747: multi-eval Soft heal with reemit-owner unset.
+            {"epoch-invariant-soft-fuse-heal-no-owner-total",
+             make_int(static_cast<std::int64_t>(
+                 aura_epoch_invariant_soft_fuse_heal_no_owner_total_v_read()))},
+            {"schema-2747", make_int(2747)},
+            {"issue-2747", make_int(2747)},
+            {"issue-2712", make_int(2712)},
+        });
+}
+
+template <typename Kv, typename Heap>
+void AotStats::emit_joint_version_fields(Kv& kv, Heap& string_heap) const {
+    kv.insert(
+        kv.end(),
+        {
             {"schema-2366", make_int(2366)},
             {"issue-2366", make_int(2366)},
             {"schema-2304", make_int(2304)},
@@ -15180,7 +15246,7 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                  // Keep string_heap_ push adjacent to make_string so
                  // #1668 dead-heap audit sees a real use (window ≤120).
                  constexpr const char* kKeepFailDebugDir = "/tmp/aura_reemit_failed";
-                 auto kfdd_idx = ev.string_heap_.mint(kKeepFailDebugDir);
+                 auto kfdd_idx = string_heap.mint(kKeepFailDebugDir);
                  return make_string(kfdd_idx);
              }()},
             {"schema-2095", make_int(2095)},
@@ -15191,45 +15257,47 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             {"schema-2013", make_int(2013)},
             {"active", make_int(1)},
             {"live_closure_remap_total",
-             make_int(ev.compiler_metrics_
+             make_int(ev.compiler_metrics()
                           ? static_cast<std::int64_t>(
-                                static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                     ->live_closure_remap_total.load(std::memory_order_relaxed))
                           : 0)},
             {"live-closure-remap-wired", make_int(1)},
-        };
-        return build_hash(kv);
-    });
+        });
+}
 
-    // Issue #2095: default-LLVM reemit observability. Surfaces the
-    // per-reason fail counter + the env-gated postmortem hook so the
-    // Agent can branch on whether failed .o are kept for inspection
-    // (lineage 2095 — pipeline-phase, >= 5 fields).
+template <typename Heap>
+std::vector<std::pair<std::string, EvalValue>> AotStats::emit(Heap& string_heap) {
+    collect();
+    std::vector<std::pair<std::string, EvalValue>> kv;
+    emit_reload_outcome_fields(kv);
+    emit_epoch_invariant_fields(kv);
+    emit_joint_version_fields(kv, string_heap);
+    return kv;
+}
+
+// Issue #5031: (query:aot-stats) registration phase.
+void register_eval_p91_aot_stats(Evaluator& ev, auto& string_heap) {
+    // (query:aot-stats) — Issue #452 / #2012: AOT hot-update + region
+    // filtering observability. Hash fields:
+    //   - aot-stale-reject-count: aura_reload_aot_module rejections
+    //     due to aot_emit_version mismatch
+    //   - aot-region-mismatch-count: region_filter mismatches
+    //   - aot-hot-update-success-count: successful atomic table swaps
+    //   - aot-hot-update-rollback-count: failed reload paths that
+    //     discarded staged registrations (#2012)
+    //
+    // This is the AI Agent's signal for "is the AOT
+    // hot-update pipeline behaving correctly?". A rising
+    // stale-reject / rollback count without rising success =
+    // version drift or partial-load recovery (#452 / #2012).
     ObservabilityPrims::register_stats_impl(
-        "query:aot-incremental-reemit-stats", [&ev](const auto&) -> EvalValue {
-            std::uint64_t success = 0;
-            std::uint64_t fail = 0;
-            std::uint64_t stale_hard_reject = 0;
-            int keep_enabled = 0;
-            if (ev.compiler_metrics_) {
-                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-                success = m->aot_incremental_llvm_emit_total.load(std::memory_order_relaxed);
-                fail = m->aot_incremental_llvm_emit_fail_total.load(std::memory_order_relaxed);
-                // Issue #2252: hard-reject when AOT slot table_generation != live epoch.
-                stale_hard_reject =
-                    m->aot_stale_probe_hard_reject_total.load(std::memory_order_relaxed);
-            }
-            keep_enabled = ::aura_reemit_keep_fail_enabled();
+        "query:aot-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                // #2369/#2605/#2606/#2850/#2893/#2950/#3736 expand this surface.
-                // Live ~174 keys (169 + 5 additive dirty-region #3736);
-                // planned 256 (≥ live + headroom). query_hash_capacity_for
-                // doubles then rounds to power-of-two.
-                // Issue #4065: four additive last-reemit keys. Stay >= live+8.
-                constexpr std::size_t kAotIncrementalReemitStatsPlannedKeys = 272;
-                auto* ht = FlatHashTable::create(
-                    query_hash_capacity_for(kAotIncrementalReemitStatsPlannedKeys));
+                // Capacity 256: #2046/#2093/#2095/#2165/#2271/#2299/#2366 keys
+                // (power-of-2 probe; 64 was >80% load after #2299).
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(131));
                 if (!ht)
                     return make_void();
                 bool overflowed = false;
@@ -15242,7 +15310,7 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
+                    auto kidx = string_heap.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -15261,285 +15329,313 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return query_hash_finish(ht, string_heap, overflowed, ev);
             };
-            std::uint64_t name_fb = 0;
-            // Issue #2602: synchronous remount walk counters (distinct
-            // from call-time closure_capture_remount_ok / _fail).
-            std::uint64_t sync_remount_ok = 0;
-            std::uint64_t sync_remount_fail = 0;
-            // Issue #2637: anon / residual sync remount walk counters
-            // (sid == 0 branch). Distinct from #2602 named sync counters.
-            std::uint64_t sync_remount_anon_ok = 0;
-            std::uint64_t sync_remount_anon_fail = 0;
-            // Issue #2691: captured-only anon sync remount.
-            std::uint64_t sync_remount_anon_cap_ok = 0;
-            std::uint64_t sync_remount_anon_cap_fail = 0;
-            // Issue #2850: pure-anon bounded sync remount.
-            std::uint64_t sync_remount_pure_ok = 0;
-            std::uint64_t sync_remount_pure_skip = 0;
-            // Issue #2950: pure-anon background remount queue.
-            std::uint64_t pure_anon_bg_enq = 0;
-            std::uint64_t pure_anon_bg_ok = 0;
-            std::uint64_t pure_anon_bg_fail = 0;
-            std::uint64_t pure_anon_bg_ovf = 0;
-            std::uint64_t pure_anon_bg_ovf_md = 0;
-            // Issue #2928: residual round-robin remount (outside reemit-success).
-            std::uint64_t residual_remount_ok = 0;
-            std::uint64_t residual_remount_budget_skip = 0;
-            std::uint64_t residual_remount_prefer_enter = 0;
-            std::uint64_t residual_remount_prefer_hit = 0;
-            std::uint64_t reemit_sync_covered_ok = 0;
-            std::uint64_t reemit_sync_covered_fail = 0;
-            std::uint64_t reemit_sync_covered_cap = 0;
-            // Issue #2605: residual / assign / preserve / named-invent axes.
-            std::uint64_t residual_backfill = 0;
-            std::uint64_t sid_assign = 0;
-            std::uint64_t sid_preserve = 0;
-            std::uint64_t named_invent = 0;
-            // Issue #2606: multi-AotState reemit ownership skip counter.
-            std::uint64_t cross_eval_skip = 0;
-            // Issue #2638: residual sid=0 growth hard cap + fail-closed
-            // drop/MustDeopt under sustained reemit.
-            std::uint64_t residual_cap_hit = 0;
-            // #2233 / #2234: query_tail registered these first; this
-            // impl wins, so keep the keys on the live hash.
-            std::uint64_t epoch_restamp = 0;
-            std::uint64_t must_deopt_kept = 0;
-            std::uint64_t capture_remount_ok = 0;
-            std::uint64_t capture_remount_fail = 0;
-            if (ev.compiler_metrics_) {
-                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-                name_fb = m->live_closure_remap_name_fallback_total.load(std::memory_order_relaxed);
-                sync_remount_ok =
-                    m->live_closure_sync_remount_ok_total.load(std::memory_order_relaxed);
-                sync_remount_fail =
-                    m->live_closure_sync_remount_fail_total.load(std::memory_order_relaxed);
-                // Issue #2637: anon sync remount counters (#2637 ship round).
-                sync_remount_anon_ok =
-                    m->live_closure_sync_remount_anon_ok_total.load(std::memory_order_relaxed);
-                sync_remount_anon_fail =
-                    m->live_closure_sync_remount_anon_fail_total.load(std::memory_order_relaxed);
-                sync_remount_anon_cap_ok = m->live_closure_sync_remount_anon_captured_ok_total.load(
-                    std::memory_order_relaxed);
-                sync_remount_anon_cap_fail =
-                    m->live_closure_sync_remount_anon_captured_fail_total.load(
-                        std::memory_order_relaxed);
-                sync_remount_pure_ok =
-                    m->live_closure_sync_remount_pure_anon_ok_total.load(std::memory_order_relaxed);
-                sync_remount_pure_skip =
-                    m->live_closure_sync_remount_pure_anon_skip_budget_total.load(
-                        std::memory_order_relaxed);
-                pure_anon_bg_enq = m->pure_anon_bg_enqueue_total.load(std::memory_order_relaxed);
-                pure_anon_bg_ok = m->pure_anon_bg_drain_ok_total.load(std::memory_order_relaxed);
-                pure_anon_bg_fail =
-                    m->pure_anon_bg_drain_fail_total.load(std::memory_order_relaxed);
-                pure_anon_bg_ovf = m->pure_anon_bg_overflow_total.load(std::memory_order_relaxed);
-                pure_anon_bg_ovf_md =
-                    m->pure_anon_bg_overflow_must_deopt_total.load(std::memory_order_relaxed);
-                residual_remount_ok = m->residual_remount_ok_total.load(std::memory_order_relaxed);
-                residual_remount_budget_skip =
-                    m->residual_remount_budget_skip_total.load(std::memory_order_relaxed);
-                residual_remount_prefer_enter =
-                    m->residual_remount_prefer_force_jit_total.load(std::memory_order_relaxed);
-                residual_remount_prefer_hit =
-                    m->residual_remount_prefer_hit_total.load(std::memory_order_relaxed);
-                reemit_sync_covered_ok =
-                    m->reemit_success_sync_covered_remount_ok_total.load(std::memory_order_relaxed);
-                reemit_sync_covered_fail = m->reemit_success_sync_covered_remount_fail_total.load(
-                    std::memory_order_relaxed);
-                reemit_sync_covered_cap = m->reemit_success_sync_covered_remount_cap_hit_total.load(
-                    std::memory_order_relaxed);
-                residual_backfill =
-                    m->live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
-                sid_assign = m->stable_func_id_assigned_total.load(std::memory_order_relaxed);
-                sid_preserve = m->stable_func_id_preserved_total.load(std::memory_order_relaxed);
-                named_invent = m->live_closure_named_name_fallback_reject_total.load(
-                    std::memory_order_relaxed);
-                cross_eval_skip =
-                    m->reemit_cross_eval_candidate_skipped_total.load(std::memory_order_relaxed);
-                residual_cap_hit =
-                    m->live_closure_residual_cap_hit_total.load(std::memory_order_relaxed);
-                epoch_restamp = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
-                must_deopt_kept =
-                    m->live_closure_must_deopt_kept_total.load(std::memory_order_relaxed);
-                capture_remount_ok =
-                    m->closure_capture_remount_ok_total.load(std::memory_order_relaxed);
-                capture_remount_fail =
-                    m->closure_capture_remount_fail_total.load(std::memory_order_relaxed);
-            }
-            std::uint64_t reemit_success = 0;
-            std::uint64_t reemit_count = 0;
-            std::uint64_t live_remap = 0;
-            if (ev.compiler_metrics_) {
-                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
-                reemit_success =
-                    m->aot_incremental_reemit_success_total.load(std::memory_order_relaxed);
-                reemit_count = m->aot_incremental_reemit_count.load(std::memory_order_relaxed);
-                live_remap = m->live_closure_remap_total.load(std::memory_order_relaxed);
-            }
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                // #1930 / #1952 lineage — query_tail registered first, this
-                // impl wins; keep original schema keys so hash-ref tests see
-                // them (overwrite used to drop schema-1930).
-                {"schema", make_int(1930)},
-                {"issue", make_int(1930)},
-                {"schema-1930", make_int(1930)},
-                {"issue-1930", make_int(1930)},
-                {"schema-1952", make_int(1952)},
-                {"stable-func-id-map-wired", make_int(1)},
-                {"emit-callback-path-wired", make_int(1)},
-                {"return-success-when-emit-wired", make_int(1)},
-                {"adaptive-region-mask-wired", make_int(1)},
-                {"pipeline-phase", make_int(6)},
-                {"aot_incremental_reemit_success_total",
-                 make_int(static_cast<std::int64_t>(reemit_success))},
-                {"aot_incremental_reemit_count", make_int(static_cast<std::int64_t>(reemit_count))},
-                // Issue #3736: additive dirty-region family on the winning
-                // hash (this impl last-wins). Old LLVM keys unchanged.
-                {"dirty-region-reemit-total", make_int(static_cast<std::int64_t>(reemit_count))},
-                {"dirty-region-reemit-success-total",
-                 make_int(static_cast<std::int64_t>(reemit_success))},
-                {"dirty-region-reemit-wired", make_int(1)},
-                {"schema-3736", make_int(3736)},
-                {"issue-3736", make_int(3736)},
-                {"stable_func_id_preserved_total",
-                 make_int(static_cast<std::int64_t>(sid_preserve))},
-                {"stable_func_id_assigned_total", make_int(static_cast<std::int64_t>(sid_assign))},
-                {"live_closure_remap_total", make_int(static_cast<std::int64_t>(live_remap))},
-                {"aot_evolution_region_skips_total", make_int(0)},
-                {"aot-evolution-region-skips-total", make_int(0)},
-                {"aot-incremental-llvm-emit-total", make_int(static_cast<std::int64_t>(success))},
-                {"aot-incremental-llvm-emit-fail-total", make_int(static_cast<std::int64_t>(fail))},
-                {"aot-reemit-keep-fail-enabled", make_int(keep_enabled)},
-                {"aot-reemit-keep-fail-debug-dir",
-                 [&] {
-                     // Keep string_heap_ push adjacent to make_string so
-                     // #1668 dead-heap audit sees a real use (window ≤120).
-                     constexpr const char* kDebugDir = "/tmp/aura_reemit_failed";
-                     auto dd_idx = ev.string_heap_.mint(kDebugDir);
-                     return make_string(dd_idx);
-                 }()},
-                // Issue #2252: hard-reject native execution when AOT
-                // slot table_generation != live epoch. Dedicated
-                // counter (distinct from aot_slot_stale_reject_total /
-                // aot_forced_recompile_on_mismatch_total) so dashboards
-                // can isolate the zero-native-hit guarantee signal.
-                {"aot-stale-probe-hard-reject-total",
-                 make_int(static_cast<std::int64_t>(stale_hard_reject))},
-                {"aot-stale-probe-hard-reject-wired", make_int(1)},
-                {"aot-incremental-reemit-stats-lineage", make_int(2095)},
-                {"schema-2252", make_int(2252)},
-                {"issue-2252", make_int(2252)},
-                // Issue #2369: stable_func_id sole primary (production surface).
-                {"live-closure-remap-name-fallback-total",
-                 make_int(static_cast<std::int64_t>(name_fb))},
-                {"live_closure_remap_name_fallback_total",
-                 make_int(static_cast<std::int64_t>(name_fb))},
-                {"remap-name-fallback-enabled",
-                 make_int(static_cast<std::int64_t>(aura_get_remap_name_fallback_enabled()))},
-                {"remap-name-fallback-default-off", make_int(1)},
-                {"stable-func-id-sole-primary-wired", make_int(1)},
-                {"schema-2369", make_int(2369)},
-                {"issue-2369", make_int(2369)},
-                // Issue #2503: remount fail → MustDeopt + batch_deopt shared path.
-                {"remount-or-force-deopt-wired", make_int(1)},
-                {"schema-2503", make_int(2503)},
-                {"issue-2503", make_int(2503)},
-                // Issue #2894: last remount fail reason (Agent recovery signal).
-                // Additive; preserves #2503/#2234/#2272/#2297 surfaces.
-                {"last-remount-fail-reason",
-                 make_int(static_cast<std::int64_t>(aura_last_remount_fail_reason()))},
-                {"last_remount_fail_reason",
-                 make_int(static_cast<std::int64_t>(aura_last_remount_fail_reason()))},
-                {"remount-fail-reason-wired", make_int(1)},
-                {"schema-2894", make_int(2894)},
-                {"issue-2894", make_int(2894)},
-                // Issue #2542: full live-closure epoch restamp on reemit success
-                // (backfill sid=0 named + anonymous MustDeopt; no silent skip).
-                {"live-closure-full-restamp-wired", make_int(1)},
-                {"schema-2542", make_int(2542)},
-                {"issue-2542", make_int(2542)},
-                // Issue #2550: named set_name forces stable_func_id != 0 at create.
-                {"named-closure-stable-id-at-create-wired", make_int(1)},
-                {"schema-2550", make_int(2550)},
-                {"issue-2550", make_int(2550)},
-                // Issue #2605: explicit anonymous / residual sid=0 policy table.
-                // residual_backfill aliases #2175; assign/preserve are map axes.
-                {"stable-id-residual-backfill-total",
-                 make_int(static_cast<std::int64_t>(residual_backfill))},
-                {"stable_id_residual_backfill_total",
-                 make_int(static_cast<std::int64_t>(residual_backfill))},
-                {"stable-id-assign-total", make_int(static_cast<std::int64_t>(sid_assign))},
-                {"stable-id-preserve-total", make_int(static_cast<std::int64_t>(sid_preserve))},
-                {"named-name-fallback-reject-total",
-                 make_int(static_cast<std::int64_t>(named_invent))},
-                {"named_name_fallback_reject_total",
-                 make_int(static_cast<std::int64_t>(named_invent))},
-                {"anonymous-must-deopt-policy-wired", make_int(1)},
-                {"residual-sid0-policy-wired", make_int(1)},
-                {"schema-2605", make_int(2605)},
-                {"issue-2605", make_int(2605)},
-                // Issue #2606: multi-AotState reemit ownership filter.
-                // Soft single-eval / nullptr owner keeps skip counter at 0.
-                {"reemit_cross_eval_candidate_skipped_total",
-                 make_int(static_cast<std::int64_t>(cross_eval_skip))},
-                {"reemit-cross-eval-candidate-skipped-total",
-                 make_int(static_cast<std::int64_t>(cross_eval_skip))},
-                {"reemit-cross-eval-filter-wired", make_int(1)},
-                {"schema-2606", make_int(2606)},
-                {"issue-2606", make_int(2606)},
-                // Issue #2713: cross-eval epoch tax observability
-                // (#2670/#2606 asymmetry). Bumped when joint epoch
-                // advance happens under >1 live AotState. Single-eval
-                // / process-default (map size ≤1) keeps the counter
-                // at 0 — zero extra work beyond one relaxed load of
-                // the map size. Joint bridge / AOT table epoch
-                // remains process-global by design (per #2606 comment:
-                // "joint epoch remains process-global — isolation
-                // is ownership + region mask + PerEval storm, not
-                // per-eval epoch domains"); the observability surface
-                // lets Agents see / throttle the cross-eval tax.
-                // #2670 / #2692 / #2606 / #2046 surfaces preserved
-                // (additive only).
-                {"cross-eval-epoch-bump-total",
-                 make_int(static_cast<std::int64_t>(cross_eval_epoch_bump_total_v_read()))},
-                {"cross-eval-epoch-bump-last-owner",
-                 make_int(
-                     reinterpret_cast<std::int64_t>(last_cross_eval_epoch_bump_owner_v_read()))},
-                {"cross-eval-epoch-bump-wired",
-                 make_int(static_cast<std::int64_t>(cross_eval_epoch_bump_wired_v_read()))},
-                {"schema-2713", make_int(2713)},
-                {"issue-2713", make_int(2713)},
-                // Issue #2744: multi-eval cascade throttle action (owner-scoped).
-                {"cross-eval-epoch-action-throttled-total",
-                 make_int(
-                     static_cast<std::int64_t>(cross_eval_epoch_action_throttled_total_v_read()))},
-                {"schema-2744", make_int(2744)},
-                {"issue-2744", make_int(2744)},
-                // Issue #2841: production multi-eval cascade defaults to
-                // owner-scoped epoch (no peer force-stale). Additive
-                // schema only; counters shared with #2744 / #2713.
-                {"cross-eval-epoch-cascade-owner-scoped-default-wired", make_int(1)},
-                {"schema-2841", make_int(2841)},
-                {"issue-2841", make_int(2841)},
-                // Issue #2951: hard invalidate owner-scoped under production multi-eval.
-                {"cross-eval-hard-owner-scoped-total",
-                 make_int(static_cast<std::int64_t>(cross_eval_hard_owner_scoped_total_v_read()))},
-                {"cross-eval-hard-global-bump-total",
-                 make_int(static_cast<std::int64_t>(cross_eval_hard_global_bump_total_v_read()))},
-                {"cross-eval-hard-owner-scoped-armed",
-                 make_int(
-                     static_cast<std::int64_t>(aura_aot_cross_eval_hard_owner_scoped_armed()))},
-                {"cross-eval-hard-owner-scoped-wired", make_int(1)},
-                {"schema-2951", make_int(2951)},
-                {"issue-2951", make_int(2951)},
-                // Issue #3025: production multi-eval C-ABI reemit owner gate.
-                {"reemit-owner-missing-reject-total",
-                 make_int(static_cast<std::int64_t>(reemit_owner_missing_reject_total_v_read()))},
-                {"reemit-owner-missing-reject-wired", make_int(1)},
-                {"schema-3025", make_int(3025)},
-                {"issue-3025", make_int(3025)},
+            return build_hash(AotStats{ev}.emit(string_heap));
+        });
+}
+
+// Issue #5031: (query:aot-incremental-reemit-stats) remount/reemit payload phases.
+// The reemit key sequence is one ordered insert stream; field names match the
+// original locals, so every key line below stays verbatim and emit() replays
+// the phases in the original order.
+struct AotReemitStats {
+    Evaluator& ev;
+    std::uint64_t success = 0;
+    std::uint64_t fail = 0;
+    std::uint64_t stale_hard_reject = 0;
+    int keep_enabled = 0;
+    std::uint64_t name_fb = 0;
+    // Issue #2602: synchronous remount walk counters (distinct
+    // from call-time closure_capture_remount_ok / _fail).
+    std::uint64_t sync_remount_ok = 0;
+    std::uint64_t sync_remount_fail = 0;
+    // Issue #2637: anon / residual sync remount walk counters
+    // (sid == 0 branch). Distinct from #2602 named sync counters.
+    std::uint64_t sync_remount_anon_ok = 0;
+    std::uint64_t sync_remount_anon_fail = 0;
+    // Issue #2691: captured-only anon sync remount.
+    std::uint64_t sync_remount_anon_cap_ok = 0;
+    std::uint64_t sync_remount_anon_cap_fail = 0;
+    // Issue #2850: pure-anon bounded sync remount.
+    std::uint64_t sync_remount_pure_ok = 0;
+    std::uint64_t sync_remount_pure_skip = 0;
+    // Issue #2950: pure-anon background remount queue.
+    std::uint64_t pure_anon_bg_enq = 0;
+    std::uint64_t pure_anon_bg_ok = 0;
+    std::uint64_t pure_anon_bg_fail = 0;
+    std::uint64_t pure_anon_bg_ovf = 0;
+    std::uint64_t pure_anon_bg_ovf_md = 0;
+    // Issue #2928: residual round-robin remount (outside reemit-success).
+    std::uint64_t residual_remount_ok = 0;
+    std::uint64_t residual_remount_budget_skip = 0;
+    std::uint64_t residual_remount_prefer_enter = 0;
+    std::uint64_t residual_remount_prefer_hit = 0;
+    std::uint64_t reemit_sync_covered_ok = 0;
+    std::uint64_t reemit_sync_covered_fail = 0;
+    std::uint64_t reemit_sync_covered_cap = 0;
+    // Issue #2605: residual / assign / preserve / named-invent axes.
+    std::uint64_t residual_backfill = 0;
+    std::uint64_t sid_assign = 0;
+    std::uint64_t sid_preserve = 0;
+    std::uint64_t named_invent = 0;
+    // Issue #2606: multi-AotState reemit ownership skip counter.
+    std::uint64_t cross_eval_skip = 0;
+    // Issue #2638: residual sid=0 growth hard cap + fail-closed
+    // drop/MustDeopt under sustained reemit.
+    std::uint64_t residual_cap_hit = 0;
+    // #2233 / #2234: query_tail registered these first; this
+    // impl wins, so keep the keys on the live hash.
+    std::uint64_t epoch_restamp = 0;
+    std::uint64_t must_deopt_kept = 0;
+    std::uint64_t capture_remount_ok = 0;
+    std::uint64_t capture_remount_fail = 0;
+    std::uint64_t reemit_success = 0;
+    std::uint64_t reemit_count = 0;
+    std::uint64_t live_remap = 0;
+    void collect();
+    template <typename Kv, typename Heap>
+    void emit_reemit_core_fields(Kv& kv, Heap& string_heap) const;
+    template <typename Kv, typename Heap>
+    void emit_remount_walk_fields(Kv& kv, Heap& string_heap) const;
+    template <typename Heap> std::vector<std::pair<std::string, EvalValue>> emit(Heap& string_heap);
+};
+
+void AotReemitStats::collect() {
+    if (ev.compiler_metrics()) {
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        success = m->aot_incremental_llvm_emit_total.load(std::memory_order_relaxed);
+        fail = m->aot_incremental_llvm_emit_fail_total.load(std::memory_order_relaxed);
+        // Issue #2252: hard-reject when AOT slot table_generation != live epoch.
+        stale_hard_reject = m->aot_stale_probe_hard_reject_total.load(std::memory_order_relaxed);
+    }
+    keep_enabled = ::aura_reemit_keep_fail_enabled();
+    if (ev.compiler_metrics()) {
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        name_fb = m->live_closure_remap_name_fallback_total.load(std::memory_order_relaxed);
+        sync_remount_ok = m->live_closure_sync_remount_ok_total.load(std::memory_order_relaxed);
+        sync_remount_fail = m->live_closure_sync_remount_fail_total.load(std::memory_order_relaxed);
+        // Issue #2637: anon sync remount counters (#2637 ship round).
+        sync_remount_anon_ok =
+            m->live_closure_sync_remount_anon_ok_total.load(std::memory_order_relaxed);
+        sync_remount_anon_fail =
+            m->live_closure_sync_remount_anon_fail_total.load(std::memory_order_relaxed);
+        sync_remount_anon_cap_ok =
+            m->live_closure_sync_remount_anon_captured_ok_total.load(std::memory_order_relaxed);
+        sync_remount_anon_cap_fail =
+            m->live_closure_sync_remount_anon_captured_fail_total.load(std::memory_order_relaxed);
+        sync_remount_pure_ok =
+            m->live_closure_sync_remount_pure_anon_ok_total.load(std::memory_order_relaxed);
+        sync_remount_pure_skip = m->live_closure_sync_remount_pure_anon_skip_budget_total.load(
+            std::memory_order_relaxed);
+        pure_anon_bg_enq = m->pure_anon_bg_enqueue_total.load(std::memory_order_relaxed);
+        pure_anon_bg_ok = m->pure_anon_bg_drain_ok_total.load(std::memory_order_relaxed);
+        pure_anon_bg_fail = m->pure_anon_bg_drain_fail_total.load(std::memory_order_relaxed);
+        pure_anon_bg_ovf = m->pure_anon_bg_overflow_total.load(std::memory_order_relaxed);
+        pure_anon_bg_ovf_md =
+            m->pure_anon_bg_overflow_must_deopt_total.load(std::memory_order_relaxed);
+        residual_remount_ok = m->residual_remount_ok_total.load(std::memory_order_relaxed);
+        residual_remount_budget_skip =
+            m->residual_remount_budget_skip_total.load(std::memory_order_relaxed);
+        residual_remount_prefer_enter =
+            m->residual_remount_prefer_force_jit_total.load(std::memory_order_relaxed);
+        residual_remount_prefer_hit =
+            m->residual_remount_prefer_hit_total.load(std::memory_order_relaxed);
+        reemit_sync_covered_ok =
+            m->reemit_success_sync_covered_remount_ok_total.load(std::memory_order_relaxed);
+        reemit_sync_covered_fail =
+            m->reemit_success_sync_covered_remount_fail_total.load(std::memory_order_relaxed);
+        reemit_sync_covered_cap =
+            m->reemit_success_sync_covered_remount_cap_hit_total.load(std::memory_order_relaxed);
+        residual_backfill =
+            m->live_closure_stable_id_backfill_total.load(std::memory_order_relaxed);
+        sid_assign = m->stable_func_id_assigned_total.load(std::memory_order_relaxed);
+        sid_preserve = m->stable_func_id_preserved_total.load(std::memory_order_relaxed);
+        named_invent =
+            m->live_closure_named_name_fallback_reject_total.load(std::memory_order_relaxed);
+        cross_eval_skip =
+            m->reemit_cross_eval_candidate_skipped_total.load(std::memory_order_relaxed);
+        residual_cap_hit = m->live_closure_residual_cap_hit_total.load(std::memory_order_relaxed);
+        epoch_restamp = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+        must_deopt_kept = m->live_closure_must_deopt_kept_total.load(std::memory_order_relaxed);
+        capture_remount_ok = m->closure_capture_remount_ok_total.load(std::memory_order_relaxed);
+        capture_remount_fail =
+            m->closure_capture_remount_fail_total.load(std::memory_order_relaxed);
+    }
+    if (ev.compiler_metrics()) {
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        reemit_success = m->aot_incremental_reemit_success_total.load(std::memory_order_relaxed);
+        reemit_count = m->aot_incremental_reemit_count.load(std::memory_order_relaxed);
+        live_remap = m->live_closure_remap_total.load(std::memory_order_relaxed);
+    }
+}
+
+template <typename Kv, typename Heap>
+void AotReemitStats::emit_reemit_core_fields(Kv& kv, Heap& string_heap) const {
+    kv.insert(
+        kv.end(),
+        {
+            // #1930 / #1952 lineage — query_tail registered first, this
+            // impl wins; keep original schema keys so hash-ref tests see
+            // them (overwrite used to drop schema-1930).
+            {"schema", make_int(1930)},
+            {"issue", make_int(1930)},
+            {"schema-1930", make_int(1930)},
+            {"issue-1930", make_int(1930)},
+            {"schema-1952", make_int(1952)},
+            {"stable-func-id-map-wired", make_int(1)},
+            {"emit-callback-path-wired", make_int(1)},
+            {"return-success-when-emit-wired", make_int(1)},
+            {"adaptive-region-mask-wired", make_int(1)},
+            {"pipeline-phase", make_int(6)},
+            {"aot_incremental_reemit_success_total",
+             make_int(static_cast<std::int64_t>(reemit_success))},
+            {"aot_incremental_reemit_count", make_int(static_cast<std::int64_t>(reemit_count))},
+            // Issue #3736: additive dirty-region family on the winning
+            // hash (this impl last-wins). Old LLVM keys unchanged.
+            {"dirty-region-reemit-total", make_int(static_cast<std::int64_t>(reemit_count))},
+            {"dirty-region-reemit-success-total",
+             make_int(static_cast<std::int64_t>(reemit_success))},
+            {"dirty-region-reemit-wired", make_int(1)},
+            {"schema-3736", make_int(3736)},
+            {"issue-3736", make_int(3736)},
+            {"stable_func_id_preserved_total", make_int(static_cast<std::int64_t>(sid_preserve))},
+            {"stable_func_id_assigned_total", make_int(static_cast<std::int64_t>(sid_assign))},
+            {"live_closure_remap_total", make_int(static_cast<std::int64_t>(live_remap))},
+            {"aot_evolution_region_skips_total", make_int(0)},
+            {"aot-evolution-region-skips-total", make_int(0)},
+            {"aot-incremental-llvm-emit-total", make_int(static_cast<std::int64_t>(success))},
+            {"aot-incremental-llvm-emit-fail-total", make_int(static_cast<std::int64_t>(fail))},
+            {"aot-reemit-keep-fail-enabled", make_int(keep_enabled)},
+            {"aot-reemit-keep-fail-debug-dir",
+             [&] {
+                 // Keep string_heap_ push adjacent to make_string so
+                 // #1668 dead-heap audit sees a real use (window ≤120).
+                 constexpr const char* kDebugDir = "/tmp/aura_reemit_failed";
+                 auto dd_idx = string_heap.mint(kDebugDir);
+                 return make_string(dd_idx);
+             }()},
+            // Issue #2252: hard-reject native execution when AOT
+            // slot table_generation != live epoch. Dedicated
+            // counter (distinct from aot_slot_stale_reject_total /
+            // aot_forced_recompile_on_mismatch_total) so dashboards
+            // can isolate the zero-native-hit guarantee signal.
+            {"aot-stale-probe-hard-reject-total",
+             make_int(static_cast<std::int64_t>(stale_hard_reject))},
+            {"aot-stale-probe-hard-reject-wired", make_int(1)},
+            {"aot-incremental-reemit-stats-lineage", make_int(2095)},
+            {"schema-2252", make_int(2252)},
+            {"issue-2252", make_int(2252)},
+            // Issue #2369: stable_func_id sole primary (production surface).
+            {"live-closure-remap-name-fallback-total",
+             make_int(static_cast<std::int64_t>(name_fb))},
+            {"live_closure_remap_name_fallback_total",
+             make_int(static_cast<std::int64_t>(name_fb))},
+            {"remap-name-fallback-enabled",
+             make_int(static_cast<std::int64_t>(aura_get_remap_name_fallback_enabled()))},
+            {"remap-name-fallback-default-off", make_int(1)},
+            {"stable-func-id-sole-primary-wired", make_int(1)},
+            {"schema-2369", make_int(2369)},
+            {"issue-2369", make_int(2369)},
+            // Issue #2503: remount fail → MustDeopt + batch_deopt shared path.
+            {"remount-or-force-deopt-wired", make_int(1)},
+            {"schema-2503", make_int(2503)},
+            {"issue-2503", make_int(2503)},
+            // Issue #2894: last remount fail reason (Agent recovery signal).
+            // Additive; preserves #2503/#2234/#2272/#2297 surfaces.
+            {"last-remount-fail-reason",
+             make_int(static_cast<std::int64_t>(aura_last_remount_fail_reason()))},
+            {"last_remount_fail_reason",
+             make_int(static_cast<std::int64_t>(aura_last_remount_fail_reason()))},
+            {"remount-fail-reason-wired", make_int(1)},
+            {"schema-2894", make_int(2894)},
+            {"issue-2894", make_int(2894)},
+            // Issue #2542: full live-closure epoch restamp on reemit success
+            // (backfill sid=0 named + anonymous MustDeopt; no silent skip).
+            {"live-closure-full-restamp-wired", make_int(1)},
+            {"schema-2542", make_int(2542)},
+            {"issue-2542", make_int(2542)},
+            // Issue #2550: named set_name forces stable_func_id != 0 at create.
+            {"named-closure-stable-id-at-create-wired", make_int(1)},
+            {"schema-2550", make_int(2550)},
+            {"issue-2550", make_int(2550)},
+            // Issue #2605: explicit anonymous / residual sid=0 policy table.
+            // residual_backfill aliases #2175; assign/preserve are map axes.
+            {"stable-id-residual-backfill-total",
+             make_int(static_cast<std::int64_t>(residual_backfill))},
+            {"stable_id_residual_backfill_total",
+             make_int(static_cast<std::int64_t>(residual_backfill))},
+            {"stable-id-assign-total", make_int(static_cast<std::int64_t>(sid_assign))},
+            {"stable-id-preserve-total", make_int(static_cast<std::int64_t>(sid_preserve))},
+            {"named-name-fallback-reject-total", make_int(static_cast<std::int64_t>(named_invent))},
+            {"named_name_fallback_reject_total", make_int(static_cast<std::int64_t>(named_invent))},
+            {"anonymous-must-deopt-policy-wired", make_int(1)},
+            {"residual-sid0-policy-wired", make_int(1)},
+            {"schema-2605", make_int(2605)},
+            {"issue-2605", make_int(2605)},
+            // Issue #2606: multi-AotState reemit ownership filter.
+            // Soft single-eval / nullptr owner keeps skip counter at 0.
+            {"reemit_cross_eval_candidate_skipped_total",
+             make_int(static_cast<std::int64_t>(cross_eval_skip))},
+            {"reemit-cross-eval-candidate-skipped-total",
+             make_int(static_cast<std::int64_t>(cross_eval_skip))},
+            {"reemit-cross-eval-filter-wired", make_int(1)},
+            {"schema-2606", make_int(2606)},
+            {"issue-2606", make_int(2606)},
+            // Issue #2713: cross-eval epoch tax observability
+            // (#2670/#2606 asymmetry). Bumped when joint epoch
+            // advance happens under >1 live AotState. Single-eval
+            // / process-default (map size ≤1) keeps the counter
+            // at 0 — zero extra work beyond one relaxed load of
+            // the map size. Joint bridge / AOT table epoch
+            // remains process-global by design (per #2606 comment:
+            // "joint epoch remains process-global — isolation
+            // is ownership + region mask + PerEval storm, not
+            // per-eval epoch domains"); the observability surface
+            // lets Agents see / throttle the cross-eval tax.
+            // #2670 / #2692 / #2606 / #2046 surfaces preserved
+            // (additive only).
+            {"cross-eval-epoch-bump-total",
+             make_int(static_cast<std::int64_t>(cross_eval_epoch_bump_total_v_read()))},
+            {"cross-eval-epoch-bump-last-owner",
+             make_int(reinterpret_cast<std::int64_t>(last_cross_eval_epoch_bump_owner_v_read()))},
+            {"cross-eval-epoch-bump-wired",
+             make_int(static_cast<std::int64_t>(cross_eval_epoch_bump_wired_v_read()))},
+            {"schema-2713", make_int(2713)},
+            {"issue-2713", make_int(2713)},
+            // Issue #2744: multi-eval cascade throttle action (owner-scoped).
+            {"cross-eval-epoch-action-throttled-total",
+             make_int(static_cast<std::int64_t>(cross_eval_epoch_action_throttled_total_v_read()))},
+            {"schema-2744", make_int(2744)},
+            {"issue-2744", make_int(2744)},
+            // Issue #2841: production multi-eval cascade defaults to
+            // owner-scoped epoch (no peer force-stale). Additive
+            // schema only; counters shared with #2744 / #2713.
+            {"cross-eval-epoch-cascade-owner-scoped-default-wired", make_int(1)},
+            {"schema-2841", make_int(2841)},
+            {"issue-2841", make_int(2841)},
+            // Issue #2951: hard invalidate owner-scoped under production multi-eval.
+            {"cross-eval-hard-owner-scoped-total",
+             make_int(static_cast<std::int64_t>(cross_eval_hard_owner_scoped_total_v_read()))},
+            {"cross-eval-hard-global-bump-total",
+             make_int(static_cast<std::int64_t>(cross_eval_hard_global_bump_total_v_read()))},
+            {"cross-eval-hard-owner-scoped-armed",
+             make_int(static_cast<std::int64_t>(aura_aot_cross_eval_hard_owner_scoped_armed()))},
+            {"cross-eval-hard-owner-scoped-wired", make_int(1)},
+            {"schema-2951", make_int(2951)},
+            {"issue-2951", make_int(2951)},
+            // Issue #3025: production multi-eval C-ABI reemit owner gate.
+            {"reemit-owner-missing-reject-total",
+             make_int(static_cast<std::int64_t>(reemit_owner_missing_reject_total_v_read()))},
+            {"reemit-owner-missing-reject-wired", make_int(1)},
+            {"schema-3025", make_int(3025)},
+            {"issue-3025", make_int(3025)},
+        });
+}
+
+template <typename Kv, typename Heap>
+void AotReemitStats::emit_remount_walk_fields(Kv& kv, Heap& string_heap) const {
+    kv.insert(kv.end(), {
                 // Issue #2602: synchronous remount walk on reemit success
                 // (named closures with stable_func_id != 0). Distinct
                 // from call-time closure_capture_remount_ok / _fail.
@@ -15688,9 +15784,9 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"issue-2234", make_int(2234)},
                 {"capture-remount-wired", make_int(1)},
                 {"closure-capture-env-gen-mismatch-total",
-                 make_int(ev.compiler_metrics_
+                 make_int(ev.compiler_metrics()
                               ? static_cast<std::int64_t>(
-                                    static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                    static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                         ->closure_capture_env_gen_mismatch_total.load(
                                             std::memory_order_relaxed))
                               : 0)},
@@ -15698,16 +15794,16 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"schema-2272", make_int(2272)},
                 {"issue-2272", make_int(2272)},
                 {"closure-capture-cell-remap-ok-total",
-                 make_int(ev.compiler_metrics_
+                 make_int(ev.compiler_metrics()
                               ? static_cast<std::int64_t>(
-                                    static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                    static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                         ->closure_capture_cell_remap_ok_total.load(
                                             std::memory_order_relaxed))
                               : 0)},
                 {"closure-capture-cell-remap-fail-total",
-                 make_int(ev.compiler_metrics_
+                 make_int(ev.compiler_metrics()
                               ? static_cast<std::int64_t>(
-                                    static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                    static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                         ->closure_capture_cell_remap_fail_total.load(
                                             std::memory_order_relaxed))
                               : 0)},
@@ -15720,30 +15816,30 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 // query publishes the low 62 bits so make_int does not abort.
                 {"last-reemit-mid",
                  make_int(aura::compiler::typed_audit::production_defaults_active() &&
-                                  ev.compiler_metrics_
-                              ? query_fixnum_mid(static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                  ev.compiler_metrics()
+                              ? query_fixnum_mid(static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                                      ->aot_last_reemit_mid.load(
                                                          std::memory_order_relaxed))
                               : 0)},
                 {"last-reemit-tenant",
                  make_int(aura::compiler::typed_audit::production_defaults_active() &&
-                                  ev.compiler_metrics_
+                                  ev.compiler_metrics()
                               ? static_cast<std::int64_t>(
-                                    static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                    static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                         ->aot_last_reemit_tenant.load(std::memory_order_relaxed))
                               : 0)},
                 {"last-reemit-fiber",
                  make_int(aura::compiler::typed_audit::production_defaults_active() &&
-                                  ev.compiler_metrics_
-                              ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                  ev.compiler_metrics()
+                              ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                     ->aot_last_reemit_fiber.load(std::memory_order_relaxed)
                               : 0)},
                 {"last-reemit-reason",
                  [&] {
                      const char* s = "";
                      if (aura::compiler::typed_audit::production_defaults_active() &&
-                         ev.compiler_metrics_) {
-                         const auto code = static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                         ev.compiler_metrics()) {
+                         const auto code = static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                                ->aot_last_reemit_reason.load(std::memory_order_relaxed);
                          if (code == CompilerMetrics::kAotLastReemitReasonOk)
                              s = "reemit-ok";
@@ -15752,12 +15848,83 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                          else if (code == CompilerMetrics::kAotLastReemitReasonStormSkip)
                              s = "reemit-storm-skip";
                      }
-                     auto idx = ev.string_heap_.mint(s);
+                     auto idx = string_heap.mint(s);
                      return make_string(idx);
                  }()},
+    });
+}
+
+template <typename Heap>
+std::vector<std::pair<std::string, EvalValue>> AotReemitStats::emit(Heap& string_heap) {
+    collect();
+    std::vector<std::pair<std::string, EvalValue>> kv;
+    emit_reemit_core_fields(kv, string_heap);
+    emit_remount_walk_fields(kv, string_heap);
+    return kv;
+}
+
+// Issue #5031: (query:aot-incremental-reemit-stats) registration phase.
+void register_eval_p91_aot_incremental_reemit(Evaluator& ev, auto& string_heap) {
+    // Issue #2095: default-LLVM reemit observability. Surfaces the
+    // per-reason fail counter + the env-gated postmortem hook so the
+    // Agent can branch on whether failed .o are kept for inspection
+    // (lineage 2095 — pipeline-phase, >= 5 fields).
+    ObservabilityPrims::register_stats_impl(
+        "query:aot-incremental-reemit-stats", [&ev, &string_heap](const auto&) -> EvalValue {
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                // #2369/#2605/#2606/#2850/#2893/#2950/#3736 expand this surface.
+                // Live ~174 keys (169 + 5 additive dirty-region #3736);
+                // planned 256 (≥ live + headroom). query_hash_capacity_for
+                // doubles then rounds to power-of-two.
+                // Issue #4065: four additive last-reemit keys. Stay >= live+8.
+                constexpr std::size_t kAotIncrementalReemitStatsPlannedKeys = 272;
+                auto* ht = FlatHashTable::create(
+                    query_hash_capacity_for(kAotIncrementalReemitStatsPlannedKeys));
+                if (!ht)
+                    return make_void();
+                bool overflowed = false;
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
+                    auto kidx = string_heap.mint(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        overflowed = true;
+                        break;
+                    }
+                }
+                return query_hash_finish(ht, string_heap, overflowed, ev);
             };
-            return build_hash(kv);
+            return build_hash(AotReemitStats{ev}.emit(string_heap));
         });
+}
+
+// Issue #909 part 91 (orig lines 10543-10617)
+void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
+    (void)add;
+    auto& string_heap = ev.string_heap_;
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_eval_p91_aot_stats(ev, string_heap);
+    register_eval_p91_aot_incremental_reemit(ev, string_heap);
 }
 
 // Issue #909 part 92 (orig lines 10618-10682)
