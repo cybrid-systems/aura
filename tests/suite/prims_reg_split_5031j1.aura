@@ -1,0 +1,125 @@
+;; Issue #5031: register_jit_p97 / register_jit_p6 / register_metrics_facade are
+;; peeled into per-responsibility phases (one helper per registered stats surface,
+;; plus ordered key phases for the two single-handler payloads), delegated in
+;; order. Primitive names, registration order, lambda capture lifetimes and every
+;; stats payload key must not move — this exercises the head, mid and tail keys of
+;; each peeled payload so a dropped or reordered phase shows up.
+(require "std/io" all:)
+
+(define fails 0)
+(define (check pred msg)
+  (if pred
+      #t
+      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+
+(define (hget h k) (hash-ref h k))
+
+;; ── p6: query:soa-dirty-stats (kv list peeled into three key phases) ──
+(define sd (stats:get "query:soa-dirty-stats"))
+(check (hash? sd) "soa-dirty-stats")
+(check (integer? (hget sd "cached-fns")) "soa-dirty cached-fns (head)")
+(check (integer? (hget sd "dirty-instructions")) "soa-dirty dirty-instructions (head)")
+(check (= 2031 (hget sd "schema-2031")) "soa-dirty schema-2031 (phase1)")
+(check (integer? (hget sd "soa-batch-blocks-per-cascade-bp")) "soa-dirty cascade bp (phase1)")
+(check (= 4168 (hget sd "schema-4168")) "soa-dirty schema-4168 (phase1 tail)")
+(check (= 2682 (hget sd "schema-2682")) "soa-dirty schema-2682 (phase2 head)")
+(check (= 2835 (hget sd "schema-2835")) "soa-dirty schema-2835 (phase2)")
+(check (= 2943 (hget sd "schema-2943")) "soa-dirty schema-2943 (phase2 tail)")
+(check (= 2690 (hget sd "schema-2690")) "soa-dirty schema-2690 (phase3 head)")
+(check (= 2109 (hget sd "schema-2109")) "soa-dirty schema-2109 (phase3)")
+(check (= 2213 (hget sd "schema-2213")) "soa-dirty schema-2213 (tail)")
+(check (= 2213 (hget sd "issue-2213")) "soa-dirty issue-2213 (tail)")
+
+;; ── p97: per-fiber quota / resource quota ────────────────────────────
+(define fq (stats:get "query:primitives-resource-quota-fiber-stats"))
+(check (hash? fq) "primitives-resource-quota-fiber-stats")
+(check (= 869 (hget fq "schema")) "fiber-quota schema")
+(check (integer? (hget fq "total")) "fiber-quota total (head)")
+(check (integer? (hget fq "active")) "fiber-quota active (tail)")
+
+(define rq (stats:get "query:resource-quota-stats"))
+(check (hash? rq) "resource-quota-stats")
+(check (= 1634 (hget rq "schema")) "resource-quota schema")
+(check (integer? (hget rq "checks_total")) "resource-quota checks_total (head)")
+(check (integer? (hget rq "panic_quota_distinguished_total")) "resource-quota mid")
+(check (integer? (hget rq "quota-reject-by-tenant-total")) "resource-quota tenant reject (tail)")
+(check (= 1634 (hget rq "issue")) "resource-quota issue (tail)")
+
+;; ── p97: per-fiber mutation depth surfaces ───────────────────────────
+(define ms (stats:get "query:per-fiber-mutation-stack-stats"))
+(check (hash? ms) "per-fiber-mutation-stack-stats")
+(check (= 1493 (hget ms "schema")) "mutation-stack schema")
+(check (integer? (hget ms "lifetime-max")) "mutation-stack lifetime-max (head)")
+(check (integer? (hget ms "hist-samples")) "mutation-stack hist-samples (tail)")
+
+(define md (stats:get "query:per-fiber-mutation-depth-stats"))
+(check (hash? md) "per-fiber-mutation-depth-stats")
+(check (= 1635 (hget md "schema")) "mutation-depth schema")
+(check (integer? (hget md "current-max")) "mutation-depth current-max (head)")
+(check (integer? (hget md "gc-safepoint-depth-check-wired")) "mutation-depth depth-check (tail)")
+
+;; ── p97: adaptive safepoint ──────────────────────────────────────────
+(define ad (stats:get "query:gc-safepoint-adaptive-stats"))
+(check (hash? ad) "gc-safepoint-adaptive-stats")
+(check (= 1599 (hget ad "schema")) "safepoint-adaptive schema")
+(check (integer? (hget ad "threshold")) "safepoint-adaptive threshold (head)")
+(check (integer? (hget ad "defer-count")) "safepoint-adaptive defer-count (head)")
+(check (integer? (hget ad "frequency-adapt-down")) "safepoint-adaptive adapt-down (tail)")
+
+;; ── p97: gc defer reason (insert_kv peeled into four key phases) ─────
+(define gd (stats:get "query:gc-defer-reason-stats"))
+(check (hash? gd) "gc-defer-reason-stats")
+(check (= 2088 (hget gd "schema")) "gc-defer schema")
+(check (integer? (hget gd "reasons")) "gc-defer reasons (phase1 head)")
+(check (integer? (hget gd "panic-bit")) "gc-defer panic-bit (phase1)")
+(check (integer? (hget gd "max-armed-effective")) "gc-defer max-armed (phase1 tail)")
+(check (integer? (hget gd "steal-complete-total")) "gc-defer steal-complete (phase2)")
+(check (= 2929 (hget gd "schema-2929")) "gc-defer schema-2929 (phase3)")
+(check (integer? (hget gd "steal-invariant-bit-snapshot")) "gc-defer invariant bit (phase3)")
+(check (= 2710 (hget gd "schema-2710")) "gc-defer schema-2710 (phase4)")
+(check (= 2609 (hget gd "schema-2609")) "gc-defer schema-2609 (tail)")
+(check (integer? (hget gd "steal-densify-linear-type-hard-fail-total"))
+       "gc-defer densify hard-fail (tail)")
+
+;; ── p97: lifetime contract snapshot ──────────────────────────────────
+(define lc (stats:get "query:lifetime-contract-snapshot"))
+(check (hash? lc) "lifetime-contract-snapshot")
+(check (= 2300 (hget lc "schema-2300")) "lifetime-contract schema-2300")
+(check (integer? (hget lc "lifetime-pin-live-count")) "lifetime-contract pin-live (head)")
+(check (integer? (hget lc "gc-defer-reasons-mask")) "lifetime-contract defer mask (head)")
+(check (= 2341 (hget lc "schema-2341")) "lifetime-contract schema-2341 (mid)")
+(check (= 2342 (hget lc "schema-2342")) "lifetime-contract schema-2342 (tail)")
+
+;; ── p97: arena moving densify health ─────────────────────────────────
+(define dh (stats:get "query:arena-moving-densify-health"))
+(check (hash? dh) "arena-moving-densify-health")
+(check (= 2619 (hget dh "schema-2619")) "densify-health schema-2619")
+(check (integer? (hget dh "production-hard-active")) "densify-health hard-active (head)")
+(check (integer? (hget dh "moving-window-green")) "densify-health window-green (head)")
+(check (= 2905 (hget dh "schema-2905")) "densify-health schema-2905 (mid)")
+(check (= 3200 (hget dh "schema-3200")) "densify-health schema-3200 (tail)")
+(check (= 4140 (hget dh "schema-4140")) "densify-health schema-4140 (tail)")
+(check (= 4140 (hget dh "issue-4140")) "densify-health issue-4140 (tail)")
+
+;; ── facade: stats:list / count / get / prefix / engine:metrics / surface ──
+(define n (stats:count))
+(check (integer? n) "stats:count integer")
+(check (> n 0) "stats:count > 0")
+(check (= n (stats:get "stats:count")) "stats:get stats:count")
+(check (pair? (stats:prefix "query:arena-moving")) "stats:prefix list")
+(check (hash? (stats:get "stats:drift-check")) "stats:drift-check hash")
+
+(define em (engine:metrics))
+(check (hash? em) "engine:metrics hash")
+(check (= 2 (hget em "schema")) "engine:metrics schema")
+(check (integer? (hget em "stats-count")) "engine:metrics stats-count")
+
+(define es (engine:surface))
+(check (hash? es) "engine:surface hash")
+(check (= 1 (hget es "schema")) "engine:surface schema")
+(check (integer? (hget es "stats-catalog-count")) "engine:surface catalog-count")
+(check (integer? (hget es "public-count")) "engine:surface public-count")
+
+(if (= fails 0)
+    (display "obs-jit p97/p6/facade split ok\n")
+    (error "obs-jit p97/p6/facade split FAILED" fails))

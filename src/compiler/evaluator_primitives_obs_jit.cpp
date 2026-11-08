@@ -769,7 +769,507 @@ void ObservabilityPrims::register_jit_p5(PrimRegistrar add, Evaluator& ev) {
 }
 
 // Issue #909 part 6 (orig lines 12185-12266)
-void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
+// Issue #5031: (query:soa-dirty-stats) cache/cascade keys phase.
+void append_jit_p6_soa_dirty_stats_cache_kv(std::vector<std::pair<std::string, EvalValue>>& kv,
+                                            const Evaluator::SoaDirtyStats& s, const auto& L) {
+    kv.insert(
+        kv.end(),
+        {
+            {"cached-fns", make_int(static_cast<std::int64_t>(s.cached_fns))},
+            {"dirty-fns", make_int(static_cast<std::int64_t>(s.dirty_fns))},
+            {"total-blocks", make_int(static_cast<std::int64_t>(s.total_blocks))},
+            {"dirty-blocks", make_int(static_cast<std::int64_t>(s.dirty_blocks))},
+            {"total-instructions", make_int(static_cast<std::int64_t>(s.total_instructions))},
+            {"dirty-instructions", make_int(static_cast<std::int64_t>(s.dirty_instructions))},
+            {"dirty-block-pct", make_int(static_cast<std::int64_t>(s.dirty_block_pct))},
+            {"dirty-instruction-pct", make_int(static_cast<std::int64_t>(s.dirty_instruction_pct))},
+            // Issue #2031: instruction-level impact scope metrics
+            {"instr_level_impact_hits_total",
+             make_int(L(&CompilerMetrics::instr_level_impact_hits_total))},
+            {"instr-level-impact-hits",
+             make_int(L(&CompilerMetrics::instr_level_impact_hits_total))},
+            {"instr_level_impact_misses_total",
+             make_int(L(&CompilerMetrics::instr_level_impact_misses_total))},
+            {"instr-level-impact-misses",
+             make_int(L(&CompilerMetrics::instr_level_impact_misses_total))},
+            {"instr_level_dirty_marks_total",
+             make_int(L(&CompilerMetrics::instr_level_dirty_marks_total))},
+            {"instr-level-dirty-marks",
+             make_int(L(&CompilerMetrics::instr_level_dirty_marks_total))},
+            {"instr-level-impact-wired", make_int(1)},
+            {"schema-2031", make_int(2031)},
+            {"issue-2031", make_int(2031)},
+            // Issue #2034: force instruction_dirty_ sync after cascade
+            {"soa_dirty_sync_total", make_int(L(&CompilerMetrics::soa_dirty_sync_total))},
+            {"soa-dirty-sync-total", make_int(L(&CompilerMetrics::soa_dirty_sync_total))},
+            {"soa-cascade-instr-dirty-sync-wired", make_int(1)},
+            {"schema-2034", make_int(2034)},
+            {"issue-2034", make_int(2034)},
+            // Issue #2139: single-entry finish_cascade_soa_dirty_sync_
+            {"soa_dirty_finish_cascade_total",
+             make_int(L(&CompilerMetrics::soa_dirty_finish_cascade_total))},
+            {"soa-dirty-finish-cascade-total",
+             make_int(L(&CompilerMetrics::soa_dirty_finish_cascade_total))},
+            {"soa-dirty-finish-wired", make_int(L(&CompilerMetrics::soa_dirty_finish_wired))},
+            {"schema-2139", make_int(2139)},
+            {"issue-2139", make_int(2139)},
+            // Issue #2522: batch mark_blocks_dirty + single generation bump
+            {"schema-2522", make_int(2522)},
+            {"issue-2522", make_int(2522)},
+            {"soa-batch-dirty-wired", make_int(1)},
+            // Issue #2615: production multi-block cascade discipline + fence metric.
+            {"schema-2615", make_int(2615)},
+            {"issue-2615", make_int(2615)},
+            {"soa-batch-dirty-cascades-total",
+             make_int(static_cast<std::int64_t>(aura::compiler::g_ir_soa_batch_dirty_cascades_total
+                                                    .load(std::memory_order_relaxed)))},
+            {"soa-batch-dirty-blocks-total",
+             make_int(static_cast<std::int64_t>(aura::compiler::g_ir_soa_batch_dirty_blocks_total
+                                                    .load(std::memory_order_relaxed)))},
+            {"soa-single-dirty-marks-total",
+             make_int(static_cast<std::int64_t>(aura::compiler::g_ir_soa_single_dirty_marks_total
+                                                    .load(std::memory_order_relaxed)))},
+            {"soa-batch-bit-only-cascades-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::g_ir_soa_batch_bit_only_cascades_total.load(
+                     std::memory_order_relaxed)))},
+            {"soa-dirty-fence-total", make_int(static_cast<std::int64_t>(
+                                          aura::compiler::current_ir_soa_generation_fence()))},
+            {"soa-batch-dirty-discipline-wired", make_int(1)},
+            // Issue #2681: production hard-ban loop-of-mark_block_dirty;
+            // multi-block cascades must use batch API. Derived key
+            // (basis points = blocks*10000/cascades) lets Agent read
+            // mean blocks-per-cascade at a glance without division.
+            {
+                "soa-batch-blocks-per-cascade-bp",
+                []() -> EvalValue {
+                    const auto cascades = aura::compiler::g_ir_soa_batch_dirty_cascades_total.load(
+                        std::memory_order_relaxed);
+                    const auto blocks = aura::compiler::g_ir_soa_batch_dirty_blocks_total.load(
+                        std::memory_order_relaxed);
+                    if (cascades == 0)
+                        return make_int(0);
+                    // integer basis points; safe for any reasonable cascade count
+                    return make_int(static_cast<std::int64_t>((blocks * 10000ULL) / cascades));
+                }(),
+            },
+            {"schema-2681", make_int(2681)},
+            {"issue-2681", make_int(2681)},
+            {"soa-batch-dirty-discipline-hardened", make_int(1)},
+            // Issue #2773: unified logical invalidation epoch (process-wide).
+            // One tick per logical cascade; multi-block IR batch → 1 fence
+            // + 1 logical advance. Single residual mark counted separately.
+            // Does not force Shape version (#2617 preserved).
+            {"schema-2773", make_int(2773)},
+            {"issue-2773", make_int(2773)},
+            {"unified-dirty-fence-advance-total",
+             make_int(static_cast<std::int64_t>(aura::compiler::g_unified_dirty_fence_advance_total
+                                                    .load(std::memory_order_relaxed)))},
+            {"unified-dirty-last-sources",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::g_unified_dirty_last_sources.load(std::memory_order_relaxed)))},
+            {"unified-dirty-ir-batch-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::g_unified_dirty_ir_batch_total.load(std::memory_order_relaxed)))},
+            {"unified-dirty-ir-single-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::g_unified_dirty_ir_single_total.load(std::memory_order_relaxed)))},
+            {"unified-dirty-fence-wired", make_int(1)},
+            // Issue #2774: residual multi-block cascade via N× mark_block_dirty
+            // (Soft production metric; CI smoke expects residual==0).
+            {"schema-2774", make_int(2774)},
+            {"issue-2774", make_int(2774)},
+            {"soa-residual-multi-via-single-cascades-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::g_ir_soa_residual_multi_via_single_cascades_total.load(
+                     std::memory_order_relaxed)))},
+            {"soa-residual-multi-via-single-marks-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::g_ir_soa_residual_multi_via_single_marks_total.load(
+                     std::memory_order_relaxed)))},
+            {"soa-residual-multi-via-single-ban-wired", make_int(1)},
+            // Issue #2936: production multi-block dirty = batch-only smoke
+            // (hard-expect residual multi-via-single == 0 under production
+            // packs; mirrors #2618 residual AoS smoke). Additive only.
+            {"schema-2936", make_int(aura::compiler::kSchemaResidualMultiViaSingleProductionSmoke)},
+            {"issue-2936", make_int(aura::compiler::kSchemaResidualMultiViaSingleProductionSmoke)},
+            {"soa-residual-multi-via-single-production-smoke-wired",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::ir_dirty_batch_only_production_smoke_wired()))},
+            {"ir-dirty-batch-only-production-smoke-wired",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::ir_dirty_batch_only_production_smoke_wired()))},
+            // Issue #4168: Soft/Off honesty — the dashboard reports
+            // pretend-amortized=1 and refuses the HP readiness claim
+            // (hp-amortization-ready=0) whenever the production face is
+            // inactive; residual==0 alone is NOT an HP amortization proof
+            // (#2936 Soft smoke stays observe-only). Soft observe counters
+            // and Production batch APIs are unchanged.
+            {"schema-4168", make_int(4168)},
+            {"issue-4168", make_int(4168)},
+            {"ir-dirty-pretend-amortized",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::ir_dirty_soft_pretend_amortized() ? 1 : 0))},
+            {"ir-dirty-hp-amortization-ready",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::ir_dirty_hp_amortization_ready() ? 1 : 0))},
+            {"ir-dirty-honesty-wired", make_int(1)},
+        });
+}
+
+// Issue #5031: (query:soa-dirty-stats) shape-storm/compact keys phase.
+void append_jit_p6_soa_dirty_stats_shape_kv(std::vector<std::pair<std::string, EvalValue>>& kv) {
+    kv.insert(
+        kv.end(),
+        {
+            // Issue #2682: Moving densify unified success gate.
+            // Single predicate (pin_contract ∧ root_remap ∧ untracked==0)
+            // used by Phase-5 outermost exit, AdaptiveCompactResult
+            // consumers, and Agent health surface. Bumps process-wide
+            // totals in lockstep with publish_last_moving_densify_window.
+            {"moving-unified-success-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::ast::g_moving_unified_success_total.load(std::memory_order_relaxed)))},
+            {"moving-unified-fail-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::ast::g_moving_unified_fail_total.load(std::memory_order_relaxed)))},
+            {"schema-2682", make_int(2682)},
+            {"issue-2682", make_int(2682)},
+            {"moving-unified-success-gate-wired", make_int(1)},
+            // Issue #2683: production default PerEval deopt-storm isolation.
+            // shape-storm-per-eval-isolations-total bumps on every storm
+            // enter under PerEval (no process-global shape_version bump).
+            // shape-storm-global-bump-total stays 0 under production default
+            // except when AURA_SHAPE_STORM_ISOLATION=global restores legacy
+            // process-global bump path for experiments.
+            {"shape-storm-per-eval-isolations-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::shape::g_shape_storm_per_eval_isolations_total_atomic().load(
+                     std::memory_order_relaxed)))},
+            {"shape-storm-global-bump-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::shape::g_shape_storm_global_bump_total_atomic().load(
+                     std::memory_order_relaxed)))},
+            {"schema-2683", make_int(2683)},
+            {"issue-2683", make_int(2683)},
+            {"shape-storm-isolation-default-per-eval", make_int(1)},
+            // Issue #2908: compact-only never advances process-global
+            // shape_version under production PerEval (soft pressure).
+            {"compact-no-global-bump-wired",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::shape::shape_compact_no_global_bump_wired()))},
+            {"compact-global-version-skipped-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::shape::g_shape_compact_global_version_skipped_total_atomic().load(
+                     std::memory_order_relaxed)))},
+            {"compact-global-version-bump-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::shape::g_shape_compact_global_version_bump_total_atomic().load(
+                     std::memory_order_relaxed)))},
+            {"schema-2908", make_int(aura::compiler::shape::kShapeCompactNoGlobalBumpIssue)},
+            {"issue-2908", make_int(aura::compiler::shape::kShapeCompactNoGlobalBumpIssue)},
+            // Issue #2687: per-Evaluator isolation capture tenant accounting.
+            // Three counters distinguish the production multi-tenant path
+            // (Evaluator::stamp_stable_ref uses capability_tenant_id_)
+            // from the legacy global-fallback path
+            // (maybe_stamp_stable_ref_isolation_tenant reads
+            // g_isolation_capture_tenant atomic). Production default =
+            // local path; global-fallback should stay 0 under
+            // multi-eval (legacy single-tenant / test harness only).
+            {"isolation-capture-stamp-local-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::core::provenance::g_isolation_capture_stamp_local_total_atomic().load(
+                     std::memory_order_relaxed)))},
+            {"isolation-capture-stamp-global-fallback-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::core::provenance::g_isolation_capture_stamp_global_fallback_total_atomic()
+                     .load(std::memory_order_relaxed)))},
+            {"isolation-capture-stamp-evaluator-miss-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::core::provenance::g_isolation_capture_stamp_evaluator_miss_total_atomic()
+                     .load(std::memory_order_relaxed)))},
+            {"schema-2687", make_int(2687)},
+            {"issue-2687", make_int(2687)},
+            // Issue #2705: production hard-close of FlatAST global capture
+            // fallback (refine #2687 residual). Armed under multi-tenant /
+            // Strict / AURA_HARD_CAPTURE_TENANT; Soft stays permissive.
+            // evaluator-miss advances on every refused global stamp.
+            {"isolation-capture-hard-close-armed",
+             make_int(aura::core::provenance::hard_capture_tenant_active() ? 1 : 0)},
+            {"schema-2705", make_int(2705)},
+            {"issue-2705", make_int(2705)},
+            // Issue #2759: Evaluator::stamp_stable_ref sole production
+            // StableNodeRef isolation authority (refine #2705 residual).
+            // global-write-suppressed advances when set_isolation_capture_tenant
+            // refuses a non-zero write under hard-close. #2687/#2705 keys
+            // preserved above.
+            {"isolation-capture-global-write-suppressed-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::core::provenance::g_isolation_capture_global_write_suppressed_total_atomic()
+                     .load(std::memory_order_relaxed)))},
+            {"schema-2759", make_int(2759)},
+            {"issue-2759", make_int(2759)},
+            // Issue #2706: sole public side-effect gate =
+            // require_effect / require_effect_on_ref. Armed sentinel so
+            // Agent dashboards verify check_and_record_effect is private
+            // (production prims cannot bypass isolation).
+            {"sole-require-effect-gate-armed", make_int(1)},
+            {"schema-2706", make_int(2706)},
+            {"issue-2706", make_int(2706)},
+            // Issue #2688 / #2835 / #2943: production-default
+            // hard_fiber_isolation + grant epoch retain window.
+            // Multi-tenant OR Strict → hard=true + K=64 (#2943 Strict
+            // alone); pure Restricted → K=16 hard=false; Soft → K=0
+            // hard=false. Env overrides win.
+            {"capability-hard-fiber-isolation",
+             make_int(aura::core::capability::g_capability_registry().hard_fiber_isolation() ? 1
+                                                                                             : 0)},
+            {"capability-grant-epoch-retain-window",
+             make_int(static_cast<std::int64_t>(
+                 aura::core::capability::g_capability_registry().grant_epoch_retain_window()))},
+            {"capability-grant-min-valid-epoch",
+             make_int(static_cast<std::int64_t>(
+                 aura::core::capability::g_capability_registry().grant_min_valid_epoch()))},
+            // Keep `g_capability_effect_metrics().capability_*` on one
+            // line for #2688 AC6 source-cite substring match.
+            {"capability-epoch-fence-hit-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::core::capability::g_capability_effect_metrics()
+                     .capability_epoch_fence_hit_total.load(std::memory_order_relaxed)))},
+            {"capability-fiber-hard-deny-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::core::capability::g_capability_effect_metrics()
+                     .capability_fiber_hard_deny_total.load(std::memory_order_relaxed)))},
+            {"schema-2688", make_int(2688)},
+            {"issue-2688", make_int(2688)},
+            {"capability-production-default-armed", make_int(1)},
+            // Issue #2835: Restricted multi-tenant hard-fiber escalate.
+            {"schema-2835", make_int(2835)},
+            {"issue-2835", make_int(2835)},
+            // Issue #2943: Strict alone also arms hard fiber default.
+            {"schema-2943", make_int(2943)},
+            {"issue-2943", make_int(2943)},
+            {"production-hard-fiber-default-wired", make_int(1)},
+            {"restricted-multi-tenant-hard-fiber-wired", make_int(1)},
+        });
+}
+
+// Issue #5031: (query:soa-dirty-stats) remount/relower keys phase.
+void append_jit_p6_soa_dirty_stats_remount_kv(std::vector<std::pair<std::string, EvalValue>>& kv,
+                                              const auto& L) {
+    kv.insert(
+        kv.end(),
+        {
+            // Issue #2690: unified PendingRecovery drain. Both
+            // maybe_storm_clear_health_pass (StormClear) and
+            // outermost MutationBoundary success exit (BoundaryExit)
+            // route through the same single-owner drain.
+            // Counters live at global scope in hot_update_registry.hh
+            // (after namespace aura::compiler closes — C ABI adjacency).
+            {"pending-recovery-driven-total",
+             make_int(static_cast<std::int64_t>(
+                 ::g_pending_recovery_driven_total_atomic().load(std::memory_order_relaxed)))},
+            {"pending-recovery-success-total",
+             make_int(static_cast<std::int64_t>(
+                 ::g_pending_recovery_success_total_atomic().load(std::memory_order_relaxed)))},
+            {"pending-recovery-skipped-reentered-total",
+             make_int(static_cast<std::int64_t>(
+                 ::g_pending_recovery_skipped_reentered_total_atomic().load(
+                     std::memory_order_relaxed)))},
+            {"pending-recovery-double-drain-prevented-total",
+             make_int(static_cast<std::int64_t>(
+                 ::g_pending_recovery_double_drain_prevented_total_atomic().load(
+                     std::memory_order_relaxed)))},
+            {"schema-2690", make_int(2690)},
+            {"issue-2690", make_int(2690)},
+            {"pending-recovery-drain-wired", make_int(1)},
+            // Issue #2691: captured-only anon sync remount counters.
+            // Distinct from the full-walk anon ok/fail counters so
+            // Agents can distinguish "must remount" (captured) from
+            // "touch-time policy" (pure anon, no captures).
+            {"live-closure-sync-remount-anon-captured-ok-total",
+             make_int(L(&CompilerMetrics::live_closure_sync_remount_anon_captured_ok_total))},
+            {"live-closure-sync-remount-anon-captured-fail-total",
+             make_int(L(&CompilerMetrics::live_closure_sync_remount_anon_captured_fail_total))},
+            {"schema-2691", make_int(2691)},
+            {"issue-2691", make_int(2691)},
+            {"closure-pending-recovery-drain-wired", make_int(1)},
+            // Issue #2850: bounded pure-anon sync remount counters.
+            {"live-closure-sync-remount-pure-anon-ok-total",
+             make_int(L(&CompilerMetrics::live_closure_sync_remount_pure_anon_ok_total))},
+            {"live-closure-sync-remount-pure-anon-skip-budget-total",
+             make_int(L(&CompilerMetrics::live_closure_sync_remount_pure_anon_skip_budget_total))},
+            {"live-closure-sync-remount-pure-anon-wired", make_int(1)},
+            {"schema-2850", make_int(2850)},
+            {"issue-2850", make_int(2850)},
+            // Issue #2893: adaptive pure-anon budget + pressure signal
+            // (refine #2850). budget-current is the last adaptive budget;
+            // pressure-bp is the 0-10000 skip/deopt pressure signal.
+            {"live-closure-sync-remount-pure-anon-budget-current",
+             make_int(static_cast<std::int64_t>(aura_sync_remount_pure_anon_budget_current()))},
+            {"live-closure-sync-remount-pure-anon-pressure-bp",
+             make_int(static_cast<std::int64_t>(aura_pure_anon_pressure_bp()))},
+            {"live-closure-sync-remount-pure-anon-adaptive-wired", make_int(1)},
+            {"schema-2893", make_int(2893)},
+            {"issue-2893", make_int(2893)},
+            // Issue #2950: pure-anon pressure-driven bg remount queue.
+            {"pure-anon-bg-enqueue-total",
+             make_int(L(&CompilerMetrics::pure_anon_bg_enqueue_total))},
+            {"pure-anon-bg-drain-ok-total",
+             make_int(L(&CompilerMetrics::pure_anon_bg_drain_ok_total))},
+            {"pure-anon-bg-drain-fail-total",
+             make_int(L(&CompilerMetrics::pure_anon_bg_drain_fail_total))},
+            {"pure-anon-bg-overflow-total",
+             make_int(L(&CompilerMetrics::pure_anon_bg_overflow_total))},
+            {"pure-anon-bg-pending",
+             make_int(static_cast<std::int64_t>(aura_pure_anon_bg_pending()))},
+            {"pure-anon-bg-remount-wired", make_int(1)},
+            {"schema-2950", make_int(2950)},
+            {"issue-2950", make_int(2950)},
+            // Issue #3024: production overflow MustDeopt (additive).
+            {"pure-anon-bg-overflow-must-deopt-total",
+             make_int(L(&CompilerMetrics::pure_anon_bg_overflow_must_deopt_total))},
+            {"pure-anon-bg-overflow-must-deopt-wired", make_int(1)},
+            {"schema-3024", make_int(3024)},
+            {"issue-3024", make_int(3024)},
+            // Issue #2928: residual round-robin remount (outside reemit-success).
+            {"residual-remount-ok-total", make_int(L(&CompilerMetrics::residual_remount_ok_total))},
+            {"residual-remount-budget-skip-total",
+             make_int(L(&CompilerMetrics::residual_remount_budget_skip_total))},
+            {"residual-remount-cursor",
+             make_int(static_cast<std::int64_t>(aura_residual_remount_cursor()))},
+            {"residual-remount-budget",
+             make_int(static_cast<std::int64_t>(aura_residual_remount_budget_default()))},
+            {"residual-remount-wired", make_int(1)},
+            {"schema-2928", make_int(2928)},
+            {"issue-2928", make_int(2928)},
+            // Issue #2977: residual remount prefer force_jit / last_success.
+            {"residual-remount-prefer-force-jit-total",
+             make_int(L(&CompilerMetrics::residual_remount_prefer_force_jit_total))},
+            {"residual-remount-prefer-hit-total",
+             make_int(L(&CompilerMetrics::residual_remount_prefer_hit_total))},
+            {"residual-remount-prefer-wired", make_int(1)},
+            {"schema-2977", make_int(2977)},
+            {"issue-2977", make_int(2977)},
+            // Issue #2978: reemit-success sync covered-named remount.
+            {"reemit-success-sync-covered-remount-ok-total",
+             make_int(L(&CompilerMetrics::reemit_success_sync_covered_remount_ok_total))},
+            {"reemit-success-sync-covered-remount-fail-total",
+             make_int(L(&CompilerMetrics::reemit_success_sync_covered_remount_fail_total))},
+            {"reemit-success-sync-covered-remount-cap-hit-total",
+             make_int(L(&CompilerMetrics::reemit_success_sync_covered_remount_cap_hit_total))},
+            {"reemit-success-sync-covered-remount-wired", make_int(1)},
+            {"schema-2978", make_int(2978)},
+            {"issue-2978", make_int(2978)},
+            // Issue #2980: event-walk + residual remount merged heal.
+            {"epoch-residual-merged-heal-total",
+             make_int(static_cast<std::int64_t>(aura_epoch_residual_merged_heal_total_v_read()))},
+            {"epoch-residual-merged-heal-wired", make_int(1)},
+            {"schema-2980", make_int(2980)},
+            {"issue-2980", make_int(2980)},
+            // Issue #2692: cross-eval sid ↔ AOT slot owner consistency
+            // assert. Soft single-eval / process-default (filter
+            // eval = nullptr) keeps this at 0. Production hard
+            // path clears the slot to prevent the next call from
+            // hitting a wrong table. Routes through
+            // query:aot-incremental-reemit-stats schema.
+            {"cross-eval-sid-owner-mismatch-total",
+             make_int(L(&CompilerMetrics::cross_eval_sid_owner_mismatch_total))},
+            {"cross-eval-sid-owner-mismatch-wired", make_int(1)},
+            {"schema-2692", make_int(2692)},
+            {"issue-2692", make_int(2692)},
+            // Issue #2181: partial-entry desync hard gate
+            {"soa_dirty_desync_detected_total",
+             make_int(L(&CompilerMetrics::soa_dirty_desync_detected_total))},
+            {"soa-dirty-desync-detected-total",
+             make_int(L(&CompilerMetrics::soa_dirty_desync_detected_total))},
+            {"soa_dirty_desync_force_full_total",
+             make_int(L(&CompilerMetrics::soa_dirty_desync_force_full_total))},
+            {"soa-dirty-desync-force-full-total",
+             make_int(L(&CompilerMetrics::soa_dirty_desync_force_full_total))},
+            {"soa_dirty_desync_synced_bits_total",
+             make_int(L(&CompilerMetrics::soa_dirty_desync_synced_bits_total))},
+            {"soa-dirty-desync-synced-bits-total",
+             make_int(L(&CompilerMetrics::soa_dirty_desync_synced_bits_total))},
+            {"soa-dirty-desync-gate-wired",
+             make_int(L(&CompilerMetrics::soa_dirty_desync_gate_wired))},
+            {"schema-2181", make_int(2181)},
+            {"issue-2181", make_int(2181)},
+            // Issue #2045: source_to_ir_map rebuild / consistency after re-lower
+            {"source_to_ir_map_rebuild_total",
+             make_int(L(&CompilerMetrics::source_to_ir_map_rebuild_total))},
+            {"source-to-ir-map-rebuild-total",
+             make_int(L(&CompilerMetrics::source_to_ir_map_rebuild_total))},
+            {"source_to_ir_map_patch_total",
+             make_int(L(&CompilerMetrics::source_to_ir_map_patch_total))},
+            {"source-to-ir-map-patch-total",
+             make_int(L(&CompilerMetrics::source_to_ir_map_patch_total))},
+            {"source_to_ir_map_inconsistency_total",
+             make_int(L(&CompilerMetrics::source_to_ir_map_inconsistency_total))},
+            {"source_to_ir_map_soa_desync_total",
+             make_int(L(&CompilerMetrics::source_to_ir_map_soa_desync_total))},
+            {"source_to_ir_map_consistent_checks_total",
+             make_int(L(&CompilerMetrics::source_to_ir_map_consistent_checks_total))},
+            {"source-to-ir-map-consistency-wired", make_int(1)},
+            {"schema-2045", make_int(2045)},
+            {"issue-2045", make_int(2045)},
+            // Issue #2206: aggressive source_to_ir_map desync recovery
+            {"source_to_ir_desync_recovered_total",
+             make_int(L(&CompilerMetrics::source_to_ir_desync_recovered_total))},
+            {"source-to-ir-desync-recovered-total",
+             make_int(L(&CompilerMetrics::source_to_ir_desync_recovered_total))},
+            {"source_to_ir_desync_funcs_patched",
+             make_int(L(&CompilerMetrics::source_to_ir_desync_funcs_patched))},
+            {"source-to-ir-desync-funcs-patched",
+             make_int(L(&CompilerMetrics::source_to_ir_desync_funcs_patched))},
+            {"source-to-ir-desync-recovery-wired", make_int(1)},
+            {"schema-2206", make_int(2206)},
+            {"issue-2206", make_int(2206)},
+            // Issue #2109: instruction-level partial re-emit metrics
+            {"relower_partial_insts_saved_total",
+             make_int(L(&CompilerMetrics::relower_partial_insts_saved_total))},
+            {"relower-partial-insts-saved-total",
+             make_int(L(&CompilerMetrics::relower_partial_insts_saved_total))},
+            {"relower_instruction_skip_total",
+             make_int(L(&CompilerMetrics::relower_instruction_skip_total))},
+            {"relower-instruction-skip-total",
+             make_int(L(&CompilerMetrics::relower_instruction_skip_total))},
+            {"should_partial_relower_consult_total",
+             make_int(L(&CompilerMetrics::should_partial_relower_consult_total))},
+            {"should-partial-relower-consult-total",
+             make_int(L(&CompilerMetrics::should_partial_relower_consult_total))},
+            {"should_partial_relower_yes_total",
+             make_int(L(&CompilerMetrics::should_partial_relower_yes_total))},
+            {"relower_partial_funcs_saved_total",
+             make_int(L(&CompilerMetrics::relower_partial_funcs_saved_total))},
+            {"instr-level-partial-reemit-wired", make_int(1)},
+            {"schema-2109", make_int(2109)},
+            {"issue-2109", make_int(2109)},
+            // Issue #2213: production tree-walker fallback gate
+            {"tree_walker_fallback_total",
+             make_int(L(&CompilerMetrics::tree_walker_fallback_total))},
+            {"tree-walker-fallback-total",
+             make_int(L(&CompilerMetrics::tree_walker_fallback_total))},
+            {"tree_walker_fallback_forbidden_total",
+             make_int(L(&CompilerMetrics::tree_walker_fallback_forbidden_total))},
+            {"tree-walker-fallback-forbidden-total",
+             make_int(L(&CompilerMetrics::tree_walker_fallback_forbidden_total))},
+            {"tree_walker_fallback_forced_soa_total",
+             make_int(L(&CompilerMetrics::tree_walker_fallback_forced_soa_total))},
+            {"tree-walker-fallback-forced-soa-total",
+             make_int(L(&CompilerMetrics::tree_walker_fallback_forced_soa_total))},
+            {"pipeline-strict-policy", make_int(static_cast<std::int64_t>(static_cast<std::uint8_t>(
+                                           aura::compiler::tree_walker_fallback_policy())))},
+            {"production-pipeline-strict",
+             make_int(aura::compiler::production_pipeline_strict() ? 1 : 0)},
+            {"tree-walker-fallback-gate-wired", make_int(1)},
+            {"schema-2213", make_int(2213)},
+            {"issue-2213", make_int(2213)},
+        });
+}
+
+// Issue #5031: (query:soa-dirty-stats) registration phase.
+void register_jit_p6_soa_dirty_stats(Evaluator& ev) {
 
     // (query:soa-dirty-stats) — Issue #429: live SoA
     // dirty state aggregate. Returns a hash with 8 fields
@@ -815,7 +1315,7 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
+                    auto kidx = ev.string_heap_mut().mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -834,510 +1334,31 @@ void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return query_hash_finish(ht, ev.string_heap_mut(), overflowed, ev);
             };
             Evaluator::SoaDirtyStats s;
             if (ev.get_soa_dirty_stats_fn_) {
                 s = ev.get_soa_dirty_stats_fn_();
             }
-            CompilerMetrics* m = ev.compiler_metrics_
-                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                      : nullptr;
             const auto L = [&](std::atomic<std::uint64_t> CompilerMetrics::* f) -> std::int64_t {
                 return m ? static_cast<std::int64_t>((m->*f).load(std::memory_order_relaxed)) : 0;
             };
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"cached-fns", make_int(static_cast<std::int64_t>(s.cached_fns))},
-                {"dirty-fns", make_int(static_cast<std::int64_t>(s.dirty_fns))},
-                {"total-blocks", make_int(static_cast<std::int64_t>(s.total_blocks))},
-                {"dirty-blocks", make_int(static_cast<std::int64_t>(s.dirty_blocks))},
-                {"total-instructions", make_int(static_cast<std::int64_t>(s.total_instructions))},
-                {"dirty-instructions", make_int(static_cast<std::int64_t>(s.dirty_instructions))},
-                {"dirty-block-pct", make_int(static_cast<std::int64_t>(s.dirty_block_pct))},
-                {"dirty-instruction-pct",
-                 make_int(static_cast<std::int64_t>(s.dirty_instruction_pct))},
-                // Issue #2031: instruction-level impact scope metrics
-                {"instr_level_impact_hits_total",
-                 make_int(L(&CompilerMetrics::instr_level_impact_hits_total))},
-                {"instr-level-impact-hits",
-                 make_int(L(&CompilerMetrics::instr_level_impact_hits_total))},
-                {"instr_level_impact_misses_total",
-                 make_int(L(&CompilerMetrics::instr_level_impact_misses_total))},
-                {"instr-level-impact-misses",
-                 make_int(L(&CompilerMetrics::instr_level_impact_misses_total))},
-                {"instr_level_dirty_marks_total",
-                 make_int(L(&CompilerMetrics::instr_level_dirty_marks_total))},
-                {"instr-level-dirty-marks",
-                 make_int(L(&CompilerMetrics::instr_level_dirty_marks_total))},
-                {"instr-level-impact-wired", make_int(1)},
-                {"schema-2031", make_int(2031)},
-                {"issue-2031", make_int(2031)},
-                // Issue #2034: force instruction_dirty_ sync after cascade
-                {"soa_dirty_sync_total", make_int(L(&CompilerMetrics::soa_dirty_sync_total))},
-                {"soa-dirty-sync-total", make_int(L(&CompilerMetrics::soa_dirty_sync_total))},
-                {"soa-cascade-instr-dirty-sync-wired", make_int(1)},
-                {"schema-2034", make_int(2034)},
-                {"issue-2034", make_int(2034)},
-                // Issue #2139: single-entry finish_cascade_soa_dirty_sync_
-                {"soa_dirty_finish_cascade_total",
-                 make_int(L(&CompilerMetrics::soa_dirty_finish_cascade_total))},
-                {"soa-dirty-finish-cascade-total",
-                 make_int(L(&CompilerMetrics::soa_dirty_finish_cascade_total))},
-                {"soa-dirty-finish-wired", make_int(L(&CompilerMetrics::soa_dirty_finish_wired))},
-                {"schema-2139", make_int(2139)},
-                {"issue-2139", make_int(2139)},
-                // Issue #2522: batch mark_blocks_dirty + single generation bump
-                {"schema-2522", make_int(2522)},
-                {"issue-2522", make_int(2522)},
-                {"soa-batch-dirty-wired", make_int(1)},
-                // Issue #2615: production multi-block cascade discipline + fence metric.
-                {"schema-2615", make_int(2615)},
-                {"issue-2615", make_int(2615)},
-                {"soa-batch-dirty-cascades-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::g_ir_soa_batch_dirty_cascades_total.load(
-                         std::memory_order_relaxed)))},
-                {"soa-batch-dirty-blocks-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::g_ir_soa_batch_dirty_blocks_total.load(
-                         std::memory_order_relaxed)))},
-                {"soa-single-dirty-marks-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::g_ir_soa_single_dirty_marks_total.load(
-                         std::memory_order_relaxed)))},
-                {"soa-batch-bit-only-cascades-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::g_ir_soa_batch_bit_only_cascades_total.load(
-                         std::memory_order_relaxed)))},
-                {"soa-dirty-fence-total", make_int(static_cast<std::int64_t>(
-                                              aura::compiler::current_ir_soa_generation_fence()))},
-                {"soa-batch-dirty-discipline-wired", make_int(1)},
-                // Issue #2681: production hard-ban loop-of-mark_block_dirty;
-                // multi-block cascades must use batch API. Derived key
-                // (basis points = blocks*10000/cascades) lets Agent read
-                // mean blocks-per-cascade at a glance without division.
-                {
-                    "soa-batch-blocks-per-cascade-bp",
-                    []() -> EvalValue {
-                        const auto cascades =
-                            aura::compiler::g_ir_soa_batch_dirty_cascades_total.load(
-                                std::memory_order_relaxed);
-                        const auto blocks = aura::compiler::g_ir_soa_batch_dirty_blocks_total.load(
-                            std::memory_order_relaxed);
-                        if (cascades == 0)
-                            return make_int(0);
-                        // integer basis points; safe for any reasonable cascade count
-                        return make_int(static_cast<std::int64_t>((blocks * 10000ULL) / cascades));
-                    }(),
-                },
-                {"schema-2681", make_int(2681)},
-                {"issue-2681", make_int(2681)},
-                {"soa-batch-dirty-discipline-hardened", make_int(1)},
-                // Issue #2773: unified logical invalidation epoch (process-wide).
-                // One tick per logical cascade; multi-block IR batch → 1 fence
-                // + 1 logical advance. Single residual mark counted separately.
-                // Does not force Shape version (#2617 preserved).
-                {"schema-2773", make_int(2773)},
-                {"issue-2773", make_int(2773)},
-                {"unified-dirty-fence-advance-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::g_unified_dirty_fence_advance_total.load(
-                         std::memory_order_relaxed)))},
-                {"unified-dirty-last-sources",
-                 make_int(static_cast<std::int64_t>(aura::compiler::g_unified_dirty_last_sources
-                                                        .load(std::memory_order_relaxed)))},
-                {"unified-dirty-ir-batch-total",
-                 make_int(static_cast<std::int64_t>(aura::compiler::g_unified_dirty_ir_batch_total
-                                                        .load(std::memory_order_relaxed)))},
-                {"unified-dirty-ir-single-total",
-                 make_int(static_cast<std::int64_t>(aura::compiler::g_unified_dirty_ir_single_total
-                                                        .load(std::memory_order_relaxed)))},
-                {"unified-dirty-fence-wired", make_int(1)},
-                // Issue #2774: residual multi-block cascade via N× mark_block_dirty
-                // (Soft production metric; CI smoke expects residual==0).
-                {"schema-2774", make_int(2774)},
-                {"issue-2774", make_int(2774)},
-                {"soa-residual-multi-via-single-cascades-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::g_ir_soa_residual_multi_via_single_cascades_total.load(
-                         std::memory_order_relaxed)))},
-                {"soa-residual-multi-via-single-marks-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::g_ir_soa_residual_multi_via_single_marks_total.load(
-                         std::memory_order_relaxed)))},
-                {"soa-residual-multi-via-single-ban-wired", make_int(1)},
-                // Issue #2936: production multi-block dirty = batch-only smoke
-                // (hard-expect residual multi-via-single == 0 under production
-                // packs; mirrors #2618 residual AoS smoke). Additive only.
-                {"schema-2936",
-                 make_int(aura::compiler::kSchemaResidualMultiViaSingleProductionSmoke)},
-                {"issue-2936",
-                 make_int(aura::compiler::kSchemaResidualMultiViaSingleProductionSmoke)},
-                {"soa-residual-multi-via-single-production-smoke-wired",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::ir_dirty_batch_only_production_smoke_wired()))},
-                {"ir-dirty-batch-only-production-smoke-wired",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::ir_dirty_batch_only_production_smoke_wired()))},
-                // Issue #4168: Soft/Off honesty — the dashboard reports
-                // pretend-amortized=1 and refuses the HP readiness claim
-                // (hp-amortization-ready=0) whenever the production face is
-                // inactive; residual==0 alone is NOT an HP amortization proof
-                // (#2936 Soft smoke stays observe-only). Soft observe counters
-                // and Production batch APIs are unchanged.
-                {"schema-4168", make_int(4168)},
-                {"issue-4168", make_int(4168)},
-                {"ir-dirty-pretend-amortized",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::ir_dirty_soft_pretend_amortized() ? 1 : 0))},
-                {"ir-dirty-hp-amortization-ready",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::ir_dirty_hp_amortization_ready() ? 1 : 0))},
-                {"ir-dirty-honesty-wired", make_int(1)},
-                // Issue #2682: Moving densify unified success gate.
-                // Single predicate (pin_contract ∧ root_remap ∧ untracked==0)
-                // used by Phase-5 outermost exit, AdaptiveCompactResult
-                // consumers, and Agent health surface. Bumps process-wide
-                // totals in lockstep with publish_last_moving_densify_window.
-                {"moving-unified-success-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::ast::g_moving_unified_success_total.load(std::memory_order_relaxed)))},
-                {"moving-unified-fail-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::ast::g_moving_unified_fail_total.load(std::memory_order_relaxed)))},
-                {"schema-2682", make_int(2682)},
-                {"issue-2682", make_int(2682)},
-                {"moving-unified-success-gate-wired", make_int(1)},
-                // Issue #2683: production default PerEval deopt-storm isolation.
-                // shape-storm-per-eval-isolations-total bumps on every storm
-                // enter under PerEval (no process-global shape_version bump).
-                // shape-storm-global-bump-total stays 0 under production default
-                // except when AURA_SHAPE_STORM_ISOLATION=global restores legacy
-                // process-global bump path for experiments.
-                {"shape-storm-per-eval-isolations-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::shape::g_shape_storm_per_eval_isolations_total_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"shape-storm-global-bump-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::shape::g_shape_storm_global_bump_total_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"schema-2683", make_int(2683)},
-                {"issue-2683", make_int(2683)},
-                {"shape-storm-isolation-default-per-eval", make_int(1)},
-                // Issue #2908: compact-only never advances process-global
-                // shape_version under production PerEval (soft pressure).
-                {"compact-no-global-bump-wired",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::shape::shape_compact_no_global_bump_wired()))},
-                {"compact-global-version-skipped-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::shape::g_shape_compact_global_version_skipped_total_atomic()
-                         .load(std::memory_order_relaxed)))},
-                {"compact-global-version-bump-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::shape::g_shape_compact_global_version_bump_total_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"schema-2908", make_int(aura::compiler::shape::kShapeCompactNoGlobalBumpIssue)},
-                {"issue-2908", make_int(aura::compiler::shape::kShapeCompactNoGlobalBumpIssue)},
-                // Issue #2687: per-Evaluator isolation capture tenant accounting.
-                // Three counters distinguish the production multi-tenant path
-                // (Evaluator::stamp_stable_ref uses capability_tenant_id_)
-                // from the legacy global-fallback path
-                // (maybe_stamp_stable_ref_isolation_tenant reads
-                // g_isolation_capture_tenant atomic). Production default =
-                // local path; global-fallback should stay 0 under
-                // multi-eval (legacy single-tenant / test harness only).
-                {"isolation-capture-stamp-local-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::core::provenance::g_isolation_capture_stamp_local_total_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"isolation-capture-stamp-global-fallback-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::core::provenance::
-                         g_isolation_capture_stamp_global_fallback_total_atomic()
-                             .load(std::memory_order_relaxed)))},
-                {"isolation-capture-stamp-evaluator-miss-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::core::provenance::g_isolation_capture_stamp_evaluator_miss_total_atomic()
-                         .load(std::memory_order_relaxed)))},
-                {"schema-2687", make_int(2687)},
-                {"issue-2687", make_int(2687)},
-                // Issue #2705: production hard-close of FlatAST global capture
-                // fallback (refine #2687 residual). Armed under multi-tenant /
-                // Strict / AURA_HARD_CAPTURE_TENANT; Soft stays permissive.
-                // evaluator-miss advances on every refused global stamp.
-                {"isolation-capture-hard-close-armed",
-                 make_int(aura::core::provenance::hard_capture_tenant_active() ? 1 : 0)},
-                {"schema-2705", make_int(2705)},
-                {"issue-2705", make_int(2705)},
-                // Issue #2759: Evaluator::stamp_stable_ref sole production
-                // StableNodeRef isolation authority (refine #2705 residual).
-                // global-write-suppressed advances when set_isolation_capture_tenant
-                // refuses a non-zero write under hard-close. #2687/#2705 keys
-                // preserved above.
-                {"isolation-capture-global-write-suppressed-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::core::provenance::
-                         g_isolation_capture_global_write_suppressed_total_atomic()
-                             .load(std::memory_order_relaxed)))},
-                {"schema-2759", make_int(2759)},
-                {"issue-2759", make_int(2759)},
-                // Issue #2706: sole public side-effect gate =
-                // require_effect / require_effect_on_ref. Armed sentinel so
-                // Agent dashboards verify check_and_record_effect is private
-                // (production prims cannot bypass isolation).
-                {"sole-require-effect-gate-armed", make_int(1)},
-                {"schema-2706", make_int(2706)},
-                {"issue-2706", make_int(2706)},
-                // Issue #2688 / #2835 / #2943: production-default
-                // hard_fiber_isolation + grant epoch retain window.
-                // Multi-tenant OR Strict → hard=true + K=64 (#2943 Strict
-                // alone); pure Restricted → K=16 hard=false; Soft → K=0
-                // hard=false. Env overrides win.
-                {"capability-hard-fiber-isolation",
-                 make_int(aura::core::capability::g_capability_registry().hard_fiber_isolation()
-                              ? 1
-                              : 0)},
-                {"capability-grant-epoch-retain-window",
-                 make_int(static_cast<std::int64_t>(
-                     aura::core::capability::g_capability_registry().grant_epoch_retain_window()))},
-                {"capability-grant-min-valid-epoch",
-                 make_int(static_cast<std::int64_t>(
-                     aura::core::capability::g_capability_registry().grant_min_valid_epoch()))},
-                // Keep `g_capability_effect_metrics().capability_*` on one
-                // line for #2688 AC6 source-cite substring match.
-                {"capability-epoch-fence-hit-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::core::capability::g_capability_effect_metrics()
-                         .capability_epoch_fence_hit_total.load(std::memory_order_relaxed)))},
-                {"capability-fiber-hard-deny-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::core::capability::g_capability_effect_metrics()
-                         .capability_fiber_hard_deny_total.load(std::memory_order_relaxed)))},
-                {"schema-2688", make_int(2688)},
-                {"issue-2688", make_int(2688)},
-                {"capability-production-default-armed", make_int(1)},
-                // Issue #2835: Restricted multi-tenant hard-fiber escalate.
-                {"schema-2835", make_int(2835)},
-                {"issue-2835", make_int(2835)},
-                // Issue #2943: Strict alone also arms hard fiber default.
-                {"schema-2943", make_int(2943)},
-                {"issue-2943", make_int(2943)},
-                {"production-hard-fiber-default-wired", make_int(1)},
-                {"restricted-multi-tenant-hard-fiber-wired", make_int(1)},
-                // Issue #2690: unified PendingRecovery drain. Both
-                // maybe_storm_clear_health_pass (StormClear) and
-                // outermost MutationBoundary success exit (BoundaryExit)
-                // route through the same single-owner drain.
-                // Counters live at global scope in hot_update_registry.hh
-                // (after namespace aura::compiler closes — C ABI adjacency).
-                {"pending-recovery-driven-total",
-                 make_int(static_cast<std::int64_t>(
-                     ::g_pending_recovery_driven_total_atomic().load(std::memory_order_relaxed)))},
-                {"pending-recovery-success-total",
-                 make_int(static_cast<std::int64_t>(
-                     ::g_pending_recovery_success_total_atomic().load(std::memory_order_relaxed)))},
-                {"pending-recovery-skipped-reentered-total",
-                 make_int(static_cast<std::int64_t>(
-                     ::g_pending_recovery_skipped_reentered_total_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"pending-recovery-double-drain-prevented-total",
-                 make_int(static_cast<std::int64_t>(
-                     ::g_pending_recovery_double_drain_prevented_total_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"schema-2690", make_int(2690)},
-                {"issue-2690", make_int(2690)},
-                {"pending-recovery-drain-wired", make_int(1)},
-                // Issue #2691: captured-only anon sync remount counters.
-                // Distinct from the full-walk anon ok/fail counters so
-                // Agents can distinguish "must remount" (captured) from
-                // "touch-time policy" (pure anon, no captures).
-                {"live-closure-sync-remount-anon-captured-ok-total",
-                 make_int(L(&CompilerMetrics::live_closure_sync_remount_anon_captured_ok_total))},
-                {"live-closure-sync-remount-anon-captured-fail-total",
-                 make_int(L(&CompilerMetrics::live_closure_sync_remount_anon_captured_fail_total))},
-                {"schema-2691", make_int(2691)},
-                {"issue-2691", make_int(2691)},
-                {"closure-pending-recovery-drain-wired", make_int(1)},
-                // Issue #2850: bounded pure-anon sync remount counters.
-                {"live-closure-sync-remount-pure-anon-ok-total",
-                 make_int(L(&CompilerMetrics::live_closure_sync_remount_pure_anon_ok_total))},
-                {"live-closure-sync-remount-pure-anon-skip-budget-total",
-                 make_int(
-                     L(&CompilerMetrics::live_closure_sync_remount_pure_anon_skip_budget_total))},
-                {"live-closure-sync-remount-pure-anon-wired", make_int(1)},
-                {"schema-2850", make_int(2850)},
-                {"issue-2850", make_int(2850)},
-                // Issue #2893: adaptive pure-anon budget + pressure signal
-                // (refine #2850). budget-current is the last adaptive budget;
-                // pressure-bp is the 0-10000 skip/deopt pressure signal.
-                {"live-closure-sync-remount-pure-anon-budget-current",
-                 make_int(static_cast<std::int64_t>(aura_sync_remount_pure_anon_budget_current()))},
-                {"live-closure-sync-remount-pure-anon-pressure-bp",
-                 make_int(static_cast<std::int64_t>(aura_pure_anon_pressure_bp()))},
-                {"live-closure-sync-remount-pure-anon-adaptive-wired", make_int(1)},
-                {"schema-2893", make_int(2893)},
-                {"issue-2893", make_int(2893)},
-                // Issue #2950: pure-anon pressure-driven bg remount queue.
-                {"pure-anon-bg-enqueue-total",
-                 make_int(L(&CompilerMetrics::pure_anon_bg_enqueue_total))},
-                {"pure-anon-bg-drain-ok-total",
-                 make_int(L(&CompilerMetrics::pure_anon_bg_drain_ok_total))},
-                {"pure-anon-bg-drain-fail-total",
-                 make_int(L(&CompilerMetrics::pure_anon_bg_drain_fail_total))},
-                {"pure-anon-bg-overflow-total",
-                 make_int(L(&CompilerMetrics::pure_anon_bg_overflow_total))},
-                {"pure-anon-bg-pending",
-                 make_int(static_cast<std::int64_t>(aura_pure_anon_bg_pending()))},
-                {"pure-anon-bg-remount-wired", make_int(1)},
-                {"schema-2950", make_int(2950)},
-                {"issue-2950", make_int(2950)},
-                // Issue #3024: production overflow MustDeopt (additive).
-                {"pure-anon-bg-overflow-must-deopt-total",
-                 make_int(L(&CompilerMetrics::pure_anon_bg_overflow_must_deopt_total))},
-                {"pure-anon-bg-overflow-must-deopt-wired", make_int(1)},
-                {"schema-3024", make_int(3024)},
-                {"issue-3024", make_int(3024)},
-                // Issue #2928: residual round-robin remount (outside reemit-success).
-                {"residual-remount-ok-total",
-                 make_int(L(&CompilerMetrics::residual_remount_ok_total))},
-                {"residual-remount-budget-skip-total",
-                 make_int(L(&CompilerMetrics::residual_remount_budget_skip_total))},
-                {"residual-remount-cursor",
-                 make_int(static_cast<std::int64_t>(aura_residual_remount_cursor()))},
-                {"residual-remount-budget",
-                 make_int(static_cast<std::int64_t>(aura_residual_remount_budget_default()))},
-                {"residual-remount-wired", make_int(1)},
-                {"schema-2928", make_int(2928)},
-                {"issue-2928", make_int(2928)},
-                // Issue #2977: residual remount prefer force_jit / last_success.
-                {"residual-remount-prefer-force-jit-total",
-                 make_int(L(&CompilerMetrics::residual_remount_prefer_force_jit_total))},
-                {"residual-remount-prefer-hit-total",
-                 make_int(L(&CompilerMetrics::residual_remount_prefer_hit_total))},
-                {"residual-remount-prefer-wired", make_int(1)},
-                {"schema-2977", make_int(2977)},
-                {"issue-2977", make_int(2977)},
-                // Issue #2978: reemit-success sync covered-named remount.
-                {"reemit-success-sync-covered-remount-ok-total",
-                 make_int(L(&CompilerMetrics::reemit_success_sync_covered_remount_ok_total))},
-                {"reemit-success-sync-covered-remount-fail-total",
-                 make_int(L(&CompilerMetrics::reemit_success_sync_covered_remount_fail_total))},
-                {"reemit-success-sync-covered-remount-cap-hit-total",
-                 make_int(L(&CompilerMetrics::reemit_success_sync_covered_remount_cap_hit_total))},
-                {"reemit-success-sync-covered-remount-wired", make_int(1)},
-                {"schema-2978", make_int(2978)},
-                {"issue-2978", make_int(2978)},
-                // Issue #2980: event-walk + residual remount merged heal.
-                {"epoch-residual-merged-heal-total",
-                 make_int(
-                     static_cast<std::int64_t>(aura_epoch_residual_merged_heal_total_v_read()))},
-                {"epoch-residual-merged-heal-wired", make_int(1)},
-                {"schema-2980", make_int(2980)},
-                {"issue-2980", make_int(2980)},
-                // Issue #2692: cross-eval sid ↔ AOT slot owner consistency
-                // assert. Soft single-eval / process-default (filter
-                // eval = nullptr) keeps this at 0. Production hard
-                // path clears the slot to prevent the next call from
-                // hitting a wrong table. Routes through
-                // query:aot-incremental-reemit-stats schema.
-                {"cross-eval-sid-owner-mismatch-total",
-                 make_int(L(&CompilerMetrics::cross_eval_sid_owner_mismatch_total))},
-                {"cross-eval-sid-owner-mismatch-wired", make_int(1)},
-                {"schema-2692", make_int(2692)},
-                {"issue-2692", make_int(2692)},
-                // Issue #2181: partial-entry desync hard gate
-                {"soa_dirty_desync_detected_total",
-                 make_int(L(&CompilerMetrics::soa_dirty_desync_detected_total))},
-                {"soa-dirty-desync-detected-total",
-                 make_int(L(&CompilerMetrics::soa_dirty_desync_detected_total))},
-                {"soa_dirty_desync_force_full_total",
-                 make_int(L(&CompilerMetrics::soa_dirty_desync_force_full_total))},
-                {"soa-dirty-desync-force-full-total",
-                 make_int(L(&CompilerMetrics::soa_dirty_desync_force_full_total))},
-                {"soa_dirty_desync_synced_bits_total",
-                 make_int(L(&CompilerMetrics::soa_dirty_desync_synced_bits_total))},
-                {"soa-dirty-desync-synced-bits-total",
-                 make_int(L(&CompilerMetrics::soa_dirty_desync_synced_bits_total))},
-                {"soa-dirty-desync-gate-wired",
-                 make_int(L(&CompilerMetrics::soa_dirty_desync_gate_wired))},
-                {"schema-2181", make_int(2181)},
-                {"issue-2181", make_int(2181)},
-                // Issue #2045: source_to_ir_map rebuild / consistency after re-lower
-                {"source_to_ir_map_rebuild_total",
-                 make_int(L(&CompilerMetrics::source_to_ir_map_rebuild_total))},
-                {"source-to-ir-map-rebuild-total",
-                 make_int(L(&CompilerMetrics::source_to_ir_map_rebuild_total))},
-                {"source_to_ir_map_patch_total",
-                 make_int(L(&CompilerMetrics::source_to_ir_map_patch_total))},
-                {"source-to-ir-map-patch-total",
-                 make_int(L(&CompilerMetrics::source_to_ir_map_patch_total))},
-                {"source_to_ir_map_inconsistency_total",
-                 make_int(L(&CompilerMetrics::source_to_ir_map_inconsistency_total))},
-                {"source_to_ir_map_soa_desync_total",
-                 make_int(L(&CompilerMetrics::source_to_ir_map_soa_desync_total))},
-                {"source_to_ir_map_consistent_checks_total",
-                 make_int(L(&CompilerMetrics::source_to_ir_map_consistent_checks_total))},
-                {"source-to-ir-map-consistency-wired", make_int(1)},
-                {"schema-2045", make_int(2045)},
-                {"issue-2045", make_int(2045)},
-                // Issue #2206: aggressive source_to_ir_map desync recovery
-                {"source_to_ir_desync_recovered_total",
-                 make_int(L(&CompilerMetrics::source_to_ir_desync_recovered_total))},
-                {"source-to-ir-desync-recovered-total",
-                 make_int(L(&CompilerMetrics::source_to_ir_desync_recovered_total))},
-                {"source_to_ir_desync_funcs_patched",
-                 make_int(L(&CompilerMetrics::source_to_ir_desync_funcs_patched))},
-                {"source-to-ir-desync-funcs-patched",
-                 make_int(L(&CompilerMetrics::source_to_ir_desync_funcs_patched))},
-                {"source-to-ir-desync-recovery-wired", make_int(1)},
-                {"schema-2206", make_int(2206)},
-                {"issue-2206", make_int(2206)},
-                // Issue #2109: instruction-level partial re-emit metrics
-                {"relower_partial_insts_saved_total",
-                 make_int(L(&CompilerMetrics::relower_partial_insts_saved_total))},
-                {"relower-partial-insts-saved-total",
-                 make_int(L(&CompilerMetrics::relower_partial_insts_saved_total))},
-                {"relower_instruction_skip_total",
-                 make_int(L(&CompilerMetrics::relower_instruction_skip_total))},
-                {"relower-instruction-skip-total",
-                 make_int(L(&CompilerMetrics::relower_instruction_skip_total))},
-                {"should_partial_relower_consult_total",
-                 make_int(L(&CompilerMetrics::should_partial_relower_consult_total))},
-                {"should-partial-relower-consult-total",
-                 make_int(L(&CompilerMetrics::should_partial_relower_consult_total))},
-                {"should_partial_relower_yes_total",
-                 make_int(L(&CompilerMetrics::should_partial_relower_yes_total))},
-                {"relower_partial_funcs_saved_total",
-                 make_int(L(&CompilerMetrics::relower_partial_funcs_saved_total))},
-                {"instr-level-partial-reemit-wired", make_int(1)},
-                {"schema-2109", make_int(2109)},
-                {"issue-2109", make_int(2109)},
-                // Issue #2213: production tree-walker fallback gate
-                {"tree_walker_fallback_total",
-                 make_int(L(&CompilerMetrics::tree_walker_fallback_total))},
-                {"tree-walker-fallback-total",
-                 make_int(L(&CompilerMetrics::tree_walker_fallback_total))},
-                {"tree_walker_fallback_forbidden_total",
-                 make_int(L(&CompilerMetrics::tree_walker_fallback_forbidden_total))},
-                {"tree-walker-fallback-forbidden-total",
-                 make_int(L(&CompilerMetrics::tree_walker_fallback_forbidden_total))},
-                {"tree_walker_fallback_forced_soa_total",
-                 make_int(L(&CompilerMetrics::tree_walker_fallback_forced_soa_total))},
-                {"tree-walker-fallback-forced-soa-total",
-                 make_int(L(&CompilerMetrics::tree_walker_fallback_forced_soa_total))},
-                {"pipeline-strict-policy",
-                 make_int(static_cast<std::int64_t>(
-                     static_cast<std::uint8_t>(aura::compiler::tree_walker_fallback_policy())))},
-                {"production-pipeline-strict",
-                 make_int(aura::compiler::production_pipeline_strict() ? 1 : 0)},
-                {"tree-walker-fallback-gate-wired", make_int(1)},
-                {"schema-2213", make_int(2213)},
-                {"issue-2213", make_int(2213)},
-            };
+            std::vector<std::pair<std::string, EvalValue>> kv;
+            append_jit_p6_soa_dirty_stats_cache_kv(kv, s, L);
+            append_jit_p6_soa_dirty_stats_shape_kv(kv);
+            append_jit_p6_soa_dirty_stats_remount_kv(kv, L);
             return build_hash(kv);
         });
+}
+
+// Issue #909 part 6 (orig lines 12185-12266)
+void ObservabilityPrims::register_jit_p6(PrimRegistrar add, Evaluator& ev) {
+    (void)add;
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_jit_p6_soa_dirty_stats(ev);
 }
 
 // Issue #909 part 7 (orig lines 12267-12379)
@@ -2007,17 +2028,16 @@ static EvalValue build_engine_metrics_hash(Evaluator& ev,
     return make_hash(hidx);
 }
 
-// P2b / #1433: observability facade for AURA_PRIMITIVES=s0 and full.
-// stats:list / stats:count / engine:metrics — no bulk query:*-stats on s0.
-void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& ev) {
+// Issue #5031: (stats:list / stats:count / stats:drift-check) registration phase.
+void register_metrics_facade_stats_catalog(PrimRegistrar add, Evaluator& ev) {
     // Issue #560: (stats:list)
     add("stats:list", [&ev](const auto&) -> EvalValue {
         const auto& stats = ObservabilityPrims::stats_primitives();
         EvalValue result = make_void();
         for (auto it = stats.rbegin(); it != stats.rend(); ++it) {
-            auto sidx = ev.string_heap_.mint(*it);
-            auto pid = ev.pairs_.size();
-            ev.pairs_.push_back({make_string(sidx), result});
+            auto sidx = ev.string_heap_mut().mint(*it);
+            auto pid = ev.pairs().size();
+            ev.pairs().push_back({make_string(sidx), result});
             result = make_pair(pid);
         }
         return result;
@@ -2033,7 +2053,10 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
     ObservabilityPrims::register_stats_impl("stats:drift-check", [&ev](const auto&) -> EvalValue {
         return ObservabilityPrims::stats_drift_check(ev);
     });
+}
 
+// Issue #5031: (engine:metrics) registration phase.
+void register_metrics_facade_engine_metrics(PrimRegistrar add, Evaluator& ev) {
     // Issue #1433 / P1a: (engine:metrics [name | :all | :prefix s | :group g])
     // Issue #3018: build_hash fail-soft on insert miss (never void for capacity).
     add("engine:metrics", [&ev](std::span<const EvalValue> a) -> EvalValue {
@@ -2045,14 +2068,14 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
             if (!types::is_keyword(v))
                 return {};
             auto kidx = types::as_keyword_idx(v);
-            if (kidx >= ev.keyword_table_.size())
+            if (kidx >= ev.keyword_table().size())
                 return {};
-            return ev.keyword_table_[kidx];
+            return ev.keyword_table()[kidx];
         };
         auto as_text = [&](const EvalValue& v) -> std::string {
             if (is_string(v)) {
                 auto sidx = as_string_idx(v);
-                if (sidx < ev.string_heap_.size())
+                if (sidx < ev.string_heap_mut().size())
                     return ev.string_at(sidx);
                 return {};
             }
@@ -2127,13 +2150,13 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
         // tenant / fiber / since-seq / mutation-id via the metrics facade.
         if (a.size() >= 1 && is_string(a[0])) {
             auto sidx = as_string_idx(a[0]);
-            if (sidx >= ev.string_heap_.size())
+            if (sidx >= ev.string_heap_mut().size())
                 return make_void();
             const std::string& name = ev.string_at(sidx);
             const auto rest = a.size() > 1 ? a.subspan(1) : std::span<const EvalValue>{};
             if (auto fn = ObservabilityPrims::lookup_stats_impl(name))
                 return (*fn)(rest);
-            if (auto fn = ev.primitives_.lookup(name))
+            if (auto fn = ev.primitives().lookup(name))
                 return (*fn)(rest);
             // Issue #3645: by-name lookup miss → typed not-found hash
             // (was make_void()). A typo'd or unregistered name must be
@@ -2144,8 +2167,8 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
             // consumers keep their exact keys). Schema stamp follows the
             // #3531 facade family per the issue sketch.
             const std::string miss_name = name; // copy: string_heap_ may grow
-            const auto st_idx = ev.string_heap_.mint("not-found");
-            const auto nm_idx = ev.string_heap_.mint(miss_name);
+            const auto st_idx = ev.string_heap_mut().mint("not-found");
+            const auto nm_idx = ev.string_heap_mut().mint(miss_name);
             const std::vector<std::pair<std::string, EvalValue>> miss_kv = {
                 {"ok", make_bool(false)},
                 {"status", make_string(st_idx)},
@@ -2170,7 +2193,7 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
                 for (const auto& name : stats) {
                     std::optional<PrimFn> fn = ObservabilityPrims::lookup_stats_impl(name);
                     if (!fn)
-                        fn = ev.primitives_.lookup(name);
+                        fn = ev.primitives().lookup(name);
                     if (!fn)
                         continue;
                     kv.push_back({name, (*fn)({})});
@@ -2185,7 +2208,7 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
                 kv.reserve(64);
                 kv.push_back({"schema", make_int(2)});
                 kv.push_back({"prefix", make_string([&] {
-                                  auto i = ev.string_heap_.mint(prefix);
+                                  auto i = ev.string_heap_mut().mint(prefix);
                                   return i;
                               }())});
                 // Stats catalog names matching prefix (values when registered).
@@ -2194,7 +2217,7 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
                         continue;
                     std::optional<PrimFn> fn = ObservabilityPrims::lookup_stats_impl(name);
                     if (!fn)
-                        fn = ev.primitives_.lookup(name);
+                        fn = ev.primitives().lookup(name);
                     if (fn)
                         kv.push_back({name, (*fn)({})});
                     else
@@ -2249,9 +2272,9 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
         {
             EvalValue names_list = make_void();
             for (auto it = stats.rbegin(); it != stats.rend(); ++it) {
-                auto sidx = ev.string_heap_.mint(*it);
-                auto pid = ev.pairs_.size();
-                ev.pairs_.push_back({make_string(sidx), names_list});
+                auto sidx = ev.string_heap_mut().mint(*it);
+                auto pid = ev.pairs().size();
+                ev.pairs().push_back({make_string(sidx), names_list});
                 names_list = make_pair(pid);
             }
             kv.push_back({"stats-names", names_list});
@@ -2280,14 +2303,17 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
         }
         return build_hash(kv);
     });
+}
 
+// Issue #5031: (stats:get / stats:prefix) registration phase.
+void register_metrics_facade_stats_lookup(PrimRegistrar add, Evaluator& ev) {
     // ── Issue #1450 / #1449 Phase 1: engine-level stats:get / stats:prefix ──
     // Mirrors lib/std/stats.aura so agents do not need (require std/stats)
     // to route observability through the facade.
     auto resolve_name = [&ev](const EvalValue& v) -> std::string {
         if (is_string(v)) {
             auto sidx = as_string_idx(v);
-            if (sidx < ev.string_heap_.size())
+            if (sidx < ev.string_heap_mut().size())
                 return ev.string_at(sidx);
         }
         return {};
@@ -2312,7 +2338,7 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
             for (const auto& n : stats) {
                 std::optional<PrimFn> fn = ObservabilityPrims::lookup_stats_impl(n);
                 if (!fn)
-                    fn = ev.primitives_.lookup(n);
+                    fn = ev.primitives().lookup(n);
                 if (fn)
                     kv.push_back({n, (*fn)({})});
             }
@@ -2321,7 +2347,7 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
         }
         if (auto fn = ObservabilityPrims::lookup_stats_impl(name))
             return (*fn)({});
-        if (auto fn = ev.primitives_.lookup(name))
+        if (auto fn = ev.primitives().lookup(name))
             return (*fn)({});
         return make_void();
     });
@@ -2341,21 +2367,24 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
                 matched.push_back(n);
         }
         for (auto it = matched.rbegin(); it != matched.rend(); ++it) {
-            auto sidx = ev.string_heap_.mint(*it);
-            auto pid = ev.pairs_.size();
-            ev.pairs_.push_back({make_string(sidx), result});
+            auto sidx = ev.string_heap_mut().mint(*it);
+            auto pid = ev.pairs().size();
+            ev.pairs().push_back({make_string(sidx), result});
             result = make_pair(pid);
         }
         return result;
     });
+}
 
+// Issue #5031: (engine:surface) registration phase.
+void register_metrics_facade_engine_surface(PrimRegistrar add, Evaluator& ev) {
     // (engine:surface) — SlimSurface inventory snapshot (#1448/#1449/#1450).
     // Named without *-stats suffix so the freeze gate stays clean.
     // AC mapping: issue text said query:primitive-surface-stats; governance
     // forbids new *-stats public names → engine:surface is the canonical form.
     add("engine:surface", [&ev](const auto&) -> EvalValue {
         const auto& stats = ObservabilityPrims::stats_primitives();
-        const auto public_slots = static_cast<std::int64_t>(ev.primitives_.slot_count());
+        const auto public_slots = static_cast<std::int64_t>(ev.primitives().slot_count());
         // Count residual public *stats-like* names still on Primitives
         // (not private register_stats_impl-only). Non-stats catalog entries
         // (e.g. query:dirty-impact) are out of scope for this counter.
@@ -2367,7 +2396,7 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
         for (const auto& n : stats) {
             if (!is_stats_like(n))
                 continue;
-            if (ev.primitives_.slot_for_name(n) < ev.primitives_.slot_count())
+            if (ev.primitives().slot_for_name(n) < ev.primitives().slot_count())
                 ++public_stats;
         }
         std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -2383,6 +2412,16 @@ void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& e
         // Issue #3018: same fail-soft builder (tiny kv; headroom always holds).
         return build_engine_metrics_hash(ev, kv);
     });
+}
+
+// P2b / #1433: observability facade for AURA_PRIMITIVES=s0 and full.
+// stats:list / stats:count / engine:metrics — no bulk query:*-stats on s0.
+void ObservabilityPrims::register_metrics_facade(PrimRegistrar add, Evaluator& ev) {
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_metrics_facade_stats_catalog(add, ev);
+    register_metrics_facade_engine_metrics(add, ev);
+    register_metrics_facade_stats_lookup(add, ev);
+    register_metrics_facade_engine_surface(add, ev);
 }
 
 // Issue #909 part 11 (orig lines 12726-12889) — bulk stats after facade
@@ -10762,12 +10801,13 @@ using types::make_void;
 void ObservabilityPrims::register_jit_p96(PrimRegistrar add, Evaluator& ev) {}
 
 // Issue #909 part 97 (orig lines 20570-20620)
-void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
+// Issue #5031: (query:primitives-resource-quota-fiber-stats) registration phase.
+void register_jit_p97_primitives_resource_quota_fiber_stats(Evaluator& ev) {
     // Issue #869: query:primitives-resource-quota-fiber-stats
     ObservabilityPrims::register_stats_impl(
         "query:primitives-resource-quota-fiber-stats", [&ev](const auto&) -> EvalValue {
-            CompilerMetrics* m = ev.compiler_metrics_
-                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                      : nullptr;
             const std::int64_t total = m ? static_cast<std::int64_t>(m->prim_quota_fiber_total.load(
                                                std::memory_order_relaxed))
@@ -10798,7 +10838,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = ev.string_heap_mut().mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -10813,9 +10853,13 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("savings", savings);
             insert_kv("active", active);
             insert_kv("schema", 869);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, ev.string_heap_mut(), overflowed, ev);
         });
+}
 
+// Issue #5031: (query:resource-quota-stats) registration phase.
+void register_jit_p97_resource_quota_stats(Evaluator& ev, auto& arena, auto& temp_arena,
+                                           auto& arena_group) {
     // Issue #1481 / #1498 / #1554 / #1579 / #1590 / #1600 / #1618:
     // query:resource-quota-stats.
     // #1481 fields: checks_total, rejects_total, max_fibers, max_mutations.
@@ -10828,9 +10872,10 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
     // #1618: ResourceQuotaManager + typed reject ≠ panic + mutation_budget_rejected.
     // schema bumped to 1618 (agents: treat unknown keys as optional).
     ObservabilityPrims::register_stats_impl(
-        "query:resource-quota-stats", [&ev](const auto&) -> EvalValue {
-            CompilerMetrics* m = ev.compiler_metrics_
-                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+        "query:resource-quota-stats",
+        [&ev, &arena, &temp_arena, &arena_group](const auto&) -> EvalValue {
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                      : nullptr;
             const std::int64_t checks_total =
                 m ? static_cast<std::int64_t>(
@@ -10873,7 +10918,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = ev.string_heap_mut().mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -10883,11 +10928,10 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
 
                 overflowed = true;
             };
-            const std::int64_t temp_wired =
-                (ev.temp_arena_ && ev.temp_arena_->has_arena_owner()) ? 1 : 0;
+            const std::int64_t temp_wired = (temp_arena && temp_arena->has_arena_owner()) ? 1 : 0;
             const std::int64_t group_wired =
-                (ev.arena_group_ && ev.arena_group_->has_default_arena_owner()) ? 1 : 0;
-            const std::int64_t primary_wired = (ev.arena_ && ev.arena_->has_arena_owner()) ? 1 : 0;
+                (arena_group && arena_group->has_default_arena_owner()) ? 1 : 0;
+            const std::int64_t primary_wired = (arena && arena->has_arena_owner()) ? 1 : 0;
             // Issue #1579: process ResourceQuota module stats.
             auto& pq = aura::core::resource_quota::process_resource_quota();
             const std::int64_t module_phase =
@@ -11054,9 +11098,12 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                           pq.quota_last_reject_tenant.load(std::memory_order_relaxed)));
             insert_kv("issue", 1634);  // primary lineage id (1628|1618|1600…)
             insert_kv("schema", 1634); // keep stable; Agents use schema-1880 for #1880 fields
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, ev.string_heap_mut(), overflowed, ev);
         });
+}
 
+// Issue #5031: (query:per-fiber-mutation-stack-stats) registration phase.
+void register_jit_p97_per_fiber_mutation_stack_stats(Evaluator& ev) {
     // Issue #1483 C3: query:per-fiber-mutation-stack-stats — exposes
     // the per_fiber_mutation_stack_depth_max + _current_max atomics
     // added at C2 (observability_metrics.h:1550-1551 area + wire sites
@@ -11102,7 +11149,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = ev.string_heap_mut().mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -11141,9 +11188,12 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("hist-samples", hist_total);
             insert_kv("issue", 1591);
             insert_kv("schema", 1493); // keep 1493; #1591 alias below
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, ev.string_heap_mut(), overflowed, ev);
         });
+}
 
+// Issue #5031: (query:per-fiber-mutation-depth-stats) registration phase.
+void register_jit_p97_per_fiber_mutation_depth_stats(Evaluator& ev) {
     // Issue #1591 / #1635: query:per-fiber-mutation-depth-stats
     // Alias of query:per-fiber-mutation-stack-stats (schema 1635 lineage).
     ObservabilityPrims::register_stats_impl(
@@ -11172,7 +11222,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = ev.string_heap_mut().mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -11200,9 +11250,12 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("safe-yield-mandate-active", 1);
             insert_kv("issue", 1635);
             insert_kv("schema", 1635); // lineage 1591 / 1504
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, ev.string_heap_mut(), overflowed, ev);
         });
+}
 
+// Issue #5031: (query:gc-safepoint-adaptive-stats) registration phase.
+void register_jit_p97_gc_safepoint_adaptive_stats(Evaluator& ev) {
     // Issue #1483 C4: query:gc-safepoint-adaptive-stats — exposes
     // the adaptive safepoint threshold + adaptive-defer counter
     // added at C4 (observability_metrics.h safepoint_adaptive_*
@@ -11272,7 +11325,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = ev.string_heap_mut().mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -11309,9 +11362,434 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mutation_stack_depth_histogram", hist_sum);
             insert_kv("issue", 1599);
             insert_kv("schema", 1599); // lineage 1493|1483
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, ev.string_heap_mut(), overflowed, ev);
         });
+}
 
+// Issue #5031: (query:gc-defer-reason-stats) live arm/policy keys phase.
+void gc_defer_reason_stats_live_kv(const auto& insert_kv) {
+    const std::uint32_t reasons = aura::gc_hooks::defer_reasons_snapshot();
+    // Issue #2088: process-wide arm counters (primary). CompilerMetrics
+    // fields remain for optional mirror; hooks are the source of truth.
+    const std::uint64_t arm_panic =
+        aura::gc_hooks::g_gc_defer_arm_panic_total.load(std::memory_order_relaxed);
+    const std::uint64_t arm_ffi_pin =
+        aura::gc_hooks::g_gc_defer_arm_ffi_pin_total.load(std::memory_order_relaxed);
+    const std::uint64_t arm_render_pin =
+        aura::gc_hooks::g_gc_defer_arm_render_pin_total.load(std::memory_order_relaxed);
+    const std::uint64_t arm_mutation_hold =
+        aura::gc_hooks::g_gc_defer_arm_mutation_hold_total.load(std::memory_order_relaxed);
+    const std::uint64_t any_total =
+        aura::gc_hooks::g_gc_defer_any_total.load(std::memory_order_relaxed);
+    // Per-reason depth atomics (still maintained alongside the
+    // bitmask — depth is for nesting observability, bitmask is
+    // for the "any reason armed" predicate).
+    const std::uint64_t panic_depth =
+        aura::gc_hooks::g_gc_defer_pending_panic_depth.load(std::memory_order_acquire);
+    const std::uint64_t ffi_pin_depth =
+        aura::gc_hooks::g_ffi_pin_defer_depth.load(std::memory_order_acquire);
+    // Issue #2160: RenderPin nesting depth + defer-because-render totals.
+    const std::uint64_t render_pin_depth = aura::gc_hooks::render_pin_defer_depth();
+    const std::uint64_t defer_because_render =
+        aura::gc_hooks::g_defer_because_render_total.load(std::memory_order_relaxed);
+    const std::uint64_t request_deferred_render =
+        aura::gc_hooks::g_gc_request_deferred_render_total.load(std::memory_order_relaxed);
+    // Issue #2173: configurable max-armed cap + overflow policy +
+    // rejected-arm counter. Read live (env-derived cached value
+    // plus per-process override for tests). Policy name is the
+    // string form so dashboards can display it directly.
+    const std::size_t max_armed = aura::gc_hooks::gc_defer_max_armed();
+    const auto policy = aura::gc_hooks::gc_defer_overflow_policy();
+    const char* policy_name = "ProcessWide";
+    switch (policy) {
+        case aura::gc_hooks::GcDeferOverflowPolicy::HardFail:
+            policy_name = "HardFail";
+            break;
+        case aura::gc_hooks::GcDeferOverflowPolicy::Expand:
+            policy_name = "Expand";
+            break;
+        default:
+            break;
+    }
+    const std::uint64_t arm_rejected_overflow_total =
+        aura::gc_hooks::g_gc_defer_arm_rejected_overflow_total.load(std::memory_order_relaxed);
+    insert_kv("schema", 2088);
+    insert_kv("schema-2088", 2088);
+    insert_kv("issue-2088", 2088);
+    insert_kv("reasons", static_cast<std::int64_t>(reasons));
+    insert_kv("panic-bit",
+              static_cast<std::int64_t>(static_cast<bool>(
+                  reasons & static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::Panic))));
+    insert_kv("ffi-pin-bit",
+              static_cast<std::int64_t>(static_cast<bool>(
+                  reasons & static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::FfiPin))));
+    insert_kv("render-pin-bit",
+              static_cast<std::int64_t>(static_cast<bool>(
+                  reasons & static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::RenderPin))));
+    insert_kv(
+        "mutation-hold-bit",
+        static_cast<std::int64_t>(static_cast<bool>(
+            reasons & static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::MutationHold))));
+    insert_kv("arm-panic-total", static_cast<std::int64_t>(arm_panic));
+    insert_kv("arm-ffi-pin-total", static_cast<std::int64_t>(arm_ffi_pin));
+    insert_kv("arm-render-pin-total", static_cast<std::int64_t>(arm_render_pin));
+    insert_kv("arm-mutation-hold-total", static_cast<std::int64_t>(arm_mutation_hold));
+    insert_kv("any-total", static_cast<std::int64_t>(any_total));
+    insert_kv("panic-depth", static_cast<std::int64_t>(panic_depth));
+    insert_kv("ffi-pin-depth", static_cast<std::int64_t>(ffi_pin_depth));
+    // Issue #2160: RenderPin end-to-end surface for Agents.
+    insert_kv("render-pin-depth", static_cast<std::int64_t>(render_pin_depth));
+    insert_kv("defer-because-render", static_cast<std::int64_t>(defer_because_render));
+    insert_kv("request-deferred-render-total", static_cast<std::int64_t>(request_deferred_render));
+    insert_kv("schema-2160", 2160);
+    insert_kv("issue-2160", 2160);
+    insert_kv("render-pin-wired", 1);
+    insert_kv("unified-defer-wired", 1);
+    // Issue #2204: MutationHold (outermost Guard) hard GC gate.
+    insert_kv("schema-2204", 2204);
+    insert_kv("issue-2204", 2204);
+    insert_kv("mutation-hold-wired", 1);
+    insert_kv("mutation-hold-depth",
+              static_cast<std::int64_t>(aura::gc_hooks::mutation_hold_defer_depth()));
+    insert_kv(
+        "request-deferred-mutation-hold-total",
+        static_cast<std::int64_t>(aura::gc_hooks::g_gc_request_deferred_mutation_hold_total.load(
+            std::memory_order_relaxed)));
+    insert_kv("defer-because-mutation-hold",
+              static_cast<std::int64_t>(aura::gc_hooks::g_defer_because_mutation_hold_total.load(
+                  std::memory_order_relaxed)));
+    // Issue #2173: configurable max-armed cap + overflow policy +
+    // rejected-arm counter (operator dashboards can size the
+    // defer table + choose fail-closed vs legacy process-wide
+    // fallback). ProcessWide path bumps table-overflow-total;
+    // HardFail path bumps arm-rejected-overflow-total without
+    // touching process-wide depth (see gc_hooks.h).
+    insert_kv("schema-2173", 2173);
+    insert_kv("issue-2173", 2173);
+    insert_kv("max-armed-effective", static_cast<std::int64_t>(max_armed));
+    insert_kv("overflow-policy", static_cast<std::int64_t>(static_cast<std::uint8_t>(policy)));
+    insert_kv("overflow-policy-name", *policy_name == 'H' ? 1 : (*policy_name == 'E' ? 2 : 0));
+    // Encode the policy name as a small int the agent can map to
+    // its display layer (ProcessWide=0, HardFail=1, Expand=2).
+    // The numeric "overflow-policy" key above already encodes
+    // the same value as raw uint8_t; this second key is for
+    // dashboards that prefer a stable integer id.
+    insert_kv("arm-rejected-overflow-total",
+              static_cast<std::int64_t>(arm_rejected_overflow_total));
+    insert_kv("table-overflow-total",
+              static_cast<std::int64_t>(
+                  aura::gc_hooks::g_gc_defer_table_overflow_total.load(std::memory_order_relaxed)));
+    // Issue #2338: production default is HardFail (not ProcessWide
+    // silent fallback). Wired in security_defaults via
+    // gc_hooks::set_gc_defer_production_locked(!dev_off). The
+    // sentinel exposes effective production lock state so Agents
+    // can confirm the gate is engaged end-to-end.
+    insert_kv("gc-defer-overflow-production-locked",
+              aura::gc_hooks::gc_defer_production_locked() ? 1 : 0);
+    insert_kv("schema-2338", 2338);
+    insert_kv("issue-2338", 2338);
+}
+
+// Issue #5031: (query:gc-defer-reason-stats) steal-complete keys phase.
+void gc_defer_reason_stats_steal_complete_kv(const auto& insert_kv) {
+    // Issue #2203 / #2377 / #3779: steal-complete single entry metrics
+    // (lineage retained; schema-2088 primary keys unchanged).
+    // Process-wide atomics are the source of truth; CompilerMetrics
+    // mirrors at on_steal_complete entry (#3779) and :group dump
+    // overlays gc_hooks for steal_complete_total. #2377: entry-missing
+    // counts light/sandbox weak-no-op or null ABI (production must stay 0).
+    insert_kv("schema-2203", 2203);
+    insert_kv("issue-2203", 2203);
+    insert_kv("steal-complete-wired", 1);
+    insert_kv("steal-complete-total",
+              static_cast<std::int64_t>(aura::gc_hooks::steal_complete_total()));
+    insert_kv("gc-defer-orphan-cleared-on-steal-total",
+              static_cast<std::int64_t>(aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total()));
+    insert_kv("steal_complete_total",
+              static_cast<std::int64_t>(aura::gc_hooks::steal_complete_total()));
+    insert_kv("gc_defer_orphan_cleared_on_steal_total",
+              static_cast<std::int64_t>(aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total()));
+    insert_kv("steal-complete-entry-missing-total",
+              static_cast<std::int64_t>(aura::gc_hooks::steal_complete_entry_missing_total()));
+    insert_kv("steal_complete_entry_missing_total",
+              static_cast<std::int64_t>(aura::gc_hooks::steal_complete_entry_missing_total()));
+    insert_kv("steal-complete-strong-required-wired", 1);
+    insert_kv("schema-2377", 2377);
+    insert_kv("issue-2377", 2377);
+    // Issue #2955: production ABI self-check (strong steal/mutation/GC hooks).
+    insert_kv("production-abi-selfcheck-ok-total",
+              static_cast<std::int64_t>(aura::serve::production_abi_selfcheck_ok_total_v_read()));
+    insert_kv("production-abi-selfcheck-fail-total",
+              static_cast<std::int64_t>(aura::serve::production_abi_selfcheck_fail_total_v_read()));
+    insert_kv(
+        "production-abi-selfcheck-last-fail-bits",
+        static_cast<std::int64_t>(aura::serve::production_abi_selfcheck_last_fail_bits_v_read()));
+    insert_kv("production-abi-selfcheck-wired",
+              static_cast<std::int64_t>(aura::serve::production_abi_selfcheck_wired_v_read()));
+    insert_kv("schema-2955", 2955);
+    insert_kv("issue-2955", 2955);
+    // Issue #2351: steal-complete LayoutStamp dual-check (lineage with #2203).
+    {
+        std::int64_t steal_mm = 0;
+        std::int64_t steal_miss = 0;
+        if (auto* __qev = Evaluator::get_query_evaluator()) {
+            steal_mm = static_cast<std::int64_t>(__qev->get_layout_stamp_steal_mismatch_total());
+            steal_miss = static_cast<std::int64_t>(__qev->get_layout_stamp_steal_missing_total());
+        }
+        insert_kv("layout-stamp-steal-mismatch-total", steal_mm);
+        insert_kv("layout-stamp-steal-missing-total", steal_miss);
+        insert_kv("layout-stamp-steal-wired", 1);
+        insert_kv("schema-2351", 2351);
+        insert_kv("issue-2351", 2351);
+    }
+    // Issue #2510: transactional LayoutStamp + provenance restamp on
+    // steal-complete (sole success-path restamp entry under strong ABI).
+    {
+        std::int64_t restamp = 0;
+        std::int64_t layout_hf = 0;
+        if (auto* __qev = Evaluator::get_query_evaluator()) {
+            restamp = static_cast<std::int64_t>(__qev->get_steal_complete_restamp_total());
+            layout_hf =
+                static_cast<std::int64_t>(__qev->get_steal_complete_layout_hard_fail_total());
+        }
+        insert_kv("steal-complete-restamp-total", restamp);
+        insert_kv("steal-complete-layout-hard-fail-total", layout_hf);
+        insert_kv("steal-snapshot-hard-fail-total",
+                  static_cast<std::int64_t>(aura::serve::Fiber::steal_snapshot_hard_fail_total()));
+        insert_kv("steal-complete-restamp-wired", 1);
+        insert_kv("schema-2510", 2510);
+        insert_kv("issue-2510", 2510);
+    }
+    // Issue #2314: residual GcDeferReason clear invoked from the
+    // steal-complete entry when defer_reasons_snapshot() != 0 post
+    // #2203 panic clear. Distinct from gc-defer-orphan-cleared-on-
+    // steal-total which counts cleared Panic depths — this counts
+    // steal-complete entries that invoked the residual interlock.
+    // Idempotent (force_clear_residual_defer_for_evaluator is atomic
+    // + CAS-based — calling twice does not double-bump counters).
+    insert_kv("residual-defer-cleared-on-steal-total",
+              static_cast<std::int64_t>(aura::gc_hooks::residual_defer_cleared_on_steal_total()));
+    insert_kv("residual_defer_cleared_on_steal_total",
+              static_cast<std::int64_t>(aura::gc_hooks::residual_defer_cleared_on_steal_total()));
+    insert_kv("residual-defer-steal-interlock-wired", 1);
+    insert_kv("schema-2314", 2314);
+    insert_kv("issue-2314", 2314);
+    // Issue #2546: hard-AND residual == 0 on steal-complete success.
+    insert_kv("residual-defer-steal-hard-fail-total",
+              static_cast<std::int64_t>(aura::gc_hooks::residual_defer_steal_hard_fail_total()));
+    insert_kv(
+        "residual-defer-steal-soft-leftover-total",
+        static_cast<std::int64_t>(aura::gc_hooks::residual_defer_steal_soft_leftover_total()));
+    insert_kv("residual-defer-steal-hard-and-wired", 1);
+    insert_kv("schema-2546", 2546);
+    insert_kv("issue-2546", 2546);
+}
+
+// Issue #5031: (query:gc-defer-reason-stats) steal-invariant keys phase.
+void gc_defer_reason_stats_steal_invariant_kv(const auto& insert_kv) {
+    // Issue #2929: StealInvariant table + per-invariant fail totals
+    // (sole-enqueue gate hard-AND is machine-checkable). Additive;
+    // #2699/#2721/#2844 counters preserved.
+    {
+        using aura::serve::steal_invariant_mask;
+        using aura::serve::StealInvariant;
+        insert_kv("steal-safety-transaction-calls-total",
+                  static_cast<std::int64_t>(aura::serve::steal_safety_transaction_calls_v_read()));
+        insert_kv("steal-safety-transaction-ok-total",
+                  static_cast<std::int64_t>(aura::serve::steal_safety_transaction_ok_v_read()));
+        insert_kv(
+            "steal-safety-transaction-reject-hard-total",
+            static_cast<std::int64_t>(aura::serve::steal_safety_transaction_reject_hard_v_read()));
+        insert_kv("steal-invariant-snapshot-fail-total",
+                  static_cast<std::int64_t>(
+                      aura::serve::steal_safety_invariant_snapshot_fail_total_v_read()));
+        insert_kv("steal-invariant-boundary-fail-total",
+                  static_cast<std::int64_t>(
+                      aura::serve::steal_safety_residual_boundary_unsafe_total_v_read()));
+        insert_kv("steal-invariant-layout-stamp-fail-total",
+                  static_cast<std::int64_t>(
+                      aura::serve::steal_safety_residual_layout_stamp_mismatch_total_v_read()));
+        insert_kv("steal-invariant-ticket-fail-total",
+                  static_cast<std::int64_t>(
+                      aura::serve::steal_safety_residual_ticket_mismatch_total_v_read()));
+        insert_kv("steal-invariant-gc-defer-fail-total",
+                  static_cast<std::int64_t>(
+                      aura::serve::steal_safety_residual_gc_defer_armed_total_v_read()));
+        insert_kv("steal-invariant-envframe-fail-total",
+                  static_cast<std::int64_t>(
+                      aura::serve::steal_safety_residual_envframe_lag_total_v_read()));
+        insert_kv("steal-safety-residual-envframe-lag-total",
+                  static_cast<std::int64_t>(
+                      aura::serve::steal_safety_residual_envframe_lag_total_v_read()));
+        insert_kv("schema-2745", 2745);
+        insert_kv("issue-2745", 2745);
+        insert_kv("steal-invariant-last-reject-bits",
+                  static_cast<std::int64_t>(
+                      aura::serve::steal_safety_last_reject_invariant_bits_v_read()));
+        insert_kv("steal-invariant-bit-snapshot", static_cast<std::int64_t>(steal_invariant_mask(
+                                                      StealInvariant::SnapshotConsistent)));
+        insert_kv("steal-invariant-bit-boundary",
+                  static_cast<std::int64_t>(steal_invariant_mask(StealInvariant::BoundarySafe)));
+        insert_kv("steal-invariant-bit-layout", static_cast<std::int64_t>(steal_invariant_mask(
+                                                    StealInvariant::LayoutStampMatch)));
+        insert_kv("steal-invariant-bit-ticket",
+                  static_cast<std::int64_t>(steal_invariant_mask(StealInvariant::TicketFresh)));
+        insert_kv("steal-invariant-bit-gc-defer",
+                  static_cast<std::int64_t>(steal_invariant_mask(StealInvariant::GcDeferClear)));
+        insert_kv("steal-invariant-bit-envframe",
+                  static_cast<std::int64_t>(steal_invariant_mask(StealInvariant::EnvFrameOk)));
+        insert_kv("steal-invariant-lifetime-proof-fail-total",
+                  static_cast<std::int64_t>(
+                      aura::serve::steal_safety_residual_lifetime_proof_reject_total_v_read()));
+        insert_kv("steal-invariant-bit-lifetime-proof",
+                  static_cast<std::int64_t>(steal_invariant_mask(StealInvariant::LifetimeProofOk)));
+        insert_kv("steal-safety-residual-lifetime-proof-reject-total",
+                  static_cast<std::int64_t>(
+                      aura::serve::steal_safety_residual_lifetime_proof_reject_total_v_read()));
+        insert_kv(
+            "steal-invariant-table-wired",
+            static_cast<std::int64_t>(aura::serve::steal_safety_invariant_table_wired_v_read()));
+        insert_kv("schema-2929", 2929);
+        insert_kv("issue-2929", 2929);
+        // Issue #3072: static sole-enqueue proof. ok_total is
+        // the authorized stolen-enqueue count; delta is 0 by
+        // construction (no extra hot-path increment). Additive
+        // — #2699/#2721/#2844/#2929 counters preserved.
+        insert_kv("steal-enqueue-sole-gate-wired",
+                  static_cast<std::int64_t>(aura::serve::steal_enqueue_sole_gate_wired_v_read()));
+        insert_kv("steal-enqueue-vs-ok-delta", 0);
+        insert_kv("schema-3072", 3072);
+        insert_kv("issue-3072", 3072);
+        insert_kv("schema-2721", 2721);
+        insert_kv("issue-2721", 2721);
+        insert_kv("schema-2699", 2699);
+        insert_kv("issue-2699", 2699);
+        // Issue #2901 residual re-arm + #2954 per-Fiber decision.
+        insert_kv("steal-safety-residual-rearm-race-total",
+                  static_cast<std::int64_t>(
+                      aura::serve::steal_safety_residual_rearm_race_total_v_read()));
+        insert_kv("steal-decision-contention-total",
+                  static_cast<std::int64_t>(aura::serve::steal_decision_contention_total_v_read()));
+        insert_kv("steal-decision-per-fiber-wired",
+                  static_cast<std::int64_t>(aura::serve::steal_decision_per_fiber_wired_v_read()));
+        insert_kv("schema-2901", 2901);
+        insert_kv("issue-2901", 2901);
+        insert_kv("schema-2954", 2954);
+        insert_kv("issue-2954", 2954);
+        // Issue #3038: post-clear re-sample under per-Fiber window.
+        // residual_rearm_race_total remains SSOT (no new race counter).
+        insert_kv("schema-3038", 3038);
+        insert_kv("issue-3038", 3038);
+        insert_kv("steal-safety-residual-rearm-resample-wired", 1);
+        // Issue #2957: residual arm (f) last LifetimeConsistencyProof.
+        insert_kv("schema-2957", 2957);
+        insert_kv("issue-2957", 2957);
+        insert_kv("schema-2888", 2888); // #2888 surfaces non-regressing
+    }
+}
+
+// Issue #5031: (query:gc-defer-reason-stats) panic-checkpoint keys phase.
+void gc_defer_reason_stats_panic_checkpoint_kv(Evaluator& ev, const auto& insert_kv) {
+    // Issue #2667: production-only hard residual GcDefer on
+    // steal-complete + PanicCheckpoint rebind. Bumped when
+    // aura_evaluator_on_steal_complete clears a live
+    // PanicCheckpoint under production / Hard (extends #2546
+    // hard-AND with PanicCheckpoint clear + release panic
+    // defer so GC is not permanently armed across steal
+    // boundaries). Soft / dev_off: no action (preserve Soft
+    // semantics). Additive schema — no break. #2546 / #2314
+    // / #2203 surfaces preserved.
+    insert_kv("panic-checkpoint-cleared-on-steal-total",
+              static_cast<std::int64_t>(aura::gc_hooks::panic_checkpoint_cleared_on_steal_total()));
+    insert_kv("panic_checkpoint_cleared_on_steal_total",
+              static_cast<std::int64_t>(aura::gc_hooks::panic_checkpoint_cleared_on_steal_total()));
+    insert_kv("panic-checkpoint-cleared-on-steal-wired", 1);
+    insert_kv("schema-2667", 2667);
+    insert_kv("issue-2667", 2667);
+    // Issue #2710: production-hard panic checkpoint policy on
+    // steal-complete (unify residual clear). Closes the
+    // residual half-open loop where a stolen fiber with a
+    // live PanicCheckpoint could enqueue Ready without
+    // clearing the previous Eval's GC arm. Production /
+    // AURA_PANIC_CONTRACT=hard now clears PanicCheckpoint on
+    // both hard_failed (#2667 — existing counter continues to
+    // bump) AND Ok paths (new counter — additive). Soft /
+    // dev_off / unset stays metric-only (no behavior change
+    // for Soft ergonomics). #2667 / #2546 / #2314 / #2203
+    // surfaces preserved (additive only). Aligns with #2598
+    // densify panic defer audit (production lock + residual
+    // panic outliving cleared checkpoint → same hard face).
+    insert_kv(
+        "panic-checkpoint-cleared-on-steal-ok-total",
+        static_cast<std::int64_t>(aura::gc_hooks::panic_checkpoint_cleared_on_steal_ok_total()));
+    insert_kv(
+        "panic_checkpoint_cleared_on_steal_ok_total",
+        static_cast<std::int64_t>(aura::gc_hooks::panic_checkpoint_cleared_on_steal_ok_total()));
+    insert_kv("panic-contract-hard-wired",
+              aura::gc_hooks::panic_contract_hard_pref_v_read() > 0 ? 1 : 0);
+    insert_kv("schema-2710", 2710);
+    insert_kv("issue-2710", 2710);
+    // Issue #2890: cross-fiber steal residual — previous-host
+    // PanicCheckpoint force-clear (production) vs same-eval transfer
+    // continuity. Closes the residual where the stolen fiber's
+    // checkpoint host lives on prev_eval_id (not the current
+    // scheduler eval) and would otherwise arm GC defer across the
+    // steal boundary until a later residual path fires. Soft / no
+    // checkpoint: zero extra work (observe-only). Additive — no
+    // regression on #2846 / #2667 / #2710 / #2314 / #2546 surfaces.
+    insert_kv(
+        "residual-defer-steal-checkpoint-cleared-total",
+        static_cast<std::int64_t>(aura::gc_hooks::residual_defer_steal_checkpoint_cleared_total()));
+    insert_kv(
+        "residual_defer_steal_checkpoint_cleared_total",
+        static_cast<std::int64_t>(aura::gc_hooks::residual_defer_steal_checkpoint_cleared_total()));
+    insert_kv("residual-defer-steal-checkpoint-transfer-total",
+              static_cast<std::int64_t>(
+                  aura::gc_hooks::residual_defer_steal_checkpoint_transfer_total()));
+    insert_kv("residual_defer_steal_checkpoint_transfer_total",
+              static_cast<std::int64_t>(
+                  aura::gc_hooks::residual_defer_steal_checkpoint_transfer_total()));
+    insert_kv("residual-defer-steal-checkpoint-wired", 1);
+    insert_kv("schema-2890", 2890);
+    insert_kv("issue-2890", aura::gc_hooks::kResidualDeferStealCheckpointIssue);
+    // Issue #2609: hard-AND residual + linear force + type fence.
+    {
+        auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+        insert_kv("steal-densify-linear-type-hard-fail-total",
+                  m ? static_cast<std::int64_t>(m->steal_densify_linear_type_hard_fail_total.load(
+                          std::memory_order_relaxed))
+                    : 0);
+        insert_kv(
+            "steal-densify-linear-type-soft-observe-total",
+            m ? static_cast<std::int64_t>(
+                    m->steal_densify_linear_type_soft_observe_total.load(std::memory_order_relaxed))
+              : 0);
+        insert_kv(
+            "steal-densify-linear-type-fail-residual-total",
+            m ? static_cast<std::int64_t>(m->steal_densify_linear_type_fail_residual_total.load(
+                    std::memory_order_relaxed))
+              : 0);
+        insert_kv("steal-densify-linear-type-fail-linear-total",
+                  m ? static_cast<std::int64_t>(m->steal_densify_linear_type_fail_linear_total.load(
+                          std::memory_order_relaxed))
+                    : 0);
+        insert_kv(
+            "steal-densify-linear-type-fail-type-fence-total",
+            m ? static_cast<std::int64_t>(m->steal_densify_linear_type_fail_type_fence_total.load(
+                    std::memory_order_relaxed))
+              : 0);
+        insert_kv("steal-densify-linear-type-last-fail-axis",
+                  m ? static_cast<std::int64_t>(m->steal_densify_linear_type_last_fail_axis.load(
+                          std::memory_order_relaxed))
+                    : 0);
+        insert_kv("steal-densify-linear-type-hard-and-wired", 1);
+        insert_kv("schema-2609", 2609);
+        insert_kv("issue-2609", 2609);
+    }
+}
+
+// Issue #5031: (query:gc-defer-reason-stats) registration phase.
+void register_jit_p97_gc_defer_reason_stats(Evaluator& ev) {
     // Issue #2088: query:gc-defer-reason-stats — unified GcDeferReason
     // bitmask lineage. Returns the current reason bitmask (Panic=1,
     // FfiPin=2, RenderPin=4) + per-reason arm counts + combined
@@ -11321,52 +11799,6 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:gc-defer-reason-stats", [&ev](const auto&) -> EvalValue {
             (void)ev;
-            const std::uint32_t reasons = aura::gc_hooks::defer_reasons_snapshot();
-            // Issue #2088: process-wide arm counters (primary). CompilerMetrics
-            // fields remain for optional mirror; hooks are the source of truth.
-            const std::uint64_t arm_panic =
-                aura::gc_hooks::g_gc_defer_arm_panic_total.load(std::memory_order_relaxed);
-            const std::uint64_t arm_ffi_pin =
-                aura::gc_hooks::g_gc_defer_arm_ffi_pin_total.load(std::memory_order_relaxed);
-            const std::uint64_t arm_render_pin =
-                aura::gc_hooks::g_gc_defer_arm_render_pin_total.load(std::memory_order_relaxed);
-            const std::uint64_t arm_mutation_hold =
-                aura::gc_hooks::g_gc_defer_arm_mutation_hold_total.load(std::memory_order_relaxed);
-            const std::uint64_t any_total =
-                aura::gc_hooks::g_gc_defer_any_total.load(std::memory_order_relaxed);
-            // Per-reason depth atomics (still maintained alongside the
-            // bitmask — depth is for nesting observability, bitmask is
-            // for the "any reason armed" predicate).
-            const std::uint64_t panic_depth =
-                aura::gc_hooks::g_gc_defer_pending_panic_depth.load(std::memory_order_acquire);
-            const std::uint64_t ffi_pin_depth =
-                aura::gc_hooks::g_ffi_pin_defer_depth.load(std::memory_order_acquire);
-            // Issue #2160: RenderPin nesting depth + defer-because-render totals.
-            const std::uint64_t render_pin_depth = aura::gc_hooks::render_pin_defer_depth();
-            const std::uint64_t defer_because_render =
-                aura::gc_hooks::g_defer_because_render_total.load(std::memory_order_relaxed);
-            const std::uint64_t request_deferred_render =
-                aura::gc_hooks::g_gc_request_deferred_render_total.load(std::memory_order_relaxed);
-            // Issue #2173: configurable max-armed cap + overflow policy +
-            // rejected-arm counter. Read live (env-derived cached value
-            // plus per-process override for tests). Policy name is the
-            // string form so dashboards can display it directly.
-            const std::size_t max_armed = aura::gc_hooks::gc_defer_max_armed();
-            const auto policy = aura::gc_hooks::gc_defer_overflow_policy();
-            const char* policy_name = "ProcessWide";
-            switch (policy) {
-                case aura::gc_hooks::GcDeferOverflowPolicy::HardFail:
-                    policy_name = "HardFail";
-                    break;
-                case aura::gc_hooks::GcDeferOverflowPolicy::Expand:
-                    policy_name = "Expand";
-                    break;
-                default:
-                    break;
-            }
-            const std::uint64_t arm_rejected_overflow_total =
-                aura::gc_hooks::g_gc_defer_arm_rejected_overflow_total.load(
-                    std::memory_order_relaxed);
             // Capacity 256: #2088 + #2160 + #2173 + #2203 + #2204 MutationHold
             // + #2929 StealInvariant table keys (additive).
             auto* ht = FlatHashTable::create(query_hash_capacity_for(135));
@@ -11386,7 +11818,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = ev.string_heap_mut().mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -11396,419 +11828,24 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
 
                 overflowed = true;
             };
-            insert_kv("schema", 2088);
-            insert_kv("schema-2088", 2088);
-            insert_kv("issue-2088", 2088);
-            insert_kv("reasons", static_cast<std::int64_t>(reasons));
-            insert_kv(
-                "panic-bit",
-                static_cast<std::int64_t>(static_cast<bool>(
-                    reasons & static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::Panic))));
-            insert_kv(
-                "ffi-pin-bit",
-                static_cast<std::int64_t>(static_cast<bool>(
-                    reasons & static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::FfiPin))));
-            insert_kv("render-pin-bit",
-                      static_cast<std::int64_t>(static_cast<bool>(
-                          reasons &
-                          static_cast<std::uint32_t>(aura::gc_hooks::GcDeferReason::RenderPin))));
-            insert_kv("mutation-hold-bit",
-                      static_cast<std::int64_t>(static_cast<bool>(
-                          reasons & static_cast<std::uint32_t>(
-                                        aura::gc_hooks::GcDeferReason::MutationHold))));
-            insert_kv("arm-panic-total", static_cast<std::int64_t>(arm_panic));
-            insert_kv("arm-ffi-pin-total", static_cast<std::int64_t>(arm_ffi_pin));
-            insert_kv("arm-render-pin-total", static_cast<std::int64_t>(arm_render_pin));
-            insert_kv("arm-mutation-hold-total", static_cast<std::int64_t>(arm_mutation_hold));
-            insert_kv("any-total", static_cast<std::int64_t>(any_total));
-            insert_kv("panic-depth", static_cast<std::int64_t>(panic_depth));
-            insert_kv("ffi-pin-depth", static_cast<std::int64_t>(ffi_pin_depth));
-            // Issue #2160: RenderPin end-to-end surface for Agents.
-            insert_kv("render-pin-depth", static_cast<std::int64_t>(render_pin_depth));
-            insert_kv("defer-because-render", static_cast<std::int64_t>(defer_because_render));
-            insert_kv("request-deferred-render-total",
-                      static_cast<std::int64_t>(request_deferred_render));
-            insert_kv("schema-2160", 2160);
-            insert_kv("issue-2160", 2160);
-            insert_kv("render-pin-wired", 1);
-            insert_kv("unified-defer-wired", 1);
-            // Issue #2204: MutationHold (outermost Guard) hard GC gate.
-            insert_kv("schema-2204", 2204);
-            insert_kv("issue-2204", 2204);
-            insert_kv("mutation-hold-wired", 1);
-            insert_kv("mutation-hold-depth",
-                      static_cast<std::int64_t>(aura::gc_hooks::mutation_hold_defer_depth()));
-            insert_kv("request-deferred-mutation-hold-total",
-                      static_cast<std::int64_t>(
-                          aura::gc_hooks::g_gc_request_deferred_mutation_hold_total.load(
-                              std::memory_order_relaxed)));
-            insert_kv(
-                "defer-because-mutation-hold",
-                static_cast<std::int64_t>(aura::gc_hooks::g_defer_because_mutation_hold_total.load(
-                    std::memory_order_relaxed)));
-            // Issue #2173: configurable max-armed cap + overflow policy +
-            // rejected-arm counter (operator dashboards can size the
-            // defer table + choose fail-closed vs legacy process-wide
-            // fallback). ProcessWide path bumps table-overflow-total;
-            // HardFail path bumps arm-rejected-overflow-total without
-            // touching process-wide depth (see gc_hooks.h).
-            insert_kv("schema-2173", 2173);
-            insert_kv("issue-2173", 2173);
-            insert_kv("max-armed-effective", static_cast<std::int64_t>(max_armed));
-            insert_kv("overflow-policy",
-                      static_cast<std::int64_t>(static_cast<std::uint8_t>(policy)));
-            insert_kv("overflow-policy-name",
-                      *policy_name == 'H' ? 1 : (*policy_name == 'E' ? 2 : 0));
-            // Encode the policy name as a small int the agent can map to
-            // its display layer (ProcessWide=0, HardFail=1, Expand=2).
-            // The numeric "overflow-policy" key above already encodes
-            // the same value as raw uint8_t; this second key is for
-            // dashboards that prefer a stable integer id.
-            insert_kv("arm-rejected-overflow-total",
-                      static_cast<std::int64_t>(arm_rejected_overflow_total));
-            insert_kv(
-                "table-overflow-total",
-                static_cast<std::int64_t>(aura::gc_hooks::g_gc_defer_table_overflow_total.load(
-                    std::memory_order_relaxed)));
-            // Issue #2338: production default is HardFail (not ProcessWide
-            // silent fallback). Wired in security_defaults via
-            // gc_hooks::set_gc_defer_production_locked(!dev_off). The
-            // sentinel exposes effective production lock state so Agents
-            // can confirm the gate is engaged end-to-end.
-            insert_kv("gc-defer-overflow-production-locked",
-                      aura::gc_hooks::gc_defer_production_locked() ? 1 : 0);
-            insert_kv("schema-2338", 2338);
-            insert_kv("issue-2338", 2338);
-            // Issue #2203 / #2377 / #3779: steal-complete single entry metrics
-            // (lineage retained; schema-2088 primary keys unchanged).
-            // Process-wide atomics are the source of truth; CompilerMetrics
-            // mirrors at on_steal_complete entry (#3779) and :group dump
-            // overlays gc_hooks for steal_complete_total. #2377: entry-missing
-            // counts light/sandbox weak-no-op or null ABI (production must stay 0).
-            insert_kv("schema-2203", 2203);
-            insert_kv("issue-2203", 2203);
-            insert_kv("steal-complete-wired", 1);
-            insert_kv("steal-complete-total",
-                      static_cast<std::int64_t>(aura::gc_hooks::steal_complete_total()));
-            insert_kv("gc-defer-orphan-cleared-on-steal-total",
-                      static_cast<std::int64_t>(
-                          aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total()));
-            insert_kv("steal_complete_total",
-                      static_cast<std::int64_t>(aura::gc_hooks::steal_complete_total()));
-            insert_kv("gc_defer_orphan_cleared_on_steal_total",
-                      static_cast<std::int64_t>(
-                          aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total()));
-            insert_kv(
-                "steal-complete-entry-missing-total",
-                static_cast<std::int64_t>(aura::gc_hooks::steal_complete_entry_missing_total()));
-            insert_kv(
-                "steal_complete_entry_missing_total",
-                static_cast<std::int64_t>(aura::gc_hooks::steal_complete_entry_missing_total()));
-            insert_kv("steal-complete-strong-required-wired", 1);
-            insert_kv("schema-2377", 2377);
-            insert_kv("issue-2377", 2377);
-            // Issue #2955: production ABI self-check (strong steal/mutation/GC hooks).
-            insert_kv(
-                "production-abi-selfcheck-ok-total",
-                static_cast<std::int64_t>(aura::serve::production_abi_selfcheck_ok_total_v_read()));
-            insert_kv("production-abi-selfcheck-fail-total",
-                      static_cast<std::int64_t>(
-                          aura::serve::production_abi_selfcheck_fail_total_v_read()));
-            insert_kv("production-abi-selfcheck-last-fail-bits",
-                      static_cast<std::int64_t>(
-                          aura::serve::production_abi_selfcheck_last_fail_bits_v_read()));
-            insert_kv(
-                "production-abi-selfcheck-wired",
-                static_cast<std::int64_t>(aura::serve::production_abi_selfcheck_wired_v_read()));
-            insert_kv("schema-2955", 2955);
-            insert_kv("issue-2955", 2955);
-            // Issue #2351: steal-complete LayoutStamp dual-check (lineage with #2203).
-            {
-                std::int64_t steal_mm = 0;
-                std::int64_t steal_miss = 0;
-                if (auto* __qev = Evaluator::get_query_evaluator()) {
-                    steal_mm =
-                        static_cast<std::int64_t>(__qev->get_layout_stamp_steal_mismatch_total());
-                    steal_miss =
-                        static_cast<std::int64_t>(__qev->get_layout_stamp_steal_missing_total());
-                }
-                insert_kv("layout-stamp-steal-mismatch-total", steal_mm);
-                insert_kv("layout-stamp-steal-missing-total", steal_miss);
-                insert_kv("layout-stamp-steal-wired", 1);
-                insert_kv("schema-2351", 2351);
-                insert_kv("issue-2351", 2351);
-            }
-            // Issue #2510: transactional LayoutStamp + provenance restamp on
-            // steal-complete (sole success-path restamp entry under strong ABI).
-            {
-                std::int64_t restamp = 0;
-                std::int64_t layout_hf = 0;
-                if (auto* __qev = Evaluator::get_query_evaluator()) {
-                    restamp = static_cast<std::int64_t>(__qev->get_steal_complete_restamp_total());
-                    layout_hf = static_cast<std::int64_t>(
-                        __qev->get_steal_complete_layout_hard_fail_total());
-                }
-                insert_kv("steal-complete-restamp-total", restamp);
-                insert_kv("steal-complete-layout-hard-fail-total", layout_hf);
-                insert_kv("steal-snapshot-hard-fail-total",
-                          static_cast<std::int64_t>(
-                              aura::serve::Fiber::steal_snapshot_hard_fail_total()));
-                insert_kv("steal-complete-restamp-wired", 1);
-                insert_kv("schema-2510", 2510);
-                insert_kv("issue-2510", 2510);
-            }
-            // Issue #2314: residual GcDeferReason clear invoked from the
-            // steal-complete entry when defer_reasons_snapshot() != 0 post
-            // #2203 panic clear. Distinct from gc-defer-orphan-cleared-on-
-            // steal-total which counts cleared Panic depths — this counts
-            // steal-complete entries that invoked the residual interlock.
-            // Idempotent (force_clear_residual_defer_for_evaluator is atomic
-            // + CAS-based — calling twice does not double-bump counters).
-            insert_kv(
-                "residual-defer-cleared-on-steal-total",
-                static_cast<std::int64_t>(aura::gc_hooks::residual_defer_cleared_on_steal_total()));
-            insert_kv(
-                "residual_defer_cleared_on_steal_total",
-                static_cast<std::int64_t>(aura::gc_hooks::residual_defer_cleared_on_steal_total()));
-            insert_kv("residual-defer-steal-interlock-wired", 1);
-            insert_kv("schema-2314", 2314);
-            insert_kv("issue-2314", 2314);
-            // Issue #2546: hard-AND residual == 0 on steal-complete success.
-            insert_kv(
-                "residual-defer-steal-hard-fail-total",
-                static_cast<std::int64_t>(aura::gc_hooks::residual_defer_steal_hard_fail_total()));
-            insert_kv("residual-defer-steal-soft-leftover-total",
-                      static_cast<std::int64_t>(
-                          aura::gc_hooks::residual_defer_steal_soft_leftover_total()));
-            insert_kv("residual-defer-steal-hard-and-wired", 1);
-            insert_kv("schema-2546", 2546);
-            insert_kv("issue-2546", 2546);
-            // Issue #2929: StealInvariant table + per-invariant fail totals
-            // (sole-enqueue gate hard-AND is machine-checkable). Additive;
-            // #2699/#2721/#2844 counters preserved.
-            {
-                using aura::serve::steal_invariant_mask;
-                using aura::serve::StealInvariant;
-                insert_kv("steal-safety-transaction-calls-total",
-                          static_cast<std::int64_t>(
-                              aura::serve::steal_safety_transaction_calls_v_read()));
-                insert_kv(
-                    "steal-safety-transaction-ok-total",
-                    static_cast<std::int64_t>(aura::serve::steal_safety_transaction_ok_v_read()));
-                insert_kv("steal-safety-transaction-reject-hard-total",
-                          static_cast<std::int64_t>(
-                              aura::serve::steal_safety_transaction_reject_hard_v_read()));
-                insert_kv("steal-invariant-snapshot-fail-total",
-                          static_cast<std::int64_t>(
-                              aura::serve::steal_safety_invariant_snapshot_fail_total_v_read()));
-                insert_kv("steal-invariant-boundary-fail-total",
-                          static_cast<std::int64_t>(
-                              aura::serve::steal_safety_residual_boundary_unsafe_total_v_read()));
-                insert_kv(
-                    "steal-invariant-layout-stamp-fail-total",
-                    static_cast<std::int64_t>(
-                        aura::serve::steal_safety_residual_layout_stamp_mismatch_total_v_read()));
-                insert_kv("steal-invariant-ticket-fail-total",
-                          static_cast<std::int64_t>(
-                              aura::serve::steal_safety_residual_ticket_mismatch_total_v_read()));
-                insert_kv("steal-invariant-gc-defer-fail-total",
-                          static_cast<std::int64_t>(
-                              aura::serve::steal_safety_residual_gc_defer_armed_total_v_read()));
-                insert_kv("steal-invariant-envframe-fail-total",
-                          static_cast<std::int64_t>(
-                              aura::serve::steal_safety_residual_envframe_lag_total_v_read()));
-                insert_kv("steal-safety-residual-envframe-lag-total",
-                          static_cast<std::int64_t>(
-                              aura::serve::steal_safety_residual_envframe_lag_total_v_read()));
-                insert_kv("schema-2745", 2745);
-                insert_kv("issue-2745", 2745);
-                insert_kv("steal-invariant-last-reject-bits",
-                          static_cast<std::int64_t>(
-                              aura::serve::steal_safety_last_reject_invariant_bits_v_read()));
-                insert_kv("steal-invariant-bit-snapshot",
-                          static_cast<std::int64_t>(
-                              steal_invariant_mask(StealInvariant::SnapshotConsistent)));
-                insert_kv(
-                    "steal-invariant-bit-boundary",
-                    static_cast<std::int64_t>(steal_invariant_mask(StealInvariant::BoundarySafe)));
-                insert_kv("steal-invariant-bit-layout",
-                          static_cast<std::int64_t>(
-                              steal_invariant_mask(StealInvariant::LayoutStampMatch)));
-                insert_kv(
-                    "steal-invariant-bit-ticket",
-                    static_cast<std::int64_t>(steal_invariant_mask(StealInvariant::TicketFresh)));
-                insert_kv(
-                    "steal-invariant-bit-gc-defer",
-                    static_cast<std::int64_t>(steal_invariant_mask(StealInvariant::GcDeferClear)));
-                insert_kv(
-                    "steal-invariant-bit-envframe",
-                    static_cast<std::int64_t>(steal_invariant_mask(StealInvariant::EnvFrameOk)));
-                insert_kv(
-                    "steal-invariant-lifetime-proof-fail-total",
-                    static_cast<std::int64_t>(
-                        aura::serve::steal_safety_residual_lifetime_proof_reject_total_v_read()));
-                insert_kv("steal-invariant-bit-lifetime-proof",
-                          static_cast<std::int64_t>(
-                              steal_invariant_mask(StealInvariant::LifetimeProofOk)));
-                insert_kv(
-                    "steal-safety-residual-lifetime-proof-reject-total",
-                    static_cast<std::int64_t>(
-                        aura::serve::steal_safety_residual_lifetime_proof_reject_total_v_read()));
-                insert_kv("steal-invariant-table-wired",
-                          static_cast<std::int64_t>(
-                              aura::serve::steal_safety_invariant_table_wired_v_read()));
-                insert_kv("schema-2929", 2929);
-                insert_kv("issue-2929", 2929);
-                // Issue #3072: static sole-enqueue proof. ok_total is
-                // the authorized stolen-enqueue count; delta is 0 by
-                // construction (no extra hot-path increment). Additive
-                // — #2699/#2721/#2844/#2929 counters preserved.
-                insert_kv(
-                    "steal-enqueue-sole-gate-wired",
-                    static_cast<std::int64_t>(aura::serve::steal_enqueue_sole_gate_wired_v_read()));
-                insert_kv("steal-enqueue-vs-ok-delta", 0);
-                insert_kv("schema-3072", 3072);
-                insert_kv("issue-3072", 3072);
-                insert_kv("schema-2721", 2721);
-                insert_kv("issue-2721", 2721);
-                insert_kv("schema-2699", 2699);
-                insert_kv("issue-2699", 2699);
-                // Issue #2901 residual re-arm + #2954 per-Fiber decision.
-                insert_kv("steal-safety-residual-rearm-race-total",
-                          static_cast<std::int64_t>(
-                              aura::serve::steal_safety_residual_rearm_race_total_v_read()));
-                insert_kv("steal-decision-contention-total",
-                          static_cast<std::int64_t>(
-                              aura::serve::steal_decision_contention_total_v_read()));
-                insert_kv("steal-decision-per-fiber-wired",
-                          static_cast<std::int64_t>(
-                              aura::serve::steal_decision_per_fiber_wired_v_read()));
-                insert_kv("schema-2901", 2901);
-                insert_kv("issue-2901", 2901);
-                insert_kv("schema-2954", 2954);
-                insert_kv("issue-2954", 2954);
-                // Issue #3038: post-clear re-sample under per-Fiber window.
-                // residual_rearm_race_total remains SSOT (no new race counter).
-                insert_kv("schema-3038", 3038);
-                insert_kv("issue-3038", 3038);
-                insert_kv("steal-safety-residual-rearm-resample-wired", 1);
-                // Issue #2957: residual arm (f) last LifetimeConsistencyProof.
-                insert_kv("schema-2957", 2957);
-                insert_kv("issue-2957", 2957);
-                insert_kv("schema-2888", 2888); // #2888 surfaces non-regressing
-            }
-            // Issue #2667: production-only hard residual GcDefer on
-            // steal-complete + PanicCheckpoint rebind. Bumped when
-            // aura_evaluator_on_steal_complete clears a live
-            // PanicCheckpoint under production / Hard (extends #2546
-            // hard-AND with PanicCheckpoint clear + release panic
-            // defer so GC is not permanently armed across steal
-            // boundaries). Soft / dev_off: no action (preserve Soft
-            // semantics). Additive schema — no break. #2546 / #2314
-            // / #2203 surfaces preserved.
-            insert_kv("panic-checkpoint-cleared-on-steal-total",
-                      static_cast<std::int64_t>(
-                          aura::gc_hooks::panic_checkpoint_cleared_on_steal_total()));
-            insert_kv("panic_checkpoint_cleared_on_steal_total",
-                      static_cast<std::int64_t>(
-                          aura::gc_hooks::panic_checkpoint_cleared_on_steal_total()));
-            insert_kv("panic-checkpoint-cleared-on-steal-wired", 1);
-            insert_kv("schema-2667", 2667);
-            insert_kv("issue-2667", 2667);
-            // Issue #2710: production-hard panic checkpoint policy on
-            // steal-complete (unify residual clear). Closes the
-            // residual half-open loop where a stolen fiber with a
-            // live PanicCheckpoint could enqueue Ready without
-            // clearing the previous Eval's GC arm. Production /
-            // AURA_PANIC_CONTRACT=hard now clears PanicCheckpoint on
-            // both hard_failed (#2667 — existing counter continues to
-            // bump) AND Ok paths (new counter — additive). Soft /
-            // dev_off / unset stays metric-only (no behavior change
-            // for Soft ergonomics). #2667 / #2546 / #2314 / #2203
-            // surfaces preserved (additive only). Aligns with #2598
-            // densify panic defer audit (production lock + residual
-            // panic outliving cleared checkpoint → same hard face).
-            insert_kv("panic-checkpoint-cleared-on-steal-ok-total",
-                      static_cast<std::int64_t>(
-                          aura::gc_hooks::panic_checkpoint_cleared_on_steal_ok_total()));
-            insert_kv("panic_checkpoint_cleared_on_steal_ok_total",
-                      static_cast<std::int64_t>(
-                          aura::gc_hooks::panic_checkpoint_cleared_on_steal_ok_total()));
-            insert_kv("panic-contract-hard-wired",
-                      aura::gc_hooks::panic_contract_hard_pref_v_read() > 0 ? 1 : 0);
-            insert_kv("schema-2710", 2710);
-            insert_kv("issue-2710", 2710);
-            // Issue #2890: cross-fiber steal residual — previous-host
-            // PanicCheckpoint force-clear (production) vs same-eval transfer
-            // continuity. Closes the residual where the stolen fiber's
-            // checkpoint host lives on prev_eval_id (not the current
-            // scheduler eval) and would otherwise arm GC defer across the
-            // steal boundary until a later residual path fires. Soft / no
-            // checkpoint: zero extra work (observe-only). Additive — no
-            // regression on #2846 / #2667 / #2710 / #2314 / #2546 surfaces.
-            insert_kv("residual-defer-steal-checkpoint-cleared-total",
-                      static_cast<std::int64_t>(
-                          aura::gc_hooks::residual_defer_steal_checkpoint_cleared_total()));
-            insert_kv("residual_defer_steal_checkpoint_cleared_total",
-                      static_cast<std::int64_t>(
-                          aura::gc_hooks::residual_defer_steal_checkpoint_cleared_total()));
-            insert_kv("residual-defer-steal-checkpoint-transfer-total",
-                      static_cast<std::int64_t>(
-                          aura::gc_hooks::residual_defer_steal_checkpoint_transfer_total()));
-            insert_kv("residual_defer_steal_checkpoint_transfer_total",
-                      static_cast<std::int64_t>(
-                          aura::gc_hooks::residual_defer_steal_checkpoint_transfer_total()));
-            insert_kv("residual-defer-steal-checkpoint-wired", 1);
-            insert_kv("schema-2890", 2890);
-            insert_kv("issue-2890", aura::gc_hooks::kResidualDeferStealCheckpointIssue);
-            // Issue #2609: hard-AND residual + linear force + type fence.
-            {
-                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-                insert_kv(
-                    "steal-densify-linear-type-hard-fail-total",
-                    m ? static_cast<std::int64_t>(m->steal_densify_linear_type_hard_fail_total.load(
-                            std::memory_order_relaxed))
-                      : 0);
-                insert_kv("steal-densify-linear-type-soft-observe-total",
-                          m ? static_cast<std::int64_t>(
-                                  m->steal_densify_linear_type_soft_observe_total.load(
-                                      std::memory_order_relaxed))
-                            : 0);
-                insert_kv("steal-densify-linear-type-fail-residual-total",
-                          m ? static_cast<std::int64_t>(
-                                  m->steal_densify_linear_type_fail_residual_total.load(
-                                      std::memory_order_relaxed))
-                            : 0);
-                insert_kv("steal-densify-linear-type-fail-linear-total",
-                          m ? static_cast<std::int64_t>(
-                                  m->steal_densify_linear_type_fail_linear_total.load(
-                                      std::memory_order_relaxed))
-                            : 0);
-                insert_kv("steal-densify-linear-type-fail-type-fence-total",
-                          m ? static_cast<std::int64_t>(
-                                  m->steal_densify_linear_type_fail_type_fence_total.load(
-                                      std::memory_order_relaxed))
-                            : 0);
-                insert_kv(
-                    "steal-densify-linear-type-last-fail-axis",
-                    m ? static_cast<std::int64_t>(m->steal_densify_linear_type_last_fail_axis.load(
-                            std::memory_order_relaxed))
-                      : 0);
-                insert_kv("steal-densify-linear-type-hard-and-wired", 1);
-                insert_kv("schema-2609", 2609);
-                insert_kv("issue-2609", 2609);
-            }
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            gc_defer_reason_stats_live_kv(insert_kv);
+            gc_defer_reason_stats_steal_complete_kv(insert_kv);
+            gc_defer_reason_stats_steal_invariant_kv(insert_kv);
+            gc_defer_reason_stats_panic_checkpoint_kv(ev, insert_kv);
+            return query_hash_finish(ht, ev.string_heap_mut(), overflowed, ev);
         });
+}
 
+// Issue #5031: (query:lifetime-contract-snapshot) registration phase.
+void register_jit_p97_lifetime_contract_snapshot(Evaluator& ev) {
     // Issue #2300: query:lifetime-contract-snapshot — single pure Agent
     // surface for pin / linear / EnvFrame / GC-defer / residual contract.
     // Aggregates existing subsystem counters; no side effects (pure read).
     // Formula for lifetime-contract-ok documented in lifetime_contract.h.
     ObservabilityPrims::register_stats_impl(
         "query:lifetime-contract-snapshot", [&ev](const auto&) -> EvalValue {
-            CompilerMetrics* m = ev.compiler_metrics_
-                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                      : nullptr;
             const auto linear = aura::core::lifetime::linear_root_snapshot();
             const std::uint64_t residual_hard =
@@ -11847,7 +11884,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = ev.string_heap_mut().mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -12095,9 +12132,12 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("pin-registry-shard-wired", 1);
             insert_kv("schema-2342", 2342);
             insert_kv("issue-2342", 2342);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, ev.string_heap_mut(), overflowed, ev);
         });
+}
 
+// Issue #5031: (query:arena-moving-densify-health) registration phase.
+void register_jit_p97_arena_moving_densify_health(Evaluator& ev) {
     // Issue #2619: query:arena-moving-densify-health — Agent surface for
     // "is Moving densify safe for the next mutate batch?" Pairs with #2596
     // production hard path. Soft/sandbox observe-only unless hard active.
@@ -12139,7 +12179,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = ev.string_heap_mut().mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -12332,8 +12372,25 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             // stamps at handler end only — no key renames.
             insert_kv("schema-4140", 4140);
             insert_kv("issue-4140", 4140);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, ev.string_heap_mut(), overflowed, ev);
         });
+}
+
+// Issue #909 part 97 (orig lines 20570-20620)
+void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
+    (void)add;
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    auto& arena = ev.arena_;
+    auto& temp_arena = ev.temp_arena_;
+    auto& arena_group = ev.arena_group_;
+    register_jit_p97_primitives_resource_quota_fiber_stats(ev);
+    register_jit_p97_resource_quota_stats(ev, arena, temp_arena, arena_group);
+    register_jit_p97_per_fiber_mutation_stack_stats(ev);
+    register_jit_p97_per_fiber_mutation_depth_stats(ev);
+    register_jit_p97_gc_safepoint_adaptive_stats(ev);
+    register_jit_p97_gc_defer_reason_stats(ev);
+    register_jit_p97_lifetime_contract_snapshot(ev);
+    register_jit_p97_arena_moving_densify_health(ev);
 }
 
 // Issue #909 part 98 (orig lines 20621-20671)

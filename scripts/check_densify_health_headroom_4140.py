@@ -95,7 +95,9 @@ def main() -> int:
                 fails.append(f"AC1: live {densify_live} + {HEADROOM} > planned {PLANNED}")
             must("bool overflowed = false", "AC1 overflowed flag", block)
             must("overflowed = true", "AC1 bounded insert stamps overflow", block)
-            must("return query_hash_finish(ht, ev.string_heap_, overflowed, ev)", "AC1 finish", block)
+            # Issue #5031: the handler is a peeled phase function, so it reaches the
+            # heap through the public accessor; the bounded-probe finish is unchanged.
+            must("return query_hash_finish(ht, ev.string_heap_mut(), overflowed, ev)", "AC1 finish", block)
             # AC2: append-only — legacy keys preserved, stamps at end.
             for k in (
                 "production-hard-active",
