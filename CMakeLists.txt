@@ -1255,6 +1255,12 @@ endif()
 add_executable(test_contracts tests/compiler/test_contracts.cpp)
 set_source_files_properties(tests/compiler/test_contracts.cpp PROPERTIES COMPILE_FLAGS "-include contracts")
 target_compile_options(test_contracts PRIVATE -fcontracts)
+# Issue #4717: contract_handler.cpp includes core/cpp26_contract_stats.h, whose
+# sharded-counter include is spelled "core/sharded_counter.h". Every other test
+# target gets `src` from aura_add_test / its own target_include_directories;
+# this bespoke target had none, so the module scan (and the build) failed with
+# "core/sharded_counter.h: No such file or directory".
+target_include_directories(test_contracts PRIVATE src)
 # Issue #477: contract test is small + production-quality; opt into strict
 # warnings for the test source itself.
 aura_strict_test_warnings(tests/compiler/test_contracts.cpp)
