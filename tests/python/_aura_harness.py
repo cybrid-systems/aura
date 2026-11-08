@@ -169,7 +169,7 @@ def repl_record(line: str) -> dict:
             val = text[start:i]
         else:
             start = i
-            while i < len(text) and text[i] != " ":
+            while i < len(text) and text[i] not in " )":
                 i += 1
             val = text[start:i]
         out[key] = val

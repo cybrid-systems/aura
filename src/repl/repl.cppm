@@ -12,6 +12,7 @@ module;
 #include <algorithm>
 #include <cctype>
 #include <optional>
+#include <map>
 #include <set>
 #include <utility>
 #include <vector>
@@ -253,6 +254,21 @@ public:
     Repl& operator=(const Repl&) = delete;
     Repl(Repl&&) = delete;
     Repl& operator=(Repl&&) = delete;
+
+    // Issue #5048: the prompt names the definition in focus and its step.
+    std::string prompt_() const {
+        if (!focus_)
+            return "> ";
+        return *focus_ + " " + std::to_string(steps_for_(*focus_)) + "> ";
+    }
+
+    int steps_for_(const std::string& name) const {
+        const auto hit = focus_steps_.find(name);
+        return hit == focus_steps_.end() ? 0 : hit->second;
+    }
+
+    // The name a command means when it is given without one.
+    std::optional<std::string> focus_name_() const { return focus_; }
 
     // Issue #5040: Tab candidates for the word at `pos`. Candidates are
     // whole replacement lines (linenoise swaps the buffer for one), so the
@@ -551,6 +567,11 @@ public:
         }
         rec += " \"wrote\" ";
         rec += wrote;
+        rec += " \"focus\" ";
+        if (focus_)
+            rec += '"' + repl_record_escape(*focus_) + '"';
+        else
+            rec += "#f";
         rec += ')';
         std::fprintf(stdout, "%s\n", rec.c_str());
         std::fflush(stdout);
@@ -654,7 +675,8 @@ public:
         std::string pending;
         while (true) {
             errno = 0;
-            char* raw = linenoise(pending.empty() ? "> " : ".. ");
+            prompt_buf_ = prompt_();
+            char* raw = linenoise(pending.empty() ? prompt_buf_.c_str() : ".. ");
             if (!raw) {
                 if (errno == EAGAIN) {
                     pending.clear();
@@ -1245,6 +1267,16 @@ private:
                              failed.empty() ? "" : " (some failed)");
                 events_.push_back("restore " + arg + " [" + (list.empty() ? "-" : list) + "]");
             }
+        } else if (cmd == ":focus") {
+            // Issue #5048: the screen names the definition being edited.
+            if (arg.empty() && !focus_) {
+                std::fprintf(stdout, "no-focus\n");
+            } else if (arg.empty()) {
+                std::fprintf(stdout, "%s %d\n", focus_->c_str(), steps_for_(*focus_));
+            } else {
+                focus_ = arg;
+                std::fprintf(stdout, "%s %d\n", arg.c_str(), steps_for_(arg));
+            }
         } else if (cmd == ":doc") {
             // Issue #5037: the description a primitive already carries.
             const auto& prims = cs_.evaluator().primitives();
@@ -1282,7 +1314,8 @@ private:
                          "  :snapshot [LBL] remember every tracked define\n"
                          "  :restore ID     put changed defines back as of snapshot ID\n"
                          "  :type EXPR      print EXPR's type without running it\n"
-                         "  :doc NAME       print a primitive's description\n");
+                         "  :doc NAME       print a primitive's description\n"
+                         "  :focus [NAME]   name the definition the prompt shows\n");
         }
         // Pipe drivers read one response line per input line.
         std::fflush(stdout);
@@ -1309,6 +1342,9 @@ private:
     CompletionCallback completion_;
     std::string history_path_;
     bool pipe_mode_ = false; // Issue #5043: pipe answers with a record
+    std::string prompt_buf_; // Issue #5048: linenoise keeps the prompt pointer
+    std::optional<std::string> focus_;            // Issue #5048
+    std::map<std::string, int> focus_steps_;      // Issue #5048
     std::unordered_map<std::string, std::string> hint_cache_; // Issue #5038
     std::set<std::string> required_mods_; // Issue #5040
     std::unordered_map<std::string, std::vector<std::string>> export_cache_; // Issue #5040
