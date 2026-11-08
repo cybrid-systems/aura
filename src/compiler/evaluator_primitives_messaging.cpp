@@ -2137,6 +2137,16 @@ void RegSplitParts::register_messaging_fiber_lifecycle_primitives(PrimRegistrar 
     // In the scheduler backend the serve-layer FIFO ready queue
     // (serve/worker.cpp) does the hand-off: the yielded fiber is
     // re-dispatched behind the siblings that are already ready.
+    //
+    // Issue #5055: since #4717 the CLI thread backend runs each fiber
+    // body on its OWN OS thread, so no sibling ever queues on the commit
+    // mutex and the CliBodyYieldHandoff degrades to a plain OS-thread
+    // yield (see the #4728 branch below). In THAT backend `fiber:yield`
+    // does NOT hand the turn to a sibling: the bodies run CONCURRENTLY.
+    // A shared global mutated from two bodies is therefore a data race
+    // (a read-modify-write loses updates — measured 9 -> 6/8 turns).
+    // docs/stdlib/fiber-spawn.md documents the execution model and the
+    // safe way to share state (the per-fiber COW overlay).
     add("fiber:yield", [&ev](const auto&) -> EvalValue {
         // Issue #4708: the yield is the primary cancellation safepoint. A
         // cancelled body raises a catchable condition here BEFORE the

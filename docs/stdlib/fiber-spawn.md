@@ -165,6 +165,46 @@ remains a valid denseness PASS path for single-worker residual hunting.
 It is not a substitute for multi-worker races once thread-fallback spawn
 is available.
 
+## Execution model: concurrent bodies in the CLI backend (Issue #5055)
+
+`fiber:spawn` bodies do **not** run one after another. Since #4717 the CLI
+thread backend gives every body **its own OS thread**, so sibling bodies run
+**concurrently**. `fiber:yield` in that backend is an OS-thread yield: it does
+**not** hand the turn to a sibling fiber (the cooperative hand-off of #4699 is
+the scheduler backend's contract — `--serve-async` — where the serve-layer
+FIFO ready queue re-dispatches the yielded fiber behind its siblings).
+
+### Consequence: a shared global is a data race
+
+Two bodies that update the same global do a read-modify-write on it. The
+update can be lost, and nothing reports it:
+
+```scheme
+(define log '())
+(define (w id) (lambda ()
+  (let loop ((i 0))
+    (if (< i 3)
+        (begin (set! log (cons id log)) (fiber:yield) (loop (+ i 1)))))))
+(define fs (map (lambda (id) (fiber:spawn (w id))) '(1 2 3)))
+(for-each fiber:join fs)
+(length log)          ; 9 expected — measured 6 / 8 / 9 across runs
+```
+
+Measured on `cf5ce063d` (Linux x86_64, 2 cores): 40 runs of the program above
+gave 9 in 39 runs and 8 in 1; under load the same program lost 3 of the 9
+updates in one run. `fiber:join` still returns each body's own value, so the
+loss is invisible unless the program counts.
+
+**A program that shares state between fiber bodies must use the per-fiber COW
+overlay** (next section) or join the writers before reading. A plain global
+(`set!` on a workspace define) is not safe against a concurrent body.
+
+### Reproducibility
+
+Two runs of the same program may differ (a lost update changes the result).
+Programs that must be reproducible must not depend on concurrent bodies
+writing the same global — join the bodies and sequence the writes.
+
 ## Per-fiber COW overlay (Issue #4715)
 
 A body can run against a private copy-on-write overlay instead of the shared
