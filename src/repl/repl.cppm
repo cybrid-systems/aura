@@ -79,6 +79,140 @@ bool repl_phrase_incomplete(std::string_view src) {
     return in_string || depth > 0;
 }
 
+// Issue #5043: the pipe face answers one evaluation with one record, so a
+// driver can tell a successful define from a failed form. The record is
+// text (not an evaluated hash): strings are escaped.
+std::string repl_record_escape(std::string_view s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s) {
+        if (c == '"' || c == '\\') {
+            out += '\\';
+            out += c;
+        } else if (c == '\n') {
+            out += "\\n";
+        } else if (c == '\r') {
+            out += "\\r";
+        } else if (c == '\t') {
+            out += "\\t";
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
+// Issue #5043: the top-level names this phrase defines or rebinds.
+std::vector<std::string> repl_defined_names(std::string_view src) {
+    std::vector<std::string> out;
+    std::size_t i = 0;
+    auto skip_ws = [&src](std::size_t& p) {
+        while (p < src.size()) {
+            const unsigned char c = static_cast<unsigned char>(src[p]);
+            if (std::isspace(c)) {
+                ++p;
+                continue;
+            }
+            if (src[p] == ';') {
+                while (p < src.size() && src[p] != '\n')
+                    ++p;
+                continue;
+            }
+            if (src[p] == '#' && p + 1 < src.size() && src[p + 1] == '|') {
+                p += 2;
+                while (p + 1 < src.size() && !(src[p] == '|' && src[p + 1] == '#'))
+                    ++p;
+                p = p + 1 < src.size() ? p + 2 : src.size();
+                continue;
+            }
+            break;
+        }
+    };
+    auto read_atom = [&src](std::size_t& p) {
+        const std::size_t b = p;
+        while (p < src.size()) {
+            const unsigned char c = static_cast<unsigned char>(src[p]);
+            if (std::isspace(c) || src[p] == '(' || src[p] == ')' || src[p] == '[' || src[p] == ']')
+                break;
+            ++p;
+        }
+        return std::string(src.substr(b, p - b));
+    };
+    auto skip_form = [&src](std::size_t& p) {
+        int depth = 0;
+        bool in_string = false;
+        for (; p < src.size(); ++p) {
+            const char c = src[p];
+            if (in_string) {
+                if (c == '\\' && p + 1 < src.size())
+                    ++p;
+                else if (c == '"')
+                    in_string = false;
+                continue;
+            }
+            if (c == ';') {
+                while (p < src.size() && src[p] != '\n')
+                    ++p;
+                continue;
+            }
+            if (c == '"') {
+                in_string = true;
+                continue;
+            }
+            if (c == '(' || c == '[')
+                ++depth;
+            else if (c == ')' || c == ']') {
+                --depth;
+                if (depth <= 0) {
+                    ++p;
+                    return;
+                }
+            }
+        }
+    };
+    while (i < src.size()) {
+        skip_ws(i);
+        if (i >= src.size())
+            break;
+        if (src[i] != '(') {
+            ++i;
+            continue;
+        }
+        const std::size_t form_start = i;
+        ++i;
+        skip_ws(i);
+        const std::string head = read_atom(i);
+        if (head == "define" || head == "mutate:rebind") {
+            skip_ws(i);
+            std::string name;
+            if (i < src.size() && (src[i] == '(' || src[i] == '[')) {
+                ++i;
+                skip_ws(i);
+                name = read_atom(i);
+            } else if (i < src.size() && src[i] == '"') {
+                ++i;
+                const std::size_t b = i;
+                while (i < src.size() && src[i] != '"') {
+                    if (src[i] == '\\' && i + 1 < src.size())
+                        ++i;
+                    ++i;
+                }
+                name = std::string(src.substr(b, i - b));
+            } else if (i < src.size() && src[i] == '\'') {
+                ++i;
+                name = read_atom(i);
+            } else {
+                name = read_atom(i);
+            }
+            if (!name.empty())
+                out.push_back(std::move(name));
+        }
+        i = form_start;
+        skip_form(i);
+    }
+    return out;
+}
+
 class Repl {
 public:
     explicit Repl(aura::compiler::CompilerService& cs)
@@ -103,8 +237,88 @@ public:
     Repl(Repl&&) = delete;
     Repl& operator=(Repl&&) = delete;
 
+    // Issue #5043: the type the checker reports for this phrase, or
+    // "unknown" when it cannot give one. No new inference here.
+    std::string type_of_(std::string_view code) {
+        const auto tr = cs_.typecheck_full(code);
+        constexpr std::string_view tag = "type: ";
+        if (!tr.output.starts_with(tag))
+            return "unknown";
+        const auto nl = tr.output.find('\n');
+        const auto end = nl == std::string::npos ? tr.output.size() : nl;
+        std::string t = tr.output.substr(tag.size(), end - tag.size());
+        // An unresolved type variable (__tNNN) is not a type the user can use.
+        if (t.empty() || t.find("__t") != std::string::npos)
+            return "unknown";
+        return t;
+    }
+
+    template <class R>
+    void print_record_(const std::string& code, const R& r) {
+        std::string wrote = "(";
+        for (const auto& n : repl_defined_names(code)) {
+            if (wrote.size() > 1)
+                wrote += ' ';
+            wrote += '"';
+            wrote += repl_record_escape(n);
+            wrote += '"';
+        }
+        wrote += ')';
+        std::string rec;
+        if (!r) {
+            const auto& d = r.error();
+            rec = "(hash \"status\" \"error\" \"message\" \"";
+            rec += repl_record_escape(d.message);
+            rec += '"';
+            if (d.location.line > 0) {
+                rec += " \"line\" ";
+                rec += std::to_string(d.location.line);
+            }
+            if (d.location.column > 0) {
+                rec += " \"column\" ";
+                rec += std::to_string(d.location.column);
+            }
+        } else {
+            const auto& v = *r;
+            // A top-level define answers the driver with void: the per-form
+            // face hands back the bound cell value, which is not the form's.
+            const bool statement = !repl_defined_names(code).empty() &&
+                                   !(aura::compiler::types::is_error(v) &&
+                                     !aura::compiler::types::is_string(v));
+            std::string val;
+            if (statement || aura::compiler::types::is_void(v))
+                val.clear();
+            else if (aura::compiler::types::is_error(v) &&
+                     !aura::compiler::types::is_string(v))
+                val = cs_.evaluator().soft_error_message(v);
+            else
+                val = aura::compiler::format_value(
+                    v, cs_.evaluator().primitives().string_heap(), cs_.evaluator().pairs(), 0,
+                    &cs_.evaluator().primitives(), cs_.evaluator().keyword_table());
+            const std::string ty =
+                (statement || aura::compiler::types::is_void(v)) ? "void" : type_of_(code);
+            rec = "(hash \"status\" \"ok\" \"value\" \"";
+            rec += repl_record_escape(val);
+            rec += "\" \"type\" \"";
+            rec += repl_record_escape(ty);
+            rec += '"';
+        }
+        rec += " \"wrote\" ";
+        rec += wrote;
+        rec += ')';
+        std::fprintf(stdout, "%s\n", rec.c_str());
+        std::fflush(stdout);
+    }
+
     void eval_and_print_(const std::string& line) {
         auto r = cs_.eval(line);
+        // Issue #5043: the pipe face answers one evaluation with exactly one
+        // record on stdout and nothing on stderr. A TTY keeps the human line
+        // and adds the record only under AURA_REPL_RECORD.
+        if (pipe_mode_ || std::getenv("AURA_REPL_RECORD") != nullptr)
+            print_record_(line, r);
+        if (pipe_mode_)
+            return;
         if (!r) {
             std::fprintf(stderr, "%s: error: %s\n", line.c_str(),
                          r.error().format_with_source(line).c_str());
@@ -137,6 +351,7 @@ public:
 
     void run() {
         const bool is_tty = ::isatty(STDIN_FILENO) != 0;
+        pipe_mode_ = !is_tty; // Issue #5043
 
         // Issue #2292 / lyapunov-fact: pipe-mode drivers send forms one line
         // at a time over a long-lived subprocess PIPE. linenoise's non-TTY
@@ -803,6 +1018,7 @@ private:
     aura::compiler::CompilerService& cs_;
     CompletionCallback completion_;
     std::string history_path_;
+    bool pipe_mode_ = false; // Issue #5043: pipe answers with a record
     static inline Repl* g_repl_ = nullptr;
 };
 

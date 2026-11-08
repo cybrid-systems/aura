@@ -19,7 +19,7 @@ import pexpect
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "python"))
 
-from _aura_harness import AURA_BIN  # noqa: E402
+from _aura_harness import AURA_BIN, repl_value  # noqa: E402
 
 
 def env() -> dict[str, str]:
@@ -74,7 +74,7 @@ class PipeUnchanged(unittest.TestCase):
             env=env(),
             timeout=120,
         )
-        self.assertEqual(r.stdout.splitlines(), ["3", "7"])
+        self.assertEqual([repl_value(line) for line in r.stdout.splitlines()], ["3", "7"])
 
 
 if __name__ == "__main__":

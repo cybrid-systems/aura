@@ -113,6 +113,75 @@ def timed_call(fn: Callable[[], int], *, category: str) -> RunReport:
     )
 
 
+# Issue #5043: the pipe REPL answers one evaluation with one record,
+# (hash "status" "ok" "value" "3" "type" "Int" "wrote" ()). These helpers
+# read that text without evaluating it.
+def _repl_record_string(text: str, i: int) -> tuple[str, int]:
+    out = []
+    i += 1  # opening quote
+    while i < len(text):
+        if text[i] == "\\" and i + 1 < len(text):
+            nxt = text[i + 1]
+            out.append({"n": "\n", "r": "\r", "t": "\t"}.get(nxt, nxt))
+            i += 2
+            continue
+        if text[i] == '"':
+            return "".join(out), i + 1
+        out.append(text[i])
+        i += 1
+    return "".join(out), i
+
+
+def repl_record(line: str) -> dict:
+    """Fields of one #5043 record line; empty for a non-record line."""
+    text = line.strip()
+    if not text.startswith("(hash"):
+        return {}
+    i = len("(hash")
+    out = {}
+    while i < len(text):
+        while i < len(text) and text[i] == " ":
+            i += 1
+        if i >= len(text) or text[i] == ")":
+            break
+        if text[i] != '"':
+            break
+        key, i = _repl_record_string(text, i)
+        while i < len(text) and text[i] == " ":
+            i += 1
+        if i < len(text) and text[i] == '"':
+            val, i = _repl_record_string(text, i)
+        elif i < len(text) and text[i] == "(":
+            start = i
+            depth = 0
+            while i < len(text):
+                if text[i] == '"':
+                    _, i = _repl_record_string(text, i)
+                    continue
+                if text[i] == "(":
+                    depth += 1
+                elif text[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        i += 1
+                        break
+                i += 1
+            val = text[start:i]
+        else:
+            start = i
+            while i < len(text) and text[i] != " ":
+                i += 1
+            val = text[start:i]
+        out[key] = val
+    return out
+
+
+def repl_value(line: str):
+    """The value field of one record line, or None when it is not a record."""
+    rec = repl_record(line)
+    return rec.get("value")
+
+
 # Categories exposed by tests/run.py (and build.py suite names where shared).
 CATEGORIES: dict[str, str] = {
     "issues": "C++ issue/domain/bundle binaries (tests/python/run_issue_tests.py)",
