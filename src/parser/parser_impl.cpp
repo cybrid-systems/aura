@@ -772,11 +772,32 @@ NodeId parse_list(ParserState& s) {
     return id;
 }
 
+// Issue #5051: parse_expr reports a malformed token (TokenKind::Error, e.g.
+// `#a` or a malformed `#\name`) by returning NULL_NODE WITHOUT consuming it —
+// the deferred error keeps the position (#4129). A caller that only checks
+// the result would keep peeking at the same token, so its loop never
+// terminates (100% CPU, no output, no exit). This helper consumes that
+// token and reports whether it did: true = the caller must stop the loop,
+// false = the form was skipped for another reason (a missing else branch, a
+// depth-guard hit) and the historical behaviour applies.
+bool consume_malformed_token(ParserState& s) {
+    if (s.lex.peek().kind != TokenKind::Error)
+        return false;
+    s.lex.consume();
+    return true;
+}
+
 NodeId parse_if(ParserState& s) {
     auto tok = s.lex.consume(); // 'if'
     auto c = parse_expr(s);
     auto t = parse_expr(s);
     auto e = parse_expr(s);
+    // Issue #5051: a malformed operand leaves the reader on the malformed
+    // token. Fail the form here instead of walking into the extra-argument
+    // loop below, which would spin on it forever. A missing else branch
+    // (the next token is ')') is legal and stays legal.
+    if (consume_malformed_token(s))
+        return aura::ast::NULL_NODE;
     // Check if the next token is the closing paren; if not, there are extra
     // arguments that belong to the else branch. Wrap them in begin.
     if (s.lex.peek().kind == TokenKind::RParen) {
@@ -785,8 +806,13 @@ NodeId parse_if(ParserState& s) {
         std::vector<NodeId> extra = {e};
         while (s.lex.peek().kind != TokenKind::RParen && !s.lex.eof()) {
             auto x = parse_expr(s);
-            if (x != aura::ast::NULL_NODE)
-                extra.push_back(x);
+            if (x == aura::ast::NULL_NODE) {
+                // Issue #5051: same guard for the extra-argument loop.
+                if (consume_malformed_token(s))
+                    break;
+                continue; // a skipped form: keep the historical behaviour
+            }
+            extra.push_back(x);
         }
         s.lex.consume(); // ')'
         e = (extra.size() == 1) ? extra[0] : s.flat.add_begin(extra);
@@ -810,8 +836,14 @@ NodeId parse_lambda(ParserState& s) {
         std::vector<NodeId> body_exprs;
         while (s.lex.peek().kind != TokenKind::RParen && !s.lex.eof()) {
             auto be = parse_expr(s);
-            if (be != NULL_NODE)
-                body_exprs.push_back(be);
+            if (be == NULL_NODE) {
+                // Issue #5051: a malformed body form leaves the reader on
+                // the malformed token — consume it so the loop terminates.
+                if (consume_malformed_token(s))
+                    break;
+                continue; // a skipped form: keep the historical behaviour
+            }
+            body_exprs.push_back(be);
             if (s.lex.peek().kind == TokenKind::RParen)
                 break;
         }
@@ -916,8 +948,14 @@ NodeId parse_lambda(ParserState& s) {
     std::vector<NodeId> body_exprs;
     while (s.lex.peek().kind != TokenKind::RParen && !s.lex.eof()) {
         auto be = parse_expr(s);
-        if (be != NULL_NODE)
-            body_exprs.push_back(be);
+        if (be == NULL_NODE) {
+            // Issue #5051: same guard as the shorthand path — a malformed
+            // body form leaves the reader on the malformed token.
+            if (consume_malformed_token(s))
+                break;
+            continue; // a skipped form: keep the historical behaviour
+        }
+        body_exprs.push_back(be);
         if (s.lex.peek().kind == TokenKind::RParen)
             break;
     }
