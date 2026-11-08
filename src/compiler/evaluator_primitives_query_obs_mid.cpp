@@ -167,15 +167,18 @@ extern std::atomic<std::uint64_t> g_occurrence_goals_live_total;
 extern std::atomic<std::uint64_t> g_occurrence_goals_live_truncated_total;
 extern std::atomic<std::uint32_t> g_occurrence_goals_live_wired;
 
-void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-                                       ::aura::compiler::LockedStringHeap& string_heap,
-                                       void*& type_registry, ModulePathResolver resolve_module_path,
-                                       Evaluator& ev) {
-    (void)pairs;
-    (void)string_heap;
-    (void)type_registry;
-    (void)resolve_module_path;
-    (void)ev;
+// --- Issue #5031: register_query_obs_mid_primitives phases -------------------
+// The single registration body outgrew the 300-line ceiling. Each phase below is
+// one responsibility family; register_query_obs_mid_primitives keeps the ordered
+// delegation so registration order, primitive names and lambda capture lifetimes
+// are unchanged.
+
+// Issue #5031: pattern index / safety / rebuild / hash stats registration phase.
+void register_query_obs_mid_pattern_index_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                ::aura::compiler::LockedStringHeap& string_heap,
+                                                void*& type_registry,
+                                                ModulePathResolver resolve_module_path,
+                                                Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:pattern-index-stats", [](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
@@ -457,7 +460,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("issue-2403", 2403);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: pattern hygiene + hygiene counters registration phase.
+void register_query_obs_mid_pattern_hygiene_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                  ::aura::compiler::LockedStringHeap& string_heap,
+                                                  void*& type_registry,
+                                                  ModulePathResolver resolve_module_path,
+                                                  Evaluator& ev) {
     // Issue #547 / #1501 / #1609 / #1636 / #1892 / #2123 / #2525:
     // query:pattern-hygiene-stats — authoritative MacroIntroduced hygiene
     // dashboard for query:pattern + query:filter residual defaults.
@@ -721,7 +731,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("active", 1);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: node / mutation provenance registration phase.
+void register_query_obs_mid_provenance_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                             ::aura::compiler::LockedStringHeap& string_heap,
+                                             void*& type_registry,
+                                             ModulePathResolver resolve_module_path,
+                                             Evaluator& ev) {
     // Issue #2242: query:node-provenance — per-node provenance query hit
     // stats. Schema **2242**. Exposes provenance_query_total +
     // stable_ref_provenance_query_total + macro_provenance_query_total
@@ -949,7 +966,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("active", 1);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: macro hygiene stats registration phase.
+void register_query_obs_mid_macro_hygiene_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                ::aura::compiler::LockedStringHeap& string_heap,
+                                                void*& type_registry,
+                                                ModulePathResolver resolve_module_path,
+                                                Evaluator& ev) {
     // Issue #486 / #1501 / #1609 / #1613: query:macro-hygiene-stats —
     // consolidated MacroIntroduced hygiene health for AI self-evo.
     // Schema **1613** (lineage 1609/1501). Aggregates query skips,
@@ -1236,7 +1260,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("schema", 1613);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: panic checkpoint lifecycle / workspace snapshot registration phase.
+void register_query_obs_mid_checkpoint_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                             ::aura::compiler::LockedStringHeap& string_heap,
+                                             void*& type_registry,
+                                             ModulePathResolver resolve_module_path,
+                                             Evaluator& ev) {
     // Issue #548: query:panic-checkpoint-lifecycle-stats.
     // Returns the sum of the 4 panic-checkpoint lifecycle
     // observability counters:
@@ -1394,7 +1425,13 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("issue-2966", 2966);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: runtime orchestration / aot hot reload registration phase.
+void register_query_obs_mid_runtime_orchestration_parts(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, void*& type_registry,
+    ModulePathResolver resolve_module_path, Evaluator& ev) {
     // Issue #512: query:runtime-orchestration-stats. Hash view of runtime
     // production orchestration gaps (work-stealing outermost enforcement,
     // EnvFrame/GC safepoint coordination, fiber migration) — non-duplicative
@@ -1564,7 +1601,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("aot-hot-reload-recommendation", recommendation);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: aot production reload / envframe safety registration phase.
+void register_query_obs_mid_aot_reload_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                             ::aura::compiler::LockedStringHeap& string_heap,
+                                             void*& type_registry,
+                                             ModulePathResolver resolve_module_path,
+                                             Evaluator& ev) {
     // Issue #522: query:aot-production-reload-stats. Commercial P0 hash view
     // of AOT hot-reload deployment readiness (func_table swap, multi-agent
     // module/region namespace, version drift) — non-duplicative synthesis
@@ -1743,7 +1787,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("envframe-production-safety-recommendation", recommendation);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: macro production hygiene / guard impact registration phase.
+void register_query_obs_mid_production_guard_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                   ::aura::compiler::LockedStringHeap& string_heap,
+                                                   void*& type_registry,
+                                                   ModulePathResolver resolve_module_path,
+                                                   Evaluator& ev) {
     // Issue #524: query:macro-production-hygiene-stats. Commercial P0 hash view
     // of MacroIntroduced marker propagation + hygiene closed-loop (clone_macro_body
     // → query:pattern → IR InlinePass) — non-duplicative synthesis of #501
@@ -1922,7 +1973,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("guard-production-impact-recommendation", recommendation);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: pattern production index / incremental relower registration phase.
+void register_query_obs_mid_production_index_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                   ::aura::compiler::LockedStringHeap& string_heap,
+                                                   void*& type_registry,
+                                                   ModulePathResolver resolve_module_path,
+                                                   Evaluator& ev) {
     // Issue #528: query:pattern-production-index-stats. Commercial P0 hash view
     // of query:pattern incremental tag_arity_index + MacroIntroduced hygiene
     // integration for large-AST AI loops — non-duplicative synthesis of #547
@@ -2136,7 +2194,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("incremental-production-relower-recommendation", recommendation);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: jit consistency registration phase.
+void register_query_obs_mid_jit_consistency_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                  ::aura::compiler::LockedStringHeap& string_heap,
+                                                  void*& type_registry,
+                                                  ModulePathResolver resolve_module_path,
+                                                  Evaluator& ev) {
     // Issue #532 / #1512 / #1658 / #1917: query:jit-consistency-stats. Commercial P0
     // hash view of JIT opcode coverage completeness, IRInterpreter execution
     // consistency, and GuardShape/Linear/hot-swap safety — non-duplicative
@@ -2319,7 +2384,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("schema", 1658); // lineage 532 / 1512 / 1289 / 427 → 1658 + #1917
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: soa columnar production registration phase.
+void register_query_obs_mid_soa_columnar_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                               ::aura::compiler::LockedStringHeap& string_heap,
+                                               void*& type_registry,
+                                               ModulePathResolver resolve_module_path,
+                                               Evaluator& ev) {
     // Issue #533: query:soa-production-columnar-stats. Commercial P0 hash view
     // of children_ columnar migration + IRModuleV2 / IRInstructionView hot-path
     // adoption + DirtyAwarePass block_dirty_ short-circuit — non-duplicative
@@ -2588,7 +2660,13 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("issue-2036", 2036);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: children stable / replace subtree registration phase.
+void register_query_obs_mid_children_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                           ::aura::compiler::LockedStringHeap& string_heap,
+                                           void*& type_registry,
+                                           ModulePathResolver resolve_module_path, Evaluator& ev) {
     // Issue #2862: query:children-stable-stats. Hash view of the
     // query:children-stable full safety contract metrics (refine
     // #2036 / #678 / #655 Gap4 / #2861). Tracks the 4 non-negotiable
@@ -2764,7 +2842,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                       static_cast<std::int64_t>(restamp_nodes));
             return query_hash_finish(ht, ev->string_heap_mut(), overflowed, *ev);
         });
+}
 
+// Issue #5031: remove node / impact scope registration phase.
+void register_query_obs_mid_edit_scope_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                             ::aura::compiler::LockedStringHeap& string_heap,
+                                             void*& type_registry,
+                                             ModulePathResolver resolve_module_path,
+                                             Evaluator& ev) {
     // Issue #2864: query:remove-node-stats. Hash view of the
     // mutate:remove-node full safety contract metrics (refine
     // #1688 / #1689 / #1281 / #369 / #2863 sibling). Tracks the 5
@@ -2907,6 +2992,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             }
             return make_hash(hidx);
         });
+}
+
+// Issue #5031: children column / shape arena compact registration phase.
+void register_query_obs_mid_children_column_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                  ::aura::compiler::LockedStringHeap& string_heap,
+                                                  void*& type_registry,
+                                                  ModulePathResolver resolve_module_path,
+                                                  Evaluator& ev) {
     // region dense lookup + DOD migration progress surface
     // (non-duplicative with #568 migration hash; no new query:*-stats).
     ObservabilityPrims::register_stats_impl(
@@ -3065,7 +3158,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("schema", 1521);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: arena compaction / contracts hotpath registration phase.
+void register_query_obs_mid_arena_contracts_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                  ::aura::compiler::LockedStringHeap& string_heap,
+                                                  void*& type_registry,
+                                                  ModulePathResolver resolve_module_path,
+                                                  Evaluator& ev) {
     // Issue #534: query:arena-production-compaction-stats. Commercial P0 hash
     // view of auto-compaction threshold policy + live-object defrag
     // coordination with fiber safepoints and MutationBoundaryGuard — non-
@@ -3280,7 +3380,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("contracts-production-hotpath-recommendation", recommendation);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: sv verification / eda stability registration phase.
+void register_query_obs_mid_sv_verification_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                  ::aura::compiler::LockedStringHeap& string_heap,
+                                                  void*& type_registry,
+                                                  ModulePathResolver resolve_module_path,
+                                                  Evaluator& ev) {
     // Issue #539: query:sv-production-verification-stats. Commercial P0 hash
     // view of EDA verification feedback → structured SV mutate closed loop +
     // commercial tool interop — non-duplicative synthesis of #519 edsl-eda-sv-
@@ -3472,7 +3579,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("eda-stability-recommendation", recommendation);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: pattern sv verification registration phase.
+void register_query_obs_mid_pattern_sv_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                             ::aura::compiler::LockedStringHeap& string_heap,
+                                             void*& type_registry,
+                                             ModulePathResolver resolve_module_path,
+                                             Evaluator& ev) {
     // Issue #541: query:pattern-sv-verification-stats. Commercial P0 hash
     // view of query:pattern + DefUseIndex + tag_arity_index incremental
     // maintenance + MacroIntroduced hygiene for large-scale SV SoC AI
@@ -3598,7 +3712,13 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("pattern-sv-verification-recommendation", recommendation);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: commercial coverage / consolidated p0 registration phase.
+void register_query_obs_mid_commercial_coverage_parts(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, void*& type_registry,
+    ModulePathResolver resolve_module_path, Evaluator& ev) {
     // Issue #557: query:top5-commercial-coverage-stats. Commercial P0 hash
     // view of the Top 5 test-coverage cluster (#531 closure-env, #530
     // incremental relower, #532 JIT consistency, #556 EDSL concurrency,
@@ -3838,7 +3958,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("consolidated-p0-production-recommendation", recommendation);
             return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: typed mutation / constraint / type incremental tail registration phase.
+void register_query_obs_mid_type_incremental_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                   ::aura::compiler::LockedStringHeap& string_heap,
+                                                   void*& type_registry,
+                                                   ModulePathResolver resolve_module_path,
+                                                   Evaluator& ev) {
     // Issue #549: query:self-evolution-stability-stats.
     // Returns the sum of the 4 self-evolution observability
     // counters:
@@ -4107,6 +4234,51 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
     //   - solve-delta-worklist-peak   solve_delta_worklist_size_peak
     //   - let-poly-wired              1
     //   - schema == 1617 (lineage 798)
+}
+
+void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                       ::aura::compiler::LockedStringHeap& string_heap,
+                                       void*& type_registry, ModulePathResolver resolve_module_path,
+                                       Evaluator& ev) {
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_query_obs_mid_pattern_index_parts(add, pairs, string_heap, type_registry,
+                                               resolve_module_path, ev);
+    register_query_obs_mid_pattern_hygiene_parts(add, pairs, string_heap, type_registry,
+                                                 resolve_module_path, ev);
+    register_query_obs_mid_provenance_parts(add, pairs, string_heap, type_registry,
+                                            resolve_module_path, ev);
+    register_query_obs_mid_macro_hygiene_parts(add, pairs, string_heap, type_registry,
+                                               resolve_module_path, ev);
+    register_query_obs_mid_checkpoint_parts(add, pairs, string_heap, type_registry,
+                                            resolve_module_path, ev);
+    register_query_obs_mid_runtime_orchestration_parts(add, pairs, string_heap, type_registry,
+                                                       resolve_module_path, ev);
+    register_query_obs_mid_aot_reload_parts(add, pairs, string_heap, type_registry,
+                                            resolve_module_path, ev);
+    register_query_obs_mid_production_guard_parts(add, pairs, string_heap, type_registry,
+                                                  resolve_module_path, ev);
+    register_query_obs_mid_production_index_parts(add, pairs, string_heap, type_registry,
+                                                  resolve_module_path, ev);
+    register_query_obs_mid_jit_consistency_parts(add, pairs, string_heap, type_registry,
+                                                 resolve_module_path, ev);
+    register_query_obs_mid_soa_columnar_parts(add, pairs, string_heap, type_registry,
+                                              resolve_module_path, ev);
+    register_query_obs_mid_children_parts(add, pairs, string_heap, type_registry,
+                                          resolve_module_path, ev);
+    register_query_obs_mid_edit_scope_parts(add, pairs, string_heap, type_registry,
+                                            resolve_module_path, ev);
+    register_query_obs_mid_children_column_parts(add, pairs, string_heap, type_registry,
+                                                 resolve_module_path, ev);
+    register_query_obs_mid_arena_contracts_parts(add, pairs, string_heap, type_registry,
+                                                 resolve_module_path, ev);
+    register_query_obs_mid_sv_verification_parts(add, pairs, string_heap, type_registry,
+                                                 resolve_module_path, ev);
+    register_query_obs_mid_pattern_sv_parts(add, pairs, string_heap, type_registry,
+                                            resolve_module_path, ev);
+    register_query_obs_mid_commercial_coverage_parts(add, pairs, string_heap, type_registry,
+                                                     resolve_module_path, ev);
+    register_query_obs_mid_type_incremental_parts(add, pairs, string_heap, type_registry,
+                                                  resolve_module_path, ev);
 }
 
 } // namespace aura::compiler::primitives_detail
