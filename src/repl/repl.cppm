@@ -255,6 +255,153 @@ public:
     Repl(Repl&&) = delete;
     Repl& operator=(Repl&&) = delete;
 
+    // Issue #5042: the live workspace text, and one definition out of it.
+    std::string workspace_source_() {
+        std::string shown;
+        if (auto err = eval_quiet_("(current-source :workspace)", &shown); !err.empty())
+            return {};
+        if (shown.size() >= 2 && shown.front() == '"' && shown.back() == '"')
+            shown = shown.substr(1, shown.size() - 2);
+        std::string out;
+        for (std::size_t i = 0; i < shown.size(); ++i) {
+            if (shown[i] == '\\' && i + 1 < shown.size()) {
+                const char next = shown[++i];
+                if (next == 'n')
+                    out += '\n';
+                else if (next == 't')
+                    out += '\t';
+                else
+                    out += next;
+                continue;
+            }
+            out += shown[i];
+        }
+        return out;
+    }
+
+    std::string live_source_of_(const std::string& name) {
+        const std::string src = workspace_source_();
+        if (src.empty())
+            return {};
+        for (const auto& form : split_forms(src)) {
+            if (auto d = parse_define(form); d && d->first == name)
+                return d->second.src;
+        }
+        return {};
+    }
+
+    bool in_workspace_(const std::string& name) {
+        std::string node;
+        eval_quiet_("(workspace:find-define " + quote_(name) + ")", &node);
+        return !node.empty();
+    }
+
+    static std::string quote_name_(const std::string& name) {
+        std::string out = "\"";
+        out += repl_record_escape(name);
+        out += '"';
+        return out;
+    }
+
+    // Issue #5042: snapshot -> rebind -> eval + gate -> KEEP, else restore.
+    bool propose_(const std::string& arg) {
+        const auto sp = arg.find_first_of(" \t");
+        if (sp == std::string::npos) {
+            std::fprintf(stdout, ":propose: usage: :propose NAME CODE\n");
+            return false;
+        }
+        const std::string name = arg.substr(0, sp);
+        std::string code = arg.substr(sp + 1);
+        // A quoted candidate is the common CLI shape; a bare one (from
+        // :ask or a paste) is accepted too.
+        if (code.size() >= 2 && code.front() == '"' && code.back() == '"') {
+            std::string unescaped;
+            for (std::size_t i = 1; i + 1 < code.size(); ++i) {
+                if (code[i] == '\\' && i + 1 < code.size() - 1) {
+                    const char next = code[++i];
+                    if (next == 'n')
+                        unescaped += '\n';
+                    else if (next == 't')
+                        unescaped += '\t';
+                    else
+                        unescaped += next;
+                } else {
+                    unescaped += code[i];
+                }
+            }
+            code = std::move(unescaped);
+        }
+        std::optional<std::pair<std::string, Def>> def;
+        for (const auto& form : split_forms(code)) {
+            if (auto d = parse_define(form); d) {
+                def = std::move(d);
+                break;
+            }
+        }
+        if (!def) {
+            std::fprintf(stdout, ":propose: the candidate has no define\n");
+            return false;
+        }
+        const std::string before = live_source_of_(name);
+        // The snapshot value is a handle: bind it and pass the binding back,
+        // the printed form is not a literal the reader can restore from.
+        static int snap_seq = 0;
+        const std::string snap_var = "__repl_snap_" + std::to_string(++snap_seq);
+        if (auto err = eval_quiet_("(define " + snap_var + " (ast:snapshot \"repl-propose\"))");
+            !err.empty()) {
+            std::fprintf(stdout, ":propose: snapshot failed: %s\n", err.c_str());
+            return false;
+        }
+        std::string err;
+        std::string shown;
+        if (in_workspace_(name))
+            err = eval_quiet_("(mutate:rebind " + quote_(name) + " " + quote_(def->second.value) +
+                                  " \"repl :propose\")",
+                              &shown);
+        if (err.empty())
+            err = eval_quiet_(def->second.src);
+        bool ok = err.empty();
+        if (ok && !gate_.empty()) {
+            std::string gv;
+            auto gerr = eval_quiet_(gate_, &gv);
+            ok = gerr.empty() && gv != "#f";
+            if (!ok && !gerr.empty())
+                err = gerr;
+        }
+        if (!ok) {
+            eval_quiet_("(ast:restore " + snap_var + ")");
+            eval_quiet_("(eval-current)");
+            // The workspace text cache can still hold the rejected candidate;
+            // re-evaluating the pre-proposal definition keeps the live source
+            // and the environment on the same text.
+            if (!before.empty())
+                eval_quiet_(before);
+        }
+        const std::string after = ok ? live_source_of_(name) : before;
+        if (ok) {
+            focus_ = name;
+            focus_steps_[name] = steps_for_(name) + 1;
+        }
+        if (pipe_mode_) {
+            std::string rec = "(hash \"status\" \"ok\" \"value\" \"\" \"type\" \"void\" \"wrote\" (";
+            rec += quote_name_(name);
+            rec += ") \"focus\" ";
+            rec += quote_name_(name);
+            rec += " \"decision\" \"";
+            rec += ok ? "KEEP" : "ROLLBACK";
+            rec += "\" \"source\" \"";
+            rec += repl_record_escape(after);
+            rec += "\")";
+            std::fprintf(stdout, "%s\n", rec.c_str());
+        } else {
+            std::fprintf(stdout, "%s\n- %s\n+ %s\n%s\n", name.c_str(),
+                         before.empty() ? "(no-workspace)" : before.c_str(), def->second.src.c_str(),
+                         ok ? "KEEP" : "ROLLBACK");
+        }
+        std::fflush(stdout);
+        return ok;
+    }
+
     // Issue #5048: the prompt names the definition in focus and its step.
     std::string prompt_() const {
         if (!focus_)
@@ -1267,6 +1414,31 @@ private:
                              failed.empty() ? "" : " (some failed)");
                 events_.push_back("restore " + arg + " [" + (list.empty() ? "-" : list) + "]");
             }
+        } else if (cmd == ":src") {
+            const auto name = arg.empty() ? focus_name_() : std::optional<std::string>(arg);
+            if (!name) {
+                std::fprintf(stdout, "no-focus\n");
+            } else {
+                const auto src = live_source_of_(*name);
+                std::fprintf(stdout, "%s\n", src.empty() ? "no-workspace" : src.c_str());
+            }
+        } else if (cmd == ":gate") {
+            if (!arg.empty())
+                gate_ = arg;
+            if (gate_.empty())
+                std::fprintf(stdout, "gate: (none)\n");
+            else
+                std::fprintf(stdout, "gate: %s\n", gate_.c_str());
+        } else if (cmd == ":fuel") {
+            if (!arg.empty()) {
+                try {
+                    fuel_ = std::stol(arg);
+                } catch (...) {
+                }
+            }
+            std::fprintf(stdout, "fuel: %ld\n", fuel_);
+        } else if (cmd == ":propose") {
+            propose_(arg);
         } else if (cmd == ":focus") {
             // Issue #5048: the screen names the definition being edited.
             if (arg.empty() && !focus_) {
@@ -1315,7 +1487,11 @@ private:
                          "  :restore ID     put changed defines back as of snapshot ID\n"
                          "  :type EXPR      print EXPR's type without running it\n"
                          "  :doc NAME       print a primitive's description\n"
-                         "  :focus [NAME]   name the definition the prompt shows\n");
+                         "  :focus [NAME]   name the definition the prompt shows\n"
+                         "  :src [NAME]     live workspace source of NAME (or the focus)\n"
+                         "  :propose NAME CODE  snapshot, rebind, eval, keep or roll back\n"
+                         "  :gate EXPR      check an accepted proposal must not return #f\n"
+                         "  :fuel N         step budget for a proposal (default 100000)\n");
         }
         // Pipe drivers read one response line per input line.
         std::fflush(stdout);
@@ -1345,6 +1521,8 @@ private:
     std::string prompt_buf_; // Issue #5048: linenoise keeps the prompt pointer
     std::optional<std::string> focus_;            // Issue #5048
     std::map<std::string, int> focus_steps_;      // Issue #5048
+    std::string gate_;                            // Issue #5042
+    long fuel_ = 100000;                          // Issue #5042
     std::unordered_map<std::string, std::string> hint_cache_; // Issue #5038
     std::set<std::string> required_mods_; // Issue #5040
     std::unordered_map<std::string, std::vector<std::string>> export_cache_; // Issue #5040
