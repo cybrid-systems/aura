@@ -12,6 +12,7 @@ module;
 #include <algorithm>
 #include <cctype>
 #include <optional>
+#include <set>
 #include <utility>
 #include <vector>
 #include <unistd.h>
@@ -226,6 +227,14 @@ public:
                 for (auto& s : g_repl_->completion_(buf))
                     linenoiseAddCompletion(lc, s.c_str());
         });
+        // Issue #5040: complete the word at the cursor, not the line end.
+        linenoiseSetCompletionCallbackPos(
+            [](const char* buf, size_t pos, linenoiseCompletions* lc) {
+                if (!g_repl_ || g_repl_->completion_)
+                    return; // a caller-supplied callback owns completion
+                for (auto& s : g_repl_->complete_(buf, pos))
+                    linenoiseAddCompletion(lc, s.c_str());
+            });
         // Issue #5038: the grey hint after the line names the word's type or
         // the primitive's arity. linenoise owns no user data, so route it
         // through the active instance.
@@ -244,6 +253,192 @@ public:
     Repl& operator=(const Repl&) = delete;
     Repl(Repl&&) = delete;
     Repl& operator=(Repl&&) = delete;
+
+    // Issue #5040: Tab candidates for the word at `pos`. Candidates are
+    // whole replacement lines (linenoise swaps the buffer for one), so the
+    // word at the cursor is replaced and the rest of the line stays.
+    std::vector<std::string> complete_(std::string_view buf, std::size_t pos) {
+        std::vector<std::string> out;
+        if (pos > buf.size())
+            pos = buf.size();
+        auto ident = [](char c) {
+            const auto u = static_cast<unsigned char>(c);
+            return std::isalnum(u) != 0 || c == '-' || c == '?' || c == '!' || c == '*' ||
+                   c == '/' || c == '>' || c == '<' || c == '=' || c == '_' || c == ':';
+        };
+        std::size_t start = pos;
+        while (start > 0 && ident(buf[start - 1]))
+            --start;
+        const std::string word(buf.substr(start, pos - start));
+        const std::string head(buf.substr(0, start));
+        const std::string tail(buf.substr(pos));
+        auto emit = [&out, &head, &tail](const std::string& cand, const std::string& prefix) {
+            if (!cand.starts_with(prefix))
+                return;
+            out.push_back(head + cand + tail);
+        };
+        if (word.starts_with(":")) {
+            static constexpr std::string_view kCommands[] = {
+                ":load",  ":reload", ":ws",      ":worldline", ":history", ":snapshot",
+                ":restore", ":help",  ":type",   ":doc",       ":src",     ":propose",
+                ":gate",  ":fuel",    ":context", ":ask",      ":focus",   ":undo",
+                ":redo",  ":at"};
+            for (const auto cmd : kCommands)
+                emit(std::string(cmd), word);
+            return out;
+        }
+        if (in_require_string_(buf, pos)) {
+            for (const auto& mod : std_modules_())
+                emit(mod, word);
+            return out;
+        }
+        if (word.empty())
+            return out;
+        for (const auto& [name, def] : defs_)
+            emit(name, word);
+        for (const auto& name : exports_())
+            emit(name, word);
+        const auto& prims = cs_.evaluator().primitives();
+        for (std::size_t slot = 0; slot < prims.slot_count(); ++slot)
+            emit(prims.name_for_slot(slot), word);
+        std::sort(out.begin(), out.end());
+        out.erase(std::unique(out.begin(), out.end()), out.end());
+        return out;
+    }
+
+    static bool in_require_string_(std::string_view buf, std::size_t pos) {
+        int quotes = 0;
+        std::size_t open = 0;
+        for (std::size_t i = 0; i < pos && i < buf.size(); ++i) {
+            if (static_cast<unsigned char>(buf[i]) == 92 && i + 1 < pos) {
+                ++i;
+                continue;
+            }
+            if (buf[i] == '"') {
+                ++quotes;
+                open = i;
+            }
+        }
+        if (quotes % 2 == 0)
+            return false;
+        auto head = buf.substr(0, open);
+        while (!head.empty() && std::isspace(static_cast<unsigned char>(head.back())))
+            head.remove_suffix(1);
+        return head.ends_with("(require");
+    }
+
+    std::vector<std::string> std_modules_() const {
+        std::vector<std::string> out;
+        std::vector<std::filesystem::path> dirs{std::filesystem::path("lib/std")};
+        if (const char* rt = std::getenv("AURA_RUNTIME_DIR"); rt && *rt)
+            dirs.emplace_back(std::filesystem::path(rt) / "lib" / "std");
+        for (const auto& dir : dirs) {
+            std::error_code ec;
+            if (!std::filesystem::is_directory(dir, ec))
+                continue;
+            for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+                if (!entry.is_regular_file(ec))
+                    continue;
+                const auto name = entry.path().filename().string();
+                if (!name.ends_with(".aura"))
+                    continue;
+                out.push_back("std/" + name.substr(0, name.size() - 5));
+            }
+            if (!out.empty())
+                break;
+        }
+        std::sort(out.begin(), out.end());
+        out.erase(std::unique(out.begin(), out.end()), out.end());
+        return out;
+    }
+
+    // Names installed by a required module: read the module's own file and
+    // take its top-level (export …) form. Cached per module.
+    std::vector<std::string> module_exports_(const std::string& mod) {
+        if (const auto hit = export_cache_.find(mod); hit != export_cache_.end())
+            return hit->second;
+        std::vector<std::string> out;
+        std::vector<std::filesystem::path> dirs{std::filesystem::path("lib/std")};
+        if (const char* rt = std::getenv("AURA_RUNTIME_DIR"); rt && *rt)
+            dirs.emplace_back(std::filesystem::path(rt) / "lib" / "std");
+        for (const auto& dir : dirs) {
+            std::ifstream in(dir / (mod + ".aura"));
+            if (!in)
+                continue;
+            const std::string src((std::istreambuf_iterator<char>(in)),
+                                  std::istreambuf_iterator<char>());
+            const auto pos = src.find("(export");
+            if (pos == std::string::npos)
+                break;
+            std::size_t i = pos + 7;
+            while (i < src.size() && src[i] != ')') {
+                while (i < src.size() && std::isspace(static_cast<unsigned char>(src[i])))
+                    ++i;
+                if (i >= src.size() || src[i] == ')')
+                    break;
+                if (src[i] == ';') {
+                    while (i < src.size() && src[i] != '\n')
+                        ++i;
+                    continue;
+                }
+                const std::size_t start = i;
+                while (i < src.size() && !std::isspace(static_cast<unsigned char>(src[i])) &&
+                       src[i] != ')')
+                    ++i;
+                if (i > start)
+                    out.emplace_back(src.substr(start, i - start));
+            }
+            if (!out.empty())
+                break;
+        }
+        export_cache_[mod] = out;
+        return out;
+    }
+
+    const std::vector<std::string>& exports_() {
+        std::vector<std::string> mods{"list", "string", "hash", "math"};
+        for (const auto& m : required_mods_)
+            mods.push_back(m);
+        std::sort(mods.begin(), mods.end());
+        mods.erase(std::unique(mods.begin(), mods.end()), mods.end());
+        std::string key;
+        for (const auto& m : mods)
+            key += m + ",";
+        if (key == exports_key_)
+            return exports_cache_;
+        exports_key_ = key;
+        exports_cache_.clear();
+        for (const auto& m : mods)
+            for (const auto& n : module_exports_(m))
+                exports_cache_.push_back(n);
+        std::sort(exports_cache_.begin(), exports_cache_.end());
+        exports_cache_.erase(std::unique(exports_cache_.begin(), exports_cache_.end()),
+                             exports_cache_.end());
+        return exports_cache_;
+    }
+
+    // The modules this session loaded through (require "std/X" ...).
+    void note_requires_(std::string_view code) {
+        std::size_t p = 0;
+        while ((p = code.find("(require", p)) != std::string_view::npos) {
+            p += 8;
+            while (p < code.size() && std::isspace(static_cast<unsigned char>(code[p])))
+                ++p;
+            if (p >= code.size() || code[p] != '"')
+                continue;
+            ++p;
+            const std::size_t start = p;
+            while (p < code.size() && code[p] != '"')
+                ++p;
+            std::string mod(code.substr(start, p - start));
+            if (mod.starts_with("std/"))
+                mod = mod.substr(4);
+            if (!mod.empty()) {
+                required_mods_.insert(mod);
+                exports_key_.clear();
+            }
+        }
+    }
 
     // Issue #5038: a grey hint for the word being typed at the end of the
     // buffer: the primitive's arity, else the binding's type. Cached per
@@ -362,6 +557,7 @@ public:
     }
 
     void eval_and_print_(const std::string& line) {
+        note_requires_(line);
         auto r = cs_.eval(line);
         // Issue #5043: the pipe face answers one evaluation with exactly one
         // record on stdout and nothing on stderr. A TTY keeps the human line
@@ -1114,6 +1310,10 @@ private:
     std::string history_path_;
     bool pipe_mode_ = false; // Issue #5043: pipe answers with a record
     std::unordered_map<std::string, std::string> hint_cache_; // Issue #5038
+    std::set<std::string> required_mods_; // Issue #5040
+    std::unordered_map<std::string, std::vector<std::string>> export_cache_; // Issue #5040
+    std::string exports_key_;                  // Issue #5040
+    std::vector<std::string> exports_cache_;   // Issue #5040
     static inline Repl* g_repl_ = nullptr;
 };
 

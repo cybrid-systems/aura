@@ -94,9 +94,13 @@ void linenoiseFree(void* ptr);
 
 /* Completion API. */
 typedef void(linenoiseCompletionCallback)(const char*, linenoiseCompletions*);
+/* Issue #5040: completion that knows the cursor, so the word under it is
+ * completed instead of the line's last word. */
+typedef void(linenoiseCompletionCallbackPos)(const char*, size_t, linenoiseCompletions*);
 typedef char*(linenoiseHintsCallback)(const char*, int* color, int* bold);
 typedef void(linenoiseFreeHintsCallback)(void*);
 void linenoiseSetCompletionCallback(linenoiseCompletionCallback*);
+void linenoiseSetCompletionCallbackPos(linenoiseCompletionCallbackPos*);
 void linenoiseSetHintsCallback(linenoiseHintsCallback*);
 void linenoiseSetFreeHintsCallback(linenoiseFreeHintsCallback*);
 void linenoiseAddCompletion(linenoiseCompletions*, const char*);

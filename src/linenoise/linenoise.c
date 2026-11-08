@@ -126,11 +126,20 @@
 #define PASTE_MAX_BYTES LINENOISE_MAX_LINE
 static char *unsupported_term[] = {"dumb","cons25","emacs",NULL};
 static linenoiseCompletionCallback *completionCallback = NULL;
+static linenoiseCompletionCallbackPos *completionCallbackPos = NULL;
 static linenoiseHintsCallback *hintsCallback = NULL;
 static linenoiseFreeHintsCallback *freeHintsCallback = NULL;
 static char *linenoiseReadLine(FILE *fp, int *err);
 static char *linenoiseNoTTY(void);
 static void refreshLineWithCompletion(struct linenoiseState *ls, linenoiseCompletions *lc, int flags);
+/* Issue #5040: one entry point for both completion callback shapes. */
+static void requestCompletions(struct linenoiseState *ls, linenoiseCompletions *lc) {
+    if (completionCallbackPos) {
+        completionCallbackPos(ls->buf, ls->pos, lc);
+    } else if (completionCallback) {
+        completionCallback(ls->buf, lc);
+    }
+}
 static void refreshLineWithFlags(struct linenoiseState *l, int flags);
 static void linenoiseFoldClear(struct linenoiseState *l);
 
@@ -761,7 +770,7 @@ static void refreshLineWithCompletion(struct linenoiseState *ls, linenoiseComple
     /* Obtain the table of completions if the caller didn't provide one. */
     linenoiseCompletions ctable = { 0, NULL };
     if (lc == NULL) {
-        completionCallback(ls->buf,&ctable);
+        requestCompletions(ls,&ctable);
         lc = &ctable;
     }
 
@@ -803,7 +812,7 @@ static int completeLine(struct linenoiseState *ls, int keypressed) {
     int nwritten;
     char c = keypressed;
 
-    completionCallback(ls->buf,&lc);
+    requestCompletions(ls,&lc);
     if (lc.len == 0) {
         linenoiseBeep();
         ls->in_completion = 0;
@@ -853,6 +862,11 @@ static int completeLine(struct linenoiseState *ls, int keypressed) {
 /* Register a callback function to be called for tab-completion. */
 void linenoiseSetCompletionCallback(linenoiseCompletionCallback *fn) {
     completionCallback = fn;
+}
+
+/* Issue #5040: cursor-aware completion registration. */
+void linenoiseSetCompletionCallbackPos(linenoiseCompletionCallbackPos *fn) {
+    completionCallbackPos = fn;
 }
 
 /* Register a hits function to be called to show hits to the user at the
@@ -1931,7 +1945,8 @@ char *linenoiseEditFeed(struct linenoiseState *l) {
     /* Only autocomplete when the callback is set. completeLine()
      * returns the character to be handled next, or zero when the
      * key was consumed to navigate completions. */
-    if ((l->in_completion || c == 9 /* TAB */) && completionCallback != NULL) {
+    if ((l->in_completion || c == 9 /* TAB */) &&
+        (completionCallback != NULL || completionCallbackPos != NULL)) {
         int retval = completeLine(l,c);
         /* Read next character when 0 */
         if (retval == 0) return linenoiseEditMore;
