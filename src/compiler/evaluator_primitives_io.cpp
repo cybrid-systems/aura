@@ -1151,14 +1151,32 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // (tcp-listen port) → listener-fd | ()
-    // Binds 127.0.0.1 (loopback denseness host). port 0 = ephemeral;
-    // use (tcp-local-port listener) to discover the assigned port.
+    // (tcp-listen port host) → listener-fd | ()
+    // One argument binds 127.0.0.1 (loopback denseness host). The optional
+    // host is an IPv4 literal such as "0.0.0.0" or "127.0.0.1"; anything
+    // else is void. port 0 = ephemeral; use (tcp-local-port listener).
     ev.defer_std_host_prim("tcp-listen", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !types::is_int(a[0]))
+        if (a.empty() || a.size() > 2 || !types::is_int(a[0]))
             return make_void();
         const auto port = types::as_int(a[0]);
         if (port < 0 || port > 65535)
             return make_void();
+        in_addr_t bind_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1 denseness
+        if (a.size() == 2) {
+            if (!types::is_string(a[1]))
+                return make_void();
+            const auto hidx = types::as_string_idx(a[1]);
+            if (hidx >= ev.string_heap_.size())
+                return make_void();
+            // Same fence as tcp-connect: the host bytes leave the heap.
+            if (!ev.inrange_string_tenant_allows(hidx, aura::compiler::security::kEffectNetwork,
+                                                 "tcp-listen"))
+                return make_void();
+            in_addr parsed{};
+            if (::inet_pton(AF_INET, ev.string_at(hidx).c_str(), &parsed) != 1)
+                return make_void();
+            bind_addr = parsed.s_addr;
+        }
         int fd = ::socket(AF_INET, SOCK_STREAM, 0);
         if (fd < 0)
             return make_void();
@@ -1167,7 +1185,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(static_cast<std::uint16_t>(port));
-        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK); // 127.0.0.1 denseness
+        addr.sin_addr.s_addr = bind_addr;
         if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
             ::close(fd);
             return make_void();

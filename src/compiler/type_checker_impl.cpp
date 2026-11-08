@@ -4800,7 +4800,8 @@ void InferenceEngine::init_primitive_env_part2(TypeId Int, TypeId Bool, TypeId F
 
     // std/socket (#1975 client; #2771 server listen/accept)
     register_primitive("tcp-connect", {String, Int}, Dyn);
-    register_primitive("tcp-listen", {Int}, Dyn);
+    // Optional IPv4 host. One argument stays 127.0.0.1.
+    register_primitive("tcp-listen", {Int, String}, Dyn, true);
     register_primitive("tcp-local-port", {Dyn}, Dyn);
     register_primitive("tcp-accept", {Dyn}, Dyn);
     register_primitive("tcp-accept-timeout", {Dyn, Int}, Dyn);
@@ -6558,16 +6559,18 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
             if (ft.variadic) {
                 const std::size_t fixed = ft.args.size() > 0 ? ft.args.size() - 1 : 0;
                 // Issue #4545: hash-ref (default) and tcp-recv (maxlen) take
-                // exactly one optional argument at runtime. They ride the
-                // dotted-rest shape for the lower bound; cap the upper bound
-                // at the registered size so an extra argument still rejects.
-                // The shape test keeps a user define of the same name with a
-                // different signature unaffected.
+                // exactly one optional argument at runtime. tcp-listen's
+                // host is the same shape. They ride the dotted-rest shape
+                // for the lower bound; cap the upper bound at the registered
+                // size so an extra argument still rejects. The shape test
+                // keeps a user define of the same name with a different
+                // signature unaffected.
                 std::size_t optional_max = 0;
                 if (callee_v.sym_id != INVALID_SYM && callee_v.tag == NodeTag::Variable) {
                     auto cname = pool.resolve(callee_v.sym_id);
                     if ((cname == "hash-ref" && ft.args.size() == 3) ||
-                        (cname == "tcp-recv" && ft.args.size() == 2))
+                        (cname == "tcp-recv" && ft.args.size() == 2) ||
+                        (cname == "tcp-listen" && ft.args.size() == 2))
                         optional_max = ft.args.size();
                 }
                 if (num_args < fixed) {
