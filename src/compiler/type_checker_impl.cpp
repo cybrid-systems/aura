@@ -6660,6 +6660,19 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
             flat.set_node_error(v.id, static_cast<std::uint8_t>(ErrorKind::TypeError));
             return reg_.void_type();
         }
+        // Issue #5052: an unbound callee VARIABLE is an inference variable,
+        // not a gradual Any. The letrec forward reference (a recursive call
+        // inside its own definition) is exactly this case: the binding is a
+        // fresh var until the definition's own type is unified in.
+        // Returning Any here made every recursive call's result Any, and
+        // the production join gate then rejected the resulting `Int ~ Any`
+        // pair as a HARD type error — so no recursive definition could be
+        // installed at runtime (mutate:rebind fail-closed, "solve_delta not
+        // SOLVED") while the same source loaded from a file passed. A fresh
+        // var keeps the join gradual (the gate's is_var branch) and lets
+        // the later unification pin the real type.
+        if (reg_.is_var(func_type))
+            return cs_.fresh_var();
     }
     return reg_.dynamic_type();
 }

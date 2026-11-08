@@ -1,0 +1,23 @@
+{
+  "issue": 5052,
+  "title": "Issue #5052: a recursive definition must be installable at runtime (the production type gate must not reject the unpinned recursive return type).",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "Issue #5052",
+        "return cs_.fresh_var();"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/python/test_issue_5052.py",
+      "contains": [
+        "#5052",
+        "the recursive rebind must not be fail-closed",
+        "the recursive rebind must be accepted"
+      ]
+    }
+  ]
+}
