@@ -495,7 +495,7 @@ jobs:
         export AURA_STARTER_KITS="$RUNNER_TEMP/aura-starter-kits"
         rc=0
         for t in tests/python/test_issue_490*.py tests/python/test_issue_491*.py tests/python/test_issue_4937*.py \
-                 tests/python/test_issue_5036.py tests/python/test_issue_5049.py; do
+                 tests/python/test_issue_50*.py; do
           echo "::group::$t"
           python3 "$t" || rc=1
           echo "::endgroup::"
