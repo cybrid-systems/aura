@@ -3830,6 +3830,11 @@ bool IRInterpreter::reclaim_unreachable_now() {
     // pairs were treated as unreachable and erased ("cannot call: value",
     // #4481 reopen).
     ev->collect_tw_inflight_roots(roots);
+    // Issue #5057 AC3: the EnvId half of the same root set. The file-mode
+    // frame mark roots these Envs' parent chains and snapshot source
+    // frames instead of treating every frame as a root.
+    std::vector<const Env*> live_envs;
+    ev->collect_tw_inflight_envs(live_envs);
     // Issue #4747: the missing direction of #4617, IR -> IR. A workspace define
     // called from another workspace define runs on that define's OWN
     // IRInterpreter (IRDefineEnvBinding), so at this instruction boundary the
@@ -3854,6 +3859,7 @@ bool IRInterpreter::reclaim_unreachable_now() {
     std::vector<std::uint8_t> live_cells;
     Evaluator::FileModeReclaimView view;
     view.extra_roots = roots;
+    view.live_envs = live_envs;
     view.ir_cells = cell_heap_;
     view.ir_closure_env = &IRInterpreter::ir_env_thunk;
     view.ir_ctx = this;

@@ -27,6 +27,7 @@ module;
 #include "compiler/mark_all_owner_clear.hh"   // Issue #4360: snapshot restore clears IR owners
 #include "compiler/user_arity.hh"             // Issue #4467: call-site procedure arity
 #include "compiler/type_feedback.h"           // Issue #4568: tree-walker lattices
+#include "compiler/env_frame_arena.hh"        // Issue #5057: catchable arena exhaustion
 #include "compiler/ir_inflight_roots.hh"      // Issue #4617: IR in-flight roots for the TW sweep
 #include "core/ownership.hh"                  // #4936 immortal<T>
 
@@ -1740,6 +1741,25 @@ void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {
                 collect_tw_root_values(set->frames, set->results, set->vecs, set->spans, out);
             }
             tw_stw_end(stw);
+        }
+    }
+}
+
+// Issue #5057: the EnvId side of collect_tw_inflight_roots. Same
+// tw_frames registry (current / tail / pinned), but the Env objects
+// themselves, so the file-mode sweep can root their parent_id and
+// cap-snapshot source frames instead of rooting every frame.
+void Evaluator::collect_tw_inflight_envs(std::vector<const Env*>& out) {
+    for (const auto& fr : tw_frames()) {
+        if (fr.current && *fr.current)
+            out.push_back(*fr.current);
+        if (fr.tail && *fr.tail)
+            out.push_back(&**fr.tail);
+        if (!fr.pinned)
+            continue;
+        for (const auto& p : *fr.pinned) {
+            if (p)
+                out.push_back(p.get());
         }
     }
 }
@@ -6184,7 +6204,20 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
             ev->set_file_diag_root_id(ast::NULL_NODE);
         }
     } file_diag_guard{{}, this, arm_file_diag};
-    auto result = eval_flat_body(flat, pool, id, env);
+    EvalResult result;
+    try {
+        result = eval_flat_body(flat, pool, id, env);
+    } catch (const env_frame_arena::Exhausted& e) {
+        // Issue #5057: the EnvFrame arena is full and no slot can be
+        // reclaimed. #4790 aborted the process here; that left a program with
+        // a large live capture-frame set (a list of >1M closures) no way to
+        // react. Surface it as an ordinary evaluation diagnostic instead:
+        // the enclosing (try ... (catch (e) ...)) binds its message, and a
+        // top-level program prints it and exits non-zero without SIGABRT.
+        // The allocation site still refuses to hand out NULL_ENV_ID, so no
+        // caller builds a captureless closure (#4787).
+        return std::unexpected(Diagnostic{ErrorKind::OutOfMemory, std::string(e.what())});
+    }
     if (arm_file_diag && result && is_error(*result) && !is_string(*result))
         return file_mode_escaped_primitive(*this, *result, flat, id);
     return result;

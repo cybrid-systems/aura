@@ -1,0 +1,67 @@
+{
+  "issue": 5057,
+  "title": "Issue #5057: EnvFrame arena exhaustion is a catchable error (never abort) and file mode reclaims dead capture frames with an observable watermark.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/env_frame_arena.hh",
+      "contains": [
+        "Issue #5057: the exhaustion exit is CATCHABLE in production",
+        "throw Exhausted(live_frames, max_slots);"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "catch (const env_frame_arena::Exhausted& e)",
+        "Diagnostic{ErrorKind::OutOfMemory, std::string(e.what())}"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/serve_async.cpp",
+      "contains": [
+        "emit_status_line(status_line_error(sid, d.format(), display));"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_gc.cpp",
+      "contains": [
+        "Issue #5057 AC3: FILE mode marks capture frames exactly like the",
+        "Issue #5057 AC3: reclaim the frames the mark did not reach",
+        "env_frame_reuse_ = std::move(rebuilt);"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/ir_executor_impl.cpp",
+      "contains": [
+        "collect_tw_inflight_envs(live_envs)",
+        "view.live_envs = live_envs;"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "env_frames_live_total",
+        "env_frames_high_water",
+        "env_frame_reuse_hits_total",
+        "env_frame_reuse_misses_total",
+        "env_frames_reclaimed_total"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/python/test_issue_5057.py",
+      "contains": [
+        "test_file_mode_reports_an_error_instead_of_sigabrt",
+        "test_an_aura_handler_can_catch_it",
+        "test_serve_async_backend_survives",
+        "test_slot_watermark_stays_proportional_to_live_frames"
+      ]
+    }
+  ]
+}

@@ -5778,6 +5778,10 @@ public:
     // not "nothing is reachable" — the caller must not erase.
     struct FileModeReclaimView {
         std::span<const types::EvalValue> extra_roots{};
+        // Issue #5057 AC3: live tree-walker Envs on this thread. Frames
+        // reachable from their parent_id / cap-snapshot chains are roots;
+        // without them the file-mode mark had to root every frame.
+        std::span<const Env* const> live_envs{};
         std::span<const types::EvalValue> ir_cells{};
         const std::vector<types::EvalValue>* (*ir_closure_env)(void* ctx,
                                                                std::uint64_t id) = nullptr;
@@ -5958,6 +5962,9 @@ public:
     // without these roots the sweep erases runtime closures that TW pair
     // chains still reference.
     void collect_tw_inflight_roots(std::vector<types::EvalValue>& out);
+    // Issue #5057: the EnvId side of the same in-flight root set (parent
+    // chains and cap-snapshot source frames feed the file-mode frame mark).
+    void collect_tw_inflight_envs(std::vector<const Env*>& out);
     // Issue #4480: RAII root for a host-side EvalValue vector that must
     // stay reachable across nested tree-walker evals (primitive apply
     // loops accumulate results into locals the mark phase cannot see).
@@ -6513,6 +6520,22 @@ public:
     // job (CompilerService owns the arena + its counting MR).
     void refresh_env_arena_metrics(CompilerMetrics& m) const {
         m.env_frames_size_total.store(env_frames_.size(), std::memory_order_relaxed);
+        // Issue #5057 AC4: live frames / high water / freelist hit-miss /
+        // reclaimed, so a host can see the arena filling before it hits the
+        // cap instead of only reading one count in the fatal message.
+        const std::size_t slots = env_frames_.size();
+        const std::size_t free_n = env_frame_reuse_.size();
+        m.env_frames_live_total.store(
+            static_cast<std::uint64_t>(slots > free_n ? slots - free_n : 0),
+            std::memory_order_relaxed);
+        m.env_frames_high_water.store(env_frame_high_water_.load(std::memory_order_relaxed),
+                                      std::memory_order_relaxed);
+        m.env_frame_reuse_hits_total.store(env_frame_reuse_hits_.load(std::memory_order_relaxed),
+                                           std::memory_order_relaxed);
+        m.env_frame_reuse_misses_total.store(
+            env_frame_reuse_misses_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        m.env_frames_reclaimed_total.store(
+            env_frame_reclaimed_total_.load(std::memory_order_relaxed), std::memory_order_relaxed);
         std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> rlock;
         for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
             rlock[ef_i] =
@@ -7675,6 +7698,13 @@ public:
     // Slots stay in the deque (no renumber). alloc_env_frame pops
     // one and restamps it. Cleared when compact renumbers or
     // truncate drops the tail.
+    // Issue #5057 AC4: observable frame-arena pressure. Slots published
+    // (append-only high water), reuse freelist hit/miss, and frames the
+    // sweeps handed back. Live frames is derived: published - freelist.
+    std::atomic<std::uint64_t> env_frame_high_water_{0};
+    std::atomic<std::uint64_t> env_frame_reuse_hits_{0};
+    std::atomic<std::uint64_t> env_frame_reuse_misses_{0};
+    std::atomic<std::uint64_t> env_frame_reclaimed_total_{0};
     std::vector<EnvId> env_frame_reuse_;
     std::vector<std::uint8_t> env_frame_on_freelist_;
     // Issue #145 P0 follow-up: shared_mutex protects

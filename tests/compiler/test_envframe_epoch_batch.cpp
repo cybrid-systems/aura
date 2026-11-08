@@ -1753,14 +1753,16 @@ static void run_4790_env_frame_exhaustion_is_loud() {
     aura::compiler::env_frame_arena::g_throw_on_exhaustion.store(false);
 }
 
-// AC3: the file-mode reclaim stays frame-conservative on purpose (the
-// written justification lives at the root rule in evaluator_gc.cpp: the
-// path has no EnvId root set for a suspended tree-walker stack, so
-// freelisting a frame whose id is still held would alias a live binding).
-// This door pins both halves: file mode recycles no frame, and the
-// tree-walker sweep on the SAME evaluator still does (#4787 stays green).
+// AC3: Issue #5057 replaced the frame-conservative rule with a real root
+// set. The file-mode reclaim now marks capture frames from frame 0 / top /
+// module / require-inject parent chains, every live tree-walker Env on this
+// thread (tw_frames current / tail / pinned) and its cap-snapshot source
+// frames, plus the env ids of the closures the mark reaches, and freelists
+// the unmarked ones. This door pins both halves: file mode now reuses dead
+// frame slots, and the tree-walker sweep on the SAME evaluator still does
+// (#4787 stays green).
 static void run_4790_file_mode_reclaim_is_conservative() {
-    std::println("\n=== Issue #4790: the file-mode reclaim is frame-conservative ===");
+    std::println("\n=== Issue #4790 / #5057: the file-mode reclaim recycles dead frames ===");
     aura::ast::StringPool pool;
     Evaluator ev;
 
@@ -1780,8 +1782,8 @@ static void run_4790_file_mode_reclaim_is_conservative() {
         run_4790_named_let_call(ev, pool, i);
     const auto after_batch2 = ev.env_frames_size();
     std::println("4790 file-mode: batch1={} batch2={}", after_batch1, after_batch2);
-    CHECK(after_batch2 - after_batch1 >= 2u * kCalls,
-          "4790 AC3: a fresh batch after a file-mode reclaim still grows (no frame recycling)");
+    CHECK(after_batch2 - after_batch1 <= 8,
+          "5057 AC3: a fresh batch after a file-mode reclaim reuses dead frame slots");
 
     const bool swept = ev.reclaim_tw_unreachable({}, {});
     CHECK(swept, "4790 AC3: the tree-walker reclaim ran on the same evaluator");

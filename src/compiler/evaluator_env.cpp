@@ -1613,6 +1613,7 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
             std::scoped_lock<std::mutex> snap_lock(cap_snap_mtx_);
             cap_snap_cache_.erase(id);
         }
+        env_frame_reuse_hits_.fetch_add(1, std::memory_order_relaxed); // Issue #5057 AC4
         return id;
     }
     // Issue #1384: construct the frame locally with version_ =
@@ -1641,6 +1642,16 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
         // hundreds of calls later (#4787: "8:32: unbound variable: cap").
         // Fail at the allocation site instead.
         env_frame_arena::fail(env_frames_.size(), EnvFrameStore::kMaxSlots);
+    }
+    // Issue #5057 AC4: a fresh publish is a freelist miss; the high water
+    // is the append-only slot ceiling the host reads before exhaustion.
+    env_frame_reuse_misses_.fetch_add(1, std::memory_order_relaxed);
+    {
+        auto prev = env_frame_high_water_.load(std::memory_order_relaxed);
+        while (env_frames_.size() > prev &&
+               !env_frame_high_water_.compare_exchange_weak(prev, env_frames_.size(),
+                                                            std::memory_order_relaxed)) {
+        }
     }
     const EnvId id = static_cast<EnvId>(new_id);
     // Issue #4580: publish the new size with release — is_valid_env_id
