@@ -1,0 +1,22 @@
+;; Issue #5031: register_query_type_stats_primitives is peeled into
+;; per-responsibility phases. Every stats key and its payload shape must stay.
+(require "std/io" all:)
+
+(define fails 0)
+(define (check pred msg)
+  (if pred
+      #t
+      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+
+(check (hash? (stats:get "query:type-incremental-fidelity-stats")) "type-incremental-fidelity-stats")
+(check (hash? (stats:get "query:lifetime-consistency-proof")) "lifetime-consistency-proof")
+(check (hash? (stats:get "query:type-dep-partial-merge-stats")) "type-dep-partial-merge-stats")
+(check (hash? (stats:get "query:type-timeout-repair-stats")) "type-timeout-repair-stats")
+(check (not (void? (stats:get "query:type-propagation-stats"))) "type-propagation-stats")
+(check (hash? (stats:get "query:lock-order-audit-stats")) "lock-order-audit-stats")
+(check (string? (typecheck-current)) "typecheck-current")
+
+(if (> fails 0)
+    (error "type-stats split regression")
+    (begin (display "type-stats split ok") (newline)))
+
