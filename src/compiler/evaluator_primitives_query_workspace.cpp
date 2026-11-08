@@ -14,6 +14,7 @@ module;
 #include <array>
 #include "reflect/node_tag_names.hh" // Issue #4345: shared NodeTag names
 #include "core/ownership.hh"         // Issue #4936: NoCopy
+#include "core/lifetime_pin.hh"      // GENERAL_OBJECT_PIN_EXEMPT (#2709)
 
 module aura.compiler.evaluator;
 
@@ -194,33 +195,60 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
         qr, flat, current_tenant_id, current_fiber_id);
 }
 
-void register_workspace_query_primitives(
-    PrimRegistrar add, std::shared_mutex& workspace_mtx, aura::ast::FlatAST*& workspace_flat,
-    aura::ast::StringPool*& workspace_pool, void*& type_registry,
-    std::vector<std::string>& keyword_table, std::pmr::vector<Pair>& pairs,
-    ::aura::compiler::LockedStringHeap& string_heap, aura::ast::ASTArena*& temp_arena,
-    std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>>& tag_arity_index,
-    // Issue #371: shared_mutex around tag_arity_index. See
-    // WorkspaceQueryState::tag_arity_index_mtx above.
-    std::shared_mutex& tag_arity_index_mtx, std::function<aura::ast::StringPool*()> canonical_pool,
-    std::function<void()> build_tag_arity_index, MakeErrorVal mev, Evaluator& ev) {
-    // Issue #2628: private PrimFn table for op-dispatch (not public names).
-    auto q_impls = std::make_shared<std::unordered_map<std::string, PrimFn>>();
+// --- Issue #5031: register_workspace_query_primitives phases -----------------
+// The single registration body outgrew the 300-line ceiling. Every phase below
+// is one responsibility family; register_workspace_query_primitives keeps the
+// ordered delegation so registration order, primitive names, effect checks and
+// lambda capture lifetimes are unchanged. The shared prelude closures are built
+// once into WorkspaceQueryPrims and copied into each registered PrimFn exactly
+// like the original per-lambda captures.
+struct BeginWorkspaceQueryEpochFn {
+    std::function<aura::core::QueryEpoch(aura::ast::FlatAST*, std::uint32_t)> impl;
+    aura::core::QueryEpoch operator()(aura::ast::FlatAST* flat,
+                                      std::uint32_t workspace_id = 0) const {
+        return impl(flat, workspace_id);
+    }
+};
 
-    WorkspaceQueryState ws{workspace_mtx,
-                           workspace_flat,
-                           workspace_pool,
-                           type_registry,
-                           keyword_table,
-                           pairs,
-                           string_heap,
-                           temp_arena,
-                           tag_arity_index,
-                           tag_arity_index_mtx,
-                           canonical_pool,
-                           build_tag_arity_index,
-                           ev};
+struct EndWorkspaceQueryEpochMaybeResultFn {
+    std::function<EvalValue(const aura::core::QueryEpoch&, aura::ast::FlatAST*, EvalValue, bool,
+                            bool)>
+        impl;
+    EvalValue operator()(const aura::core::QueryEpoch& start, aura::ast::FlatAST* flat,
+                         EvalValue ok, bool as_query_result, bool pinned = false) const {
+        return impl(start, flat, ok, as_query_result, pinned);
+    }
+};
 
+using StableNodeRef = aura::ast::FlatAST::StableNodeRef;
+
+struct WorkspaceQueryPrims {
+    WorkspaceQueryPrims(WorkspaceQueryState state, MakeErrorVal err_fn, Evaluator& evaluator,
+                        std::shared_ptr<std::unordered_map<std::string, PrimFn>> impls)
+        : ws(std::move(state))
+        , mev(std::move(err_fn))
+        , ev(evaluator)
+        , q_impls(std::move(impls)) {}
+
+    WorkspaceQueryState ws;
+    MakeErrorVal mev;
+    Evaluator& ev;
+    std::shared_ptr<std::unordered_map<std::string, PrimFn>> q_impls;
+    BeginWorkspaceQueryEpochFn begin_query_epoch;
+    std::function<EvalValue(const aura::core::QueryEpoch&, aura::ast::FlatAST*, EvalValue)>
+        end_query_epoch;
+    std::function<EvalValue(const aura::core::QueryEpoch&, EvalValue, bool)> make_query_result_hash;
+    EndWorkspaceQueryEpochMaybeResultFn end_query_epoch_maybe_result;
+    std::function<std::optional<aura::ast::FlatAST::StableNodeRef>(const EvalValue&)>
+        unpack_query_stable_ref;
+    std::function<EvalValue(std::span<const EvalValue>, const char*, bool*, aura::ast::NodeId&)>
+        resolve_query_node_arg;
+};
+
+// Issue #5031: QueryEpoch + safe-span pin prelude closures.
+void build_workspace_query_epoch_prims(WorkspaceQueryPrims& P) {
+    auto& mev = P.mev;
+    auto& ev = P.ev;
     // Issue #2192: QueryEpoch helpers for primary workspace queries.
     // Capture under shared_lock (caller holds); finish re-checks before return.
     auto begin_query_epoch = [](aura::ast::FlatAST* flat,
@@ -234,6 +262,7 @@ void register_workspace_query_primitives(
             workspace_id = flat->install_id();
         return aura::core::capture_query_epoch(gen, workspace_id);
     };
+    P.begin_query_epoch.impl = begin_query_epoch;
     auto end_query_epoch = [&mev](const aura::core::QueryEpoch& start, aura::ast::FlatAST* flat,
                                   EvalValue ok) -> EvalValue {
         const auto gen = flat ? static_cast<std::uint64_t>(flat->generation())
@@ -244,26 +273,42 @@ void register_workspace_query_primitives(
                        "see engine:metrics \"query:query-epoch-stats\")");
         return ok;
     };
+    P.end_query_epoch = end_query_epoch;
+}
 
-    // Issue #2989: production query children default is SafePCVSpan
-    // (children_columnar). Bans raw children() / NodeView.children on the
-    // hot path so a concurrent mutate COW cannot UAF a long-running reader.
-    // Issue #3397: production Agent query export must not return the
-    // TLS-pinned stable children view (TLS pin valid only until next
-    // same-thread call — UAF across Guard).
-    // Issue #3328: production re-use face — pcv_span_for_agent_export
-    // force_refresh on fingerprint mismatch so query:children /
-    // query:children-stable never walk a stale COW frozen view.
-    // Soft: helper is identity (AC2 zero extra).
-    // Issue #3829: children_columnar stamps across-Guard fingerprint so
-    // has_fingerprint() gates (and export refresh) are live on dense spans.
-    auto pin_query_children = [&ev](aura::ast::FlatAST& flat, aura::ast::NodeId id) {
+// Issue #5031: safe-span pin prelude closure.
+// Issue #2989: production query children default is SafePCVSpan
+// (children_columnar). Bans raw children() / NodeView.children on the
+// hot path so a concurrent mutate COW cannot UAF a long-running reader.
+// Issue #3397: production Agent query export must not return the
+// TLS-pinned stable children view (TLS pin valid only until next
+// same-thread call — UAF across Guard).
+// Issue #3328: production re-use face — pcv_span_for_agent_export
+// force_refresh on fingerprint mismatch so query:children /
+// query:children-stable never walk a stale COW frozen view.
+// Soft: helper is identity (AC2 zero extra).
+// Issue #3829: children_columnar stamps across-Guard fingerprint so
+// has_fingerprint() gates (and export refresh) are live on dense spans.
+[[nodiscard]] auto make_pin_query_children(Evaluator& ev) {
+    return [&ev](aura::ast::FlatAST& flat, aura::ast::NodeId id) {
         ev.bump_query_safe_span_pin();
         auto kids = flat.children_columnar(id);
         kids = flat.pcv_span_for_agent_export(
             kids, id, aura::compiler::typed_audit::production_defaults_active());
         return kids;
     };
+}
+
+// Issue #5031: QueryResult hash packer prelude closure.
+void build_workspace_query_result_hash_prims(WorkspaceQueryPrims& P) {
+    // GENERAL_OBJECT_PIN_EXEMPT: query-result-hash
+    // The only allocation-shaped token in this packer is the #3449 OOM error
+    // text; it allocates a FlatHashTable, never a densify-tracked arena
+    // object, so there is no GeneralObjectPin owner to wire here.
+    GENERAL_OBJECT_PIN_EXEMPT("query-result-hash");
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
 
     // Issue #2933: wrap a bare match list into a first-class QueryResult
     // hash (schema-2933). Opt-in via :as-query-result / :query-result #t.
@@ -463,6 +508,15 @@ void register_workspace_query_primitives(
         }
         return make_hash(hidx);
     };
+    P.make_query_result_hash = make_query_result_hash;
+}
+
+// Issue #5031: epoch finish + stable-ref unpack prelude closures.
+void build_workspace_query_finish_prims(WorkspaceQueryPrims& P) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto end_query_epoch = P.end_query_epoch;
+    auto make_query_result_hash = P.make_query_result_hash;
 
     // Issue #2933: finish epoch then optionally wrap as QueryResult.
     auto end_query_epoch_maybe_result =
@@ -491,7 +545,7 @@ void register_workspace_query_primitives(
             return finished;
         return make_query_result_hash(start, finished, pinned);
     };
-
+    P.end_query_epoch_maybe_result.impl = end_query_epoch_maybe_result;
     // Issue #2186: force every public EDSL query consumer of a node handle
     // through ensure_valid_or_refresh (silent-stale zero-tolerance). Accepts
     // bare NodeId or packed (id . gen) / (id . (gen . _)) stable-ref pairs
@@ -599,6 +653,15 @@ void register_workspace_query_primitives(
         }
         return ref;
     };
+    P.unpack_query_stable_ref = unpack_query_stable_ref;
+}
+
+// Issue #5031: node operand resolver prelude closure.
+void build_workspace_query_resolve_prims(WorkspaceQueryPrims& P) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto unpack_query_stable_ref = P.unpack_query_stable_ref;
     auto resolve_query_node_arg = [&ev, mev, unpack_query_stable_ref,
                                    ws](std::span<const EvalValue> a, const char* op, bool* ok,
                                        aura::ast::NodeId& out_node) -> EvalValue {
@@ -734,6 +797,22 @@ void register_workspace_query_primitives(
         return make_void();
     };
 
+    P.resolve_query_node_arg = resolve_query_node_arg;
+}
+
+// Issue #5031: core registration phase.
+void register_workspace_query_core_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // (query :find name) — Find all node IDs with matching symbol name
     (*q_impls)["query:find"] = PrimFn{[ws, mev, &ev, begin_query_epoch,
                                        end_query_epoch_maybe_result](const auto& a) -> EvalValue {
@@ -885,7 +964,26 @@ void register_workspace_query_primitives(
         // Issue #3827: schema-2 under Production via maybe_result.
         return end_query_epoch_maybe_result(qe, &flat, result, as_query_result);
     }};
+}
 
+// Issue #5031: tree registration phase.
+void register_workspace_query_tree_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
+    // GENERAL_OBJECT_PIN_EXEMPT: children-stable-pairs
+    // This phase creates no densify-tracked arena object: the 3*N pair-spine
+    // pre-size below only reserves ws.pairs entries, so there is no
+    // GeneralObjectPin owner to wire here.
+    GENERAL_OBJECT_PIN_EXEMPT("children-stable-pairs");
     // Issue #249: (query :children-stable node-id|stable-ref) — Get children
     // as a list of (node-id . generation) stable-ref pairs. Use
     // this instead of (query :children ...) when the result is
@@ -1090,7 +1188,21 @@ void register_workspace_query_primitives(
         }
         return end_query_epoch_maybe_result(qe, &flat, packed, /*as_query_result=*/false);
     }};
+}
 
+// Issue #5031: handle registration phase.
+void register_workspace_query_handle_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // (query:root) — Return the current workspace root node ID, or #f if no workspace
     // Issue #3896: production must not export a bare NodeId through
     // end_query_epoch — resolve/mutate refuse bare int (#3395). Finish via
@@ -1174,7 +1286,22 @@ void register_workspace_query_primitives(
 
             return result;
         }};
+}
 
+// Issue #5031: stable_ref registration phase.
+// Issue #5031: stable-ref export registration phase.
+void register_workspace_query_stable_ref_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // Issue #235 / #2404: (query:stable-ref node-id) — Returns a
     // stable reference to a node as (node-id . current-gen).
     // The stable-ref can be passed back to mutate:* primitives
@@ -1295,7 +1422,21 @@ void register_workspace_query_primitives(
             }
             return end_query_epoch_maybe_result(qe, &flat, packed, /*as_query_result=*/false);
         });
+}
 
+// Issue #5031: ensure-ref recovery registration phase.
+void register_workspace_query_ensure_ref_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // Issue #2404: (query:ensure-ref node-id|stable-ref) — force
     // validate_or_refresh on an Agent-held handle and return a diagnostic
     // hash: valid / id / gen / refreshed / provenance snapshot keys +
@@ -1539,7 +1680,21 @@ void register_workspace_query_primitives(
         }
         return make_hash(hidx);
     });
+}
 
+// Issue #5031: ref validity registration phase.
+void register_workspace_query_ref_valid_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // Issue #347 follow-up #1 / #393 / Issue #3767: (query:ref-valid?
     // stable-ref). Production packed v2 / QueryResult uses
     // unpack_query_stable_ref + FlatAST::is_valid (wrap + cow fence)
@@ -1603,7 +1758,22 @@ void register_workspace_query_primitives(
         auto gen = static_cast<std::uint16_t>(as_int(inner.car));
         return make_bool(flat.is_valid_id_gen(id, gen));
     });
+}
 
+
+// Issue #5031: lookup registration phase.
+void register_workspace_query_lookup_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // (query:calls name) — Find all call sites of a named function
     // Issue #4088: the bare NodeId list exit now finishes via
     // end_query_epoch_maybe_result — Production auto-upgrades the list to
@@ -1727,7 +1897,21 @@ void register_workspace_query_primitives(
             // (was the bare end_query_epoch — schema-1 list leak).
             return end_query_epoch_maybe_result(qe, &flat, result, /*as_query_result=*/false);
         });
+}
 
+// Issue #5031: lookup_nav registration phase.
+void register_workspace_query_lookup_nav_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // Issue #4344: (define-lookup name) — Soft goto-def API for editor
     // agents. Resolves workspace Define nodes by name and returns one
     // (id line col) record per match (redefinitions / shadowing yield
@@ -1948,7 +2132,330 @@ void register_workspace_query_primitives(
         ws.push_stamped_pair({make_keyword(field_idx), make_string(val_string_idx)});
         return make_pair(val_pair);
     });
+}
 
+// Issue #5031: filter registration phase.
+// Issue #425 / #2525 / #244: parsed (where :field value) predicate for query:filter.
+struct WorkspaceFilterPredicate {
+    std::string field;
+    std::string value;
+};
+
+// Issue #425 / #2525 / #3354: parse the top-level query:filter keywords and the
+// predicate list. Extracted from the registration lambda (#5031) so the
+// registration body stays under the 300-line ceiling; keyword order, consumed
+// arg tracking and the hygiene default are unchanged.
+[[nodiscard]] std::optional<EvalValue>
+workspace_filter_parse_args(std::span<const EvalValue> a, const WorkspaceQueryState& ws,
+                            Evaluator& ev, const MakeErrorVal& mev, bool& hygiene_skip_macro,
+                            bool& as_query_result,
+                            std::vector<WorkspaceFilterPredicate>& predicates) {
+    // Issue #425 / #2525: top-level hygiene gate for query:filter.
+    // Production default (#2525 residual after #2123 pattern default):
+    //   skip MacroIntroduced BEFORE predicate evaluation unless
+    //   explicit :include-macro-introduced / :allow-macro-introduced #t
+    //   (or :hygiene #f / :skip-macro-introduced #f / :exclude-macro-introduced #f).
+    // Agent contract: default filter results never contain MacroIntroduced.
+    //
+    // Keywords:
+    //   :hygiene / :skip-macro-introduced  — bool (default #t under #2525)
+    //   :include-macro-introduced / :allow-macro-introduced / :allow-macro?
+    //       — opt-in include (#3354 mutate keyword alias)
+    //   :exclude-macro-introduced #t|#f — explicit exclude (default true)
+    //
+    // The gate runs BEFORE the predicate loop, so any (where ...)
+    // predicates still apply on top of the hygiene filter.
+    // Issue #425: track which arg indices are consumed by
+    // top-level keyword parsing so the predicate parser can
+    // skip them. Without this, the predicate loop would
+    // re-encounter :hygiene / #f and reject them as
+    // "malformed predicate" (not a (where ...) pair).
+    std::vector<bool> arg_consumed(a.size(), false);
+    for (std::size_t ai = 0; ai < a.size(); ++ai) {
+        if (is_keyword(a[ai])) {
+            auto kidx = as_keyword_idx(a[ai]);
+            if (kidx >= ws.keyword_table.size())
+                return mev("bad-arg", "unknown keyword");
+            auto kw = ws.keyword_table[kidx];
+            auto consume_bool_kw = [&](bool default_v) -> bool {
+                bool v = default_v;
+                arg_consumed[ai] = true;
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        v = as_bool(a[ai + 1]);
+                    else
+                        v = (as_int(a[ai + 1]) != 0);
+                    arg_consumed[ai + 1] = true;
+                    ++ai;
+                }
+                return v;
+            };
+            if (kw == ":hygiene" || kw == ":skip-macro-introduced") {
+                hygiene_skip_macro = consume_bool_kw(true);
+            } else if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced" ||
+                       kw == ":allow-macro?") {
+                // Issue #2525: opt-in restore previous "include macro" behaviour.
+                // Issue #3354: :allow-macro? is the mutate keyword (parity).
+                hygiene_skip_macro = !consume_bool_kw(true);
+            } else if (kw == ":exclude-macro-introduced") {
+                hygiene_skip_macro = consume_bool_kw(true);
+            } else if (kw == ":as-query-result" || kw == ":query-result") {
+                // Issue #3395: opt-in QueryResult binding. Default
+                // off (bare list); #t promotes to schema-2 hash via
+                // make_query_result_hash below. Production auto-upgrade
+                // happens after the QueryEpoch retry loop.
+                as_query_result = true;
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        as_query_result = as_bool(a[ai + 1]);
+                    else
+                        as_query_result = (as_int(a[ai + 1]) != 0);
+                    arg_consumed[ai + 1] = true;
+                    ++ai;
+                }
+            } else {
+                // Re-emit a bad-arg for unknown top-level
+                // keyword (we already validated that each
+                // non-keyword arg is a (where ...) pair
+                // below). The predicate parser would have
+                // already produced a "malformed predicate"
+                // for a stray keyword at this point, but we
+                // surface it earlier with a clearer message.
+                return mev("bad-arg", std::string("unknown top-level keyword: ") + kw);
+            }
+        }
+    }
+    // Issue #3354: global hygiene:set-allow-macro-mutate! unlocks
+    // filter the same as mutate (query_hygiene_allow_macro).
+    if (query_hygiene_allow_macro(ev, a, !hygiene_skip_macro))
+        hygiene_skip_macro = false;
+    // Collect predicates from arguments (each is a (where ...) pair)
+    for (std::size_t ai = 0; ai < a.size(); ++ai) {
+        // Issue #425: skip args consumed by the top-level
+        // keyword parser (e.g. :hygiene + its bool value).
+        if (arg_consumed[ai])
+            continue;
+        if (!is_pair(a[ai]))
+            return mev("bad-arg", "each predicate must be a (where ...) pair");
+        auto pair_idx = as_pair_idx(a[ai]);
+        auto car = ws.pairs[pair_idx].car;
+        auto cdr = ws.pairs[pair_idx].cdr;
+        if (!is_keyword(car) || !is_string(cdr))
+            return mev("bad-arg", "malformed predicate");
+        auto kidx = as_keyword_idx(car);
+        auto sidx = as_string_idx(cdr);
+        if (kidx >= ws.keyword_table.size() || sidx >= ws.string_heap.size())
+            return mev("bad-arg", "predicate field/value out of range");
+        predicates.push_back({ws.keyword_table[kidx], ws.string_heap[sidx]});
+    }
+
+    if (predicates.empty() && !hygiene_skip_macro)
+        return mev("bad-arg", "at least one predicate required");
+
+    // Issue #2525: count filter hygiene skips for Agent dashboards
+    // (hygiene_skip_total / hygiene_include_total on pattern-hygiene-stats).
+    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+        if (hygiene_skip_macro)
+            m->hygiene_filter_default_skip_total.fetch_add(1, std::memory_order_relaxed);
+        else
+            m->hygiene_filter_include_opt_in_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    return std::nullopt;
+}
+
+// Issue #425 / #2525 / #244: match one workspace node against every parsed
+// query:filter predicate. Extracted from the registration lambda (#5031) so the
+// registration body stays under the 300-line ceiling; predicate order, the
+// short-circuit breaks and the unknown-field reject are unchanged.
+template <typename PinChildrenFn>
+[[nodiscard]] bool
+workspace_filter_node_matches(aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                              aura::ast::NodeId id, const aura::ast::NodeView& v,
+                              const std::vector<WorkspaceFilterPredicate>& predicates,
+                              const PinChildrenFn& pin_query_children, std::string& unknown_field) {
+    bool match = true;
+
+    for (auto& p : predicates) {
+        if (p.field == ":node-type" || p.field == ":tag") {
+            // Match NodeTag name
+            bool found = false;
+            for (auto& m : aura::ast::kNodeMeta) {
+                if (m.name == p.value && m.name != "<gap>") {
+                    if (v.tag == m.tag)
+                        found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                match = false;
+                break;
+            }
+        } else if (p.field == ":callee") {
+            // For Call nodes, match callee Variable name
+            // Issue #2989: pin children via SafePCVSpan.
+            if (v.tag == aura::ast::NodeTag::Call) {
+                auto kids = pin_query_children(flat, id);
+                if (kids.empty()) {
+                    match = false;
+                    break;
+                }
+                auto callee = flat.get(kids[0]);
+                if (callee.tag != aura::ast::NodeTag::Variable ||
+                    pool.resolve(callee.sym_id) != p.value) {
+                    match = false;
+                    break;
+                }
+            } else {
+                match = false;
+                break;
+            }
+        } else if (p.field == ":defined-by" || p.field == ":defines") {
+            // Match Define nodes by name
+            if (v.tag == aura::ast::NodeTag::Define) {
+                auto name = pool.resolve(v.sym_id);
+                if (name != p.value) {
+                    match = false;
+                    break;
+                }
+            } else {
+                match = false;
+                break;
+            }
+        } else if (p.field == ":has-param") {
+            // Check if node has a parameter with the given name
+            bool found_param = false;
+            for (auto pid : v.params) {
+                if (pool.resolve(pid) == p.value) {
+                    found_param = true;
+                    break;
+                }
+            }
+            if (!found_param) {
+                match = false;
+                break;
+            }
+        } else if (p.field == ":has-child") {
+            // Check if node has at least one child with the given NodeTag name
+            aura::ast::NodeTag child_tag = static_cast<aura::ast::NodeTag>(-1);
+            bool found_tag = false;
+            for (auto& m : aura::ast::kNodeMeta) {
+                if (m.name == p.value && m.name != "<gap>") {
+                    child_tag = m.tag;
+                    found_tag = true;
+                    break;
+                }
+            }
+            if (!found_tag) {
+                match = false;
+                break;
+            }
+            bool has_child = false;
+            // Issue #2989: SafePCVSpan, not raw NodeView.children.
+            auto kids = pin_query_children(flat, id);
+            for (auto cid : kids) {
+                if (cid != aura::ast::NULL_NODE && flat.get(cid).tag == child_tag) {
+                    has_child = true;
+                    break;
+                }
+            }
+            if (!has_child) {
+                match = false;
+                break;
+            }
+        } else if (p.field == ":depth") {
+            // Check if node is at the given depth from root
+            int target_depth = 0;
+            try {
+                target_depth = std::stoi(p.value);
+            } catch (...) {
+                // [SILENCE-PRIM-#615] Non-numeric :depth
+                // predicate silently de-selects the node rather
+                // than raising — documented parse-tolerant
+                // filter behavior across all ws predicates.
+                match = false;
+                break;
+            }
+            if (target_depth < 0) {
+                match = false;
+                break;
+            }
+            // Starting from this node, walk up via children_of to count depth
+            int actual_depth = 0;
+            aura::ast::NodeId cur = id;
+            while (cur != 0) { // root is always NodeId 0
+                // Find parent by scanning all nodes for one that has cur as child
+                aura::ast::NodeId parent = aura::ast::NULL_NODE;
+                for (aura::ast::NodeId pid = 0; pid < flat.size(); ++pid) {
+                    // Issue #2989: SafePCVSpan, not raw NodeView.children.
+                    auto kids = pin_query_children(flat, pid);
+                    for (auto cid : kids) {
+                        if (cid == cur) {
+                            parent = pid;
+                            break;
+                        }
+                    }
+                    if (parent != aura::ast::NULL_NODE)
+                        break;
+                }
+                if (parent == aura::ast::NULL_NODE)
+                    break;
+                cur = parent;
+                ++actual_depth;
+            }
+            if (actual_depth != target_depth) {
+                match = false;
+                break;
+            }
+        } else if (p.field == ":marker" || p.field == ":syntax-marker") {
+            // Issue #244 / #267: match SyntaxMarker by name.
+            // The marker column is populated by clone_macro_body
+            // (Issue #190) and persists in ws.workspace_flat across
+            // mutations. Marker names (case-sensitive):
+            //   "User"           — code the user wrote directly
+            //   "MacroIntroduced" — code inserted by a hygienic macro
+            //   "BoolLiteral"    — auto-generated #t / #f nodes
+            auto m = flat.marker(id);
+            const char* mname = nullptr;
+            switch (m) {
+                case aura::ast::SyntaxMarker::User:
+                    mname = "User";
+                    break;
+                case aura::ast::SyntaxMarker::MacroIntroduced:
+                    mname = "MacroIntroduced";
+                    break;
+                case aura::ast::SyntaxMarker::BoolLiteral:
+                    mname = "BoolLiteral";
+                    break;
+                case aura::ast::SyntaxMarker::EmptyList:
+                    mname = "EmptyList";
+                    break;
+            }
+            if (!mname || p.value != mname) {
+                match = false;
+                break;
+            }
+        } else {
+            unknown_field = std::string("unknown where field: \"") + p.field + "\"";
+            return false;
+        }
+    }
+
+    return match;
+}
+
+void register_workspace_query_filter_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // (query:filter predicate ...) — Filter workspace nodes matching ALL predicates.
     // Each predicate is created by (where :field value).
     // Returns a list of matching node IDs.
@@ -1980,124 +2487,11 @@ void register_workspace_query_primitives(
             auto& flat = *ws.workspace_flat;
             auto& pool = *ws.workspace_pool;
 
-            // Issue #425 / #2525: top-level hygiene gate for query:filter.
-            // Production default (#2525 residual after #2123 pattern default):
-            //   skip MacroIntroduced BEFORE predicate evaluation unless
-            //   explicit :include-macro-introduced / :allow-macro-introduced #t
-            //   (or :hygiene #f / :skip-macro-introduced #f / :exclude-macro-introduced #f).
-            // Agent contract: default filter results never contain MacroIntroduced.
-            //
-            // Keywords:
-            //   :hygiene / :skip-macro-introduced  — bool (default #t under #2525)
-            //   :include-macro-introduced / :allow-macro-introduced / :allow-macro?
-            //       — opt-in include (#3354 mutate keyword alias)
-            //   :exclude-macro-introduced #t|#f — explicit exclude (default true)
-            //
-            // The gate runs BEFORE the predicate loop, so any (where ...)
-            // predicates still apply on top of the hygiene filter.
+            std::vector<WorkspaceFilterPredicate> predicates;
             bool hygiene_skip_macro = true; // Issue #2525 production default ON
-            // Issue #425: track which arg indices are consumed by
-            // top-level keyword parsing so the predicate parser can
-            // skip them. Without this, the predicate loop would
-            // re-encounter :hygiene / #f and reject them as
-            // "malformed predicate" (not a (where ...) pair).
-            std::vector<bool> arg_consumed(a.size(), false);
-            for (std::size_t ai = 0; ai < a.size(); ++ai) {
-                if (is_keyword(a[ai])) {
-                    auto kidx = as_keyword_idx(a[ai]);
-                    if (kidx >= ws.keyword_table.size())
-                        return mev("bad-arg", "unknown keyword");
-                    auto kw = ws.keyword_table[kidx];
-                    auto consume_bool_kw = [&](bool default_v) -> bool {
-                        bool v = default_v;
-                        arg_consumed[ai] = true;
-                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                            if (is_bool(a[ai + 1]))
-                                v = as_bool(a[ai + 1]);
-                            else
-                                v = (as_int(a[ai + 1]) != 0);
-                            arg_consumed[ai + 1] = true;
-                            ++ai;
-                        }
-                        return v;
-                    };
-                    if (kw == ":hygiene" || kw == ":skip-macro-introduced") {
-                        hygiene_skip_macro = consume_bool_kw(true);
-                    } else if (kw == ":include-macro-introduced" ||
-                               kw == ":allow-macro-introduced" || kw == ":allow-macro?") {
-                        // Issue #2525: opt-in restore previous "include macro" behaviour.
-                        // Issue #3354: :allow-macro? is the mutate keyword (parity).
-                        hygiene_skip_macro = !consume_bool_kw(true);
-                    } else if (kw == ":exclude-macro-introduced") {
-                        hygiene_skip_macro = consume_bool_kw(true);
-                    } else if (kw == ":as-query-result" || kw == ":query-result") {
-                        // Issue #3395: opt-in QueryResult binding. Default
-                        // off (bare list); #t promotes to schema-2 hash via
-                        // make_query_result_hash below. Production auto-upgrade
-                        // happens after the QueryEpoch retry loop.
-                        as_query_result = true;
-                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                            if (is_bool(a[ai + 1]))
-                                as_query_result = as_bool(a[ai + 1]);
-                            else
-                                as_query_result = (as_int(a[ai + 1]) != 0);
-                            arg_consumed[ai + 1] = true;
-                            ++ai;
-                        }
-                    } else {
-                        // Re-emit a bad-arg for unknown top-level
-                        // keyword (we already validated that each
-                        // non-keyword arg is a (where ...) pair
-                        // below). The predicate parser would have
-                        // already produced a "malformed predicate"
-                        // for a stray keyword at this point, but we
-                        // surface it earlier with a clearer message.
-                        return mev("bad-arg", std::string("unknown top-level keyword: ") + kw);
-                    }
-                }
-            }
-            // Issue #3354: global hygiene:set-allow-macro-mutate! unlocks
-            // filter the same as mutate (query_hygiene_allow_macro).
-            if (query_hygiene_allow_macro(ev, a, !hygiene_skip_macro))
-                hygiene_skip_macro = false;
-
-            // Collect predicates from arguments (each is a (where ...) pair)
-            struct Predicate {
-                std::string field;
-                std::string value;
-            };
-            std::vector<Predicate> predicates;
-
-            for (std::size_t ai = 0; ai < a.size(); ++ai) {
-                // Issue #425: skip args consumed by the top-level
-                // keyword parser (e.g. :hygiene + its bool value).
-                if (arg_consumed[ai])
-                    continue;
-                if (!is_pair(a[ai]))
-                    return mev("bad-arg", "each predicate must be a (where ...) pair");
-                auto pair_idx = as_pair_idx(a[ai]);
-                auto car = ws.pairs[pair_idx].car;
-                auto cdr = ws.pairs[pair_idx].cdr;
-                if (!is_keyword(car) || !is_string(cdr))
-                    return mev("bad-arg", "malformed predicate");
-                auto kidx = as_keyword_idx(car);
-                auto sidx = as_string_idx(cdr);
-                if (kidx >= ws.keyword_table.size() || sidx >= ws.string_heap.size())
-                    return mev("bad-arg", "predicate field/value out of range");
-                predicates.push_back({ws.keyword_table[kidx], ws.string_heap[sidx]});
-            }
-
-            if (predicates.empty() && !hygiene_skip_macro)
-                return mev("bad-arg", "at least one predicate required");
-
-            // Issue #2525: count filter hygiene skips for Agent dashboards
-            // (hygiene_skip_total / hygiene_include_total on pattern-hygiene-stats).
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                if (hygiene_skip_macro)
-                    m->hygiene_filter_default_skip_total.fetch_add(1, std::memory_order_relaxed);
-                else
-                    m->hygiene_filter_include_opt_in_total.fetch_add(1, std::memory_order_relaxed);
-            }
+            if (auto err = workspace_filter_parse_args(a, ws, ev, mev, hygiene_skip_macro,
+                                                       as_query_result, predicates))
+                return *err;
 
             // Issue #2989: complete the match under shared_lock (held above).
             // Generation snapshot + retry if a writer advanced the workspace
@@ -2189,172 +2583,12 @@ void register_workspace_query_primitives(
                         continue;
                     }
                     auto v = flat.get(id);
-                    bool match = true;
-
-                    for (auto& p : predicates) {
-                        if (p.field == ":node-type" || p.field == ":tag") {
-                            // Match NodeTag name
-                            bool found = false;
-                            for (auto& m : aura::ast::kNodeMeta) {
-                                if (m.name == p.value && m.name != "<gap>") {
-                                    if (v.tag == m.tag)
-                                        found = true;
-                                    break;
-                                }
-                            }
-                            if (!found) {
-                                match = false;
-                                break;
-                            }
-                        } else if (p.field == ":callee") {
-                            // For Call nodes, match callee Variable name
-                            // Issue #2989: pin children via SafePCVSpan.
-                            if (v.tag == aura::ast::NodeTag::Call) {
-                                auto kids = pin_query_children(flat, id);
-                                if (kids.empty()) {
-                                    match = false;
-                                    break;
-                                }
-                                auto callee = flat.get(kids[0]);
-                                if (callee.tag != aura::ast::NodeTag::Variable ||
-                                    pool.resolve(callee.sym_id) != p.value) {
-                                    match = false;
-                                    break;
-                                }
-                            } else {
-                                match = false;
-                                break;
-                            }
-                        } else if (p.field == ":defined-by" || p.field == ":defines") {
-                            // Match Define nodes by name
-                            if (v.tag == aura::ast::NodeTag::Define) {
-                                auto name = pool.resolve(v.sym_id);
-                                if (name != p.value) {
-                                    match = false;
-                                    break;
-                                }
-                            } else {
-                                match = false;
-                                break;
-                            }
-                        } else if (p.field == ":has-param") {
-                            // Check if node has a parameter with the given name
-                            bool found_param = false;
-                            for (auto pid : v.params) {
-                                if (pool.resolve(pid) == p.value) {
-                                    found_param = true;
-                                    break;
-                                }
-                            }
-                            if (!found_param) {
-                                match = false;
-                                break;
-                            }
-                        } else if (p.field == ":has-child") {
-                            // Check if node has at least one child with the given NodeTag name
-                            aura::ast::NodeTag child_tag = static_cast<aura::ast::NodeTag>(-1);
-                            bool found_tag = false;
-                            for (auto& m : aura::ast::kNodeMeta) {
-                                if (m.name == p.value && m.name != "<gap>") {
-                                    child_tag = m.tag;
-                                    found_tag = true;
-                                    break;
-                                }
-                            }
-                            if (!found_tag) {
-                                match = false;
-                                break;
-                            }
-                            bool has_child = false;
-                            // Issue #2989: SafePCVSpan, not raw NodeView.children.
-                            auto kids = pin_query_children(flat, id);
-                            for (auto cid : kids) {
-                                if (cid != aura::ast::NULL_NODE && flat.get(cid).tag == child_tag) {
-                                    has_child = true;
-                                    break;
-                                }
-                            }
-                            if (!has_child) {
-                                match = false;
-                                break;
-                            }
-                        } else if (p.field == ":depth") {
-                            // Check if node is at the given depth from root
-                            int target_depth = 0;
-                            try {
-                                target_depth = std::stoi(p.value);
-                            } catch (...) {
-                                // [SILENCE-PRIM-#615] Non-numeric :depth
-                                // predicate silently de-selects the node rather
-                                // than raising — documented parse-tolerant
-                                // filter behavior across all ws predicates.
-                                match = false;
-                                break;
-                            }
-                            if (target_depth < 0) {
-                                match = false;
-                                break;
-                            }
-                            // Starting from this node, walk up via children_of to count depth
-                            int actual_depth = 0;
-                            aura::ast::NodeId cur = id;
-                            while (cur != 0) { // root is always NodeId 0
-                                // Find parent by scanning all nodes for one that has cur as child
-                                aura::ast::NodeId parent = aura::ast::NULL_NODE;
-                                for (aura::ast::NodeId pid = 0; pid < flat.size(); ++pid) {
-                                    // Issue #2989: SafePCVSpan, not raw NodeView.children.
-                                    auto kids = pin_query_children(flat, pid);
-                                    for (auto cid : kids) {
-                                        if (cid == cur) {
-                                            parent = pid;
-                                            break;
-                                        }
-                                    }
-                                    if (parent != aura::ast::NULL_NODE)
-                                        break;
-                                }
-                                if (parent == aura::ast::NULL_NODE)
-                                    break;
-                                cur = parent;
-                                ++actual_depth;
-                            }
-                            if (actual_depth != target_depth) {
-                                match = false;
-                                break;
-                            }
-                        } else if (p.field == ":marker" || p.field == ":syntax-marker") {
-                            // Issue #244 / #267: match SyntaxMarker by name.
-                            // The marker column is populated by clone_macro_body
-                            // (Issue #190) and persists in ws.workspace_flat across
-                            // mutations. Marker names (case-sensitive):
-                            //   "User"           — code the user wrote directly
-                            //   "MacroIntroduced" — code inserted by a hygienic macro
-                            //   "BoolLiteral"    — auto-generated #t / #f nodes
-                            auto m = flat.marker(id);
-                            const char* mname = nullptr;
-                            switch (m) {
-                                case aura::ast::SyntaxMarker::User:
-                                    mname = "User";
-                                    break;
-                                case aura::ast::SyntaxMarker::MacroIntroduced:
-                                    mname = "MacroIntroduced";
-                                    break;
-                                case aura::ast::SyntaxMarker::BoolLiteral:
-                                    mname = "BoolLiteral";
-                                    break;
-                                case aura::ast::SyntaxMarker::EmptyList:
-                                    mname = "EmptyList";
-                                    break;
-                            }
-                            if (!mname || p.value != mname) {
-                                match = false;
-                                break;
-                            }
-                        } else {
-                            return mev("unknown-field",
-                                       std::string("unknown where field: \"") + p.field + "\"");
-                        }
-                    }
+                    std::string unknown_field;
+                    const bool match = workspace_filter_node_matches(
+                        flat, pool, id, v, predicates, pin_query_children, unknown_field);
+                    if (!unknown_field.empty())
+                        return mev("unknown-field",
+                                   std::string("unknown where field: \"") + unknown_field + "\"");
 
                     if (match) {
                         auto pid = ws.pairs.size();
@@ -2397,7 +2631,21 @@ void register_workspace_query_primitives(
                 return make_query_result_hash(last_qe, result, /*pinned=*/false);
             return result;
         });
+}
 
+// Issue #5031: node_shape registration phase.
+void register_workspace_query_node_shape_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // (query:node-type tag-name) — Find all nodes with a given NodeTag name
     // Tag names: LiteralInt, Variable, Call, IfExpr, Lambda, Let, LetRec,
     //            Define, Begin, Set, Quote, LiteralString, TypeAnnotation,
@@ -2639,7 +2887,21 @@ void register_workspace_query_primitives(
 
             return result;
         });
+}
 
+// Issue #5031: index registration phase.
+void register_workspace_query_index_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // Issue #278: (query:ref-counts node-id) — return the
     // number of AST nodes whose children include this node-id
     // (i.e. the number of direct parents in the AST). 0 if
@@ -2827,7 +3089,21 @@ void register_workspace_query_primitives(
             // hash inside end_query_epoch_maybe_result; Soft keeps the bare list.
             return end_query_epoch_maybe_result(qe, &flat, result, /*as_query_result=*/false);
         });
+}
 
+// Issue #5031: marker registration phase.
+void register_workspace_query_marker_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // Issue #278: (query:calls-by-marker marker-name) —
     // return all Call nodes whose SyntaxMarker matches
     // the given name. C++ engine primitive (same
@@ -3081,7 +3357,21 @@ void register_workspace_query_primitives(
             }
             return end_query_epoch_maybe_result(qe, &flat, result, as_query_result);
         });
+}
 
+// Issue #5031: provenance registration phase.
+void register_workspace_query_provenance_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // Issue #1914: (query:node-provenance node-id|stable-ref) — full diagnostic hash
     // for AI root-cause of failed mutate / hygiene. Combines StableNodeRef
     // capture + SyntaxMarker + last mutation targeting this node + fiber.
@@ -3281,7 +3571,21 @@ void register_workspace_query_primitives(
         }
         return make_hash(hidx);
     });
+}
 
+// Issue #5031: hygiene registration phase.
+void register_workspace_query_hygiene_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // (query:macro-introduced) — Issue #244: shortcut for
     // (query:filter (where :marker "MacroIntroduced")).
     // Returns a list of NodeIds whose SyntaxMarker is
@@ -3525,7 +3829,717 @@ void register_workspace_query_primitives(
     // ═══════════════════════════════════════════════════════════════
     // P8: Query/Transform EDSL 扩展 — pattern matching
     // ═══════════════════════════════════════════════════════════════
+}
 
+// Issue #5031: pattern registration phase.
+// Issue #5031: per-call state for (query:pattern). The registration used to be a
+// single 600-line lambda; the responsibility methods below carry the same body
+// slices in the same order so names, guards, early returns and captured owners
+// are unchanged. One instance is built per call (never shared across threads).
+struct WorkspacePatternCall {
+    WorkspacePatternCall(WorkspaceQueryState state, MakeErrorVal err_fn, Evaluator& evaluator,
+                         BeginWorkspaceQueryEpochFn begin_fn,
+                         EndWorkspaceQueryEpochMaybeResultFn end_fn)
+        : ws(std::move(state))
+        , mev(std::move(err_fn))
+        , ev(evaluator)
+        , begin_query_epoch(std::move(begin_fn))
+        , end_query_epoch_maybe_result(std::move(end_fn)) {}
+
+    WorkspaceQueryState ws;
+    MakeErrorVal mev;
+    Evaluator& ev;
+    BeginWorkspaceQueryEpochFn begin_query_epoch;
+    EndWorkspaceQueryEpochMaybeResultFn end_query_epoch_maybe_result;
+    // Issue #2192 QueryEpoch for this call.
+    aura::core::QueryEpoch qe{};
+    // Issue #289 / #481 / #1374: keyword flags (nested_arity defaults to Kleene).
+    bool have_pattern = false;
+    std::size_t pattern_string_idx = 0;
+    bool include_macro_introduced = false;
+    bool as_query_result = false;
+    bool nested_arity = true;
+    bool with_markers = false;
+    // Issue #4933 pattern parse cache + #2363 GeneralObjectPin adopt (site 4/7).
+    aura::ast::StringPool* pat_pool = nullptr;
+    aura::ast::FlatAST* pat_flat = nullptr;
+    aura::ast::NodeId pattern_root = aura::ast::NULL_NODE;
+    std::uint32_t wildcard_sym = 0;
+    aura::core::lifetime::GeneralObjectPin pat_pool_pin;
+    aura::core::lifetime::GeneralObjectPin pat_flat_pin;
+    // Issue #482 QueryMatcher for this call.
+    std::unique_ptr<aura::compiler::QueryMatcher> matcher_ptr;
+    aura::ast::FlatAST* flat_ptr = nullptr;
+    EvalValue result = make_void();
+    // Issue #186 / #211 / #289 / #292 walk-shape pre-computation.
+    aura::ast::NodeView pat_root_node;
+    std::size_t pat_child_count = 0;
+    bool pat_root_is_wildcard = false;
+    bool pat_has_ellipsis = false;
+    bool pat_is_guard = false;
+    bool use_index_fast_path = false;
+    std::uint64_t macro_skips_this_query = 0;
+
+    template <typename PinChildrenFn>
+    EvalValue run(std::span<const EvalValue> a, const PinChildrenFn& pin_query_children);
+    std::optional<EvalValue> parse_args(std::span<const EvalValue> a);
+    std::optional<EvalValue> prepare_match();
+    std::optional<EvalValue> prepare_walk();
+    [[nodiscard]] bool check_guard();
+    std::optional<EvalValue> walk();
+    EvalValue finish();
+};
+
+// Issue #5031: (query:pattern) keyword + pattern-string parsing.
+std::optional<EvalValue> WorkspacePatternCall::parse_args(std::span<const EvalValue> a) {
+    auto& ws = this->ws;
+    auto& mev = this->mev;
+    auto& ev = this->ev;
+    // Issue #3103 helpers live at TU scope (stamp_query_result_full_provenance
+    // / query_result_is_fresh_with_refs) — nested defs are not C++.
+
+    // Issue #3103: opt-in QueryResult binding (default bare list).
+    // Issue #289 / #481 / #1374: nested-arity / Kleene-star ellipsis.
+    // Default (#t) is Kleene (`...` consumes 0..N consecutive
+    // children). Set `:nested-arity #f` or `:strict-arity #t` to
+    // opt back into the pre-#289 strict single-subtree wildcard
+    // behavior (`...` consumes exactly 1 child). The :strict-arity
+    // keyword is a discoverable alias for :nested-arity #f —
+    // both flip the matcher to position-by-position matching.
+    // Issue #1374: mutate:replace-pattern shares QueryMatcher and
+    // the same default (Kleene) so query-then-mutate pipelines see
+    // the same node set without an explicit :nested-arity flag.
+    // Issue #289: result format. Default (false) preserves the
+    // pre-#289 result shape — a flat list of NodeIds. When
+    // #t, each result item is a (NodeId . marker-int) pair so
+    // agents can see which matches came from macro-expanded
+    // code without a separate provenance query.
+    for (std::size_t ai = 0; ai < a.size(); ++ai) {
+        if (is_string(a[ai])) {
+            if (have_pattern)
+                return mev("bad-arg", "query:pattern: multiple pattern strings");
+            have_pattern = true;
+            pattern_string_idx = as_string_idx(a[ai]);
+            if (pattern_string_idx >= ws.string_heap.size())
+                return mev("bad-arg", "pattern string index out of range");
+        } else if (is_keyword(a[ai])) {
+            auto kidx = as_keyword_idx(a[ai]);
+            if (kidx >= ws.keyword_table.size())
+                return mev("bad-arg", "unknown keyword");
+            auto kw = ws.keyword_table[kidx];
+            // Issue #289: shared bool/optional-int flag consumer
+            // for the three new keyword args. `target` defaults
+            // to #t when the value is omitted (just keyword alone).
+            auto consume_bool = [&](bool& target) {
+                target = true;
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        target = as_bool(a[ai + 1]);
+                    else
+                        target = (as_int(a[ai + 1]) != 0);
+                    ++ai;
+                }
+            };
+            if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced" ||
+                kw == ":allow-macro?") {
+                // Issue #3354: :allow-macro? is the mutate keyword (parity).
+                consume_bool(include_macro_introduced);
+            } else if (kw == ":exclude-macro-introduced") {
+                // Issue #922: explicit hygiene predicate for safe
+                // self-evolution. Default exclude (include=false) is
+                // already the behavior when the keyword is absent;
+                // this keyword makes the filter discoverable for AI
+                // agents. :exclude-macro-introduced #t → skip MacroIntroduced
+                // (safe); #f → allow MacroIntroduced in results.
+                bool exclude = true;
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        exclude = as_bool(a[ai + 1]);
+                    else
+                        exclude = (as_int(a[ai + 1]) != 0);
+                    ++ai;
+                }
+                include_macro_introduced = !exclude;
+            } else if (kw == ":respect-hygiene") {
+                // Issue #547: discoverable alias for
+                // :include-macro-introduced. Same semantics
+                // (skip MacroIntroduced by default for
+                // hygiene safety); the keyword reads more
+                // naturally for the EDSL self-evolution
+                // use case.
+                bool v = false;
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        v = as_bool(a[ai + 1]);
+                    else
+                        v = (as_int(a[ai + 1]) != 0);
+                    ++ai;
+                }
+                include_macro_introduced = v;
+            } else if (kw == ":nested-arity") {
+                consume_bool(nested_arity);
+            } else if (kw == ":strict-arity") {
+                // Issue #481: discoverable alias for the strict
+                // single-subtree wildcard mode (pre-#289 default).
+                // Equivalent to `:nested-arity #f`.
+                bool v = true;
+                if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                    if (is_bool(a[ai + 1]))
+                        v = as_bool(a[ai + 1]);
+                    else
+                        v = (as_int(a[ai + 1]) != 0);
+                    ++ai;
+                }
+                nested_arity = !v;
+            } else if (kw == ":with-markers") {
+                consume_bool(with_markers);
+            } else if (kw == ":as-query-result" || kw == ":query-result") {
+                // Issue #2933: return QueryResult hash (matches +
+                // QueryEpoch) instead of bare match list.
+                consume_bool(as_query_result);
+            } else {
+                return mev("bad-arg", std::string("unknown query:pattern keyword: ") + kw);
+            }
+        } else {
+            return mev("bad-arg",
+                       "usage: (query:pattern expr [:include-macro-introduced [#t]]"
+                       " [:allow-macro-introduced [#t]] [:allow-macro? [#t]]"
+                       " [:exclude-macro-introduced [#t|#f]]"
+                       " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]]"
+                       " [:as-query-result])");
+        }
+    }
+    // Issue #3354: global hygiene:set-allow-macro-mutate! unlocks
+    // query:pattern the same as mutate (query_hygiene_allow_macro).
+    include_macro_introduced = query_hygiene_allow_macro(ev, a, include_macro_introduced);
+    if (!have_pattern)
+        return mev("bad-arg", "query:pattern: missing pattern string");
+
+    return std::nullopt;
+}
+
+// Issue #5031: (query:pattern) pattern parse/cache + matcher construction.
+std::optional<EvalValue> WorkspacePatternCall::prepare_match() {
+    auto& ws = this->ws;
+    auto& ev = this->ev;
+    // Phase 2.5.0: pat_pool stays separate from canonical_pool. The
+    // wildcard "..." sym is intern'd in pat_pool so pat_node.sym_id
+    // comparisons work — sharing the canonical pool would mix
+    // pattern-specific garbage into the long-lived workspace, and the
+    // pattern's sym_ids would clash with workspace sym_ids (different
+    // ASTs, same pool). Documented exception to the canonical-pool
+    // migration — see commit 14682c5.
+    // Issue #4933: the parse is text-only, so an identical pattern text
+    // is parsed once per temp_arena generation instead of on every
+    // call (two arena creates + parse_to_flat + wildcard intern).
+    // (gc-temp) resets the arena and drops the cache.
+    const std::string& pattern_text = ws.string_heap[pattern_string_idx];
+    aura::compiler::PatternParseCacheEntry cached_pattern;
+    const bool pattern_cached = ev.lookup_pattern_parse(pattern_text, cached_pattern);
+    pat_pool = pattern_cached ? cached_pattern.pool : nullptr;
+    pat_flat = pattern_cached ? cached_pattern.flat : nullptr;
+    pattern_root = pattern_cached ? cached_pattern.root : aura::ast::NULL_NODE;
+    wildcard_sym = pattern_cached ? cached_pattern.wildcard_sym : 0;
+    if (!pattern_cached) {
+        auto alloc = ws.temp_arena->allocator();
+        pat_pool = ws.temp_arena->create<aura::ast::StringPool>(alloc);
+        pat_flat = ws.temp_arena->create<aura::ast::FlatAST>(alloc);
+    }
+    // Issue #2363: GeneralObjectPin adopt (site 4/7) — query:pattern.
+    // Issue #2840: production required-mode fail-closed on pin wire.
+    if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
+            pat_pool_pin, pat_flat_pin, static_cast<void*>(pat_pool), static_cast<void*>(pat_flat)))
+        return make_void();
+    if (!pattern_cached) {
+        auto pr = aura::parser::parse_to_flat(pattern_text, *pat_flat, *pat_pool);
+        if (!pr.success || pr.root == aura::ast::NULL_NODE)
+            return make_void();
+        pattern_root = pr.root;
+        // Intern "..." in the pattern pool for wildcard matching.
+        // (Symbol comparison keeps the wildcard + capture paths
+        // orthogonal — "?x" is a capture, "..." is the legacy
+        // single-subtree / new Kleene-star wildcard, never both.)
+        wildcard_sym = pat_pool->intern("...");
+        ev.store_pattern_parse(
+            pattern_text, aura::compiler::PatternParseCacheEntry{ws.temp_arena, pat_pool, pat_flat,
+                                                                 pattern_root, wildcard_sym});
+    }
+
+    // Issue #482: use the shared QueryMatcher from query_matcher.hh.
+    // Same matcher used by mutate:replace-pattern, so the two
+    // primitives agree on which nodes match a pattern regardless
+    // of :nested-arity mode.
+    // Issue #2123: default skip MacroIntroduced (!include); opt-in
+    // bumps pattern_include_macro_opt_in_total for dashboards.
+    if (include_macro_introduced) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->pattern_include_macro_opt_in_total.fetch_add(1, std::memory_order_relaxed);
+            m->hygiene_include_total.fetch_add(1, std::memory_order_relaxed); // #2525
+        }
+    }
+    matcher_ptr = std::make_unique<aura::compiler::QueryMatcher>(
+        ws.workspace_flat, ws.workspace_pool, pat_flat, pat_pool, wildcard_sym, nested_arity,
+        !include_macro_introduced);
+
+    // ─── Per-match state (Issue #289, refactored in #482) ───────
+    // Captures are stored as an insertion-ordered vector (linear
+    // scan lookup is fine — typical patterns have < 10 captures;
+    // the alternative unordered_map adds complexity for
+    // save/restore during backtracking). Backtracking uses a
+    // savepoint pattern: snapshot the current size, restore by
+    // truncating the vector.
+
+
+    flat_ptr = ws.workspace_flat;
+    result = make_void();
+
+    return std::nullopt;
+}
+
+// Issue #5031: (query:pattern) walk-shape pre-computation.
+std::optional<EvalValue> WorkspacePatternCall::prepare_walk() {
+    auto& matcher = *matcher_ptr;
+    // Issue #186 Phase 1: pre-compute the pattern's children
+    // count once. The outer loop can then skip nodes whose
+    // children count doesn't match the pattern's children
+    // count, avoiding the recursive descent into subtrees
+    // that can't possibly match. For large ASTs (500-5000
+    // nodes) this is a real win — the O(N × Depth) becomes
+    // O(N) when the pattern's children count is a strong
+    // filter.
+    pat_root_node = pat_flat->get(pattern_root);
+    pat_child_count = pat_root_node.children.size();
+    pat_root_is_wildcard =
+        pat_root_node.tag == aura::ast::NodeTag::Variable && pat_root_node.sym_id == wildcard_sym;
+    // Issue #289: pre-compute whether the pattern contains any
+    // "..." descendant. In Kleene mode + ellipsis anywhere in
+    // the pattern, the workspace arity is not fixed, so the
+    // (tag, arity) index fast path can't prune by arity — we
+    // must do a full walk. In the default strict mode the
+    // arity is still fixed (single-subtree wildcard), so the
+    // index helps regardless of ellipsis presence.
+    pat_has_ellipsis = matcher.pat_has_ellipsis_rec(pattern_root);
+    // Issue #292: (:guard <sub-pat> "expr") wrappers have
+    // tag=Call, arity=2-3 — the index fast path would skip
+    // positions whose (tag, arity) doesn't match. Force
+    // slow path for guard wrappers.
+    pat_is_guard = matcher.is_guard_root(pattern_root);
+    use_index_fast_path =
+        !pat_root_is_wildcard && !pat_is_guard && (!nested_arity || !pat_has_ellipsis);
+
+    return std::nullopt;
+}
+
+// Issue #292: guard predicate support. After
+// match_subtree returns true, check pending_guards_ on
+// the matcher. If a guard is pending, build a let
+// expression that binds each ?capture to its captured
+// NodeId (as int), eval the guard string, and accept
+// the match only if the guard returns truthy. The
+// captures used here are pat-side sym_ids (e.g. "?x")
+// which the matcher recorded during match_subtree;
+// we resolve them via pat_pool to get the binding
+// name.
+[[nodiscard]] bool WorkspacePatternCall::check_guard() {
+    auto& matcher = *matcher_ptr;
+    auto& ws = this->ws;
+    auto& ev = this->ev;
+    if (!matcher.has_pending_guard())
+        return true;
+    const auto& pg = matcher.take_pending_guard();
+    // Build let source. Each capture: (name value).
+    // The captured value is the workspace node's value
+    // (LiteralInt int_value) if applicable, else the
+    // NodeId. This makes the guard expression natural
+    // to write — the user does (> ?x 0) not (> <node-id> 0).
+    std::string let_src = "(let (";
+    for (const auto& kv : pg.captures) {
+        // Skip sentinel sym_id 0 (wildcard captures).
+        if (kv.first == 0)
+            continue;
+        auto name = pat_pool->resolve(kv.first);
+        if (name.empty() || name[0] != '?')
+            continue;
+        // Issue #1695: capture values are StableNodeRef.
+        const auto cap_id = kv.second.id;
+        int64_t bind_value = static_cast<int64_t>(cap_id);
+        if (cap_id != aura::ast::NULL_NODE && cap_id < ws.workspace_flat->size()) {
+            auto wsn = ws.workspace_flat->get(cap_id);
+            if (wsn.tag == aura::ast::NodeTag::LiteralInt) {
+                bind_value = wsn.int_value;
+            }
+        }
+        let_src += "(" + std::string(name) + " " + std::to_string(bind_value) + ")";
+    }
+    let_src += ") " + pg.guard_expr + ")";
+    // Parse the let source into a temp flat and eval
+    // it in top_env. This is the same parse_to_flat +
+    // eval_flat pipeline used elsewhere in this file
+    // (see pattern parse above); we use ws.temp_arena
+    // so (gc-temp) reclaims it per call.
+    auto alloc = ws.temp_arena->allocator();
+    auto* guard_pool = ws.temp_arena->create<aura::ast::StringPool>(alloc);
+    auto* guard_flat = ws.temp_arena->create<aura::ast::FlatAST>(alloc);
+    // Issue #2363: GeneralObjectPin adopt (site 5/7) — query:pattern guard.
+    aura::core::lifetime::GeneralObjectPin guard_pool_pin;
+    aura::core::lifetime::GeneralObjectPin guard_flat_pin;
+    // Issue #2840: production required-mode fail-closed on pin wire.
+    bool ok = false;
+    if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
+            guard_pool_pin, guard_flat_pin, static_cast<void*>(guard_pool),
+            static_cast<void*>(guard_flat)))
+        return false; // reject guard under required pin fail
+    auto pr = aura::parser::parse_to_flat(let_src, *guard_flat, *guard_pool);
+    if (pr.success && pr.root != aura::ast::NULL_NODE) {
+        auto gr = ev.eval_flat(*guard_flat, *guard_pool, pr.root, ev.top_env());
+        if (gr) {
+            auto& gv = *gr;
+
+            // Truthy = non-zero int, non-#f, non-void.
+            if (types::is_int(gv))
+                ok = (types::as_int(gv) != 0);
+            else if (types::is_bool(gv))
+                ok = types::as_bool(gv);
+            else if (types::is_pair(gv))
+                ok = true;
+        }
+    }
+
+    matcher.clear_pending_guard();
+    return ok;
+}
+
+// Issue #5031: (query:pattern) match walk (index fast path + full walk).
+std::optional<EvalValue> WorkspacePatternCall::walk() {
+    auto& ws = this->ws;
+    auto& ev = this->ev;
+    auto& matcher = *matcher_ptr;
+    auto& flat = *flat_ptr;
+    // Walk every node in workspace and try matching at each position.
+    // Issue #140 / #1636 / #1892: MANDATE default skip of
+    // SyntaxMarker::MacroIntroduced roots (and recursive subtrees via
+    // QueryMatcher). Hygiene correctness for AI self-evolution:
+    // matching macro-introduced code as user code would leak into
+    // mutate feedback loops. Opt-in only via
+    // :include-macro-introduced / :allow-macro-introduced #t.
+    //
+    // Issue #186: also skip nodes whose children count doesn't
+    // match the pattern's children count (the pattern's
+    // children are the only subtree that can match). This is
+    // a quick early-exit that's safe because:
+    //   - If pat_root is a wildcard "..." → no constraint
+    //   - Otherwise, the children count must match exactly
+    //     (verified later in match_subtree's default case)
+    //
+    // Issue #211: use the (tag, arity) index to skip
+    // non-matching nodes BEFORE the recursive descent.
+    // For patterns where the root's (tag, arity) is rare
+    // (e.g., looking for `(+ 1 2)` in a workspace with
+    // mostly `define`s and `lambda`s), this is a massive
+    // speedup vs. the O(N) full walk.
+    //
+    // The index is built lazily on first use and cached
+    // per-workspace (invalidated when ws.workspace_flat is
+    // changed via set_workspace_flat).
+    //
+    // Issue #1892: count skips this call for TypedMutationAudit
+    // (one summary event per query — not per-node, hotpath safe).
+    if (use_index_fast_path) {
+        // Issue #593: tag_arity delta hits during hygiene query.
+        if (flat.tag_arity_index_dirty())
+            ev.bump_tag_arity_hygiene_query_delta();
+        // Index lookup: find all nodes whose (tag, arity)
+        // matches the pattern's root.
+        //
+        // Issue #1372 (closes #371 follow-up): build + bucket
+        // copy under a single unique_lock via
+        // snapshot_tag_arity_bucket — eliminates the race
+        // window between build's lock release and shared
+        // find. Match iterates the returned snapshot outside
+        // the tag_arity lock (workspace shared_lock still held
+        // for QueryEpoch fencing — Issue #2403 documents why
+        // full match stays under workspace_mtx).
+        //
+        // Issue #2403: constrained (tag+arity±marker) ALWAYS
+        // hits composite index. Empty bucket is still a hit
+        // (index used; miss counter only for unconstrained).
+        const std::uint32_t pat_tag_val = static_cast<std::uint32_t>(pat_root_node.tag);
+        const std::uint64_t pat_key = (static_cast<std::uint64_t>(pat_tag_val) << 32) |
+                                      static_cast<std::uint64_t>(pat_child_count);
+        // Issue #1501 / #1892: hygiene default uses user-only tag_arity
+        // index (MacroIntroduced roots excluded at bucket serve time).
+        // trigger 0 = LazyQuery (PatternIndexRebuildTrigger).
+        const auto bucket =
+            ev.snapshot_tag_arity_bucket(pat_key, /*trigger=*/0,
+                                         /*skip_macro_introduced=*/!include_macro_introduced);
+        // #2403 AC1: composite hit for constrained path (incl. empty).
+        ev.bump_query_index_composite_hit();
+        if (bucket.empty()) {
+            // No nodes match the pattern's (tag, arity).
+            // Skip the full walk. Structural miss kept for #423
+            // empty-bucket fast-exit telemetry.
+            ev.bump_pattern_structural_index_miss();
+            return end_query_epoch_maybe_result(qe, ws.workspace_flat, make_void(),
+                                                as_query_result);
+        }
+        ev.bump_pattern_structural_index_hit();
+        ev.bump_total_query_calls();
+        for (aura::ast::NodeId id : bucket) {
+            if (id >= flat.size())
+                continue;
+            // Issue #4163: skip free-list tombstones (#261/#1299 —
+            // node_gen_==0). A warm bucket can still hold a freed
+            // id: free_orphan_nodes_from leaves parent_ set (the
+            // #484 parent-based checks cannot catch it) and the
+            // quiet sync path (same size+gen) never re-prunes, so
+            // the serve loop is the last line of defense before a
+            // recycled NodeId reaches the schema-2 QueryResult.
+            if (flat.is_free_slot(id))
+                continue;
+            if (!include_macro_introduced && flat.is_macro_introduced(id)) {
+                // Issue #458 / #1501 / #1609 / #1636 / #1892: MANDATE
+                // force-skip MacroIntroduced on query:pattern hot path
+                // (default hygiene) unless :allow-macro-introduced #t.
+                ev.bump_macro_introduced_skipped_in_query();
+                ++macro_skips_this_query;
+                if (flat.provenance(id) != 0)
+                    ev.bump_macro_hygiene_provenance_violation();
+                continue;
+            }
+            // Issue #289: fresh per-match state. Captures
+            // and depth are reset so a failed match doesn't
+            // pollute the next position's attempt.
+            matcher.state.captures.clear();
+            matcher.state.depth = 0;
+            if (matcher.match_subtree(id, pattern_root)) {
+                // Issue #292: guard predicate check.
+                if (!check_guard())
+                    continue;
+                // Issue #289: result format. With
+                // :with-markers #t, store a (NodeId . marker-int)
+                // pair per match so agents can see which
+                // matches came from macro-expanded code.
+                // Default (false) keeps the pre-#289 shape —
+                // flat list of NodeIds.
+                EvalValue item;
+                if (with_markers) {
+                    auto nid_int = make_int(static_cast<std::int64_t>(id));
+                    auto marker_int = make_int(static_cast<std::int64_t>(flat.marker(id)));
+                    auto pair_pid = ws.pairs.size();
+                    ws.push_stamped_pair({nid_int, marker_int});
+                    item = make_pair(pair_pid);
+                } else {
+                    item = make_int(static_cast<std::int64_t>(id));
+                }
+                auto pid = ws.pairs.size();
+                ws.push_stamped_pair({item, result});
+                result = make_pair(pid);
+            }
+        }
+    } else {
+        // Full walk (Kleene + ellipsis, or wildcard root).
+        // Issue #2403 AC1: unconstrained → composite miss only.
+        // Issue #2525: when workspace has MacroIntroduced and default
+        // hygiene is on, bump unconstrained-walk metric so Agents can
+        // observe O(N) residue paths (fail-closed via metrics, not abort).
+        ev.bump_query_index_composite_miss();
+        ev.bump_total_query_calls();
+        if (!include_macro_introduced) {
+            bool has_macro = false;
+            for (aura::ast::NodeId mid = 0; mid < flat.size(); ++mid) {
+                if (flat.is_macro_introduced(mid)) {
+                    has_macro = true;
+                    break;
+                }
+            }
+            if (has_macro) {
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->pattern_hygiene_unconstrained_walk_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
+        }
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            if (!include_macro_introduced && flat.is_macro_introduced(id)) {
+                ev.bump_macro_introduced_skipped_in_query();
+                ++macro_skips_this_query;
+                if (flat.provenance(id) != 0)
+                    ev.bump_macro_hygiene_provenance_violation();
+                continue;
+            }
+            // Issue #484: skip orphan nodes (parent_ == NULL
+            // and not the workspace root). After
+            // mutate:replace-pattern, the OLD matched child
+            // has its parent_ cleared by set_child, leaving
+            // it orphaned in the flat. Such orphans should
+            // not be returned by query:pattern — they are
+            // no longer reachable from the workspace tree.
+            //
+            // Issue #484 follow-up: marker-based
+            // disambiguation. MacroIntroduced-marker
+            // orphans are macro-expanded bodies cloned by
+            // clone_macro_body whose cloned top got
+            // MacroIntroduced marker but whose
+            // macro_expand_all call failed to splice them
+            // into the workspace (a separate bug — see
+            // #484 follow-up). Allowing them through keeps
+            // these bodies queryable. User-marker orphans
+            // are typically mutate-replaced children (the
+            // genuine lost-from-tree case) and should be
+            // excluded.
+            //
+            // Edge case: if the flat has no root set (root
+            // == NULL_NODE, e.g. test fixture that builds a
+            // bare flat without a workspace root), every
+            // node is by definition orphan. Don't skip any
+            // — the caller (test fixture) is intentionally
+            // exercising index operations on orphan-like
+            // nodes.
+            if (flat.root != aura::ast::NULL_NODE && id != flat.root &&
+                flat.parent_of(id) == aura::ast::NULL_NODE && !flat.is_macro_introduced(id))
+                continue;
+            matcher.state.captures.clear();
+            matcher.state.depth = 0;
+            if (matcher.match_subtree(id, pattern_root)) {
+                // Issue #292: guard predicate check.
+                if (!check_guard())
+                    continue;
+                EvalValue item;
+                if (with_markers) {
+                    auto nid_int = make_int(static_cast<std::int64_t>(id));
+                    auto marker_int = make_int(static_cast<std::int64_t>(flat.marker(id)));
+                    auto pair_pid = ws.pairs.size();
+                    ws.push_stamped_pair({nid_int, marker_int});
+                    item = make_pair(pair_pid);
+                } else {
+                    item = make_int(static_cast<std::int64_t>(id));
+                }
+                auto pid = ws.pairs.size();
+                ws.push_stamped_pair({item, result});
+                result = make_pair(pid);
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
+// Issue #5031: (query:pattern) hygiene accounting + QueryEpoch finish.
+EvalValue WorkspacePatternCall::finish() {
+    auto& ws = this->ws;
+    auto& ev = this->ev;
+    auto& matcher = *matcher_ptr;
+    auto& flat = *flat_ptr;
+    // Issue #421 / #1892 / #2123: sync recursive hygiene skips + verify
+    // default-hygiene results never surface MacroIntroduced
+    // node ids (post query-split contract).
+    if (matcher.recursive_macro_skipped() > 0) {
+        ev.bump_pattern_recursive_macro_skipped(matcher.recursive_macro_skipped());
+        // Issue #1255: strict hygiene filter also feeds macro-intro-filtered.
+        ev.bump_pattern_macro_intro_filtered(matcher.recursive_macro_skipped());
+        // Issue #2123: recursive skips count toward filtered total.
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->pattern_hygiene_filtered_total.fetch_add(matcher.recursive_macro_skipped(),
+                                                        std::memory_order_relaxed);
+            m->pattern_hygiene_filter_hits.fetch_add(matcher.recursive_macro_skipped(),
+                                                     std::memory_order_relaxed);
+            m->hygiene_skip_total.fetch_add(matcher.recursive_macro_skipped(),
+                                            std::memory_order_relaxed); // #2525
+        }
+        macro_skips_this_query += matcher.recursive_macro_skipped();
+    }
+    if (matcher.macro_intro_filtered_strict() > 0) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            m->pattern_hygiene_violations_caught.fetch_add(matcher.macro_intro_filtered_strict(),
+                                                           std::memory_order_relaxed);
+        }
+    }
+    if (!include_macro_introduced) {
+        const auto violations_before = ev.get_pattern_macro_filter_violations();
+        ev.verify_pattern_result_hygiene(flat, result, with_markers);
+        const auto violations_after = ev.get_pattern_macro_filter_violations();
+        // Issue #1280 / #1892: default exclude-MacroIntroduced path is the
+        // production hygiene contract for query:pattern (self-evo hotpath).
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            m->pattern_hygiene_default_exclude.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1892: TypedMutationAudit summary for this query call.
+        // Success = intentional default skip (hygiene held). Error =
+        // verify found MacroIntroduced leakage in results (must be 0).
+        if (macro_skips_this_query > 0 || violations_after > violations_before) {
+            const bool leaked = violations_after > violations_before;
+            typed_audit::capture_macro_hygiene_audit(
+                leaked ? "query-pattern-macro-leak" : "query-pattern-macro-skip",
+                leaked ? typed_audit::AuditOutcome::Error : typed_audit::AuditOutcome::Success,
+                /*target_node=*/0, static_cast<std::int64_t>(aura_fiber_current_id()),
+                ev.capability_tenant_id());
+        }
+    }
+    // Issue #2192 finish + optional #2933 QueryResult wrap.
+    return end_query_epoch_maybe_result(qe, ws.workspace_flat, result, as_query_result);
+}
+
+// Issue #5031: (query:pattern) call driver — lock, checks, ordered phases.
+template <typename PinChildrenFn>
+EvalValue WorkspacePatternCall::run(std::span<const EvalValue> a,
+                                    const PinChildrenFn& pin_query_children) {
+    auto& ws = this->ws;
+    auto& mev = this->mev;
+    auto& ev = this->ev;
+    // Issue #2403 / #2989: shared_lock spans QueryEpoch capture + match.
+    // Entire match completes under the lock; SafePCVSpan pins PCV
+    // storage so a writer COW cannot UAF the reader. Index path
+    // keeps hold O(candidates) via composite (tag,arity±marker)
+    // bucket, not O(N). Lock hold is timed for Agent SLO (RAII).
+    const auto lock_t0 = std::chrono::steady_clock::now();
+    std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+    struct QuerySharedLockTimer : ::aura::core::NoCopy {
+        Evaluator& ev;
+        std::chrono::steady_clock::time_point t0;
+        ~QuerySharedLockTimer() {
+            const auto us =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now() - t0)
+                                               .count());
+            ev.note_query_shared_lock_us(us);
+        }
+    } lock_timer{{}, ev, lock_t0};
+    if (a.empty())
+        return mev("bad-arg", "usage: (query:pattern expr [:include-macro-introduced [#t]]"
+                              " [:allow-macro-introduced [#t]] [:allow-macro? [#t]]"
+                              " [:exclude-macro-introduced [#t|#f]]"
+                              " [:respect-hygiene [#t|#f]]"
+                              " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]]"
+                              " [:as-query-result|#:query-result #t])");
+    if (!ws.workspace_flat || !ws.workspace_pool)
+        return mev("no-workspace", "no workspace AST loaded");
+    qe = begin_query_epoch(ws.workspace_flat); // Issue #2192
+
+    if (auto err = parse_args(a))
+        return *err;
+    if (auto err = prepare_match())
+        return *err;
+    auto& flat = *flat_ptr;
+    // Issue #2989: pin root children for the duration of match so a
+    // concurrent mutate COW cannot UAF the reader. Matcher also
+    // pins per-node via children_safe_view (query_matcher.cpp).
+    const auto pin_root = (flat.root != aura::ast::NULL_NODE) ? flat.root : aura::ast::NodeId{0};
+    auto match_pin = pin_query_children(flat, pin_root);
+    (void)match_pin;
+    ev.bump_pattern_hygiene_safe_span_enforced();
+    if (auto err = prepare_walk())
+        return *err;
+    if (auto early = walk())
+        return *early;
+    return finish();
+}
+
+// Issue #5031: pattern registration phase.
+void register_workspace_query_pattern_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // (query:pattern "expr") — Find all nodes matching a structural pattern
     //
     // Pattern syntax:
@@ -3566,606 +4580,25 @@ void register_workspace_query_primitives(
     add("query:pattern",
         [ws, mev, &ev, begin_query_epoch, end_query_epoch_maybe_result,
          pin_query_children](const auto& a) -> EvalValue {
-            // Issue #2403 / #2989: shared_lock spans QueryEpoch capture + match.
-            // Entire match completes under the lock; SafePCVSpan pins PCV
-            // storage so a writer COW cannot UAF the reader. Index path
-            // keeps hold O(candidates) via composite (tag,arity±marker)
-            // bucket, not O(N). Lock hold is timed for Agent SLO (RAII).
-            const auto lock_t0 = std::chrono::steady_clock::now();
-            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-            struct QuerySharedLockTimer : ::aura::core::NoCopy {
-                Evaluator& ev;
-                std::chrono::steady_clock::time_point t0;
-                ~QuerySharedLockTimer() {
-                    const auto us = static_cast<std::uint64_t>(
-                        std::chrono::duration_cast<std::chrono::microseconds>(
-                            std::chrono::steady_clock::now() - t0)
-                            .count());
-                    ev.note_query_shared_lock_us(us);
-                }
-            } lock_timer{{}, ev, lock_t0};
-            if (a.empty())
-                return mev("bad-arg",
-                           "usage: (query:pattern expr [:include-macro-introduced [#t]]"
-                           " [:allow-macro-introduced [#t]] [:allow-macro? [#t]]"
-                           " [:exclude-macro-introduced [#t|#f]]"
-                           " [:respect-hygiene [#t|#f]]"
-                           " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]]"
-                           " [:as-query-result|#:query-result #t])");
-            if (!ws.workspace_flat || !ws.workspace_pool)
-                return mev("no-workspace", "no workspace AST loaded");
-            const auto qe = begin_query_epoch(ws.workspace_flat); // Issue #2192
-
-            bool have_pattern = false;
-            std::size_t pattern_string_idx = 0;
-            bool include_macro_introduced = false;
-            // Issue #3103 helpers live at TU scope (stamp_query_result_full_provenance
-            // / query_result_is_fresh_with_refs) — nested defs are not C++.
-
-            // Issue #3103: opt-in QueryResult binding (default bare list).
-            bool as_query_result = false;
-            // Issue #289 / #481 / #1374: nested-arity / Kleene-star ellipsis.
-            // Default (#t) is Kleene (`...` consumes 0..N consecutive
-            // children). Set `:nested-arity #f` or `:strict-arity #t` to
-            // opt back into the pre-#289 strict single-subtree wildcard
-            // behavior (`...` consumes exactly 1 child). The :strict-arity
-            // keyword is a discoverable alias for :nested-arity #f —
-            // both flip the matcher to position-by-position matching.
-            // Issue #1374: mutate:replace-pattern shares QueryMatcher and
-            // the same default (Kleene) so query-then-mutate pipelines see
-            // the same node set without an explicit :nested-arity flag.
-            bool nested_arity = true;
-            // Issue #289: result format. Default (false) preserves the
-            // pre-#289 result shape — a flat list of NodeIds. When
-            // #t, each result item is a (NodeId . marker-int) pair so
-            // agents can see which matches came from macro-expanded
-            // code without a separate provenance query.
-            bool with_markers = false;
-            for (std::size_t ai = 0; ai < a.size(); ++ai) {
-                if (is_string(a[ai])) {
-                    if (have_pattern)
-                        return mev("bad-arg", "query:pattern: multiple pattern strings");
-                    have_pattern = true;
-                    pattern_string_idx = as_string_idx(a[ai]);
-                    if (pattern_string_idx >= ws.string_heap.size())
-                        return mev("bad-arg", "pattern string index out of range");
-                } else if (is_keyword(a[ai])) {
-                    auto kidx = as_keyword_idx(a[ai]);
-                    if (kidx >= ws.keyword_table.size())
-                        return mev("bad-arg", "unknown keyword");
-                    auto kw = ws.keyword_table[kidx];
-                    // Issue #289: shared bool/optional-int flag consumer
-                    // for the three new keyword args. `target` defaults
-                    // to #t when the value is omitted (just keyword alone).
-                    auto consume_bool = [&](bool& target) {
-                        target = true;
-                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                            if (is_bool(a[ai + 1]))
-                                target = as_bool(a[ai + 1]);
-                            else
-                                target = (as_int(a[ai + 1]) != 0);
-                            ++ai;
-                        }
-                    };
-                    if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced" ||
-                        kw == ":allow-macro?") {
-                        // Issue #3354: :allow-macro? is the mutate keyword (parity).
-                        consume_bool(include_macro_introduced);
-                    } else if (kw == ":exclude-macro-introduced") {
-                        // Issue #922: explicit hygiene predicate for safe
-                        // self-evolution. Default exclude (include=false) is
-                        // already the behavior when the keyword is absent;
-                        // this keyword makes the filter discoverable for AI
-                        // agents. :exclude-macro-introduced #t → skip MacroIntroduced
-                        // (safe); #f → allow MacroIntroduced in results.
-                        bool exclude = true;
-                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                            if (is_bool(a[ai + 1]))
-                                exclude = as_bool(a[ai + 1]);
-                            else
-                                exclude = (as_int(a[ai + 1]) != 0);
-                            ++ai;
-                        }
-                        include_macro_introduced = !exclude;
-                    } else if (kw == ":respect-hygiene") {
-                        // Issue #547: discoverable alias for
-                        // :include-macro-introduced. Same semantics
-                        // (skip MacroIntroduced by default for
-                        // hygiene safety); the keyword reads more
-                        // naturally for the EDSL self-evolution
-                        // use case.
-                        bool v = false;
-                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                            if (is_bool(a[ai + 1]))
-                                v = as_bool(a[ai + 1]);
-                            else
-                                v = (as_int(a[ai + 1]) != 0);
-                            ++ai;
-                        }
-                        include_macro_introduced = v;
-                    } else if (kw == ":nested-arity") {
-                        consume_bool(nested_arity);
-                    } else if (kw == ":strict-arity") {
-                        // Issue #481: discoverable alias for the strict
-                        // single-subtree wildcard mode (pre-#289 default).
-                        // Equivalent to `:nested-arity #f`.
-                        bool v = true;
-                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
-                            if (is_bool(a[ai + 1]))
-                                v = as_bool(a[ai + 1]);
-                            else
-                                v = (as_int(a[ai + 1]) != 0);
-                            ++ai;
-                        }
-                        nested_arity = !v;
-                    } else if (kw == ":with-markers") {
-                        consume_bool(with_markers);
-                    } else if (kw == ":as-query-result" || kw == ":query-result") {
-                        // Issue #2933: return QueryResult hash (matches +
-                        // QueryEpoch) instead of bare match list.
-                        consume_bool(as_query_result);
-                    } else {
-                        return mev("bad-arg", std::string("unknown query:pattern keyword: ") + kw);
-                    }
-                } else {
-                    return mev("bad-arg",
-                               "usage: (query:pattern expr [:include-macro-introduced [#t]]"
-                               " [:allow-macro-introduced [#t]] [:allow-macro? [#t]]"
-                               " [:exclude-macro-introduced [#t|#f]]"
-                               " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]]"
-                               " [:as-query-result])");
-                }
-            }
-            // Issue #3354: global hygiene:set-allow-macro-mutate! unlocks
-            // query:pattern the same as mutate (query_hygiene_allow_macro).
-            include_macro_introduced = query_hygiene_allow_macro(ev, a, include_macro_introduced);
-            if (!have_pattern)
-                return mev("bad-arg", "query:pattern: missing pattern string");
-            auto idx = pattern_string_idx;
-
-            // Phase 2.5.0: pat_pool stays separate from canonical_pool. The
-            // wildcard "..." sym is intern'd in pat_pool so pat_node.sym_id
-            // comparisons work — sharing the canonical pool would mix
-            // pattern-specific garbage into the long-lived workspace, and the
-            // pattern's sym_ids would clash with workspace sym_ids (different
-            // ASTs, same pool). Documented exception to the canonical-pool
-            // migration — see commit 14682c5.
-            // Issue #4933: the parse is text-only, so an identical pattern text
-            // is parsed once per temp_arena generation instead of on every
-            // call (two arena creates + parse_to_flat + wildcard intern).
-            // (gc-temp) resets the arena and drops the cache.
-            const std::string& pattern_text = ws.string_heap[idx];
-            aura::compiler::PatternParseCacheEntry cached_pattern;
-            const bool pattern_cached = ev.lookup_pattern_parse(pattern_text, cached_pattern);
-            aura::ast::StringPool* pat_pool = pattern_cached ? cached_pattern.pool : nullptr;
-            aura::ast::FlatAST* pat_flat = pattern_cached ? cached_pattern.flat : nullptr;
-            aura::ast::NodeId pattern_root =
-                pattern_cached ? cached_pattern.root : aura::ast::NULL_NODE;
-            std::uint32_t wildcard_sym = pattern_cached ? cached_pattern.wildcard_sym : 0;
-            if (!pattern_cached) {
-                auto alloc = ws.temp_arena->allocator();
-                pat_pool = ws.temp_arena->create<aura::ast::StringPool>(alloc);
-                pat_flat = ws.temp_arena->create<aura::ast::FlatAST>(alloc);
-            }
-            // Issue #2363: GeneralObjectPin adopt (site 4/7) — query:pattern.
-            aura::core::lifetime::GeneralObjectPin pat_pool_pin;
-            aura::core::lifetime::GeneralObjectPin pat_flat_pin;
-            // Issue #2840: production required-mode fail-closed on pin wire.
-            if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
-                    pat_pool_pin, pat_flat_pin, static_cast<void*>(pat_pool),
-                    static_cast<void*>(pat_flat)))
-                return make_void();
-            if (!pattern_cached) {
-                auto pr = aura::parser::parse_to_flat(pattern_text, *pat_flat, *pat_pool);
-                if (!pr.success || pr.root == aura::ast::NULL_NODE)
-                    return make_void();
-                pattern_root = pr.root;
-                // Intern "..." in the pattern pool for wildcard matching.
-                // (Symbol comparison keeps the wildcard + capture paths
-                // orthogonal — "?x" is a capture, "..." is the legacy
-                // single-subtree / new Kleene-star wildcard, never both.)
-                wildcard_sym = pat_pool->intern("...");
-                ev.store_pattern_parse(pattern_text, aura::compiler::PatternParseCacheEntry{
-                                                         ws.temp_arena, pat_pool, pat_flat,
-                                                         pattern_root, wildcard_sym});
-            }
-
-            // Issue #482: use the shared QueryMatcher from query_matcher.hh.
-            // Same matcher used by mutate:replace-pattern, so the two
-            // primitives agree on which nodes match a pattern regardless
-            // of :nested-arity mode.
-            // Issue #2123: default skip MacroIntroduced (!include); opt-in
-            // bumps pattern_include_macro_opt_in_total for dashboards.
-            if (include_macro_introduced) {
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                    m->pattern_include_macro_opt_in_total.fetch_add(1, std::memory_order_relaxed);
-                    m->hygiene_include_total.fetch_add(1, std::memory_order_relaxed); // #2525
-                }
-            }
-            aura::compiler::QueryMatcher matcher(ws.workspace_flat, ws.workspace_pool, pat_flat,
-                                                 pat_pool, wildcard_sym, nested_arity,
-                                                 !include_macro_introduced);
-
-            // ─── Per-match state (Issue #289, refactored in #482) ───────
-            // Captures are stored as an insertion-ordered vector (linear
-            // scan lookup is fine — typical patterns have < 10 captures;
-            // the alternative unordered_map adds complexity for
-            // save/restore during backtracking). Backtracking uses a
-            // savepoint pattern: snapshot the current size, restore by
-            // truncating the vector.
-
-
-            auto& flat = *ws.workspace_flat;
-            EvalValue result = make_void();
-            // Issue #2989: pin root children for the duration of match so a
-            // concurrent mutate COW cannot UAF the reader. Matcher also
-            // pins per-node via children_safe_view (query_matcher.cpp).
-            const auto pin_root =
-                (flat.root != aura::ast::NULL_NODE) ? flat.root : aura::ast::NodeId{0};
-            auto match_pin = pin_query_children(flat, pin_root);
-            (void)match_pin;
-            ev.bump_pattern_hygiene_safe_span_enforced();
-
-            // Issue #292: guard predicate support. After
-            // match_subtree returns true, check pending_guards_ on
-            // the matcher. If a guard is pending, build a let
-            // expression that binds each ?capture to its captured
-            // NodeId (as int), eval the guard string, and accept
-            // the match only if the guard returns truthy. The
-            // captures used here are pat-side sym_ids (e.g. "?x")
-            // which the matcher recorded during match_subtree;
-            // we resolve them via pat_pool to get the binding
-            // name.
-            auto check_guard = [&]() -> bool {
-                if (!matcher.has_pending_guard())
-                    return true;
-                const auto& pg = matcher.take_pending_guard();
-                // Build let source. Each capture: (name value).
-                // The captured value is the workspace node's value
-                // (LiteralInt int_value) if applicable, else the
-                // NodeId. This makes the guard expression natural
-                // to write — the user does (> ?x 0) not (> <node-id> 0).
-                std::string let_src = "(let (";
-                for (const auto& kv : pg.captures) {
-                    // Skip sentinel sym_id 0 (wildcard captures).
-                    if (kv.first == 0)
-                        continue;
-                    auto name = pat_pool->resolve(kv.first);
-                    if (name.empty() || name[0] != '?')
-                        continue;
-                    // Issue #1695: capture values are StableNodeRef.
-                    const auto cap_id = kv.second.id;
-                    int64_t bind_value = static_cast<int64_t>(cap_id);
-                    if (cap_id != aura::ast::NULL_NODE && cap_id < ws.workspace_flat->size()) {
-                        auto wsn = ws.workspace_flat->get(cap_id);
-                        if (wsn.tag == aura::ast::NodeTag::LiteralInt) {
-                            bind_value = wsn.int_value;
-                        }
-                    }
-                    let_src += "(" + std::string(name) + " " + std::to_string(bind_value) + ")";
-                }
-                let_src += ") " + pg.guard_expr + ")";
-                // Parse the let source into a temp flat and eval
-                // it in top_env. This is the same parse_to_flat +
-                // eval_flat pipeline used elsewhere in this file
-                // (see pattern parse above); we use ws.temp_arena
-                // so (gc-temp) reclaims it per call.
-                auto alloc = ws.temp_arena->allocator();
-                auto* guard_pool = ws.temp_arena->create<aura::ast::StringPool>(alloc);
-                auto* guard_flat = ws.temp_arena->create<aura::ast::FlatAST>(alloc);
-                // Issue #2363: GeneralObjectPin adopt (site 5/7) — query:pattern guard.
-                aura::core::lifetime::GeneralObjectPin guard_pool_pin;
-                aura::core::lifetime::GeneralObjectPin guard_flat_pin;
-                // Issue #2840: production required-mode fail-closed on pin wire.
-                bool ok = false;
-                if (!aura::core::lifetime::wire_general_object_create_pair_or_required_fail(
-                        guard_pool_pin, guard_flat_pin, static_cast<void*>(guard_pool),
-                        static_cast<void*>(guard_flat)))
-                    return false; // reject guard under required pin fail
-                auto pr = aura::parser::parse_to_flat(let_src, *guard_flat, *guard_pool);
-                if (pr.success && pr.root != aura::ast::NULL_NODE) {
-                    auto gr = ev.eval_flat(*guard_flat, *guard_pool, pr.root, ev.top_env());
-                    if (gr) {
-                        auto& gv = *gr;
-
-                        // Truthy = non-zero int, non-#f, non-void.
-                        if (types::is_int(gv))
-                            ok = (types::as_int(gv) != 0);
-                        else if (types::is_bool(gv))
-                            ok = types::as_bool(gv);
-                        else if (types::is_pair(gv))
-                            ok = true;
-                    }
-                }
-
-                matcher.clear_pending_guard();
-                return ok;
-            };
-
-            // Issue #186 Phase 1: pre-compute the pattern's children
-            // count once. The outer loop can then skip nodes whose
-            // children count doesn't match the pattern's children
-            // count, avoiding the recursive descent into subtrees
-            // that can't possibly match. For large ASTs (500-5000
-            // nodes) this is a real win — the O(N × Depth) becomes
-            // O(N) when the pattern's children count is a strong
-            // filter.
-            auto pat_root_node = pat_flat->get(pattern_root);
-            const std::size_t pat_child_count = pat_root_node.children.size();
-            const bool pat_root_is_wildcard = pat_root_node.tag == aura::ast::NodeTag::Variable &&
-                                              pat_root_node.sym_id == wildcard_sym;
-            // Issue #289: pre-compute whether the pattern contains any
-            // "..." descendant. In Kleene mode + ellipsis anywhere in
-            // the pattern, the workspace arity is not fixed, so the
-            // (tag, arity) index fast path can't prune by arity — we
-            // must do a full walk. In the default strict mode the
-            // arity is still fixed (single-subtree wildcard), so the
-            // index helps regardless of ellipsis presence.
-            const bool pat_has_ellipsis = matcher.pat_has_ellipsis_rec(pattern_root);
-            // Issue #292: (:guard <sub-pat> "expr") wrappers have
-            // tag=Call, arity=2-3 — the index fast path would skip
-            // positions whose (tag, arity) doesn't match. Force
-            // slow path for guard wrappers.
-            const bool pat_is_guard = matcher.is_guard_root(pattern_root);
-            const bool use_index_fast_path =
-                !pat_root_is_wildcard && !pat_is_guard && (!nested_arity || !pat_has_ellipsis);
-
-
-            // Walk every node in workspace and try matching at each position.
-            // Issue #140 / #1636 / #1892: MANDATE default skip of
-            // SyntaxMarker::MacroIntroduced roots (and recursive subtrees via
-            // QueryMatcher). Hygiene correctness for AI self-evolution:
-            // matching macro-introduced code as user code would leak into
-            // mutate feedback loops. Opt-in only via
-            // :include-macro-introduced / :allow-macro-introduced #t.
-            //
-            // Issue #186: also skip nodes whose children count doesn't
-            // match the pattern's children count (the pattern's
-            // children are the only subtree that can match). This is
-            // a quick early-exit that's safe because:
-            //   - If pat_root is a wildcard "..." → no constraint
-            //   - Otherwise, the children count must match exactly
-            //     (verified later in match_subtree's default case)
-            //
-            // Issue #211: use the (tag, arity) index to skip
-            // non-matching nodes BEFORE the recursive descent.
-            // For patterns where the root's (tag, arity) is rare
-            // (e.g., looking for `(+ 1 2)` in a workspace with
-            // mostly `define`s and `lambda`s), this is a massive
-            // speedup vs. the O(N) full walk.
-            //
-            // The index is built lazily on first use and cached
-            // per-workspace (invalidated when ws.workspace_flat is
-            // changed via set_workspace_flat).
-            //
-            // Issue #1892: count skips this call for TypedMutationAudit
-            // (one summary event per query — not per-node, hotpath safe).
-            std::uint64_t macro_skips_this_query = 0;
-            if (use_index_fast_path) {
-                // Issue #593: tag_arity delta hits during hygiene query.
-                if (flat.tag_arity_index_dirty())
-                    ev.bump_tag_arity_hygiene_query_delta();
-                // Index lookup: find all nodes whose (tag, arity)
-                // matches the pattern's root.
-                //
-                // Issue #1372 (closes #371 follow-up): build + bucket
-                // copy under a single unique_lock via
-                // snapshot_tag_arity_bucket — eliminates the race
-                // window between build's lock release and shared
-                // find. Match iterates the returned snapshot outside
-                // the tag_arity lock (workspace shared_lock still held
-                // for QueryEpoch fencing — Issue #2403 documents why
-                // full match stays under workspace_mtx).
-                //
-                // Issue #2403: constrained (tag+arity±marker) ALWAYS
-                // hits composite index. Empty bucket is still a hit
-                // (index used; miss counter only for unconstrained).
-                const std::uint32_t pat_tag_val = static_cast<std::uint32_t>(pat_root_node.tag);
-                const std::uint64_t pat_key = (static_cast<std::uint64_t>(pat_tag_val) << 32) |
-                                              static_cast<std::uint64_t>(pat_child_count);
-                // Issue #1501 / #1892: hygiene default uses user-only tag_arity
-                // index (MacroIntroduced roots excluded at bucket serve time).
-                // trigger 0 = LazyQuery (PatternIndexRebuildTrigger).
-                const auto bucket = ev.snapshot_tag_arity_bucket(
-                    pat_key, /*trigger=*/0,
-                    /*skip_macro_introduced=*/!include_macro_introduced);
-                // #2403 AC1: composite hit for constrained path (incl. empty).
-                ev.bump_query_index_composite_hit();
-                if (bucket.empty()) {
-                    // No nodes match the pattern's (tag, arity).
-                    // Skip the full walk. Structural miss kept for #423
-                    // empty-bucket fast-exit telemetry.
-                    ev.bump_pattern_structural_index_miss();
-                    return end_query_epoch_maybe_result(qe, ws.workspace_flat, make_void(),
-                                                        as_query_result);
-                }
-                ev.bump_pattern_structural_index_hit();
-                ev.bump_total_query_calls();
-                for (aura::ast::NodeId id : bucket) {
-                    if (id >= flat.size())
-                        continue;
-                    // Issue #4163: skip free-list tombstones (#261/#1299 —
-                    // node_gen_==0). A warm bucket can still hold a freed
-                    // id: free_orphan_nodes_from leaves parent_ set (the
-                    // #484 parent-based checks cannot catch it) and the
-                    // quiet sync path (same size+gen) never re-prunes, so
-                    // the serve loop is the last line of defense before a
-                    // recycled NodeId reaches the schema-2 QueryResult.
-                    if (flat.is_free_slot(id))
-                        continue;
-                    if (!include_macro_introduced && flat.is_macro_introduced(id)) {
-                        // Issue #458 / #1501 / #1609 / #1636 / #1892: MANDATE
-                        // force-skip MacroIntroduced on query:pattern hot path
-                        // (default hygiene) unless :allow-macro-introduced #t.
-                        ev.bump_macro_introduced_skipped_in_query();
-                        ++macro_skips_this_query;
-                        if (flat.provenance(id) != 0)
-                            ev.bump_macro_hygiene_provenance_violation();
-                        continue;
-                    }
-                    // Issue #289: fresh per-match state. Captures
-                    // and depth are reset so a failed match doesn't
-                    // pollute the next position's attempt.
-                    matcher.state.captures.clear();
-                    matcher.state.depth = 0;
-                    if (matcher.match_subtree(id, pattern_root)) {
-                        // Issue #292: guard predicate check.
-                        if (!check_guard())
-                            continue;
-                        // Issue #289: result format. With
-                        // :with-markers #t, store a (NodeId . marker-int)
-                        // pair per match so agents can see which
-                        // matches came from macro-expanded code.
-                        // Default (false) keeps the pre-#289 shape —
-                        // flat list of NodeIds.
-                        EvalValue item;
-                        if (with_markers) {
-                            auto nid_int = make_int(static_cast<std::int64_t>(id));
-                            auto marker_int = make_int(static_cast<std::int64_t>(flat.marker(id)));
-                            auto pair_pid = ws.pairs.size();
-                            ws.push_stamped_pair({nid_int, marker_int});
-                            item = make_pair(pair_pid);
-                        } else {
-                            item = make_int(static_cast<std::int64_t>(id));
-                        }
-                        auto pid = ws.pairs.size();
-                        ws.push_stamped_pair({item, result});
-                        result = make_pair(pid);
-                    }
-                }
-            } else {
-                // Full walk (Kleene + ellipsis, or wildcard root).
-                // Issue #2403 AC1: unconstrained → composite miss only.
-                // Issue #2525: when workspace has MacroIntroduced and default
-                // hygiene is on, bump unconstrained-walk metric so Agents can
-                // observe O(N) residue paths (fail-closed via metrics, not abort).
-                ev.bump_query_index_composite_miss();
-                ev.bump_total_query_calls();
-                if (!include_macro_introduced) {
-                    bool has_macro = false;
-                    for (aura::ast::NodeId mid = 0; mid < flat.size(); ++mid) {
-                        if (flat.is_macro_introduced(mid)) {
-                            has_macro = true;
-                            break;
-                        }
-                    }
-                    if (has_macro) {
-                        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                            m->pattern_hygiene_unconstrained_walk_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                    }
-                }
-                for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-                    if (!include_macro_introduced && flat.is_macro_introduced(id)) {
-                        ev.bump_macro_introduced_skipped_in_query();
-                        ++macro_skips_this_query;
-                        if (flat.provenance(id) != 0)
-                            ev.bump_macro_hygiene_provenance_violation();
-                        continue;
-                    }
-                    // Issue #484: skip orphan nodes (parent_ == NULL
-                    // and not the workspace root). After
-                    // mutate:replace-pattern, the OLD matched child
-                    // has its parent_ cleared by set_child, leaving
-                    // it orphaned in the flat. Such orphans should
-                    // not be returned by query:pattern — they are
-                    // no longer reachable from the workspace tree.
-                    //
-                    // Issue #484 follow-up: marker-based
-                    // disambiguation. MacroIntroduced-marker
-                    // orphans are macro-expanded bodies cloned by
-                    // clone_macro_body whose cloned top got
-                    // MacroIntroduced marker but whose
-                    // macro_expand_all call failed to splice them
-                    // into the workspace (a separate bug — see
-                    // #484 follow-up). Allowing them through keeps
-                    // these bodies queryable. User-marker orphans
-                    // are typically mutate-replaced children (the
-                    // genuine lost-from-tree case) and should be
-                    // excluded.
-                    //
-                    // Edge case: if the flat has no root set (root
-                    // == NULL_NODE, e.g. test fixture that builds a
-                    // bare flat without a workspace root), every
-                    // node is by definition orphan. Don't skip any
-                    // — the caller (test fixture) is intentionally
-                    // exercising index operations on orphan-like
-                    // nodes.
-                    if (flat.root != aura::ast::NULL_NODE && id != flat.root &&
-                        flat.parent_of(id) == aura::ast::NULL_NODE && !flat.is_macro_introduced(id))
-                        continue;
-                    matcher.state.captures.clear();
-                    matcher.state.depth = 0;
-                    if (matcher.match_subtree(id, pattern_root)) {
-                        // Issue #292: guard predicate check.
-                        if (!check_guard())
-                            continue;
-                        EvalValue item;
-                        if (with_markers) {
-                            auto nid_int = make_int(static_cast<std::int64_t>(id));
-                            auto marker_int = make_int(static_cast<std::int64_t>(flat.marker(id)));
-                            auto pair_pid = ws.pairs.size();
-                            ws.push_stamped_pair({nid_int, marker_int});
-                            item = make_pair(pair_pid);
-                        } else {
-                            item = make_int(static_cast<std::int64_t>(id));
-                        }
-                        auto pid = ws.pairs.size();
-                        ws.push_stamped_pair({item, result});
-                        result = make_pair(pid);
-                    }
-                }
-            }
-
-            // Issue #421 / #1892 / #2123: sync recursive hygiene skips + verify
-            // default-hygiene results never surface MacroIntroduced
-            // node ids (post query-split contract).
-            if (matcher.recursive_macro_skipped() > 0) {
-                ev.bump_pattern_recursive_macro_skipped(matcher.recursive_macro_skipped());
-                // Issue #1255: strict hygiene filter also feeds macro-intro-filtered.
-                ev.bump_pattern_macro_intro_filtered(matcher.recursive_macro_skipped());
-                // Issue #2123: recursive skips count toward filtered total.
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                    m->pattern_hygiene_filtered_total.fetch_add(matcher.recursive_macro_skipped(),
-                                                                std::memory_order_relaxed);
-                    m->pattern_hygiene_filter_hits.fetch_add(matcher.recursive_macro_skipped(),
-                                                             std::memory_order_relaxed);
-                    m->hygiene_skip_total.fetch_add(matcher.recursive_macro_skipped(),
-                                                    std::memory_order_relaxed); // #2525
-                }
-                macro_skips_this_query += matcher.recursive_macro_skipped();
-            }
-            if (matcher.macro_intro_filtered_strict() > 0) {
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                    m->pattern_hygiene_violations_caught.fetch_add(
-                        matcher.macro_intro_filtered_strict(), std::memory_order_relaxed);
-                }
-            }
-            if (!include_macro_introduced) {
-                const auto violations_before = ev.get_pattern_macro_filter_violations();
-                ev.verify_pattern_result_hygiene(flat, result, with_markers);
-                const auto violations_after = ev.get_pattern_macro_filter_violations();
-                // Issue #1280 / #1892: default exclude-MacroIntroduced path is the
-                // production hygiene contract for query:pattern (self-evo hotpath).
-                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                    m->pattern_hygiene_default_exclude.fetch_add(1, std::memory_order_relaxed);
-                // Issue #1892: TypedMutationAudit summary for this query call.
-                // Success = intentional default skip (hygiene held). Error =
-                // verify found MacroIntroduced leakage in results (must be 0).
-                if (macro_skips_this_query > 0 || violations_after > violations_before) {
-                    const bool leaked = violations_after > violations_before;
-                    typed_audit::capture_macro_hygiene_audit(
-                        leaked ? "query-pattern-macro-leak" : "query-pattern-macro-skip",
-                        leaked ? typed_audit::AuditOutcome::Error
-                               : typed_audit::AuditOutcome::Success,
-                        /*target_node=*/0, static_cast<std::int64_t>(aura_fiber_current_id()),
-                        ev.capability_tenant_id());
-                }
-            }
-            // Issue #2192 finish + optional #2933 QueryResult wrap.
-            return end_query_epoch_maybe_result(qe, ws.workspace_flat, result, as_query_result);
+            WorkspacePatternCall call{ws, mev, ev, begin_query_epoch, end_query_epoch_maybe_result};
+            return call.run(a, pin_query_children);
         });
+}
 
+
+// Issue #5031: provenance_of registration phase.
+void register_workspace_query_provenance_of_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // Issue #282: (query:provenance-of var-name) — return the
     // list of NarrowingRecords that narrowed `var-name`. Each
     // entry is a hash with keys: :predicate, :refined-type,
@@ -4306,7 +4739,21 @@ void register_workspace_query_primitives(
         }
         return result;
     });
+}
 
+// Issue #5031: narrowing registration phase.
+void register_workspace_query_narrowing_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // Issue #282 follow-up #5: (query:narrowings-at-mutation mutation-id) —
     // return the list of NarrowingRecord capture_epochs that
     // were LIVE at the time of the given mutation. A narrowing
@@ -4408,7 +4855,23 @@ void register_workspace_query_primitives(
             }
             return result;
         });
+}
 
+// Issue #5031: dispatch registration phase.
+void register_workspace_query_dispatch_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
+    auto& pairs = P.ws.pairs;
+    auto& string_heap = P.ws.string_heap;
     // ── Issue #1435 / #2628: (query :op …) unified dispatcher ─────
     // Canonical surface for core structural ops. Aliases live in private
     // q_impls / stats_impl only (no public add registrations).
@@ -4676,7 +5139,21 @@ void register_workspace_query_primitives(
                                             "(see engine:metrics \"query:query-epoch-stats\")");
         return matches;
     });
+}
 
+// Issue #5031: epoch_stats registration phase.
+void register_workspace_query_epoch_stats_parts(WorkspaceQueryPrims& P, PrimRegistrar add) {
+    auto& ws = P.ws;
+    auto& mev = P.mev;
+    auto& ev = P.ev;
+    auto& q_impls = P.q_impls;
+    auto& begin_query_epoch = P.begin_query_epoch;
+    auto& end_query_epoch = P.end_query_epoch;
+    auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
+    auto& make_query_result_hash = P.make_query_result_hash;
+    auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
+    auto& resolve_query_node_arg = P.resolve_query_node_arg;
+    auto pin_query_children = make_pin_query_children(P.ev);
     // Issue #2192: (engine:metrics "query:query-epoch-stats") /
     // (engine:metrics "query:last-epoch") — QueryEpoch snapshot contract.
     // Issue #2933: additive QueryResult counters on the same surface.
@@ -4801,6 +5278,61 @@ void register_workspace_query_primitives(
     ObservabilityPrims::register_stats_impl("query:query-epoch-stats", query_epoch_stats_fn);
     // Alias: Agents looking for query:last-epoch (AC sketch).
     ObservabilityPrims::register_stats_impl("query:last-epoch", query_epoch_stats_fn);
+}
+
+void register_workspace_query_primitives(
+    PrimRegistrar add, std::shared_mutex& workspace_mtx, aura::ast::FlatAST*& workspace_flat,
+    aura::ast::StringPool*& workspace_pool, void*& type_registry,
+    std::vector<std::string>& keyword_table, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, aura::ast::ASTArena*& temp_arena,
+    std::unordered_map<std::uint64_t, std::vector<aura::ast::NodeId>>& tag_arity_index,
+    // Issue #371: shared_mutex around tag_arity_index. See
+    // WorkspaceQueryState::tag_arity_index_mtx above.
+    std::shared_mutex& tag_arity_index_mtx, std::function<aura::ast::StringPool*()> canonical_pool,
+    std::function<void()> build_tag_arity_index, MakeErrorVal mev, Evaluator& ev) {
+    // Issue #2628: private PrimFn table for op-dispatch (not public names).
+    auto q_impls = std::make_shared<std::unordered_map<std::string, PrimFn>>();
+
+    WorkspaceQueryState ws{workspace_mtx,
+                           workspace_flat,
+                           workspace_pool,
+                           type_registry,
+                           keyword_table,
+                           pairs,
+                           string_heap,
+                           temp_arena,
+                           tag_arity_index,
+                           tag_arity_index_mtx,
+                           canonical_pool,
+                           build_tag_arity_index,
+                           ev};
+
+    WorkspaceQueryPrims P{ws, mev, ev, q_impls};
+    build_workspace_query_epoch_prims(P);
+    build_workspace_query_result_hash_prims(P);
+    build_workspace_query_finish_prims(P);
+    build_workspace_query_resolve_prims(P);
+
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_workspace_query_core_parts(P, add);
+    register_workspace_query_tree_parts(P, add);
+    register_workspace_query_handle_parts(P, add);
+    register_workspace_query_stable_ref_parts(P, add);
+    register_workspace_query_ensure_ref_parts(P, add);
+    register_workspace_query_ref_valid_parts(P, add);
+    register_workspace_query_lookup_parts(P, add);
+    register_workspace_query_lookup_nav_parts(P, add);
+    register_workspace_query_filter_parts(P, add);
+    register_workspace_query_node_shape_parts(P, add);
+    register_workspace_query_index_parts(P, add);
+    register_workspace_query_marker_parts(P, add);
+    register_workspace_query_provenance_parts(P, add);
+    register_workspace_query_hygiene_parts(P, add);
+    register_workspace_query_pattern_parts(P, add);
+    register_workspace_query_provenance_of_parts(P, add);
+    register_workspace_query_narrowing_parts(P, add);
+    register_workspace_query_dispatch_parts(P, add);
+    register_workspace_query_epoch_stats_parts(P, add);
 }
 
 } // namespace aura::compiler::primitives_detail

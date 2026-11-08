@@ -1,0 +1,89 @@
+;; Issue #5031: register_workspace_query_primitives is peeled into
+;; per-responsibility phases (find/children, stable-ref, ensure-ref, lookup,
+;; filter, node shape, index, marker, provenance, hygiene, pattern, dispatch).
+;; Primitive names, registration order, lambda capture lifetimes and the
+;; query:* stats payload keys must not move.
+(require "std/io" all:)
+
+(define fails 0)
+(define (check pred msg)
+  (if pred
+      #t
+      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+
+(define r 0)
+(define c 0)
+
+;; ── workspace setup ─────────────────────────────────────────────────
+(set-code "(define (sq x) (* x x)) (define-hygienic-macro (dbl y) (* y 2)) (dbl 3) (define x 5) (if (> x 2) (sq x) 0)")
+(eval-current)
+(set! r (query:root))
+(set! c (car (query :children r)))
+
+;; ── find / children / parent phase ──────────────────────────────────
+(check (integer? r) "query:root")
+(check (list? (query :find "sq")) "query:find")
+(check (list? (query :children r)) "query:children")
+(check (list? (query :children-stable r)) "query:children-stable")
+(check (list? (query :parent c)) "query:parent")
+(check (list? (query :parent-stable c)) "query:parent-stable")
+(check (pair? (query :node r)) "query:node")
+(check (list? (query:node-type "Call")) "query:node-type")
+(check (string? (query:node-marker r)) "query:node-marker")
+
+;; ── stable-ref / ensure-ref / ref-valid phase ───────────────────────
+(check (pair? (query:stable-ref r)) "query:stable-ref")
+(check (hash? (query:ensure-ref r)) "query:ensure-ref")
+(check (boolean? (query:ref-valid? (query:stable-ref r))) "query:ref-valid?")
+
+;; ── name lookup phase (defines / calls / code / where) ──────────────
+(check (list? (query:defines)) "query:defines")
+(check (list? (define-lookup "sq")) "define-lookup")
+(check (list? (query:calls "sq")) "query:calls")
+(check (list? (query:node-types)) "query:node-types")
+(check (string? (query:code)) "query:code")
+(check (pair? (query:where :callee "sq")) "query:where")
+
+;; ── filter phase (keyword parse + predicate match helpers) ──────────
+(check (list? (query:filter (query:where :node-type "Define"))) "query:filter")
+(check (list? (query:filter (query:where :node-type "Define")
+                             (query:where :defined-by "sq")))
+       "query:filter two predicates")
+(check (list? (query:filter (query:where :callee "sq"))) "query:filter :callee")
+(check (list? (query:filter (query:where :node-type "Call")
+                            :include-macro-introduced #t))
+       "query:filter hygiene opt-in")
+
+;; ── index / marker / provenance / narrowing phase ───────────────────
+(check (list? (query:by-marker "User")) "query:by-marker")
+(check (list? (query:defines-by-marker "User")) "query:defines-by-marker")
+(check (list? (query:calls-by-marker "User")) "query:calls-by-marker")
+(check (integer? (query:dirty-subtree r)) "query:dirty-subtree")
+(check (list? (query:provenance-of "x")) "query:provenance-of")
+(check (list? (query:provenance-of*)) "query:provenance-of*")
+
+;; ── pattern phase (call-object phases: parse/prepare/walk/finish) ───
+(check (list? (query:pattern "(define x 5)")) "query:pattern")
+(check (list? (query:pattern "(define x 5)" :with-markers #t))
+       "query:pattern :with-markers")
+(check (list? (query:pattern "(define x 5)" :strict-arity #t))
+       "query:pattern :strict-arity")
+(check (list? (query:pattern "(define ...)")) "query:pattern wildcard")
+
+;; ── dispatch / result binding phase ────────────────────────────────
+(check (list? (query :find "sq")) "query dispatcher :find")
+(check (integer? (query :root)) "query dispatcher :root")
+(define qr (query:pattern "(define x 5)" :as-query-result #t))
+(check (hash? qr) "query:pattern :as-query-result")
+(check (boolean? (query:result-fresh? qr)) "query:result-fresh?")
+(check (list? (query:result-matches qr)) "query:result-matches")
+
+;; ── epoch stats phase ──────────────────────────────────────────────
+(check (hash? (stats:get "query:query-epoch-stats")) "query:query-epoch-stats")
+(check (hash? (stats:get "query:last-epoch")) "query:last-epoch")
+(check (not (void? (stats:get "query:marker-stats"))) "query:marker-stats")
+(check (not (void? (stats:get "query:reflect-node-members"))) "query:reflect-node-members")
+
+(if (= fails 0)
+    (display "workspace query split ok\n")
+    (error "workspace query split FAILED" fails))
