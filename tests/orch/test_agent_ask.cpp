@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <print>
 #include <string>
 #include <string_view>
@@ -704,6 +705,67 @@ int run_test_agent_ask() {
               "4731 AC1: the helper serializes on keyword_table_mtx_");
         CHECK(ef_src4731.find("std::scoped_lock kw_lock(keyword_table_mtx_);") != std::string::npos,
               "4731 AC1: the interpreter intern path takes keyword_table_mtx_");
+    }
+
+    // ── #5053: the body must not run before the handle is published ──
+    // The Aura spawn prim registers the agent's NAME in the name table AFTER
+    // the body fiber is scheduled. A worker body that looks itself up by name
+    // (orch:agent-recv "<own name>") could run first and fail with
+    // "unknown agent" — the body died and every ask to it timed out. The
+    // publication gate closes that window.
+    {
+        std::println("\n--- #5053: agent body waits for the publication gate ---");
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        auto gate = std::make_shared<aura::orch::AgentPublishGate>();
+        std::atomic<bool> body_ran{false};
+        AgentSpec spec;
+        spec.name = "gate5053";
+        spec.attach_mailbox = true;
+        spec.mailbox_high_water = 16;
+        spec.mutation_boundary = false;
+        spec.publish_gate = gate;
+        spec.body = [&body_ran] { body_ran.store(true, std::memory_order_release); };
+        auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok, "5053: gated spawn ok");
+        // The gate is NOT released yet: the body must not have run.
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        CHECK(!body_ran.load(std::memory_order_acquire),
+              "5053: the body waits until the handle is published");
+        // Release: the body may run now.
+        gate->release(true);
+        for (int i = 0; i < 200 && !body_ran.load(std::memory_order_acquire); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        CHECK(body_ran.load(std::memory_order_acquire),
+              "5053: the body runs after the gate is released");
+        // A cancelled gate must keep the body from running at all.
+        {
+            auto gate2 = std::make_shared<aura::orch::AgentPublishGate>();
+            std::atomic<bool> body2_ran{false};
+            AgentSpec spec2;
+            spec2.name = "gate5053b";
+            spec2.attach_mailbox = true;
+            spec2.mailbox_high_water = 16;
+            spec2.mutation_boundary = false;
+            spec2.publish_gate = gate2;
+            spec2.body = [&body2_ran] { body2_ran.store(true, std::memory_order_release); };
+            auto h2 = spawn_agent_with_mailbox(sched, std::move(spec2));
+            CHECK(h2.ok, "5053: cancelled spawn ok");
+            gate2->release(false);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            CHECK(!body2_ran.load(std::memory_order_acquire),
+                  "5053: a cancelled spawn never runs its body");
+        }
+        // Source-cite: the gate is wired on the spawn paths.
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        const auto scope_src = read_file("src/orch/agent_scope.h");
+        const auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(spawn_src.find("AgentPublishGate") != std::string::npos,
+              "5053: agent_spawn.h defines / honours the publication gate");
+        CHECK(scope_src.find("publish_gate") != std::string::npos,
+              "5053: agent_scope.h gates the scope spawn");
+        CHECK(prim_src.find("publish_gate") != std::string::npos,
+              "5053: the spawn primitive publishes the handle");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

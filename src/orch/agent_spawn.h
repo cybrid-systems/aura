@@ -2310,9 +2310,36 @@ inline AgentHandle agent_import_handoff(HandoffToken tok, void* dst_ev,
     return h;
 }
 
+// Issue #5053: publication gate for an agent body.
+//
+// The Aura spawn prim registers the agent's NAME in the per-Evaluator name
+// table (AgentNameTable) AFTER the body fiber has been scheduled. A worker
+// body that looks itself up by name (orch:agent-recv "<own name>") could
+// therefore run before the name existed and fail with "unknown agent" —
+// the body died and every ask to it timed out.
+//
+// The gate closes that window: the body waits at its first instruction until
+// the caller published the handle (state = Run) or cancelled the spawn
+// (state = Cancel). A body whose gate is never released must not hang, so
+// the wait is bounded and falls through to running the body.
+struct AgentPublishGate {
+    enum class State : int { Waiting = 0, Run = 1, Cancel = 2 };
+    std::atomic<int> state{static_cast<int>(State::Waiting)};
+    void release(bool run) noexcept {
+        state.store(static_cast<int>(run ? State::Run : State::Cancel), std::memory_order_release);
+    }
+    [[nodiscard]] bool run() const noexcept {
+        return state.load(std::memory_order_acquire) != static_cast<int>(State::Cancel);
+    }
+};
+
 struct AgentSpec {
     std::string name;
     std::function<void()> body; // required for spawn
+    // Issue #5053: when set, the body waits for the caller to publish the
+    // handle (see AgentPublishGate) before it runs its first instruction.
+    // Null (the C++ host path) = no wait.
+    std::shared_ptr<AgentPublishGate> publish_gate;
     // Issue #4851: start this body on the worker's FIFO start-order queue
     // (scope-spawn siblings begin in spawn order instead of LIFO).
     bool start_fifo = false;
@@ -3115,10 +3142,15 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
     auto body_acq_rej = std::make_shared<std::atomic<std::uint8_t>>(0);
     h.body_acquire_rejected_slot = body_acq_rej;
     const bool start_fifo = spec.start_fifo;
+    // Issue #5053: the Aura spawn prim publishes the handle in the name
+    // table AFTER this fiber is scheduled. Without the gate the body can run
+    // first and its own name lookup (orch:agent-recv "<own name>") fails
+    // with "unknown agent".
+    auto publish_gate = spec.publish_gate;
     serve::Fiber* f = sched.spawn(
         [body = std::move(body), mb, attach, live, coop, progress_clock = want_progress_clock,
          register_soft, body_acq_rej, pin_ev = pending_body_pin.ev,
-         pin_token = pending_body_pin.token]() mutable {
+         pin_token = pending_body_pin.token, publish_gate]() mutable {
             // Issue #4725: release the pending-body pin once the body has been
             // applied -- also on the try_acquire skip path and when the
             // closure is no longer live. Declared first so it runs LAST: the
@@ -3131,6 +3163,21 @@ inline std::string spawn_tenant_spoof_error(std::uint64_t requested, std::uint64
                         aura_fiber_release_pending_body(ev, token);
                 }
             } pin_release{{}, pin_ev, pin_token};
+            // Issue #5053: wait until the caller published the handle (or
+            // cancelled the spawn). The wait is bounded: a caller that never
+            // releases the gate must not hang the body.
+            if (publish_gate) {
+                const auto deadline =
+                    std::chrono::steady_clock::now() + std::chrono::milliseconds(2000);
+                while (publish_gate->state.load(std::memory_order_acquire) ==
+                       static_cast<int>(AgentPublishGate::State::Waiting)) {
+                    if (std::chrono::steady_clock::now() >= deadline)
+                        break;
+                    std::this_thread::sleep_for(std::chrono::microseconds(50));
+                }
+                if (!publish_gate->run())
+                    return; // cancelled spawn: the body never runs
+            }
             // Issue #2540: register fiber-local coop state for agent_poll().
             struct CoopReg {
                 std::uint64_t fid = 0;

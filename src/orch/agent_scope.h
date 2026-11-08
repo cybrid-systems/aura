@@ -588,7 +588,14 @@ public:
             failed.quota_dimension = serve::parallel_orch::kSerializedReasonMissingOrOverlapKeys;
             return failed;
         }
+        // Issue #5053: the body must not run before the handle is in
+        // handles_ — a scope body that looks itself up by name
+        // (orch:agent-recv "<own name>") would race the registration.
+        auto publish_gate = std::make_shared<AgentPublishGate>();
+        spec.publish_gate = publish_gate;
         handles_.emplace_back(spawn_agent_with_mailbox(*sched_, spec));
+        // Issue #5053: the handle is published — the body may run now.
+        publish_gate->release(true);
         // Copy the spec for re-spawn. AgentSpec's body is a
         // std::function (cheap to copy; the body closure is shared
         // by handle, so the new spawn reuses the same closure
@@ -2046,7 +2053,12 @@ private:
         }
         if (policy.restart_backoff_ms > 0)
             fiber_sleep_ms(policy.restart_backoff_ms);
+        // Issue #5053: same publication gate as the first spawn — the
+        // restarted body must not run before the scope holds its handle.
+        std::shared_ptr<AgentPublishGate> publish_gate = std::make_shared<AgentPublishGate>();
+        specs_[i].publish_gate = publish_gate;
         auto nh = spawn_agent_with_mailbox(*sched_, specs_[i]);
+        publish_gate->release(nh.ok);
         if (!nh.ok) {
             g_orch_module_stats.agent_restart_spawn_denied_total.fetch_add(
                 1, std::memory_order_relaxed);
