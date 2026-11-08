@@ -108,11 +108,17 @@ static void ac4404_type_registry_compact_fence() {
               note_at != std::string::npos,
           "4404 idle gate wraps compact");
     CHECK(null_at < gate_at && gate_at < note_at, "4404 null check then gate then bump");
-    const auto helper = mem.find("auto with_arena_compact_idle");
-    CHECK(helper != std::string::npos && helper < add, "4404 helper is above the primitive");
-    if (helper != std::string::npos && helper < add) {
-        CHECK(mem.substr(helper, add - helper).find("note_type_registry_content_compacted") ==
-                  std::string::npos,
+    // Issue #5033: the idle gate is peeled out of the registration body, so the
+    // helper may be a lambda or a part function; check its own body.
+    auto helper = mem.find("auto with_arena_compact_idle");
+    if (helper == std::string::npos)
+        helper = mem.find("with_arena_compact_idle(");
+    CHECK(helper != std::string::npos, "4404 helper is above the primitive");
+    if (helper != std::string::npos) {
+        const auto hend = mem.find("\n}\n", helper);
+        const auto hbody =
+            mem.substr(helper, hend == std::string::npos ? std::string::npos : hend - helper);
+        CHECK(hbody.find("note_type_registry_content_compacted") == std::string::npos,
               "4404 idle return does not bump");
     }
 
