@@ -4419,7 +4419,11 @@ void InferenceEngine::init_primitive_env_uncached() {
 void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId Float, TypeId String,
                                                TypeId Dyn, TypeId Void, TypeId Vector,
                                                TypeId Hash) {
-    register_primitive("mutate:rebind", {String, String}, Dyn);
+    // Issue #5056: the runtime takes (name, code, [summary], [validate
+    // type-name]), so the second String is not the last parameter. Dotted
+    // rest gives the 2-argument lower bound; optional_max below caps it at
+    // 4 so a 3-argument (format …) summary call does not report arity.
+    register_primitive("mutate:rebind", {String, String, String}, Dyn, true);
     register_primitive("mutate:replace-type", {Int, String}, Dyn);
     register_primitive("mutate:replace-value", {Int, Dyn, String}, Dyn);
     register_primitive("mutate:set-body", {String, String}, Dyn);
@@ -4497,6 +4501,10 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     register_primitive("string-index", {String, String, Int}, Int);
     register_primitive("string->number", {String}, Dyn);
     register_primitive("string->number", {String, Int}, Int, true);
+    // Issue #5056: (format template args…) -> String. It was unbound, so
+    // every call came back Any and a format result passed to a String slot
+    // (mutate:rebind's second argument) printed a false gradual warning.
+    register_primitive("format", {String, Dyn}, String, true);
 
     // Pair operations
     register_primitive("cons", {Dyn, Dyn}, Dyn);
@@ -6600,6 +6608,10 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                         (cname == "tcp-recv" && ft.args.size() == 2) ||
                         (cname == "tcp-listen" && ft.args.size() == 2))
                         optional_max = ft.args.size();
+                    // Issue #5056: (mutate:rebind name code [summary]
+                    // [validate type-name]) — two optional trailing args.
+                    else if (cname == "mutate:rebind" && ft.args.size() == 3)
+                        optional_max = 4;
                 }
                 if (num_args < fixed) {
                     auto msg = std::string("call '") + std::string(pool.resolve(callee_v.sym_id)) +
@@ -8038,7 +8050,13 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
     }
 
     auto cond_id = v.child(0);
-    check_flat(flat, pool, cond_id, reg_.bool_type());
+    // Issue #5056: an if condition is a truthiness position — the runtime
+    // treats only #f as false, so any value type is usable. Requiring Bool
+    // rejected the gradual Any that (and …) / (or …) produce (their result
+    // is the last value, not a Bool) and printed a false
+    // "expected Bool, got Any" warning. Synthesize the condition and keep
+    // the occurrence narrowing below; the sub-expression is still checked.
+    (void)synthesize_flat(flat, pool, cond_id, flat.get(cond_id));
 
     if (v.children.size() < 2) {
         last_if_narrowing_ = 0;
@@ -9184,9 +9202,10 @@ void InferenceEngine::check_flat_if(FlatAST& flat, StringPool& pool, NodeId id, 
         return;
     auto cond_id = v.child(0);
     auto then_id = v.child(1);
-    // Condition must be Bool
-    auto cond_type = synthesize_flat(flat, pool, cond_id, flat.get(cond_id));
-    cs_.consistent_unify(cond_type, reg_.bool_type());
+    // Issue #5056: truthiness position — any condition type is usable
+    // (only #f is false at runtime). Do not unify with Bool here: gradual
+    // Any from (and …) / (or …) is not a bool-typed value.
+    (void)synthesize_flat(flat, pool, cond_id, flat.get(cond_id));
     // Issue #283: extract Occurrence Typing narrowing on the
     // condition. Mirrors the synthesize_flat_if path
     // (line ~2493) but in check-mode we only APPLY the
