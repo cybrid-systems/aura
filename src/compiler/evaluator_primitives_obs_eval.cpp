@@ -3242,8 +3242,8 @@ void ObservabilityPrims::register_eval_p21(PrimRegistrar add, Evaluator& ev) {
         });
 }
 
-// Issue #909 part 22 (orig lines 3291-3411)
-void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
+// Issue #5031: (query:gc-safepoint-deferral-stats) registration phase.
+void register_eval_p22_gc_safepoint_deferral_stats(Evaluator& ev, auto& string_heap) {
 
     // Issue #646: query:gc-safepoint-deferral-stats —
     // Agent-discoverable structured dashboard for the GC
@@ -3309,7 +3309,7 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
     // + arena pressure + TSan coverage from the issue body
     // — separate follow-ups.
     ObservabilityPrims::register_stats_impl(
-        "query:gc-safepoint-deferral-stats", [&ev](const auto&) -> EvalValue {
+        "query:gc-safepoint-deferral-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             // outermost-deferral: new foundation atomic
             // (0 until AC1 outermost depth==1 wire-up).
             const std::uint64_t outermost_deferral =
@@ -3348,7 +3348,7 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -3362,8 +3362,12 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
             insert_kv("inner-proceeded", static_cast<std::int64_t>(inner_proceeded));
             insert_kv("backoff-trigger", static_cast<std::int64_t>(backoff_trigger));
             insert_kv("schema", 646);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #5031: (query:gc-compact-stats) registration phase.
+void register_eval_p22_gc_compact_stats(Evaluator& ev, auto& string_heap) {
 
     // Issue #2001: query:gc-compact-stats — pointer remapping
     // + compaction metrics for compact_sweep. Reads from
@@ -3372,7 +3376,7 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
     // shrink + remap tables are built). schema=2001 marks the Phase 2
     // remap walk landed (compact + remap, beyond report-dead).
     ObservabilityPrims::register_stats_impl(
-        "query:gc-compact-stats", [&ev](const auto&) -> EvalValue {
+        "query:gc-compact-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             auto* m = ev.compiler_metrics()
                           ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           : nullptr;
@@ -3398,7 +3402,7 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -3433,14 +3437,18 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mark-size-provider-wired",
                       static_cast<std::int64_t>(
                           aura::serve::g_mark_size_provider_wired.load(std::memory_order_relaxed)));
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #5031: (query:gc-mark-size-stats) registration phase.
+void register_eval_p22_gc_mark_size_stats(Evaluator& ev, auto& string_heap) {
 
     // Issue #2084: query:gc-mark-size-stats — whether mark_from_roots received
     // real heap sizes this process (vs root-max fallback). Agents use this to
     // confirm full-heap MarkBitVector coverage under long-running mutate+GC.
     ObservabilityPrims::register_stats_impl(
-        "query:gc-mark-size-stats", [&ev](const auto&) -> EvalValue {
+        "query:gc-mark-size-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             (void)ev;
             // Capacity power-of-two; #2117 adds atomic MarkBitVector keys.
             auto* ht = FlatHashTable::create(query_hash_capacity_for(23));
@@ -3460,7 +3468,7 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -3501,8 +3509,12 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mark-bitvector-relaxed-order", 1); // STW fence is external
             insert_kv("schema-2117", 2117);
             insert_kv("issue-2117", 2117);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #5031: (query:envframe-lifetime-stats) registration phase.
+void register_eval_p22_envframe_lifetime_stats(Evaluator& ev, auto& string_heap) {
 
     // Issue #2003: query:envframe-lifetime-stats — EnvFrame explicit
     // lifetime protocol RAII guard run counter. Tracks 3 wire-up sites
@@ -3511,7 +3523,7 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
     // schema=2003 marks the explicit protocol landed (vs implicit drift
     // between the 3 sites pre-#2003).
     ObservabilityPrims::register_stats_impl(
-        "query:envframe-lifetime-stats", [&ev](const auto&) -> EvalValue {
+        "query:envframe-lifetime-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             auto* m = ev.compiler_metrics()
                           ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           : nullptr;
@@ -3539,7 +3551,7 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -3617,8 +3629,19 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
             insert_kv("envframe-cross-evaluator-skip-wired", 1);
             insert_kv("schema-3535", kEnvFrameCrossEvaluatorSkipIssue);
             insert_kv("issue-3535", kEnvFrameCrossEvaluatorSkipIssue);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #909 part 22 (orig lines 3291-3411)
+void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
+    (void)add;
+    auto& string_heap = ev.string_heap_;
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_eval_p22_gc_safepoint_deferral_stats(ev, string_heap);
+    register_eval_p22_gc_compact_stats(ev, string_heap);
+    register_eval_p22_gc_mark_size_stats(ev, string_heap);
+    register_eval_p22_envframe_lifetime_stats(ev, string_heap);
 }
 
 // Issue #909 part 23 (orig lines 3412-3552)
@@ -8909,8 +8932,8 @@ void ObservabilityPrims::register_eval_p46(PrimRegistrar add, Evaluator& ev) {
         });
 }
 
-// Issue #909 part 47 (orig lines 6159-6284)
-void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
+// Issue #5031: (query:value-dispatch-stats) registration phase.
+void register_eval_p47_value_dispatch_stats(Evaluator& ev, auto& string_heap) {
 
     // Issue #723 / #571 / #1622 / #3906: (query:value-dispatch-stats) — Value v2
     // dispatch + consteval table + Contracts observability (non-duplicative
@@ -8923,7 +8946,7 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
     //   - classify-calls / consteval-table-wired / hotpath-contracts-wired
     //   - schema == 1622 (lineage 723|571)
     ObservabilityPrims::register_stats_impl(
-        "query:value-dispatch-stats", [&ev](const auto&) -> EvalValue {
+        "query:value-dispatch-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // #1622: ~14 keys — create(32) headroom.
@@ -8940,7 +8963,7 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
+                    auto kidx = string_heap.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -8959,7 +8982,7 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return query_hash_finish(ht, string_heap, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -9053,6 +9076,11 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
+}
+
+// Issue #5031: (query:mutation-boundary-coverage-stats) registration phase.
+void register_eval_p47_mutation_boundary_coverage_stats(Evaluator& ev, auto& string_heap,
+                                                        std::atomic<bool>& held) {
 
     // Issue #1444: (query:mutation-boundary-coverage-stats) —
     // surface the cross-fiber Guard-coverage telemetry: naked-mutate
@@ -9060,7 +9088,8 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
     // event, and the strict-mode / threshold knobs (so callers can verify
     // policy is engaged without re-reading CompilerMetrics directly).
     ObservabilityPrims::register_stats_impl(
-        "query:mutation-boundary-coverage-stats", [&ev](const auto&) -> EvalValue {
+        "query:mutation-boundary-coverage-stats",
+        [&ev, &string_heap, &held](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(query_hash_capacity_for(35));
@@ -9076,7 +9105,7 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
+                    auto kidx = string_heap.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -9095,7 +9124,7 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return query_hash_finish(ht, string_heap, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -9108,8 +9137,7 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t guard_enforced = m ? load(m->mutate_guard_enforced) : 0;
             const std::int64_t boundary_depth =
                 static_cast<std::int64_t>(Evaluator::mutation_boundary_depth());
-            const std::int64_t boundary_held =
-                ev.mutation_boundary_held_.load(std::memory_order_relaxed) ? 1 : 0;
+            const std::int64_t boundary_held = held.load(std::memory_order_relaxed) ? 1 : 0;
             const std::int64_t threshold_us = m ? load(m->long_mutation_threshold_us) : 500'000;
             const std::int64_t strict_mode = m ? load(m->long_mutation_strict_mode) : 0;
             const std::int64_t starvation_prevented = m ? load(m->starvation_prevented_count) : 0;
@@ -9176,13 +9204,17 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
+}
+
+// Issue #5031: (query:orchestration-steal-stats) registration phase.
+void register_eval_p47_orchestration_steal_stats(Evaluator& ev, auto& string_heap) {
 
     // Issue #1445 / #1492 / #1633: (query:orchestration-steal-stats) —
     // work-stealing + inner-boundary defer + starvation mitigation.
     // Schema **1633** (lineage 1492/1445): long-mutation hook wired to
     // apply_starvation_mitigation; mandate flags for steal loop.
     ObservabilityPrims::register_stats_impl(
-        "query:orchestration-steal-stats", [&ev](const auto&) -> EvalValue {
+        "query:orchestration-steal-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // Capacity must be power-of-two (open-address mask hcap-1).
@@ -9200,7 +9232,7 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
+                    auto kidx = string_heap.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -9219,7 +9251,7 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return query_hash_finish(ht, string_heap, overflowed, ev);
             };
             auto& s = ::aura::serve::metrics::adaptive_steal_stats();
             auto load = [&](std::atomic<std::uint64_t>& a) -> std::int64_t {
@@ -9300,6 +9332,17 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
+}
+
+// Issue #909 part 47 (orig lines 6159-6284)
+void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
+    (void)add;
+    auto& string_heap = ev.string_heap_;
+    std::atomic<bool>& held = ev.mutation_boundary_held_;
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_eval_p47_value_dispatch_stats(ev, string_heap);
+    register_eval_p47_mutation_boundary_coverage_stats(ev, string_heap, held);
+    register_eval_p47_orchestration_steal_stats(ev, string_heap);
 }
 
 
@@ -16085,8 +16128,8 @@ void ObservabilityPrims::register_eval_p93(PrimRegistrar add, Evaluator& ev) {
         });
 }
 
-// Issue #909 part 94 (orig lines 10763-10835)
-void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
+// Issue #5031: (query:soa-adoption-stats) registration phase.
+void register_eval_p94_soa_adoption_stats(Evaluator& ev, auto& string_heap, auto& alloc_lock) {
 
     // (query:soa-adoption-stats) — Issue #463: SoA Phase 2
     // adoption observability. Returns a 3-field hash:
@@ -16105,12 +16148,12 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
     // scaffold; subsequent cycles replace it with
     // SoA-aware Pass overloads).
     ObservabilityPrims::register_stats_impl(
-        "query:soa-adoption-stats", [&ev](const auto&) -> EvalValue {
+        "query:soa-adoption-stats", [&ev, &string_heap, &alloc_lock](const auto&) -> EvalValue {
             std::uint64_t funcs = 0;
             std::uint64_t instrs = 0;
             std::uint64_t views = 0;
-            if (ev.compiler_metrics_) {
-                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            if (ev.compiler_metrics()) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
                 funcs = m->soa_functions_visited.load(std::memory_order_relaxed);
                 instrs = m->soa_instructions_visited.load(std::memory_order_relaxed);
                 views = m->aos_view_built_count.load(std::memory_order_relaxed);
@@ -16133,7 +16176,7 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
+                    auto kidx = string_heap.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -16156,7 +16199,7 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                 {
                     // Issue #4860: unlocked size()+push_back raced a concurrent publish
                     // (double free). Index read, push and stamp are one critical section.
-                    std::scoped_lock slock(ev.alloc_storage_lock_);
+                    std::scoped_lock slock(alloc_lock);
                     hidx = g_hash_tables.size();
                     g_hash_tables.push_back(ht);
                     aura_hash_stamp_new_table_owner();
@@ -16168,8 +16211,8 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
             std::uint64_t skipped = 0;
             std::uint64_t migrate = 0;
             std::uint64_t view_hits = 0;
-            if (ev.compiler_metrics_) {
-                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            if (ev.compiler_metrics()) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
                 // Mirror live pass_manager / soa_view atomics into CompilerMetrics.
                 m->concept_enforcement_hits_total.store(
                     aura::compiler::concept_enforcement_hits_total.load(std::memory_order_relaxed),
@@ -16226,8 +16269,8 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
             const auto cap_d = static_cast<std::int64_t>(
                 im::capture_dirty_marks_total.load(std::memory_order_relaxed));
             const auto families = static_cast<std::int64_t>(im::consumer_families_active());
-            if (ev.compiler_metrics_) {
-                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+            if (ev.compiler_metrics()) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
                 m->ir_soa_dual_emit_bridge_count.store(static_cast<std::uint64_t>(dual_bridge),
                                                        std::memory_order_relaxed);
             }
@@ -16320,11 +16363,15 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
+}
+
+// Issue #5031: (query:soa-view-enforcement-stats) registration phase.
+void register_eval_p94_soa_view_enforcement_stats(Evaluator& ev, auto& string_heap) {
 
     // Issue #1517 / #1619: dedicated enforcement surface for Agents.
     ObservabilityPrims::register_stats_impl(
-        "query:soa-view-enforcement-stats", [&ev](const auto&) -> EvalValue {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+        "query:soa-view-enforcement-stats", [&ev, &string_heap](const auto&) -> EvalValue {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // #1619/#1918: ~25 keys — need headroom (create(32) can drop).
@@ -16341,7 +16388,7 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
+                    auto kidx = string_heap.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -16360,7 +16407,7 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return query_hash_finish(ht, string_heap, overflowed, ev);
             };
             // Refresh from live atomics.
             const auto enforce =
@@ -16495,6 +16542,16 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
+}
+
+// Issue #909 part 94 (orig lines 10763-10835)
+void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
+    (void)add;
+    auto& string_heap = ev.string_heap_;
+    auto& alloc_lock = ev.alloc_storage_lock_;
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_eval_p94_soa_adoption_stats(ev, string_heap, alloc_lock);
+    register_eval_p94_soa_view_enforcement_stats(ev, string_heap);
 }
 
 // Issue #909 part 95 (orig lines 10836-10921)
@@ -17456,8 +17513,8 @@ void ObservabilityPrims::register_eval_p102(PrimRegistrar add, Evaluator& ev) {
     });
 }
 
-// Issue #909 part 103 (orig lines 11524-11637)
-void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
+// Issue #5031: (query:closure-stats) registration phase.
+void register_eval_p103_closure_stats(Evaluator& ev, auto& string_heap) {
 
     // (query:closure-stats) — Issue #428: unified closure
     // observability surface in the query: family. Returns
@@ -17491,110 +17548,117 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
     // return the same hash shape; the new one just adds
     // 2 bridge_epoch fields. The old primitive stays for
     // backward compat (existing tests use closure:stats).
-    ObservabilityPrims::register_stats_impl("query:closure-stats", [&ev](const auto&) -> EvalValue {
-        // Issue #2238: anonymous-AOT policy readers are file-scope extern C
-        // (aura_anonymous_aot_reject_total_v_read / aura_get_require_stable_id_for_aot).
-        // Reuse the same build_hash pattern as closure:stats.
-        // Inline here (instead of refactoring closure:stats to
-        // a helper) so the new primitive stays self-contained
-        // and easy to evolve independently.
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(22));
-            if (!ht)
-                return make_void();
-            bool overflowed = false;
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            for (auto& [k, v] : kv) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (char c : k)
-                    h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                auto kidx = ev.string_heap_.mint(k);
-                EvalValue key_ev = make_string(kidx);
-                bool inserted = false;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = v.val;
-                        ht->size++;
-                        inserted = true;
+    ObservabilityPrims::register_stats_impl(
+        "query:closure-stats", [&ev, &string_heap](const auto&) -> EvalValue {
+            // Issue #2238: anonymous-AOT policy readers are file-scope extern C
+            // (aura_anonymous_aot_reject_total_v_read / aura_get_require_stable_id_for_aot).
+            // Reuse the same build_hash pattern as closure:stats.
+            // Inline here (instead of refactoring closure:stats to
+            // a helper) so the new primitive stays self-contained
+            // and easy to evolve independently.
+            auto build_hash =
+                [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(22));
+                if (!ht)
+                    return make_void();
+                bool overflowed = false;
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                for (auto& [k, v] : kv) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (char c : k)
+                        h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
+                    auto kidx = string_heap.mint(k);
+                    EvalValue key_ev = make_string(kidx);
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
+                            meta[idx] = fp;
+                            keys[idx] = key_ev.val;
+                            vals[idx] = v.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        overflowed = true;
                         break;
                     }
                 }
-                if (!inserted) {
-                    overflowed = true;
-                    break;
-                }
+                return query_hash_finish(ht, string_heap, overflowed, ev);
+            };
+            std::uint64_t calls = 0, ffi_c = 0, tw_c = 0, ir_c = 0;
+            std::uint64_t bridge_c = 0, stale_c = 0;
+            std::uint64_t bridge_epoch_hits = 0, bridge_epoch_drifts = 0;
+            if (ev.compiler_metrics()) {
+                auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics());
+                calls = m->closure_calls_total.load(std::memory_order_relaxed);
+                ffi_c = m->closure_ffi_calls.load(std::memory_order_relaxed);
+                tw_c = m->closure_tw_calls.load(std::memory_order_relaxed);
+                ir_c = m->closure_ir_calls.load(std::memory_order_relaxed);
+                bridge_c = m->closure_bridge_calls.load(std::memory_order_relaxed);
+                stale_c = m->closure_stale_returns.load(std::memory_order_relaxed);
+                bridge_epoch_hits = m->bridge_epoch_hit_count_.load(std::memory_order_relaxed);
+                bridge_epoch_drifts =
+                    m->closure_stale_refresh_count_.load(std::memory_order_relaxed);
             }
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
-        };
-        std::uint64_t calls = 0, ffi_c = 0, tw_c = 0, ir_c = 0;
-        std::uint64_t bridge_c = 0, stale_c = 0;
-        std::uint64_t bridge_epoch_hits = 0, bridge_epoch_drifts = 0;
-        if (ev.compiler_metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
-            calls = m->closure_calls_total.load(std::memory_order_relaxed);
-            ffi_c = m->closure_ffi_calls.load(std::memory_order_relaxed);
-            tw_c = m->closure_tw_calls.load(std::memory_order_relaxed);
-            ir_c = m->closure_ir_calls.load(std::memory_order_relaxed);
-            bridge_c = m->closure_bridge_calls.load(std::memory_order_relaxed);
-            stale_c = m->closure_stale_returns.load(std::memory_order_relaxed);
-            bridge_epoch_hits = m->bridge_epoch_hit_count_.load(std::memory_order_relaxed);
-            bridge_epoch_drifts = m->closure_stale_refresh_count_.load(std::memory_order_relaxed);
-        }
-        std::int64_t bridge_pct =
-            calls > 0 ? static_cast<std::int64_t>((bridge_c * 100) / calls) : 0;
-        // Drift = stale-refreshes / (hits + drifts) * 100.
-        // 0 if no checks yet (avoids divide-by-zero in the
-        // dashboard, which would otherwise show NaN).
-        std::uint64_t total_epoch_checks = bridge_epoch_hits + bridge_epoch_drifts;
-        std::int64_t drift_pct =
-            total_epoch_checks > 0
-                ? static_cast<std::int64_t>((bridge_epoch_drifts * 100) / total_epoch_checks)
-                : 0;
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"calls-total", make_int(static_cast<std::int64_t>(calls))},
-            {"ffi-calls", make_int(static_cast<std::int64_t>(ffi_c))},
-            {"tw-calls", make_int(static_cast<std::int64_t>(tw_c))},
-            {"ir-calls", make_int(static_cast<std::int64_t>(ir_c))},
-            {"bridge-calls", make_int(static_cast<std::int64_t>(bridge_c))},
-            {"stale-returns", make_int(static_cast<std::int64_t>(stale_c))},
-            {"bridge-fraction-pct", make_int(bridge_pct)},
-            {"bridge-epoch-hits", make_int(static_cast<std::int64_t>(bridge_epoch_hits))},
-            {"bridge-epoch-drift-pct", make_int(drift_pct)},
-            // Issue #2238: anonymous AOT-bound closure policy surface.
-            // 5 new keys (AC2 metric + signal + lineage). Hash table
-            // size 32 already has room (9+5=14 keys, load ~44%).
-            // - anonymous-aot-reject-total: cumulative count from
-            //   g_anonymous_aot_reject_total (bumped in
-            //   aura_closure_set_name + aura_closure_check_aot_stable_id_policy
-            //   when policy is on AND closure is sid=0 + empty name).
-            // - require-stable-id-for-aot: live read of policy flag.
-            //   0 = permissive (legacy tests), 1 = strict (production).
-            //   Live read so Agent can detect env-driven toggles without
-            //   restart.
-            // - require-stable-id-wired=1: signal key, mirrors
-            //   `region-priority-throttle-wired=1` for #2132 +
-            //   `capture-remount-wired=1` for #2234 +
-            //   `storm-isolation-wired=1` for #2236 +
-            //   `rollback-wired=1` for #2237.
-            // - schema-2238 / issue-2238: schema lineage keys (per
-            //   #2093 MUST-stay-in-lockstep pattern).
-            {"anonymous-aot-reject-total",
-             make_int(static_cast<std::int64_t>(aura_anonymous_aot_reject_total_v_read()))},
-            {"require-stable-id-for-aot",
-             make_int(static_cast<std::int64_t>(aura_get_require_stable_id_for_aot()))},
-            {"require-stable-id-wired", make_int(1)},
-            {"schema-2238", make_int(2238)},
-            {"issue-2238", make_int(2238)},
-        };
-        return build_hash(kv);
-    });
+            std::int64_t bridge_pct =
+                calls > 0 ? static_cast<std::int64_t>((bridge_c * 100) / calls) : 0;
+            // Drift = stale-refreshes / (hits + drifts) * 100.
+            // 0 if no checks yet (avoids divide-by-zero in the
+            // dashboard, which would otherwise show NaN).
+            std::uint64_t total_epoch_checks = bridge_epoch_hits + bridge_epoch_drifts;
+            std::int64_t drift_pct =
+                total_epoch_checks > 0
+                    ? static_cast<std::int64_t>((bridge_epoch_drifts * 100) / total_epoch_checks)
+                    : 0;
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"calls-total", make_int(static_cast<std::int64_t>(calls))},
+                {"ffi-calls", make_int(static_cast<std::int64_t>(ffi_c))},
+                {"tw-calls", make_int(static_cast<std::int64_t>(tw_c))},
+                {"ir-calls", make_int(static_cast<std::int64_t>(ir_c))},
+                {"bridge-calls", make_int(static_cast<std::int64_t>(bridge_c))},
+                {"stale-returns", make_int(static_cast<std::int64_t>(stale_c))},
+                {"bridge-fraction-pct", make_int(bridge_pct)},
+                {"bridge-epoch-hits", make_int(static_cast<std::int64_t>(bridge_epoch_hits))},
+                {"bridge-epoch-drift-pct", make_int(drift_pct)},
+                // Issue #2238: anonymous AOT-bound closure policy surface.
+                // 5 new keys (AC2 metric + signal + lineage). Hash table
+                // size 32 already has room (9+5=14 keys, load ~44%).
+                // - anonymous-aot-reject-total: cumulative count from
+                //   g_anonymous_aot_reject_total (bumped in
+                //   aura_closure_set_name + aura_closure_check_aot_stable_id_policy
+                //   when policy is on AND closure is sid=0 + empty name).
+                // - require-stable-id-for-aot: live read of policy flag.
+                //   0 = permissive (legacy tests), 1 = strict (production).
+                //   Live read so Agent can detect env-driven toggles without
+                //   restart.
+                // - require-stable-id-wired=1: signal key, mirrors
+                //   `region-priority-throttle-wired=1` for #2132 +
+                //   `capture-remount-wired=1` for #2234 +
+                //   `storm-isolation-wired=1` for #2236 +
+                //   `rollback-wired=1` for #2237.
+                // - schema-2238 / issue-2238: schema lineage keys (per
+                //   #2093 MUST-stay-in-lockstep pattern).
+                {"anonymous-aot-reject-total",
+                 make_int(static_cast<std::int64_t>(aura_anonymous_aot_reject_total_v_read()))},
+                {"require-stable-id-for-aot",
+                 make_int(static_cast<std::int64_t>(aura_get_require_stable_id_for_aot()))},
+                {"require-stable-id-wired", make_int(1)},
+                {"schema-2238", make_int(2238)},
+                {"issue-2238", make_int(2238)},
+            };
+            return build_hash(kv);
+        });
+}
+
+// Issue #5031: (query:macro-fiber-hygiene) registration phase.
+void register_eval_p103_macro_fiber_hygiene(Evaluator& ev, auto& string_heap) {
 
     // Issue #2097 + Issue #2174: per-fiber hygiene metrics for Agent query under
     // concurrent self-evo / fiber-steal (refine Macro Hygiene review §7.2,
@@ -17605,7 +17669,8 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
     // fiber total), query observability, hygiene tracer, expand counters,
     // and MacroSelfEvo gate totals — all atomic loads (no heavy alloc).
     ObservabilityPrims::register_stats_impl(
-        "query:macro-fiber-hygiene", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        "query:macro-fiber-hygiene",
+        [&ev, &string_heap](std::span<const EvalValue> a) -> EvalValue {
             std::uint32_t fiber_id = 0;
             if (!a.empty() && is_int(a[0]))
                 fiber_id = static_cast<std::uint32_t>(as_int(a[0]));
@@ -17653,7 +17718,7 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
+                    auto kidx = string_heap.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -17672,7 +17737,7 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return query_hash_finish(ht, string_heap, overflowed, ev);
             };
             using namespace aura::compiler::macro_exp;
             // All values are atomic loads — zero allocation in the hot
@@ -17775,6 +17840,15 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
         });
 }
 
+// Issue #909 part 103 (orig lines 11524-11637)
+void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
+    (void)add;
+    auto& string_heap = ev.string_heap_;
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_eval_p103_closure_stats(ev, string_heap);
+    register_eval_p103_macro_fiber_hygiene(ev, string_heap);
+}
+
 
 using EvalValue = types::EvalValue;
 using PrimRegistrar = std::function_ref<void(std::string, PrimFn)>;
@@ -17816,13 +17890,13 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
-// Issue #909 part 104 (orig lines 11638-11700)
-void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
+// Issue #5031: (query:pass-concepts-stats) registration phase.
+void register_eval_p104_pass_concepts_stats(Evaluator& ev, auto& string_heap) {
 
     // (engine:metrics "query:pass-concepts-stats") — Issue #1577:
     // centralized concept_constraints inventory + import hits.
     ObservabilityPrims::register_stats_impl(
-        "query:pass-concepts-stats", [&ev](const auto&) -> EvalValue {
+        "query:pass-concepts-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             using namespace aura::compiler::pass_concepts;
             note_concept_constraints_import();
             auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
@@ -17833,7 +17907,7 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
             auto keys = ht->keys();
             auto vals = ht->values();
             auto hcap = ht->capacity;
-            const auto mod_kidx = ev.string_heap_.mint("aura.core.concept_constraints");
+            const auto mod_kidx = string_heap.mint("aura.core.concept_constraints");
             const std::pair<std::string, EvalValue> fields[] = {
                 {"phase", make_int(kConceptConstraintsPhase)},
                 {"concept-count", make_int(kPassConceptCount)},
@@ -17848,7 +17922,7 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 const auto fp = ::aura::compiler::hash::fingerprint(h);
-                auto kidx = ev.string_heap_.mint(k);
+                auto kidx = string_heap.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
@@ -17867,12 +17941,16 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                     break;
                 }
             }
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #5031: (query:render-pass-incremental-stats) registration phase.
+void register_eval_p104_render_pass_incremental_stats(Evaluator& ev, auto& string_heap) {
 
     // (engine:metrics "query:render-pass-incremental-stats") — Issue #1578.
     ObservabilityPrims::register_stats_impl(
-        "query:render-pass-incremental-stats", [&ev](const auto&) -> EvalValue {
+        "query:render-pass-incremental-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             using namespace aura::compiler::opt_registry;
             auto* ht = FlatHashTable::create(query_hash_capacity_for(18));
             if (!ht)
@@ -17902,7 +17980,7 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 const auto fp = ::aura::compiler::hash::fingerprint(h);
-                auto kidx = ev.string_heap_.mint(k);
+                auto kidx = string_heap.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
@@ -17921,15 +17999,19 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                     break;
                 }
             }
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #5031: (query:optimization-passes-stats) registration phase.
+void register_eval_p104_optimization_passes_stats(Evaluator& ev, auto& string_heap) {
 
     // (engine:metrics "query:optimization-passes-stats") — Issue #1576:
     // concrete optimization_passes registry + contract/pipeline counters.
     // Issue #2025 DeadCoercion layered keys; Issue #2106 cascade_skip +
     // DeadCoercion dirty-cone early-out (schema-2106).
     ObservabilityPrims::register_stats_impl(
-        "query:optimization-passes-stats", [&ev](const auto&) -> EvalValue {
+        "query:optimization-passes-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             using namespace aura::compiler::opt_registry;
             // #1576 + #2025 + #2106 + #2130 keys → 128 slots.
             auto* ht = FlatHashTable::create(query_hash_capacity_for(75));
@@ -17958,8 +18040,8 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
             const auto layered = ir_elided + ast_elided;
             const auto cascade_skip =
                 static_cast<std::int64_t>(aura::compiler::dirty::cascade_skip_subtree_visible());
-            CompilerMetrics* m = ev.compiler_metrics_
-                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                      : nullptr;
             const auto cascade_skip_metrics =
                 m ? static_cast<std::int64_t>(
@@ -18079,7 +18161,7 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 const auto fp = ::aura::compiler::hash::fingerprint(h);
-                auto kidx = ev.string_heap_.mint(k);
+                auto kidx = string_heap.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
@@ -18098,14 +18180,18 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                     break;
                 }
             }
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #5031: (query:dirty-cascade-stats) registration phase.
+void register_eval_p104_dirty_cascade_stats(Evaluator& ev, auto& string_heap) {
 
     // (engine:metrics "query:dirty-cascade-stats") — Issue #2063 / #2106 / #2191:
     // summary-dirty early-exit + type cone mirror observability.
     // register_stats_impl only (SlimSurface freeze: no new public prim name).
     ObservabilityPrims::register_stats_impl(
-        "query:dirty-cascade-stats", [&ev](const auto&) -> EvalValue {
+        "query:dirty-cascade-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             (void)aura::compiler::dirty::flush_dirty_skip_subtree_to_metrics();
             auto* ht = FlatHashTable::create(query_hash_capacity_for(36)); // #2191 / #3264 headroom
             if (!ht)
@@ -18118,8 +18204,8 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
             const auto load = [](std::atomic<std::uint64_t>& a) {
                 return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
             };
-            CompilerMetrics* m = ev.compiler_metrics_
-                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+            CompilerMetrics* m = ev.compiler_metrics()
+                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                      : nullptr;
             const auto skip_metrics =
                 m ? load(m->cascade_skip_subtree_total)
@@ -18195,7 +18281,7 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 const auto fp = ::aura::compiler::hash::fingerprint(h);
-                auto kidx = ev.string_heap_.mint(k);
+                auto kidx = string_heap.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
@@ -18214,8 +18300,12 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                     break;
                 }
             }
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #5031: (query:closure-epoch-concurrency-stats) registration phase.
+void register_eval_p104_closure_epoch_concurrency_stats(Evaluator& ev, auto& string_heap) {
 
     // (query:closure-epoch-concurrency-stats) — Issue #739:
     // atomic epoch visibility under fiber steal + invalidate.
@@ -18225,12 +18315,12 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
     //   - linear-violation-prevented: linear_violation_prevented_epoch_total
     //   - schema == 739
     ObservabilityPrims::register_stats_impl(
-        "query:closure-epoch-concurrency-stats", [&ev](const auto&) -> EvalValue {
+        "query:closure-epoch-concurrency-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             std::uint64_t stale_steal = 0;
             std::uint64_t fence_enforced = 0;
             std::uint64_t linear_prevented = 0;
-            if (ev.compiler_metrics_) {
-                auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics_);
+            if (ev.compiler_metrics()) {
+                auto* m = static_cast<struct CompilerMetrics*>(ev.compiler_metrics());
                 stale_steal = m->epoch_stale_steal_caught.load(std::memory_order_relaxed);
                 fence_enforced =
                     m->closure_epoch_fence_enforced_total.load(std::memory_order_relaxed);
@@ -18257,7 +18347,7 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 const auto fp = ::aura::compiler::hash::fingerprint(h);
-                auto kidx = ev.string_heap_.mint(k);
+                auto kidx = string_heap.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
@@ -18276,7 +18366,19 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                     break;
                 }
             }
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #909 part 104 (orig lines 11638-11700)
+void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
+    (void)add;
+    auto& string_heap = ev.string_heap_;
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_eval_p104_pass_concepts_stats(ev, string_heap);
+    register_eval_p104_render_pass_incremental_stats(ev, string_heap);
+    register_eval_p104_optimization_passes_stats(ev, string_heap);
+    register_eval_p104_dirty_cascade_stats(ev, string_heap);
+    register_eval_p104_closure_epoch_concurrency_stats(ev, string_heap);
 }
 } // namespace aura::compiler::primitives_detail
