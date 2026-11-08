@@ -63,9 +63,17 @@ public:
             std::fprintf(stdout, "\n");
             std::fflush(stdout);
         } else if (!aura::compiler::types::is_void(*r)) {
-            auto val = aura::compiler::format_value(
-                *r, cs_.evaluator().primitives().string_heap(), cs_.evaluator().pairs(), 0,
-                &cs_.evaluator().primitives(), cs_.evaluator().keyword_table());
+            // Issue #5049: an error VALUE (a refused `set-code`, `(car 5)`)
+            // printed a bare `<error>` and swallowed its cause. The file
+            // faces already read the cause through soft_error_message.
+            std::string val;
+            if (aura::compiler::types::is_error(*r) &&
+                !aura::compiler::types::is_string(*r))
+                val = cs_.evaluator().soft_error_message(*r);
+            else
+                val = aura::compiler::format_value(
+                    *r, cs_.evaluator().primitives().string_heap(), cs_.evaluator().pairs(), 0,
+                    &cs_.evaluator().primitives(), cs_.evaluator().keyword_table());
             std::fprintf(stdout, "%s\n", val.c_str());
             std::fflush(stdout);
         } else {
