@@ -8,9 +8,11 @@ the KEEP / ROLLBACK decision, the record fields and the no-focus path.
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -70,6 +72,36 @@ class Propose(unittest.TestCase):
         self.assertIn("ROLLBACK", r.stdout)
         defined = [line for line in r.stdout.splitlines() if line.startswith("(define guess")]
         self.assertEqual(defined[-1], "(define guess (lambda () 0))", r.stdout)
+
+    def test_fuel_exhaustion_rolls_back(self) -> None:
+        r = run_repl(
+            '(set-code "(define guess 0)")\n'
+            ":fuel 5000\n"
+            ':propose guess "(define guess (let loop ((i 0)) (loop i)))"\n'
+            ":src guess\n(quit)\n"
+        )
+        self.assertIn("ROLLBACK", r.stdout, r.stdout + r.stderr)
+        defined = [line for line in r.stdout.splitlines() if line.startswith("(define guess")]
+        self.assertEqual(defined[-1], "(define guess 0)", r.stdout)
+
+    def test_ctrl_c_during_the_candidate_rolls_back(self) -> None:
+        child = pexpect.spawn(str(AURA_BIN), ["repl"], timeout=30, env=env(), encoding="utf-8", codec_errors="replace")
+        try:
+            child.expect(r"> ")
+            child.sendline('(set-code "(define guess 0)")')
+            child.expect(r"> ")
+            child.sendline(":fuel 100000000")
+            child.expect(r"> ")
+            child.sendline(':propose guess "(define guess (let loop ((i 0)) (loop i)))"')
+            time.sleep(1.0)
+            child.kill(signal.SIGINT)
+            child.expect("ROLLBACK")
+            child.expect(r"> ")
+            child.sendline(":src guess")
+            child.expect(r"\(define guess 0\)")
+        finally:
+            child.sendline("(quit)")
+            child.close(force=True)
 
     def test_pipe_record_carries_the_decision(self) -> None:
         r = run_repl('(set-code "(define (guess) 0)")\n:propose guess "(define (guess) 7)"\n(quit)\n')
