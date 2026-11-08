@@ -3966,6 +3966,12 @@ static int run_oneshot_or_file(int argc, char** argv) {
     ::signal(SIGTERM, SIG_DFL);
 
 
+    // Issue #5049: a bare `aura` on a TTY is the same interactive face as
+    // `aura repl` — one soft session, one std prelude, one preset default.
+    // Non-TTY stays the oneshot pipe (#2322), so gate on the terminal.
+    if (argc == 1 && ::isatty(STDIN_FILENO))
+        g_repl_4911 = true;
+
     const OneshotLaunch launch = parse_oneshot_launch(argc, argv);
     if (launch.status >= 0)
         return launch.status;
