@@ -119,7 +119,12 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
         auto record_error = [&](std::string_view msg, std::optional<Token> err_tok = std::nullopt) {
             auto loc = err_tok ? aura::diag::SourceLocation{err_tok->line, err_tok->column, 0}
                                : aura::diag::SourceLocation{};
-            auto formatted = loc.valid() ? std::format("{}: {}", loc.format(), msg) : msg;
+            // Both arms must be std::string: with a std::string_view arm the
+            // conditional's common type is the view, and the temporary from
+            // std::format dies at the end of this full expression — assigning
+            // it below reads freed memory (ASan heap-use-after-free).
+            auto formatted =
+                loc.valid() ? std::format("{}: {}", loc.format(), msg) : std::string(msg);
             if (r.error.empty())
                 r.error = formatted;
             r.errors.push_back(ParseError{std::string(msg), loc});
@@ -217,7 +222,9 @@ FlatParseResult parse(ParserState& s, std::string_view src) {
             flush_deferred_char_error();
             auto loc = aura::diag::SourceLocation{tok.line, tok.column, 0};
             const std::string_view msg = "unexpected ')'";
-            auto formatted = loc.valid() ? std::format("{}: {}", loc.format(), msg) : msg;
+            // std::string arm on both sides — see record_error above.
+            auto formatted =
+                loc.valid() ? std::format("{}: {}", loc.format(), msg) : std::string(msg);
             if (r.error.empty())
                 r.error = formatted;
             r.errors.push_back(ParseError{std::string(msg), loc});
