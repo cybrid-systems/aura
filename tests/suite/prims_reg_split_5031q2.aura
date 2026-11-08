@@ -1,0 +1,184 @@
+;; Issue #5031: register_query_obs_mid_primitives and
+;; register_query_lifecycle_primitives are peeled into per-responsibility phases.
+;; Primitive names, registration order, lambda capture lifetimes and every stats
+;; payload key must not move.
+(require "std/io" all:)
+
+(define fails 0)
+(define (check pred msg)
+  (if pred
+      #t
+      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+(define (hget h k) (hash-ref h k))
+
+;; ── obs_mid: pattern index / safety / rebuild / hash phase ──────────
+(check (integer? (stats:get "query:pattern-index-stats")) "pattern-index-stats")
+(check (hash? (stats:get "query:pattern-safety-stats")) "pattern-safety-stats")
+(check (hash? (stats:get "query:pattern-index-rebuild-stats")) "pattern-index-rebuild")
+(check (hash? (stats:get "query:pattern-index-stats-hash")) "pattern-index-stats-hash")
+
+;; ── obs_mid: pattern hygiene + hygiene counters phase ───────────────
+(define ph (stats:get "query:pattern-hygiene-stats"))
+(check (hash? ph) "pattern-hygiene-stats")
+(check (integer? (stats:get "query:hygiene-skip-count")) "hygiene-skip-count")
+(check (integer? (stats:get "query:safe-span-pin-count")) "safe-span-pin-count")
+(check (hash? (stats:get "query:by-marker")) "query:by-marker")
+
+;; ── obs_mid: provenance phase ───────────────────────────────────────
+(check (hash? (stats:get "query:node-provenance")) "node-provenance")
+(check (hash? (stats:get "query:last-mutation-provenance")) "last-mutation-provenance")
+(check (hash? (stats:get "query:hygiene-provenance-stats")) "hygiene-provenance-stats")
+
+;; ── obs_mid: macro hygiene phase ────────────────────────────────────
+(define mh (stats:get "query:macro-hygiene-stats"))
+(check (hash? mh) "macro-hygiene-stats")
+(check (= 1613 (hget mh "schema")) "macro-hygiene schema 1613")
+(check (integer? (hget mh "health-score")) "macro-hygiene health-score")
+(check (integer? (hget mh "recommendation")) "macro-hygiene recommendation")
+
+;; ── obs_mid: checkpoint / snapshot phase ────────────────────────────
+(check (integer? (stats:get "query:panic-checkpoint-lifecycle-stats")) "panic-checkpoint")
+(check (hash? (stats:get "query:workspace-snapshot-stats")) "workspace-snapshot-stats")
+
+;; ── obs_mid: runtime orchestration / aot reload phase ───────────────
+(check (hash? (stats:get "query:runtime-orchestration-stats")) "runtime-orchestration")
+(check (hash? (stats:get "query:aot-hot-reload-stats")) "aot-hot-reload-stats")
+(check (hash? (stats:get "query:aot-production-reload-stats")) "aot-production-reload")
+(check (hash? (stats:get "query:envframe-production-safety-stats")) "envframe-production-safety")
+
+;; ── obs_mid: production guard / index phase ─────────────────────────
+(check (hash? (stats:get "query:macro-production-hygiene-stats")) "macro-production-hygiene")
+(check (hash? (stats:get "query:guard-production-impact-stats")) "guard-production-impact")
+(check (hash? (stats:get "query:pattern-production-index-stats")) "pattern-production-index")
+(check (hash? (stats:get "query:incremental-production-relower-stats")) "incremental-relower")
+(check (hash? (stats:get "query:jit-consistency-stats")) "jit-consistency-stats")
+
+;; ── obs_mid: soa columnar / children / edit scope phase ─────────────
+(check (hash? (stats:get "query:soa-production-columnar-stats")) "soa-production-columnar")
+(check (hash? (stats:get "query:soa-children-columnar-migration-stats")) "soa-children-columnar")
+(check (hash? (stats:get "query:children-stable-stats")) "children-stable-stats")
+(check (hash? (stats:get "query:replace-subtree-stats")) "replace-subtree-stats")
+(check (hash? (stats:get "query:remove-node-stats")) "remove-node-stats")
+(check (hash? (stats:get "query:impact-scope-stats")) "impact-scope-stats")
+(check (hash? (stats:get "query:children-column-stats")) "children-column-stats")
+(check (hash? (stats:get "query:shape-arena-compact-stats")) "shape-arena-compact-stats")
+
+;; ── obs_mid: arena / contracts / sv verification phase ──────────────
+(check (hash? (stats:get "query:arena-production-compaction-stats")) "arena-production-compact")
+(check (hash? (stats:get "query:contracts-production-hotpath-stats")) "contracts-production")
+(check (hash? (stats:get "query:sv-production-verification-stats")) "sv-production-verification")
+(check (hash? (stats:get "query:eda-stability-stats")) "eda-stability-stats")
+(check (hash? (stats:get "query:pattern-sv-verification-stats")) "pattern-sv-verification")
+(check (hash? (stats:get "query:top5-commercial-coverage-stats")) "top5-commercial-coverage")
+(check (hash? (stats:get "query:consolidated-p0-production-stats")) "consolidated-p0")
+(check (integer? (stats:get "query:self-evolution-stability-stats")) "self-evolution-stability")
+
+;; ── obs_mid: typed mutation / constraint / type incremental phase ───
+(check (integer? (stats:get "query:typed-mutation-stats")) "typed-mutation-stats")
+(check (integer? (stats:get "query:dirty-impact")) "query:dirty-impact")
+(check (integer? (stats:get "query:task2-refinement-stats")) "task2-refinement-stats")
+(check (integer? (stats:get "query:constraint-delta-blame-stats")) "constraint-delta-blame")
+(check (integer? (stats:get "query:constraint-delta-stats")) "constraint-delta-stats")
+(check (integer? (stats:get "query:solve-delta-safety-stats")) "solve-delta-safety")
+(check (integer? (stats:get "query:tc-constraints-live")) "tc-constraints-live")
+(check (integer? (stats:get "query:typed-incremental-stats")) "typed-incremental-stats")
+(check (integer? (stats:get "query:type-incremental-stats")) "type-incremental-stats")
+
+;; ── lifecycle: provenance / ir hygiene phase ────────────────────────
+(check (hash? (stats:get "query:ir-hygiene-stats")) "ir-hygiene-stats")
+(check (hash? (stats:get "query:pattern-marker-stats")) "pattern-marker-stats")
+
+;; ── lifecycle: production readiness phase ───────────────────────────
+(check (integer? (stats:get "query:consolidated-production-priority-stats")) "production-priority")
+(check (integer? (stats:get "query:production-roadmap-stats")) "production-roadmap")
+(check (integer? (stats:get "query:task6-production-readiness-stats")) "task6-readiness")
+(check (integer? (stats:get "query:compiler-runtime-production-readiness-stats")) "runtime-readiness")
+(check (integer? (stats:get "query:commercial-production-readiness-stats")) "commercial-readiness")
+
+;; ── lifecycle: commercial self-evo / loop phase ─────────────────────
+(check (integer? (stats:get "query:macro-reflect-self-evo-commercial-stats")) "reflect-commercial")
+(check (integer? (stats:get "query:edsl-query-mutate-commercial-stats")) "edsl-query-mutate")
+(check (integer? (stats:get "query:macro-reflect-self-evo-followup-stats")) "reflect-followup")
+(check (integer? (stats:get "query:macro-reflect-self-evo-stats")) "macro-reflect-self-evo")
+(check (hash? (stats:get "query:self-evolution-loop-stats")) "self-evolution-loop")
+
+;; ── lifecycle: query:self-evo-stats (SelfEvoStats collect/emit) ─────
+(define se (stats:get "query:self-evo-stats"))
+(check (hash? se) "self-evo hash")
+(check (= 1909 (hget se "schema")) "self-evo schema")
+(check (= 1909 (hget se "issue")) "self-evo issue")
+(check (= 2030 (hget se "schema-2030")) "self-evo schema-2030")
+(check (= 2030 (hget se "issue-2030")) "self-evo issue-2030")
+(check (= 1 (hget se "blame-occurrence-ratios-wired")) "self-evo blame wired")
+(check (integer? (hget se "health-score-bp")) "self-evo health-score-bp")
+(check (integer? (hget se "recommendation")) "self-evo recommendation")
+(check (integer? (hget se "macro-introduced-ratio-bp")) "self-evo macro ratio")
+(check (integer? (hget se "rollback-success-rate-bp")) "self-evo rollback rate")
+(check (integer? (hget se "avg-mutation-boundary-depth-x100")) "self-evo depth avg")
+(check (integer? (hget se "blame_completeness_ratio")) "self-evo blame ratio")
+(check (integer? (hget se "occurrence_narrowing_post_mutate_hit_rate")) "self-evo occurrence")
+(check (integer? (hget se "linear_occurrence_consistency_bp")) "self-evo linear occurrence")
+(check (= 1 (hget se "unified-dashboard-wired")) "self-evo unified wired")
+
+;; ── lifecycle: batch / primitive / prompt6 phase ────────────────────
+(check (hash? (stats:get "query:stable-refs-batch-health")) "stable-refs-batch-health")
+(check (integer? (stats:get "query:primitives-stats")) "primitives-stats")
+(check (integer? (stats:get "query:primitive-meta-stats")) "primitive-meta-stats")
+(check (integer? (stats:get "query:prompt6-violation-count")) "prompt6-violation-count")
+(check (integer? (stats:get "query:prompt6-safety-score")) "prompt6-safety-score")
+(check (hash? (stats:get "query:prompt6-memory-safety-stats")) "prompt6-memory-safety")
+
+;; ── lifecycle: eda / orchestration / dirty phase ────────────────────
+(check (hash? (stats:get "query:edsl-eda-sv-closedloop-stats")) "edsl-eda-sv-closedloop")
+(check (hash? (stats:get "query:multi-fiber-orchestration-stats")) "multi-fiber-orchestration")
+(check (integer? (stats:get "query:soa-hotpath-adoption-stats")) "soa-hotpath-adoption")
+(check (integer? (stats:get "query:dirty-propagation-cost-stats")) "dirty-propagation-cost")
+(check (integer? (stats:get "query:dirty-propagation-stats")) "dirty-propagation-stats")
+(check (hash? (stats:get "query:dirty-columnar")) "dirty-columnar")
+(check (integer? (stats:get "query:generation-epoch-stats")) "generation-epoch-stats")
+
+;; ── lifecycle: snapshot / contract / index phase ────────────────────
+(check (integer? (stats:get "query:ast-column-compaction-stats")) "ast-column-compaction")
+(check (integer? (stats:get "query:mutation-boundary-invariant-stats")) "boundary-invariant")
+(check (integer? (stats:get "query:envframe-dualpath-stale-stats")) "envframe-dualpath-stale")
+(check (integer? (stats:get "query:defuse-version-stats")) "defuse-version-stats")
+(check (hash? (stats:get "query:evolution-epoch-snapshot")) "evolution-epoch-snapshot")
+(check (integer? (stats:get "query:macro-hygiene-contract-stats")) "macro-hygiene-contract")
+(check (integer? (stats:get "query:pattern-macro-filter-stats")) "pattern-macro-filter")
+(check (integer? (stats:get "query:hygiene-violation-stats")) "hygiene-violation-stats")
+(check (integer? (stats:get "query:pattern-structural-index-stats")) "pattern-structural-index")
+(check (integer? (stats:get "query:stable-ref-workspace-tree-stats")) "workspace-tree-stats")
+
+;; ── lifecycle: shape / pass / task4 phase ───────────────────────────
+(check (integer? (stats:get "query:shape-deopt-burst-stats")) "shape-deopt-burst")
+(check (integer? (stats:get "query:pass-contracts-stats")) "pass-contracts-stats")
+(check (integer? (stats:get "query:arena-compaction-stats")) "arena-compaction-stats")
+(check (integer? (stats:get "query:ir-soa-incremental-stats")) "ir-soa-incremental")
+(check (integer? (stats:get "query:ir-metadata-stats")) "ir-metadata-stats")
+(check (integer? (stats:get "query:task4-hotpath-safety-score")) "task4-hotpath-safety")
+(check (integer? (stats:get "query:task4-cache-locality-win")) "task4-cache-locality")
+(check (integer? (stats:get "query:shape-stability-stats")) "shape-stability-stats")
+(check (hash? (stats:get "query:shape-profiler-stats")) "shape-profiler-stats")
+(check (hash? (stats:get "query:shape-storm-health")) "shape-storm-health")
+(check (hash? (stats:get "query:shape-stability-jit-stats-hash")) "shape-stability-jit")
+(check (integer? (stats:get "query:task4-mutation-stability")) "task4-mutation-stability")
+(check (hash? (stats:get "query:task4-hotpath-contracts")) "task4-hotpath-contracts")
+(check (hash? (stats:get "query:contracts-hotpath-stats-hash")) "contracts-hotpath-hash")
+
+;; ── lifecycle: stability surface / mutation log phase ───────────────
+(check (integer? (stats:get "query:edsl-stability-stats")) "edsl-stability-stats")
+(check (integer? (stats:get "query:stable-ref-cow-fiber-stats")) "stable-ref-cow-fiber")
+(check (integer? (stats:get "query:atomic-batch-rollback-stats")) "atomic-batch-rollback")
+(check (integer? (stats:get "query:query-and-replace-batch-stats")) "query-and-replace-batch")
+(check (integer? (stats:get "query:mutation-log-stats")) "mutation-log-stats")
+(check (integer? (stats:get "query:mutation-rollback-coverage-stats")) "rollback-coverage")
+(check (list? (stats:get "query:mutation-log")) "query:mutation-log")
+(check (list? (stats:get "query:mutation-provenance")) "query:mutation-provenance")
+
+;; ── lifecycle: mutation memory / blame-of alias phase ───────────────
+(check (list? (stats:get "query:mutation-memory")) "query:mutation-memory")
+(check (list? (stats:get "query:blame-of")) "query:blame-of")
+
+(if (= fails 0)
+    (display "prims reg split 5031q2 ok\n")
+    (error "prims reg split 5031q2 FAILED" fails))
