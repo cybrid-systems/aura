@@ -40,6 +40,17 @@ class Prompt(unittest.TestCase):
             child.sendline("(quit)")
             child.close(force=True)
 
+    def test_src_without_a_name_uses_the_focus(self) -> None:
+        r = subprocess.run(
+            [str(AURA_BIN), "repl", "--quiet"],
+            input='(set-code "(define (guess) 0)")\n:focus guess\n:src\n(quit)\n',
+            capture_output=True,
+            text=True,
+            env=env(),
+            timeout=120,
+        )
+        self.assertIn("(define guess (lambda () 0))", r.stdout, r.stdout + r.stderr)
+
     def test_no_focus_is_reported(self) -> None:
         r = subprocess.run(
             [str(AURA_BIN), "repl", "--quiet"],
