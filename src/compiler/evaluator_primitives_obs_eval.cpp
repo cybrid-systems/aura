@@ -5756,9 +5756,14 @@ void ObservabilityPrims::register_eval_p40(PrimRegistrar add, Evaluator& ev) {
     });
 }
 
-// Issue #909 part 41 (orig lines 5423-5535)
-void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
+// --- Issue #5031: register_eval_p41 phases ---------------------------------
+// The p41 registration body outgrew the 300-line ceiling (105 X-macro tiers).
+// Each phase below is one registration responsibility family; register_eval_p41
+// keeps the ordered delegation so registration order, primitive names, lambda
+// capture lifetimes and every stats payload key stay identical.
 
+// Issue #5031: query:fiber-boundary-violation-stats registration phase.
+void register_eval_p41_fiber_boundary_violation(Evaluator& ev, auto& string_heap) {
     // Issue #717: (query:fiber-boundary-violation-stats) —
     // fiber-safe MutationBoundaryGuard recovery counters
     // (non-duplicative with #438 query:fiber-migration-stats
@@ -5796,7 +5801,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
     // so we can attach PrimMeta with schema=717 + category=general
     // + arity=0 + pure=true (same pattern as #712-#716).
     ObservabilityPrims::register_stats_impl(
-        "query:fiber-boundary-violation-stats", [&ev](const auto&) -> EvalValue {
+        "query:fiber-boundary-violation-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
@@ -5812,7 +5817,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
+                    auto kidx = string_heap.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -5831,7 +5836,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return query_hash_finish(ht, string_heap, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -5856,7 +5861,660 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
+}
 
+// Issue #5031: query:mutation-boundary-hold-stats payload phases.
+// The hold-stats key sequence is one ordered insert stream (121 planned slots).
+// Field names match the original locals, so every key line below stays verbatim;
+// emit() replays the phases in the original order.
+struct MutationHoldStats {
+    Evaluator& ev;
+    CompilerMetrics* m = nullptr;
+    std::array<std::int64_t, CompilerMetrics::kMutationBoundaryHoldHistBuckets> hist{};
+    std::int64_t hist_sum = 0;
+    std::int64_t holds = 0;
+    std::int64_t hold_us = 0;
+    std::int64_t avg = 0;
+    std::int64_t p99_us = 0;
+    std::int64_t hold_max = 0;
+    std::int64_t acquires = 0;
+    std::int64_t contended = 0;
+    std::int64_t wait_ns = 0;
+    std::int64_t wait_max = 0;
+    std::int64_t wait_avg = 0;
+    std::int64_t rate_pct = 0;
+    std::int64_t load(std::atomic<std::uint64_t>& a) const {
+        return m ? static_cast<std::int64_t>(a.load(std::memory_order_relaxed)) : 0;
+    }
+    void collect();
+    template <typename Kv> void emit_hold_core_fields(Kv& kv) const;
+    template <typename Kv> void emit_exit_order_region_fields(Kv& kv) const;
+    template <typename Kv> void emit_long_hold_residual_fields(Kv& kv) const;
+    template <typename Kv> void emit_exit_residual_restamp_fields(Kv& kv) const;
+    template <typename Kv> void emit_render_budget_slo_fields(Kv& kv) const;
+    template <typename Kv> void emit_production_policy_lock_fields(Kv& kv) const;
+    template <typename Kv> void emit_force_drain_steal_fields(Kv& kv) const;
+    std::vector<std::pair<std::string, EvalValue>> emit();
+};
+
+void MutationHoldStats::collect() {
+    m = ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+    holds = m ? load(m->mutation_boundary_holds_total) : 0;
+    hold_us = m ? load(m->mutation_boundary_hold_time_total_us) : 0;
+    avg = holds > 0 ? static_cast<std::int64_t>(hold_us / holds) : 0;
+    // Issue #1375: sum of histogram for integrity check.
+    hist_sum = 0;
+    if (m) {
+        for (std::size_t i = 0; i < CompilerMetrics::kMutationBoundaryHoldHistBuckets; ++i) {
+            hist[i] = load(m->mutation_boundary_hold_histogram[i]);
+            hist_sum += hist[i];
+        }
+    }
+    // Issue #2040: p99 proxy from hold histogram midpoints (µs).
+    static constexpr std::int64_t kHoldMidsUs[CompilerMetrics::kMutationBoundaryHoldHistBuckets] = {
+        50, 300, 750, 3'000, 7'500, 30'000, 75'000, 550'000, 2'000'000};
+    p99_us = 0;
+    if (holds > 0) {
+        const auto target =
+            static_cast<std::int64_t>((static_cast<std::uint64_t>(holds) * 99 + 99) / 100);
+        std::int64_t cum = 0;
+        p99_us = kHoldMidsUs[CompilerMetrics::kMutationBoundaryHoldHistBuckets - 1];
+        for (std::size_t i = 0; i < CompilerMetrics::kMutationBoundaryHoldHistBuckets; ++i) {
+            cum += hist[i];
+            if (cum >= target) {
+                p99_us = kHoldMidsUs[i];
+                break;
+            }
+        }
+    }
+    hold_max = m ? load(m->mutation_hold_duration_us_max) : 0;
+    // Issue #2040: workspace_mtx_ unique-acquire contention.
+    acquires = m ? load(m->workspace_mtx_acquire_total) : 0;
+    contended = m ? load(m->workspace_mtx_contended_total) : 0;
+    wait_ns = m ? load(m->workspace_mtx_wait_ns_total) : 0;
+    wait_max = m ? load(m->workspace_mtx_wait_ns_max) : 0;
+    wait_avg = contended > 0 ? static_cast<std::int64_t>(wait_ns / contended) : 0;
+    rate_pct = acquires > 0
+                   ? static_cast<std::int64_t>((static_cast<std::uint64_t>(contended) * 100) /
+                                               static_cast<std::uint64_t>(acquires))
+                   : 0;
+}
+
+// Issue #5031: hold time / duration / 9-bucket histogram core (#1375 / #2040).
+template <typename Kv> void MutationHoldStats::emit_hold_core_fields(Kv& kv) const {
+    kv.insert(
+        kv.end(),
+        {
+            {"same-thread-yield",
+             make_int(m ? load(m->mutation_boundary_yield_same_thread_total) : 0)},
+            {"cross-thread-migration",
+             make_int(m ? load(m->mutation_boundary_cross_thread_migration_total) : 0)},
+            {"yield-rollback", make_int(m ? load(m->mutation_boundary_yield_rollback_total) : 0)},
+            {"hold-time-us-total", make_int(hold_us)},
+            {"total-us", make_int(hold_us)}, // #1375 alias
+            {"holds-total", make_int(holds)},
+            {"holds-over-1ms", make_int(m ? load(m->mutation_boundary_holds_over_1ms_total) : 0)},
+            {"over-1ms", make_int(m ? load(m->mutation_boundary_holds_over_1ms_total) : 0)},
+            {"avg-hold-us", make_int(avg)},
+            {"avg-us", make_int(avg)},
+            {"max-hold-us", make_int(hold_max)}, // #2040
+            {"p99-hold-us", make_int(p99_us)},   // #2040
+            {"held-now", make_int(ev.mutation_boundary_held() ? 1 : 0)},
+            // Issue #2040: workspace_mtx_ contention (Guard unique acquire)
+            {"workspace-mtx-acquire-total", make_int(acquires)},
+            {"workspace-mtx-contended-total", make_int(contended)},
+            {"workspace-mtx-wait-ns-total", make_int(wait_ns)},
+            {"workspace-mtx-wait-ns-avg", make_int(wait_avg)},
+            {"workspace-mtx-wait-ns-max", make_int(wait_max)},
+            {"workspace-mtx-contention-rate-pct", make_int(rate_pct)},
+            {"closedloop-contention-total",
+             make_int(m ? load(m->workspace_closedloop_shared_mutex_contention_total) : 0)},
+            {"closedloop-contention-ns-total",
+             make_int(m ? load(m->workspace_closedloop_shared_mutex_contention_ns_total) : 0)},
+            // Issue #1375: 9-bucket histogram keys (see bucket-labels)
+            {"hist-0-100us", make_int(hist[0])},
+            {"hist-100-500us", make_int(hist[1])},
+            {"hist-500us-1ms", make_int(hist[2])},
+            {"hist-1-5ms", make_int(hist[3])},
+            {"hist-5-10ms", make_int(hist[4])},
+            {"hist-10-50ms", make_int(hist[5])},
+            {"hist-50-100ms", make_int(hist[6])},
+            {"hist-100ms-1s", make_int(hist[7])},
+            {"hist-gt-1s", make_int(hist[8])},
+            {"hist-sum", make_int(hist_sum)},
+            {"hist-buckets", make_int(static_cast<std::int64_t>(
+                                 CompilerMetrics::kMutationBoundaryHoldHistBuckets))},
+            {"schema", make_int(2040)}, // #2040 extended (was 1375)
+            {"issue", make_int(2040)},
+        });
+}
+
+// Issue #5031: outermost exit order + region/optimistic concurrency (#2120 / #2121 / #2523).
+template <typename Kv> void MutationHoldStats::emit_exit_order_region_fields(Kv& kv) const {
+    kv.insert(
+        kv.end(),
+        {
+            // Issue #2120: outermost exit order phase counters + schema.
+            // Pipeline: probes → GC defer drain → reemit → unlock last.
+            {"outermost-exit-phase1-probes-total",
+             make_int(m ? load(m->outermost_exit_phase1_probes_total) : 0)},
+            {"outermost-exit-phase3-gc-defer-total",
+             make_int(m ? load(m->outermost_exit_phase3_gc_defer_total) : 0)},
+            {"outermost-exit-phase4-reemit-total",
+             make_int(m ? load(m->outermost_exit_phase4_reemit_total) : 0)},
+            {"outermost-exit-phase5-unlock-total",
+             make_int(m ? load(m->outermost_exit_phase5_unlock_total) : 0)},
+            {"outermost-exit-order-complete-total",
+             make_int(m ? load(m->outermost_exit_order_complete_total) : 0)},
+            {"outermost-exit-order-wired", make_int(1)},
+            {"schema-2120", make_int(2120)},
+            {"issue-2120", make_int(2120)},
+            // Issue #2121: region / optimistic write concurrency (AC5 equivalent
+            // surface — extends existing hold-stats; no new *-stats freeze name).
+            {"workspace-region-acquire-total",
+             make_int(m ? load(m->workspace_region_acquire_total) : 0)},
+            {"workspace-global-exclusive-total",
+             make_int(m ? load(m->workspace_global_exclusive_total) : 0)},
+            {"workspace-region-collision-total",
+             make_int(m ? load(m->workspace_region_collision_total) : 0)},
+            {"workspace-region-fallback-global-total",
+             make_int(m ? load(m->workspace_region_fallback_global_total) : 0)},
+            {"workspace-region-hold-samples",
+             make_int(m ? load(m->workspace_region_hold_samples) : 0)},
+            {"workspace-region-shards",
+             make_int(static_cast<std::int64_t>(Evaluator::kWorkspaceRegionShards))},
+            {"workspace-region-concurrency-enabled",
+             make_int(ev.workspace_region_concurrency_enabled() ? 1 : 0)},
+            {"region-concurrency-wired", make_int(1)},
+            {"schema-2121", make_int(2121)},
+            {"issue-2121", make_int(2121)},
+            // Issue #2523 residual: Agent self-throttle keys on hold-stats too.
+            {"workspace-mtx-optimistic-hit-total",
+             make_int(m ? load(m->workspace_mtx_optimistic_hit_total) : 0)},
+            {"workspace-mtx-region-collision-total",
+             make_int(m ? load(m->workspace_mtx_region_collision_total) : 0)},
+            {"workspace-mtx-waiters-now", make_int(m ? load(m->workspace_mtx_waiters_now) : 0)},
+            {"workspace-mtx-waiters-peak", make_int(m ? load(m->workspace_mtx_waiters_peak) : 0)},
+            {"workspace-mtx-hold-ns-p99", make_int(p99_us * 1000)},
+            {"schema-2523", make_int(2523)},
+            {"issue-2523", make_int(2523)},
+            {"workspace-mtx-contention-wired", make_int(1)},
+        });
+}
+
+// Issue #5031: long-hold timeouts + residual defer policy (#2199 / #2200 / #2211 / #2269 / #2296).
+template <typename Kv> void MutationHoldStats::emit_long_hold_residual_fields(Kv& kv) const {
+    kv.insert(
+        kv.end(),
+        {
+            // Issue #2199: hard timeout / force-fail for long outermost holds.
+            // Soft: metrics + hook only; Strict: forced abort → rollback.
+            // Abort is transactional (success=false → exit_mutation_boundary
+            // rollback), not async preempt mid-mutate without Guard.
+            {"long-mutation-forced-abort-total",
+             make_int(m ? load(m->long_mutation_forced_abort_total) : 0)},
+            {"long_mutation_forced_abort_total",
+             make_int(m ? load(m->long_mutation_forced_abort_total) : 0)},
+            {"long-mutation-strict-mode", make_int(m ? load(m->long_mutation_strict_mode) : 0)},
+            {"long-mutation-threshold-us",
+             make_int(m ? load(m->long_mutation_threshold_us) : 500'000)},
+            {"max-extreme-mutation-us",
+             make_int(m ? load(m->max_extreme_mutation_us) : 30'000'000)},
+            {"hard-timeout-us", make_int(m ? load(m->hard_timeout_us) : 0)},
+            {"long-mutation-extreme-total", make_int(m ? load(m->long_mutation_extreme_total) : 0)},
+            {"mutation-too-long-total", make_int(m ? load(m->mutation_too_long_total) : 0)},
+            {"hard-timeout-force-fail-wired", make_int(1)},
+            {"schema-2199", make_int(2199)},
+            {"issue-2199", make_int(2199)},
+            // Issue #2200: yield-under-Guard reject total (correlate with holds).
+            {"yield-while-mutation-held-total",
+             make_int(static_cast<std::int64_t>(
+                 ::aura::serve::metrics::adaptive_steal_stats()
+                     .yield_while_mutation_held_total.load(std::memory_order_relaxed)))},
+            {"last-yield-rejected-reason",
+             make_int(static_cast<std::int64_t>(
+                 ::aura::serve::metrics::adaptive_steal_stats().last_yield_rejected_reason.load(
+                     std::memory_order_relaxed)))},
+            {"yield-while-mutation-held-wired", make_int(1)},
+            {"schema-2200", make_int(2200)},
+            {"issue-2200", make_int(2200)},
+            // Issue #2211: residual GcDeferReason after outermost success
+            // drain (schema-2120 lineage — folds into hold-stats, no new
+            // public primitive name). Soft metric + best-effort clear.
+            {"mutation-boundary-residual-defer-total",
+             make_int(m ? load(m->mutation_boundary_residual_defer_total) : 0)},
+            {"residual-defer-total",
+             make_int(m ? load(m->mutation_boundary_residual_defer_total) : 0)},
+            {"mutation_boundary_residual_defer_total",
+             make_int(m ? load(m->mutation_boundary_residual_defer_total) : 0)},
+            {"residual-defer-assert-wired", make_int(1)},
+            // Issue #2269: production-default residual defer policy
+            // (forced-clear or hard-fail). AC1-A/B decision table.
+            // AC1-A (hard) bumps residual-defer-hard-fail-total + abort;
+            // AC1-B (clear, production default) bumps
+            // residual-defer-forced-clear-total + clear_gc_defer_for_
+            // evaluator + release_mutation_hold_defer(). Soft (sandbox /
+            // unit) is the legacy #2211 path — only residual-defer-total
+            // bumps, no clear, no abort.
+            {"residual-defer-forced-clear-total",
+             make_int(m ? load(m->mutation_boundary_residual_defer_forced_clear_total) : 0)},
+            {"residual-defer-hard-fail-total",
+             make_int(m ? load(m->mutation_boundary_residual_defer_hard_fail_total) : 0)},
+            // Active policy under current process env (re-evaluated
+            // per insert_kv call). 0=soft, 1=clear, 2=hard. Lets
+            // dashboards distinguish A vs B vs legacy at a glance.
+            {"residual-defer-policy", make_int([]() -> std::int64_t {
+                 const char* sandbox_e = std::getenv("AURA_SANDBOX");
+                 const bool dev_off =
+                     sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
+                 if (dev_off)
+                     return 0; // Soft
+                 const char* policy_e = std::getenv("AURA_RESIDUAL_DEFER_POLICY");
+                 const bool policy_hard_env =
+                     policy_e && *policy_e && std::string_view(policy_e) == "hard";
+                 const char* legacy_e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
+                 const bool legacy_hard = legacy_e && *legacy_e && legacy_e[0] != '0';
+                 if (policy_hard_env || legacy_hard)
+                     return 2; // Hard
+                 return 1;     // Clear (production default)
+             }())},
+            {"residual-defer-policy-wired", make_int(1)},
+            {"schema-2269", make_int(2269)},
+            {"issue-2269", make_int(2269)},
+            // Issue #2296: multi-eval residual Clear + steal orphan window.
+            // Correlate forced-clear vs orphan-cleared-on-steal vs
+            // arm-rejected-overflow vs bit-reconcile on one surface.
+            {"residual-defer-bit-reconcile-total",
+             make_int(m ? load(m->mutation_boundary_residual_defer_bit_reconcile_total) : 0)},
+            {"gc-defer-bit-reconcile-total",
+             make_int(static_cast<std::int64_t>(aura::gc_hooks::gc_defer_bit_reconcile_total()))},
+            {"gc-defer-orphan-cleared-on-steal-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total()))},
+            {"gc-defer-table-overflow-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::gc_hooks::g_gc_defer_table_overflow_total.load(std::memory_order_relaxed)))},
+            {"residual-defer-multi-eval-wired", make_int(1)},
+            {"force-clear-all-gc-defer-wired", make_int(1)},
+            {"schema-2296", make_int(2296)},
+            {"issue-2296", make_int(2296)},
+        });
+}
+
+// Issue #5031: exit residual + pin gate + restamp budget + panic densify + render fast-exit (#2846
+// / #2975 / #2934 / #2364 / #2215).
+template <typename Kv> void MutationHoldStats::emit_exit_residual_restamp_fields(Kv& kv) const {
+    kv.insert(
+        kv.end(),
+        {
+            // Issue #2846: residual-defer-after-exit closed loop
+            // (outermost exit success+failure + steal-complete). Soft
+            // observe leftover; production Clear force-clears + counts.
+            {"residual-defer-after-exit-total",
+             make_int(
+                 m ? load(m->residual_defer_after_exit_total)
+                   : static_cast<std::int64_t>(aura::gc_hooks::residual_defer_after_exit_total()))},
+            {"residual-defer-after-exit-wired", make_int(1)},
+            {"close-residual-defer-after-exit-wired", make_int(1)},
+            {"schema-2846", make_int(2846)},
+            {"issue-2846", make_int(2846)},
+            // Issue #2975: outermost-exit residual + pin_contract hard gate.
+            // Additive — Soft residual-after-exit-total preserved (AC5).
+            {"residual-after-exit-hard-fail-total",
+             make_int(m ? load(m->residual_after_exit_hard_fail_total)
+                        : static_cast<std::int64_t>(
+                              aura::gc_hooks::residual_after_exit_hard_fail_total()))},
+            {"pin-contract-fail-on-exit-total",
+             make_int(
+                 m ? load(m->pin_contract_fail_on_exit_total)
+                   : static_cast<std::int64_t>(aura::gc_hooks::pin_contract_fail_on_exit_total()))},
+            {"outermost-exit-force-reason",
+             make_int(
+                 static_cast<std::int64_t>(aura::gc_hooks::last_outermost_exit_force_reason()))},
+            {"outermost-exit-residual-pin-gate-wired", make_int(1)},
+            {"schema-2975", make_int(aura::gc_hooks::kOutermostExitResidualPinGateIssue)},
+            {"issue-2975", make_int(aura::gc_hooks::kOutermostExitResidualPinGateIssue)},
+            // Issue #2934: restamp budget on Guard exit (Agent latency
+            // control). Live FlatAST counters when workspace loaded.
+            {"restamp-budget",
+             make_int(ev.workspace_flat()
+                          ? static_cast<std::int64_t>(ev.workspace_flat()->restamp_budget_nodes())
+                          : 0)},
+            {"restamp-budget-exceeded-total",
+             make_int(ev.workspace_flat()
+                          ? static_cast<std::int64_t>(
+                                ev.workspace_flat()->restamp_budget_exceeded_total())
+                          : 0)},
+            {"restamp-nodes-skipped-total",
+             make_int(ev.workspace_flat() ? static_cast<std::int64_t>(
+                                                ev.workspace_flat()->restamp_nodes_skipped_total())
+                                          : 0)},
+            {"restamp-last-budget-exceeded",
+             make_int(ev.workspace_flat() && ev.workspace_flat()->restamp_last_budget_exceeded()
+                          ? 1
+                          : 0)},
+            {"restamp-budget-wired", make_int(1)},
+            {"schema-2934", make_int(2934)},
+            {"issue-2934", make_int(2934)},
+            {"unified-restamp-torn-visible-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::ast::unified_restamp_torn_visible_total_v_read()))},
+            {"unified-restamp-calls-total",
+             make_int(static_cast<std::int64_t>(aura::ast::unified_restamp_calls_total_v_read()))},
+            {"schema-3019", make_int(aura::ast::kUnifiedRestampIssue)},
+            {"issue-3019", make_int(aura::ast::kUnifiedRestampIssue)},
+            {"unified-restamp-wired", make_int(1)},
+            {"schema-3058", make_int(aura::ast::kUnifiedRestampQueryVisibleIssue)},
+            {"issue-3058", make_int(aura::ast::kUnifiedRestampQueryVisibleIssue)},
+            {"query-stable-ref-over-budget-visible-wired", make_int(1)},
+            {"restamp-budget-query-epoch-stale-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::core::g_restamp_budget_query_epoch_stale_total().load(
+                     std::memory_order_relaxed)))},
+            {"query-epoch-forced-stale",
+             make_int(
+                 aura::core::g_query_epoch_forced_stale().load(std::memory_order_relaxed) ? 1 : 0)},
+            {"schema-3041", make_int(3041)},
+            {"issue-3041", make_int(3041)},
+            // Issue #2364: PanicCheckpoint residual × densify closed loop.
+            {"panic-defer-after-densify-total",
+             make_int(
+                 m ? load(m->panic_defer_after_densify_total)
+                   : static_cast<std::int64_t>(aura::gc_hooks::panic_defer_after_densify_total()))},
+            {"panic-defer-after-densify-cleared-total",
+             make_int(m ? load(m->panic_defer_after_densify_cleared_total)
+                        : static_cast<std::int64_t>(
+                              aura::gc_hooks::panic_defer_after_densify_cleared_total()))},
+            {"panic-defer-after-densify-rearmed-total",
+             make_int(m ? load(m->panic_defer_after_densify_rearmed_total)
+                        : static_cast<std::int64_t>(
+                              aura::gc_hooks::panic_defer_after_densify_rearmed_total()))},
+            {"panic-defer-after-densify-hard-fail-total",
+             make_int(m ? load(m->panic_defer_after_densify_hard_fail_total)
+                        : static_cast<std::int64_t>(
+                              aura::gc_hooks::panic_defer_after_densify_hard_fail_total()))},
+            {"panic-defer-after-densify-wired", make_int(1)},
+            {"schema-2364", make_int(2364)},
+            {"issue-2364", make_int(2364)},
+            {"schema-2211", make_int(2211)},
+            {"issue-2211", make_int(2211)},
+            // Issue #2215: RenderFastExit (outermost success under render hotpath).
+            {"render-fast-exit-total", make_int(m ? load(m->render_fast_exit_total) : 0)},
+            {"render_fast_exit_total", make_int(m ? load(m->render_fast_exit_total) : 0)},
+            {"render-fast-exit-skipped-audit-total",
+             make_int(m ? load(m->render_fast_exit_skipped_audit_total) : 0)},
+            {"render_fast_exit_skipped_audit_total",
+             make_int(m ? load(m->render_fast_exit_skipped_audit_total) : 0)},
+            {"render-fast-exit-deferred-reemit-total",
+             make_int(m ? load(m->render_fast_exit_deferred_reemit_total) : 0)},
+            {"render_fast_exit_deferred_reemit_total",
+             make_int(m ? load(m->render_fast_exit_deferred_reemit_total) : 0)},
+            {"render-fast-exit-wired", make_int(1)},
+            {"schema-2215", make_int(2215)},
+            {"issue-2215", make_int(2215)},
+        });
+}
+
+// Issue #5031: render suppress + hold over-budget + hold SLO circuit-breaker (#2311 / #2313 /
+// #2349).
+template <typename Kv> void MutationHoldStats::emit_render_budget_slo_fields(Kv& kv) const {
+    kv.insert(kv.end(),
+              {
+                  // Issue #2311: RenderFastExit suppress counters (linear /
+                  // match-site / hard_gate force full audit path). Distinct
+                  // from render-fast-exit-skipped-audit-total which counts
+                  // skipped audits AFTER fast-exit — these count suppressed
+                  // fast-exits (production fail-closed default).
+                  {"render-fast-exit-suppressed-linear-or-match-total",
+                   make_int(m ? load(m->render_fast_exit_suppressed_linear_or_match_total) : 0)},
+                  {"render_fast_exit_suppressed_linear_or_match_total",
+                   make_int(m ? load(m->render_fast_exit_suppressed_linear_or_match_total) : 0)},
+                  {"render-fast-exit-suppressed-linear-total",
+                   make_int(m ? load(m->render_fast_exit_suppressed_linear_total) : 0)},
+                  {"render_fast_exit_suppressed_linear_total",
+                   make_int(m ? load(m->render_fast_exit_suppressed_linear_total) : 0)},
+                  {"render-fast-exit-suppressed-match-total",
+                   make_int(m ? load(m->render_fast_exit_suppressed_match_total) : 0)},
+                  {"render_fast_exit_suppressed_match_total",
+                   make_int(m ? load(m->render_fast_exit_suppressed_match_total) : 0)},
+                  {"schema-2311", make_int(2311)},
+                  {"issue-2311", make_int(2311)},
+                  // Issue #2313: hold-budget over-budget signal — distinct
+                  // from mutation_too_long_total which is the LATE-warning
+                  // threshold via long_mutation_threshold_us (default 500ms).
+                  // mutation_hold_over_budget_total is the EARLY-warning
+                  // threshold via AURA_MUTATION_HOLD_BUDGET_US (default 100ms).
+                  // Bumped at outermost dtor when hold > budget. SIGNAL-ONLY —
+                  // does NOT force-fail or yield (would violate #2200 / unlock
+                  // workspace_mtx_ mid-mutate). Agents read over-budget rate
+                  // to choose RenderFastExit-style degrade or shorter batches.
+                  {"mutation-hold-over-budget-total",
+                   make_int(m ? load(m->mutation_hold_over_budget_total) : 0)},
+                  {"mutation_hold_over_budget_total",
+                   make_int(m ? load(m->mutation_hold_over_budget_total) : 0)},
+                  // Current budget config — exposes the env-driven threshold.
+                  {"mutation-hold-budget-us",
+                   make_int(static_cast<std::int64_t>(aura::compiler::mutation_hold_budget_us()))},
+                  {"mutation-hold-over-budget-wired", make_int(1)},
+                  {"schema-2313", make_int(2313)},
+                  {"issue-2313", make_int(2313)},
+                  // Issue #2349: production hold SLO circuit-breaker.
+                  // Soft: metric only. Production default: force success_flag=false.
+                  // Env AURA_MUTATION_HOLD_SLO_US (default 100ms; 0 disables).
+                  {"mutation-hold-slo-violation-total",
+                   make_int(m ? load(m->mutation_hold_slo_violation_total) : 0)},
+                  {"mutation_hold_slo_violation_total",
+                   make_int(m ? load(m->mutation_hold_slo_violation_total) : 0)},
+                  {"mutation-hold-slo-us",
+                   make_int(static_cast<std::int64_t>(aura::compiler::mutation_hold_slo_us()))},
+                  {"mutation-hold-slo-soft",
+                   make_int(aura::compiler::mutation_hold_slo_soft_mode() ? 1 : 0)},
+                  {"mutation-hold-slo-wired", make_int(1)},
+                  {"schema-2349", make_int(2349)},
+                  {"issue-2349", make_int(2349)},
+              });
+}
+
+// Issue #5031: production residual policy lock + same-tx rebind order (#2853 / #2854).
+template <typename Kv> void MutationHoldStats::emit_production_policy_lock_fields(Kv& kv) const {
+    kv.insert(
+        kv.end(),
+        {
+            // Issue #2853: production residual policy lock —
+            // gauge + lock-active-now + effective-mode sentinels
+            // so Agents can assert the lock is engaged under
+            // production defaults. Mirrors steal-snapshot Soft
+            // lock (#2372) + production residual policy wire
+            // (schema-2853 / issue-2853 additive — no break of
+            // schema-2349 / schema-2211 / schema-2269 lineage).
+            // Lock-active gauge: bumped each Phase-5 outermost
+            // success residual check where production lock was
+            // gating the policy. Light binaries without
+            // CompilerMetrics wired still get the file-scope
+            // atomic via aura::serve::g_production_residual_policy_lock_active_total.
+            {"production-residual-policy-lock-active-total",
+             make_int(static_cast<std::int64_t>(
+                 aura::serve::production_residual_policy_lock_active_total_v_read()))},
+            {"production_residual_policy_lock_active_total",
+             make_int(static_cast<std::int64_t>(
+                 aura::serve::production_residual_policy_lock_active_total_v_read()))},
+            // Lock-active-now: 1 if production_defaults_active() +
+            // sandbox != off (current state, not cumulative gauge).
+            {"production-residual-policy-lock-active",
+             make_int(aura::serve::production_residual_policy_locked() ? 1 : 0)},
+            {"production_residual_policy_lock_active",
+             make_int(aura::serve::production_residual_policy_locked() ? 1 : 0)},
+            // Effective mode sentinels (after production lock + test
+            // override resolution). Soft=1 means Soft path is active
+            // (no force-fail, no force-clear); Soft=0 means Clear or
+            // Hard applies (force-clear or abort).
+            {"hold-slo-effective-soft-mode",
+             make_int(aura::compiler::mutation_hold_slo_soft_mode() ? 1 : 0)},
+            {"hold_slo_effective_soft_mode",
+             make_int(aura::compiler::mutation_hold_slo_soft_mode() ? 1 : 0)},
+            {"residual-defer-soft-for-test",
+             make_int(aura::serve::is_residual_defer_soft_for_test() ? 1 : 0)},
+            {"residual_defer_soft_for_test",
+             make_int(aura::serve::is_residual_defer_soft_for_test() ? 1 : 0)},
+            {"hold-slo-soft-for-test", make_int(aura::serve::is_hold_slo_soft_for_test() ? 1 : 0)},
+            {"hold_slo_soft_for_test", make_int(aura::serve::is_hold_slo_soft_for_test() ? 1 : 0)},
+            {"production-residual-policy-lock-wired", make_int(1)},
+            {"production_residual_policy_lock_wired", make_int(1)},
+            {"schema-2853", make_int(2853)},
+            {"issue-2853", make_int(2853)},
+            // Issue #2854: same-transaction order — rebind + scan + proof
+            // stamp is one atomic story on densify/steal. Additive
+            // cumulative counters + last outcome sentinel + ownership
+            // rebind last report (mirror #2853 additive schema key
+            // pattern — no break of schema-2853 / schema-2758 / #2717
+            // lineage). Agents read these to assert no success proof
+            // outlives a failed rebind on the same exit.
+            {"type-linear-proof-stamped-after-rebind-total",
+             make_int(static_cast<std::int64_t>(
+                 typed_audit::type_linear_proof_stamped_after_rebind_total_v_read()))},
+            {"type_linear_proof_stamped_after_rebind_total",
+             make_int(static_cast<std::int64_t>(
+                 typed_audit::type_linear_proof_stamped_after_rebind_total_v_read()))},
+            {"type-linear-proof-reject-after-rebind-fail-total",
+             make_int(static_cast<std::int64_t>(
+                 typed_audit::type_linear_proof_reject_after_rebind_fail_total_v_read()))},
+            {"type_linear_proof_reject_after_rebind_fail_total",
+             make_int(static_cast<std::int64_t>(
+                 typed_audit::type_linear_proof_reject_after_rebind_fail_total_v_read()))},
+            // Last outcome sentinel: 0=Quiet, 1=Stamped, 2=Reject.
+            // Surfaced for Agent drift detect (a #2854 reject should
+            // be followed by force_linear_rollback + #2296 path).
+            {"last-type-linear-proof-outcome",
+             make_int(typed_audit::last_type_linear_proof_outcome_v_read())},
+            {"last_type_linear_proof_outcome",
+             make_int(typed_audit::last_type_linear_proof_outcome_v_read())},
+            // Ownership rebind last report (file-scope atomics from
+            // #2708 walk, surfaced for Agent dashboards to distinguish
+            // pre-#2854 success stamps from post-#2854 ordered stamps).
+            {"ownership-rebind-last-ok",
+             make_int(aura::compiler::last_ownership_rebind_report_v_read().rebind_ok ? 1 : 0)},
+            {"ownership_rebind_last_ok",
+             make_int(aura::compiler::last_ownership_rebind_report_v_read().rebind_ok ? 1 : 0)},
+            {"ownership-rebind-last-root-count",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::last_ownership_rebind_report_v_read().root_count))},
+            {"ownership_rebind_last_root_count",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::last_ownership_rebind_report_v_read().root_count))},
+            {"ownership-rebind-last-had-mismatch",
+             make_int(aura::compiler::last_ownership_rebind_report_v_read().had_mismatch ? 1 : 0)},
+            {"ownership_rebind_last_had_mismatch",
+             make_int(aura::compiler::last_ownership_rebind_report_v_read().had_mismatch ? 1 : 0)},
+            {"ownership-rebind-last-had-rebind",
+             make_int(aura::compiler::last_ownership_rebind_report_v_read().had_rebind ? 1 : 0)},
+            {"ownership_rebind_last_had_rebind",
+             make_int(aura::compiler::last_ownership_rebind_report_v_read().had_rebind ? 1 : 0)},
+            {"ownership-rebind-last-reason",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::last_ownership_rebind_report_v_read().reason))},
+            {"ownership_rebind_last_reason",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::last_ownership_rebind_report_v_read().reason))},
+            {"ownership-rebind-same-tx-wired", make_int(1)},
+            {"ownership_rebind_same_tx_wired", make_int(1)},
+            {"schema-2854", make_int(2854)},
+            {"issue-2854", make_int(2854)},
+        });
+}
+
+// Issue #5031: reemit force-drain + hold-estimate discovery + steal interlock (#2855 / #2405 /
+// #2314 / #2546).
+template <typename Kv> void MutationHoldStats::emit_force_drain_steal_fields(Kv& kv) const {
+    kv.insert(kv.end(),
+              {
+                  // Issue #2855: production deferred-reemit deadline force-drain
+                  // (bounded native hole). Additive cumulative counters + last-stamp
+                  // observability so Agents can assert the force gate is engaged
+                  // under production Defer (env AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS).
+                  // Force-drain body fires from on_reemit_pipeline_call (NOT steal path
+                  // per #2715 regression guard); drives the deferred-reemit recovery
+                  // branch directly with CAS re-entry guard. Exchange-not-check semantics:
+                  // concurrent BoundaryExit + force-drain → at most one body, double-
+                  // drain prevented counter may rise. Preserve #2748/#2715/#2690/#2604
+                  // surfaces (regression check).
+                  {"reemit-deferred-force-drain-total",
+                   make_int(static_cast<std::int64_t>(
+                       aura::compiler::hot_update_registry().reemit_deferred_force_drain_total()))},
+                  {"reemit_deferred_force_drain_total",
+                   make_int(static_cast<std::int64_t>(
+                       aura::compiler::hot_update_registry().reemit_deferred_force_drain_total()))},
+                  {"reemit-deferred-force-drain-skipped-reentered-total",
+                   make_int(static_cast<std::int64_t>(
+                       aura::compiler::hot_update_registry()
+                           .reemit_deferred_force_drain_skipped_reentered_total()))},
+                  {"reemit_deferred_force_drain_skipped_reentered_total",
+                   make_int(static_cast<std::int64_t>(
+                       aura::compiler::hot_update_registry()
+                           .reemit_deferred_force_drain_skipped_reentered_total()))},
+                  {"reemit-deferred-force-drain-double-prevented-total",
+                   make_int(static_cast<std::int64_t>(
+                       aura::compiler::hot_update_registry()
+                           .reemit_deferred_force_drain_double_prevented_total()))},
+                  {"reemit_deferred_force_drain_double_prevented_total",
+                   make_int(static_cast<std::int64_t>(
+                       aura::compiler::hot_update_registry()
+                           .reemit_deferred_force_drain_double_prevented_total()))},
+                  // Env-cached deadline (0 = disabled, observe-only #2748 preserved).
+                  // Surfaces to Agent dashboards so they can distinguish "force gate
+                  // engaged" from "observe-only context" without re-parsing env.
+                  {"reemit-deferred-force-drain-deadline-ms",
+                   make_int(static_cast<std::int64_t>(
+                       aura::compiler::HotUpdateRegistry::force_drain_deadline_ms()))},
+                  {"reemit_deferred_force_drain_deadline_ms",
+                   make_int(static_cast<std::int64_t>(
+                       aura::compiler::HotUpdateRegistry::force_drain_deadline_ms()))},
+                  {"reemit-deferred-force-drain-wired", make_int(1)},
+                  {"reemit_deferred_force_drain_wired", make_int(1)},
+                  {"schema-2855", make_int(2855)},
+                  {"issue-2855", make_int(2855)},
+                  // Issue #2405: predictive estimate surface (separate pure query);
+                  // discovery key here so Agents find hold-estimate from hold-stats.
+                  {"hold-estimate-wired", make_int(1)},
+                  {"schema-2405", make_int(2405)},
+                  {"issue-2405", make_int(2405)},
+                  // Issue #2314: residual defer cleared on steal (orphan
+                  // interlock). Mirrors query:gc-defer-reason-stats (which
+                  // also exposes the same counter for cross-subsystem view).
+                  {"residual-defer-cleared-on-steal-total",
+                   make_int(m ? load(m->residual_defer_cleared_on_steal_total) : 0)},
+                  {"residual_defer_cleared_on_steal_total",
+                   make_int(m ? load(m->residual_defer_cleared_on_steal_total) : 0)},
+                  {"residual-defer-steal-interlock-wired", make_int(1)},
+                  {"schema-2314", make_int(2314)},
+                  // Issue #2546: steal-complete residual hard-AND
+                  {"residual-defer-steal-hard-fail-total",
+                   make_int(static_cast<std::int64_t>(
+                       aura::gc_hooks::residual_defer_steal_hard_fail_total()))},
+                  {"residual-defer-steal-soft-leftover-total",
+                   make_int(static_cast<std::int64_t>(
+                       aura::gc_hooks::residual_defer_steal_soft_leftover_total()))},
+                  {"residual-defer-steal-hard-and-wired", make_int(1)},
+                  {"schema-2546", make_int(2546)},
+                  {"issue-2546", make_int(2546)},
+                  {"issue-2314", make_int(2314)},
+              });
+}
+
+std::vector<std::pair<std::string, EvalValue>> MutationHoldStats::emit() {
+    collect();
+    std::vector<std::pair<std::string, EvalValue>> kv;
+    emit_hold_core_fields(kv);
+    emit_exit_order_region_fields(kv);
+    emit_long_hold_residual_fields(kv);
+    emit_exit_residual_restamp_fields(kv);
+    emit_render_budget_slo_fields(kv);
+    emit_production_policy_lock_fields(kv);
+    emit_force_drain_steal_fields(kv);
+    return kv;
+}
+
+// Issue #5031: query:mutation-boundary-hold-stats registration phase.
+void register_eval_p41_mutation_boundary_hold_stats(Evaluator& ev, auto& string_heap) {
     // Issue #1373 / #1375 / #2040 / #2121 / #2523:
     // (query:mutation-boundary-hold-stats) — hold-time + yield/migration +
     // 9-bucket histogram + workspace_mtx_ unique-acquire contention
@@ -5865,7 +6523,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
     // mutation_hold_* SLO. Agents that prefer a focused surface also
     // have query:workspace-mtx-contention-stats (same counters, AC5).
     ObservabilityPrims::register_stats_impl(
-        "query:mutation-boundary-hold-stats", [&ev](const auto&) -> EvalValue {
+        "query:mutation-boundary-hold-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // ~50 fields (#2040 + #2120 + #2121) + 9 histogram buckets
@@ -5883,7 +6541,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
+                    auto kidx = string_heap.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -5902,588 +6560,21 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return query_hash_finish(ht, string_heap, overflowed, ev);
             };
-            CompilerMetrics* m = ev.compiler_metrics()
-                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
-                                     : nullptr;
-            auto load = [&](std::atomic<std::uint64_t>& a) -> std::int64_t {
-                return m ? static_cast<std::int64_t>(a.load(std::memory_order_relaxed)) : 0;
-            };
-            const std::int64_t holds = m ? load(m->mutation_boundary_holds_total) : 0;
-            const std::int64_t hold_us = m ? load(m->mutation_boundary_hold_time_total_us) : 0;
-            const std::int64_t avg = holds > 0 ? static_cast<std::int64_t>(hold_us / holds) : 0;
-            // Issue #1375: sum of histogram for integrity check.
-            std::int64_t hist_sum = 0;
-            std::array<std::int64_t, CompilerMetrics::kMutationBoundaryHoldHistBuckets> hist{};
-            if (m) {
-                for (std::size_t i = 0; i < CompilerMetrics::kMutationBoundaryHoldHistBuckets;
-                     ++i) {
-                    hist[i] = load(m->mutation_boundary_hold_histogram[i]);
-                    hist_sum += hist[i];
-                }
-            }
-            // Issue #2040: p99 proxy from hold histogram midpoints (µs).
-            static constexpr std::int64_t
-                kHoldMidsUs[CompilerMetrics::kMutationBoundaryHoldHistBuckets] = {
-                    50, 300, 750, 3'000, 7'500, 30'000, 75'000, 550'000, 2'000'000};
-            std::int64_t p99_us = 0;
-            if (holds > 0) {
-                const auto target =
-                    static_cast<std::int64_t>((static_cast<std::uint64_t>(holds) * 99 + 99) / 100);
-                std::int64_t cum = 0;
-                p99_us = kHoldMidsUs[CompilerMetrics::kMutationBoundaryHoldHistBuckets - 1];
-                for (std::size_t i = 0; i < CompilerMetrics::kMutationBoundaryHoldHistBuckets;
-                     ++i) {
-                    cum += hist[i];
-                    if (cum >= target) {
-                        p99_us = kHoldMidsUs[i];
-                        break;
-                    }
-                }
-            }
-            const std::int64_t hold_max = m ? load(m->mutation_hold_duration_us_max) : 0;
-            // Issue #2040: workspace_mtx_ unique-acquire contention.
-            const std::int64_t acquires = m ? load(m->workspace_mtx_acquire_total) : 0;
-            const std::int64_t contended = m ? load(m->workspace_mtx_contended_total) : 0;
-            const std::int64_t wait_ns = m ? load(m->workspace_mtx_wait_ns_total) : 0;
-            const std::int64_t wait_max = m ? load(m->workspace_mtx_wait_ns_max) : 0;
-            const std::int64_t wait_avg =
-                contended > 0 ? static_cast<std::int64_t>(wait_ns / contended) : 0;
-            const std::int64_t rate_pct =
-                acquires > 0
-                    ? static_cast<std::int64_t>((static_cast<std::uint64_t>(contended) * 100) /
-                                                static_cast<std::uint64_t>(acquires))
-                    : 0;
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"same-thread-yield",
-                 make_int(m ? load(m->mutation_boundary_yield_same_thread_total) : 0)},
-                {"cross-thread-migration",
-                 make_int(m ? load(m->mutation_boundary_cross_thread_migration_total) : 0)},
-                {"yield-rollback",
-                 make_int(m ? load(m->mutation_boundary_yield_rollback_total) : 0)},
-                {"hold-time-us-total", make_int(hold_us)},
-                {"total-us", make_int(hold_us)}, // #1375 alias
-                {"holds-total", make_int(holds)},
-                {"holds-over-1ms",
-                 make_int(m ? load(m->mutation_boundary_holds_over_1ms_total) : 0)},
-                {"over-1ms", make_int(m ? load(m->mutation_boundary_holds_over_1ms_total) : 0)},
-                {"avg-hold-us", make_int(avg)},
-                {"avg-us", make_int(avg)},
-                {"max-hold-us", make_int(hold_max)}, // #2040
-                {"p99-hold-us", make_int(p99_us)},   // #2040
-                {"held-now", make_int(ev.mutation_boundary_held() ? 1 : 0)},
-                // Issue #2040: workspace_mtx_ contention (Guard unique acquire)
-                {"workspace-mtx-acquire-total", make_int(acquires)},
-                {"workspace-mtx-contended-total", make_int(contended)},
-                {"workspace-mtx-wait-ns-total", make_int(wait_ns)},
-                {"workspace-mtx-wait-ns-avg", make_int(wait_avg)},
-                {"workspace-mtx-wait-ns-max", make_int(wait_max)},
-                {"workspace-mtx-contention-rate-pct", make_int(rate_pct)},
-                {"closedloop-contention-total",
-                 make_int(m ? load(m->workspace_closedloop_shared_mutex_contention_total) : 0)},
-                {"closedloop-contention-ns-total",
-                 make_int(m ? load(m->workspace_closedloop_shared_mutex_contention_ns_total) : 0)},
-                // Issue #1375: 9-bucket histogram keys (see bucket-labels)
-                {"hist-0-100us", make_int(hist[0])},
-                {"hist-100-500us", make_int(hist[1])},
-                {"hist-500us-1ms", make_int(hist[2])},
-                {"hist-1-5ms", make_int(hist[3])},
-                {"hist-5-10ms", make_int(hist[4])},
-                {"hist-10-50ms", make_int(hist[5])},
-                {"hist-50-100ms", make_int(hist[6])},
-                {"hist-100ms-1s", make_int(hist[7])},
-                {"hist-gt-1s", make_int(hist[8])},
-                {"hist-sum", make_int(hist_sum)},
-                {"hist-buckets", make_int(static_cast<std::int64_t>(
-                                     CompilerMetrics::kMutationBoundaryHoldHistBuckets))},
-                {"schema", make_int(2040)}, // #2040 extended (was 1375)
-                {"issue", make_int(2040)},
-                // Issue #2120: outermost exit order phase counters + schema.
-                // Pipeline: probes → GC defer drain → reemit → unlock last.
-                {"outermost-exit-phase1-probes-total",
-                 make_int(m ? load(m->outermost_exit_phase1_probes_total) : 0)},
-                {"outermost-exit-phase3-gc-defer-total",
-                 make_int(m ? load(m->outermost_exit_phase3_gc_defer_total) : 0)},
-                {"outermost-exit-phase4-reemit-total",
-                 make_int(m ? load(m->outermost_exit_phase4_reemit_total) : 0)},
-                {"outermost-exit-phase5-unlock-total",
-                 make_int(m ? load(m->outermost_exit_phase5_unlock_total) : 0)},
-                {"outermost-exit-order-complete-total",
-                 make_int(m ? load(m->outermost_exit_order_complete_total) : 0)},
-                {"outermost-exit-order-wired", make_int(1)},
-                {"schema-2120", make_int(2120)},
-                {"issue-2120", make_int(2120)},
-                // Issue #2121: region / optimistic write concurrency (AC5 equivalent
-                // surface — extends existing hold-stats; no new *-stats freeze name).
-                {"workspace-region-acquire-total",
-                 make_int(m ? load(m->workspace_region_acquire_total) : 0)},
-                {"workspace-global-exclusive-total",
-                 make_int(m ? load(m->workspace_global_exclusive_total) : 0)},
-                {"workspace-region-collision-total",
-                 make_int(m ? load(m->workspace_region_collision_total) : 0)},
-                {"workspace-region-fallback-global-total",
-                 make_int(m ? load(m->workspace_region_fallback_global_total) : 0)},
-                {"workspace-region-hold-samples",
-                 make_int(m ? load(m->workspace_region_hold_samples) : 0)},
-                {"workspace-region-shards",
-                 make_int(static_cast<std::int64_t>(Evaluator::kWorkspaceRegionShards))},
-                {"workspace-region-concurrency-enabled",
-                 make_int(ev.workspace_region_concurrency_enabled() ? 1 : 0)},
-                {"region-concurrency-wired", make_int(1)},
-                {"schema-2121", make_int(2121)},
-                {"issue-2121", make_int(2121)},
-                // Issue #2523 residual: Agent self-throttle keys on hold-stats too.
-                {"workspace-mtx-optimistic-hit-total",
-                 make_int(m ? load(m->workspace_mtx_optimistic_hit_total) : 0)},
-                {"workspace-mtx-region-collision-total",
-                 make_int(m ? load(m->workspace_mtx_region_collision_total) : 0)},
-                {"workspace-mtx-waiters-now", make_int(m ? load(m->workspace_mtx_waiters_now) : 0)},
-                {"workspace-mtx-waiters-peak",
-                 make_int(m ? load(m->workspace_mtx_waiters_peak) : 0)},
-                {"workspace-mtx-hold-ns-p99", make_int(p99_us * 1000)},
-                {"schema-2523", make_int(2523)},
-                {"issue-2523", make_int(2523)},
-                {"workspace-mtx-contention-wired", make_int(1)},
-                // Issue #2199: hard timeout / force-fail for long outermost holds.
-                // Soft: metrics + hook only; Strict: forced abort → rollback.
-                // Abort is transactional (success=false → exit_mutation_boundary
-                // rollback), not async preempt mid-mutate without Guard.
-                {"long-mutation-forced-abort-total",
-                 make_int(m ? load(m->long_mutation_forced_abort_total) : 0)},
-                {"long_mutation_forced_abort_total",
-                 make_int(m ? load(m->long_mutation_forced_abort_total) : 0)},
-                {"long-mutation-strict-mode", make_int(m ? load(m->long_mutation_strict_mode) : 0)},
-                {"long-mutation-threshold-us",
-                 make_int(m ? load(m->long_mutation_threshold_us) : 500'000)},
-                {"max-extreme-mutation-us",
-                 make_int(m ? load(m->max_extreme_mutation_us) : 30'000'000)},
-                {"hard-timeout-us", make_int(m ? load(m->hard_timeout_us) : 0)},
-                {"long-mutation-extreme-total",
-                 make_int(m ? load(m->long_mutation_extreme_total) : 0)},
-                {"mutation-too-long-total", make_int(m ? load(m->mutation_too_long_total) : 0)},
-                {"hard-timeout-force-fail-wired", make_int(1)},
-                {"schema-2199", make_int(2199)},
-                {"issue-2199", make_int(2199)},
-                // Issue #2200: yield-under-Guard reject total (correlate with holds).
-                {"yield-while-mutation-held-total",
-                 make_int(static_cast<std::int64_t>(
-                     ::aura::serve::metrics::adaptive_steal_stats()
-                         .yield_while_mutation_held_total.load(std::memory_order_relaxed)))},
-                {"last-yield-rejected-reason",
-                 make_int(static_cast<std::int64_t>(
-                     ::aura::serve::metrics::adaptive_steal_stats().last_yield_rejected_reason.load(
-                         std::memory_order_relaxed)))},
-                {"yield-while-mutation-held-wired", make_int(1)},
-                {"schema-2200", make_int(2200)},
-                {"issue-2200", make_int(2200)},
-                // Issue #2211: residual GcDeferReason after outermost success
-                // drain (schema-2120 lineage — folds into hold-stats, no new
-                // public primitive name). Soft metric + best-effort clear.
-                {"mutation-boundary-residual-defer-total",
-                 make_int(m ? load(m->mutation_boundary_residual_defer_total) : 0)},
-                {"residual-defer-total",
-                 make_int(m ? load(m->mutation_boundary_residual_defer_total) : 0)},
-                {"mutation_boundary_residual_defer_total",
-                 make_int(m ? load(m->mutation_boundary_residual_defer_total) : 0)},
-                {"residual-defer-assert-wired", make_int(1)},
-                // Issue #2269: production-default residual defer policy
-                // (forced-clear or hard-fail). AC1-A/B decision table.
-                // AC1-A (hard) bumps residual-defer-hard-fail-total + abort;
-                // AC1-B (clear, production default) bumps
-                // residual-defer-forced-clear-total + clear_gc_defer_for_
-                // evaluator + release_mutation_hold_defer(). Soft (sandbox /
-                // unit) is the legacy #2211 path — only residual-defer-total
-                // bumps, no clear, no abort.
-                {"residual-defer-forced-clear-total",
-                 make_int(m ? load(m->mutation_boundary_residual_defer_forced_clear_total) : 0)},
-                {"residual-defer-hard-fail-total",
-                 make_int(m ? load(m->mutation_boundary_residual_defer_hard_fail_total) : 0)},
-                // Active policy under current process env (re-evaluated
-                // per insert_kv call). 0=soft, 1=clear, 2=hard. Lets
-                // dashboards distinguish A vs B vs legacy at a glance.
-                {"residual-defer-policy", make_int([]() -> std::int64_t {
-                     const char* sandbox_e = std::getenv("AURA_SANDBOX");
-                     const bool dev_off =
-                         sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
-                     if (dev_off)
-                         return 0; // Soft
-                     const char* policy_e = std::getenv("AURA_RESIDUAL_DEFER_POLICY");
-                     const bool policy_hard_env =
-                         policy_e && *policy_e && std::string_view(policy_e) == "hard";
-                     const char* legacy_e = std::getenv("AURA_HARD_RESIDUAL_DEFER");
-                     const bool legacy_hard = legacy_e && *legacy_e && legacy_e[0] != '0';
-                     if (policy_hard_env || legacy_hard)
-                         return 2; // Hard
-                     return 1;     // Clear (production default)
-                 }())},
-                {"residual-defer-policy-wired", make_int(1)},
-                {"schema-2269", make_int(2269)},
-                {"issue-2269", make_int(2269)},
-                // Issue #2296: multi-eval residual Clear + steal orphan window.
-                // Correlate forced-clear vs orphan-cleared-on-steal vs
-                // arm-rejected-overflow vs bit-reconcile on one surface.
-                {"residual-defer-bit-reconcile-total",
-                 make_int(m ? load(m->mutation_boundary_residual_defer_bit_reconcile_total) : 0)},
-                {"gc-defer-bit-reconcile-total",
-                 make_int(
-                     static_cast<std::int64_t>(aura::gc_hooks::gc_defer_bit_reconcile_total()))},
-                {"gc-defer-orphan-cleared-on-steal-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::gc_hooks::gc_defer_orphan_cleared_on_steal_total()))},
-                {"gc-defer-table-overflow-total",
-                 make_int(static_cast<std::int64_t>(aura::gc_hooks::g_gc_defer_table_overflow_total
-                                                        .load(std::memory_order_relaxed)))},
-                {"residual-defer-multi-eval-wired", make_int(1)},
-                {"force-clear-all-gc-defer-wired", make_int(1)},
-                {"schema-2296", make_int(2296)},
-                {"issue-2296", make_int(2296)},
-                // Issue #2846: residual-defer-after-exit closed loop
-                // (outermost exit success+failure + steal-complete). Soft
-                // observe leftover; production Clear force-clears + counts.
-                {"residual-defer-after-exit-total",
-                 make_int(m ? load(m->residual_defer_after_exit_total)
-                            : static_cast<std::int64_t>(
-                                  aura::gc_hooks::residual_defer_after_exit_total()))},
-                {"residual-defer-after-exit-wired", make_int(1)},
-                {"close-residual-defer-after-exit-wired", make_int(1)},
-                {"schema-2846", make_int(2846)},
-                {"issue-2846", make_int(2846)},
-                // Issue #2975: outermost-exit residual + pin_contract hard gate.
-                // Additive — Soft residual-after-exit-total preserved (AC5).
-                {"residual-after-exit-hard-fail-total",
-                 make_int(m ? load(m->residual_after_exit_hard_fail_total)
-                            : static_cast<std::int64_t>(
-                                  aura::gc_hooks::residual_after_exit_hard_fail_total()))},
-                {"pin-contract-fail-on-exit-total",
-                 make_int(m ? load(m->pin_contract_fail_on_exit_total)
-                            : static_cast<std::int64_t>(
-                                  aura::gc_hooks::pin_contract_fail_on_exit_total()))},
-                {"outermost-exit-force-reason",
-                 make_int(static_cast<std::int64_t>(
-                     aura::gc_hooks::last_outermost_exit_force_reason()))},
-                {"outermost-exit-residual-pin-gate-wired", make_int(1)},
-                {"schema-2975", make_int(aura::gc_hooks::kOutermostExitResidualPinGateIssue)},
-                {"issue-2975", make_int(aura::gc_hooks::kOutermostExitResidualPinGateIssue)},
-                // Issue #2934: restamp budget on Guard exit (Agent latency
-                // control). Live FlatAST counters when workspace loaded.
-                {"restamp-budget",
-                 make_int(ev.workspace_flat() ? static_cast<std::int64_t>(
-                                                    ev.workspace_flat()->restamp_budget_nodes())
-                                              : 0)},
-                {"restamp-budget-exceeded-total",
-                 make_int(ev.workspace_flat()
-                              ? static_cast<std::int64_t>(
-                                    ev.workspace_flat()->restamp_budget_exceeded_total())
-                              : 0)},
-                {"restamp-nodes-skipped-total",
-                 make_int(ev.workspace_flat()
-                              ? static_cast<std::int64_t>(
-                                    ev.workspace_flat()->restamp_nodes_skipped_total())
-                              : 0)},
-                {"restamp-last-budget-exceeded",
-                 make_int(ev.workspace_flat() && ev.workspace_flat()->restamp_last_budget_exceeded()
-                              ? 1
-                              : 0)},
-                {"restamp-budget-wired", make_int(1)},
-                {"schema-2934", make_int(2934)},
-                {"issue-2934", make_int(2934)},
-                {"unified-restamp-torn-visible-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::ast::unified_restamp_torn_visible_total_v_read()))},
-                {"unified-restamp-calls-total",
-                 make_int(
-                     static_cast<std::int64_t>(aura::ast::unified_restamp_calls_total_v_read()))},
-                {"schema-3019", make_int(aura::ast::kUnifiedRestampIssue)},
-                {"issue-3019", make_int(aura::ast::kUnifiedRestampIssue)},
-                {"unified-restamp-wired", make_int(1)},
-                {"schema-3058", make_int(aura::ast::kUnifiedRestampQueryVisibleIssue)},
-                {"issue-3058", make_int(aura::ast::kUnifiedRestampQueryVisibleIssue)},
-                {"query-stable-ref-over-budget-visible-wired", make_int(1)},
-                {"restamp-budget-query-epoch-stale-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::core::g_restamp_budget_query_epoch_stale_total().load(
-                         std::memory_order_relaxed)))},
-                {"query-epoch-forced-stale",
-                 make_int(aura::core::g_query_epoch_forced_stale().load(std::memory_order_relaxed)
-                              ? 1
-                              : 0)},
-                {"schema-3041", make_int(3041)},
-                {"issue-3041", make_int(3041)},
-                // Issue #2364: PanicCheckpoint residual × densify closed loop.
-                {"panic-defer-after-densify-total",
-                 make_int(m ? load(m->panic_defer_after_densify_total)
-                            : static_cast<std::int64_t>(
-                                  aura::gc_hooks::panic_defer_after_densify_total()))},
-                {"panic-defer-after-densify-cleared-total",
-                 make_int(m ? load(m->panic_defer_after_densify_cleared_total)
-                            : static_cast<std::int64_t>(
-                                  aura::gc_hooks::panic_defer_after_densify_cleared_total()))},
-                {"panic-defer-after-densify-rearmed-total",
-                 make_int(m ? load(m->panic_defer_after_densify_rearmed_total)
-                            : static_cast<std::int64_t>(
-                                  aura::gc_hooks::panic_defer_after_densify_rearmed_total()))},
-                {"panic-defer-after-densify-hard-fail-total",
-                 make_int(m ? load(m->panic_defer_after_densify_hard_fail_total)
-                            : static_cast<std::int64_t>(
-                                  aura::gc_hooks::panic_defer_after_densify_hard_fail_total()))},
-                {"panic-defer-after-densify-wired", make_int(1)},
-                {"schema-2364", make_int(2364)},
-                {"issue-2364", make_int(2364)},
-                {"schema-2211", make_int(2211)},
-                {"issue-2211", make_int(2211)},
-                // Issue #2215: RenderFastExit (outermost success under render hotpath).
-                {"render-fast-exit-total", make_int(m ? load(m->render_fast_exit_total) : 0)},
-                {"render_fast_exit_total", make_int(m ? load(m->render_fast_exit_total) : 0)},
-                {"render-fast-exit-skipped-audit-total",
-                 make_int(m ? load(m->render_fast_exit_skipped_audit_total) : 0)},
-                {"render_fast_exit_skipped_audit_total",
-                 make_int(m ? load(m->render_fast_exit_skipped_audit_total) : 0)},
-                {"render-fast-exit-deferred-reemit-total",
-                 make_int(m ? load(m->render_fast_exit_deferred_reemit_total) : 0)},
-                {"render_fast_exit_deferred_reemit_total",
-                 make_int(m ? load(m->render_fast_exit_deferred_reemit_total) : 0)},
-                {"render-fast-exit-wired", make_int(1)},
-                {"schema-2215", make_int(2215)},
-                {"issue-2215", make_int(2215)},
-                // Issue #2311: RenderFastExit suppress counters (linear /
-                // match-site / hard_gate force full audit path). Distinct
-                // from render-fast-exit-skipped-audit-total which counts
-                // skipped audits AFTER fast-exit — these count suppressed
-                // fast-exits (production fail-closed default).
-                {"render-fast-exit-suppressed-linear-or-match-total",
-                 make_int(m ? load(m->render_fast_exit_suppressed_linear_or_match_total) : 0)},
-                {"render_fast_exit_suppressed_linear_or_match_total",
-                 make_int(m ? load(m->render_fast_exit_suppressed_linear_or_match_total) : 0)},
-                {"render-fast-exit-suppressed-linear-total",
-                 make_int(m ? load(m->render_fast_exit_suppressed_linear_total) : 0)},
-                {"render_fast_exit_suppressed_linear_total",
-                 make_int(m ? load(m->render_fast_exit_suppressed_linear_total) : 0)},
-                {"render-fast-exit-suppressed-match-total",
-                 make_int(m ? load(m->render_fast_exit_suppressed_match_total) : 0)},
-                {"render_fast_exit_suppressed_match_total",
-                 make_int(m ? load(m->render_fast_exit_suppressed_match_total) : 0)},
-                {"schema-2311", make_int(2311)},
-                {"issue-2311", make_int(2311)},
-                // Issue #2313: hold-budget over-budget signal — distinct
-                // from mutation_too_long_total which is the LATE-warning
-                // threshold via long_mutation_threshold_us (default 500ms).
-                // mutation_hold_over_budget_total is the EARLY-warning
-                // threshold via AURA_MUTATION_HOLD_BUDGET_US (default 100ms).
-                // Bumped at outermost dtor when hold > budget. SIGNAL-ONLY —
-                // does NOT force-fail or yield (would violate #2200 / unlock
-                // workspace_mtx_ mid-mutate). Agents read over-budget rate
-                // to choose RenderFastExit-style degrade or shorter batches.
-                {"mutation-hold-over-budget-total",
-                 make_int(m ? load(m->mutation_hold_over_budget_total) : 0)},
-                {"mutation_hold_over_budget_total",
-                 make_int(m ? load(m->mutation_hold_over_budget_total) : 0)},
-                // Current budget config — exposes the env-driven threshold.
-                {"mutation-hold-budget-us",
-                 make_int(static_cast<std::int64_t>(aura::compiler::mutation_hold_budget_us()))},
-                {"mutation-hold-over-budget-wired", make_int(1)},
-                {"schema-2313", make_int(2313)},
-                {"issue-2313", make_int(2313)},
-                // Issue #2349: production hold SLO circuit-breaker.
-                // Soft: metric only. Production default: force success_flag=false.
-                // Env AURA_MUTATION_HOLD_SLO_US (default 100ms; 0 disables).
-                {"mutation-hold-slo-violation-total",
-                 make_int(m ? load(m->mutation_hold_slo_violation_total) : 0)},
-                {"mutation_hold_slo_violation_total",
-                 make_int(m ? load(m->mutation_hold_slo_violation_total) : 0)},
-                {"mutation-hold-slo-us",
-                 make_int(static_cast<std::int64_t>(aura::compiler::mutation_hold_slo_us()))},
-                {"mutation-hold-slo-soft",
-                 make_int(aura::compiler::mutation_hold_slo_soft_mode() ? 1 : 0)},
-                {"mutation-hold-slo-wired", make_int(1)},
-                {"schema-2349", make_int(2349)},
-                {"issue-2349", make_int(2349)},
-                // Issue #2853: production residual policy lock —
-                // gauge + lock-active-now + effective-mode sentinels
-                // so Agents can assert the lock is engaged under
-                // production defaults. Mirrors steal-snapshot Soft
-                // lock (#2372) + production residual policy wire
-                // (schema-2853 / issue-2853 additive — no break of
-                // schema-2349 / schema-2211 / schema-2269 lineage).
-                // Lock-active gauge: bumped each Phase-5 outermost
-                // success residual check where production lock was
-                // gating the policy. Light binaries without
-                // CompilerMetrics wired still get the file-scope
-                // atomic via aura::serve::g_production_residual_policy_lock_active_total.
-                {"production-residual-policy-lock-active-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::serve::production_residual_policy_lock_active_total_v_read()))},
-                {"production_residual_policy_lock_active_total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::serve::production_residual_policy_lock_active_total_v_read()))},
-                // Lock-active-now: 1 if production_defaults_active() +
-                // sandbox != off (current state, not cumulative gauge).
-                {"production-residual-policy-lock-active",
-                 make_int(aura::serve::production_residual_policy_locked() ? 1 : 0)},
-                {"production_residual_policy_lock_active",
-                 make_int(aura::serve::production_residual_policy_locked() ? 1 : 0)},
-                // Effective mode sentinels (after production lock + test
-                // override resolution). Soft=1 means Soft path is active
-                // (no force-fail, no force-clear); Soft=0 means Clear or
-                // Hard applies (force-clear or abort).
-                {"hold-slo-effective-soft-mode",
-                 make_int(aura::compiler::mutation_hold_slo_soft_mode() ? 1 : 0)},
-                {"hold_slo_effective_soft_mode",
-                 make_int(aura::compiler::mutation_hold_slo_soft_mode() ? 1 : 0)},
-                {"residual-defer-soft-for-test",
-                 make_int(aura::serve::is_residual_defer_soft_for_test() ? 1 : 0)},
-                {"residual_defer_soft_for_test",
-                 make_int(aura::serve::is_residual_defer_soft_for_test() ? 1 : 0)},
-                {"hold-slo-soft-for-test",
-                 make_int(aura::serve::is_hold_slo_soft_for_test() ? 1 : 0)},
-                {"hold_slo_soft_for_test",
-                 make_int(aura::serve::is_hold_slo_soft_for_test() ? 1 : 0)},
-                {"production-residual-policy-lock-wired", make_int(1)},
-                {"production_residual_policy_lock_wired", make_int(1)},
-                {"schema-2853", make_int(2853)},
-                {"issue-2853", make_int(2853)},
-                // Issue #2854: same-transaction order — rebind + scan + proof
-                // stamp is one atomic story on densify/steal. Additive
-                // cumulative counters + last outcome sentinel + ownership
-                // rebind last report (mirror #2853 additive schema key
-                // pattern — no break of schema-2853 / schema-2758 / #2717
-                // lineage). Agents read these to assert no success proof
-                // outlives a failed rebind on the same exit.
-                {"type-linear-proof-stamped-after-rebind-total",
-                 make_int(static_cast<std::int64_t>(
-                     typed_audit::type_linear_proof_stamped_after_rebind_total_v_read()))},
-                {"type_linear_proof_stamped_after_rebind_total",
-                 make_int(static_cast<std::int64_t>(
-                     typed_audit::type_linear_proof_stamped_after_rebind_total_v_read()))},
-                {"type-linear-proof-reject-after-rebind-fail-total",
-                 make_int(static_cast<std::int64_t>(
-                     typed_audit::type_linear_proof_reject_after_rebind_fail_total_v_read()))},
-                {"type_linear_proof_reject_after_rebind_fail_total",
-                 make_int(static_cast<std::int64_t>(
-                     typed_audit::type_linear_proof_reject_after_rebind_fail_total_v_read()))},
-                // Last outcome sentinel: 0=Quiet, 1=Stamped, 2=Reject.
-                // Surfaced for Agent drift detect (a #2854 reject should
-                // be followed by force_linear_rollback + #2296 path).
-                {"last-type-linear-proof-outcome",
-                 make_int(typed_audit::last_type_linear_proof_outcome_v_read())},
-                {"last_type_linear_proof_outcome",
-                 make_int(typed_audit::last_type_linear_proof_outcome_v_read())},
-                // Ownership rebind last report (file-scope atomics from
-                // #2708 walk, surfaced for Agent dashboards to distinguish
-                // pre-#2854 success stamps from post-#2854 ordered stamps).
-                {"ownership-rebind-last-ok",
-                 make_int(aura::compiler::last_ownership_rebind_report_v_read().rebind_ok ? 1 : 0)},
-                {"ownership_rebind_last_ok",
-                 make_int(aura::compiler::last_ownership_rebind_report_v_read().rebind_ok ? 1 : 0)},
-                {"ownership-rebind-last-root-count",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::last_ownership_rebind_report_v_read().root_count))},
-                {"ownership_rebind_last_root_count",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::last_ownership_rebind_report_v_read().root_count))},
-                {"ownership-rebind-last-had-mismatch",
-                 make_int(aura::compiler::last_ownership_rebind_report_v_read().had_mismatch ? 1
-                                                                                             : 0)},
-                {"ownership_rebind_last_had_mismatch",
-                 make_int(aura::compiler::last_ownership_rebind_report_v_read().had_mismatch ? 1
-                                                                                             : 0)},
-                {"ownership-rebind-last-had-rebind",
-                 make_int(aura::compiler::last_ownership_rebind_report_v_read().had_rebind ? 1
-                                                                                           : 0)},
-                {"ownership_rebind_last_had_rebind",
-                 make_int(aura::compiler::last_ownership_rebind_report_v_read().had_rebind ? 1
-                                                                                           : 0)},
-                {"ownership-rebind-last-reason",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::last_ownership_rebind_report_v_read().reason))},
-                {"ownership_rebind_last_reason",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::last_ownership_rebind_report_v_read().reason))},
-                {"ownership-rebind-same-tx-wired", make_int(1)},
-                {"ownership_rebind_same_tx_wired", make_int(1)},
-                {"schema-2854", make_int(2854)},
-                {"issue-2854", make_int(2854)},
-                // Issue #2855: production deferred-reemit deadline force-drain
-                // (bounded native hole). Additive cumulative counters + last-stamp
-                // observability so Agents can assert the force gate is engaged
-                // under production Defer (env AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS).
-                // Force-drain body fires from on_reemit_pipeline_call (NOT steal path
-                // per #2715 regression guard); drives the deferred-reemit recovery
-                // branch directly with CAS re-entry guard. Exchange-not-check semantics:
-                // concurrent BoundaryExit + force-drain → at most one body, double-
-                // drain prevented counter may rise. Preserve #2748/#2715/#2690/#2604
-                // surfaces (regression check).
-                {"reemit-deferred-force-drain-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::hot_update_registry().reemit_deferred_force_drain_total()))},
-                {"reemit_deferred_force_drain_total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::hot_update_registry().reemit_deferred_force_drain_total()))},
-                {"reemit-deferred-force-drain-skipped-reentered-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::hot_update_registry()
-                         .reemit_deferred_force_drain_skipped_reentered_total()))},
-                {"reemit_deferred_force_drain_skipped_reentered_total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::hot_update_registry()
-                         .reemit_deferred_force_drain_skipped_reentered_total()))},
-                {"reemit-deferred-force-drain-double-prevented-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::hot_update_registry()
-                         .reemit_deferred_force_drain_double_prevented_total()))},
-                {"reemit_deferred_force_drain_double_prevented_total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::hot_update_registry()
-                         .reemit_deferred_force_drain_double_prevented_total()))},
-                // Env-cached deadline (0 = disabled, observe-only #2748 preserved).
-                // Surfaces to Agent dashboards so they can distinguish "force gate
-                // engaged" from "observe-only context" without re-parsing env.
-                {"reemit-deferred-force-drain-deadline-ms",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::HotUpdateRegistry::force_drain_deadline_ms()))},
-                {"reemit_deferred_force_drain_deadline_ms",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::HotUpdateRegistry::force_drain_deadline_ms()))},
-                {"reemit-deferred-force-drain-wired", make_int(1)},
-                {"reemit_deferred_force_drain_wired", make_int(1)},
-                {"schema-2855", make_int(2855)},
-                {"issue-2855", make_int(2855)},
-                // Issue #2405: predictive estimate surface (separate pure query);
-                // discovery key here so Agents find hold-estimate from hold-stats.
-                {"hold-estimate-wired", make_int(1)},
-                {"schema-2405", make_int(2405)},
-                {"issue-2405", make_int(2405)},
-                // Issue #2314: residual defer cleared on steal (orphan
-                // interlock). Mirrors query:gc-defer-reason-stats (which
-                // also exposes the same counter for cross-subsystem view).
-                {"residual-defer-cleared-on-steal-total",
-                 make_int(m ? load(m->residual_defer_cleared_on_steal_total) : 0)},
-                {"residual_defer_cleared_on_steal_total",
-                 make_int(m ? load(m->residual_defer_cleared_on_steal_total) : 0)},
-                {"residual-defer-steal-interlock-wired", make_int(1)},
-                {"schema-2314", make_int(2314)},
-                // Issue #2546: steal-complete residual hard-AND
-                {"residual-defer-steal-hard-fail-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::gc_hooks::residual_defer_steal_hard_fail_total()))},
-                {"residual-defer-steal-soft-leftover-total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::gc_hooks::residual_defer_steal_soft_leftover_total()))},
-                {"residual-defer-steal-hard-and-wired", make_int(1)},
-                {"schema-2546", make_int(2546)},
-                {"issue-2546", make_int(2546)},
-                {"issue-2314", make_int(2314)},
-            };
-            return build_hash(kv);
+            return build_hash(MutationHoldStats{ev}.emit());
         });
+}
 
+// Issue #5031: query:workspace-mtx-contention-stats registration phase.
+void register_eval_p41_workspace_mtx_contention(Evaluator& ev, auto& string_heap) {
     // Issue #2523: (query:workspace-mtx-contention-stats) — focused Agent
     // self-throttle surface (hold p99, waiters, region-collision, optimistic
     // hits). Complements query:mutation-boundary-hold-stats without requiring
     // Agents to parse the full hold-stats hash. Internal catalog only
     // (register_stats_impl — SlimSurface public count unchanged).
     ObservabilityPrims::register_stats_impl(
-        "query:workspace-mtx-contention-stats", [&ev](const auto&) -> EvalValue {
+        "query:workspace-mtx-contention-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(query_hash_capacity_for(34));
@@ -6499,7 +6590,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
+                    auto kidx = string_heap.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -6518,7 +6609,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return query_hash_finish(ht, string_heap, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -6607,12 +6698,15 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
+}
 
+// Issue #5031: query:workspace-concurrency-stats registration phase.
+void register_eval_p41_workspace_concurrency(Evaluator& ev, auto& string_heap) {
     // Issue #2990: query:workspace-concurrency-stats — ConcurrentMutationPolicy
     // + ScopedParallel admit / conflict-fallback. Complements #2523 contention
     // and #2985 health (does not reimplement health throttle).
     ObservabilityPrims::register_stats_impl(
-        "query:workspace-concurrency-stats", [&ev](const auto&) -> EvalValue {
+        "query:workspace-concurrency-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(query_hash_capacity_for(31));
@@ -6628,7 +6722,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
+                    auto kidx = string_heap.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     for (std::size_t at = 0; at < hcap; ++at) {
                         auto slot = ((h >> 1) + at) & (hcap - 1);
@@ -6641,7 +6735,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return query_hash_finish(ht, string_heap, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -6691,14 +6785,17 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
+}
 
+// Issue #5031: query:mutation-hold-estimate registration phase.
+void register_eval_p41_mutation_hold_estimate(Evaluator& ev, auto& string_heap) {
     // Issue #2405: (query:mutation-hold-estimate) — predictive pure query
     // for Agent batch planning. Surfaces recent outermost hold p50/p99,
     // live budget/slo config, dirty-scope estimate, and recommend-split
     // (estimate > 0.7 * budget). Soft: no side effects; zeros when no
     // recent holds / empty dirty. Does not change Guard dtor / SLO policy.
     ObservabilityPrims::register_stats_impl(
-        "query:mutation-hold-estimate", [&ev](const auto&) -> EvalValue {
+        "query:mutation-hold-estimate", [&ev, &string_heap](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(query_hash_capacity_for(23));
@@ -6714,7 +6811,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
+                    auto kidx = string_heap.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -6733,7 +6830,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return query_hash_finish(ht, string_heap, overflowed, ev);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -6817,14 +6914,17 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
+}
 
+// Issue #5031: query:mutation-hold-live registration phase.
+void register_eval_p41_mutation_hold_live(Evaluator& ev, auto& string_heap) {
     // Issue #2517: (query:mutation-hold-live) — real-time longest outermost
     // MutationBoundary holder probe for Agent self-degrade (split / yield).
     // Surfaces fiber-id + start-ns + duration-us + depth. No holder → zeros.
     // Coexists with #2405 hold-estimate (historical p50/p99) and #2379 health.
     // Best-effort CAS updates (AC5); not a hard mutex owner lock.
     ObservabilityPrims::register_stats_impl(
-        "query:mutation-hold-live", [&ev](const auto&) -> EvalValue {
+        "query:mutation-hold-live", [&ev, &string_heap](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 auto* ht = FlatHashTable::create(query_hash_capacity_for(24));
@@ -6840,7 +6940,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
+                    auto kidx = string_heap.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -6859,7 +6959,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return query_hash_finish(ht, string_heap, overflowed, ev);
             };
             const auto snap = aura::compiler::mutation_hold_live_snapshot();
             const auto budget =
@@ -6898,19 +6998,25 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             };
             return build_hash(kv);
         });
+}
 
+// Issue #5031: query:mutation-boundary-depth registration phase.
+void register_eval_p41_mutation_boundary_depth(Evaluator& ev, auto& string_heap) {
     // Issue #1504: (query:mutation-boundary-depth) — current Guard
     // nesting depth for Agent orchestration (0 = steal-safe / yield-safe).
     ObservabilityPrims::register_stats_impl(
-        "query:mutation-boundary-depth", [&ev](const auto&) -> EvalValue {
+        "query:mutation-boundary-depth", [&ev, &string_heap](const auto&) -> EvalValue {
             return make_int(static_cast<std::int64_t>(ev.mutation_boundary_depth()));
         });
+}
 
+// Issue #5031: query:pcv-hotpath-stats registration phase.
+void register_eval_p41_pcv_hotpath(Evaluator& ev, auto& string_heap) {
     // Issue #2058 / #2140 / #2406 / #2521: (query:pcv-hotpath-stats) —
     // PCV unique in-place vs COW alloc vs TLS freelist (production default
     // ON; AURA_PCV_TLS=0 forces off).
     ObservabilityPrims::register_stats_impl(
-        "query:pcv-hotpath-stats", [&ev](const auto&) -> EvalValue {
+        "query:pcv-hotpath-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             (void)ev;
             auto& m = aura::ast::g_pcv_hotpath_metrics();
             auto load = [&](std::atomic<std::uint64_t>& a) -> std::int64_t {
@@ -6934,7 +7040,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                     auto idx = ((h >> 1) + at) & (hcap - 1);
                     if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
                         meta[idx] = fp;
-                        auto kidx = ev.string_heap_.mint(k_str);
+                        auto kidx = string_heap.mint(k_str);
                         keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
                         vals[idx] = make_int(v).val;
                         ht->size++;
@@ -6990,12 +7096,15 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2140", aura::ast::kPcvExclusiveSetIssue);
             insert_kv("schema", aura::ast::kPcvTlsDefaultOnIssue);
             insert_kv("active", 1);
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: safe-yield action + stats + fairness registration phase.
+void register_eval_p41_safe_yield_surfaces(Evaluator& ev, auto& string_heap) {
     // Shared builder for safe-yield action surfaces (#1504 / #1591 / #1635).
     // Capacity must be power-of-two (open-address mask hcap-1).
-    auto build_safe_yield_hash = [&ev](int rc) -> EvalValue {
+    auto build_safe_yield_hash = [&ev, &string_heap](int rc) -> EvalValue {
         auto* ht = FlatHashTable::create(query_hash_capacity_for(53));
         if (!ht)
             return make_void();
@@ -7009,7 +7118,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             for (const char* p = k_str; *p; ++p)
                 h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
             const auto fp = ::aura::compiler::hash::fingerprint(h);
-            auto kidx = ev.string_heap_.mint(k_str);
+            auto kidx = string_heap.mint(k_str);
             for (std::size_t at = 0; at < hcap; ++at) {
                 auto slot = ((h >> 1) + at) & (hcap - 1);
                 if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
@@ -7066,7 +7175,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
         insert_kv("safe-yield-mandate-active", 1);
         insert_kv("issue", 1635);
         insert_kv("schema", 1635); // lineage 1591 / 1504
-        return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+        return query_hash_finish(ht, string_heap, overflowed, ev);
     };
 
     // Issue #1504: (query:mutation-boundary-safe-yield) — attempt cooperative
@@ -7094,7 +7203,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #1504 / #1635: lifetime counters + depth instrumentation (read-only).
     ObservabilityPrims::register_stats_impl(
-        "query:mutation-boundary-safe-yield-stats", [&ev](const auto&) -> EvalValue {
+        "query:mutation-boundary-safe-yield-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             auto* ht = FlatHashTable::create(query_hash_capacity_for(22));
             if (!ht)
                 return make_void();
@@ -7108,7 +7217,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 for (const char* p = k_str; *p; ++p)
                     h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
                 const auto fp = ::aura::compiler::hash::fingerprint(h);
-                auto kidx = ev.string_heap_.mint(k_str);
+                auto kidx = string_heap.mint(k_str);
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto slot = ((h >> 1) + at) & (hcap - 1);
                     if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
@@ -7155,13 +7264,13 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             insert_kv("safe-yield-mandate-active", 1);
             insert_kv("issue", 1635);
             insert_kv("schema", 1635); // lineage 1591 / 1504
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 
     // Issue #1591 / #1635: unified fairness dashboard (safe-yield + per-fiber
     // depth + steal starvation + safepoint wait). One hash for multi-Agent.
     ObservabilityPrims::register_stats_impl(
-        "query:mutation-boundary-fairness-stats", [&ev](const auto&) -> EvalValue {
+        "query:mutation-boundary-fairness-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             auto* ht = FlatHashTable::create(query_hash_capacity_for(24));
             if (!ht)
                 return make_void();
@@ -7175,7 +7284,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 for (const char* p = k_str; *p; ++p)
                     h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
                 const auto fp = ::aura::compiler::hash::fingerprint(h);
-                auto kidx = ev.string_heap_.mint(k_str);
+                auto kidx = string_heap.mint(k_str);
                 for (std::size_t at = 0; at < hcap; ++at) {
                     auto slot = ((h >> 1) + at) & (hcap - 1);
                     if (meta[slot] == ::aura::compiler::hash::kEmptySlot) {
@@ -7240,13 +7349,757 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             insert_kv("safe-yield-mandate-active", 1);
             insert_kv("issue", 1635);
             insert_kv("schema", 1635); // lineage 1591 / 1504
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
 }
 
-// Issue #909 part 42 (orig lines 5536-5657)
-void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
+// Issue #909 part 41 (orig lines 5423-5535)
+void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
+    (void)add;
+    auto& string_heap = ev.string_heap_;
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_eval_p41_fiber_boundary_violation(ev, string_heap);
+    register_eval_p41_mutation_boundary_hold_stats(ev, string_heap);
+    register_eval_p41_workspace_mtx_contention(ev, string_heap);
+    register_eval_p41_workspace_concurrency(ev, string_heap);
+    register_eval_p41_mutation_hold_estimate(ev, string_heap);
+    register_eval_p41_mutation_hold_live(ev, string_heap);
+    register_eval_p41_mutation_boundary_depth(ev, string_heap);
+    register_eval_p41_pcv_hotpath(ev, string_heap);
+    register_eval_p41_safe_yield_surfaces(ev, string_heap);
+}
 
+// --- Issue #5031: register_eval_p42 phases ---------------------------------
+// The p42 registration body outgrew the 300-line ceiling. Each phase below is
+// one registration responsibility family; register_eval_p42 keeps the ordered
+// delegation so registration order, primitive names, lambda capture lifetimes
+// and every stats payload key stay identical.
+
+// Issue #5031: query:incremental-relower-stats payload phases.
+// The relower key sequence outgrew the 300-line ceiling; field names match the
+// original locals so every key line below stays verbatim, and emit() replays
+// the phases in the original order (including the phase-stats tail loop).
+struct RelowerStats {
+    Evaluator& ev;
+    CompilerMetrics* m = nullptr;
+    std::int64_t impact_blocks_hit = 0;
+    std::int64_t partial_relowers = 0;
+    std::int64_t full_fallbacks = 0;
+    std::int64_t time_saved_us = 0;
+    std::int64_t incr_blocks = 0;
+    std::int64_t per_fn = 0;
+    std::int64_t skipped = 0;
+    std::int64_t full_called = 0;
+    std::int64_t dirty_hits = 0;
+    std::int64_t blocks_saved = 0;
+    std::int64_t dirty_ratio_bp = 0;
+    std::int64_t eval_hits = 0;
+    std::int64_t eval_path = 0;
+    std::int64_t eval_ir_path = 0;
+    std::int64_t dirty_prec_bp = 10000;
+    std::int64_t min_scope_bp = 10000;
+    std::int64_t load(std::atomic<std::uint64_t>& a) const {
+        return m ? static_cast<std::int64_t>(a.load(std::memory_order_relaxed)) : 0;
+    }
+    void collect();
+    template <typename Kv> void emit_relower_core_scope_fields(Kv& kv) const;
+    template <typename Kv> void emit_threshold_policy_fields(Kv& kv) const;
+    template <typename Kv> void emit_stamp_cascade_fields(Kv& kv) const;
+    template <typename Kv> void emit_post_mutate_cascade_fields(Kv& kv) const;
+    template <typename Kv> void emit_storm_fallback_fields(Kv& kv) const;
+    template <typename Kv> void emit_phase_stats_fields(Kv& kv) const;
+    std::vector<std::pair<std::string, EvalValue>> emit();
+};
+
+void RelowerStats::collect() {
+    m = ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
+    impact_blocks_hit = m ? static_cast<std::int64_t>(m->incremental_impact_blocks_hit_total.load(
+                                std::memory_order_relaxed))
+                          : 0;
+    partial_relowers = m ? static_cast<std::int64_t>(
+                               m->incremental_partial_relower_total.load(std::memory_order_relaxed))
+                         : 0;
+    full_fallbacks = m ? static_cast<std::int64_t>(
+                             m->incremental_full_fallback_total.load(std::memory_order_relaxed))
+                       : 0;
+    time_saved_us = m ? static_cast<std::int64_t>(
+                            m->incremental_time_saved_us_total.load(std::memory_order_relaxed))
+                      : 0;
+    // Issue #1601 / #1605 / #1623: production consumer metrics
+    // (eval/eval_ir/define_function prefer partial re-lower).
+    incr_blocks = m ? static_cast<std::int64_t>(
+                          m->incremental_relower_blocks_total.load(std::memory_order_relaxed))
+                    : 0;
+    per_fn = m ? static_cast<std::int64_t>(
+                     m->relower_per_function_called_count.load(std::memory_order_relaxed))
+               : 0;
+    skipped = m ? static_cast<std::int64_t>(
+                      m->relower_skipped_entirely_count.load(std::memory_order_relaxed))
+                : 0;
+    full_called =
+        m ? static_cast<std::int64_t>(m->relower_full_called_count.load(std::memory_order_relaxed))
+          : 0;
+    dirty_hits = m ? static_cast<std::int64_t>(
+                         m->ir_soa_block_dirty_hits_total.load(std::memory_order_relaxed))
+                   : 0;
+    blocks_saved = m ? static_cast<std::int64_t>(
+                           m->ir_soa_relower_blocks_saved_total.load(std::memory_order_relaxed))
+                     : 0;
+    dirty_ratio_bp =
+        (dirty_hits + blocks_saved) > 0
+            ? static_cast<std::int64_t>((dirty_hits * 10000) / (dirty_hits + blocks_saved))
+            : 0;
+    // #1623: EDSL eval hot-path partial re-lower AC counters
+    eval_hits = m ? static_cast<std::int64_t>(
+                        m->incremental_eval_relower_hits.load(std::memory_order_relaxed))
+                  : 0;
+    eval_path =
+        m ? static_cast<std::int64_t>(m->eval_path_relower_total.load(std::memory_order_relaxed))
+          : 0;
+    eval_ir_path =
+        m ? static_cast<std::int64_t>(m->eval_ir_path_relower_total.load(std::memory_order_relaxed))
+          : 0;
+    // Local load helper must be declared before the kv brace list
+    // (C++ point-of-instantiation; #1639 keys use load()).
+    // Issue #1915: precision + minimal scope (basis points).
+    dirty_prec_bp = 10000;
+    min_scope_bp = 10000;
+    if (m) {
+        const auto blk = m->dirty_propagation_block_marks.load(std::memory_order_relaxed);
+        const auto full_marks =
+            m->dirty_propagation_full_func_marks.load(std::memory_order_relaxed);
+        const auto den_marks = blk + full_marks;
+        if (den_marks > 0)
+            dirty_prec_bp = ::aura::compiler::basis_points(blk, den_marks);
+        const auto clean = m->invalidate_early_exit_clean_total.load(std::memory_order_relaxed) +
+                           m->relower_skipped_entirely_count.load(std::memory_order_relaxed);
+        const auto full_rl = m->relower_full_called_count.load(std::memory_order_relaxed);
+        const auto den_scope = clean + full_rl;
+        if (den_scope > 0)
+            min_scope_bp = ::aura::compiler::basis_points(clean, den_scope);
+    }
+}
+
+// Issue #5031: core partial-vs-full signals + dirty scope (#718 / #1601 / #1605 / #1623 / #1639 /
+// #1915 / #2032 / #3067).
+template <typename Kv> void RelowerStats::emit_relower_core_scope_fields(Kv& kv) const {
+    kv.insert(
+        kv.end(),
+        {
+            {"impact-blocks-hit", make_int(impact_blocks_hit)},
+            {"partial-relowers", make_int(partial_relowers)},
+            {"full-fallbacks", make_int(full_fallbacks)},
+            {"time-saved-us", make_int(time_saved_us)},
+            // #1601 / #1605 AC names (underscore form for agents)
+            {"incremental_relower_blocks", make_int(incr_blocks)},
+            {"relower_per_function_called_count", make_int(per_fn)},
+            {"relower_skipped_entirely_count", make_int(skipped)},
+            {"relower_full_called_count", make_int(full_called)},
+            // #1605 AC3 alias (snapshot field name)
+            {"full_relower_count", make_int(full_called)},
+            {"dirty_block_ratio", make_int(dirty_ratio_bp)}, // basis points
+            {"dirty_block_ratio_bp", make_int(dirty_ratio_bp)},
+            // #1623 AC keys — eval/eval_ir hot-path partial wins
+            {"incremental_eval_relower_hits", make_int(eval_hits)},
+            {"eval_path_relower_total", make_int(eval_path)},
+            {"eval_ir_path_relower_total", make_int(eval_ir_path)},
+            {"eval-prefer-partial-wired", make_int(1)},
+            {"eval-ir-prefer-partial-wired", make_int(1)},
+            {"relower-only-dirty-blocks-wired", make_int(1)},
+            {"relower-define-blocks-wired", make_int(1)},
+            {"lookup-define-v2-prefer-partial", make_int(1)},
+            // Issue #1639: per-block dirty bitmask → partial
+            // re-lower wiring (refine #1474 / #1495 / #1505 /
+            // #1514 / #1555 / #1601 / #1605). 6 new keys
+            // completing the spec's observability surface:
+            //   - full-relower-count (alias for the new atomic
+            //     full_relower_count in observability_metrics.h)
+            //   - dirty-block-ratio-numerator-total +
+            //     denominator-total: running sums so dashboards
+            //     can compute time-weighted averages
+            //     (the instantaneous dirty_block_ratio key
+            //     above uses basis points from current snapshot)
+            //   - relower-block-hit-rate + numerator + denominator:
+            //     computed hit-rate (basis points) + running sums
+            {"full-relower-count", make_int(m ? load(m->full_relower_count) : 0)},
+            {"dirty-block-ratio-numerator-total",
+             make_int(m ? load(m->dirty_block_ratio_numerator_total) : 0)},
+            {"dirty-block-ratio-denominator-total",
+             make_int(m ? load(m->dirty_block_ratio_denominator_total) : 0)},
+            {"relower-block-hit-rate-numerator-total",
+             make_int(m ? load(m->relower_block_hit_rate_numerator_total) : 0)},
+            {"relower-block-hit-rate-denominator-total",
+             make_int(m ? load(m->relower_block_hit_rate_denominator_total) : 0)},
+            {"relower-block-hit-rate",
+             make_int(
+                 ((m ? (m->relower_block_hit_rate_denominator_total.load(std::memory_order_relaxed))
+                     : 0)) > 0
+                     ? static_cast<std::int64_t>(
+                           (m ? m->relower_block_hit_rate_numerator_total.load(
+                                    std::memory_order_relaxed)
+                              : 0) *
+                           10000 /
+                           (m ? m->relower_block_hit_rate_denominator_total.load(
+                                    std::memory_order_relaxed)
+                              : 1))
+                     : 0)},
+            // Issue #1915: fine-grained dirty prop + minimal recompile scope
+            {"relower_block_count", make_int(m ? load(m->relower_block_count) : 0)},
+            {"relower-block-count", make_int(m ? load(m->relower_block_count) : 0)},
+            {"dirty_propagation_block_marks",
+             make_int(m ? load(m->dirty_propagation_block_marks) : 0)},
+            {"dirty_propagation_full_func_marks",
+             make_int(m ? load(m->dirty_propagation_full_func_marks) : 0)},
+            {"dirty_propagation_precision", make_int(dirty_prec_bp)},
+            {"dirty-propagation-precision", make_int(dirty_prec_bp)},
+            {"minimal_recompile_scope", make_int(min_scope_bp)},
+            {"minimal-recompile-scope", make_int(min_scope_bp)},
+            {"minimal_recompile_clean_funcs_saved",
+             make_int(m ? load(m->minimal_recompile_clean_funcs_saved) : 0)},
+            {"invalidate_early_exit_clean_total",
+             make_int(m ? load(m->invalidate_early_exit_clean_total) : 0)},
+            {"body-only-dirty-wired", make_int(1)},
+            {"cascade-body-only-wired", make_int(1)},
+            {"no-full-func-degrade-default", make_int(1)},
+            // Keep schema=1639 for lineage tests (#718…#1639); #1915 is additive.
+            {"schema-1915", make_int(1915)},
+            {"issue-1915", make_int(1915)},
+            // Issue #2032: dep_graph stale-edge reject + configurable threshold
+            {"dep_graph_edge_reject_stale_total",
+             make_int(m ? load(m->dep_graph_edge_reject_stale_total) : 0)},
+            {"dep-graph-edge-reject-stale",
+             make_int(m ? load(m->dep_graph_edge_reject_stale_total) : 0)},
+            {"dep_graph_generation_total", make_int(m ? load(m->dep_graph_generation_total) : 0)},
+            {"partial_relower_threshold_used",
+             make_int(m ? load(m->partial_relower_threshold_used) : 8)},
+            {"partial-relower-threshold",
+             make_int(static_cast<std::int64_t>(aura::compiler::get_partial_relower_threshold()))},
+            {"dep-graph-stale-reject-wired", make_int(1)},
+            {"partial-relower-threshold-wired", make_int(1)},
+            {"schema-2032", make_int(2032)},
+            {"issue-2032", make_int(2032)},
+            // Issue #3067: stale-reject deferred hybrid cascade drain.
+            {"hybrid-deferred-cascade-total",
+             make_int(m ? load(m->hybrid_deferred_cascade_total) : 0)},
+            {"hybrid-deferred-cascade-wired",
+             make_int(m ? static_cast<std::int64_t>(
+                              m->hybrid_deferred_cascade_wired.load(std::memory_order_relaxed))
+                        : 1)},
+            {"schema-3067", make_int(3067)},
+            {"issue-3067", make_int(3067)},
+        });
+}
+
+// Issue #5031: adaptive threshold policy + soundness oracle + sampling (#2112 / #2113 / #2245 /
+// #2248 / #4156).
+template <typename Kv> void RelowerStats::emit_threshold_policy_fields(Kv& kv) const {
+    kv.insert(
+        kv.end(),
+        {
+            // Issue #2112: adaptive partial/full threshold policy
+            {"avg-partial-relower-cost-ns",
+             make_int(static_cast<std::int64_t>(aura::compiler::avg_partial_relower_cost_ns()))},
+            {"avg-full-relower-cost-ns",
+             make_int(static_cast<std::int64_t>(aura::compiler::avg_full_relower_cost_ns()))},
+            {"partial-vs-full-win-ratio-bp",
+             make_int(static_cast<std::int64_t>(aura::compiler::partial_vs_full_win_ratio_bp()))},
+            {"partial-relower-cost-samples",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::partial_relower_cost_samples_atomic().load(
+                     std::memory_order_relaxed)))},
+            {"full-relower-cost-samples",
+             make_int(static_cast<std::int64_t>(aura::compiler::full_relower_cost_samples_atomic()
+                                                    .load(std::memory_order_relaxed)))},
+            {"adaptive-partial-relower-min",
+             make_int(static_cast<std::int64_t>(aura::compiler::kAdaptivePartialRelowerMin))},
+            {"adaptive-partial-relower-max",
+             make_int(static_cast<std::int64_t>(aura::compiler::kAdaptivePartialRelowerMax))},
+            {"adaptive-partial-relower-wired", make_int(1)},
+            {"schema-2112", make_int(2112)},
+            {"issue-2112", make_int(2112)},
+            // Issue #2113: incremental soundness oracle (partial ≡ full)
+            {"incremental_soundness_runs_total",
+             make_int(m ? load(m->incremental_soundness_runs_total)
+                        : static_cast<std::int64_t>(
+                              aura::compiler::incremental_soundness_runs_atomic().load(
+                                  std::memory_order_relaxed)))},
+            {"incremental-soundness-runs",
+             make_int(static_cast<std::int64_t>(aura::compiler::incremental_soundness_runs_atomic()
+                                                    .load(std::memory_order_relaxed)))},
+            {"incremental_soundness_ok_total",
+             make_int(m ? load(m->incremental_soundness_ok_total)
+                        : static_cast<std::int64_t>(
+                              aura::compiler::incremental_soundness_ok_atomic().load(
+                                  std::memory_order_relaxed)))},
+            {"incremental-soundness-ok", make_int(static_cast<std::int64_t>(
+                                             aura::compiler::incremental_soundness_ok_atomic().load(
+                                                 std::memory_order_relaxed)))},
+            {"incremental_soundness_mismatch_total",
+             make_int(m ? load(m->incremental_soundness_mismatch_total)
+                        : static_cast<std::int64_t>(
+                              aura::compiler::incremental_soundness_mismatch_atomic().load(
+                                  std::memory_order_relaxed)))},
+            {"incremental-soundness-mismatch",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::incremental_soundness_mismatch_atomic().load(
+                     std::memory_order_relaxed)))},
+            {"incremental-soundness-enabled",
+             make_int(aura::compiler::incremental_soundness_enabled() ? 1 : 0)},
+            {"incremental-soundness-mode",
+             make_int(static_cast<std::int64_t>(aura::compiler::get_incremental_soundness_mode()))},
+            {"incremental-soundness-wired", make_int(1)},
+            // Issue #2245: production sampling of incremental soundness
+            {"incremental_soundness_prod_runs_total",
+             make_int(m ? load(m->incremental_soundness_prod_runs_total) : 0)},
+            {"incremental-soundness-prod-runs",
+             make_int(m ? load(m->incremental_soundness_prod_runs_total) : 0)},
+            {"incremental_soundness_prod_ok_total",
+             make_int(m ? load(m->incremental_soundness_prod_ok_total) : 0)},
+            {"incremental-soundness-prod-ok",
+             make_int(m ? load(m->incremental_soundness_prod_ok_total) : 0)},
+            {"incremental_soundness_mismatch_prod_total",
+             make_int(m ? load(m->incremental_soundness_mismatch_prod_total) : 0)},
+            {"incremental-soundness-mismatch-prod",
+             make_int(m ? load(m->incremental_soundness_mismatch_prod_total) : 0)},
+            {"incremental-soundness-sample-bp",
+             make_int(static_cast<std::int64_t>(aura::compiler::soundness_sample_bp()))},
+            {"incremental-soundness-mode-allows-prod",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::incremental_soundness_mode_allows_prod() ? 1 : 0))},
+            // Issue #2248: Agent-driven adaptive relower threshold
+            {"adaptive-thr-current",
+             make_int(static_cast<std::int64_t>(
+                 m ? load(m->adaptive_thr_current)
+                   : static_cast<std::uint64_t>(aura::compiler::current_adaptive_partial_thr()) *
+                         100))},
+            {"adaptive-thr-raises-total", make_int(m ? load(m->adaptive_thr_raises_total) : 0)},
+            {"adaptive-thr-decays-total", make_int(m ? load(m->adaptive_thr_decays_total) : 0)},
+            {"adaptive-thr-bad-window-count",
+             make_int(m ? load(m->adaptive_thr_bad_window_count)
+                        : static_cast<std::int64_t>(
+                              aura::compiler::adaptive_thr_policy_singleton().bad_window_count))},
+            {"adaptive-thr-frozen", make_int(m ? load(m->adaptive_thr_frozen)
+                                               : (aura::compiler::adaptive_thr_frozen() ? 1 : 0))},
+            // Issue #4156: genuinely wired — the peel decision core
+            // (decide_workload_adaptive_partial_relower) clamps the
+            // effective thr to the risk-narrowed adaptive face.
+            {"adaptive-thr-wired", make_int(1)},
+            {"schema-2248", make_int(2248)},
+            {"issue-2248", make_int(2248)},
+            {"schema-2245", make_int(2245)},
+            {"issue-2245", make_int(2245)},
+            {"schema-2113", make_int(2113)},
+            {"issue-2113", make_int(2113)},
+        });
+}
+
+// Issue #5031: JIT equivalence + cache stamp + SoA fence + cascade scope (#2210 / #2033 / #2183 /
+// #2111 / #2041 / #3034 / #3068 / #2044 / #2045).
+template <typename Kv> void RelowerStats::emit_stamp_cascade_fields(Kv& kv) const {
+    kv.insert(
+        kv.end(),
+        {
+            // Issue #2210: JIT / Interpreter PrimCall + apply_closure
+            // equivalence oracle (opt-in; zero-cost when mode 0/2)
+            {"jit_equivalence_runs_total",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::jit_equivalence_runs_atomic().load(std::memory_order_relaxed)))},
+            {"jit-equivalence-runs",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::jit_equivalence_runs_atomic().load(std::memory_order_relaxed)))},
+            {"jit_equivalence_ok_total",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::jit_equivalence_ok_atomic().load(std::memory_order_relaxed)))},
+            {"jit-equivalence-ok",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::jit_equivalence_ok_atomic().load(std::memory_order_relaxed)))},
+            {"jit_equivalence_mismatch_total",
+             make_int(static_cast<std::int64_t>(aura::compiler::jit_equivalence_mismatch_atomic()
+                                                    .load(std::memory_order_relaxed)))},
+            {"jit-equivalence-mismatch", make_int(static_cast<std::int64_t>(
+                                             aura::compiler::jit_equivalence_mismatch_atomic().load(
+                                                 std::memory_order_relaxed)))},
+            {"jit_equivalence_deopt_force_total",
+             make_int(static_cast<std::int64_t>(
+                 aura::compiler::jit_equivalence_deopt_force_total_atomic().load(
+                     std::memory_order_relaxed)))},
+            {"jit-equivalence-enabled",
+             make_int(aura::compiler::jit_equivalence_enabled() ? 1 : 0)},
+            {"jit-equivalence-mode",
+             make_int(static_cast<std::int64_t>(aura::compiler::get_jit_equivalence_mode()))},
+            {"jit-equivalence-wired", make_int(1)},
+            {"schema-2210", make_int(2210)},
+            {"issue-2210", make_int(2210)},
+            // Issue #2033 / #2183: CacheEntryVersionStamp + bridge_epoch
+            // should_relower + unified restamp contract
+            {"cache_entry_version_stamp_total",
+             make_int(m ? load(m->cache_entry_version_stamp_total) : 0)},
+            {"cache_stamp_restamp_total", make_int(m ? load(m->cache_stamp_restamp_total) : 0)},
+            {"cache-stamp-restamp-total", make_int(m ? load(m->cache_stamp_restamp_total) : 0)},
+            {"cache_stamp_mismatch_force_relower_total",
+             make_int(m ? load(m->cache_stamp_mismatch_force_relower_total) : 0)},
+            {"cache-stamp-mismatch-force-relower-total",
+             make_int(m ? load(m->cache_stamp_mismatch_force_relower_total) : 0)},
+            {"cache_stamp_mismatch_reasons_bits",
+             make_int(m ? load(m->cache_stamp_mismatch_reasons_bits) : 0)},
+            {"cache_stamp_aot_restamp_total",
+             make_int(m ? load(m->cache_stamp_aot_restamp_total) : 0)},
+            {"should_relower_bridge_epoch_mismatch_total",
+             make_int(m ? load(m->should_relower_bridge_epoch_mismatch_total) : 0)},
+            {"should_relower_stamp_mismatch_total",
+             make_int(m ? load(m->should_relower_stamp_mismatch_total) : 0)},
+            {"should-relower-bridge-epoch-mismatch",
+             make_int(m ? load(m->should_relower_bridge_epoch_mismatch_total) : 0)},
+            {"cache-entry-version-stamp-wired", make_int(1)},
+            {"should-relower-bridge-epoch-wired", make_int(1)},
+            {"cache-stamp-restamp-wired", make_int(1)},
+            {"schema-2033", make_int(2033)},
+            {"issue-2033", make_int(2033)},
+            {"schema-2183", make_int(2183)},
+            {"issue-2183", make_int(2183)},
+            // Issue #2111: SoA generation fence (silent-stale under self-evo)
+            {"soa_generation_bump_total", make_int(m ? load(m->soa_generation_bump_total) : 0)},
+            {"soa-generation-bump-total", make_int(m ? load(m->soa_generation_bump_total) : 0)},
+            {"soa_generation_stale_prevented_total",
+             make_int(m ? load(m->soa_generation_stale_prevented_total) : 0)},
+            {"soa-generation-stale-prevented-total",
+             make_int(m ? load(m->soa_generation_stale_prevented_total) : 0)},
+            {"soa-generation-fence-wired", make_int(1)},
+            {"schema-2111", make_int(2111)},
+            {"issue-2111", make_int(2111)},
+            // Issue #2041: invalidate_function cascade respects
+            // should_partial_relower + partial_recompile end-to-end
+            {"invalidate-cascade-partial-wired", make_int(1)},
+            {"should-partial-relower-cascade-wired", make_int(1)},
+            {"jit-partial-recompile-on-cascade-wired", make_int(1)},
+            {"schema-2041", make_int(2041)},
+            {"issue-2041", make_int(2041)},
+            // Issue #3034: ImpactScope / hybrid-cascade cross-check —
+            // partial upgraded to full on under-estimate.
+            {"partial_forced_full_by_impact_total",
+             make_int(m ? load(m->partial_forced_full_by_impact_total) : 0)},
+            {"partial-forced-full-by-impact-total",
+             make_int(m ? load(m->partial_forced_full_by_impact_total) : 0)},
+            {"impact-cross-check-wired", make_int(1)},
+            {"schema-3034", make_int(3034)},
+            {"issue-3034", make_int(3034)},
+            // Issue #3068: map ensure + impact_ub snapshot before
+            // partial decision. Existing counters only (no new
+            // middle-layer metrics).
+            {"map-ensure-before-partial-wired", make_int(1)},
+            {"schema-3068", make_int(3068)},
+            {"issue-3068", make_int(3068)},
+            // Issue #2044: cascade full re-lower uses full dirty pass suite
+            {"cascade_incremental_pass_pipeline_total",
+             make_int(m ? load(m->cascade_incremental_pass_pipeline_total) : 0)},
+            {"cascade-incremental-pass-pipeline-total",
+             make_int(m ? load(m->cascade_incremental_pass_pipeline_total) : 0)},
+            {"cascade_incremental_pass_clean_blocks_skipped",
+             make_int(m ? load(m->cascade_incremental_pass_clean_blocks_skipped) : 0)},
+            {"cascade-incremental-pass-suite-wired", make_int(1)},
+            {"schema-2044", make_int(2044)},
+            {"issue-2044", make_int(2044)},
+            // Issue #2045: source_to_ir_map consistency after re-lower
+            {"source_to_ir_map_rebuild_total",
+             make_int(m ? load(m->source_to_ir_map_rebuild_total) : 0)},
+            {"source-to-ir-map-rebuild-total",
+             make_int(m ? load(m->source_to_ir_map_rebuild_total) : 0)},
+            {"source_to_ir_map_patch_total",
+             make_int(m ? load(m->source_to_ir_map_patch_total) : 0)},
+            {"source_to_ir_map_inconsistency_total",
+             make_int(m ? load(m->source_to_ir_map_inconsistency_total) : 0)},
+            {"source_to_ir_map_consistent_checks_total",
+             make_int(m ? load(m->source_to_ir_map_consistent_checks_total) : 0)},
+            {"source-to-ir-map-consistency-wired", make_int(1)},
+            {"schema-2045", make_int(2045)},
+            {"issue-2045", make_int(2045)},
+        });
+}
+
+// Issue #5031: post-mutate cascade family (#2038 / #2988 / #2812 / #2813 / #2815 / #2816 / #2817 /
+// #2762 / #2126 / #2127).
+template <typename Kv> void RelowerStats::emit_post_mutate_cascade_fields(Kv& kv) const {
+    kv.insert(
+        kv.end(),
+        {
+            // Issue #2038: push-automatic post-mutate cascade + latency
+            {"post_mutate_incremental_cascade_total",
+             make_int(m ? load(m->post_mutate_incremental_cascade_total) : 0)},
+            {"post-mutate-incremental-cascade-total",
+             make_int(m ? load(m->post_mutate_incremental_cascade_total) : 0)},
+            {"post_mutate_incremental_defines_total",
+             make_int(m ? load(m->post_mutate_incremental_defines_total) : 0)},
+            {"post-mutate-incremental-defines-total",
+             make_int(m ? load(m->post_mutate_incremental_defines_total) : 0)},
+            {"post_mutate_incremental_latency_us_total",
+             make_int(m ? load(m->post_mutate_incremental_latency_us_total) : 0)},
+            {"post-mutate-incremental-latency-us-total",
+             make_int(m ? load(m->post_mutate_incremental_latency_us_total) : 0)},
+            {"post_mutate_incremental_latency_samples",
+             make_int(m ? load(m->post_mutate_incremental_latency_samples) : 0)},
+            {"post-mutate-push-cascade-wired", make_int(1)},
+            {"schema-2038", make_int(2038)},
+            {"issue-2038", make_int(2038)},
+            // Issue #2988: mutate success invalidate close-loop (additive).
+            {"mutate-invalidate-dirty-nodes-total",
+             make_int(m ? load(m->mutate_invalidate_dirty_nodes_total) : 0)},
+            {"mutate-invalidate-defuse-bumps-total",
+             make_int(m ? load(m->mutate_invalidate_defuse_bumps_total) : 0)},
+            {"mutate-invalidate-jit-total", make_int(m ? load(m->mutate_invalidate_jit_total) : 0)},
+            {"mutate-invalidate-binding-gen-bumps-total",
+             make_int(m ? load(m->mutate_invalidate_binding_gen_bumps_total) : 0)},
+            {"mutate-invalidate-precise-wired",
+             make_int(m ? static_cast<std::int64_t>(
+                              m->mutate_invalidate_precise_wired.load(std::memory_order_relaxed))
+                        : 1)},
+            {"schema-2988", make_int(2988)},
+            {"issue-2988", make_int(2988)},
+            // Issue #2812: post-Guard BFS invalidate (closures of mutated defines).
+            // Additive — #2038 keys preserved.
+            {"cascade-bfs-invalidate-pending-total",
+             make_int(m ? load(m->cascade_bfs_invalidate_pending_total) : 0)},
+            {"cascade_bfs_invalidate_pending_total",
+             make_int(m ? load(m->cascade_bfs_invalidate_pending_total) : 0)},
+            {"cascade-bfs-invalidate-total",
+             make_int(m ? load(m->cascade_bfs_invalidate_total) : 0)},
+            {"cascade_bfs_invalidate_total",
+             make_int(m ? load(m->cascade_bfs_invalidate_total) : 0)},
+            {"cascade-bfs-invalidate-cleared-total",
+             make_int(m ? load(m->cascade_bfs_invalidate_cleared_total) : 0)},
+            {"cascade-bfs-invalidate-wired", make_int(1)},
+            {"schema-2812", make_int(2812)},
+            {"issue-2812", make_int(2812)},
+            // Issue #2813: cascade eager re-lower ran vs silent skip (fn null).
+            // Additive — #2038/#2812 keys preserved.
+            {"cascade-relower-ran-total", make_int(m ? load(m->cascade_relower_ran_total) : 0)},
+            {"cascade_relower_ran_total", make_int(m ? load(m->cascade_relower_ran_total) : 0)},
+            {"cascade-relower-skipped-total",
+             make_int(m ? load(m->cascade_relower_skipped_total) : 0)},
+            {"cascade_relower_skipped_total",
+             make_int(m ? load(m->cascade_relower_skipped_total) : 0)},
+            {"cascade-relower-wired", make_int(1)},
+            {"schema-2813", make_int(2813)},
+            {"issue-2813", make_int(2813)},
+            // Issue #2815: multi-Define same-name cascade (extra defs marked).
+            {"cascade-multi-define-stale-total",
+             make_int(m ? load(m->cascade_multi_define_stale_total) : 0)},
+            {"cascade_multi_define_stale_total",
+             make_int(m ? load(m->cascade_multi_define_stale_total) : 0)},
+            {"cascade-multi-define-wired", make_int(1)},
+            {"schema-2815", make_int(2815)},
+            {"issue-2815", make_int(2815)},
+            // Issue #2816: path2 O(N+M) define-by-sym index.
+            {"cascade-path2-lookup-total", make_int(m ? load(m->cascade_path2_lookup_total) : 0)},
+            {"cascade_path2_lookup_total", make_int(m ? load(m->cascade_path2_lookup_total) : 0)},
+            {"cascade-path2-index-nodes-total",
+             make_int(m ? load(m->cascade_path2_index_nodes_total) : 0)},
+            {"cascade_path2_index_nodes_total",
+             make_int(m ? load(m->cascade_path2_index_nodes_total) : 0)},
+            {"cascade-path2-index-wired", make_int(1)},
+            {"schema-2816", make_int(2816)},
+            {"issue-2816", make_int(2816)},
+            // Issue #2817: ghost-name defuse_touch skips (no live Define).
+            {"cascade-ghost-name-touch-total",
+             make_int(m ? load(m->cascade_ghost_name_touch_total) : 0)},
+            {"cascade_ghost_name_touch_total",
+             make_int(m ? load(m->cascade_ghost_name_touch_total) : 0)},
+            {"cascade-ghost-name-wired", make_int(1)},
+            {"schema-2817", make_int(2817)},
+            {"issue-2817", make_int(2817)},
+            // Issue #2762: post-mutate macro re-expand under Guard cascade
+            // (refine #165/#2096). Additive — #2038 keys preserved.
+            {"post-mutate-macro-reexpand-total",
+             make_int(m ? load(m->post_mutate_macro_reexpand_total) : 0)},
+            {"post_mutate_macro_reexpand_total",
+             make_int(m ? load(m->post_mutate_macro_reexpand_total) : 0)},
+            {"post-mutate-macro-reexpand-cascade-total",
+             make_int(m ? load(m->post_mutate_macro_reexpand_cascade_total) : 0)},
+            {"post-mutate-macro-reexpand-wired", make_int(1)},
+            {"schema-2762", make_int(2762)},
+            {"issue-2762", make_int(2762)},
+            // Issue #2126: instr-level impact prefer on mark_define_dirty /
+            // quote-lambda cascade (eliminate nested/quote full-relower).
+            {"instr-level-impact-prefer-total",
+             make_int(m ? load(m->instr_level_impact_prefer_total) : 0)},
+            {"instr-level-impact-prefer-fallback-total",
+             make_int(m ? load(m->instr_level_impact_prefer_fallback_total) : 0)},
+            {"nested-lambda-full-dirty-avoided-total",
+             make_int(m ? load(m->nested_lambda_full_dirty_avoided_total) : 0)},
+            {"instr-level-impact-hits", make_int(m ? load(m->instr_level_impact_hits_total) : 0)},
+            {"instr-level-impact-misses",
+             make_int(m ? load(m->instr_level_impact_misses_total) : 0)},
+            {"instr-level-dirty-marks", make_int(m ? load(m->instr_level_dirty_marks_total) : 0)},
+            {"minimal-recompile-clean-funcs-saved",
+             make_int(m ? load(m->minimal_recompile_clean_funcs_saved) : 0)},
+            {"instr-level-impact-prefer-wired", make_int(1)},
+            {"schema-2126", make_int(2126)},
+            {"issue-2126", make_int(2126)},
+            // Issue #2127: workload / deopt / density adaptive thr.
+            {"effective-partial-relower-threshold",
+             make_int(static_cast<std::int64_t>(get_effective_partial_relower_threshold()))},
+            {"adaptive-relower-reason-bits",
+             make_int(static_cast<std::int64_t>(get_last_adaptive_relower_reason()))},
+            {"adaptive-partial-decision-total",
+             make_int(static_cast<std::int64_t>(
+                 adaptive_partial_decision_total_atomic().load(std::memory_order_relaxed)))},
+            {"adaptive-full-decision-total",
+             make_int(static_cast<std::int64_t>(
+                 adaptive_full_decision_total_atomic().load(std::memory_order_relaxed)))},
+            {"adaptive-deopt-adjust-total",
+             make_int(static_cast<std::int64_t>(
+                 adaptive_deopt_adjust_total_atomic().load(std::memory_order_relaxed)))},
+            {"adaptive-density-adjust-total",
+             make_int(static_cast<std::int64_t>(
+                 adaptive_density_adjust_total_atomic().load(std::memory_order_relaxed)))},
+            {"workload-adaptive-relower-wired", make_int(1)},
+            {"schema-2127", make_int(2127)},
+            {"issue-2127", make_int(2127)},
+        });
+}
+
+// Issue #5031: storm gates + per-reason fallback + instr-level + cold miss (#2190 / #2212 / #2244 /
+// #2206 / #2193 / #2133 / #3892).
+template <typename Kv> void RelowerStats::emit_storm_fallback_fields(Kv& kv) const {
+    kv.insert(
+        kv.end(),
+        {
+            // Issue #2190: StormLevel Global gate on partial relower
+            {"partial_relower_storm_gate_consult_total",
+             make_int(static_cast<std::int64_t>(partial_relower_storm_gate_consult_total_atomic()
+                                                    .load(std::memory_order_relaxed)))},
+            {"partial-relower-storm-gate-consult-total",
+             make_int(static_cast<std::int64_t>(partial_relower_storm_gate_consult_total_atomic()
+                                                    .load(std::memory_order_relaxed)))},
+            {"partial_relower_storm_forced_full_total",
+             make_int(static_cast<std::int64_t>(partial_relower_storm_forced_full_total_atomic()
+                                                    .load(std::memory_order_relaxed)))},
+            {"partial-relower-storm-forced-full-total",
+             make_int(static_cast<std::int64_t>(partial_relower_storm_forced_full_total_atomic()
+                                                    .load(std::memory_order_relaxed)))},
+            {"partial-relower-storm-gate-wired", make_int(1)},
+            // Issue #2212: Shape-storm prefers partial (wider dirty range)
+            {"partial_relower_under_shape_storm_total",
+             make_int(static_cast<std::int64_t>(partial_relower_under_shape_storm_total_atomic()
+                                                    .load(std::memory_order_relaxed)))},
+            {"partial-relower-under-shape-storm-total",
+             make_int(static_cast<std::int64_t>(partial_relower_under_shape_storm_total_atomic()
+                                                    .load(std::memory_order_relaxed)))},
+            {"shape-storm-partial-prefer-wired", make_int(1)},
+            {"schema-2212", make_int(2212)},
+            {"issue-2212", make_int(2212)},
+            // Issue #2244: Strict-mode hard-fail + rebuild on source_to_ir_map
+            {"source-to-ir-inconsistency-total",
+             make_int(m ? load(m->source_to_ir_inconsistency_total) : 0)},
+            {"source_to_ir_inconsistency_total",
+             make_int(m ? load(m->source_to_ir_inconsistency_total) : 0)},
+            {"source-to-ir-hard-fail-total",
+             make_int(m ? load(m->source_to_ir_hard_fail_total) : 0)},
+            {"source_to_ir_hard_fail_total",
+             make_int(m ? load(m->source_to_ir_hard_fail_total) : 0)},
+            {"schema-2244", make_int(2244)},
+            {"issue-2244", make_int(2244)},
+            // Issue #2206: aggressive source_to_ir_map desync recovery
+            {"source-to-ir-desync-recovered-total",
+             make_int(m ? load(m->source_to_ir_desync_recovered_total) : 0)},
+            {"source_to_ir_desync_recovered_total",
+             make_int(m ? load(m->source_to_ir_desync_recovered_total) : 0)},
+            {"source-to-ir-desync-funcs-patched",
+             make_int(m ? load(m->source_to_ir_desync_funcs_patched) : 0)},
+            {"source_to_ir_desync_funcs_patched",
+             make_int(m ? load(m->source_to_ir_desync_funcs_patched) : 0)},
+            {"source-to-ir-desync-recovery-wired", make_int(1)},
+            {"schema-2206", make_int(2206)},
+            {"issue-2206", make_int(2206)},
+            {"schema-2190", make_int(2190)},
+            {"issue-2190", make_int(2190)},
+            // Issue #2193: per-reason full-fallback (invalidate cascade)
+            {"relower-last-fallback-reason",
+             make_int(m ? static_cast<std::int64_t>(
+                              m->relower_last_fallback_reason.load(std::memory_order_relaxed))
+                        : 0)},
+            {"relower_last_fallback_reason",
+             make_int(m ? static_cast<std::int64_t>(
+                              m->relower_last_fallback_reason.load(std::memory_order_relaxed))
+                        : 0)},
+            {"relower-fallback-ok-count", make_int(m ? load(m->relower_fallback_ok_total) : 0)},
+            {"relower-fallback-no-source-count",
+             make_int(m ? load(m->relower_fallback_no_source_total) : 0)},
+            {"relower-fallback-empty-ir-count",
+             make_int(m ? load(m->relower_fallback_empty_ir_total) : 0)},
+            {"relower-fallback-threshold-count",
+             make_int(m ? load(m->relower_fallback_threshold_total) : 0)},
+            {"relower-fallback-parse-count",
+             make_int(m ? load(m->relower_fallback_parse_fail_total) : 0)},
+            {"relower-fallback-parse-fail-count",
+             make_int(m ? load(m->relower_fallback_parse_fail_total) : 0)},
+            {"relower-fallback-relower-reject-count",
+             make_int(m ? load(m->relower_fallback_relower_reject_total) : 0)},
+            {"relower-fallback-desync-count",
+             make_int(m ? load(m->relower_fallback_desync_force_full_total) : 0)},
+            {"relower-fallback-desync-force-full-count",
+             make_int(m ? load(m->relower_fallback_desync_force_full_total) : 0)},
+            {"relower-fallback-map-inconsistent-count",
+             make_int(m ? load(m->relower_fallback_map_inconsistent_total) : 0)},
+            {"relower-fallback-other-count",
+             make_int(m ? load(m->relower_fallback_other_total) : 0)},
+            {"relower-fallback-reason-wired", make_int(1)},
+            {"schema-2193", make_int(2193)},
+            {"issue-2193", make_int(2193)},
+            // Issue #2133: consume affected_instrs in relower + DirtyAware peel
+            {"instr-level-relower-total", make_int(m ? load(m->instr_level_relower_total) : 0)},
+            {"instr-level-pass-skipped-clean",
+             make_int(m ? load(m->instr_level_pass_skipped_clean) : 0)},
+            {"instr-level-pass-runs-total", make_int(m ? load(m->instr_level_pass_runs_total) : 0)},
+            {"instr-level-unmapped-ratio-bp",
+             make_int(m ? load(m->instr_level_unmapped_ratio_bp) : 0)},
+            {"instr-level-equiv-checks-total",
+             make_int(m ? load(m->instr_level_equiv_checks_total) : 0)},
+            {"instr-level-equiv-ok-total", make_int(m ? load(m->instr_level_equiv_ok_total) : 0)},
+            {"instr-level-relower-wired", make_int(1)},
+            {"schema-2133", make_int(2133)},
+            {"issue-2133", make_int(2133)},
+            // Issue #3892: prefer-partial cold miss (st==2)
+            {"cold-miss-total", make_int(m ? load(m->incremental_relower_cold_miss_total) : 0)},
+            {"incremental_relower_cold_miss_total",
+             make_int(m ? load(m->incremental_relower_cold_miss_total) : 0)},
+            {"schema-3892", make_int(3892)},
+            {"issue-3892", make_int(3892)},
+            {"issue", make_int(1639)},
+            // lineage 718 → … → 1639; #2032–#2190 satellites
+            {"schema", make_int(1639)},
+        });
+}
+
+// Issue #5031: per-phase rebind timing tail (opt-in).
+template <typename Kv> void RelowerStats::emit_phase_stats_fields(Kv& kv) const {
+    {
+        namespace ps = aura::compiler::phase_stats;
+        kv.emplace_back("phase-stats-enabled", make_int(ps::enabled() ? 1 : 0));
+        for (unsigned p = 0; p < ps::kCount; ++p) {
+            kv.emplace_back(
+                std::string("phase-") + ps::kNames[p] + "-ns",
+                make_int(static_cast<std::int64_t>(ps::g_ns[p].load(std::memory_order_relaxed))));
+            kv.emplace_back(std::string("phase-") + ps::kNames[p] + "-count",
+                            make_int(static_cast<std::int64_t>(
+                                ps::g_count[p].load(std::memory_order_relaxed))));
+        }
+    }
+}
+
+std::vector<std::pair<std::string, EvalValue>> RelowerStats::emit() {
+    collect();
+    std::vector<std::pair<std::string, EvalValue>> kv;
+    emit_relower_core_scope_fields(kv);
+    emit_threshold_policy_fields(kv);
+    emit_stamp_cascade_fields(kv);
+    emit_post_mutate_cascade_fields(kv);
+    emit_storm_fallback_fields(kv);
+    emit_phase_stats_fields(kv);
+    return kv;
+}
+
+// Issue #5031: query:incremental-relower-stats registration phase.
+void register_eval_p42_incremental_relower(Evaluator& ev, auto& string_heap) {
     // Issue #718: (query:incremental-relower-stats) — fine-grained
     // per-block re-lower observability counters (non-duplicative
     // with #196 per-block dirty tracking + #426/#460 pure helpers
@@ -7286,7 +8139,7 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
     // so we can attach PrimMeta with schema=718 + category=general
     // + arity=0 + pure=true (same pattern as #712-#717).
     ObservabilityPrims::register_stats_impl(
-        "query:incremental-relower-stats", [&ev](const auto&) -> EvalValue {
+        "query:incremental-relower-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // Planned-key arg must track kv.size() (currently ~280).
@@ -7305,7 +8158,7 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                     for (char c : k)
                         h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                     const auto fp = ::aura::compiler::hash::fingerprint(h);
-                    auto kidx = ev.string_heap_.mint(k);
+                    auto kidx = string_heap.mint(k);
                     EvalValue key_ev = make_string(kidx);
                     bool inserted = false;
                     for (std::size_t at = 0; at < hcap; ++at) {
@@ -7324,681 +8177,18 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+                return query_hash_finish(ht, string_heap, overflowed, ev);
             };
-            CompilerMetrics* m = ev.compiler_metrics()
-                                     ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
-                                     : nullptr;
-            const std::int64_t impact_blocks_hit =
-                m ? static_cast<std::int64_t>(
-                        m->incremental_impact_blocks_hit_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t partial_relowers =
-                m ? static_cast<std::int64_t>(
-                        m->incremental_partial_relower_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t full_fallbacks =
-                m ? static_cast<std::int64_t>(
-                        m->incremental_full_fallback_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t time_saved_us =
-                m ? static_cast<std::int64_t>(
-                        m->incremental_time_saved_us_total.load(std::memory_order_relaxed))
-                  : 0;
-            // Issue #1601 / #1605 / #1623: production consumer metrics
-            // (eval/eval_ir/define_function prefer partial re-lower).
-            const std::int64_t incr_blocks =
-                m ? static_cast<std::int64_t>(
-                        m->incremental_relower_blocks_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t per_fn =
-                m ? static_cast<std::int64_t>(
-                        m->relower_per_function_called_count.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t skipped =
-                m ? static_cast<std::int64_t>(
-                        m->relower_skipped_entirely_count.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t full_called =
-                m ? static_cast<std::int64_t>(
-                        m->relower_full_called_count.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t dirty_hits =
-                m ? static_cast<std::int64_t>(
-                        m->ir_soa_block_dirty_hits_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t blocks_saved =
-                m ? static_cast<std::int64_t>(
-                        m->ir_soa_relower_blocks_saved_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t dirty_ratio_bp =
-                (dirty_hits + blocks_saved) > 0
-                    ? static_cast<std::int64_t>((dirty_hits * 10000) / (dirty_hits + blocks_saved))
-                    : 0;
-            // #1623: EDSL eval hot-path partial re-lower AC counters
-            const std::int64_t eval_hits =
-                m ? static_cast<std::int64_t>(
-                        m->incremental_eval_relower_hits.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t eval_path =
-                m ? static_cast<std::int64_t>(
-                        m->eval_path_relower_total.load(std::memory_order_relaxed))
-                  : 0;
-            const std::int64_t eval_ir_path =
-                m ? static_cast<std::int64_t>(
-                        m->eval_ir_path_relower_total.load(std::memory_order_relaxed))
-                  : 0;
-            // Local load helper must be declared before the kv brace list
-            // (C++ point-of-instantiation; #1639 keys use load()).
-            auto load = [&](std::atomic<std::uint64_t>& a) -> std::int64_t {
-                return m ? static_cast<std::int64_t>(a.load(std::memory_order_relaxed)) : 0;
-            };
-            // Issue #1915: precision + minimal scope (basis points).
-            std::int64_t dirty_prec_bp = 10000;
-            std::int64_t min_scope_bp = 10000;
-            if (m) {
-                const auto blk = m->dirty_propagation_block_marks.load(std::memory_order_relaxed);
-                const auto full_marks =
-                    m->dirty_propagation_full_func_marks.load(std::memory_order_relaxed);
-                const auto den_marks = blk + full_marks;
-                if (den_marks > 0)
-                    dirty_prec_bp = ::aura::compiler::basis_points(blk, den_marks);
-                const auto clean =
-                    m->invalidate_early_exit_clean_total.load(std::memory_order_relaxed) +
-                    m->relower_skipped_entirely_count.load(std::memory_order_relaxed);
-                const auto full_rl = m->relower_full_called_count.load(std::memory_order_relaxed);
-                const auto den_scope = clean + full_rl;
-                if (den_scope > 0)
-                    min_scope_bp = ::aura::compiler::basis_points(clean, den_scope);
-            }
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"impact-blocks-hit", make_int(impact_blocks_hit)},
-                {"partial-relowers", make_int(partial_relowers)},
-                {"full-fallbacks", make_int(full_fallbacks)},
-                {"time-saved-us", make_int(time_saved_us)},
-                // #1601 / #1605 AC names (underscore form for agents)
-                {"incremental_relower_blocks", make_int(incr_blocks)},
-                {"relower_per_function_called_count", make_int(per_fn)},
-                {"relower_skipped_entirely_count", make_int(skipped)},
-                {"relower_full_called_count", make_int(full_called)},
-                // #1605 AC3 alias (snapshot field name)
-                {"full_relower_count", make_int(full_called)},
-                {"dirty_block_ratio", make_int(dirty_ratio_bp)}, // basis points
-                {"dirty_block_ratio_bp", make_int(dirty_ratio_bp)},
-                // #1623 AC keys — eval/eval_ir hot-path partial wins
-                {"incremental_eval_relower_hits", make_int(eval_hits)},
-                {"eval_path_relower_total", make_int(eval_path)},
-                {"eval_ir_path_relower_total", make_int(eval_ir_path)},
-                {"eval-prefer-partial-wired", make_int(1)},
-                {"eval-ir-prefer-partial-wired", make_int(1)},
-                {"relower-only-dirty-blocks-wired", make_int(1)},
-                {"relower-define-blocks-wired", make_int(1)},
-                {"lookup-define-v2-prefer-partial", make_int(1)},
-                // Issue #1639: per-block dirty bitmask → partial
-                // re-lower wiring (refine #1474 / #1495 / #1505 /
-                // #1514 / #1555 / #1601 / #1605). 6 new keys
-                // completing the spec's observability surface:
-                //   - full-relower-count (alias for the new atomic
-                //     full_relower_count in observability_metrics.h)
-                //   - dirty-block-ratio-numerator-total +
-                //     denominator-total: running sums so dashboards
-                //     can compute time-weighted averages
-                //     (the instantaneous dirty_block_ratio key
-                //     above uses basis points from current snapshot)
-                //   - relower-block-hit-rate + numerator + denominator:
-                //     computed hit-rate (basis points) + running sums
-                {"full-relower-count", make_int(m ? load(m->full_relower_count) : 0)},
-                {"dirty-block-ratio-numerator-total",
-                 make_int(m ? load(m->dirty_block_ratio_numerator_total) : 0)},
-                {"dirty-block-ratio-denominator-total",
-                 make_int(m ? load(m->dirty_block_ratio_denominator_total) : 0)},
-                {"relower-block-hit-rate-numerator-total",
-                 make_int(m ? load(m->relower_block_hit_rate_numerator_total) : 0)},
-                {"relower-block-hit-rate-denominator-total",
-                 make_int(m ? load(m->relower_block_hit_rate_denominator_total) : 0)},
-                {"relower-block-hit-rate",
-                 make_int(((m ? (m->relower_block_hit_rate_denominator_total.load(
-                                    std::memory_order_relaxed))
-                              : 0)) > 0
-                              ? static_cast<std::int64_t>(
-                                    (m ? m->relower_block_hit_rate_numerator_total.load(
-                                             std::memory_order_relaxed)
-                                       : 0) *
-                                    10000 /
-                                    (m ? m->relower_block_hit_rate_denominator_total.load(
-                                             std::memory_order_relaxed)
-                                       : 1))
-                              : 0)},
-                // Issue #1915: fine-grained dirty prop + minimal recompile scope
-                {"relower_block_count", make_int(m ? load(m->relower_block_count) : 0)},
-                {"relower-block-count", make_int(m ? load(m->relower_block_count) : 0)},
-                {"dirty_propagation_block_marks",
-                 make_int(m ? load(m->dirty_propagation_block_marks) : 0)},
-                {"dirty_propagation_full_func_marks",
-                 make_int(m ? load(m->dirty_propagation_full_func_marks) : 0)},
-                {"dirty_propagation_precision", make_int(dirty_prec_bp)},
-                {"dirty-propagation-precision", make_int(dirty_prec_bp)},
-                {"minimal_recompile_scope", make_int(min_scope_bp)},
-                {"minimal-recompile-scope", make_int(min_scope_bp)},
-                {"minimal_recompile_clean_funcs_saved",
-                 make_int(m ? load(m->minimal_recompile_clean_funcs_saved) : 0)},
-                {"invalidate_early_exit_clean_total",
-                 make_int(m ? load(m->invalidate_early_exit_clean_total) : 0)},
-                {"body-only-dirty-wired", make_int(1)},
-                {"cascade-body-only-wired", make_int(1)},
-                {"no-full-func-degrade-default", make_int(1)},
-                // Keep schema=1639 for lineage tests (#718…#1639); #1915 is additive.
-                {"schema-1915", make_int(1915)},
-                {"issue-1915", make_int(1915)},
-                // Issue #2032: dep_graph stale-edge reject + configurable threshold
-                {"dep_graph_edge_reject_stale_total",
-                 make_int(m ? load(m->dep_graph_edge_reject_stale_total) : 0)},
-                {"dep-graph-edge-reject-stale",
-                 make_int(m ? load(m->dep_graph_edge_reject_stale_total) : 0)},
-                {"dep_graph_generation_total",
-                 make_int(m ? load(m->dep_graph_generation_total) : 0)},
-                {"partial_relower_threshold_used",
-                 make_int(m ? load(m->partial_relower_threshold_used) : 8)},
-                {"partial-relower-threshold",
-                 make_int(
-                     static_cast<std::int64_t>(aura::compiler::get_partial_relower_threshold()))},
-                {"dep-graph-stale-reject-wired", make_int(1)},
-                {"partial-relower-threshold-wired", make_int(1)},
-                {"schema-2032", make_int(2032)},
-                {"issue-2032", make_int(2032)},
-                // Issue #3067: stale-reject deferred hybrid cascade drain.
-                {"hybrid-deferred-cascade-total",
-                 make_int(m ? load(m->hybrid_deferred_cascade_total) : 0)},
-                {"hybrid-deferred-cascade-wired",
-                 make_int(m ? static_cast<std::int64_t>(
-                                  m->hybrid_deferred_cascade_wired.load(std::memory_order_relaxed))
-                            : 1)},
-                {"schema-3067", make_int(3067)},
-                {"issue-3067", make_int(3067)},
-                // Issue #2112: adaptive partial/full threshold policy
-                {"avg-partial-relower-cost-ns",
-                 make_int(
-                     static_cast<std::int64_t>(aura::compiler::avg_partial_relower_cost_ns()))},
-                {"avg-full-relower-cost-ns",
-                 make_int(static_cast<std::int64_t>(aura::compiler::avg_full_relower_cost_ns()))},
-                {"partial-vs-full-win-ratio-bp",
-                 make_int(
-                     static_cast<std::int64_t>(aura::compiler::partial_vs_full_win_ratio_bp()))},
-                {"partial-relower-cost-samples",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::partial_relower_cost_samples_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"full-relower-cost-samples",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::full_relower_cost_samples_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"adaptive-partial-relower-min",
-                 make_int(static_cast<std::int64_t>(aura::compiler::kAdaptivePartialRelowerMin))},
-                {"adaptive-partial-relower-max",
-                 make_int(static_cast<std::int64_t>(aura::compiler::kAdaptivePartialRelowerMax))},
-                {"adaptive-partial-relower-wired", make_int(1)},
-                {"schema-2112", make_int(2112)},
-                {"issue-2112", make_int(2112)},
-                // Issue #2113: incremental soundness oracle (partial ≡ full)
-                {"incremental_soundness_runs_total",
-                 make_int(m ? load(m->incremental_soundness_runs_total)
-                            : static_cast<std::int64_t>(
-                                  aura::compiler::incremental_soundness_runs_atomic().load(
-                                      std::memory_order_relaxed)))},
-                {"incremental-soundness-runs",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::incremental_soundness_runs_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"incremental_soundness_ok_total",
-                 make_int(m ? load(m->incremental_soundness_ok_total)
-                            : static_cast<std::int64_t>(
-                                  aura::compiler::incremental_soundness_ok_atomic().load(
-                                      std::memory_order_relaxed)))},
-                {"incremental-soundness-ok",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::incremental_soundness_ok_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"incremental_soundness_mismatch_total",
-                 make_int(m ? load(m->incremental_soundness_mismatch_total)
-                            : static_cast<std::int64_t>(
-                                  aura::compiler::incremental_soundness_mismatch_atomic().load(
-                                      std::memory_order_relaxed)))},
-                {"incremental-soundness-mismatch",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::incremental_soundness_mismatch_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"incremental-soundness-enabled",
-                 make_int(aura::compiler::incremental_soundness_enabled() ? 1 : 0)},
-                {"incremental-soundness-mode",
-                 make_int(
-                     static_cast<std::int64_t>(aura::compiler::get_incremental_soundness_mode()))},
-                {"incremental-soundness-wired", make_int(1)},
-                // Issue #2245: production sampling of incremental soundness
-                {"incremental_soundness_prod_runs_total",
-                 make_int(m ? load(m->incremental_soundness_prod_runs_total) : 0)},
-                {"incremental-soundness-prod-runs",
-                 make_int(m ? load(m->incremental_soundness_prod_runs_total) : 0)},
-                {"incremental_soundness_prod_ok_total",
-                 make_int(m ? load(m->incremental_soundness_prod_ok_total) : 0)},
-                {"incremental-soundness-prod-ok",
-                 make_int(m ? load(m->incremental_soundness_prod_ok_total) : 0)},
-                {"incremental_soundness_mismatch_prod_total",
-                 make_int(m ? load(m->incremental_soundness_mismatch_prod_total) : 0)},
-                {"incremental-soundness-mismatch-prod",
-                 make_int(m ? load(m->incremental_soundness_mismatch_prod_total) : 0)},
-                {"incremental-soundness-sample-bp",
-                 make_int(static_cast<std::int64_t>(aura::compiler::soundness_sample_bp()))},
-                {"incremental-soundness-mode-allows-prod",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::incremental_soundness_mode_allows_prod() ? 1 : 0))},
-                // Issue #2248: Agent-driven adaptive relower threshold
-                {"adaptive-thr-current",
-                 make_int(static_cast<std::int64_t>(
-                     m ? load(m->adaptive_thr_current)
-                       : static_cast<std::uint64_t>(
-                             aura::compiler::current_adaptive_partial_thr()) *
-                             100))},
-                {"adaptive-thr-raises-total", make_int(m ? load(m->adaptive_thr_raises_total) : 0)},
-                {"adaptive-thr-decays-total", make_int(m ? load(m->adaptive_thr_decays_total) : 0)},
-                {"adaptive-thr-bad-window-count",
-                 make_int(
-                     m ? load(m->adaptive_thr_bad_window_count)
-                       : static_cast<std::int64_t>(
-                             aura::compiler::adaptive_thr_policy_singleton().bad_window_count))},
-                {"adaptive-thr-frozen",
-                 make_int(m ? load(m->adaptive_thr_frozen)
-                            : (aura::compiler::adaptive_thr_frozen() ? 1 : 0))},
-                // Issue #4156: genuinely wired — the peel decision core
-                // (decide_workload_adaptive_partial_relower) clamps the
-                // effective thr to the risk-narrowed adaptive face.
-                {"adaptive-thr-wired", make_int(1)},
-                {"schema-2248", make_int(2248)},
-                {"issue-2248", make_int(2248)},
-                {"schema-2245", make_int(2245)},
-                {"issue-2245", make_int(2245)},
-                {"schema-2113", make_int(2113)},
-                {"issue-2113", make_int(2113)},
-                // Issue #2210: JIT / Interpreter PrimCall + apply_closure
-                // equivalence oracle (opt-in; zero-cost when mode 0/2)
-                {"jit_equivalence_runs_total",
-                 make_int(static_cast<std::int64_t>(aura::compiler::jit_equivalence_runs_atomic()
-                                                        .load(std::memory_order_relaxed)))},
-                {"jit-equivalence-runs", make_int(static_cast<std::int64_t>(
-                                             aura::compiler::jit_equivalence_runs_atomic().load(
-                                                 std::memory_order_relaxed)))},
-                {"jit_equivalence_ok_total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::jit_equivalence_ok_atomic().load(std::memory_order_relaxed)))},
-                {"jit-equivalence-ok",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::jit_equivalence_ok_atomic().load(std::memory_order_relaxed)))},
-                {"jit_equivalence_mismatch_total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::jit_equivalence_mismatch_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"jit-equivalence-mismatch",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::jit_equivalence_mismatch_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"jit_equivalence_deopt_force_total",
-                 make_int(static_cast<std::int64_t>(
-                     aura::compiler::jit_equivalence_deopt_force_total_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"jit-equivalence-enabled",
-                 make_int(aura::compiler::jit_equivalence_enabled() ? 1 : 0)},
-                {"jit-equivalence-mode",
-                 make_int(static_cast<std::int64_t>(aura::compiler::get_jit_equivalence_mode()))},
-                {"jit-equivalence-wired", make_int(1)},
-                {"schema-2210", make_int(2210)},
-                {"issue-2210", make_int(2210)},
-                // Issue #2033 / #2183: CacheEntryVersionStamp + bridge_epoch
-                // should_relower + unified restamp contract
-                {"cache_entry_version_stamp_total",
-                 make_int(m ? load(m->cache_entry_version_stamp_total) : 0)},
-                {"cache_stamp_restamp_total", make_int(m ? load(m->cache_stamp_restamp_total) : 0)},
-                {"cache-stamp-restamp-total", make_int(m ? load(m->cache_stamp_restamp_total) : 0)},
-                {"cache_stamp_mismatch_force_relower_total",
-                 make_int(m ? load(m->cache_stamp_mismatch_force_relower_total) : 0)},
-                {"cache-stamp-mismatch-force-relower-total",
-                 make_int(m ? load(m->cache_stamp_mismatch_force_relower_total) : 0)},
-                {"cache_stamp_mismatch_reasons_bits",
-                 make_int(m ? load(m->cache_stamp_mismatch_reasons_bits) : 0)},
-                {"cache_stamp_aot_restamp_total",
-                 make_int(m ? load(m->cache_stamp_aot_restamp_total) : 0)},
-                {"should_relower_bridge_epoch_mismatch_total",
-                 make_int(m ? load(m->should_relower_bridge_epoch_mismatch_total) : 0)},
-                {"should_relower_stamp_mismatch_total",
-                 make_int(m ? load(m->should_relower_stamp_mismatch_total) : 0)},
-                {"should-relower-bridge-epoch-mismatch",
-                 make_int(m ? load(m->should_relower_bridge_epoch_mismatch_total) : 0)},
-                {"cache-entry-version-stamp-wired", make_int(1)},
-                {"should-relower-bridge-epoch-wired", make_int(1)},
-                {"cache-stamp-restamp-wired", make_int(1)},
-                {"schema-2033", make_int(2033)},
-                {"issue-2033", make_int(2033)},
-                {"schema-2183", make_int(2183)},
-                {"issue-2183", make_int(2183)},
-                // Issue #2111: SoA generation fence (silent-stale under self-evo)
-                {"soa_generation_bump_total", make_int(m ? load(m->soa_generation_bump_total) : 0)},
-                {"soa-generation-bump-total", make_int(m ? load(m->soa_generation_bump_total) : 0)},
-                {"soa_generation_stale_prevented_total",
-                 make_int(m ? load(m->soa_generation_stale_prevented_total) : 0)},
-                {"soa-generation-stale-prevented-total",
-                 make_int(m ? load(m->soa_generation_stale_prevented_total) : 0)},
-                {"soa-generation-fence-wired", make_int(1)},
-                {"schema-2111", make_int(2111)},
-                {"issue-2111", make_int(2111)},
-                // Issue #2041: invalidate_function cascade respects
-                // should_partial_relower + partial_recompile end-to-end
-                {"invalidate-cascade-partial-wired", make_int(1)},
-                {"should-partial-relower-cascade-wired", make_int(1)},
-                {"jit-partial-recompile-on-cascade-wired", make_int(1)},
-                {"schema-2041", make_int(2041)},
-                {"issue-2041", make_int(2041)},
-                // Issue #3034: ImpactScope / hybrid-cascade cross-check —
-                // partial upgraded to full on under-estimate.
-                {"partial_forced_full_by_impact_total",
-                 make_int(m ? load(m->partial_forced_full_by_impact_total) : 0)},
-                {"partial-forced-full-by-impact-total",
-                 make_int(m ? load(m->partial_forced_full_by_impact_total) : 0)},
-                {"impact-cross-check-wired", make_int(1)},
-                {"schema-3034", make_int(3034)},
-                {"issue-3034", make_int(3034)},
-                // Issue #3068: map ensure + impact_ub snapshot before
-                // partial decision. Existing counters only (no new
-                // middle-layer metrics).
-                {"map-ensure-before-partial-wired", make_int(1)},
-                {"schema-3068", make_int(3068)},
-                {"issue-3068", make_int(3068)},
-                // Issue #2044: cascade full re-lower uses full dirty pass suite
-                {"cascade_incremental_pass_pipeline_total",
-                 make_int(m ? load(m->cascade_incremental_pass_pipeline_total) : 0)},
-                {"cascade-incremental-pass-pipeline-total",
-                 make_int(m ? load(m->cascade_incremental_pass_pipeline_total) : 0)},
-                {"cascade_incremental_pass_clean_blocks_skipped",
-                 make_int(m ? load(m->cascade_incremental_pass_clean_blocks_skipped) : 0)},
-                {"cascade-incremental-pass-suite-wired", make_int(1)},
-                {"schema-2044", make_int(2044)},
-                {"issue-2044", make_int(2044)},
-                // Issue #2045: source_to_ir_map consistency after re-lower
-                {"source_to_ir_map_rebuild_total",
-                 make_int(m ? load(m->source_to_ir_map_rebuild_total) : 0)},
-                {"source-to-ir-map-rebuild-total",
-                 make_int(m ? load(m->source_to_ir_map_rebuild_total) : 0)},
-                {"source_to_ir_map_patch_total",
-                 make_int(m ? load(m->source_to_ir_map_patch_total) : 0)},
-                {"source_to_ir_map_inconsistency_total",
-                 make_int(m ? load(m->source_to_ir_map_inconsistency_total) : 0)},
-                {"source_to_ir_map_consistent_checks_total",
-                 make_int(m ? load(m->source_to_ir_map_consistent_checks_total) : 0)},
-                {"source-to-ir-map-consistency-wired", make_int(1)},
-                {"schema-2045", make_int(2045)},
-                {"issue-2045", make_int(2045)},
-                // Issue #2038: push-automatic post-mutate cascade + latency
-                {"post_mutate_incremental_cascade_total",
-                 make_int(m ? load(m->post_mutate_incremental_cascade_total) : 0)},
-                {"post-mutate-incremental-cascade-total",
-                 make_int(m ? load(m->post_mutate_incremental_cascade_total) : 0)},
-                {"post_mutate_incremental_defines_total",
-                 make_int(m ? load(m->post_mutate_incremental_defines_total) : 0)},
-                {"post-mutate-incremental-defines-total",
-                 make_int(m ? load(m->post_mutate_incremental_defines_total) : 0)},
-                {"post_mutate_incremental_latency_us_total",
-                 make_int(m ? load(m->post_mutate_incremental_latency_us_total) : 0)},
-                {"post-mutate-incremental-latency-us-total",
-                 make_int(m ? load(m->post_mutate_incremental_latency_us_total) : 0)},
-                {"post_mutate_incremental_latency_samples",
-                 make_int(m ? load(m->post_mutate_incremental_latency_samples) : 0)},
-                {"post-mutate-push-cascade-wired", make_int(1)},
-                {"schema-2038", make_int(2038)},
-                {"issue-2038", make_int(2038)},
-                // Issue #2988: mutate success invalidate close-loop (additive).
-                {"mutate-invalidate-dirty-nodes-total",
-                 make_int(m ? load(m->mutate_invalidate_dirty_nodes_total) : 0)},
-                {"mutate-invalidate-defuse-bumps-total",
-                 make_int(m ? load(m->mutate_invalidate_defuse_bumps_total) : 0)},
-                {"mutate-invalidate-jit-total",
-                 make_int(m ? load(m->mutate_invalidate_jit_total) : 0)},
-                {"mutate-invalidate-binding-gen-bumps-total",
-                 make_int(m ? load(m->mutate_invalidate_binding_gen_bumps_total) : 0)},
-                {"mutate-invalidate-precise-wired",
-                 make_int(m ? static_cast<std::int64_t>(m->mutate_invalidate_precise_wired.load(
-                                  std::memory_order_relaxed))
-                            : 1)},
-                {"schema-2988", make_int(2988)},
-                {"issue-2988", make_int(2988)},
-                // Issue #2812: post-Guard BFS invalidate (closures of mutated defines).
-                // Additive — #2038 keys preserved.
-                {"cascade-bfs-invalidate-pending-total",
-                 make_int(m ? load(m->cascade_bfs_invalidate_pending_total) : 0)},
-                {"cascade_bfs_invalidate_pending_total",
-                 make_int(m ? load(m->cascade_bfs_invalidate_pending_total) : 0)},
-                {"cascade-bfs-invalidate-total",
-                 make_int(m ? load(m->cascade_bfs_invalidate_total) : 0)},
-                {"cascade_bfs_invalidate_total",
-                 make_int(m ? load(m->cascade_bfs_invalidate_total) : 0)},
-                {"cascade-bfs-invalidate-cleared-total",
-                 make_int(m ? load(m->cascade_bfs_invalidate_cleared_total) : 0)},
-                {"cascade-bfs-invalidate-wired", make_int(1)},
-                {"schema-2812", make_int(2812)},
-                {"issue-2812", make_int(2812)},
-                // Issue #2813: cascade eager re-lower ran vs silent skip (fn null).
-                // Additive — #2038/#2812 keys preserved.
-                {"cascade-relower-ran-total", make_int(m ? load(m->cascade_relower_ran_total) : 0)},
-                {"cascade_relower_ran_total", make_int(m ? load(m->cascade_relower_ran_total) : 0)},
-                {"cascade-relower-skipped-total",
-                 make_int(m ? load(m->cascade_relower_skipped_total) : 0)},
-                {"cascade_relower_skipped_total",
-                 make_int(m ? load(m->cascade_relower_skipped_total) : 0)},
-                {"cascade-relower-wired", make_int(1)},
-                {"schema-2813", make_int(2813)},
-                {"issue-2813", make_int(2813)},
-                // Issue #2815: multi-Define same-name cascade (extra defs marked).
-                {"cascade-multi-define-stale-total",
-                 make_int(m ? load(m->cascade_multi_define_stale_total) : 0)},
-                {"cascade_multi_define_stale_total",
-                 make_int(m ? load(m->cascade_multi_define_stale_total) : 0)},
-                {"cascade-multi-define-wired", make_int(1)},
-                {"schema-2815", make_int(2815)},
-                {"issue-2815", make_int(2815)},
-                // Issue #2816: path2 O(N+M) define-by-sym index.
-                {"cascade-path2-lookup-total",
-                 make_int(m ? load(m->cascade_path2_lookup_total) : 0)},
-                {"cascade_path2_lookup_total",
-                 make_int(m ? load(m->cascade_path2_lookup_total) : 0)},
-                {"cascade-path2-index-nodes-total",
-                 make_int(m ? load(m->cascade_path2_index_nodes_total) : 0)},
-                {"cascade_path2_index_nodes_total",
-                 make_int(m ? load(m->cascade_path2_index_nodes_total) : 0)},
-                {"cascade-path2-index-wired", make_int(1)},
-                {"schema-2816", make_int(2816)},
-                {"issue-2816", make_int(2816)},
-                // Issue #2817: ghost-name defuse_touch skips (no live Define).
-                {"cascade-ghost-name-touch-total",
-                 make_int(m ? load(m->cascade_ghost_name_touch_total) : 0)},
-                {"cascade_ghost_name_touch_total",
-                 make_int(m ? load(m->cascade_ghost_name_touch_total) : 0)},
-                {"cascade-ghost-name-wired", make_int(1)},
-                {"schema-2817", make_int(2817)},
-                {"issue-2817", make_int(2817)},
-                // Issue #2762: post-mutate macro re-expand under Guard cascade
-                // (refine #165/#2096). Additive — #2038 keys preserved.
-                {"post-mutate-macro-reexpand-total",
-                 make_int(m ? load(m->post_mutate_macro_reexpand_total) : 0)},
-                {"post_mutate_macro_reexpand_total",
-                 make_int(m ? load(m->post_mutate_macro_reexpand_total) : 0)},
-                {"post-mutate-macro-reexpand-cascade-total",
-                 make_int(m ? load(m->post_mutate_macro_reexpand_cascade_total) : 0)},
-                {"post-mutate-macro-reexpand-wired", make_int(1)},
-                {"schema-2762", make_int(2762)},
-                {"issue-2762", make_int(2762)},
-                // Issue #2126: instr-level impact prefer on mark_define_dirty /
-                // quote-lambda cascade (eliminate nested/quote full-relower).
-                {"instr-level-impact-prefer-total",
-                 make_int(m ? load(m->instr_level_impact_prefer_total) : 0)},
-                {"instr-level-impact-prefer-fallback-total",
-                 make_int(m ? load(m->instr_level_impact_prefer_fallback_total) : 0)},
-                {"nested-lambda-full-dirty-avoided-total",
-                 make_int(m ? load(m->nested_lambda_full_dirty_avoided_total) : 0)},
-                {"instr-level-impact-hits",
-                 make_int(m ? load(m->instr_level_impact_hits_total) : 0)},
-                {"instr-level-impact-misses",
-                 make_int(m ? load(m->instr_level_impact_misses_total) : 0)},
-                {"instr-level-dirty-marks",
-                 make_int(m ? load(m->instr_level_dirty_marks_total) : 0)},
-                {"minimal-recompile-clean-funcs-saved",
-                 make_int(m ? load(m->minimal_recompile_clean_funcs_saved) : 0)},
-                {"instr-level-impact-prefer-wired", make_int(1)},
-                {"schema-2126", make_int(2126)},
-                {"issue-2126", make_int(2126)},
-                // Issue #2127: workload / deopt / density adaptive thr.
-                {"effective-partial-relower-threshold",
-                 make_int(static_cast<std::int64_t>(get_effective_partial_relower_threshold()))},
-                {"adaptive-relower-reason-bits",
-                 make_int(static_cast<std::int64_t>(get_last_adaptive_relower_reason()))},
-                {"adaptive-partial-decision-total",
-                 make_int(static_cast<std::int64_t>(
-                     adaptive_partial_decision_total_atomic().load(std::memory_order_relaxed)))},
-                {"adaptive-full-decision-total",
-                 make_int(static_cast<std::int64_t>(
-                     adaptive_full_decision_total_atomic().load(std::memory_order_relaxed)))},
-                {"adaptive-deopt-adjust-total",
-                 make_int(static_cast<std::int64_t>(
-                     adaptive_deopt_adjust_total_atomic().load(std::memory_order_relaxed)))},
-                {"adaptive-density-adjust-total",
-                 make_int(static_cast<std::int64_t>(
-                     adaptive_density_adjust_total_atomic().load(std::memory_order_relaxed)))},
-                {"workload-adaptive-relower-wired", make_int(1)},
-                {"schema-2127", make_int(2127)},
-                {"issue-2127", make_int(2127)},
-                // Issue #2190: StormLevel Global gate on partial relower
-                {"partial_relower_storm_gate_consult_total",
-                 make_int(static_cast<std::int64_t>(
-                     partial_relower_storm_gate_consult_total_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"partial-relower-storm-gate-consult-total",
-                 make_int(static_cast<std::int64_t>(
-                     partial_relower_storm_gate_consult_total_atomic().load(
-                         std::memory_order_relaxed)))},
-                {"partial_relower_storm_forced_full_total",
-                 make_int(static_cast<std::int64_t>(partial_relower_storm_forced_full_total_atomic()
-                                                        .load(std::memory_order_relaxed)))},
-                {"partial-relower-storm-forced-full-total",
-                 make_int(static_cast<std::int64_t>(partial_relower_storm_forced_full_total_atomic()
-                                                        .load(std::memory_order_relaxed)))},
-                {"partial-relower-storm-gate-wired", make_int(1)},
-                // Issue #2212: Shape-storm prefers partial (wider dirty range)
-                {"partial_relower_under_shape_storm_total",
-                 make_int(static_cast<std::int64_t>(partial_relower_under_shape_storm_total_atomic()
-                                                        .load(std::memory_order_relaxed)))},
-                {"partial-relower-under-shape-storm-total",
-                 make_int(static_cast<std::int64_t>(partial_relower_under_shape_storm_total_atomic()
-                                                        .load(std::memory_order_relaxed)))},
-                {"shape-storm-partial-prefer-wired", make_int(1)},
-                {"schema-2212", make_int(2212)},
-                {"issue-2212", make_int(2212)},
-                // Issue #2244: Strict-mode hard-fail + rebuild on source_to_ir_map
-                {"source-to-ir-inconsistency-total",
-                 make_int(m ? load(m->source_to_ir_inconsistency_total) : 0)},
-                {"source_to_ir_inconsistency_total",
-                 make_int(m ? load(m->source_to_ir_inconsistency_total) : 0)},
-                {"source-to-ir-hard-fail-total",
-                 make_int(m ? load(m->source_to_ir_hard_fail_total) : 0)},
-                {"source_to_ir_hard_fail_total",
-                 make_int(m ? load(m->source_to_ir_hard_fail_total) : 0)},
-                {"schema-2244", make_int(2244)},
-                {"issue-2244", make_int(2244)},
-                // Issue #2206: aggressive source_to_ir_map desync recovery
-                {"source-to-ir-desync-recovered-total",
-                 make_int(m ? load(m->source_to_ir_desync_recovered_total) : 0)},
-                {"source_to_ir_desync_recovered_total",
-                 make_int(m ? load(m->source_to_ir_desync_recovered_total) : 0)},
-                {"source-to-ir-desync-funcs-patched",
-                 make_int(m ? load(m->source_to_ir_desync_funcs_patched) : 0)},
-                {"source_to_ir_desync_funcs_patched",
-                 make_int(m ? load(m->source_to_ir_desync_funcs_patched) : 0)},
-                {"source-to-ir-desync-recovery-wired", make_int(1)},
-                {"schema-2206", make_int(2206)},
-                {"issue-2206", make_int(2206)},
-                {"schema-2190", make_int(2190)},
-                {"issue-2190", make_int(2190)},
-                // Issue #2193: per-reason full-fallback (invalidate cascade)
-                {"relower-last-fallback-reason",
-                 make_int(m ? static_cast<std::int64_t>(
-                                  m->relower_last_fallback_reason.load(std::memory_order_relaxed))
-                            : 0)},
-                {"relower_last_fallback_reason",
-                 make_int(m ? static_cast<std::int64_t>(
-                                  m->relower_last_fallback_reason.load(std::memory_order_relaxed))
-                            : 0)},
-                {"relower-fallback-ok-count", make_int(m ? load(m->relower_fallback_ok_total) : 0)},
-                {"relower-fallback-no-source-count",
-                 make_int(m ? load(m->relower_fallback_no_source_total) : 0)},
-                {"relower-fallback-empty-ir-count",
-                 make_int(m ? load(m->relower_fallback_empty_ir_total) : 0)},
-                {"relower-fallback-threshold-count",
-                 make_int(m ? load(m->relower_fallback_threshold_total) : 0)},
-                {"relower-fallback-parse-count",
-                 make_int(m ? load(m->relower_fallback_parse_fail_total) : 0)},
-                {"relower-fallback-parse-fail-count",
-                 make_int(m ? load(m->relower_fallback_parse_fail_total) : 0)},
-                {"relower-fallback-relower-reject-count",
-                 make_int(m ? load(m->relower_fallback_relower_reject_total) : 0)},
-                {"relower-fallback-desync-count",
-                 make_int(m ? load(m->relower_fallback_desync_force_full_total) : 0)},
-                {"relower-fallback-desync-force-full-count",
-                 make_int(m ? load(m->relower_fallback_desync_force_full_total) : 0)},
-                {"relower-fallback-map-inconsistent-count",
-                 make_int(m ? load(m->relower_fallback_map_inconsistent_total) : 0)},
-                {"relower-fallback-other-count",
-                 make_int(m ? load(m->relower_fallback_other_total) : 0)},
-                {"relower-fallback-reason-wired", make_int(1)},
-                {"schema-2193", make_int(2193)},
-                {"issue-2193", make_int(2193)},
-                // Issue #2133: consume affected_instrs in relower + DirtyAware peel
-                {"instr-level-relower-total", make_int(m ? load(m->instr_level_relower_total) : 0)},
-                {"instr-level-pass-skipped-clean",
-                 make_int(m ? load(m->instr_level_pass_skipped_clean) : 0)},
-                {"instr-level-pass-runs-total",
-                 make_int(m ? load(m->instr_level_pass_runs_total) : 0)},
-                {"instr-level-unmapped-ratio-bp",
-                 make_int(m ? load(m->instr_level_unmapped_ratio_bp) : 0)},
-                {"instr-level-equiv-checks-total",
-                 make_int(m ? load(m->instr_level_equiv_checks_total) : 0)},
-                {"instr-level-equiv-ok-total",
-                 make_int(m ? load(m->instr_level_equiv_ok_total) : 0)},
-                {"instr-level-relower-wired", make_int(1)},
-                {"schema-2133", make_int(2133)},
-                {"issue-2133", make_int(2133)},
-                // Issue #3892: prefer-partial cold miss (st==2)
-                {"cold-miss-total", make_int(m ? load(m->incremental_relower_cold_miss_total) : 0)},
-                {"incremental_relower_cold_miss_total",
-                 make_int(m ? load(m->incremental_relower_cold_miss_total) : 0)},
-                {"schema-3892", make_int(3892)},
-                {"issue-3892", make_int(3892)},
-                {"issue", make_int(1639)},
-                // lineage 718 → … → 1639; #2032–#2190 satellites
-                {"schema", make_int(1639)},
-            };
-            {
-                namespace ps = aura::compiler::phase_stats;
-                kv.emplace_back("phase-stats-enabled", make_int(ps::enabled() ? 1 : 0));
-                for (unsigned p = 0; p < ps::kCount; ++p) {
-                    kv.emplace_back(std::string("phase-") + ps::kNames[p] + "-ns",
-                                    make_int(static_cast<std::int64_t>(
-                                        ps::g_ns[p].load(std::memory_order_relaxed))));
-                    kv.emplace_back(std::string("phase-") + ps::kNames[p] + "-count",
-                                    make_int(static_cast<std::int64_t>(
-                                        ps::g_count[p].load(std::memory_order_relaxed))));
-                }
-            }
-            return build_hash(kv);
+            return build_hash(RelowerStats{ev}.emit());
         });
+}
 
+// Issue #5031: query:incremental-relower-policy-stats registration phase.
+void register_eval_p42_incremental_relower_policy(Evaluator& ev, auto& string_heap) {
     // Issue #2112 / #2127 / #2190: (query:incremental-relower-policy-stats)
     // adaptive partial/full threshold + StormLevel gate (SlimSurface).
     ObservabilityPrims::register_stats_impl(
-        "query:incremental-relower-policy-stats", [&ev](const auto&) -> EvalValue {
+        "query:incremental-relower-policy-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             (void)ev;
             auto* ht = FlatHashTable::create(query_hash_capacity_for(51)); // #2190 headroom
             if (!ht)
@@ -8105,7 +8295,7 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 const auto fp = ::aura::compiler::hash::fingerprint(h);
-                auto kidx = ev.string_heap_.mint(k);
+                auto kidx = string_heap.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
@@ -8124,16 +8314,19 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                     break;
                 }
             }
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
 
+// Issue #5031: query:incremental-soundness-stats registration phase.
+void register_eval_p42_incremental_soundness(Evaluator& ev, auto& string_heap) {
     // Issue #2113: (query:incremental-soundness-stats) — debug oracle
     // partial ≡ full IR (register_stats_impl; SlimSurface freeze).
     // Enable: -DAURA_INCREMENTAL_SOUNDNESS, debug (!NDEBUG) auto, or
     // set_incremental_soundness_mode(1). Disable: mode(2). HARD assert:
     // -DAURA_INCREMENTAL_SOUNDNESS_HARD.
     ObservabilityPrims::register_stats_impl(
-        "query:incremental-soundness-stats", [&ev](const auto&) -> EvalValue {
+        "query:incremental-soundness-stats", [&ev, &string_heap](const auto&) -> EvalValue {
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                      : nullptr;
@@ -8186,7 +8379,7 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 for (char c : k)
                     h = (h ^ static_cast<std::uint8_t>(c)) * ::aura::compiler::stats::kFnvPrime;
                 const auto fp = ::aura::compiler::hash::fingerprint(h);
-                auto kidx = ev.string_heap_.mint(k);
+                auto kidx = string_heap.mint(k);
                 EvalValue key_ev = make_string(kidx);
                 bool inserted = false;
                 for (std::size_t at = 0; at < hcap; ++at) {
@@ -8205,8 +8398,18 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                     break;
                 }
             }
-            return query_hash_finish(ht, ev.string_heap_, overflowed, ev);
+            return query_hash_finish(ht, string_heap, overflowed, ev);
         });
+}
+
+// Issue #909 part 42 (orig lines 5536-5657)
+void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
+    (void)add;
+    auto& string_heap = ev.string_heap_;
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_eval_p42_incremental_relower(ev, string_heap);
+    register_eval_p42_incremental_relower_policy(ev, string_heap);
+    register_eval_p42_incremental_soundness(ev, string_heap);
 }
 
 // Issue #909 part 43 (orig lines 5658-5790)

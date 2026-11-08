@@ -1,0 +1,86 @@
+;; Issue #5031: register_eval_p41 / register_eval_p42 are peeled into
+;; per-responsibility phases (body phases + ordered insert phases). Primitive
+;; names, registration order, lambda capture lifetimes and every stats payload
+;; key must not move — this exercises a few keys of each peeled surface.
+(require "std/io" all:)
+
+(define fails 0)
+(define (check pred msg)
+  (if pred
+      #t
+      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+
+(define (hget h k) (hash-ref h k))
+
+;; ── p41: fiber boundary / hold stats / contention / concurrency ─────
+(define fb (stats:get "query:fiber-boundary-violation-stats"))
+(check (hash? fb) "fiber-boundary-violation-stats")
+(check (= 717 (hget fb "schema")) "fiber-boundary schema")
+(check (integer? (hget fb "rollbacks")) "fiber-boundary rollbacks")
+
+(define hs (stats:get "query:mutation-boundary-hold-stats"))
+(check (hash? hs) "mutation-boundary-hold-stats")
+(check (= 2040 (hget hs "schema")) "hold-stats schema")
+(check (= 2040 (hget hs "issue")) "hold-stats issue")
+(check (= 9 (hget hs "hist-buckets")) "hold-stats hist-buckets")
+(check (integer? (hget hs "holds-total")) "hold-stats holds-total")
+(check (integer? (hget hs "p99-hold-us")) "hold-stats p99")
+(check (= 2120 (hget hs "schema-2120")) "hold-stats schema-2120")
+(check (= 2854 (hget hs "schema-2854")) "hold-stats schema-2854")
+(check (= 1 (hget hs "production-residual-policy-lock-wired")) "hold-stats policy lock")
+
+(define mc (stats:get "query:workspace-mtx-contention-stats"))
+(check (hash? mc) "workspace-mtx-contention-stats")
+(check (= 2523 (hget mc "schema")) "mtx-contention schema")
+
+(define wc (stats:get "query:workspace-concurrency-stats"))
+(check (hash? wc) "workspace-concurrency-stats")
+(check (= 2990 (hget wc "schema")) "workspace-concurrency schema")
+(check (= 3039 (hget wc "schema-3039")) "workspace-concurrency schema-3039")
+
+;; ── p41: hold estimate / live / depth / pcv / safe-yield / fairness ──
+(define he (stats:get "query:mutation-hold-estimate"))
+(check (hash? he) "mutation-hold-estimate")
+(check (= 2405 (hget he "schema")) "hold-estimate schema")
+
+(define hl (stats:get "query:mutation-hold-live"))
+(check (hash? hl) "mutation-hold-live")
+(check (= 2517 (hget hl "schema-2517")) "hold-live schema-2517")
+
+(check (integer? (stats:get "query:mutation-boundary-depth")) "mutation-boundary-depth")
+
+(define pcv (stats:get "query:pcv-hotpath-stats"))
+(check (hash? pcv) "pcv-hotpath-stats")
+(check (integer? (hget pcv "unique-inplace-total")) "pcv unique-inplace-total")
+(check (= 3233 (hget pcv "schema-3233")) "pcv schema-3233")
+
+(define sy (stats:get "query:mutation-boundary-safe-yield-stats"))
+(check (hash? sy) "mutation-boundary-safe-yield-stats")
+(check (= 1635 (hget sy "schema")) "safe-yield-stats schema")
+
+(define ff (stats:get "query:mutation-boundary-fairness-stats"))
+(check (hash? ff) "mutation-boundary-fairness-stats")
+(check (= 1635 (hget ff "schema")) "fairness-stats schema")
+(check (integer? (hget ff "mutation-stack-depth-histogram-samples")) "fairness hist samples")
+
+;; ── p42: incremental relower / policy / soundness ───────────────────
+(define rl (stats:get "query:incremental-relower-stats"))
+(check (hash? rl) "incremental-relower-stats")
+(check (= 1639 (hget rl "schema")) "relower schema")
+(check (= 1639 (hget rl "issue")) "relower issue")
+(check (integer? (hget rl "impact-blocks-hit")) "relower impact-blocks-hit")
+(check (= 3892 (hget rl "schema-3892")) "relower schema-3892")
+(check (integer? (hget rl "phase-stats-enabled")) "relower phase-stats head")
+
+(define rp (stats:get "query:incremental-relower-policy-stats"))
+(check (hash? rp) "incremental-relower-policy-stats")
+(check (= 2209 (hget rp "schema")) "relower-policy schema")
+(check (= 2112 (hget rp "schema-2112")) "relower-policy schema-2112")
+
+(define sd (stats:get "query:incremental-soundness-stats"))
+(check (hash? sd) "incremental-soundness-stats")
+(check (= 2113 (hget sd "schema")) "soundness schema")
+
+(if (= fails 0)
+    (display "obs-eval split ok\n")
+    (error "obs-eval split FAILED" fails))
