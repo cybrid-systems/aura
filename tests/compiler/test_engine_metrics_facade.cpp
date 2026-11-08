@@ -12,6 +12,7 @@
 #include "compiler/typed_mutation_audit.h"
 
 #include <algorithm>
+#include <cstdlib> // #5054: AURA_SANDBOX hatch for the scheduler start gate
 #include <cstdint>
 #include <fstream>
 #include <iterator>
@@ -1150,6 +1151,40 @@ int main() {
               "3882 AC: no docs/design/3882-*");
         CHECK(read_file("scripts/coverage/checks/check_planned_keys_3882.py").empty(),
               "3882 AC: no new check_*.py");
+    }
+
+    // ── #5054: the orch scheduler's counters must be observable in a CLI
+    // program. The hooks were only wired by the --serve-async path, so
+    // (stats:get "orch:metrics") returned void exactly where agents and
+    // fibers run (the CLI orch scheduler).
+    {
+        // The CLI orch scheduler is created on the first orch use. Its
+        // multi-worker start gate refuses an unarmed start (production
+        // bootstrap or AURA_SANDBOX=off) — the same hatch the other
+        // orch-facing tests use.
+        const char* prev_sandbox = std::getenv("AURA_SANDBOX");
+        const std::string prev = prev_sandbox ? prev_sandbox : "";
+        const bool had = prev_sandbox != nullptr;
+        ::setenv("AURA_SANDBOX", "off", 1);
+        // The CLI orch scheduler is created on the first orch use.
+        auto spawn = cs.eval("(orch:spawn-agent \"obs5054\" (lambda () 1))");
+        if (had)
+            ::setenv("AURA_SANDBOX", prev.c_str(), 1);
+        else
+            ::unsetenv("AURA_SANDBOX");
+        CHECK(spawn.has_value(), "5054: spawn evaluated");
+        auto is_void = cs.eval("(void? (stats:get \"orch:metrics\"))");
+        CHECK(is_void && is_bool(*is_void) && !as_bool(*is_void),
+              "5054: (stats:get \"orch:metrics\") is not void");
+        auto is_str = cs.eval("(string? (stats:get \"orch:metrics\"))");
+        CHECK(is_str && is_bool(*is_str) && as_bool(*is_str),
+              "5054: orch:metrics is the scheduler metrics JSON");
+        auto reset = cs.eval("(orch:reset-metrics)");
+        CHECK(reset && is_bool(*reset) && as_bool(*reset),
+              "5054: (orch:reset-metrics) works outside serve-async");
+        CHECK(read_file("src/compiler/evaluator_primitives_agent.cpp").find("Issue #5054") !=
+                  std::string::npos,
+              "5054 AC1: the CLI orch scheduler wires the metrics hooks");
     }
 
     if (::aura::test::g_failed) {
