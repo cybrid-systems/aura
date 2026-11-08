@@ -7,7 +7,11 @@
 
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
-#include <cstdlib> // setenv / unsetenv (#4321)
+#include <cstdlib>  // setenv / unsetenv (#4321)
+#include <fstream>  // #5051 source-cite
+#include <iterator> // #5051 source-cite
+#include <print>    // #5051 AC output
+#include <string>   // #5051 AC output
 
 import std;
 import aura.core;
@@ -559,6 +563,88 @@ bool test_lexer_ctype_casts_4936() {
     return failed == 0;
 }
 
+// Issue #5051: a malformed character literal in an `if` / `lambda` operand
+// used to HANG the reader: parse_expr returns NULL_NODE for a TokenKind::Error
+// WITHOUT consuming it (the deferred error keeps the position, #4129), and the
+// operand loop kept peeking at the same token forever (100% CPU, no output,
+// no exit). The form must now fail with a located parse error.
+//
+// A regression hangs this test binary — the CI timeout is the failure signal.
+bool test_malformed_operand_parse_error_5051() {
+    int passed = 0, failed = 0;
+    auto ac = [&](bool ok, int n, const char* label) {
+        if (ok) {
+            ++passed;
+            std::println("--- #5051 AC{}: {}", n, label);
+        } else {
+            ++failed;
+            std::println(std::cerr, "  FAIL: #5051 AC{}: {}", n, label);
+        }
+    };
+
+    // AC1 — the malformed forms must not parse, and must report a located
+    // error (no silent truncation).
+    const char* kMalformed[] = {
+        "(if 1 #a 2)",              // malformed operand in the then branch
+        "(if #a 1 2)",              // malformed condition
+        "(if 1 2 3 #a)",            // malformed extra argument
+        "(lambda (x) #a)",          // malformed body (params form)
+        "(lambda x #a)",            // malformed body (rest-arg shorthand)
+        "(lambda (x) (list 1) #a)", // malformed body after a valid form
+    };
+    int n = 1;
+    for (const char* src : kMalformed) {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::StringPool pool(alloc);
+        aura::ast::FlatAST flat(alloc);
+        auto pr = aura::parser::parse_to_flat(src, flat, pool);
+        const bool not_parsed = !pr.success && pr.root == aura::ast::NULL_NODE;
+        bool located = false;
+        for (const auto& pe : pr.errors)
+            if (pe.location.valid())
+                located = true;
+        ac(not_parsed && located, n, "malformed operand fails the form with a located error");
+        ++n;
+    }
+
+    // AC2 — the legal shapes must still parse: a two-armed `if` (no else
+    // branch) is legal and must stay legal.
+    {
+        const char* kLegal[] = {"(if #t 1)", "(if #t 1 2)", "(lambda (x) x)", "(lambda x x)"};
+        for (const char* src : kLegal) {
+            aura::ast::ASTArena arena;
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto pr = aura::parser::parse_to_flat(src, flat, pool);
+            ac(pr.success && pr.root != aura::ast::NULL_NODE, n,
+               "legal if / lambda forms still parse");
+            ++n;
+        }
+    }
+
+    // AC3 — source-cite: the reader guards the three loops that used to spin.
+    {
+        std::string parser;
+        for (const char* p : {"src/parser/parser_impl.cpp", "../src/parser/parser_impl.cpp",
+                              "../../src/parser/parser_impl.cpp"}) {
+            std::ifstream in(p);
+            if (!in)
+                continue;
+            parser.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+            break;
+        }
+        const bool guard = parser.find("consume_malformed_token") != std::string::npos;
+        ac(guard, n, "parser_impl.cpp cites the malformed-token guard");
+        ++n;
+    }
+
+    if (failed != 0)
+        std::println(std::cerr, "#5051 reader: {} passed, {} failed", passed, failed);
+    return failed == 0;
+}
+
 bool test_character_literal_4129() {
     int passed = 0, failed = 0;
     auto ac = [&](bool ok, int n, const char* label) {
@@ -704,6 +790,8 @@ int main() {
     if (!test_force_soa_keyword_literal_4321())
         return 1;
     if (!test_character_literal_4129())
+        return 1;
+    if (!test_malformed_operand_parse_error_5051())
         return 1;
     if (!test_lexer_ctype_casts_4936())
         return 1;

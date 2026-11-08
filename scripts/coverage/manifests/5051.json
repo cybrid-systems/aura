@@ -1,0 +1,29 @@
+{
+  "issue": 5051,
+  "title": "Issue #5051: a malformed character literal in an if/lambda operand must fail the form, not hang the reader.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/parser/parser_impl.cpp",
+      "contains": [
+        "consume_malformed_token",
+        "Issue #5051"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_ir.cpp",
+      "contains": [
+        "test_malformed_operand_parse_error_5051",
+        "#5051 AC"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_ir.cpp",
+      "contains": [
+        "legal if / lambda forms still parse"
+      ]
+    }
+  ]
+}
