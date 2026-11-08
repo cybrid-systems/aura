@@ -6344,6 +6344,34 @@ TypeId InferenceEngine::synthesize_flat_var(FlatAST& flat, StringPool& pool, Nod
     return ty_raw;
 }
 
+// Issue #5052 / #4316: true when the callee names a letrec binding whose
+// value (child 0) is still being synthesized above this call — the recursive
+// forward-reference shape. Every other variable callee (lambda parameter,
+// let-bound type var) keeps the gradual Dynamic return of #4316 AC2.
+static bool call_is_letrec_forward_ref(const FlatAST& flat, const StringPool& pool, NodeId call_id,
+                                       NodeId callee_id) {
+    const auto callee_v = flat.get(callee_id);
+    if (callee_v.tag != NodeTag::Variable || callee_v.sym_id == INVALID_SYM)
+        return false;
+    const auto cname = pool.resolve(callee_v.sym_id);
+    NodeId cur = call_id;
+    while (cur != NULL_NODE && cur < flat.size()) {
+        const NodeId par = flat.parent_of(cur);
+        if (par == NULL_NODE || par >= flat.size())
+            break;
+        const auto pv = flat.get(par);
+        if (pv.sym_id != INVALID_SYM &&
+            (pv.tag == NodeTag::LetRec || pv.tag == NodeTag::Let || pv.tag == NodeTag::Define) &&
+            pool.resolve(pv.sym_id) == cname) {
+            // Nearest same-named binder decides: only its own letrec value
+            // (the definition still in progress) is a forward reference.
+            return pv.tag == NodeTag::LetRec && !pv.children.empty() && pv.child(0) == cur;
+        }
+        cur = par;
+    }
+    return false;
+}
+
 TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, NodeView v) {
     // v.child(0) = function, v.child(1..n) = args
     // Issue #3518: empty Call is incomplete, not Any (same as empty Pair).
@@ -6660,18 +6688,23 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
             flat.set_node_error(v.id, static_cast<std::uint8_t>(ErrorKind::TypeError));
             return reg_.void_type();
         }
-        // Issue #5052: an unbound callee VARIABLE is an inference variable,
-        // not a gradual Any. The letrec forward reference (a recursive call
-        // inside its own definition) is exactly this case: the binding is a
-        // fresh var until the definition's own type is unified in.
-        // Returning Any here made every recursive call's result Any, and
-        // the production join gate then rejected the resulting `Int ~ Any`
-        // pair as a HARD type error — so no recursive definition could be
-        // installed at runtime (mutate:rebind fail-closed, "solve_delta not
-        // SOLVED") while the same source loaded from a file passed. A fresh
-        // var keeps the join gradual (the gate's is_var branch) and lets
-        // the later unification pin the real type.
-        if (reg_.is_var(func_type))
+        // Issue #5052: a *letrec forward reference* is an inference variable,
+        // not a gradual Any. Named let desugars to
+        // `(letrec ((name (lambda …))) (name …))`, so a recursive call inside
+        // its own definition sees the binding as a fresh var until the
+        // definition's own type is unified in. Returning Any there made every
+        // recursive call's result Any, and the production join gate then
+        // rejected the resulting `Int ~ Any` pair as a HARD type error — so no
+        // recursive definition could be installed at runtime
+        // (mutate:rebind fail-closed, "solve_delta not SOLVED") while the same
+        // source loaded from a file passed. A fresh var keeps the join
+        // gradual (the gate's is_var branch) and lets the later unification
+        // pin the real type.
+        //
+        // Every other variable callee — a lambda parameter, a `let`-bound
+        // type var — stays gradual and keeps the Dynamic return below
+        // (#4316 AC2; type_checker.ixx: "var ~ Dynamic still binds Any").
+        if (reg_.is_var(func_type) && call_is_letrec_forward_ref(flat, pool, v.id, func_id))
             return cs_.fresh_var();
     }
     return reg_.dynamic_type();
