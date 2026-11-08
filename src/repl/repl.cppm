@@ -1,5 +1,6 @@
 module;
 #include <cerrno>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -17,6 +18,7 @@ module;
 #include <utility>
 #include <vector>
 #include <unistd.h>
+#include "../compiler/eval_budget.h"
 #include "../linenoise/linenoise.h"
 
 #ifndef AURA_BUILD_VERSION
@@ -352,15 +354,27 @@ public:
             std::fprintf(stdout, ":propose: snapshot failed: %s\n", err.c_str());
             return false;
         }
+        // Issue #5042: the candidate evaluation runs under the step budget,
+        // and Ctrl-C during it sets the interrupt flag instead of killing the
+        // REPL. Either way the proposal rolls back.
+        struct SigGuard {
+            explicit SigGuard(long steps) { aura::compiler::eval_budget::arm(steps); }
+            ~SigGuard() { aura::compiler::eval_budget::disarm(); }
+        };
+        static auto on_sigint = [](int) { aura::compiler::eval_budget::request_interrupt(); };
+        const auto prev_int = std::signal(SIGINT, on_sigint);
         std::string err;
         std::string shown;
+        bool ok = false;
+        {
+        SigGuard guard(fuel_);
         if (in_workspace_(name))
             err = eval_quiet_("(mutate:rebind " + quote_(name) + " " + quote_(def->second.value) +
                                   " \"repl :propose\")",
                               &shown);
         if (err.empty())
             err = eval_quiet_(def->second.src);
-        bool ok = err.empty();
+        ok = err.empty();
         if (ok && !gate_.empty()) {
             std::string gv;
             auto gerr = eval_quiet_(gate_, &gv);
@@ -368,6 +382,8 @@ public:
             if (!ok && !gerr.empty())
                 err = gerr;
         }
+        }
+        std::signal(SIGINT, prev_int);
         if (!ok) {
             eval_quiet_("(ast:restore " + snap_var + ")");
             eval_quiet_("(eval-current)");

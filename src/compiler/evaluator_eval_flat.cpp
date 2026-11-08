@@ -12,6 +12,7 @@ module;
 #include "compiler/value_tags.h"       // Issue #2259: pure tag hot path + metrics
 #include "core/cpp26_contract_stats.h" // Issue #2259: AURA_HOT_RECORD on apply_closure
 #include "serve/fiber.h"               // Issue #2650: aura_eval_c_stack_depth_slot (fiber-local)
+#include "compiler/eval_budget.h"      // Issue #5042: REPL proposal budget
 #include "compiler/mutation_hold_budget.h" // Issue #3693: reject_enabled gate for eval_flat poll
 #include "typed_mutation_audit.h"          // Issue #3066: pin composite/batch join mid
 #include "core/capability_model.hh"        // Issue #3132: check_macro_self_evo
@@ -277,6 +278,14 @@ extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept;
 
 #define EVAL_FLAT_HOLD_BUDGET_POLL()                                                               \
     do {                                                                                           \
+        /* Issue #5042: a REPL proposal arms a step budget and an interrupt flag. */               \
+        if (aura::compiler::eval_budget::consume_or_interrupted()) {                               \
+            return std::unexpected(Diagnostic{                                                     \
+                ErrorKind::InternalError,                                                          \
+                aura::compiler::eval_budget::g_interrupt.load(std::memory_order_relaxed)           \
+                    ? "eval-budget: interrupted"                                                   \
+                    : "eval-budget: fuel exhausted"});                                             \
+        }                                                                                          \
         if (aura::serve::g_current_fiber != nullptr) {                                             \
             if (auto _hb3693 = eval_flat_hold_budget_safepoint_poll())                             \
                 return std::unexpected(*_hb3693);                                                  \
