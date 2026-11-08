@@ -84,6 +84,22 @@ class SoftReplTypeWarnings(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn("type warning", r.stderr, r.stderr)
 
+    def test_dynamic_argument_is_a_checked_boundary(self) -> None:
+        # A Dynamic value (here: the result of an unsigned helper) passed to a
+        # statically-typed parameter is a gradual boundary. It must not be
+        # reported as a type error; the deferred CoercionNode does the runtime
+        # check. This is the evolve! shape from the issue thread.
+        r = run_repl(
+            [
+                '(set-code "(define (params) (list 0 0))")',
+                "(eval-current)",
+                '(define (params->src c) (format "(define (params) ~a)" c))',
+                '(define (evolve! c) (mutate:rebind "params" (params->src c) "evolve"))',
+            ]
+        )
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("type warning", r.stderr, r.stderr)
+
     def test_a_real_mismatch_prints_once(self) -> None:
         r = run_repl(["(define (bad) (string-length 1))"])
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
