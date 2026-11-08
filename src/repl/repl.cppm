@@ -258,6 +258,94 @@ public:
     Repl(Repl&&) = delete;
     Repl& operator=(Repl&&) = delete;
 
+    // Issue #5047: walk the focus name's worldline one step back or forward.
+    void undo_redo_(const std::string& arg, int dir) {
+        const auto name = arg.empty() ? focus_name_() : std::optional<std::string>(arg);
+        if (!name) {
+            std::fprintf(stdout, "no-focus\n");
+            std::fflush(stdout);
+            return;
+        }
+        auto it = worldline_.find(*name);
+        if (it == worldline_.end() || it->second.empty()) {
+            std::fprintf(stdout, "%s\n", dir < 0 ? "no-undo" : "no-redo");
+            std::fflush(stdout);
+            return;
+        }
+        const std::size_t at = wl_pos_.count(*name) ? wl_pos_[*name] : 0;
+        std::optional<std::size_t> target;
+        if (dir < 0) {
+            if (at > 0)
+                target = at - 1;
+        } else if (at + 1 < it->second.size()) {
+            target = at + 1;
+        }
+        if (!target) {
+            std::fprintf(stdout, "%s\n", dir < 0 ? "no-undo" : "no-redo");
+            std::fflush(stdout);
+            return;
+        }
+        const std::string before = live_source_of_(*name);
+        const std::string after = it->second[*target];
+        if (auto err = apply_source_(*name, after); !err.empty()) {
+            std::fprintf(stdout, "%s: error: %s\n", name->c_str(), err.c_str());
+            std::fflush(stdout);
+            return;
+        }
+        wl_pos_[*name] = *target;
+        focus_ = *name;
+        focus_steps_[*name] += 1;
+        const char* decision = dir < 0 ? "undo" : "redo";
+        if (pipe_mode_) {
+            std::string rec = "(hash \"status\" \"ok\" \"value\" \"\" \"type\" \"void\" \"wrote\" () \"focus\" ";
+            rec += quote_name_(*name);
+            rec += " \"decision\" \"";
+            rec += decision;
+            rec += "\" \"source\" \"";
+            rec += repl_record_escape(after);
+            rec += "\" \"previous\" \"";
+            rec += repl_record_escape(before);
+            rec += "\")";
+            std::fprintf(stdout, "%s\n", rec.c_str());
+        } else {
+            print_diff_(*name, before, after, decision, !in_workspace_(*name));
+        }
+        std::fflush(stdout);
+    }
+
+    // Issue #5047: show one step's source without installing it.
+    void at_(const std::string& arg) {
+        const auto name = focus_name_();
+        if (!name) {
+            std::fprintf(stdout, "no-focus\n");
+            std::fflush(stdout);
+            return;
+        }
+        int step = -1;
+        try {
+            step = std::stoi(arg);
+        } catch (...) {
+        }
+        auto it = worldline_.find(*name);
+        if (step < 0 || it == worldline_.end() || static_cast<std::size_t>(step) >= it->second.size()) {
+            std::fprintf(stdout, "no-step\n");
+            std::fflush(stdout);
+            return;
+        }
+        const std::string& src = it->second[static_cast<std::size_t>(step)];
+        if (pipe_mode_) {
+            std::string rec = "(hash \"status\" \"ok\" \"value\" \"\" \"type\" \"void\" \"wrote\" () \"focus\" ";
+            rec += quote_name_(*name);
+            rec += " \"source\" \"";
+            rec += repl_record_escape(src);
+            rec += "\")";
+            std::fprintf(stdout, "%s\n", rec.c_str());
+        } else {
+            std::fprintf(stdout, "%s\n", src.c_str());
+        }
+        std::fflush(stdout);
+    }
+
     // Issue #5046: one rewrite prints a four-line block: the name, the live
     // source before, the candidate after, and the decision.
     void print_diff_(const std::string& name, const std::string& before, const std::string& after,
@@ -405,10 +493,9 @@ public:
                 eval_quiet_(before);
         }
         const std::string after = ok ? live_source_of_(name) : before;
-        if (ok) {
-            focus_ = name;
-            focus_steps_[name] = steps_for_(name) + 1;
-        }
+        focus_ = name;
+        worldline_push_(name, before, after);
+        focus_steps_[name] += 1;
         if (pipe_mode_) {
             std::string rec = "(hash \"status\" \"ok\" \"value\" \"\" \"type\" \"void\" \"wrote\" (";
             rec += quote_name_(name);
@@ -439,6 +526,45 @@ public:
     int steps_for_(const std::string& name) const {
         const auto hit = focus_steps_.find(name);
         return hit == focus_steps_.end() ? 0 : hit->second;
+    }
+
+    // Issue #5047: append the post-decision source, dropping any redo tail.
+    void worldline_push_(const std::string& name, const std::string& before,
+                         const std::string& after) {
+        auto& line = worldline_[name];
+        if (line.empty())
+            line.push_back(before);
+        const auto pos = wl_pos_.find(name);
+        const std::size_t at = pos == wl_pos_.end() ? line.size() - 1 : pos->second;
+        line.resize(at + 1);
+        line.push_back(after);
+        wl_pos_[name] = line.size() - 1;
+    }
+
+    // Install a stored step's text the same way a proposal installs a
+    // candidate: rebind on the workspace, otherwise evaluate the define.
+    std::string apply_source_(const std::string& name, const std::string& text) {
+        std::optional<std::pair<std::string, Def>> def;
+        for (const auto& form : split_forms(text)) {
+            if (auto d = parse_define(form); d) {
+                def = std::move(d);
+                break;
+            }
+        }
+        if (!def)
+            return eval_quiet_(text);
+        if (in_workspace_(name)) {
+            std::string shown;
+            const auto err = eval_quiet_("(mutate:rebind " + quote_(name) + " " +
+                                            quote_(def->second.value) + " \"repl :undo\")",
+                                        &shown);
+            if (!err.empty())
+                return err;
+            if (shown == "#t" || shown.find("effect-denied") == std::string::npos)
+                if (const auto ev = eval_quiet_(def->second.src); !ev.empty())
+                    return ev;
+        }
+        return eval_quiet_(def->second.src);
     }
 
     // The name a command means when it is given without one.
@@ -1464,6 +1590,12 @@ private:
                              failed.empty() ? "" : " (some failed)");
                 events_.push_back("restore " + arg + " [" + (list.empty() ? "-" : list) + "]");
             }
+        } else if (cmd == ":undo") {
+            undo_redo_(arg, -1);
+        } else if (cmd == ":redo") {
+            undo_redo_(arg, 1);
+        } else if (cmd == ":at") {
+            at_(arg);
         } else if (cmd == ":src") {
             const auto name = arg.empty() ? focus_name_() : std::optional<std::string>(arg);
             if (!name) {
@@ -1497,6 +1629,10 @@ private:
                 std::fprintf(stdout, "%s %d\n", focus_->c_str(), steps_for_(*focus_));
             } else {
                 focus_ = arg;
+                if (!worldline_.contains(arg)) {
+                    worldline_[arg] = {live_source_of_(arg)};
+                    wl_pos_[arg] = 0;
+                }
                 std::fprintf(stdout, "%s %d\n", arg.c_str(), steps_for_(arg));
             }
         } else if (cmd == ":doc") {
@@ -1570,7 +1706,11 @@ private:
     bool pipe_mode_ = false; // Issue #5043: pipe answers with a record
     std::string prompt_buf_; // Issue #5048: linenoise keeps the prompt pointer
     std::optional<std::string> focus_;            // Issue #5048
-    std::map<std::string, int> focus_steps_;      // Issue #5048
+    // Issue #5047: per-name worldline; index 0 is the source when it entered
+    // focus, each decision (KEEP, ROLLBACK, undo, redo) appends one step.
+    std::map<std::string, std::vector<std::string>> worldline_;
+    std::map<std::string, std::size_t> wl_pos_;
+    std::map<std::string, int> focus_steps_; // Issue #5048: steps shown in the prompt
     std::string gate_;                            // Issue #5042
     long fuel_ = 100000;                          // Issue #5042
     std::unordered_map<std::string, std::string> hint_cache_; // Issue #5038
