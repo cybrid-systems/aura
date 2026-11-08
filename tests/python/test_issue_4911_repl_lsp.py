@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "python"))
 
-from _aura_harness import AURA_BIN  # noqa: E402
+from _aura_harness import AURA_BIN, repl_value  # noqa: E402
 
 V1 = """; strategy
 (define generated 0)
@@ -71,7 +71,7 @@ class Repl(unittest.TestCase):
                 if line.startswith("snapshot "):
                     snap = line.split()[1]
                     break
-            self.assertIn("6\n", seen)
+            self.assertIn("6", [repl_value(line) for line in seen])
             # Edit the file while the session is live, then :reload.
             f.write_text(V2)
             out, err = p.communicate(
@@ -88,14 +88,17 @@ class Repl(unittest.TestCase):
             i = next(n for n, x in enumerate(lines) if x.startswith("reloaded "))
             # score is a plain REPL define (no set-code workspace): redefined in place
             self.assertIn("redefined in place: [score]", lines[i + 1])
-            self.assertEqual(lines[i + 2 : i + 6], ["60", "1", "7", "5"], out + err)  # generated stays 1
+            self.assertEqual(
+                [repl_value(x) for x in lines[i + 2 : i + 6]], ["60", "1", "7", "5"], out + err
+            )  # generated stays 1
             self.assertRegex(out, r"score\s+fn\s+.*backtest\.aura:7")
             self.assertRegex(out, r"prices\s+value\s+.*backtest\.aura:6")
             self.assertRegex(out, r"mutation-log: total \d+, committed \d+")
             self.assertIn("#2 snapshot " + snap + " v1", out)
             self.assertRegex(out, r"#3 reload .*backtest\.aura: changed \[score weight\] added \[bonus\]")
             # :restore puts score/weight back (bonus was added later and stays)
-            self.assertEqual(lines[-3:], ["restored snapshot " + snap + ": [score weight]", "6", "1"], out + err)
+            self.assertEqual(lines[-3], "restored snapshot " + snap + ": [score weight]", out + err)
+            self.assertEqual([repl_value(x) for x in lines[-2:]], ["6", "1"], out + err)
             self.assertNotIn("error", err.replace("aura: repl", ""), err)
 
     def test_reload_required_module_snapshot_restore(self) -> None:
@@ -126,7 +129,7 @@ class Repl(unittest.TestCase):
                 line = p.stdout.readline()
                 self.assertTrue(line, "REPL closed early: " + "".join(seen))
                 seen.append(line)
-                if line.strip() == "6":
+                if repl_value(line) == "6":
                     break
             lib.write_text("(define (score p)\n  (* 10 (apply + p)))\n(define (unused) 1)\n")
             out, err = p.communicate(":reload lib.aura\n(score prices)\ngenerated\n:worldline\n(quit)\n", timeout=120)
@@ -135,7 +138,9 @@ class Repl(unittest.TestCase):
             lines = [x.strip() for x in out.splitlines()]
             i = next(n for n, x in enumerate(lines) if x.startswith("reloaded "))
             self.assertIn("redefined in place: [score]", lines[i + 1])
-            self.assertEqual(lines[i + 2 : i + 4], ["60", "1"], out + err)  # prices not regenerated
+            self.assertEqual(
+                [repl_value(x) for x in lines[i + 2 : i + 4]], ["60", "1"], out + err
+            )  # prices not regenerated
             self.assertRegex(out, r"#1 load .*main\.aura")
             self.assertRegex(out, r"#2 reload .*lib\.aura: changed \[score\]")
             self.assertNotIn("error", err.replace("aura: repl", ""), err)
@@ -183,7 +188,7 @@ class Repl(unittest.TestCase):
                 line = p.stdout.readline()
                 self.assertTrue(line, "REPL closed early: " + "".join(seen))
                 seen.append(line)
-                if line.strip() == "3":
+                if repl_value(line) == "3":
                     break
             lib.write_text(lib.read_text().replace("(if (member r xs) #t #f)", "(and (member r xs) #t)"))
             out, err = p.communicate(":reload lib.aura\n(step! 3)\n(step! 5)\n(quit)\n", timeout=120)
@@ -191,7 +196,7 @@ class Repl(unittest.TestCase):
             self.assertIn("changed [has?] added [-] unchanged 1", out, out + err)
             self.assertIn("redefined in place: [has?]", out, out + err)
             lines = [x.strip() for x in out.splitlines()]
-            self.assertEqual(lines[-2:], ["(#t #t 107 3)", "(#t #t 109 3)"], out + err)
+            self.assertEqual([repl_value(x) for x in lines[-2:]], ["(#t #t 107 3)", "(#t #t 109 3)"], out + err)
 
     def test_reload_without_load_and_help(self) -> None:
         r = subprocess.run(
@@ -205,8 +210,9 @@ class Repl(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn(":reload: no file loaded yet", r.stderr)
         self.assertIn(":worldline", r.stdout)
-        self.assertIn("3", r.stdout.splitlines())
-        self.assertIn("2", r.stdout.splitlines(), r.stdout + r.stderr)  # std prelude (assq) loaded
+        values = [repl_value(line) for line in r.stdout.splitlines()]
+        self.assertIn("3", values)
+        self.assertIn("2", values, r.stdout + r.stderr)  # std prelude (assq) loaded
 
     def test_closures_after_set_code_and_heap_churn(self) -> None:
         # Kit shape (set-code, then data generation, then map over a closure)
@@ -221,7 +227,7 @@ class Repl(unittest.TestCase):
         e.pop("AURA_ARENA_MOVING_COMPACT", None)
         r = subprocess.run([str(AURA_BIN), "repl"], input=prog, capture_output=True, text=True, env=e, timeout=120)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(r.stdout.strip().splitlines()[-1], "(2 3)", r.stdout + r.stderr)
+        self.assertEqual(repl_value(r.stdout.strip().splitlines()[-1]), "(2 3)", r.stdout + r.stderr)
 
 
 def frame(obj: dict) -> bytes:
