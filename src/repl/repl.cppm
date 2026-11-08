@@ -258,6 +258,68 @@ public:
     Repl(Repl&&) = delete;
     Repl& operator=(Repl&&) = delete;
 
+    // Issue #5044: ask the model for one definition and feed it to :propose.
+    void ask_(const std::string& prompt) {
+        const auto name = focus_ ? focus_ : last_src_name_;
+        if (!name) {
+            std::fprintf(stdout, "no-focus\n");
+            std::fflush(stdout);
+            return;
+        }
+        std::string probe;
+        if (!eval_quiet_("(procedure? extract-code)", &probe).empty())
+            if (auto err = eval_quiet_("(require \"std/agent\" all:)"); !err.empty()) {
+                std::fprintf(stdout, ":ask: std/agent: %s\n", err.c_str());
+                std::fflush(stdout);
+                return;
+            }
+        if (!eval_quiet_("(procedure? llm:chat)", &probe).empty())
+            if (auto err = eval_quiet_("(require \"std/llm\" all:)"); !err.empty()) {
+                std::fprintf(stdout, ":ask: std/llm: %s\n", err.c_str());
+                std::fflush(stdout);
+                return;
+            }
+        const std::string system = "Return exactly one Aura definition and no other text.";
+        const std::string user = context_line_() + "\n" + prompt;
+        const std::string call = "(llm:chat " + quote_(system) + " " + quote_(user) + ")";
+        if (auto err = eval_quiet_("(define __repl_ask " + call + ")"); !err.empty()) {
+            std::fprintf(stdout, ":ask: %s\n", err.c_str());
+            std::fflush(stdout);
+            return;
+        }
+        std::string ok;
+        eval_quiet_("(hash-ref __repl_ask \"ok\" #f)", &ok);
+        if (ok == "#f") {
+            std::string what;
+            eval_quiet_("(hash-ref __repl_ask \"error\" \"llm-failed\")", &what);
+            std::fprintf(stdout, ":ask: %s\n", what.empty() ? "llm-failed" : what.c_str());
+            std::fflush(stdout);
+            return;
+        }
+        std::string candidate;
+        eval_quiet_("(extract-code __repl_ask)", &candidate);
+        if (candidate.size() >= 2 && candidate.front() == '"' && candidate.back() == '"') {
+            std::string un;
+            for (std::size_t i = 1; i + 1 < candidate.size(); ++i) {
+                if (candidate[i] == '\\' && i + 1 < candidate.size() - 1) {
+                    const char next = candidate[++i];
+                    un += next == 'n' ? '\n' : (next == 't' ? '\t' : next);
+                } else {
+                    un += candidate[i];
+                }
+            }
+            candidate = std::move(un);
+        }
+        if (candidate.empty()) {
+            std::fprintf(stdout, ":ask: no definition extracted\n");
+            std::fflush(stdout);
+            return;
+        }
+        if (!pipe_mode_)
+            std::fprintf(stdout, "%s\n", candidate.c_str());
+        propose_(*name + " " + candidate, &candidate);
+    }
+
     // Issue #5045: one value carrying what the next round needs.
     std::string context_line_() {
         const auto name = focus_ ? focus_ : last_src_name_;
@@ -439,7 +501,7 @@ public:
     }
 
     // Issue #5042: snapshot -> rebind -> eval + gate -> KEEP, else restore.
-    bool propose_(const std::string& arg) {
+    bool propose_(const std::string& arg, const std::string* candidate = nullptr) {
         const auto sp = arg.find_first_of(" \t");
         if (sp == std::string::npos) {
             std::fprintf(stdout, ":propose: usage: :propose NAME CODE\n");
@@ -543,7 +605,13 @@ public:
             rec += repl_record_escape(after);
             rec += "\" \"previous\" \"";
             rec += repl_record_escape(before);
-            rec += "\")";
+            rec += '"';
+            if (candidate) {
+                rec += " \"candidate\" \"";
+                rec += repl_record_escape(*candidate);
+                rec += '"';
+            }
+            rec += ')';
             std::fprintf(stdout, "%s\n", rec.c_str());
         } else {
             print_diff_(name, before, def->second.src, ok ? "KEEP" : "ROLLBACK", false);
@@ -1631,6 +1699,8 @@ private:
                              failed.empty() ? "" : " (some failed)");
                 events_.push_back("restore " + arg + " [" + (list.empty() ? "-" : list) + "]");
             }
+        } else if (cmd == ":ask" && !arg.empty()) {
+            ask_(arg);
         } else if (cmd == ":context") {
             std::fprintf(stdout, "%s\n", context_line_().c_str());
             std::fflush(stdout);
@@ -1722,7 +1792,8 @@ private:
                          "  :src [NAME]     live workspace source of NAME (or the focus)\n"
                          "  :propose NAME CODE  snapshot, rebind, eval, keep or roll back\n"
                          "  :gate EXPR      check an accepted proposal must not return #f\n"
-                         "  :fuel N         step budget for a proposal (default 100000)\n");
+                         "  :fuel N         step budget for a proposal (default 100000)\n"
+                         "  :ask TEXT       ask the model for one definition, then :propose it\n");
         }
         // Pipe drivers read one response line per input line.
         std::fflush(stdout);
