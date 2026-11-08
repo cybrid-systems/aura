@@ -1,0 +1,24 @@
+{
+  "issue": 5054,
+  "title": "Issue #5054: the orch scheduler counters must be observable in a CLI program (orch:metrics is not serve-async only).",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "Issue #5054",
+        "g_get_scheduler_metrics",
+        "g_reset_scheduler_metrics"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_engine_metrics_facade.cpp",
+      "contains": [
+        "5054: spawn evaluated",
+        "is not void",
+        "works outside serve-async"
+      ]
+    }
+  ]
+}

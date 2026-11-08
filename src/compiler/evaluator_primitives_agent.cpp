@@ -455,6 +455,24 @@ namespace {
             // restore and aborted a start that was armed when requested.
             sched->evaluate_start_gate();
             runner = std::thread([this] { sched->run(); });
+            // Issue #5054: the CLI orch scheduler runs a real 2-worker
+            // scheduler, so its counters (fibers_spawned / fibers_completed /
+            // io_events / steal_* / per-worker) must be observable here too.
+            // The hooks were only wired by the --serve-async path
+            // (src/serve/serve_async.cpp), so (stats:get "orch:metrics")
+            // returned void in every CLI program — exactly where agents and
+            // fibers are debugged. The scheduler outlives every call (the
+            // holder owns it for the process lifetime), so capturing the
+            // pointer is safe.
+            {
+                auto* s = sched.get();
+                aura::messaging::g_get_scheduler_metrics = [s]() -> std::string {
+                    return s->metrics().to_json();
+                };
+                aura::messaging::g_reset_scheduler_metrics = [s]() {
+                    s->metrics().reset_workers();
+                };
+            }
             // Issue #4831: registered after main's aura_reset_runtime handler,
             // so it runs before it (atexit is LIFO) and joins the worker
             // threads while the heaps are still intact.
