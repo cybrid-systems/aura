@@ -7701,10 +7701,15 @@ public:
     // Issue #5057 AC4: observable frame-arena pressure. Slots published
     // (append-only high water), reuse freelist hit/miss, and frames the
     // sweeps handed back. Live frames is derived: published - freelist.
+    // Private: the clang-tidy module gate counts public data members, and
+    // these are read only through refresh_env_arena_metrics.
+private:
     std::atomic<std::uint64_t> env_frame_high_water_{0};
     std::atomic<std::uint64_t> env_frame_reuse_hits_{0};
     std::atomic<std::uint64_t> env_frame_reuse_misses_{0};
     std::atomic<std::uint64_t> env_frame_reclaimed_total_{0};
+
+public:
     std::vector<EnvId> env_frame_reuse_;
     std::vector<std::uint8_t> env_frame_on_freelist_;
     // Issue #145 P0 follow-up: shared_mutex protects
