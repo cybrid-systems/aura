@@ -93,6 +93,161 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+static std::string body_of_part(const std::string& full, const std::string& name) {
+    const std::string marker = "RegSplitParts::" + name + "(";
+    for (auto dp = full.find(marker); dp != std::string::npos; dp = full.find(marker, dp + 1)) {
+        std::size_t i = dp + marker.size();
+        int paren = 1;
+        char quote = 0;
+        while (i < full.size() && paren > 0) {
+            const char c = full[i];
+            if (quote != 0) {
+                if (c == '\\') {
+                    i += 2;
+                    continue;
+                }
+                if (c == quote)
+                    quote = 0;
+            } else if (c == '"' || c == '\'') {
+                quote = c;
+            } else if (c == '(') {
+                ++paren;
+            } else if (c == ')') {
+                --paren;
+            }
+            ++i;
+        }
+        while (i < full.size() &&
+               (full[i] == ' ' || full[i] == '\t' || full[i] == '\n' || full[i] == '\r'))
+            ++i;
+        if (i >= full.size() || full[i] != '{')
+            continue; // a call site, not the definition
+        int depth = 0;
+        char q = 0;
+        bool in_line = false;
+        bool in_blk = false;
+        for (std::size_t j = i; j < full.size(); ++j) {
+            const char c = full[j];
+            const char n = j + 1 < full.size() ? full[j + 1] : '\0';
+            if (in_line) {
+                if (c == '\n')
+                    in_line = false;
+                continue;
+            }
+            if (in_blk) {
+                if (c == '*' && n == '/') {
+                    in_blk = false;
+                    ++j;
+                }
+                continue;
+            }
+            if (q != 0) {
+                if (c == '\\') {
+                    ++j;
+                    continue;
+                }
+                if (c == q)
+                    q = 0;
+                continue;
+            }
+            if (c == '/' && n == '/') {
+                in_line = true;
+                ++j;
+                continue;
+            }
+            if (c == '/' && n == '*') {
+                in_blk = true;
+                ++j;
+                continue;
+            }
+            const bool prev_ident =
+                j > 0 && ((full[j - 1] >= '0' && full[j - 1] <= '9') ||
+                          (full[j - 1] >= 'a' && full[j - 1] <= 'z') ||
+                          (full[j - 1] >= 'A' && full[j - 1] <= 'Z') || full[j - 1] == '_');
+            if (c == '"' || (c == '\'' && !prev_ident)) {
+                q = c;
+                continue;
+            }
+            if (c == '{') {
+                ++depth;
+            } else if (c == '}') {
+                --depth;
+                if (depth == 0)
+                    return full.substr(i, j - i + 1);
+            }
+        }
+        return {};
+    }
+    return {};
+}
+
+// Issue #5033: query:orch-module-stats hands its inserts to peeled
+// RegSplitParts::orch_module_stats_partN phases. insert_kv_pos() finds a key
+// inserted via insert_kv() in a body (a line break may separate the call and
+// the literal); inserted_before_finish() accepts the key in the registration
+// body or in a phase it calls before query_hash_finish (bounded recursion).
+static std::size_t insert_kv_pos(const std::string& text, std::string_view key) {
+    const std::string lit = "\"" + std::string(key) + "\"";
+    for (auto pos = text.find(lit); pos != std::string::npos; pos = text.find(lit, pos + 1)) {
+        const auto call = text.rfind("insert_kv(", pos);
+        if (call == std::string::npos)
+            continue;
+        bool gap_only = true;
+        for (auto i = call + std::string_view("insert_kv(").size(); i < pos; ++i) {
+            const char c = text[i];
+            if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+                gap_only = false;
+                break;
+            }
+        }
+        if (gap_only)
+            return pos;
+    }
+    return std::string::npos;
+}
+
+static bool phase_inserts(const std::string& full, const std::string& body, std::size_t fin,
+                          std::string_view key, int depth) {
+    if (insert_kv_pos(body, key) != std::string::npos)
+        return true;
+    if (depth <= 0)
+        return false;
+    static constexpr std::string_view kMarker = "RegSplitParts::";
+    std::size_t scan = 0;
+    while (true) {
+        const auto pos = body.find(kMarker, scan);
+        if (pos == std::string::npos || (fin != std::string::npos && pos > fin))
+            break;
+        auto begin = pos + kMarker.size();
+        auto end = begin;
+        while (end < body.size()) {
+            const char c = body[end];
+            const bool ident = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                               (c >= '0' && c <= '9') || c == '_';
+            if (!ident)
+                break;
+            ++end;
+        }
+        if (end > begin) {
+            const std::string part = body_of_part(full, body.substr(begin, end - begin));
+            if (!part.empty() && phase_inserts(full, part, std::string::npos, key, depth - 1))
+                return true;
+        }
+        scan = end;
+    }
+    return false;
+}
+
+static bool inserted_before_finish(const std::string& full, std::string_view key) {
+    const auto reg = body_of_part(full, "register_orch_stats_primitives");
+    if (reg.empty())
+        return false;
+    const auto fin = reg.find("return query_hash_finish(ht, ev.string_heap_");
+    if (fin == std::string::npos)
+        return false;
+    return phase_inserts(full, reg, fin, key, 3);
+}
+
 static std::int64_t href(CompilerService& cs, std::string_view key) {
     auto r =
         cs.eval(std::format("(hash-ref (engine:metrics \"query:orch-module-stats\") \"{}\")", key));
@@ -1308,10 +1463,12 @@ int run_test_orch_obs_facade() {
             CHECK(agent.find("query_hash_capacity_for(kOrchModuleStatsPlannedKeys)") !=
                       std::string::npos,
                   "3733 AC4: capacity from planned keys");
-            const auto key_pos = agent.find("insert_kv(\"spawn-tenant-required-total\"");
+            // #5033: the insert now lives in a peeled insert phase called by
+            // the registration body, so follow the phase and keep the
+            // append-before-finish ordering (the call expands in place).
+            const auto key_pos = insert_kv_pos(agent, "spawn-tenant-required-total");
             CHECK(key_pos != std::string::npos, "3733 AC4: spawn-tenant-required-total insert");
-            const auto finish_pos = agent.find("return query_hash_finish(ht, ev.string_heap_");
-            CHECK(finish_pos != std::string::npos && key_pos < finish_pos,
+            CHECK(inserted_before_finish(agent, "spawn-tenant-required-total"),
                   "3733 AC4: new keys append before query_hash_finish");
             CHECK(agent.find("class AgentRegistry") == std::string::npos &&
                       agent.find("struct AgentRegistry") == std::string::npos,

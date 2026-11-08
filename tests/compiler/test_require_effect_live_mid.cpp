@@ -519,6 +519,138 @@ static void ac3725_5_soft_off_and_source() {
 
 } // namespace
 
+// Issue #5033: the mutate registration bodies delegate to peeled
+// RegSplitParts helpers, so a marker that used to sit in add_mutate's lambda
+// body may now live in a part it calls. body_of_part() returns one
+// RegSplitParts definition; expand_parts() appends the bodies of the parts a
+// window calls (bounded recursion).
+static std::string body_of_part(const std::string& full, const std::string& name) {
+    const std::string marker = "RegSplitParts::" + name + "(";
+    for (auto dp = full.find(marker); dp != std::string::npos; dp = full.find(marker, dp + 1)) {
+        std::size_t i = dp + marker.size();
+        int paren = 1;
+        char quote = 0;
+        while (i < full.size() && paren > 0) {
+            const char c = full[i];
+            if (quote != 0) {
+                if (c == '\\') {
+                    i += 2;
+                    continue;
+                }
+                if (c == quote)
+                    quote = 0;
+            } else if (c == '"' || c == '\'') {
+                quote = c;
+            } else if (c == '(') {
+                ++paren;
+            } else if (c == ')') {
+                --paren;
+            }
+            ++i;
+        }
+        while (i < full.size() &&
+               (full[i] == ' ' || full[i] == '\t' || full[i] == '\n' || full[i] == '\r'))
+            ++i;
+        if (i >= full.size() || full[i] != '{')
+            continue; // a call site, not the definition
+        int depth = 0;
+        char q = 0;
+        bool in_line = false;
+        bool in_blk = false;
+        for (std::size_t j = i; j < full.size(); ++j) {
+            const char c = full[j];
+            const char n = j + 1 < full.size() ? full[j + 1] : '\0';
+            if (in_line) {
+                if (c == '\n')
+                    in_line = false;
+                continue;
+            }
+            if (in_blk) {
+                if (c == '*' && n == '/') {
+                    in_blk = false;
+                    ++j;
+                }
+                continue;
+            }
+            if (q != 0) {
+                if (c == '\\') {
+                    ++j;
+                    continue;
+                }
+                if (c == q)
+                    q = 0;
+                continue;
+            }
+            if (c == '/' && n == '/') {
+                in_line = true;
+                ++j;
+                continue;
+            }
+            if (c == '/' && n == '*') {
+                in_blk = true;
+                ++j;
+                continue;
+            }
+            const bool prev_ident =
+                j > 0 && ((full[j - 1] >= '0' && full[j - 1] <= '9') ||
+                          (full[j - 1] >= 'a' && full[j - 1] <= 'z') ||
+                          (full[j - 1] >= 'A' && full[j - 1] <= 'Z') || full[j - 1] == '_');
+            if (c == '"' || (c == '\'' && !prev_ident)) {
+                q = c;
+                continue;
+            }
+            if (c == '{') {
+                ++depth;
+            } else if (c == '}') {
+                --depth;
+                if (depth == 0)
+                    return full.substr(i, j - i + 1);
+            }
+        }
+        return {};
+    }
+    return {};
+}
+
+static std::string expand_parts(const std::string& full, const std::string& win, int depth) {
+    static constexpr std::string_view kMarker = "RegSplitParts::";
+    std::string extra;
+    std::size_t scan = 0;
+    while (true) {
+        const auto pos = win.find(kMarker, scan);
+        if (pos == std::string::npos)
+            break;
+        auto begin = pos + kMarker.size();
+        auto end = begin;
+        while (end < win.size()) {
+            const char c = win[end];
+            const bool ident = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                               (c >= '0' && c <= '9') || c == '_';
+            if (!ident)
+                break;
+            ++end;
+        }
+        if (end > begin && depth > 0) {
+            const std::string body = body_of_part(full, win.substr(begin, end - begin));
+            if (!body.empty()) {
+                extra += body;
+                extra += expand_parts(full, body, depth - 1);
+            }
+        }
+        scan = end;
+    }
+    return win + extra;
+}
+
+// The add_mutate lambda body plus the parts it calls
+// (mutate_wrapped_call -> mutate_wrapper_enter / ...), where the #4385
+// "early note" (#4385) comment now lives.
+static std::string add_mutate_window(const std::string& full) {
+    const auto addp = full.find("auto add_mutate = ");
+    if (addp == std::string::npos)
+        return {};
+    return expand_parts(full, aura::test::aura_lambda_body_after(full, addp), 3);
+}
 
 // ── #3594: production phantom mid=1 refusal (epoch=0 / TypedMid=0 matrix) ──
 static void ac3594_1_production_epoch0_refuses() {
@@ -1372,7 +1504,10 @@ static void ac4385_source_cite() {
     const auto obs = read_file("src/compiler/evaluator_primitives_observability.cpp");
     CHECK(bound.find("mint_session_audit_mid") != std::string::npos,
           "4385: Guard still mints the session mid (#3964)");
-    CHECK(mutate.find("Issue #4385") != std::string::npos, "4385: add_mutate cites the early note");
+    // #5033: the early note moved into the peeled mutate_wrapper_enter part,
+    // reached through add_mutate -> mutate_wrapped_call.
+    CHECK(add_mutate_window(mutate).find("#4385") != std::string::npos,
+          "4385: add_mutate cites the early note");
     CHECK(mutate.find("mint_session_audit_mid") != std::string::npos,
           "4385: admission mints before require_effect");
     CHECK(obs.find("schema-4385") == std::string::npos, "4385: no schema-4385 query key");

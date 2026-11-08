@@ -124,6 +124,128 @@ static SecurityScheduleInput base_input() {
     return in;
 }
 
+// Issue #5033: registration bodies delegate to peeled RegSplitParts helpers,
+// so a body window must also carry the parts it calls. body_of_part() returns
+// one RegSplitParts definition; expand_parts() appends the bodies of the parts
+// a window calls (bounded recursion).
+static std::string body_of_part(const std::string& full, const std::string& name) {
+    const std::string marker = "RegSplitParts::" + name + "(";
+    for (auto dp = full.find(marker); dp != std::string::npos; dp = full.find(marker, dp + 1)) {
+        std::size_t i = dp + marker.size();
+        int paren = 1;
+        char quote = 0;
+        while (i < full.size() && paren > 0) {
+            const char c = full[i];
+            if (quote != 0) {
+                if (c == '\\') {
+                    i += 2;
+                    continue;
+                }
+                if (c == quote)
+                    quote = 0;
+            } else if (c == '"' || c == '\'') {
+                quote = c;
+            } else if (c == '(') {
+                ++paren;
+            } else if (c == ')') {
+                --paren;
+            }
+            ++i;
+        }
+        while (i < full.size() &&
+               (full[i] == ' ' || full[i] == '\t' || full[i] == '\n' || full[i] == '\r'))
+            ++i;
+        if (i >= full.size() || full[i] != '{')
+            continue; // a call site, not the definition
+        int depth = 0;
+        char q = 0;
+        bool in_line = false;
+        bool in_blk = false;
+        for (std::size_t j = i; j < full.size(); ++j) {
+            const char c = full[j];
+            const char n = j + 1 < full.size() ? full[j + 1] : '\0';
+            if (in_line) {
+                if (c == '\n')
+                    in_line = false;
+                continue;
+            }
+            if (in_blk) {
+                if (c == '*' && n == '/') {
+                    in_blk = false;
+                    ++j;
+                }
+                continue;
+            }
+            if (q != 0) {
+                if (c == '\\') {
+                    ++j;
+                    continue;
+                }
+                if (c == q)
+                    q = 0;
+                continue;
+            }
+            if (c == '/' && n == '/') {
+                in_line = true;
+                ++j;
+                continue;
+            }
+            if (c == '/' && n == '*') {
+                in_blk = true;
+                ++j;
+                continue;
+            }
+            const bool prev_ident =
+                j > 0 && ((full[j - 1] >= '0' && full[j - 1] <= '9') ||
+                          (full[j - 1] >= 'a' && full[j - 1] <= 'z') ||
+                          (full[j - 1] >= 'A' && full[j - 1] <= 'Z') || full[j - 1] == '_');
+            if (c == '"' || (c == '\'' && !prev_ident)) {
+                q = c;
+                continue;
+            }
+            if (c == '{') {
+                ++depth;
+            } else if (c == '}') {
+                --depth;
+                if (depth == 0)
+                    return full.substr(i, j - i + 1);
+            }
+        }
+        return {};
+    }
+    return {};
+}
+
+static std::string expand_parts(const std::string& full, const std::string& win, int depth) {
+    static constexpr std::string_view kMarker = "RegSplitParts::";
+    std::string extra;
+    std::size_t scan = 0;
+    while (true) {
+        const auto pos = win.find(kMarker, scan);
+        if (pos == std::string::npos)
+            break;
+        auto begin = pos + kMarker.size();
+        auto end = begin;
+        while (end < win.size()) {
+            const char c = win[end];
+            const bool ident = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                               (c >= '0' && c <= '9') || c == '_';
+            if (!ident)
+                break;
+            ++end;
+        }
+        if (end > begin && depth > 0) {
+            const std::string body = body_of_part(full, win.substr(begin, end - begin));
+            if (!body.empty()) {
+                extra += body;
+                extra += expand_parts(full, body, depth - 1);
+            }
+        }
+        scan = end;
+    }
+    return win + extra;
+}
+
 } // namespace
 
 int run_test_security_schedule_gate() {
@@ -1589,11 +1711,14 @@ int run_test_security_schedule_gate() {
         // windows (tests/compiler/source_contract.hpp) - no byte widths.
         using aura::test::source_contract::brace_body;
         const auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
-        const auto prim_win = brace_body(prim_src, "add(\"parallel-intend\"");
-        CHECK(prim_win.ok, "4639: parallel-intend body window found");
-        CHECK(prim_win.view.find("caller_bp_scope_id()") != std::string_view::npos,
+        const auto prim_slice = brace_body(prim_src, "add(\"parallel-intend\"");
+        CHECK(prim_slice.ok, "4639: parallel-intend body window found");
+        // #5033: the registration body delegates to the peeled
+        // parallel_intend_* parts, so follow the parts it calls.
+        const auto prim_win = expand_parts(prim_src, std::string(prim_slice.view), 3);
+        CHECK(prim_win.find("caller_bp_scope_id()") != std::string::npos,
               "4639: parallel-intend threads the caller scope");
-        CHECK(prim_win.view.find("mb->bp_scope_id()") == std::string_view::npos,
+        CHECK(prim_win.find("mb->bp_scope_id()") == std::string::npos,
               "4639: parallel-intend has no inline mailbox scope lookup");
         const auto gate_src = read_file("src/orch/security_schedule_gate.h");
         CHECK(gate_src.find("caller_bp_scope_id") != std::string::npos,

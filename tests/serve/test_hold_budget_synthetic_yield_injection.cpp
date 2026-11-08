@@ -63,6 +63,139 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+// Issue #5033: the mutate registration bodies now delegate to peeled
+// RegSplitParts helpers, so a slice that stops at the add_mutate lambda brace
+// misses the statements the #3480 pins look for. body_of_part() returns one
+// RegSplitParts definition; expand_parts() appends the bodies of the parts a
+// window calls (bounded recursion).
+static std::string body_of_part(const std::string& full, const std::string& name) {
+    const std::string marker = "RegSplitParts::" + name + "(";
+    for (auto dp = full.find(marker); dp != std::string::npos; dp = full.find(marker, dp + 1)) {
+        std::size_t i = dp + marker.size();
+        int paren = 1;
+        char quote = 0;
+        while (i < full.size() && paren > 0) {
+            const char c = full[i];
+            if (quote != 0) {
+                if (c == '\\') {
+                    i += 2;
+                    continue;
+                }
+                if (c == quote)
+                    quote = 0;
+            } else if (c == '"' || c == '\'') {
+                quote = c;
+            } else if (c == '(') {
+                ++paren;
+            } else if (c == ')') {
+                --paren;
+            }
+            ++i;
+        }
+        while (i < full.size() &&
+               (full[i] == ' ' || full[i] == '\t' || full[i] == '\n' || full[i] == '\r'))
+            ++i;
+        if (i >= full.size() || full[i] != '{')
+            continue; // a call site, not the definition
+        int depth = 0;
+        char q = 0;
+        bool in_line = false;
+        bool in_blk = false;
+        for (std::size_t j = i; j < full.size(); ++j) {
+            const char c = full[j];
+            const char n = j + 1 < full.size() ? full[j + 1] : '\0';
+            if (in_line) {
+                if (c == '\n')
+                    in_line = false;
+                continue;
+            }
+            if (in_blk) {
+                if (c == '*' && n == '/') {
+                    in_blk = false;
+                    ++j;
+                }
+                continue;
+            }
+            if (q != 0) {
+                if (c == '\\') {
+                    ++j;
+                    continue;
+                }
+                if (c == q)
+                    q = 0;
+                continue;
+            }
+            if (c == '/' && n == '/') {
+                in_line = true;
+                ++j;
+                continue;
+            }
+            if (c == '/' && n == '*') {
+                in_blk = true;
+                ++j;
+                continue;
+            }
+            const bool prev_ident =
+                j > 0 && ((full[j - 1] >= '0' && full[j - 1] <= '9') ||
+                          (full[j - 1] >= 'a' && full[j - 1] <= 'z') ||
+                          (full[j - 1] >= 'A' && full[j - 1] <= 'Z') || full[j - 1] == '_');
+            if (c == '"' || (c == '\'' && !prev_ident)) {
+                q = c;
+                continue;
+            }
+            if (c == '{') {
+                ++depth;
+            } else if (c == '}') {
+                --depth;
+                if (depth == 0)
+                    return full.substr(i, j - i + 1);
+            }
+        }
+        return {};
+    }
+    return {};
+}
+
+static std::string expand_parts(const std::string& full, const std::string& win, int depth) {
+    static constexpr std::string_view kMarker = "RegSplitParts::";
+    std::string extra;
+    std::size_t scan = 0;
+    while (true) {
+        const auto pos = win.find(kMarker, scan);
+        if (pos == std::string::npos)
+            break;
+        auto begin = pos + kMarker.size();
+        auto end = begin;
+        while (end < win.size()) {
+            const char c = win[end];
+            const bool ident = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                               (c >= '0' && c <= '9') || c == '_';
+            if (!ident)
+                break;
+            ++end;
+        }
+        if (end > begin && depth > 0) {
+            const std::string body = body_of_part(full, win.substr(begin, end - begin));
+            if (!body.empty()) {
+                extra += body;
+                extra += expand_parts(full, body, depth - 1);
+            }
+        }
+        scan = end;
+    }
+    return win + extra;
+}
+
+// The add_mutate lambda body plus the peeled parts it calls
+// (mutate_wrapped_call -> mutate_wrapper_enter / mutate_post_body_belt /
+// mutate_wrapper_commit), i.e. where the #3480 force-release face lives.
+static std::string add_mutate_window(const std::string& full) {
+    const auto addp = full.find("auto add_mutate = ");
+    if (addp == std::string::npos)
+        return {};
+    return expand_parts(full, aura::test::aura_lambda_body_after(full, addp), 3);
+}
+
 } // namespace
 
 int run_test_hold_budget_synthetic_yield_injection() {
@@ -1543,12 +1676,10 @@ int run_test_hold_budget_add_mutate_inbody_poll_3480() {
         CHECK(held_after.load() == 0, "3480 AC1: workspace hold cleared after add_mutate");
         CHECK(depth_after.load() == 0, "3480 AC1: depth slot == 0");
         const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
-        const auto addp = mut.find("auto add_mutate = ");
-        // #4332/#4385/#4910 each grew the lambda and slid the old character
-        // budget off the post-fn(a) anchors; match the lambda braces instead
-        // of a byte count (same extraction as the python checker).
-        const auto aw = addp == std::string::npos ? std::string{}
-                                                  : aura::test::aura_lambda_body_after(mut, addp);
+        // #5033: the wrapper body now delegates to peeled RegSplitParts
+        // (mutate_wrapped_call -> mutate_post_body_belt), so the window
+        // follows the parts it calls instead of a byte count.
+        const auto aw = add_mutate_window(mut);
         const auto fnp = aw.find("auto result = fn(a);");
         const auto frp = aw.find("force_release_hold_budget_inbody");
         CHECK(fnp != std::string::npos && frp != std::string::npos && frp > fnp,
@@ -1575,7 +1706,7 @@ int run_test_hold_budget_add_mutate_inbody_poll_3480() {
         const auto add = mut.find("auto add_mutate = ");
         CHECK(add != std::string::npos, "3480 AC2: add_mutate present");
         // #3480 AC2: same brace-matched body; no byte budget to outgrow.
-        const auto awin = aura::test::aura_lambda_body_after(mut, add);
+        const auto awin = add_mutate_window(mut);
         CHECK(!awin.empty(), "3480 AC2: add_mutate body extracted");
         CHECK(awin.find("aura_fiber_request_hold_budget_cancel") == std::string::npos,
               "3480 AC2: wrapper does not unlock from thief thread");
@@ -2145,14 +2276,17 @@ int run_test_hold_budget_prebody_synthetic_yield_4257() {
     CHECK(mh.find("kMutationHoldBudgetPreBodySyntheticYieldIssue") != std::string::npos,
           "4257: stamp in mutation_hold_budget.h");
     CHECK(mh.find("4257") != std::string::npos, "4257: issue cite");
-    const auto addp = mut.find("auto add_mutate = ");
-    // #4257 reuses the #3480 brace-matched extraction: the wrapper grows
-    // (the #4910 evo step pushed fn(a) to ~27900) and a byte budget rots.
-    const auto aw =
-        addp == std::string::npos ? std::string{} : aura::test::aura_lambda_body_after(mut, addp);
-    const auto syn = aw.find("inject_synthetic_mutation_boundary_yield");
-    const auto fnp = aw.find("auto result = fn(a);");
-    CHECK(syn != std::string::npos && fnp != std::string::npos && syn < fnp,
+    // #5033: the wrapper peeled into mutate_wrapped_call, which calls
+    // mutate_wrapper_enter (the #4257 arm) before fn(a), so follow the parts
+    // and keep the ordering check positional inside that wrapper.
+    const auto aw = add_mutate_window(mut);
+    const auto wrap = body_of_part(mut, "mutate_wrapped_call");
+    const auto enter = body_of_part(mut, "mutate_wrapper_enter");
+    const auto syn = wrap.find("RegSplitParts::mutate_wrapper_enter(");
+    const auto arm = enter.find("inject_synthetic_mutation_boundary_yield");
+    const auto fnp = wrap.find("auto result = fn(a);");
+    CHECK(arm != std::string::npos && syn != std::string::npos && fnp != std::string::npos &&
+              syn < fnp,
           "4257: synthetic yield armed BEFORE fn(a)");
     CHECK(aw.find("Issue #4257") != std::string::npos, "4257: mutate wrapper cites issue");
     CHECK(aw.find("force_release_hold_budget_inbody") != std::string::npos,

@@ -211,6 +211,139 @@ static std::string brace_block_after(const std::string& text, std::size_t from) 
     return {};
 }
 
+// Issue #5033: the mutate registration bodies delegate to peeled
+// RegSplitParts helpers, so the add_mutate lambda body alone no longer holds
+// the dtor persist/abort_restore face. body_of_part() returns one
+// RegSplitParts definition; expand_parts() appends the bodies of the parts a
+// window calls (bounded recursion).
+static std::string body_of_part(const std::string& full, const std::string& name) {
+    const std::string marker = "RegSplitParts::" + name + "(";
+    for (auto dp = full.find(marker); dp != std::string::npos; dp = full.find(marker, dp + 1)) {
+        std::size_t i = dp + marker.size();
+        int paren = 1;
+        char quote = 0;
+        while (i < full.size() && paren > 0) {
+            const char c = full[i];
+            if (quote != 0) {
+                if (c == '\\') {
+                    i += 2;
+                    continue;
+                }
+                if (c == quote)
+                    quote = 0;
+            } else if (c == '"' || c == '\'') {
+                quote = c;
+            } else if (c == '(') {
+                ++paren;
+            } else if (c == ')') {
+                --paren;
+            }
+            ++i;
+        }
+        while (i < full.size() &&
+               (full[i] == ' ' || full[i] == '\t' || full[i] == '\n' || full[i] == '\r'))
+            ++i;
+        if (i >= full.size() || full[i] != '{')
+            continue; // a call site, not the definition
+        int depth = 0;
+        char q = 0;
+        bool in_line = false;
+        bool in_blk = false;
+        for (std::size_t j = i; j < full.size(); ++j) {
+            const char c = full[j];
+            const char n = j + 1 < full.size() ? full[j + 1] : '\0';
+            if (in_line) {
+                if (c == '\n')
+                    in_line = false;
+                continue;
+            }
+            if (in_blk) {
+                if (c == '*' && n == '/') {
+                    in_blk = false;
+                    ++j;
+                }
+                continue;
+            }
+            if (q != 0) {
+                if (c == '\\') {
+                    ++j;
+                    continue;
+                }
+                if (c == q)
+                    q = 0;
+                continue;
+            }
+            if (c == '/' && n == '/') {
+                in_line = true;
+                ++j;
+                continue;
+            }
+            if (c == '/' && n == '*') {
+                in_blk = true;
+                ++j;
+                continue;
+            }
+            const bool prev_ident =
+                j > 0 && ((full[j - 1] >= '0' && full[j - 1] <= '9') ||
+                          (full[j - 1] >= 'a' && full[j - 1] <= 'z') ||
+                          (full[j - 1] >= 'A' && full[j - 1] <= 'Z') || full[j - 1] == '_');
+            if (c == '"' || (c == '\'' && !prev_ident)) {
+                q = c;
+                continue;
+            }
+            if (c == '{') {
+                ++depth;
+            } else if (c == '}') {
+                --depth;
+                if (depth == 0)
+                    return full.substr(i, j - i + 1);
+            }
+        }
+        return {};
+    }
+    return {};
+}
+
+static std::string expand_parts(const std::string& full, const std::string& win, int depth) {
+    static constexpr std::string_view kMarker = "RegSplitParts::";
+    std::string extra;
+    std::size_t scan = 0;
+    while (true) {
+        const auto pos = win.find(kMarker, scan);
+        if (pos == std::string::npos)
+            break;
+        auto begin = pos + kMarker.size();
+        auto end = begin;
+        while (end < win.size()) {
+            const char c = win[end];
+            const bool ident = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                               (c >= '0' && c <= '9') || c == '_';
+            if (!ident)
+                break;
+            ++end;
+        }
+        if (end > begin && depth > 0) {
+            const std::string body = body_of_part(full, win.substr(begin, end - begin));
+            if (!body.empty()) {
+                extra += body;
+                extra += expand_parts(full, body, depth - 1);
+            }
+        }
+        scan = end;
+    }
+    return win + extra;
+}
+
+// The add_mutate lambda body plus the parts it calls
+// (mutate_wrapped_call -> mutate_wrapper_enter / mutate_post_body_belt /
+// mutate_wrapper_commit), where the #3697 persist-reject exit now lives.
+static std::string add_mutate_window(const std::string& full) {
+    const auto addp = full.find("auto add_mutate = ");
+    if (addp == std::string::npos)
+        return {};
+    return expand_parts(full, brace_block_after(full, addp), 3);
+}
+
 // Issue #4310: production persist-reject and outermost abort put type
 // columns and the solve_delta high-water back. Soft does not copy.
 static void ac4310_abort_restores_type_columns_and_cs() {
@@ -2247,12 +2380,11 @@ int run_test_outermost_persist_fail_closed() {
         CHECK(contains(mut, "Issue #3697"), "3697: add_mutate cites #3697");
         const auto cite = mut.find("Issue #3697: outermost dtor persist-reject");
         CHECK(cite != std::string::npos, "3697: add_mutate wrapper cite");
-        // Window = brace-matched add_mutate lambda body (the dtor
-        // persist/abort_restore face lives at the end of the wrapper body;
-        // the fixed 1800-char cite window was drift-bait).
-        const auto lam =
-            mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt");
-        const auto body = brace_block_after(mut, lam);
+        // Window = brace-matched add_mutate lambda body followed by the
+        // peeled parts it calls (#5033): the dtor persist/abort_restore face
+        // moved into mutate_wrapper_commit, reached through
+        // mutate_wrapped_call, so the lambda body alone no longer carries it.
+        const auto body = add_mutate_window(mut);
         CHECK(!body.empty(), "3697: add_mutate lambda body (brace-matched)");
         CHECK(contains(body, "wrapper_guard.reset()"),
               "3697: dtor persist/abort_restore runs before EDSL return");
