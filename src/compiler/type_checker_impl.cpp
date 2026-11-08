@@ -8065,9 +8065,11 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
     // treats only #f as false, so any value type is usable. Requiring Bool
     // rejected the gradual Any that (and …) / (or …) produce (their result
     // is the last value, not a Bool) and printed a false
-    // "expected Bool, got Any" warning. Synthesize the condition and keep
-    // the occurrence narrowing below; the sub-expression is still checked.
-    (void)synthesize_flat(flat, pool, cond_id, flat.get(cond_id));
+    // "expected Bool, got Any" warning. Check the condition against a fresh
+    // variable instead: that imposes no expectation but still runs the
+    // check-mode pass (nested diagnostics + the #627 switch/narrow counters
+    // that incremental mutation health reads).
+    check_flat(flat, pool, cond_id, cs_.fresh_var());
 
     if (v.children.size() < 2) {
         last_if_narrowing_ = 0;
