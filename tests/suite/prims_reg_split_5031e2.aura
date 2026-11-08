@@ -1,0 +1,96 @@
+;; Issue #5031: register_eval_p11 / register_eval_p65 / register_eval_p91 are
+;; peeled into per-responsibility phases (body phases + ordered insert phases).
+;; Primitive names, registration order, lambda capture lifetimes and every stats
+;; payload key must not move — this exercises the head, middle and tail keys of
+;; each peeled payload so a dropped or reordered phase shows up.
+(require "std/io" all:)
+
+(define fails 0)
+(define (check pred msg)
+  (if pred
+      #t
+      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
+
+(define (hget h k) (hash-ref h k))
+
+;; ── p11: arena compaction payloads ──────────────────────────────────
+(define ac (stats:get "query:arena-auto-compaction-stats"))
+(check (hash? ac) "arena-auto-compaction-stats")
+(check (= 642 (hget ac "schema")) "auto-compaction schema")
+(check (integer? (hget ac "auto-trigger")) "auto-compaction auto-trigger")
+(check (integer? (hget ac "guard-defrag")) "auto-compaction guard-defrag")
+
+(define lc (stats:get "arena:live-compact"))
+(check (hash? lc) "arena:live-compact")
+(check (= 2166 (hget lc "schema")) "live-compact schema")
+(check (integer? (hget lc "bytes-reclaimed")) "live-compact bytes-reclaimed")
+(check (= 2256 (hget lc "schema-2256")) "live-compact schema-2256")
+
+(define ls (stats:get "query:arena-live-compact-stats"))
+(check (hash? ls) "arena-live-compact-stats")
+(check (= 2166 (hget ls "schema")) "live-compact-stats schema")
+(check (integer? (hget ls "soft-count")) "live-compact-stats soft-count")
+(check (integer? (hget ls "force-count")) "live-compact-stats force-count")
+(check (= 2157 (hget ls "schema-2157")) "live-compact-stats schema-2157")
+(check (= 2905 (hget ls "schema-2905")) "live-compact-stats schema-2905 (sticky phase)")
+(check (= 2339 (hget ls "schema-2339")) "live-compact-stats schema-2339 (root remap phase)")
+(check (= 2298 (hget ls "schema-2298")) "live-compact-stats schema-2298 (pin phase)")
+(check (= 2709 (hget ls "schema-2709")) "live-compact-stats schema-2709 (enforcement phase)")
+(check (= 3534 (hget ls "schema-3534")) "live-compact-stats schema-3534 (inventory tail)")
+(check (= 2266 (hget ls "schema-2266")) "live-compact-stats schema-2266 (tail)")
+
+;; ── p65: stable-ref / post-steal / epoch-apply payloads ─────────────
+(define cc (stats:get "query:stable-ref-cross-cow-provenance-stats"))
+(check (hash? cc) "stable-ref-cross-cow-provenance-stats")
+(check (= 818 (hget cc "schema")) "cross-cow schema")
+(check (integer? (hget cc "provenance-enforced-hits")) "cross-cow provenance-enforced-hits")
+
+(define ps (stats:get "query:post-steal-closed-loop-stats"))
+(check (hash? ps) "post-steal-closed-loop-stats")
+(check (= 1631 (hget ps "schema")) "post-steal schema")
+(check (= 1631 (hget ps "issue")) "post-steal issue")
+(check (integer? (hget ps "post-steal-refresh-count")) "post-steal refresh count")
+(check (= 2194 (hget ps "schema-2194")) "post-steal schema-2194 (refresh phase)")
+(check (= 2197 (hget ps "schema-2197")) "post-steal schema-2197 (linear phase)")
+(check (= 2026 (hget ps "schema-2026")) "post-steal schema-2026")
+(check (= 2103 (hget ps "schema-2103")) "post-steal schema-2103")
+(check (= 2222 (hget ps "schema-2222")) "post-steal schema-2222")
+(check (= 2677 (hget ps "schema-2677")) "post-steal schema-2677 (tail)")
+
+(define ea (stats:get "query:epoch-apply-hotpath-stats"))
+(check (hash? ea) "epoch-apply-hotpath-stats")
+(check (= 1660 (hget ea "schema")) "epoch-apply schema")
+(check (= 1660 (hget ea "issue")) "epoch-apply issue")
+(check (= 1916 (hget ea "schema-1916")) "epoch-apply schema-1916")
+
+(define jl (stats:get "query:join-linear-enforcement-stats"))
+(check (hash? jl) "join-linear-enforcement-stats")
+(check (= 1595 (hget jl "schema")) "join-linear schema")
+(check (= 1595 (hget jl "issue")) "join-linear issue")
+
+(define sp (stats:get "query:stable-ref-provenance-stats"))
+(check (hash? sp) "stable-ref-provenance-stats")
+(check (= 1630 (hget sp "schema")) "stable-ref-provenance schema")
+(check (= 2404 (hget sp "schema-2404")) "stable-ref-provenance schema-2404 (tail)")
+
+;; ── p91: AOT reload / incremental reemit payloads ───────────────────
+(define ao (stats:get "query:aot-stats"))
+(check (hash? ao) "aot-stats")
+(check (integer? (hget ao "aot-stale-reject-count")) "aot-stats stale-reject (head)")
+(check (= 2046 (hget ao "schema-2046")) "aot-stats schema-2046 (joint version phase)")
+(check (= 2095 (hget ao "schema-2095")) "aot-stats schema-2095 (reemit phase)")
+(check (= 1952 (hget ao "schema-1952")) "aot-stats schema-1952 (tail)")
+(check (= 2013 (hget ao "schema-2013")) "aot-stats schema-2013 (tail)")
+(check (= 1 (hget ao "active")) "aot-stats active tail")
+
+(define ar (stats:get "query:aot-incremental-reemit-stats"))
+(check (hash? ar) "aot-incremental-reemit-stats")
+(check (= 1930 (hget ar "schema")) "aot-reemit schema")
+(check (= 1930 (hget ar "issue")) "aot-reemit issue")
+(check (= 1 (hget ar "stable-func-id-map-wired")) "aot-reemit head key")
+(check (integer? (hget ar "live-closure-sync-remount-ok-total")) "aot-reemit remount phase head")
+(check (integer? (hget ar "live-closure-sync-remount-anon-fail-total")) "aot-reemit remount walk phase")
+
+(if (= fails 0)
+    (display "obs-eval p11/p65/p91 split ok\n")
+    (error "obs-eval p11/p65/p91 split FAILED" fails))
