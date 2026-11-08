@@ -166,15 +166,17 @@ extern std::atomic<std::uint64_t> g_occurrence_goals_live_total;
 extern std::atomic<std::uint64_t> g_occurrence_goals_live_truncated_total;
 extern std::atomic<std::uint32_t> g_occurrence_goals_live_wired;
 
-void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
-                                         ::aura::compiler::LockedStringHeap& string_heap,
-                                         void*& type_registry,
-                                         ModulePathResolver resolve_module_path, Evaluator& ev) {
-    // Issue #4106: pairs is now used by the production operand resolve below.
-    (void)string_heap;
-    (void)type_registry;
-    (void)resolve_module_path;
-    (void)ev;
+// --- Issue #5031: register_query_lifecycle_primitives phases -----------------
+// The single registration body outgrew the 300-line ceiling. Each phase below is
+// one responsibility family; register_query_lifecycle_primitives keeps the ordered
+// delegation so registration order, primitive names and lambda capture lifetimes
+// are unchanged.
+
+// Issue #5031: sunk macro provenance chain probe registration phase.
+void register_query_lifecycle_macro_provenance_parts(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, void*& type_registry,
+    ModulePathResolver resolve_module_path, Evaluator& ev) {
     sink_query_prim(
         "query:macro-provenance-chain", [&ev, &string_heap, &pairs](const auto& a) -> EvalValue {
             // Issue #4106: the production read takes the workspace shared lock
@@ -344,7 +346,14 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             }
             return make_hash(hidx);
         });
+}
 
+// Issue #5031: ir hygiene stats builder / registration registration phase.
+void register_query_lifecycle_ir_hygiene_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                               ::aura::compiler::LockedStringHeap& string_heap,
+                                               void*& type_registry,
+                                               ModulePathResolver resolve_module_path,
+                                               Evaluator& ev) {
     // Issue #501 / #514 / #1610 / #1616 / #1891 / #2022: query:ir-hygiene-stats —
     // IR-level MacroIntroduced + ClosureBridge provenance (refine #1047).
     // Schema **2022** (lineage 1891 / 1616 / 1610 / 501). Authoritative e2e
@@ -614,7 +623,13 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             }
             return make_hash(hidx);
         });
+}
 
+// Issue #5031: consolidated production priority / roadmap registration phase.
+void register_query_lifecycle_production_priority_parts(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, void*& type_registry,
+    ModulePathResolver resolve_module_path, Evaluator& ev) {
     // Issue #517: query:consolidated-production-priority-stats.
     // Returns the sum of 9 counter groups spanning the 3 P0 foundational
     // pillars from the consolidated meta tracker (non-duplicative with
@@ -723,7 +738,14 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                                       gen_wrap + memory_bridge + memory_env +
                                                       soa_skip + soa_hotpath + batch + rollback));
         });
+}
 
+// Issue #5031: task6 / compiler-runtime / commercial readiness registration phase.
+void register_query_lifecycle_readiness_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                              ::aura::compiler::LockedStringHeap& string_heap,
+                                              void*& type_registry,
+                                              ModulePathResolver resolve_module_path,
+                                              Evaluator& ev) {
     // Issue #514: query:task6-production-readiness-stats. Returns the
     // sum of 12 counters spanning the Task6 review Top 3 production
     // gaps (non-duplicative synthesis of #547/#551/#550 themes):
@@ -843,7 +865,13 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                                       type_system + eda_batch + stdlib_hotpath +
                                                       orchestration));
         });
+}
 
+// Issue #5031: macro-reflect self-evo commercial / edsl query-mutate commercial registration phase.
+void register_query_lifecycle_commercial_self_evo_parts(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, void*& type_registry,
+    ModulePathResolver resolve_module_path, Evaluator& ev) {
     // Issue #635: query:macro-reflect-self-evo-commercial-stats.
     // Returns the sum of 10 counters spanning the July 2026
     // macro + static reflection + self-evolution commercial
@@ -951,7 +979,14 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 stable_ref + provenance + query_index + query_hygiene + guard_mutate + dirty_up +
                 atomic + eda_feedback + gc_coord + orchestration));
         });
+}
 
+// Issue #5031: self-evo followup / self-evo / self-evolution loop registration phase.
+void register_query_lifecycle_self_evo_loop_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                  ::aura::compiler::LockedStringHeap& string_heap,
+                                                  void*& type_registry,
+                                                  ModulePathResolver resolve_module_path,
+                                                  Evaluator& ev) {
     // Issue #619: query:macro-reflect-self-evo-followup-stats.
     // Returns the sum of 4 Task6 follow-up closed-loop counters:
     //   - hygiene_skips: macro_introduced_skipped_in_query_
@@ -1138,334 +1173,384 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             }
             return make_hash(hidx);
         });
+}
 
-    // Issue #1909: query:self-evo-stats — unified self-evolution loop
-    // health dashboard for AI Agents. Aggregates IR hygiene (#1891),
-    // pattern hygiene (#1892), TypedMutationAudit (#1894), Guard hold
-    // latency, and closed-loop rollback into one hash (schema **1909**).
-    // AC keys (basis points 0..10000 unless noted):
-    //   macro-introduced-ratio-bp, hygiene-violation-rate-bp,
-    //   ir-macro-propagated-pct-bp, avg-mutation-boundary-depth-x100,
-    //   rollback-success-rate-bp, self-evo-loop-latency-p99-us,
-    //   recommendation (0=ok,1=review,2=alert), health-score-bp
-    ObservabilityPrims::register_stats_impl(
-        "query:self-evo-stats", [](std::span<const EvalValue> a) -> EvalValue {
-            (void)a;
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev)
-                return make_void();
-            using namespace aura::compiler::typed_audit;
-            auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
-            auto load_m =
-                [m](std::atomic<std::uint64_t> CompilerMetrics::* field) -> std::uint64_t {
-                return m ? (m->*field).load(std::memory_order_relaxed) : 0;
-            };
+// Issue #1909: query:self-evo-stats — unified self-evolution loop
+// health dashboard for AI Agents. Aggregates IR hygiene (#1891),
+// pattern hygiene (#1892), TypedMutationAudit (#1894), Guard hold
+// latency, and closed-loop rollback into one hash (schema **1909**).
+// AC keys (basis points 0..10000 unless noted):
+//   macro-introduced-ratio-bp, hygiene-violation-rate-bp,
+//   ir-macro-propagated-pct-bp, avg-mutation-boundary-depth-x100,
+//   rollback-success-rate-bp, self-evo-loop-latency-p99-us,
+//   recommendation (0=ok,1=review,2=alert), health-score-bp
+//
+// Issue #5031: the consolidated dashboard outgrew the 300-line ceiling; each
+// method below is one responsibility and they run in the original order:
+//   collect -> emit. Member names match the original locals so the moved
+// slices stay verbatim.
+struct SelfEvoStats {
+    Evaluator* ev = nullptr;
+    std::uint64_t markers = 0;
+    std::uint64_t root_skips = 0;
+    std::uint64_t recursive_skips = 0;
+    std::uint64_t hygiene_viol = 0;
+    std::uint64_t pattern_leak = 0;
+    std::uint64_t boundary_hygiene = 0;
+    std::uint64_t ws_nodes = 0;
+    std::int64_t macro_introduced_ratio_bp = 0;
+    std::int64_t hygiene_violation_rate_bp = 0;
+    std::uint64_t ir_instr_total = 0;
+    std::uint64_t ir_instr_macro = 0;
+    std::uint64_t ir_macro_zero_prov = 0;
+    std::int64_t ir_module_walked = 0;
+    std::int64_t ir_macro_propagated_pct_bp = 0;
+    std::uint64_t lowering_prop = 0;
+    std::uint64_t hygiene_leakage = 0;
+    std::int64_t depth_live = 0;
+    std::int64_t depth_max = 0;
+    std::int64_t avg_depth_x100 = 0;
+    std::uint64_t rollback_ok = 0;
+    std::uint64_t rollback_log = 0;
+    std::int64_t rollback_success_rate_bp = 0;
+    std::uint64_t hold_max_us = 0;
+    std::int64_t hold_avg_us = 0;
+    std::int64_t latency_p99_us = 0;
+    std::uint64_t inv_aud = 0;
+    std::uint64_t inv_fail = 0;
+    std::int64_t inv_pass_bp = 0;
+    std::uint64_t blame_c = 0;
+    std::uint64_t blame_m = 0;
+    std::int64_t blame_completeness_ratio_bp = 0;
+    std::uint64_t renarrow_hits = 0;
+    std::uint64_t renarrow_total = 0;
+    std::uint64_t stale_refresh = 0;
+    std::uint64_t narrowing_refresh = 0;
+    std::int64_t occurrence_narrowing_post_mutate_hit_rate_bp = 0;
+    std::int64_t linear_occurrence_consistency_bp = 0;
+    std::int64_t type_invariant_ratio_bp = 0;
+    std::int64_t linear_invariant_ratio_bp = 0;
+    std::int64_t provenance_invariant_ratio_bp = 0;
+    std::int64_t linear_provenance_consistency_bp = 0;
+    std::uint64_t sv_rounds = 0;
+    std::uint64_t sv_hits = 0;
+    std::int64_t recommendation = 0;
+    std::int64_t health_score_bp = 0;
+    void collect();
+    EvalValue emit();
+};
 
-            // ── Macro / pattern hygiene ──
-            const std::uint64_t markers = workspace_marker_macro_introduced(ev);
-            const std::uint64_t root_skips = ev->get_macro_introduced_skipped_in_query();
-            const std::uint64_t recursive_skips = ev->get_pattern_recursive_macro_skipped();
-            const std::uint64_t hygiene_viol = ev->get_hygiene_violation_count();
-            const std::uint64_t pattern_leak = ev->get_pattern_macro_filter_violations();
-            const std::uint64_t boundary_hygiene =
-                load_m(&CompilerMetrics::hygiene_violation_prevented_on_boundary_total) +
-                load_m(&CompilerMetrics::mutation_boundary_hygiene_violation_total);
-            std::uint64_t ws_nodes = 0;
-            if (auto* ws = ev->workspace_flat())
-                ws_nodes = static_cast<std::uint64_t>(ws->size());
-            const std::uint64_t macro_ratio_den = ws_nodes > 0 ? ws_nodes : 1;
-            const std::int64_t macro_introduced_ratio_bp =
-                static_cast<std::int64_t>((markers * 10000ull) / macro_ratio_den);
-            const std::uint64_t hygiene_events =
-                root_skips + recursive_skips + hygiene_viol + pattern_leak + boundary_hygiene;
-            const std::uint64_t hygiene_den =
-                hygiene_events > 0 ? hygiene_events : (root_skips + recursive_skips + 1);
-            const std::int64_t hygiene_violation_rate_bp =
-                static_cast<std::int64_t>(((hygiene_viol + pattern_leak) * 10000ull) / hygiene_den);
+void SelfEvoStats::collect() {
+    using namespace aura::compiler::typed_audit;
+    auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
+    auto load_m = [m](std::atomic<std::uint64_t> CompilerMetrics::* field) -> std::uint64_t {
+        return m ? (m->*field).load(std::memory_order_relaxed) : 0;
+    };
 
-            // ── IR hygiene / propagation ──
-            std::uint64_t ir_instr_total = 0, ir_instr_macro = 0, ir_macro_zero_prov = 0;
-            std::int64_t ir_module_walked = 0;
-            if (ev->compiler_service()) {
-                auto* svc = static_cast<aura::compiler::CompilerService*>(ev->compiler_service());
-                if (const auto& mod_opt = svc->last_ir_module(); mod_opt.has_value()) {
-                    ir_module_walked = 1;
-                    for (const auto& fn : mod_opt->functions) {
-                        for (const auto& blk : fn.blocks) {
-                            for (const auto& instr : blk.instructions) {
-                                ++ir_instr_total;
-                                if (instr.source_marker == 1) {
-                                    ++ir_instr_macro;
-                                    if (instr.provenance == 0)
-                                        ++ir_macro_zero_prov;
-                                }
-                            }
+    // ── Macro / pattern hygiene ──
+    markers = workspace_marker_macro_introduced(ev);
+    root_skips = ev->get_macro_introduced_skipped_in_query();
+    recursive_skips = ev->get_pattern_recursive_macro_skipped();
+    hygiene_viol = ev->get_hygiene_violation_count();
+    pattern_leak = ev->get_pattern_macro_filter_violations();
+    boundary_hygiene = load_m(&CompilerMetrics::hygiene_violation_prevented_on_boundary_total) +
+                       load_m(&CompilerMetrics::mutation_boundary_hygiene_violation_total);
+    ws_nodes = 0;
+    if (auto* ws = ev->workspace_flat())
+        ws_nodes = static_cast<std::uint64_t>(ws->size());
+    const std::uint64_t macro_ratio_den = ws_nodes > 0 ? ws_nodes : 1;
+    macro_introduced_ratio_bp = static_cast<std::int64_t>((markers * 10000ull) / macro_ratio_den);
+    const std::uint64_t hygiene_events =
+        root_skips + recursive_skips + hygiene_viol + pattern_leak + boundary_hygiene;
+    const std::uint64_t hygiene_den =
+        hygiene_events > 0 ? hygiene_events : (root_skips + recursive_skips + 1);
+    hygiene_violation_rate_bp =
+        static_cast<std::int64_t>(((hygiene_viol + pattern_leak) * 10000ull) / hygiene_den);
+
+    // ── IR hygiene / propagation ──
+    ir_instr_total = 0, ir_instr_macro = 0, ir_macro_zero_prov = 0;
+    ir_module_walked = 0;
+    if (ev->compiler_service()) {
+        auto* svc = static_cast<aura::compiler::CompilerService*>(ev->compiler_service());
+        if (const auto& mod_opt = svc->last_ir_module(); mod_opt.has_value()) {
+            ir_module_walked = 1;
+            for (const auto& fn : mod_opt->functions) {
+                for (const auto& blk : fn.blocks) {
+                    for (const auto& instr : blk.instructions) {
+                        ++ir_instr_total;
+                        if (instr.source_marker == 1) {
+                            ++ir_instr_macro;
+                            if (instr.provenance == 0)
+                                ++ir_macro_zero_prov;
                         }
                     }
                 }
             }
-            const std::uint64_t ir_den = ir_instr_total > 0 ? ir_instr_total : 1;
-            const std::int64_t ir_macro_propagated_pct_bp =
-                static_cast<std::int64_t>((ir_instr_macro * 10000ull) / ir_den);
-            const std::uint64_t lowering_prop =
-                load_m(&CompilerMetrics::lowering_marker_propagated_total);
-            const std::uint64_t hygiene_leakage =
-                load_m(&CompilerMetrics::macro_introduced_ignored_in_ir_total) + ir_macro_zero_prov;
+        }
+    }
+    const std::uint64_t ir_den = ir_instr_total > 0 ? ir_instr_total : 1;
+    ir_macro_propagated_pct_bp = static_cast<std::int64_t>((ir_instr_macro * 10000ull) / ir_den);
+    lowering_prop = load_m(&CompilerMetrics::lowering_marker_propagated_total);
+    hygiene_leakage =
+        load_m(&CompilerMetrics::macro_introduced_ignored_in_ir_total) + ir_macro_zero_prov;
 
-            // ── Boundary depth ──
-            const std::int64_t depth_live =
-                static_cast<std::int64_t>(Evaluator::mutation_boundary_depth());
-            const std::int64_t depth_max =
-                static_cast<std::int64_t>(ev->get_per_fiber_mutation_stack_depth_current_max());
-            const std::int64_t avg_depth_x100 =
-                depth_max > 0 ? (depth_live * 100) / depth_max : depth_live * 100;
+    // ── Boundary depth ──
+    depth_live = static_cast<std::int64_t>(Evaluator::mutation_boundary_depth());
+    depth_max = static_cast<std::int64_t>(ev->get_per_fiber_mutation_stack_depth_current_max());
+    avg_depth_x100 = depth_max > 0 ? (depth_live * 100) / depth_max : depth_live * 100;
 
-            // ── Rollback success ──
-            const std::uint64_t rollback_ok =
-                load_m(&CompilerMetrics::closed_loop_rollback_success_total);
-            const std::uint64_t rollback_log = ev->get_mutation_log_rollback_count();
-            const std::uint64_t guard_exc =
-                load_m(&CompilerMetrics::mutation_guard_exception_total) +
-                load_m(&CompilerMetrics::mutation_boundary_exception_rollback_total);
-            const std::uint64_t rollback_attempts = rollback_ok + rollback_log + guard_exc;
-            const std::int64_t rollback_success_rate_bp =
-                ::aura::compiler::basis_points_vacuous_full(rollback_ok, rollback_attempts);
+    // ── Rollback success ──
+    rollback_ok = load_m(&CompilerMetrics::closed_loop_rollback_success_total);
+    rollback_log = ev->get_mutation_log_rollback_count();
+    const std::uint64_t guard_exc =
+        load_m(&CompilerMetrics::mutation_guard_exception_total) +
+        load_m(&CompilerMetrics::mutation_boundary_exception_rollback_total);
+    const std::uint64_t rollback_attempts = rollback_ok + rollback_log + guard_exc;
+    rollback_success_rate_bp =
+        ::aura::compiler::basis_points_vacuous_full(rollback_ok, rollback_attempts);
 
-            // ── Latency p99 proxy: max hold duration (us); hist top bucket ──
-            const std::uint64_t hold_max_us =
-                load_m(&CompilerMetrics::mutation_hold_duration_us_max);
-            const std::uint64_t hold_total =
-                load_m(&CompilerMetrics::mutation_hold_duration_us_total);
-            const std::uint64_t hold_samples = load_m(&CompilerMetrics::mutation_hold_samples);
-            const std::int64_t hold_avg_us =
-                hold_samples > 0 ? static_cast<std::int64_t>(hold_total / hold_samples) : 0;
-            // p99 ≈ max when sample count small; else use max as conservative p99.
-            const std::int64_t latency_p99_us = static_cast<std::int64_t>(hold_max_us);
+    // ── Latency p99 proxy: max hold duration (us); hist top bucket ──
+    hold_max_us = load_m(&CompilerMetrics::mutation_hold_duration_us_max);
+    const std::uint64_t hold_total = load_m(&CompilerMetrics::mutation_hold_duration_us_total);
+    const std::uint64_t hold_samples = load_m(&CompilerMetrics::mutation_hold_samples);
+    hold_avg_us = hold_samples > 0 ? static_cast<std::int64_t>(hold_total / hold_samples) : 0;
+    // p99 ≈ max when sample count small; else use max as conservative p99.
+    latency_p99_us = static_cast<std::int64_t>(hold_max_us);
 
-            // ── TypedMutationAudit ──
-            const auto& ac = g_typed_mutation_audit_counters;
-            const std::uint64_t inv_aud = ac.invariant_audits.load(std::memory_order_relaxed);
-            const std::uint64_t inv_pass = ac.invariant_all_pass.load(std::memory_order_relaxed);
-            const std::uint64_t inv_fail =
-                ac.invariant_violations_caught.load(std::memory_order_relaxed);
-            const std::int64_t inv_pass_bp =
-                ::aura::compiler::basis_points_vacuous_full(inv_pass, inv_aud);
+    // ── TypedMutationAudit ──
+    const auto& ac = g_typed_mutation_audit_counters;
+    inv_aud = ac.invariant_audits.load(std::memory_order_relaxed);
+    const std::uint64_t inv_pass = ac.invariant_all_pass.load(std::memory_order_relaxed);
+    inv_fail = ac.invariant_violations_caught.load(std::memory_order_relaxed);
+    inv_pass_bp = ::aura::compiler::basis_points_vacuous_full(inv_pass, inv_aud);
 
-            // ── Issue #2030: provenance blame completeness + occurrence hit rate ──
-            // blame_completeness_ratio = complete / (complete + miss) in bp.
-            // Prefer CompilerMetrics when populated; else process-wide audit counters.
-            const std::uint64_t m_blame_c = load_m(&CompilerMetrics::blame_chain_complete_total);
-            const std::uint64_t m_blame_m = load_m(&CompilerMetrics::blame_propagation_miss_total);
-            const std::uint64_t blame_c =
-                m_blame_c > 0 ? m_blame_c
-                              : ac.blame_chain_complete_total.load(std::memory_order_relaxed);
-            const std::uint64_t blame_m =
-                m_blame_m > 0 ? m_blame_m
-                              : ac.blame_propagation_miss_total.load(std::memory_order_relaxed);
-            const std::uint64_t blame_den = blame_c + blame_m;
-            const std::int64_t blame_completeness_ratio_bp =
-                ::aura::compiler::basis_points_vacuous_full(
-                    blame_c, blame_den); // completeness over no samples is vacuously true
-            // occurrence_narrowing_post_mutate_hit_rate: renarrow hits/total,
-            // else stale-refresh blame-complete ratio, else N/A → 10000.
-            const std::uint64_t renarrow_hits =
-                load_m(&CompilerMetrics::occurrence_renarrow_hits_total);
-            const std::uint64_t renarrow_total =
-                load_m(&CompilerMetrics::occurrence_renarrow_total);
-            const std::uint64_t stale_refresh =
-                load_m(&CompilerMetrics::occurrence_stale_refreshes_total);
-            const std::uint64_t occ_blame_ok =
-                load_m(&CompilerMetrics::occurrence_blame_chain_complete_total);
-            const std::uint64_t narrowing_refresh = ev->get_narrowing_refresh_count();
-            std::int64_t occurrence_narrowing_post_mutate_hit_rate_bp =
-                ::aura::compiler::kBasisPointScale; // N/A = perfect until data
-            if (renarrow_total > 0) {
-                occurrence_narrowing_post_mutate_hit_rate_bp =
-                    ::aura::compiler::basis_points(renarrow_hits, renarrow_total);
-            } else if (stale_refresh > 0) {
-                occurrence_narrowing_post_mutate_hit_rate_bp =
-                    ::aura::compiler::basis_points_vacuous_full(occ_blame_ok, stale_refresh);
-            } else if (narrowing_refresh > 0) {
-                // Refresh activity without miss accounting → treat as hit.
-                occurrence_narrowing_post_mutate_hit_rate_bp = ::aura::compiler::kBasisPointScale;
+    // ── Issue #2030: provenance blame completeness + occurrence hit rate ──
+    // blame_completeness_ratio = complete / (complete + miss) in bp.
+    // Prefer CompilerMetrics when populated; else process-wide audit counters.
+    const std::uint64_t m_blame_c = load_m(&CompilerMetrics::blame_chain_complete_total);
+    const std::uint64_t m_blame_m = load_m(&CompilerMetrics::blame_propagation_miss_total);
+    blame_c =
+        m_blame_c > 0 ? m_blame_c : ac.blame_chain_complete_total.load(std::memory_order_relaxed);
+    blame_m =
+        m_blame_m > 0 ? m_blame_m : ac.blame_propagation_miss_total.load(std::memory_order_relaxed);
+    const std::uint64_t blame_den = blame_c + blame_m;
+    blame_completeness_ratio_bp = ::aura::compiler::basis_points_vacuous_full(
+        blame_c, blame_den); // completeness over no samples is vacuously true
+    // occurrence_narrowing_post_mutate_hit_rate: renarrow hits/total,
+    // else stale-refresh blame-complete ratio, else N/A → 10000.
+    renarrow_hits = load_m(&CompilerMetrics::occurrence_renarrow_hits_total);
+    renarrow_total = load_m(&CompilerMetrics::occurrence_renarrow_total);
+    stale_refresh = load_m(&CompilerMetrics::occurrence_stale_refreshes_total);
+    const std::uint64_t occ_blame_ok =
+        load_m(&CompilerMetrics::occurrence_blame_chain_complete_total);
+    narrowing_refresh = ev->get_narrowing_refresh_count();
+    occurrence_narrowing_post_mutate_hit_rate_bp =
+        ::aura::compiler::kBasisPointScale; // N/A = perfect until data
+    if (renarrow_total > 0) {
+        occurrence_narrowing_post_mutate_hit_rate_bp =
+            ::aura::compiler::basis_points(renarrow_hits, renarrow_total);
+    } else if (stale_refresh > 0) {
+        occurrence_narrowing_post_mutate_hit_rate_bp =
+            ::aura::compiler::basis_points_vacuous_full(occ_blame_ok, stale_refresh);
+    } else if (narrowing_refresh > 0) {
+        // Refresh activity without miss accounting → treat as hit.
+        occurrence_narrowing_post_mutate_hit_rate_bp = ::aura::compiler::kBasisPointScale;
+    }
+    // Linear × occurrence consistency (process-wide atomics + metrics).
+    using namespace aura::compiler::linear_occurrence_mutate;
+    const std::uint64_t lin_reval =
+        revalidate_hits_total.load(std::memory_order_relaxed) +
+        load_m(&CompilerMetrics::linear_occurrence_revalidate_hits_total);
+    const std::uint64_t lin_escape =
+        escape_violations_prevented_total.load(std::memory_order_relaxed) +
+        load_m(&CompilerMetrics::linear_occurrence_escape_prevented_total);
+    const std::uint64_t lin_pred_safe =
+        predicate_branch_linear_safe_total.load(std::memory_order_relaxed) +
+        load_m(&CompilerMetrics::linear_occurrence_predicate_safe_total);
+    const std::uint64_t lin_den = lin_reval + lin_escape;
+    linear_occurrence_consistency_bp =
+        ::aura::compiler::basis_points_vacuous_full(lin_reval, lin_den);
+    const std::uint64_t type_ok = ac.type_invariant_ok.load(std::memory_order_relaxed);
+    const std::uint64_t type_fail = ac.type_invariant_fail.load(std::memory_order_relaxed);
+    const std::uint64_t lin_ok = ac.linear_invariant_ok.load(std::memory_order_relaxed);
+    const std::uint64_t lin_inv_fail = ac.linear_invariant_fail.load(std::memory_order_relaxed);
+    const std::uint64_t prov_ok = ac.provenance_invariant_ok.load(std::memory_order_relaxed);
+    const std::uint64_t prov_fail = ac.provenance_invariant_fail.load(std::memory_order_relaxed);
+    type_invariant_ratio_bp =
+        ::aura::compiler::basis_points_vacuous_full(type_ok, type_ok + type_fail);
+    linear_invariant_ratio_bp =
+        ::aura::compiler::basis_points_vacuous_full(lin_ok, lin_ok + lin_inv_fail);
+    provenance_invariant_ratio_bp =
+        ::aura::compiler::basis_points_vacuous_full(prov_ok, prov_ok + prov_fail);
+    linear_provenance_consistency_bp =
+        static_cast<std::int64_t>(aura::core::provenance::linear_provenance_consistency_bp());
+    (void)lin_pred_safe;
+
+    // ── SV closed-loop rounds (self-evo signal) ──
+    sv_rounds = load_m(&CompilerMetrics::sv_self_evo_closed_loop_rounds_total);
+    sv_hits = load_m(&CompilerMetrics::sv_self_evo_convergence_hits_total);
+
+    // ── Recommendation + composite health ──
+    // 0=ok, 1=review (elevated skips/latency), 2=alert (leakage/violations)
+    recommendation = 0;
+    if (hygiene_viol > 0 || pattern_leak > 0 || hygiene_leakage > 0 || inv_fail > 0)
+        recommendation = 2;
+    else if (hygiene_violation_rate_bp > 500 || hold_avg_us > 10000 ||
+             macro_introduced_ratio_bp > 5000 || blame_completeness_ratio_bp < 5000)
+        recommendation = 1;
+    // health-score: average of inverted risk signals (higher better)
+    const std::int64_t hygiene_health =
+        ::aura::compiler::kBasisPointScale -
+        std::min<std::int64_t>(hygiene_violation_rate_bp, ::aura::compiler::kBasisPointScale);
+    const std::int64_t inv_health = inv_pass_bp;
+    const std::int64_t rb_health = rollback_success_rate_bp;
+    const std::int64_t ir_health =
+        hygiene_leakage == 0
+            ? ::aura::compiler::kBasisPointScale
+            : std::max<std::int64_t>(0, ::aura::compiler::kBasisPointScale -
+                                            static_cast<std::int64_t>(hygiene_leakage * 1000));
+    // Issue #2030: fold blame + occurrence hit rate into health.
+    health_score_bp = (hygiene_health + inv_health + rb_health + ir_health +
+                       blame_completeness_ratio_bp + occurrence_narrowing_post_mutate_hit_rate_bp) /
+                      6;
+
+    if (m)
+        m->self_evo_unified_health_queries_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+EvalValue SelfEvoStats::emit() {
+    auto& string_heap = ev->string_heap_mut();
+    // #1909 + #2030 agent ratio keys → 128 slots.
+    auto* ht = FlatHashTable::create(128);
+    if (!ht)
+        return make_void();
+    auto meta = ht->metadata();
+    auto keys = ht->keys();
+    auto vals = ht->values();
+    auto hcap = ht->capacity;
+    auto insert_kv = [&](const char* k_str, std::int64_t v) {
+        std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+        for (const char* p = k_str; *p; ++p)
+            h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+        const auto fp = ::aura::compiler::hash::fingerprint(h);
+        for (std::size_t at = 0; at < hcap; ++at) {
+            auto idx = ((h >> 1) + at) & (hcap - 1);
+            if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
+                meta[idx] = fp;
+                auto kidx = string_heap.mint(k_str);
+                keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                vals[idx] = make_int(v).val;
+                ht->size++;
+                return;
             }
-            // Linear × occurrence consistency (process-wide atomics + metrics).
-            using namespace aura::compiler::linear_occurrence_mutate;
-            const std::uint64_t lin_reval =
-                revalidate_hits_total.load(std::memory_order_relaxed) +
-                load_m(&CompilerMetrics::linear_occurrence_revalidate_hits_total);
-            const std::uint64_t lin_escape =
-                escape_violations_prevented_total.load(std::memory_order_relaxed) +
-                load_m(&CompilerMetrics::linear_occurrence_escape_prevented_total);
-            const std::uint64_t lin_pred_safe =
-                predicate_branch_linear_safe_total.load(std::memory_order_relaxed) +
-                load_m(&CompilerMetrics::linear_occurrence_predicate_safe_total);
-            const std::uint64_t lin_den = lin_reval + lin_escape;
-            const std::int64_t linear_occurrence_consistency_bp =
-                ::aura::compiler::basis_points_vacuous_full(lin_reval, lin_den);
-            const std::uint64_t type_ok = ac.type_invariant_ok.load(std::memory_order_relaxed);
-            const std::uint64_t type_fail = ac.type_invariant_fail.load(std::memory_order_relaxed);
-            const std::uint64_t lin_ok = ac.linear_invariant_ok.load(std::memory_order_relaxed);
-            const std::uint64_t lin_inv_fail =
-                ac.linear_invariant_fail.load(std::memory_order_relaxed);
-            const std::uint64_t prov_ok =
-                ac.provenance_invariant_ok.load(std::memory_order_relaxed);
-            const std::uint64_t prov_fail =
-                ac.provenance_invariant_fail.load(std::memory_order_relaxed);
-            const std::int64_t type_invariant_ratio_bp =
-                ::aura::compiler::basis_points_vacuous_full(type_ok, type_ok + type_fail);
-            const std::int64_t linear_invariant_ratio_bp =
-                ::aura::compiler::basis_points_vacuous_full(lin_ok, lin_ok + lin_inv_fail);
-            const std::int64_t provenance_invariant_ratio_bp =
-                ::aura::compiler::basis_points_vacuous_full(prov_ok, prov_ok + prov_fail);
-            const std::int64_t linear_provenance_consistency_bp = static_cast<std::int64_t>(
-                aura::core::provenance::linear_provenance_consistency_bp());
-            (void)lin_pred_safe;
+        }
+    };
 
-            // ── SV closed-loop rounds (self-evo signal) ──
-            const std::uint64_t sv_rounds =
-                load_m(&CompilerMetrics::sv_self_evo_closed_loop_rounds_total);
-            const std::uint64_t sv_hits =
-                load_m(&CompilerMetrics::sv_self_evo_convergence_hits_total);
+    // Issue #1909 AC names (exact + kebab aliases)
+    insert_kv("macro-introduced-ratio-bp", macro_introduced_ratio_bp);
+    insert_kv("macro_introduced_ratio", macro_introduced_ratio_bp);
+    insert_kv("hygiene-violation-rate-bp", hygiene_violation_rate_bp);
+    insert_kv("hygiene_violation_rate", hygiene_violation_rate_bp);
+    insert_kv("ir-macro-propagated-pct-bp", ir_macro_propagated_pct_bp);
+    insert_kv("ir_macro_propagated_pct", ir_macro_propagated_pct_bp);
+    insert_kv("avg-mutation-boundary-depth-x100", avg_depth_x100);
+    insert_kv("avg_mutation_boundary_depth", avg_depth_x100);
+    insert_kv("rollback-success-rate-bp", rollback_success_rate_bp);
+    insert_kv("rollback_success_rate", rollback_success_rate_bp);
+    insert_kv("self-evo-loop-latency-p99-us", latency_p99_us);
+    insert_kv("self_evo_loop_latency_p99", latency_p99_us);
+    // Supporting counters for dashboards
+    insert_kv("macro-markers", static_cast<std::int64_t>(markers));
+    insert_kv("workspace-nodes", static_cast<std::int64_t>(ws_nodes));
+    insert_kv("hygiene-skips", static_cast<std::int64_t>(root_skips + recursive_skips));
+    insert_kv("hygiene-violations", static_cast<std::int64_t>(hygiene_viol));
+    insert_kv("pattern-hygiene-leakage", static_cast<std::int64_t>(pattern_leak));
+    insert_kv("boundary-hygiene-prevented", static_cast<std::int64_t>(boundary_hygiene));
+    insert_kv("ir-module-walked", ir_module_walked);
+    insert_kv("ir-instr-total", static_cast<std::int64_t>(ir_instr_total));
+    insert_kv("ir-instr-macro-introduced", static_cast<std::int64_t>(ir_instr_macro));
+    insert_kv("ir-macro-zero-provenance", static_cast<std::int64_t>(ir_macro_zero_prov));
+    insert_kv("hygiene-leakage", static_cast<std::int64_t>(hygiene_leakage));
+    insert_kv("lowering-marker-propagated", static_cast<std::int64_t>(lowering_prop));
+    insert_kv("mutation-boundary-depth-live", depth_live);
+    insert_kv("mutation-boundary-depth-max", depth_max);
+    insert_kv("mutation-hold-avg-us", hold_avg_us);
+    insert_kv("mutation-hold-max-us", static_cast<std::int64_t>(hold_max_us));
+    insert_kv("rollback-success-total", static_cast<std::int64_t>(rollback_ok));
+    insert_kv("rollback-log-total", static_cast<std::int64_t>(rollback_log));
+    insert_kv("invariant-audits", static_cast<std::int64_t>(inv_aud));
+    insert_kv("invariant-pass-rate-bp", inv_pass_bp);
+    insert_kv("invariant-fail", static_cast<std::int64_t>(inv_fail));
+    insert_kv("sv-closed-loop-rounds", static_cast<std::int64_t>(sv_rounds));
+    insert_kv("sv-convergence-hits", static_cast<std::int64_t>(sv_hits));
+    // Issue #2030: agent-facing blame + occurrence + linear/provenance ratios
+    insert_kv("blame_completeness_ratio", blame_completeness_ratio_bp);
+    insert_kv("blame-completeness-ratio-bp", blame_completeness_ratio_bp);
+    insert_kv("blame-chain-complete-total", static_cast<std::int64_t>(blame_c));
+    insert_kv("blame-propagation-miss-total", static_cast<std::int64_t>(blame_m));
+    insert_kv("occurrence_narrowing_post_mutate_hit_rate",
+              occurrence_narrowing_post_mutate_hit_rate_bp);
+    insert_kv("occurrence-narrowing-post-mutate-hit-rate-bp",
+              occurrence_narrowing_post_mutate_hit_rate_bp);
+    insert_kv("occurrence-renarrow-hits", static_cast<std::int64_t>(renarrow_hits));
+    insert_kv("occurrence-renarrow-total", static_cast<std::int64_t>(renarrow_total));
+    insert_kv("occurrence-stale-refreshes", static_cast<std::int64_t>(stale_refresh));
+    insert_kv("narrowing-refresh-count", static_cast<std::int64_t>(narrowing_refresh));
+    insert_kv("linear-occurrence-consistency-bp", linear_occurrence_consistency_bp);
+    insert_kv("linear_occurrence_consistency_bp", linear_occurrence_consistency_bp);
+    insert_kv("type-invariant-ratio-bp", type_invariant_ratio_bp);
+    insert_kv("linear-invariant-ratio-bp", linear_invariant_ratio_bp);
+    insert_kv("provenance-invariant-ratio-bp", provenance_invariant_ratio_bp);
+    insert_kv("linear-provenance-consistency-bp", linear_provenance_consistency_bp);
+    insert_kv("blame-occurrence-ratios-wired", 1);
+    insert_kv("schema-2030", 2030);
+    insert_kv("issue-2030", 2030);
+    insert_kv("health-score-bp", health_score_bp);
+    insert_kv("recommendation", recommendation);
+    insert_kv("unified-dashboard-wired", 1);
+    insert_kv("ir-hygiene-lineage", 1891);
+    insert_kv("pattern-hygiene-lineage", 1892);
+    insert_kv("typed-audit-lineage", 1894);
+    insert_kv("loop-stats-lineage", 1883);
+    insert_kv("schema", 1909); // primary lineage; #2030 via schema-2030
+    insert_kv("issue", 1909);
+    insert_kv("active", 1);
+    std::size_t hidx = 0;
+    {
+        // Issue #4860: unlocked size()+push_back raced a concurrent publish
+        // (double free). Index read, push and stamp are one critical section.
+        std::scoped_lock slock(ev->alloc_storage_lock_);
+        hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        aura_hash_stamp_new_table_owner();
+    }
+    return make_hash(hidx);
+}
 
-            // ── Recommendation + composite health ──
-            // 0=ok, 1=review (elevated skips/latency), 2=alert (leakage/violations)
-            std::int64_t recommendation = 0;
-            if (hygiene_viol > 0 || pattern_leak > 0 || hygiene_leakage > 0 || inv_fail > 0)
-                recommendation = 2;
-            else if (hygiene_violation_rate_bp > 500 || hold_avg_us > 10000 ||
-                     macro_introduced_ratio_bp > 5000 || blame_completeness_ratio_bp < 5000)
-                recommendation = 1;
-            // health-score: average of inverted risk signals (higher better)
-            const std::int64_t hygiene_health =
-                ::aura::compiler::kBasisPointScale -
-                std::min<std::int64_t>(hygiene_violation_rate_bp,
-                                       ::aura::compiler::kBasisPointScale);
-            const std::int64_t inv_health = inv_pass_bp;
-            const std::int64_t rb_health = rollback_success_rate_bp;
-            const std::int64_t ir_health =
-                hygiene_leakage == 0
-                    ? ::aura::compiler::kBasisPointScale
-                    : std::max<std::int64_t>(0,
-                                             ::aura::compiler::kBasisPointScale -
-                                                 static_cast<std::int64_t>(hygiene_leakage * 1000));
-            // Issue #2030: fold blame + occurrence hit rate into health.
-            const std::int64_t health_score_bp =
-                (hygiene_health + inv_health + rb_health + ir_health + blame_completeness_ratio_bp +
-                 occurrence_narrowing_post_mutate_hit_rate_bp) /
-                6;
+// Issue #5031: self-evo dashboard registration phase.
+void register_query_lifecycle_self_evo_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                             ::aura::compiler::LockedStringHeap& string_heap,
+                                             void*& type_registry,
+                                             ModulePathResolver resolve_module_path,
+                                             Evaluator& ev) {
+    ObservabilityPrims::register_stats_impl("query:self-evo-stats",
+                                            [](std::span<const EvalValue> a) -> EvalValue {
+                                                (void)a;
+                                                auto* ev = Evaluator::get_query_evaluator();
+                                                if (!ev)
+                                                    return make_void();
+                                                SelfEvoStats s;
+                                                s.ev = ev;
+                                                s.collect();
+                                                return s.emit();
+                                            });
+}
 
-            if (m)
-                m->self_evo_unified_health_queries_total.fetch_add(1, std::memory_order_relaxed);
-
-            auto& string_heap = ev->string_heap_mut();
-            // #1909 + #2030 agent ratio keys → 128 slots.
-            auto* ht = FlatHashTable::create(128);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.mint(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-            };
-
-            // Issue #1909 AC names (exact + kebab aliases)
-            insert_kv("macro-introduced-ratio-bp", macro_introduced_ratio_bp);
-            insert_kv("macro_introduced_ratio", macro_introduced_ratio_bp);
-            insert_kv("hygiene-violation-rate-bp", hygiene_violation_rate_bp);
-            insert_kv("hygiene_violation_rate", hygiene_violation_rate_bp);
-            insert_kv("ir-macro-propagated-pct-bp", ir_macro_propagated_pct_bp);
-            insert_kv("ir_macro_propagated_pct", ir_macro_propagated_pct_bp);
-            insert_kv("avg-mutation-boundary-depth-x100", avg_depth_x100);
-            insert_kv("avg_mutation_boundary_depth", avg_depth_x100);
-            insert_kv("rollback-success-rate-bp", rollback_success_rate_bp);
-            insert_kv("rollback_success_rate", rollback_success_rate_bp);
-            insert_kv("self-evo-loop-latency-p99-us", latency_p99_us);
-            insert_kv("self_evo_loop_latency_p99", latency_p99_us);
-            // Supporting counters for dashboards
-            insert_kv("macro-markers", static_cast<std::int64_t>(markers));
-            insert_kv("workspace-nodes", static_cast<std::int64_t>(ws_nodes));
-            insert_kv("hygiene-skips", static_cast<std::int64_t>(root_skips + recursive_skips));
-            insert_kv("hygiene-violations", static_cast<std::int64_t>(hygiene_viol));
-            insert_kv("pattern-hygiene-leakage", static_cast<std::int64_t>(pattern_leak));
-            insert_kv("boundary-hygiene-prevented", static_cast<std::int64_t>(boundary_hygiene));
-            insert_kv("ir-module-walked", ir_module_walked);
-            insert_kv("ir-instr-total", static_cast<std::int64_t>(ir_instr_total));
-            insert_kv("ir-instr-macro-introduced", static_cast<std::int64_t>(ir_instr_macro));
-            insert_kv("ir-macro-zero-provenance", static_cast<std::int64_t>(ir_macro_zero_prov));
-            insert_kv("hygiene-leakage", static_cast<std::int64_t>(hygiene_leakage));
-            insert_kv("lowering-marker-propagated", static_cast<std::int64_t>(lowering_prop));
-            insert_kv("mutation-boundary-depth-live", depth_live);
-            insert_kv("mutation-boundary-depth-max", depth_max);
-            insert_kv("mutation-hold-avg-us", hold_avg_us);
-            insert_kv("mutation-hold-max-us", static_cast<std::int64_t>(hold_max_us));
-            insert_kv("rollback-success-total", static_cast<std::int64_t>(rollback_ok));
-            insert_kv("rollback-log-total", static_cast<std::int64_t>(rollback_log));
-            insert_kv("invariant-audits", static_cast<std::int64_t>(inv_aud));
-            insert_kv("invariant-pass-rate-bp", inv_pass_bp);
-            insert_kv("invariant-fail", static_cast<std::int64_t>(inv_fail));
-            insert_kv("sv-closed-loop-rounds", static_cast<std::int64_t>(sv_rounds));
-            insert_kv("sv-convergence-hits", static_cast<std::int64_t>(sv_hits));
-            // Issue #2030: agent-facing blame + occurrence + linear/provenance ratios
-            insert_kv("blame_completeness_ratio", blame_completeness_ratio_bp);
-            insert_kv("blame-completeness-ratio-bp", blame_completeness_ratio_bp);
-            insert_kv("blame-chain-complete-total", static_cast<std::int64_t>(blame_c));
-            insert_kv("blame-propagation-miss-total", static_cast<std::int64_t>(blame_m));
-            insert_kv("occurrence_narrowing_post_mutate_hit_rate",
-                      occurrence_narrowing_post_mutate_hit_rate_bp);
-            insert_kv("occurrence-narrowing-post-mutate-hit-rate-bp",
-                      occurrence_narrowing_post_mutate_hit_rate_bp);
-            insert_kv("occurrence-renarrow-hits", static_cast<std::int64_t>(renarrow_hits));
-            insert_kv("occurrence-renarrow-total", static_cast<std::int64_t>(renarrow_total));
-            insert_kv("occurrence-stale-refreshes", static_cast<std::int64_t>(stale_refresh));
-            insert_kv("narrowing-refresh-count", static_cast<std::int64_t>(narrowing_refresh));
-            insert_kv("linear-occurrence-consistency-bp", linear_occurrence_consistency_bp);
-            insert_kv("linear_occurrence_consistency_bp", linear_occurrence_consistency_bp);
-            insert_kv("type-invariant-ratio-bp", type_invariant_ratio_bp);
-            insert_kv("linear-invariant-ratio-bp", linear_invariant_ratio_bp);
-            insert_kv("provenance-invariant-ratio-bp", provenance_invariant_ratio_bp);
-            insert_kv("linear-provenance-consistency-bp", linear_provenance_consistency_bp);
-            insert_kv("blame-occurrence-ratios-wired", 1);
-            insert_kv("schema-2030", 2030);
-            insert_kv("issue-2030", 2030);
-            insert_kv("health-score-bp", health_score_bp);
-            insert_kv("recommendation", recommendation);
-            insert_kv("unified-dashboard-wired", 1);
-            insert_kv("ir-hygiene-lineage", 1891);
-            insert_kv("pattern-hygiene-lineage", 1892);
-            insert_kv("typed-audit-lineage", 1894);
-            insert_kv("loop-stats-lineage", 1883);
-            insert_kv("schema", 1909); // primary lineage; #2030 via schema-2030
-            insert_kv("issue", 1909);
-            insert_kv("active", 1);
-            std::size_t hidx = 0;
-            {
-                // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                // (double free). Index read, push and stamp are one critical section.
-                std::scoped_lock slock(ev->alloc_storage_lock_);
-                hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                aura_hash_stamp_new_table_owner();
-            }
-            return make_hash(hidx);
-        });
-
+// Issue #5031: stable-refs batch health registration phase.
+void register_query_lifecycle_stable_ref_batch_parts(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, void*& type_registry,
+    ModulePathResolver resolve_module_path, Evaluator& ev) {
     // Issue #1912: query:stable-refs-batch-health — batch StableNodeRef
     // refresh/pin observability for AI multi-round COW/sub-workspace loops.
     // Schema **1912**. AC metrics:
@@ -1581,7 +1666,15 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             }
             return make_hash(hidx);
         });
+}
 
+// Issue #5031: primitives / primitive-meta / prompt6 counts registration phase.
+void register_query_lifecycle_primitives_meta_parts(PrimRegistrar add,
+                                                    std::pmr::vector<Pair>& pairs,
+                                                    ::aura::compiler::LockedStringHeap& string_heap,
+                                                    void*& type_registry,
+                                                    ModulePathResolver resolve_module_path,
+                                                    Evaluator& ev) {
     // Issue #583: query:primitives-stats. Returns the sum of 6
     // primitives registry + core hot-path observability counters
     // spanning evaluator_primitives_registry.cpp registration
@@ -1723,7 +1816,14 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                                       env_refresh + gc_skipped + gc_walk_skips +
                                                       gc_waits));
         });
+}
 
+// Issue #5031: prompt6 memory safety registration phase.
+void register_query_lifecycle_prompt6_memory_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                   ::aura::compiler::LockedStringHeap& string_heap,
+                                                   void*& type_registry,
+                                                   ModulePathResolver resolve_module_path,
+                                                   Evaluator& ev) {
     // Issue #516: query:prompt6-memory-safety-stats. Hash view of Prompt6
     // memory/ownership/GC production-readiness pillars (non-duplicative
     // synthesis of #602 prompt6-violation-count + prompt6-safety-score int
@@ -1838,7 +1938,14 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             }
             return make_hash(hidx);
         });
+}
 
+// Issue #5031: edsl eda sv closedloop registration phase.
+void register_query_lifecycle_edsl_eda_sv_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                ::aura::compiler::LockedStringHeap& string_heap,
+                                                void*& type_registry,
+                                                ModulePathResolver resolve_module_path,
+                                                Evaluator& ev) {
     // Issue #519: query:edsl-eda-sv-closedloop-stats. Hash view of the
     // consolidated EDSL/EDA/SV verification closed-loop pillars (non-
     // duplicative synthesis of #496 sv-node-stats, #510 eda-verification-
@@ -1963,7 +2070,13 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             }
             return make_hash(hidx);
         });
+}
 
+// Issue #5031: multi-fiber orchestration / soa hotpath / dirty propagation registration phase.
+void register_query_lifecycle_multi_fiber_orchestration_parts(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, void*& type_registry,
+    ModulePathResolver resolve_module_path, Evaluator& ev) {
     // Issue #521: query:multi-fiber-orchestration-stats. Hash view of
     // commercial multi-fiber orchestration + MutationBoundary + work-
     // stealing safety (non-duplicative synthesis of #500 work-steal-stats,
@@ -2172,7 +2285,15 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             const std::uint64_t max_depth = ws->mark_dirty_max_depth_observed();
             return make_int(static_cast<std::int64_t>(upward_calls + early_exit + max_depth));
         });
+}
 
+// Issue #5031: dirty columnar / generation epoch / ast column compaction / boundary invariant /
+// envframe stale / defuse registration phase.
+void register_query_lifecycle_dirty_columnar_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                   ::aura::compiler::LockedStringHeap& string_heap,
+                                                   void*& type_registry,
+                                                   ModulePathResolver resolve_module_path,
+                                                   Evaluator& ev) {
     // Issue #2904: query:dirty-columnar — Agent-visible columnar dirty
     // propagation metrics (column writes / cascades avoided / column
     // scans / legacy tree-walk). Hash surface so Agents poll without
@@ -2391,7 +2512,14 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             return make_int(static_cast<std::int64_t>(defuse + last + mutations + impact +
                                                       guard_epoch + aot + bridge));
         });
+}
 
+// Issue #5031: evolution snapshot / macro contract / pattern filter / hygiene violation /
+// structural index / workspace tree registration phase.
+void register_query_lifecycle_evolution_snapshot_parts(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, void*& type_registry,
+    ModulePathResolver resolve_module_path, Evaluator& ev) {
     // Issue #2860: query:evolution-epoch-snapshot. Unified fiber-scoped
     // "evolution epoch" view for Agent self-evo loops. Reduces the
     // multi-primitive stitch (query:macro-fiber-hygiene +
@@ -2651,7 +2779,15 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             return make_int(static_cast<std::int64_t>(resolves + misses + violations + layers +
                                                       active + cow_epoch + checks));
         });
+}
 
+// Issue #5031: shape deopt burst / pass contracts / arena compaction / ir soa / ir metadata / task4
+// hotpath registration phase.
+void register_query_lifecycle_shape_deopt_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                ::aura::compiler::LockedStringHeap& string_heap,
+                                                void*& type_registry,
+                                                ModulePathResolver resolve_module_path,
+                                                Evaluator& ev) {
     // Issue #407: query:shape-deopt-burst-stats. Returns the sum of
     // 7 ShapeProfiler bursty-mutation + deopt-storm observability
     // counters for AI orchestration workload tuning
@@ -2916,7 +3052,15 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 m ? m->relower_per_function_called_count.load(std::memory_order_relaxed) : 0;
             return make_int(static_cast<std::int64_t>(hits + delta + spec + cascade + per_fn));
         });
+}
 
+// Issue #5031: shape stability / shape profiler registration phase.
+void register_query_lifecycle_shape_stability_parts(PrimRegistrar add,
+                                                    std::pmr::vector<Pair>& pairs,
+                                                    ::aura::compiler::LockedStringHeap& string_heap,
+                                                    void*& type_registry,
+                                                    ModulePathResolver resolve_module_path,
+                                                    Evaluator& ev) {
     // Issue #570/#605: query:shape-stability-stats. Returns the sum
     // of 6 ShapeProfiler stability observability counters:
     //   - shape_stability_hit_count    (first-time stable)
@@ -3072,6 +3216,14 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
     // Issue #2433: query:shape-storm-health — compact Agent-facing score
     // for closed-loop throttle (health-bp + force-reason + version snapshot).
     // Soft path: pure atomic loads; zero writes.
+}
+
+// Issue #5031: shape storm health / shape stability jit registration phase.
+void register_query_lifecycle_shape_storm_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                ::aura::compiler::LockedStringHeap& string_heap,
+                                                void*& type_registry,
+                                                ModulePathResolver resolve_module_path,
+                                                Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:shape-storm-health", [&ev, &string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
@@ -3307,7 +3459,15 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
     // evaluator_primitives_obs_eval.cpp (hash schema 1622). This int-sum
     // duplicate (#571) last-write-lost under full_primitives; catalog seed
     // (#3603) is unchanged.
+}
 
+// Issue #5031: task4 mutation stability / hotpath contracts registration phase.
+void register_query_lifecycle_task4_contracts_parts(PrimRegistrar add,
+                                                    std::pmr::vector<Pair>& pairs,
+                                                    ::aura::compiler::LockedStringHeap& string_heap,
+                                                    void*& type_registry,
+                                                    ModulePathResolver resolve_module_path,
+                                                    Evaluator& ev) {
     // Issue #607: query:task4-mutation-stability. Returns
     // the sum of 6 mutation-stability counters under load:
     //   - dirty_propagation_count_       (dirty walks completed)
@@ -3522,7 +3682,14 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             }
             return make_hash(hidx);
         });
+}
 
+// Issue #5031: edsl stability / stable-ref cow fiber / atomic batch / mutation log stats
+// registration phase.
+void register_query_lifecycle_stability_surface_parts(
+    PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+    ::aura::compiler::LockedStringHeap& string_heap, void*& type_registry,
+    ModulePathResolver resolve_module_path, Evaluator& ev) {
     // Issue #552: query:edsl-stability-stats. Returns
     // the sum of 5 EDSL long-running stability counters
     // from across the workspace + Evaluator:
@@ -3743,7 +3910,14 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                                       bumps_saved_total + rollbacks + ws_commits +
                                                       ws_bumps_saved + in_fiber_total));
         });
+}
 
+// Issue #5031: mutation rollback coverage / mutation log / mutation provenance registration phase.
+void register_query_lifecycle_mutation_log_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                                 ::aura::compiler::LockedStringHeap& string_heap,
+                                                 void*& type_registry,
+                                                 ModulePathResolver resolve_module_path,
+                                                 Evaluator& ev) {
     // Issue #400: query:mutation-rollback-coverage-stats. Returns
     // the sum of 4 rollback-coverage observability counters
     // spanning sym_id / structural / field-offset / batch paths
@@ -3907,319 +4081,367 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             }
             return make_hash(hidx);
         });
+}
 
-    // Issue #2196: query:mutation-memory / query:blame-of — unified
-    // Agent self-repair surface ("代码即记忆").
-    //
-    // Single join of MutationRecord provenance + status + composite
-    // parent chain + dirty cascade + StableNodeRef/pin signals so
-    // Agents do not scrape schema-XXXX stats across multiple prims.
-    //
-    // Lookup modes (args after the stats name via engine:metrics):
-    //   ()                       → most recent mutation
-    //   (mutation-id)            → by mutation_id
-    //   (1 node-id)              → last mutation targeting node
-    //   (2 composite-tx-id)      → first/root record of composite txn
-    //   ("node" node-id)         → same as mode 1
-    //   ("composite" cid)        → same as mode 2
-    //   ("blame" / "memory")     → latest (alias)
-    //
-    // Agent closed-loop: mutate → observe blame → selective re-mutate
-    // or rollback. live-effects=0 when status=RolledBack (AC3).
-    // Prefer reusing MutationRecord fields — no second log.
-    {
-        auto mutation_memory_impl = [](std::span<const EvalValue> a) -> EvalValue {
-            auto* ev = Evaluator::get_query_evaluator();
-            if (!ev)
-                return make_void();
-            auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
-            if (m)
-                m->mutation_memory_query_total.fetch_add(1, std::memory_order_relaxed);
+// Issue #2196: query:mutation-memory / query:blame-of — unified
+// Agent self-repair surface ("代码即记忆").
+//
+// Single join of MutationRecord provenance + status + composite
+// parent chain + dirty cascade + StableNodeRef/pin signals so
+// Agents do not scrape schema-XXXX stats across multiple prims.
+//
+// Lookup modes (args after the stats name via engine:metrics):
+//   ()                       → most recent mutation
+//   (mutation-id)            → by mutation_id
+//   (1 node-id)              → last mutation targeting node
+//   (2 composite-tx-id)      → first/root record of composite txn
+//   ("node" node-id)         → same as mode 1
+//   ("composite" cid)        → same as mode 2
+//   ("blame" / "memory")     → latest (alias)
+//
+// Agent closed-loop: mutate → observe blame → selective re-mutate
+// or rollback. live-effects=0 when status=RolledBack (AC3).
+// Prefer reusing MutationRecord fields — no second log.
+EvalValue mutation_memory_impl(std::span<const EvalValue> a) {
+    auto* ev = Evaluator::get_query_evaluator();
+    if (!ev)
+        return make_void();
+    auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
+    if (m)
+        m->mutation_memory_query_total.fetch_add(1, std::memory_order_relaxed);
 
-            auto* ws = ev->workspace_flat();
-            if (!ws)
-                return make_void();
-            const auto log = ws->mutation_log_view();
+    auto* ws = ev->workspace_flat();
+    if (!ws)
+        return make_void();
+    const auto log = ws->mutation_log_view();
 
-            // Parse lookup mode.
-            enum class Mode : std::uint8_t { Latest = 0, ByMid = 1, ByNode = 2, ByComposite = 3 };
-            Mode mode = Mode::Latest;
-            std::uint64_t want = 0;
-            if (!a.empty()) {
-                if (is_string(a[0])) {
-                    const auto sidx = as_string_idx(a[0]);
-                    const auto heap = ev->string_heap();
-                    std::string_view key;
-                    if (sidx < heap.size())
-                        key = heap[sidx];
-                    if (key == "node" || key == "by-node" || key == "target") {
-                        mode = Mode::ByNode;
-                        if (a.size() >= 2 && is_int(a[1]))
-                            want = static_cast<std::uint64_t>(as_int(a[1]));
-                    } else if (key == "composite" || key == "by-composite" || key == "txn") {
-                        mode = Mode::ByComposite;
-                        if (a.size() >= 2 && is_int(a[1]))
-                            want = static_cast<std::uint64_t>(as_int(a[1]));
-                    } else if (key == "mutation" || key == "by-mutation" || key == "id") {
-                        mode = Mode::ByMid;
-                        if (a.size() >= 2 && is_int(a[1]))
-                            want = static_cast<std::uint64_t>(as_int(a[1]));
-                    } else {
-                        // "blame" / "memory" / unknown → latest
-                        mode = Mode::Latest;
-                    }
-                } else if (is_int(a[0])) {
-                    if (a.size() >= 2 && is_int(a[1])) {
-                        const auto mcode = as_int(a[0]);
-                        want = static_cast<std::uint64_t>(as_int(a[1]));
-                        if (mcode == 1)
-                            mode = Mode::ByNode;
-                        else if (mcode == 2)
-                            mode = Mode::ByComposite;
-                        else
-                            mode = Mode::ByMid;
-                    } else {
-                        mode = Mode::ByMid;
-                        want = static_cast<std::uint64_t>(as_int(a[0]));
-                    }
-                }
-            }
-
-            const aura::ast::MutationRecord* rec = nullptr;
-            if (log.empty()) {
-                // Empty log: still return schema shell so Agents can
-                // detect the surface without multi-stats scrape.
-            } else if (mode == Mode::Latest) {
-                rec = &log.back();
-            } else if (mode == Mode::ByMid) {
-                for (std::size_t i = log.size(); i-- > 0;) {
-                    if (log[i].mutation_id == want) {
-                        rec = &log[i];
-                        break;
-                    }
-                }
-            } else if (mode == Mode::ByNode) {
-                // Last mutation whose target_node matches.
-                for (std::size_t i = log.size(); i-- > 0;) {
-                    if (static_cast<std::uint64_t>(log[i].target_node) == want) {
-                        rec = &log[i];
-                        break;
-                    }
-                }
-            } else if (mode == Mode::ByComposite) {
-                // Prefer root (parent=0) of composite; else first match.
-                const aura::ast::MutationRecord* first = nullptr;
-                for (std::size_t i = 0; i < log.size(); ++i) {
-                    if (log[i].composite_transaction_id != want)
-                        continue;
-                    if (!first)
-                        first = &log[i];
-                    if (log[i].parent_mutation_id == 0) {
-                        rec = &log[i];
-                        break;
-                    }
-                }
-                if (!rec)
-                    rec = first;
-            }
-
-            auto* ht = FlatHashTable::create(64);
-            if (!ht)
-                return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                const auto fp = ::aura::compiler::hash::fingerprint(h);
-                auto kidx = ev->push_string_heap(k_str);
-                EvalValue key_ev = make_string(static_cast<std::uint64_t>(kidx));
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
-            };
-
-            insert_kv("schema-2196", 2196);
-            insert_kv("issue-2196", 2196);
-            insert_kv("mutation-memory-wired", 1);
-            insert_kv("lookup-mode", static_cast<std::int64_t>(mode));
-            insert_kv("log-size", static_cast<std::int64_t>(log.size()));
-            insert_kv("found", rec ? 1 : 0);
-
-            std::uint64_t join_size = 0;
-            if (!rec) {
-                if (m)
-                    m->mutation_memory_join_size_last.store(0, std::memory_order_relaxed);
-                insert_kv("join-size", 0);
-                insert_kv("live-effects", 0);
-                std::size_t hidx = 0;
-                {
-                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                    // (double free). Index read, push and stamp are one critical section.
-                    std::scoped_lock slock(ev->alloc_storage_lock_);
-                    hidx = g_hash_tables.size();
-                    g_hash_tables.push_back(ht);
-                    aura_hash_stamp_new_table_owner();
-                }
-                return make_hash(hidx);
-            }
-
-            if (m)
-                m->mutation_memory_found_total.fetch_add(1, std::memory_order_relaxed);
-
-            const bool rolled_back = rec->status == aura::ast::MutationStatus::RolledBack;
-            if (rolled_back && m)
-                m->mutation_memory_rolled_back_total.fetch_add(1, std::memory_order_relaxed);
-
-            // Core MutationRecord fields (reuse existing audit trail).
-            insert_kv("mutation-id", static_cast<std::int64_t>(rec->mutation_id));
-            insert_kv("timestamp-ms", static_cast<std::int64_t>(rec->timestamp_ms));
-            insert_kv("target-node", static_cast<std::int64_t>(rec->target_node));
-            insert_kv("affected-stable-node", static_cast<std::int64_t>(rec->target_node));
-            insert_kv("author-fingerprint", static_cast<std::int64_t>(rec->author_fingerprint));
-            insert_kv("parent-mutation-id", static_cast<std::int64_t>(rec->parent_mutation_id));
-            insert_kv("composite-transaction-id",
-                      static_cast<std::int64_t>(rec->composite_transaction_id));
-            insert_kv("status", rolled_back ? 1 : 0); // 0=Committed, 1=RolledBack
-            insert_kv("live-effects", rolled_back ? 0 : 1);
-            insert_kv("has-rollback-data", rec->has_rollback_data ? 1 : 0);
-            insert_kv("invariant-status", static_cast<std::int64_t>(rec->invariant_status));
-            insert_kv("operator-name-len", static_cast<std::int64_t>(rec->operator_name.size()));
-            insert_kv("summary-len", static_cast<std::int64_t>(rec->summary.size()));
-            insert_kv("parent-id", static_cast<std::int64_t>(rec->parent_id));
-            insert_kv("field-offset", static_cast<std::int64_t>(rec->field_offset));
-
-            // Parent chain walk → root (cap 8 hops).
-            std::uint64_t chain[8] = {};
-            std::size_t chain_len = 0;
-            std::uint64_t walk = rec->mutation_id;
-            std::uint64_t root_mid = rec->mutation_id;
-            for (std::size_t hop = 0; hop < 8 && walk != 0; ++hop) {
-                chain[chain_len++] = walk;
-                join_size++;
-                const aura::ast::MutationRecord* cur = nullptr;
-                for (std::size_t i = log.size(); i-- > 0;) {
-                    if (log[i].mutation_id == walk) {
-                        cur = &log[i];
-                        break;
-                    }
-                }
-                if (!cur || cur->parent_mutation_id == 0)
-                    break;
-                walk = cur->parent_mutation_id;
-                root_mid = walk;
-            }
-            insert_kv("root-mutation-id", static_cast<std::int64_t>(root_mid));
-            insert_kv("chain-depth", static_cast<std::int64_t>(chain_len));
-            insert_kv("chain-0", chain_len > 0 ? static_cast<std::int64_t>(chain[0]) : 0);
-            insert_kv("chain-1", chain_len > 1 ? static_cast<std::int64_t>(chain[1]) : 0);
-            insert_kv("chain-2", chain_len > 2 ? static_cast<std::int64_t>(chain[2]) : 0);
-            insert_kv("chain-3", chain_len > 3 ? static_cast<std::int64_t>(chain[3]) : 0);
-
-            // Composite siblings / children (same composite_transaction_id).
-            std::uint64_t composite_siblings = 0;
-            std::uint64_t composite_children = 0;
-            std::uint64_t affected_nodes_sample[4] = {};
-            std::size_t affected_sample_n = 0;
-            auto push_affected = [&](std::uint64_t n) {
-                if (n == 0 || n == static_cast<std::uint64_t>(~0u))
-                    return;
-                for (std::size_t i = 0; i < affected_sample_n; ++i)
-                    if (affected_nodes_sample[i] == n)
-                        return;
-                if (affected_sample_n < 4)
-                    affected_nodes_sample[affected_sample_n++] = n;
-            };
-            push_affected(rec->target_node);
-            if (rec->composite_transaction_id != 0) {
-                for (const auto& r : log) {
-                    if (r.composite_transaction_id != rec->composite_transaction_id)
-                        continue;
-                    ++composite_siblings;
-                    join_size++;
-                    push_affected(r.target_node);
-                    if (r.parent_mutation_id == rec->mutation_id)
-                        ++composite_children;
-                }
+    // Parse lookup mode.
+    enum class Mode : std::uint8_t { Latest = 0, ByMid = 1, ByNode = 2, ByComposite = 3 };
+    Mode mode = Mode::Latest;
+    std::uint64_t want = 0;
+    if (!a.empty()) {
+        if (is_string(a[0])) {
+            const auto sidx = as_string_idx(a[0]);
+            const auto heap = ev->string_heap();
+            std::string_view key;
+            if (sidx < heap.size())
+                key = heap[sidx];
+            if (key == "node" || key == "by-node" || key == "target") {
+                mode = Mode::ByNode;
+                if (a.size() >= 2 && is_int(a[1]))
+                    want = static_cast<std::uint64_t>(as_int(a[1]));
+            } else if (key == "composite" || key == "by-composite" || key == "txn") {
+                mode = Mode::ByComposite;
+                if (a.size() >= 2 && is_int(a[1]))
+                    want = static_cast<std::uint64_t>(as_int(a[1]));
+            } else if (key == "mutation" || key == "by-mutation" || key == "id") {
+                mode = Mode::ByMid;
+                if (a.size() >= 2 && is_int(a[1]))
+                    want = static_cast<std::uint64_t>(as_int(a[1]));
             } else {
-                composite_siblings = 1;
+                // "blame" / "memory" / unknown → latest
+                mode = Mode::Latest;
             }
-            insert_kv("composite-sibling-count", static_cast<std::int64_t>(composite_siblings));
-            insert_kv("composite-child-count", static_cast<std::int64_t>(composite_children));
-            insert_kv("affected-node-0", affected_sample_n > 0
-                                             ? static_cast<std::int64_t>(affected_nodes_sample[0])
-                                             : 0);
-            insert_kv("affected-node-1", affected_sample_n > 1
-                                             ? static_cast<std::int64_t>(affected_nodes_sample[1])
-                                             : 0);
-            insert_kv("affected-node-2", affected_sample_n > 2
-                                             ? static_cast<std::int64_t>(affected_nodes_sample[2])
-                                             : 0);
-            insert_kv("affected-node-3", affected_sample_n > 3
-                                             ? static_cast<std::int64_t>(affected_nodes_sample[3])
-                                             : 0);
-            insert_kv("affected-node-sample-len", static_cast<std::int64_t>(affected_sample_n));
-
-            // Dirty cascade + StableNodeRef join (current workspace state).
-            const auto nid = rec->target_node;
-            const bool in_range = nid < ws->size();
-            const std::uint8_t dirty_bits =
-                in_range ? ws->dirty_reasons(nid) : static_cast<std::uint8_t>(0);
-            insert_kv("dirty-now", dirty_bits != 0 ? 1 : 0);
-            insert_kv("dirty-reasons", static_cast<std::int64_t>(dirty_bits));
-            insert_kv("stable-ref-invalidations",
-                      static_cast<std::int64_t>(ws->stable_ref_invalidations()));
-            insert_kv("workspace-gen", static_cast<std::int64_t>(ws->generation()));
-            insert_kv("dirty-nodes-snapshot",
-                      static_cast<std::int64_t>(ev->get_dirty_nodes_in_snapshot()));
-            // Pin hits: lifetime pin invalidations/restamps if metrics present.
-            std::int64_t pin_hits = 0;
-            if (m) {
-                pin_hits = static_cast<std::int64_t>(
-                    m->lifetime_pin_invalidations_total.load(std::memory_order_relaxed) +
-                    m->lifetime_pin_restamps_total.load(std::memory_order_relaxed));
+        } else if (is_int(a[0])) {
+            if (a.size() >= 2 && is_int(a[1])) {
+                const auto mcode = as_int(a[0]);
+                want = static_cast<std::uint64_t>(as_int(a[1]));
+                if (mcode == 1)
+                    mode = Mode::ByNode;
+                else if (mcode == 2)
+                    mode = Mode::ByComposite;
+                else
+                    mode = Mode::ByMid;
+            } else {
+                mode = Mode::ByMid;
+                want = static_cast<std::uint64_t>(as_int(a[0]));
             }
-            insert_kv("pin-hits", pin_hits);
-            // Invalidation trace hit for this mutation (binding gen join).
-            insert_kv("invalidation-trace-hit",
-                      ws->last_invalidation_for(rec->mutation_id) ? 1 : 0);
-
-            // Safe to retry: live-effects + has rollback data, not rolled back.
-            insert_kv("safe-to-retry", (!rolled_back && rec->has_rollback_data) ? 1 : 0);
-            // Safe to re-mutate: RolledBack or no live effects claimed.
-            insert_kv("safe-to-remutate", rolled_back ? 1 : 0);
-
-            insert_kv("join-size", static_cast<std::int64_t>(join_size));
-            if (m)
-                m->mutation_memory_join_size_last.store(join_size, std::memory_order_relaxed);
-
-            std::size_t hidx = 0;
-            {
-                // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                // (double free). Index read, push and stamp are one critical section.
-                std::scoped_lock slock(ev->alloc_storage_lock_);
-                hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                aura_hash_stamp_new_table_owner();
-            }
-            return make_hash(hidx);
-        };
-
-        ObservabilityPrims::register_stats_impl("query:mutation-memory", mutation_memory_impl);
-        // Alias for Agent discoverability (issue names both).
-        ObservabilityPrims::register_stats_impl("query:blame-of", mutation_memory_impl);
+        }
     }
 
+    const aura::ast::MutationRecord* rec = nullptr;
+    if (log.empty()) {
+        // Empty log: still return schema shell so Agents can
+        // detect the surface without multi-stats scrape.
+    } else if (mode == Mode::Latest) {
+        rec = &log.back();
+    } else if (mode == Mode::ByMid) {
+        for (std::size_t i = log.size(); i-- > 0;) {
+            if (log[i].mutation_id == want) {
+                rec = &log[i];
+                break;
+            }
+        }
+    } else if (mode == Mode::ByNode) {
+        // Last mutation whose target_node matches.
+        for (std::size_t i = log.size(); i-- > 0;) {
+            if (static_cast<std::uint64_t>(log[i].target_node) == want) {
+                rec = &log[i];
+                break;
+            }
+        }
+    } else if (mode == Mode::ByComposite) {
+        // Prefer root (parent=0) of composite; else first match.
+        const aura::ast::MutationRecord* first = nullptr;
+        for (std::size_t i = 0; i < log.size(); ++i) {
+            if (log[i].composite_transaction_id != want)
+                continue;
+            if (!first)
+                first = &log[i];
+            if (log[i].parent_mutation_id == 0) {
+                rec = &log[i];
+                break;
+            }
+        }
+        if (!rec)
+            rec = first;
+    }
+
+    auto* ht = FlatHashTable::create(64);
+    if (!ht)
+        return make_void();
+    auto meta = ht->metadata();
+    auto keys = ht->keys();
+    auto vals = ht->values();
+    auto hcap = ht->capacity;
+    auto insert_kv = [&](const char* k_str, std::int64_t v) {
+        std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+        for (const char* p = k_str; *p; ++p)
+            h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+        const auto fp = ::aura::compiler::hash::fingerprint(h);
+        auto kidx = ev->push_string_heap(k_str);
+        EvalValue key_ev = make_string(static_cast<std::uint64_t>(kidx));
+        for (std::size_t at = 0; at < hcap; ++at) {
+            auto idx = ((h >> 1) + at) & (hcap - 1);
+            if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
+                meta[idx] = fp;
+                keys[idx] = key_ev.val;
+                vals[idx] = make_int(v).val;
+                ht->size++;
+                return;
+            }
+        }
+    };
+
+    insert_kv("schema-2196", 2196);
+    insert_kv("issue-2196", 2196);
+    insert_kv("mutation-memory-wired", 1);
+    insert_kv("lookup-mode", static_cast<std::int64_t>(mode));
+    insert_kv("log-size", static_cast<std::int64_t>(log.size()));
+    insert_kv("found", rec ? 1 : 0);
+
+    std::uint64_t join_size = 0;
+    if (!rec) {
+        if (m)
+            m->mutation_memory_join_size_last.store(0, std::memory_order_relaxed);
+        insert_kv("join-size", 0);
+        insert_kv("live-effects", 0);
+        std::size_t hidx = 0;
+        {
+            // Issue #4860: unlocked size()+push_back raced a concurrent publish
+            // (double free). Index read, push and stamp are one critical section.
+            std::scoped_lock slock(ev->alloc_storage_lock_);
+            hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            aura_hash_stamp_new_table_owner();
+        }
+        return make_hash(hidx);
+    }
+
+    if (m)
+        m->mutation_memory_found_total.fetch_add(1, std::memory_order_relaxed);
+
+    const bool rolled_back = rec->status == aura::ast::MutationStatus::RolledBack;
+    if (rolled_back && m)
+        m->mutation_memory_rolled_back_total.fetch_add(1, std::memory_order_relaxed);
+
+    // Core MutationRecord fields (reuse existing audit trail).
+    insert_kv("mutation-id", static_cast<std::int64_t>(rec->mutation_id));
+    insert_kv("timestamp-ms", static_cast<std::int64_t>(rec->timestamp_ms));
+    insert_kv("target-node", static_cast<std::int64_t>(rec->target_node));
+    insert_kv("affected-stable-node", static_cast<std::int64_t>(rec->target_node));
+    insert_kv("author-fingerprint", static_cast<std::int64_t>(rec->author_fingerprint));
+    insert_kv("parent-mutation-id", static_cast<std::int64_t>(rec->parent_mutation_id));
+    insert_kv("composite-transaction-id", static_cast<std::int64_t>(rec->composite_transaction_id));
+    insert_kv("status", rolled_back ? 1 : 0); // 0=Committed, 1=RolledBack
+    insert_kv("live-effects", rolled_back ? 0 : 1);
+    insert_kv("has-rollback-data", rec->has_rollback_data ? 1 : 0);
+    insert_kv("invariant-status", static_cast<std::int64_t>(rec->invariant_status));
+    insert_kv("operator-name-len", static_cast<std::int64_t>(rec->operator_name.size()));
+    insert_kv("summary-len", static_cast<std::int64_t>(rec->summary.size()));
+    insert_kv("parent-id", static_cast<std::int64_t>(rec->parent_id));
+    insert_kv("field-offset", static_cast<std::int64_t>(rec->field_offset));
+
+    // Parent chain walk → root (cap 8 hops).
+    std::uint64_t chain[8] = {};
+    std::size_t chain_len = 0;
+    std::uint64_t walk = rec->mutation_id;
+    std::uint64_t root_mid = rec->mutation_id;
+    for (std::size_t hop = 0; hop < 8 && walk != 0; ++hop) {
+        chain[chain_len++] = walk;
+        join_size++;
+        const aura::ast::MutationRecord* cur = nullptr;
+        for (std::size_t i = log.size(); i-- > 0;) {
+            if (log[i].mutation_id == walk) {
+                cur = &log[i];
+                break;
+            }
+        }
+        if (!cur || cur->parent_mutation_id == 0)
+            break;
+        walk = cur->parent_mutation_id;
+        root_mid = walk;
+    }
+    insert_kv("root-mutation-id", static_cast<std::int64_t>(root_mid));
+    insert_kv("chain-depth", static_cast<std::int64_t>(chain_len));
+    insert_kv("chain-0", chain_len > 0 ? static_cast<std::int64_t>(chain[0]) : 0);
+    insert_kv("chain-1", chain_len > 1 ? static_cast<std::int64_t>(chain[1]) : 0);
+    insert_kv("chain-2", chain_len > 2 ? static_cast<std::int64_t>(chain[2]) : 0);
+    insert_kv("chain-3", chain_len > 3 ? static_cast<std::int64_t>(chain[3]) : 0);
+
+    // Composite siblings / children (same composite_transaction_id).
+    std::uint64_t composite_siblings = 0;
+    std::uint64_t composite_children = 0;
+    std::uint64_t affected_nodes_sample[4] = {};
+    std::size_t affected_sample_n = 0;
+    auto push_affected = [&](std::uint64_t n) {
+        if (n == 0 || n == static_cast<std::uint64_t>(~0u))
+            return;
+        for (std::size_t i = 0; i < affected_sample_n; ++i)
+            if (affected_nodes_sample[i] == n)
+                return;
+        if (affected_sample_n < 4)
+            affected_nodes_sample[affected_sample_n++] = n;
+    };
+    push_affected(rec->target_node);
+    if (rec->composite_transaction_id != 0) {
+        for (const auto& r : log) {
+            if (r.composite_transaction_id != rec->composite_transaction_id)
+                continue;
+            ++composite_siblings;
+            join_size++;
+            push_affected(r.target_node);
+            if (r.parent_mutation_id == rec->mutation_id)
+                ++composite_children;
+        }
+    } else {
+        composite_siblings = 1;
+    }
+    insert_kv("composite-sibling-count", static_cast<std::int64_t>(composite_siblings));
+    insert_kv("composite-child-count", static_cast<std::int64_t>(composite_children));
+    insert_kv("affected-node-0",
+              affected_sample_n > 0 ? static_cast<std::int64_t>(affected_nodes_sample[0]) : 0);
+    insert_kv("affected-node-1",
+              affected_sample_n > 1 ? static_cast<std::int64_t>(affected_nodes_sample[1]) : 0);
+    insert_kv("affected-node-2",
+              affected_sample_n > 2 ? static_cast<std::int64_t>(affected_nodes_sample[2]) : 0);
+    insert_kv("affected-node-3",
+              affected_sample_n > 3 ? static_cast<std::int64_t>(affected_nodes_sample[3]) : 0);
+    insert_kv("affected-node-sample-len", static_cast<std::int64_t>(affected_sample_n));
+
+    // Dirty cascade + StableNodeRef join (current workspace state).
+    const auto nid = rec->target_node;
+    const bool in_range = nid < ws->size();
+    const std::uint8_t dirty_bits =
+        in_range ? ws->dirty_reasons(nid) : static_cast<std::uint8_t>(0);
+    insert_kv("dirty-now", dirty_bits != 0 ? 1 : 0);
+    insert_kv("dirty-reasons", static_cast<std::int64_t>(dirty_bits));
+    insert_kv("stable-ref-invalidations",
+              static_cast<std::int64_t>(ws->stable_ref_invalidations()));
+    insert_kv("workspace-gen", static_cast<std::int64_t>(ws->generation()));
+    insert_kv("dirty-nodes-snapshot", static_cast<std::int64_t>(ev->get_dirty_nodes_in_snapshot()));
+    // Pin hits: lifetime pin invalidations/restamps if metrics present.
+    std::int64_t pin_hits = 0;
+    if (m) {
+        pin_hits = static_cast<std::int64_t>(
+            m->lifetime_pin_invalidations_total.load(std::memory_order_relaxed) +
+            m->lifetime_pin_restamps_total.load(std::memory_order_relaxed));
+    }
+    insert_kv("pin-hits", pin_hits);
+    // Invalidation trace hit for this mutation (binding gen join).
+    insert_kv("invalidation-trace-hit", ws->last_invalidation_for(rec->mutation_id) ? 1 : 0);
+
+    // Safe to retry: live-effects + has rollback data, not rolled back.
+    insert_kv("safe-to-retry", (!rolled_back && rec->has_rollback_data) ? 1 : 0);
+    // Safe to re-mutate: RolledBack or no live effects claimed.
+    insert_kv("safe-to-remutate", rolled_back ? 1 : 0);
+
+    insert_kv("join-size", static_cast<std::int64_t>(join_size));
+    if (m)
+        m->mutation_memory_join_size_last.store(join_size, std::memory_order_relaxed);
+
+    std::size_t hidx = 0;
+    {
+        // Issue #4860: unlocked size()+push_back raced a concurrent publish
+        // (double free). Index read, push and stamp are one critical section.
+        std::scoped_lock slock(ev->alloc_storage_lock_);
+        hidx = g_hash_tables.size();
+        g_hash_tables.push_back(ht);
+        aura_hash_stamp_new_table_owner();
+    }
+    return make_hash(hidx);
+}
+
+// Issue #5031: mutation memory / blame-of registration phase.
+void register_query_lifecycle_mutation_memory_parts(PrimRegistrar add,
+                                                    std::pmr::vector<Pair>& pairs,
+                                                    ::aura::compiler::LockedStringHeap& string_heap,
+                                                    void*& type_registry,
+                                                    ModulePathResolver resolve_module_path,
+                                                    Evaluator& ev) {
+    ObservabilityPrims::register_stats_impl("query:mutation-memory", mutation_memory_impl);
+    // Alias for Agent discoverability (issue names both).
+    ObservabilityPrims::register_stats_impl("query:blame-of", mutation_memory_impl);
+}
+
+void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
+                                         ::aura::compiler::LockedStringHeap& string_heap,
+                                         void*& type_registry,
+                                         ModulePathResolver resolve_module_path, Evaluator& ev) {
+    // Issue #4106: pairs is now used by the production operand resolve below.
+    // Issue #5031: ordered delegation over the peeled responsibility phases.
+    register_query_lifecycle_macro_provenance_parts(add, pairs, string_heap, type_registry,
+                                                    resolve_module_path, ev);
+    register_query_lifecycle_ir_hygiene_parts(add, pairs, string_heap, type_registry,
+                                              resolve_module_path, ev);
+    register_query_lifecycle_production_priority_parts(add, pairs, string_heap, type_registry,
+                                                       resolve_module_path, ev);
+    register_query_lifecycle_readiness_parts(add, pairs, string_heap, type_registry,
+                                             resolve_module_path, ev);
+    register_query_lifecycle_commercial_self_evo_parts(add, pairs, string_heap, type_registry,
+                                                       resolve_module_path, ev);
+    register_query_lifecycle_self_evo_loop_parts(add, pairs, string_heap, type_registry,
+                                                 resolve_module_path, ev);
+    register_query_lifecycle_self_evo_parts(add, pairs, string_heap, type_registry,
+                                            resolve_module_path, ev);
+    register_query_lifecycle_stable_ref_batch_parts(add, pairs, string_heap, type_registry,
+                                                    resolve_module_path, ev);
+    register_query_lifecycle_primitives_meta_parts(add, pairs, string_heap, type_registry,
+                                                   resolve_module_path, ev);
+    register_query_lifecycle_prompt6_memory_parts(add, pairs, string_heap, type_registry,
+                                                  resolve_module_path, ev);
+    register_query_lifecycle_edsl_eda_sv_parts(add, pairs, string_heap, type_registry,
+                                               resolve_module_path, ev);
+    register_query_lifecycle_multi_fiber_orchestration_parts(add, pairs, string_heap, type_registry,
+                                                             resolve_module_path, ev);
+    register_query_lifecycle_dirty_columnar_parts(add, pairs, string_heap, type_registry,
+                                                  resolve_module_path, ev);
+    register_query_lifecycle_evolution_snapshot_parts(add, pairs, string_heap, type_registry,
+                                                      resolve_module_path, ev);
+    register_query_lifecycle_shape_deopt_parts(add, pairs, string_heap, type_registry,
+                                               resolve_module_path, ev);
+    register_query_lifecycle_shape_stability_parts(add, pairs, string_heap, type_registry,
+                                                   resolve_module_path, ev);
+    register_query_lifecycle_shape_storm_parts(add, pairs, string_heap, type_registry,
+                                               resolve_module_path, ev);
+    register_query_lifecycle_task4_contracts_parts(add, pairs, string_heap, type_registry,
+                                                   resolve_module_path, ev);
+    register_query_lifecycle_stability_surface_parts(add, pairs, string_heap, type_registry,
+                                                     resolve_module_path, ev);
+    register_query_lifecycle_mutation_log_parts(add, pairs, string_heap, type_registry,
+                                                resolve_module_path, ev);
+    register_query_lifecycle_mutation_memory_parts(add, pairs, string_heap, type_registry,
+                                                   resolve_module_path, ev);
     // (query:mutations-since <id>) — Issue #346: returns
     // a pair-list of mutations with mutation_id >
     // the given id. Useful for "what changed since my
