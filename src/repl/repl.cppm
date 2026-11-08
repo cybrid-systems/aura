@@ -11,6 +11,7 @@ module;
 #include <string_view>
 #include <unordered_map>
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <optional>
 #include <map>
@@ -257,6 +258,16 @@ public:
     Repl(Repl&&) = delete;
     Repl& operator=(Repl&&) = delete;
 
+    // Issue #5046: one rewrite prints a four-line block: the name, the live
+    // source before, the candidate after, and the decision.
+    void print_diff_(const std::string& name, const std::string& before, const std::string& after,
+                     const char* decision, bool file_only) {
+        std::fprintf(stdout, "%s\n- %s\n+ %s\n%s%s\n", name.c_str(),
+                     before.empty() ? "(no-workspace)" : before.c_str(),
+                     after.empty() ? "(no-workspace)" : after.c_str(), decision,
+                     file_only ? " file" : "");
+    }
+
     // Issue #5042: the live workspace text, and one definition out of it.
     std::string workspace_source_() {
         std::string shown;
@@ -407,12 +418,12 @@ public:
             rec += ok ? "KEEP" : "ROLLBACK";
             rec += "\" \"source\" \"";
             rec += repl_record_escape(after);
+            rec += "\" \"previous\" \"";
+            rec += repl_record_escape(before);
             rec += "\")";
             std::fprintf(stdout, "%s\n", rec.c_str());
         } else {
-            std::fprintf(stdout, "%s\n- %s\n+ %s\n%s\n", name.c_str(),
-                         before.empty() ? "(no-workspace)" : before.c_str(), def->second.src.c_str(),
-                         ok ? "KEEP" : "ROLLBACK");
+            print_diff_(name, before, def->second.src, ok ? "KEEP" : "ROLLBACK", false);
         }
         std::fflush(stdout);
         return ok;
@@ -1265,6 +1276,11 @@ public:
         }
         last_file_ = path;
         std::vector<std::string> changed, added, failed, redefined;
+        struct DiffBlock {
+            std::string name, before, after;
+            bool file_only = false;
+        };
+        std::vector<DiffBlock> blocks;
         int same = 0, skipped = 0;
         for (auto& f : split_forms(*src)) {
             auto d = parse_define(f);
@@ -1281,6 +1297,9 @@ public:
                 continue;
             }
             std::string err;
+            std::string before_src = live_source_of_(name);
+            if (before_src.empty() && it != defs_.end())
+                before_src = it->second.src;
             if (it == defs_.end()) {
                 err = eval_quiet_(f.text);
                 if (err.empty()) {
@@ -1302,6 +1321,10 @@ public:
                 failed.push_back(name);
                 continue;
             }
+            std::string after_src = live_source_of_(name);
+            if (after_src.empty())
+                after_src = def.src;
+            blocks.push_back({name, before_src, after_src, !in_workspace_(name)});
             defs_[name] = std::move(def);
         }
         auto join = [](const std::vector<std::string>& v) {
@@ -1310,6 +1333,9 @@ public:
                 s += (s.empty() ? "" : " ") + x;
             return s.empty() ? std::string("-") : s;
         };
+        // Issue #5046: a block per rewritten name, the summary last.
+        for (const auto& b : blocks)
+            print_diff_(b.name, b.before, b.after, "KEEP", b.file_only);
         std::fprintf(stdout,
                      "reloaded %s: changed [%s] added [%s] unchanged %d, skipped %d top-level "
                      "expression(s)%s\n",
@@ -1406,10 +1432,12 @@ private:
                              arg.c_str());
             } else {
                 std::vector<std::string> back, failed;
+                std::vector<std::array<std::string, 3>> blocks;
                 for (auto& [name, def] : sn->defs) {
                     auto it = defs_.find(name);
                     if (it != defs_.end() && it->second.text == def.text)
                         continue;
+                    const std::string before_src = live_source_of_(name);
                     bool redef = false;
                     auto err = apply_def_(name, def, it == defs_.end() || it->second.is_fn, redef);
                     if (!err.empty()) {
@@ -1419,12 +1447,18 @@ private:
                         continue;
                     }
                     defs_[name] = def;
+                    std::string after_src = live_source_of_(name);
+                    if (after_src.empty())
+                        after_src = def.src;
+                    blocks.push_back({name, before_src, after_src});
                     back.push_back(name);
                 }
                 std::ranges::sort(back);
                 std::string list;
                 for (auto& n : back)
                     list += (list.empty() ? "" : " ") + n;
+                for (const auto& b : blocks)
+                    print_diff_(b[0], b[1], b[2], "ROLLBACK", false);
                 std::fprintf(stdout, "restored snapshot %s: [%s]%s\n", arg.c_str(),
                              list.empty() ? "-" : list.c_str(),
                              failed.empty() ? "" : " (some failed)");
