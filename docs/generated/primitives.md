@@ -6,7 +6,7 @@
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 423 · **stdlib-candidate** 87 · **delete** 6 · **unclassified** 7
+**kernel** 430 · **stdlib-candidate** 87 · **delete** 6
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
@@ -179,18 +179,18 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `apply` *[core]* `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `apply-fix` *[core]* `kernel` — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `arena-offset` *[core]* `kernel` — `src/compiler/evaluator_primitives_misc.cpp`
-- `arithmetic-shift` *[core]* `unclassified` — `src/compiler/evaluator_primitives_core.cpp`
+- `arithmetic-shift` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `asin` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `assv` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
 - `atan` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `aura-executable-path` *[core]* `kernel` — `src/compiler/evaluator_primitives_io.cpp`
 - `auto-rollback-on-panic` *[core]* `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
-- `bit-count` *[core]* `unclassified` — `src/compiler/evaluator_primitives_core.cpp`
-- `bitwise-and` *[core]* `unclassified` — `src/compiler/evaluator_primitives_core.cpp`
-- `bitwise-ior` *[core]* `unclassified` — `src/compiler/evaluator_primitives_core.cpp`
-- `bitwise-not` *[core]* `unclassified` — `src/compiler/evaluator_primitives_core.cpp`
-- `bitwise-xor` *[core]* `unclassified` — `src/compiler/evaluator_primitives_core.cpp`
+- `bit-count` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
+- `bitwise-and` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
+- `bitwise-ior` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
+- `bitwise-not` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
+- `bitwise-xor` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `boolean?` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `broadcast` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `bytes->f64vector` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -307,7 +307,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `inexact->exact` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `inexact?` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `integer->char` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `integer-length` *[core]* `unclassified` — `src/compiler/evaluator_primitives_core.cpp`
+- `integer-length` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `integer?` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `intend` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `intend-analytics` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
@@ -774,7 +774,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `arena:compact-with-policy` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:request-defrag` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:set-auto-compact-threshold` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `arithmetic-shift` `unclassified` — `src/compiler/evaluator_primitives_core.cpp`
+- `arithmetic-shift` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `asin` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `assv` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
@@ -786,11 +786,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `atomic:update!` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `aura-executable-path` `kernel` — `src/compiler/evaluator_primitives_io.cpp`
 - `auto-rollback-on-panic` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
-- `bit-count` `unclassified` — `src/compiler/evaluator_primitives_core.cpp`
-- `bitwise-and` `unclassified` — `src/compiler/evaluator_primitives_core.cpp`
-- `bitwise-ior` `unclassified` — `src/compiler/evaluator_primitives_core.cpp`
-- `bitwise-not` `unclassified` — `src/compiler/evaluator_primitives_core.cpp`
-- `bitwise-xor` `unclassified` — `src/compiler/evaluator_primitives_core.cpp`
+- `bit-count` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
+- `bitwise-and` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
+- `bitwise-ior` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
+- `bitwise-not` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
+- `bitwise-xor` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `boolean?` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `broadcast` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `bytes->f64vector` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -942,7 +942,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `inexact->exact` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `inexact?` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `integer->char` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `integer-length` `unclassified` — `src/compiler/evaluator_primitives_core.cpp`
+- `integer-length` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `integer?` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `intend` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `intend-analytics` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
@@ -1219,7 +1219,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (423)
+### kernel (430)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1253,6 +1253,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `arena:compact-with-policy` *[K-GOV]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:request-defrag` *[K-GOV]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:set-auto-compact-threshold` *[K-GOV]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `arithmetic-shift` *[K-NUM]* — `src/compiler/evaluator_primitives_core.cpp`
 - `asin` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
 - `ast:compact-nodes` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:diff` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
@@ -1279,6 +1280,11 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `atomic:update!` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `aura-executable-path` *[K-IO]* — `src/compiler/evaluator_primitives_io.cpp`
 - `auto-rollback-on-panic` *[K-PANIC]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
+- `bit-count` *[K-NUM]* — `src/compiler/evaluator_primitives_core.cpp`
+- `bitwise-and` *[K-NUM]* — `src/compiler/evaluator_primitives_core.cpp`
+- `bitwise-ior` *[K-NUM]* — `src/compiler/evaluator_primitives_core.cpp`
+- `bitwise-not` *[K-NUM]* — `src/compiler/evaluator_primitives_core.cpp`
+- `bitwise-xor` *[K-NUM]* — `src/compiler/evaluator_primitives_core.cpp`
 - `boolean?` *[K-VAL]* — `src/compiler/evaluator_primitives_core.cpp`
 - `broadcast` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `bytes->f64vector` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1397,6 +1403,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `inexact->exact` *[K-VAL]* — `src/compiler/evaluator_primitives_math.cpp`
 - `inexact?` *[K-VAL]* — `src/compiler/evaluator_primitives_core.cpp`
 - `integer->char` *[K-VAL]* — `src/compiler/evaluator_primitives_char.cpp`
+- `integer-length` *[K-NUM]* — `src/compiler/evaluator_primitives_core.cpp`
 - `integer?` *[K-VAL]* — `src/compiler/evaluator_primitives_core.cpp`
 - `intend` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `intend-analytics` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
@@ -1743,13 +1750,3 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `orch:parallel-intend` *[D-ALIAS]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `primitives:contract-probe` *[D-ALIAS]* — `src/compiler/evaluator_primitives_test.cpp`
 - `truncate` *[D-ALIAS]* — `src/compiler/evaluator_primitives_math.cpp`
-
-### unclassified (7)
-
-- `arithmetic-shift` *[]* — `src/compiler/evaluator_primitives_core.cpp`
-- `bit-count` *[]* — `src/compiler/evaluator_primitives_core.cpp`
-- `bitwise-and` *[]* — `src/compiler/evaluator_primitives_core.cpp`
-- `bitwise-ior` *[]* — `src/compiler/evaluator_primitives_core.cpp`
-- `bitwise-not` *[]* — `src/compiler/evaluator_primitives_core.cpp`
-- `bitwise-xor` *[]* — `src/compiler/evaluator_primitives_core.cpp`
-- `integer-length` *[]* — `src/compiler/evaluator_primitives_core.cpp`

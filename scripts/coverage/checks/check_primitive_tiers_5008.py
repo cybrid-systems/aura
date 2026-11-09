@@ -166,8 +166,11 @@ def check_growth(tiers: dict, catalog: list[str], *, quiet: bool = False) -> lis
             "      (authoring contract: kernel exception table), with a justification."
         )
     elif not quiet:
+        covered = len(added) - len(unpaid)
         print(
-            f"OK: registration count {len(cur)} <= baseline {base_count} ({len(added)} added, {len(removed)} removed)"
+            f"OK: catalog {len(cur)} vs baseline {base_count} "
+            f"({len(added)} added, {len(removed)} removed, "
+            f"{covered} addition(s) covered by kernel_exceptions)"
         )
     return errors
 
@@ -176,7 +179,7 @@ def check_retirement(tiers: dict, catalog: list[str]) -> list[str]:
     errors: list[str] = []
     entries: dict[str, dict] = tiers.get("primitives", {})
     cur = set(catalog)
-    refs = prim_surface.stdlib_references(sorted(entries))
+    refs = prim_surface.stdlib_call_references(sorted(entries))
 
     flagged = sorted(n for n, e in entries.items() if e.get("deprecated"))
     for name in flagged:

@@ -2,14 +2,14 @@
 
 # Standard library index (generated)
 
-**86** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**97** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
 | `std/INDEX` | `stdlib:list` `stdlib:help` `stdlib:examples` `stdlib:by-prefix` `stdlib:by-tag` | lib/std/INDEX.aura — Stdlib discoverability index (Issue #565) |
 | `std/abc` | `abc:init` `abc:init-hash` `abc:step!` `abc:best` `abc:population` `abc:report` `abc:export` `abc:help` … (+7) | lib/std/abc.aura — Issue #2878 Artificial Bee Colony surface |
 | `std/adaptive` | `string-index` `string-contains?` `string-trim` `measure-distance` `structured-diagnosis` `pid:analyze` `get-api-ref` `get-full-api-ref` | lib/std/adaptive.aura -- adaptive intend decision module |
-| `std/agent` | `auto-grow` `edsl-fix` `safe-eval` `llm-ask` `extract-code` `agent:decision-metrics` `agent:decide` `agent:loop-stats` … (+2) | agent.aura — Self-growing AI agent library (Issue #1460) |
+| `std/agent` | `auto-grow` `edsl-fix` `safe-eval` `llm-ask` `extract-code` `agent:decision-metrics` `agent:decide` `agent:loop-stats` … (+13) | lib/std/agent.aura — one closed loop, six phases (#5004) |
 | `std/algorithm` | `sort-stable` `sort-by` `binary-search` `merge-sorted` `merge` `sorted?` `unique` `min-by` … (+3) | Aura standard algorithm library |
 | `std/ant` | `pheromone:init` `pheromone:update` `pheromone:rank` `pheromone:score` `pheromone:export` `pheromone:evaporate!` `pheromone:types` `colony:search` | lib/std/ant.aura -- mutation-type pheromone ranking + colony:search |
 | `std/ast-viz` | `ast:to-dot` `ast:to-dot-node` `mutation:trace` `mutation:trace-node` | — |
@@ -18,9 +18,12 @@
 | `std/bench` | `all-tasks` `task-count` `run-rounds` `aggregate` `print-report` `run-one` `run-parallel` `bench:list-sort` … (+1) | — |
 | `std/bitwise` | `bitwise-not` `bitwise-and` `bitwise-ior` `bitwise-xor` `arithmetic-shift` `bit-count` `integer-length` `bitwise-if` … (+7) | lib/std/bitwise.aura — SRFI-151 bitwise operations (Issue #5003) |
 | `std/boids` | `boids:vec-add` `boids:vec-sub` `boids:vec-scale` `boids:vec-len` `boids:distance` `boids:separation` `boids:alignment` `boids:cohesion` … (+4) | lib/std/boids.aura — Issue #2879 Boids-style coordination (not physics sim) |
+| `std/bytevector` | `bytevector?` `make-bytevector` `bytevector-length` `bytevector-u8-ref` `bytevector-u8-set!` `bytevector-copy` `bytevector-copy!` `bytevector-append` … (+4) | lib/std/bytevector.aura — R7RS bytevectors + UTF-8 (Issue #5005) |
 | `std/capability` | — | std/capability.aura — Capability discovery surface (Issue #4276) |
+| `std/case-lambda` | `case-lambda` | lib/std/case-lambda.aura — R7RS (scheme case-lambda) (Issue #5005) |
 | `std/cbuild` | `cbuild-root` `cbuild-set-root!` `cbuild-digest` `cbuild-toolchain-id` `cbuild-key` `cbuild-entry-dir` `cbuild-artifact!` `cbuild-object!` … (+9) | cbuild.aura — 磁盘内容寻址增量构建缓存（Issue #4803） |
 | `std/cgen` | `cgen-expr` `cgen-stmt` `cgen-fn` `cgen-unit` `cgen-digest` `cgen-build-cached!` `cgen-cache-stats` `cgen-cache-clear!` | cgen.aura — C 代码生成 EDSL（最小原型，Issue #4802 第一步） |
+| `std/char` | `char=?` `char<?` `char>?` `char<=?` `char>=?` `char-ci=?` `char-ci<?` `char-ci>?` … (+13) | lib/std/char.aura — R7RS (scheme char) surface (Issue #5005) |
 | `std/combinators` | `compose` `curry` `rcurry` `partial2` `const` `identity` `flip` `complement` … (+1) | combinators.aura — Functional programming utilities |
 | `std/compat` | `query:siblings` `query:find-by-name` `query:nodes-with-marker` `query:subtree` | lib/std/compat.aura — temporary compatibility shims for demoted query:* |
 | `std/core` | `core:any` `core:all` `core:zip-with` `core:group-by` `core:chunk` `core:running-sum` `core:safe-div` `core:format-currency` … (+2) | lib/std/core.aura — Core builtin high-level helpers (Issue #564) |
@@ -31,7 +34,9 @@
 | `std/encoding` | `hex-encode` `hex-decode` `base64-encode` `base64-decode` | lib/std/encoding.aura — Encoding utilities |
 | `std/engine-metrics` | `engine-metrics:get` `engine-metrics:list` `engine-metrics:group` `engine-metrics:prefix` `engine-metrics:all` `engine-metrics:count` | lib/std/engine-metrics.aura — Issue #1433 thin wrappers around (engine:metrics) |
 | `std/evo-core` | `evo:help` `evo:schema` `evo:candidate` `evo:candidate?` `evo:child` `evo:candidate-id` `evo:candidate-genome` `evo:candidate-parents` … (+38) | lib/std/evo-core.aura — Issue #4939 (v0.2 P0): the shared base every |
+| `std/evo` | `evo:records` `evo:worldline` `evo:parse-line` `evo:parse-log` `evo:record-count` `evo:keep?` `evo:arm-of` `evo:arm-stats` … (+19) | lib/std/evo.aura — experience layer over the evo:record! worldline (#5004) |
 | `std/evolve` | `evolve-strategy` | evolve.aura -- Strategy evolution from intend analytics |
+| `std/exception` | `with-exception-handler` `raise-continuable` `error-object?` `error-object-message` `error-object-irritants` `guard` `raise` | lib/std/exception.aura — R7RS (scheme base) exception surface (Issue #5005) |
 | `std/extract` | `extract-code` `trim-str` `find-in-str` | lib/std/extract.aura — Code extraction from LLM responses |
 | `std/ffi` | `c-load` `c-func` `c-alloc` `c-free` `c-opaque` `c-opaque?` `c-opaque->int` `c-struct-size` … (+14) | ffi.aura — C FFI host prims (Issue #3176) |
 | `std/fs` | `path-join` `path-dirname` `path-basename` `path-extname` `file-read` `file-write` `file-exists?` `file-size` … (+3) | lib/std/fs.aura — File system utilities |
@@ -44,13 +49,14 @@
 | `std/hot-update-region` | `region:own-mask` `region:isolate!` `region:get` `region:compatible?` `region:clear!` | lib/std/hot-update-region.aura — Issue #1370 |
 | `std/hot-update-reload` | `make-manual-reload` `make-threshold-reload` `make-composite-reload` `make-once-reload` | lib/std/hot-update-reload.aura — Issue #1370 |
 | `std/hot-update` | `hot-update:make-config` `hot-update:default-config` `hot-update:config-version` `hot-update:config-retries` `hot-update:config-telemetry?` `hot-update:reload` `hot-update:reload-with` `hot-update:reload-version` … (+7) | lib/std/hot-update.aura — Issue #1370 |
-| `std/io` | `file-exists?` `file-size` `file-copy` `file-delete` `file-read` `file-write` `file->string` `string->file` … (+2) | Aura standard I/O library |
+| `std/io` | `file-exists?` `file-size` `file-copy` `file-delete` `file-read` `file-write` `file->string` `string->file` … (+20) | lib/std/io.aura — file verbs + R7RS ports (Issues #5003, #5005) |
 | `std/iter` | `;;` `List` `operations` `any?` `every?` `find` `find-index` `count` … (+24) | iter.aura — Iterator and collection utilities |
 | `std/json` | `json-stringify` `json-escape` `json-value` `c2s` `json-arr-items` `json-obj-items` | Aura JSON library -- product names over C++ hot-path prims (#1440). |
 | `std/kir-build` | `kir-build!` `kir-item-unit` `kir-rebuild-set` `kir-build-memo-stats` `kir-build-memo-clear!` | kir-build.aura — per-function incremental native builds for std/kir modules (Issue #4803) |
 | `std/kir-gpu` | `kir-gpu-check` `kir->cuda` `kir->cuda-unit` `kir->ptx` `kir->triton` `kir-float-text` | kir-gpu.aura — GPU 后端：CUDA C / PTX / Triton（Issue #4802 第三阶段） |
 | `std/kir-sched` | `kir-with-body` `kir-find-loop` `kir-split` `kir-reorder` `kir-tile` `kir-unroll` `kir-vectorize` `kir-sched-apply` … (+1) | kir-sched.aura — 调度变换 = kernel IR 上的 AST 重写（Issue #4802） |
 | `std/kir` | `kir-name` `kir-head` `kir-items` `kir-find` `kir-ty` `kir-params` `kir-body` `kir-ret` … (+19) | kir.aura — 类型化 kernel IR（Issue #4802 第二阶段） |
+| `std/lazy` | `delay` `force` `promise?` `make-promise` | lib/std/lazy.aura — R7RS (scheme lazy) (Issue #5005) |
 | `std/list` | `foldr` `foldl` `map` `for-each` `member?` `zip` `zip3` `take` … (+32) | Aura standard list library |
 | `std/llm` | `aura-llm-call` `aura-verify` `llm:rate-limit-set!` `llm:rate-limit-remaining` `llm:call-sandboxed` `llm:register-template` `llm:list-templates` `llm:apply-template` … (+7) | Aura std/llm — LLM 交互模块 (Issue #929 + #1551 production safety) |
 | `std/math` | `;` `Constants` `pi` `e` `phi` `tau` `Basic` `square` … (+53) | Aura standard math library |
@@ -58,22 +64,26 @@
 | `std/mutate` | `mutate:summary` `mutate:by-operator` `mutate:last-info` `mutate:operator-count` `mutate:rolled-back?` `mutate:rollback-rate` `mutate:boundary-depth` `mutate:boundary-safe?` … (+4) | — |
 | `std/mutation-atomic` | `typed-mutate-atomic-all` | lib/std/mutation-atomic.aura — Issue #1442 convenience over (typed-mutate-atomic) |
 | `std/net` | `http-get-json` `http-post-json` `url-encode` `url-decode` `url-join` `fetch-try` | lib/std/net.aura — Network client library |
-| `std/orchestrator` | `orch:define-role` `orch:step` `orch:pipeline` `orch:conduct` `orch:parallel` `orch:parallel-with-yield` `agent:spawn` `agent:ask` … (+9) | — |
+| `std/orch` | `orch:spawn` `orch:handle` `orch:list` `orch:status` `orch:stop` `orch:restart` `orch:local?` `orch:registry-epoch` … (+18) | lib/std/orch.aura — multi-agent orchestration on the five primitives (#5004) |
+| `std/orchestrator` | `orch:define-role` `orch:step` `orch:pipeline` `orch:conduct` `orch:parallel` `orch:parallel-with-yield` `orch:supervise` `orch:run` … (+11) | lib/std/orchestrator.aura — one release of forwarding to std/orch (#5004) |
+| `std/parameter` | `make-parameter` `parameterize` `parameter?` `parameter-set!` | lib/std/parameter.aura — R7RS parameters (Issue #5005) |
 | `std/persist` | `persist:save` `persist:load` `persist:info` `persist:version` `persist:format-version` `persist:round-trip?` | lib/std/persist.aura — Issue #1381 |
 | `std/pipeline` | `synthesize:pipeline` | Aura std/pipeline — 代码生成管线 |
 | `std/primitives` | `primitives:help` `primitives:list` `primitives:categories` `primitives:entry-points` `primitives:registry-file` `primitives:discover` | lib/std/primitives.aura — Engine primitives discoverability (#1552) |
-| `std/process` | `sh` `sh-ok?` `which` | lib/std/process.aura — Process management |
+| `std/process` | `sh` `sh-ok?` `which` `command-line` `get-environment-variable` `get-environment-variables` | lib/std/process.aura — Process management |
 | `std/prompt` | `build-sys-prompt` `get-api-ref-for-modules` | lib/std/prompt.aura — Unified prompt builder for LLM code generation |
 | `std/pso` | `pso:init` `pso:init-hash` `pso:step!` `pso:best` `pso:population` `pso:report` `pso:export` `pso:help` … (+12) | lib/std/pso.aura — Issue #2877 Particle Swarm Optimization surface |
 | `std/query-workspace` | `query:macro-introduced-calls` `query:macro-introduced-defines` | — |
 | `std/query` | `query:list-categories` `query:help` `query:nodes-with-marker` `query:find-by-name` `query:subtree` `query:defines` `query:defines-by-marker` `query:calls-by-marker` … (+2) | lib/std/query.aura — query: namespace high-level Agent API |
 | `std/queue` | `make-queue` `enqueue` `dequeue` `queue-front` `queue-rest` `queue-empty?` `queue-length` `queue->list` … (+1) | queue.aura — FIFO queue (pair-based, immutable) |
+| `std/r7rs` | `r7rs:libraries` `r7rs:coverage` `r7rs:status` `r7rs:missing` `r7rs:library-exports` | lib/std/r7rs.aura — R7RS-small coverage table (Issue #5005) |
 | `std/random` | `make-random` `random-next` `random-integer` `random-float` `random-range` `random-vector` `shuffle` `random-seed` | random.aura — Simple pseudo-random number generator |
 | `std/record` | — | lib/std/record.aura — SRFI-9 records (Issue #5003) |
 | `std/refactor` | `refactor:rename-var` `refactor:extract-function` `refactor:inline-function` | — |
 | `std/regex` | `re-match?` `re-find` `re-replace` `re-split` `re-quote` | lib/std/regex.aura — Regular expression utilities |
 | `std/rule` | `rule:define` `rule:apply` `rule:apply-all` `rule:list` `rule:list-violations` `rule:remove` `rule:enable` `rule:disable` … (+3) | Aura std/rule — 代码规范系统 (P2) |
 | `std/safe-refactor` | `safe-refactor:with-snapshot` `safe-refactor:replace-fn` `safe-refactor:check-and-apply` `safe-refactor:rollback` | lib/std/safe-refactor.aura — verification-gated refactoring |
+| `std/search` | `search:init` `search:step` `search:batch` `search:run` `search:pending` `search:best` `search:best-score` `search:export` … (+5) | lib/std/search.aura — one search protocol over the program space (#5007) |
 | `std/set` | `set` `set?` `set-copy` `set-clear!` `set-adjoin` `set-adjoin!` `set-delete` `set-delete!` … (+37) | lib/std/set.aura — SRFI-113 sets on the unified hash table (Issue #5003) |
 | `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` `tcp-listen` `tcp-local-port` `tcp-accept` `tcp-accept-timeout` | socket.aura — TCP socket library (client + server) |
 | `std/sort` | `list-sort` `list-stable-sort` `list-sort!` `list-stable-sort!` `vector-sort` `vector-stable-sort` `vector-sort!` `vector-stable-sort!` … (+3) | lib/std/sort.aura — SRFI-132 sorting (Issue #5003) |
@@ -86,6 +96,7 @@
 | `std/synthesize-v2` | `synthesize:test-driven` `synthesize:debug` `synthesize:project` `synthesize:compose` `synthesize:run-tests` `synthesize:eval-test` | lib/std/synthesize-v2.aura -- Synthesize Pipeline v2 |
 | `std/synthesize` | `synthesize:list-templates` `synthesize:list-help` | lib/std/synthesize.aura — synthesize: namespace stdlib wrappers |
 | `std/test` | — | Aura Testing Framework |
+| `std/time` | `current-second` `current-jiffy` `jiffies-per-second` | lib/std/time.aura — R7RS (scheme time) (Issue #5005) |
 | `std/uuid` | `uuid` `uuid-compact` `uuid-nil` | lib/std/uuid.aura — UUID v4 generation |
 | `std/validate` | `json-type` `err` `check` `validate` `valid?` `error-count` | Aura JSON Schema Validator — 纯函数式 |
 | `std/vector-math` | `vec:map` `vec:zip` `vec:fold` `vec:sum` `vec:prod` `vec:mean` `vec:dot` `vec:norm` … (+26) | lib/std/vector-math.aura — Numerical vector operations |
