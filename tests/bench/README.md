@@ -34,6 +34,14 @@ Usage:
 - Shootout-style `.aura` ports: `binarytrees_{cons,while,array}.aura`, `fasta.aura`, `fannkuchredux.aura`, `nbody.aura`, `pidigits.aura`, `regexredux.aura`, `revcomp.aura`
   - Three `binarytrees` variants are intentional (cons vs while vs array memory/stack ceilings), not duplicates.
 
+## Optimisation benches (Aura, opt-in)
+
+- `zdt1_surrogate_4943.aura` — Issue #4943 expensive benchmark: ZDT1 with a
+  100 ms artificial evaluation delay, plain 1,000 evaluations vs a 300-
+  evaluation surrogate-guided arm (space-filling design + GP infill). Not in
+  the CI suite; wall time ~3-4 minutes. See the header for the command and
+  the methods; the recorded run is under `tests/bench/results/`.
+
 ## Unrelated
 
 - `run_bench_all.py` — multi-model LLM EDSL comparison (paths still point at a personal layout; not the C++ suite).
