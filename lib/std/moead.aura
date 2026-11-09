@@ -1,0 +1,597 @@
+; lib/std/moead.aura — Issue #4940 (v0.2 P1): MOEA/D as the main
+; multi-objective search frame (Zhang & Li, IEEE TEVC 2007), with the
+; MOEA/DD- style dominance+decomposition archive (Li, Deb, Zhang, Kwong,
+; TEVC 2015).
+;
+; A MOEA/D state is a VALUE: the weight vectors, the neighborhood table,
+; the ideal/nadir estimates and the population all live in the hash that
+; (moead:make ...) returns, so two searches never interfere.
+;
+;   (moead:make (hash "n-obj" 3 "H" 12 "T" 10
+;                     "scalar" "tchebycheff"|"pbi"|"ws"
+;                     "theta" 5.0 "nr" 2 "delta" 0.9
+;                     "operator" "de"|"sbx"|<proposer>
+;                     "dd" #f "dim" 30 "bounds" (list (list 0.0 1.0))))
+;   (moead:ask s k) (moead:tell! s cands objs) (moead:front s)
+;   (moead:weights s) (moead:run! s eval-fn evals) (moead:report s)
+;
+; Candidates are std/evo-core candidates; objectives are read from a list
+; (a raw vector) or from an evaluation hash's "objectives"/"constraints".
+; Every subproblem is a scalar problem built from the Das-Dennis weight
+; set; T nearest weights form the neighborhood; the ideal and nadir
+; points are updated online and objectives are normalized before the
+; scalar aggregate is computed.
+;
+; Constraint handling: Deb's constraint domination. An infeasible
+; candidate never replaces a feasible neighbour; two infeasible ones are
+; ranked by total violation.
+;
+; Form order (#2769): export before anything else.
+
+(export moead:make moead:ask moead:tell! moead:run! moead:front moead:weights
+        moead:report moead:help moead:schema moead:scalar)
+
+(require "std/evo-core" all:)
+(require "std/pareto" all:)
+
+(define moead-schema-version 1)
+
+(define (moead:help)
+  "std/moead (#4940): (moead:make (hash \"n-obj\" 2 \"H\" 39 \"T\" 10 \"scalar\" \"tchebycheff\" \"operator\" \"de\" \"dim\" 30)) -> s; (moead:ask s 40) -> candidates; (moead:tell! s cands objs) -> #t; (moead:run! s eval 20000) -> s; (moead:front s) (moead:weights s). Scalars: tchebycheff | pbi | ws. dd #t turns on the MOEA/DD dominance+decomposition archive.")
+
+(define (moead:schema) moead-schema-version)
+
+; ── helpers ──────────────────────────────────────────────────────────
+(define (md-opt h k d)
+  (if (hash? h)
+      (let ((v (hash-ref h k ())))
+        (if (null? v) d v))
+      d))
+
+(define (md-num v) (cond ((number? v) (if (inexact? v) v (exact->inexact v))) (else 0.0)))
+
+(define (md-iota n)
+  (let loop ((i 0) (acc (list)))
+    (if (>= i n) (reverse acc) (loop (+ i 1) (cons i acc)))))
+
+(define (md-take xs n)
+  (let loop ((ys xs) (k 0) (acc (list)))
+    (if (or (null? ys) (>= k n)) (reverse acc) (loop (cdr ys) (+ k 1) (cons (car ys) acc)))))
+
+(define (md-index-hash xs)
+  (let loop ((ys xs) (i 0) (h (hash)))
+    (if (null? ys) h (begin (hash-set! h i (car ys)) (loop (cdr ys) (+ i 1) h)))))
+
+(define (md-fingerprint g)
+  (let loop ((xs g) (a 2166136261) (b 5381))
+    (if (null? xs)
+        (string-append "n" (number->string a) "_" (number->string b))
+        (let* ((v (if (number? (car xs))
+                      (inexact->exact (floor (* 1000000.0 (md-num (car xs)))))
+                      0))
+               (a2 (modulo (+ (* (modulo a 1000003) 31) (modulo v 1000003)) 2147483647))
+               (b2 (modulo (+ (* (modulo b 1000033) 131) (modulo v 1000033)) 2147483629)))
+          (loop (cdr xs) a2 b2)))))
+
+(define (md-candidate g opts)
+  (hash-set! opts "id" (md-fingerprint g))
+  (evo:candidate g opts))
+
+(define (md-rng seed gen slot)
+  (hash 0 (hash-ref (evo:rng seed gen slot) "state" 1)))
+
+(define (md-rand! r)
+  (let ((n (modulo (+ (* (hash-ref r 0 1) 1103515245) 12345) 2147483647)))
+    (hash-set! r 0 n)
+    (/ n 2147483647.0)))
+
+(define (md-rand-int! r n)
+  (if (<= n 1) 0 (inexact->exact (floor (* (md-rand! r) n)))))
+
+(define (md-dist a b)
+  (let loop ((xs a) (ys b) (s 0.0))
+    (if (or (null? xs) (null? ys))
+        (sqrt s)
+        (let ((d (- (md-num (car xs)) (md-num (car ys)))))
+          (loop (cdr xs) (cdr ys) (+ s (* d d)))))))
+
+; MINIMIZE space: a "max" objective is negated, a "min" one is kept.
+(define (md-sign d) (if (and (string? d) (string=? d "max")) -1.0 1.0))
+
+(define (md-dir-at dirs i) (if (< i (length dirs)) (list-ref dirs i) "max"))
+
+; problem-space objectives -> MINIMIZE space (every scalarizer expects it)
+(define (md-minvec objs dirs)
+  (let loop ((i 0) (xs objs) (acc (list)))
+    (if (null? xs)
+        (reverse acc)
+        (loop (+ i 1) (cdr xs)
+              (cons (* (md-sign (md-dir-at dirs i)) (md-num (car xs))) acc)))))
+
+(define (md-objs-of item order)
+  (cond ((and (list? item) (not (hash? item))) item)
+        ((hash? item)
+         (let ((o (md-opt item "objs" #f)))
+           (cond ((list? o) o)
+                 ((hash? (md-opt item "objectives" (hash)))
+                  (let* ((h (md-opt item "objectives" (hash)))
+                         (ks (if (and (list? order) (not (null? order)))
+                                 order
+                                 (sort (hash-keys h) string<?))))
+                    (map (lambda (k) (md-num (hash-ref h k 0.0))) ks)))
+                 (else (list)))))
+        (else (list))))
+
+(define (md-viol-of item)
+  (cond ((not (hash? item)) 0.0)
+        ((number? (md-opt item "viol" #f)) (md-num (md-opt item "viol" 0)))
+        ((hash? (md-opt item "constraints" #f)) (evo:violations item))
+        (else 0.0)))
+
+(define (md-bounds-at bounds i)
+  (let ((b (if (< i (length bounds)) (list-ref bounds i) #f)))
+    (cond ((and (list? b) (>= (length b) 2) (number? (car b)))
+           (list (md-num (car b)) (md-num (car (cdr b)))))
+          (else (list 0.0 1.0)))))
+
+(define (md-clamp x b)
+  (let ((lo (car b)) (hi (car (cdr b))))
+    (if (< x lo) lo (if (> x hi) hi x))))
+
+(define (md-genome dim bounds r)
+  (let loop ((i 0) (acc (list)))
+    (if (>= i dim)
+        (reverse acc)
+        (let ((b (md-bounds-at bounds i)))
+          (loop (+ i 1)
+                (cons (+ (car b) (* (md-rand! r) (- (car (cdr b)) (car b)))) acc))))))
+
+; ── Das-Dennis weight lattice ────────────────────────────────────────
+; Every composition of H into m parts, divided by H (Das & Dennis 1998).
+(define (md-dd-parts m total H)
+  (if (< m 1)
+      (list)
+      (if (= m 1)
+          (list (list (/ (md-num total) (md-num H))))
+          (let loop ((i 0) (acc (list)))
+            (if (> i total)
+                (reverse acc)
+                (let* ((rest (md-dd-parts (- m 1) (- total i) H))
+                       (heads (map (lambda (w) (cons (/ (md-num i) (md-num H)) w)) rest)))
+                  (loop (+ i 1) (append (reverse heads) acc))))))))
+
+(define (md-das-dennis m H)
+  (md-dd-parts m H H))
+
+(define (md-neighbors ws T)
+  (let ((n (length ws)))
+    (let loop ((i 0) (acc (list)))
+      (if (>= i n)
+          (reverse acc)
+          (let* ((wi (list-ref ws i))
+                 (pairs (let jl ((j 0) (a (list)))
+                          (if (>= j n)
+                              (reverse a)
+                              (jl (+ j 1) (cons (list (md-dist wi (list-ref ws j)) j) a)))))
+                 (sorted (sort pairs (lambda (p q)
+                                       (let ((dp (car p)) (dq (car q)))
+                                         (cond ((< dp dq) #t)
+                                               ((> dp dq) #f)
+                                               (else (< (car (cdr p)) (car (cdr q)))))))))
+                 (t (if (> T n) n T)))
+            (loop (+ i 1)
+                  (cons (map (lambda (p) (car (cdr p))) (md-take sorted t)) acc)))))))
+
+; ── scalar aggregates (normalized objective vectors, MINIMIZE) ───────
+(define (md-ws f w)
+  (let loop ((fs f) (ws w) (s 0.0))
+    (if (or (null? fs) (null? ws)) s
+        (loop (cdr fs) (cdr ws) (+ s (* (md-num (car fs)) (md-num (car ws))))))))
+
+(define (md-tch f w)
+  (let loop ((fs f) (ws w) (m 0.0))
+    (if (or (null? fs) (null? ws)) m
+        (loop (cdr fs) (cdr ws) (max m (* (md-num (car fs)) (md-num (car ws))))))))
+
+(define (md-wnorm w)
+  (sqrt (let loop ((ws w) (s 0.0))
+          (if (null? ws) s (loop (cdr ws) (+ s (* (md-num (car ws)) (md-num (car ws)))))))))
+
+(define (md-pbi f w theta)
+  (let* ((nw (md-wnorm w))
+         (d1 (if (<= nw 0.0) 0.0 (/ (md-ws f w) nw))))
+    (let loop ((fs f) (ws w) (s 0.0))
+      (if (or (null? fs) (null? ws))
+          (+ d1 (* theta (sqrt s)))
+          (let ((d (- (md-num (car fs))
+                      (if (<= nw 0.0) 0.0 (* d1 (/ (md-num (car ws)) nw))))))
+            (loop (cdr fs) (cdr ws) (+ s (* d d))))))))
+
+; Public: the scalarized value of a normalized objective vector under w.
+(define (moead:scalar s f w) (md-scalar s f w))
+
+(define (md-scalar s f w)
+  (let ((kind (md-opt s "scalar" "tchebycheff")))
+    (cond ((string=? kind "ws") (md-ws f w))
+          ((string=? kind "pbi") (md-pbi f w (md-opt s "theta" 5.0)))
+          (else (md-tch f w)))))
+
+; ── normalization ───────────────────────────────────────────────────
+; Ideal/nadir are tracked over the CURRENT population (plus the incoming
+; candidate), not over every evaluation ever made: an early bad point would
+; otherwise inflate the nadir forever and flatten the normalized objective
+; that still has work to do.
+(define (md-fold-min a b)
+  (let loop ((xs a) (ys b) (acc (list)))
+    (if (or (null? xs) (null? ys))
+        (reverse acc)
+        (loop (cdr xs) (cdr ys) (cons (min (md-num (car xs)) (md-num (car ys))) acc)))))
+
+(define (md-fold-max a b)
+  (let loop ((xs a) (ys b) (acc (list)))
+    (if (or (null? xs) (null? ys))
+        (reverse acc)
+        (loop (cdr xs) (cdr ys) (cons (max (md-num (car xs)) (md-num (car ys))) acc)))))
+
+; Ideal/nadir over the current population plus the incoming batch. An
+; early bad point would inflate a permanently-accumulated nadir and
+; flatten the normalized objective that still has work to do, so this is
+; recomputed once per tell batch (see moead:tell!).
+(define (md-refresh-extremes! s batch-objs)
+  (let ((dirs (md-opt s "dirs" (list)))
+        (order (md-opt s "objectives" #f)))
+    (let loop ((ps (md-opt s "pop" (list))) (bs batch-objs) (ideal #f) (nadir #f))
+      (cond
+        ((not (null? ps))
+         (let ((objs (md-objs-of (car ps) order)))
+           (if (null? objs)
+               (loop (cdr ps) bs ideal nadir)
+               (let ((g (md-minvec objs dirs)))
+                 (loop (cdr ps) bs
+                       (if ideal (md-fold-min ideal g) g)
+                       (if nadir (md-fold-max nadir g) g))))))
+        ((not (null? bs))
+         (let ((g (md-minvec (car bs) dirs)))
+           (loop ps (cdr bs)
+                 (if ideal (md-fold-min ideal g) g)
+                 (if nadir (md-fold-max nadir g) g))))
+        (else
+         (hash-set! s "ideal" (if ideal ideal (list)))
+         (hash-set! s "nadir" (if nadir nadir (list))))))))
+
+(define (md-normalize s f)
+  (let ((ideal (md-opt s "ideal" (list)))
+        (nadir (md-opt s "nadir" (list))))
+    (let loop ((xs f) (is ideal) (ns nadir) (acc (list)))
+      (if (or (null? xs) (null? is) (null? ns))
+          (reverse acc)
+          (let* ((span (- (md-num (car ns)) (md-num (car is))))
+                 (sp (if (> span 0.0) span 1.0)))
+            (loop (cdr xs) (cdr is) (cdr ns)
+                  (cons (/ (- (md-num (car xs)) (md-num (car is))) sp) acc)))))))
+
+; ── state ───────────────────────────────────────────────────────────
+(define (moead:make opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (m0 (md-opt o "n-obj" 2))
+         (m (if (and (integer? m0) (>= m0 1)) m0 2))
+         (H0 (md-opt o "H" 12))
+         (H (if (and (integer? H0) (>= H0 1)) H0 12))
+         (wopt (md-opt o "weights" "das-dennis"))
+         (ws (cond ((list? wopt) wopt)
+                   ((and (string? wopt) (string=? wopt "das-dennis")) (md-das-dennis m H))
+                   (else (md-das-dennis m H))))
+         (n (length ws))
+         (T0 (md-opt o "T" 10))
+         (T (if (and (integer? T0) (>= T0 1)) (if (> T0 n) n T0) (if (> 10 n) n 10)))
+         (seed (md-opt o "seed" 42))
+         (dim0 (md-opt o "dim" 10))
+         (dim (if (and (integer? dim0) (>= dim0 1)) dim0 10))
+         (bounds (let ((b (md-opt o "bounds" (list (list 0.0 1.0)))))
+                   (if (list? b) b (list (list 0.0 1.0)))))
+         (dirs (let ((d (md-opt o "dirs" (list))))
+                 (if (list? d) d (list))))
+         (r (md-rng seed 0 0))
+         (pop (let loop ((i 0) (acc (list)))
+                (if (>= i n)
+                    (reverse acc)
+                    (loop (+ i 1)
+                          (cons (hash "cand" (md-candidate (md-genome dim bounds r)
+                                                          (hash "gen" 0 "slot" i))
+                                      "objs" (list)
+                                      "sub" i)
+                                acc))))))
+    (hash "kind" "moead" "schema" moead-schema-version
+          "seed" seed "n-obj" m "H" H "T" T "dim" dim "bounds" bounds
+          "weights" ws "weights-h" (md-index-hash ws)
+          "neighbors" (md-neighbors ws T)
+          "scalar" (let ((sc (md-opt o "scalar" "tchebycheff")))
+                     (if (string? sc) sc "tchebycheff"))
+          "theta" (md-num (md-opt o "theta" 5.0))
+          "nr" (md-opt o "nr" 2) "delta" (md-num (md-opt o "delta" 0.9))
+          "operator" (md-opt o "operator" "de")
+          "proposer" (md-opt o "proposer" #f)
+          "dd" (eq? (md-opt o "dd" #f) #t)
+          "dirs" dirs "objectives" (md-opt o "objectives" #f)
+          "ideal" (list) "nadir" (list)
+          "pop" pop "gen" 0 "slot" n "nfe" 0
+          "archive" (pareto:archive (hash "dirs" dirs "cap" n "trim" "hv")))))
+
+(define (moead-valid? s)
+  (and (hash? s) (string=? (md-opt s "kind" "") "moead")))
+
+(define (moead:weights s) (md-opt s "weights" (list)))
+
+(define (md-entry-id e)
+  (let ((c (md-opt e "cand" #f)))
+    (if (hash? c) (md-opt c "id" "") "")))
+
+(define (md-pop-at s i)
+  (let ((pop (md-opt s "pop" (list))))
+    (if (< i (length pop)) (list-ref pop i) #f)))
+
+(define (md-genome-of e)
+  (let ((c (md-opt e "cand" #f)))
+    (if (hash? c) (md-opt c "genome" (list)) (list))))
+
+
+; one proposal for subproblem sub
+(define (moead-propose s sub r)
+  (let* ((op (md-opt s "operator" "de"))
+         (dim (md-opt s "dim" 10))
+         (bounds (md-opt s "bounds" (list (list 0.0 1.0))))
+         (nbrs (let ((nb (md-opt s "neighbors" (list))))
+                 (if (< sub (length nb)) (list-ref nb sub) (list sub))))
+         (base (md-pop-at s sub))
+         (bg (md-genome-of base))
+         (pf (md-opt s "proposer" #f)))
+    (cond
+      ((procedure? pf)
+       (let ((raw (pf s (md-opt s "gen" 0) (md-opt s "slot" 0) r)))
+         (if (hash? raw) (md-opt raw "genome" (list)) raw)))
+      ((and (string? op) (string=? op "sbx"))
+       (let* ((i2 (md-rand-int! r (length nbrs)))
+              (p2 (md-pop-at s (list-ref nbrs i2)))
+              (kids (md-sbx bg (md-genome-of p2) 15.0 0.9 r))
+              (g (car kids)))
+         (md-poly-mut g bounds 20.0 (/ 1.0 dim) r)))
+      (else
+       (let* ((k (length nbrs))
+              (i1 (md-rand-int! r k))
+              (i2 (md-rand-int! r k))
+              (i3 (md-rand-int! r k))
+              (g1 (md-genome-of (md-pop-at s (list-ref nbrs i1))))
+              (g2 (md-genome-of (md-pop-at s (list-ref nbrs i2))))
+              (g3 (md-genome-of (md-pop-at s (list-ref nbrs i3))))
+              (F 0.5)
+              (CR 0.9)
+              (jrand (md-rand-int! r dim)))
+         (let loop ((xs g1) (ys g2) (zs g3) (bs bounds) (i 0) (acc (list)))
+           (if (or (null? xs) (null? ys) (null? zs))
+               (reverse acc)
+               (let* ((b (if (null? bs) (list 0.0 1.0) (car bs)))
+                      (v (+ (md-num (car xs)) (* F (- (md-num (car ys)) (md-num (car zs))))))
+                      (u (md-rand! r))
+                      (trial (cond ((or (= i jrand) (<= u CR)) v)
+                                   ((< i (length bg)) (md-num (list-ref bg i)))
+                                   (else v))))
+                 (loop (cdr xs) (cdr ys) (cdr zs)
+                       (if (null? bs) bs (cdr bs)) (+ i 1)
+                       (cons (md-clamp trial b) acc))))))))))
+
+(define (md-sbx p1 p2 eta pc r)
+  (let loop ((xs p1) (ys p2) (c1 (list)) (c2 (list)))
+    (if (or (null? xs) (null? ys))
+        (list (reverse c1) (reverse c2))
+        (let* ((x1 (md-num (car xs)))
+               (x2 (md-num (car ys)))
+               (u (md-rand! r)))
+          (if (or (> u pc) (< (abs (- x1 x2)) 1e-12))
+              (loop (cdr xs) (cdr ys) (cons x1 c1) (cons x2 c2))
+              (let* ((u2 (md-rand! r))
+                     (beta (if (<= u2 0.5)
+                               (expt (* 2.0 u2) (/ 1.0 (+ eta 1.0)))
+                               (expt (/ 1.0 (* 2.0 (- 1.0 u2))) (/ 1.0 (+ eta 1.0)))))
+                     (y1 (* 0.5 (+ (* (+ 1.0 beta) x1) (* (- 1.0 beta) x2))))
+                     (y2 (* 0.5 (+ (* (- 1.0 beta) x1) (* (+ 1.0 beta) x2)))))
+                (loop (cdr xs) (cdr ys) (cons y1 c1) (cons y2 c2))))))))
+
+(define (md-poly-mut g bounds eta pm r)
+  (let loop ((xs g) (bs bounds) (i 0) (acc (list)))
+    (if (null? xs)
+        (reverse acc)
+        (let* ((b (if (null? bs) (list 0.0 1.0) (car bs)))
+               (x (md-num (car xs)))
+               (lo (md-num (car b)))
+               (hi (md-num (car (cdr b))))
+               (u (md-rand! r)))
+          (if (or (> u pm) (<= (- hi lo) 0.0))
+              (loop (cdr xs) (if (null? bs) bs (cdr bs)) (+ i 1) (cons x acc))
+              (let* ((d1 (/ (- x lo) (- hi lo)))
+                     (d2 (/ (- hi x) (- hi lo)))
+                     (u2 (md-rand! r))
+                     (e (/ 1.0 (+ eta 1.0)))
+                     (dq (if (<= u2 0.5)
+                             (- (expt (+ (* 2.0 u2)
+                                         (* (- 1.0 (* 2.0 u2))
+                                            (expt (- 1.0 d1) (+ eta 1.0))))
+                                      e)
+                                1.0)
+                             (- 1.0
+                                (expt (+ (* 2.0 (- 1.0 u2))
+                                         (* (- (* 2.0 u2) 1.0)
+                                            (expt (- 1.0 d2) (+ eta 1.0))))
+                                      e)))))
+                (loop (cdr xs) (if (null? bs) bs (cdr bs)) (+ i 1)
+                      (cons (md-clamp (+ x (* dq (- hi lo))) b) acc))))))))
+
+
+(define (moead:ask s k)
+  (if (not (moead-valid? s))
+      (list)
+      (let* ((n (length (moead:weights s)))
+             (gen (md-opt s "gen" 0))
+             (slot0 (md-opt s "slot" 0)))
+        (let loop ((i 0) (acc (list)))
+          (if (>= i k)
+              (reverse acc)
+              (let* ((sub (modulo (+ (* gen 3) slot0 i) n))
+                     (r (md-rng (md-opt s "seed" 42) gen (+ slot0 i)))
+                     (g (moead-propose s sub r))
+                     (base (md-pop-at s sub))
+                     (c (md-candidate g (hash "gen" gen "slot" (+ slot0 i)
+                                              "meta" (hash "sub" sub)
+                                              "parents" (list (md-entry-id base))))))
+                (loop (+ i 1) (cons c acc))))))))
+
+(define (md-penalty viol g)
+  (if (> viol 0.0) (+ g (* 1000000.0 viol)) g))
+
+(define (md-set-at lst i v)
+  (cond ((null? lst) (list))
+        ((= i 0) (cons v (cdr lst)))
+        (else (cons (car lst) (md-set-at (cdr lst) (- i 1) v)))))
+
+(define (md-filter p xs)
+  (let loop ((ys xs) (acc (list)))
+    (if (null? ys) (reverse acc)
+        (if (p (car ys)) (loop (cdr ys) (cons (car ys) acc)) (loop (cdr ys) acc)))))
+
+(define (md-nearest ws f)
+  (let loop ((i 0) (bi 0) (bd 1e308))
+    (if (>= i (length ws))
+        bi
+        (let ((d (md-dist f (list-ref ws i))))
+          (if (< d bd) (loop (+ i 1) i d) (loop (+ i 1) bi bd))))))
+
+(define (md-dd-prune! s)
+  (let* ((a (md-opt s "archive" #f))
+         (pts (if (hash? a) (pareto:front a) (list)))
+         (n (length pts))
+         (cap (length (moead:weights s)))
+         (ws (moead:weights s))
+         (order (md-opt s "objectives" #f))
+         (dirs (md-opt s "dirs" (list))))
+    (if (<= n cap)
+        #t
+        (let* ((assoc
+                 (map (lambda (e)
+                        (let* ((f (md-normalize s (md-minvec (md-objs-of e order) dirs)))
+                               (idx (md-nearest ws f)))
+                          (list idx (md-scalar s f (list-ref ws idx)) (md-opt e "id" ""))))
+                      pts))
+               (seen (hash))
+               (drop (let loop ((as assoc) (acc (list)))
+                       (if (null? as)
+                           (reverse acc)
+                           (let* ((k (car (car as)))
+                                  (prev (hash-ref seen k #f)))
+                             (cond ((not prev)
+                                    (hash-set! seen k (car as))
+                                    (loop (cdr as) acc))
+                                   ((< (car (cdr (car as))) (car (cdr prev)))
+                                    (loop (cdr as) (cons (car (cdr (cdr prev))) acc)))
+                                   (else (loop (cdr as) (cons (car (cdr (cdr (car as)))) acc)))))))))
+          (hash-set! a "points"
+                     (let loop ((xs (md-opt a "points" (list))))
+                       (if (null? xs) (list)
+                           (if (member (md-opt (car xs) "id" "") drop)
+                               (loop (cdr xs))
+                               (cons (car xs) (loop (cdr xs)))))))
+          #t))))
+
+(define (moead-tell-one s c os)
+  (let* ((order (md-opt s "objectives" #f))
+         (dirs (md-opt s "dirs" (list)))
+         (objs (if (list? os) os (md-objs-of os order)))
+         (viol (if (list? os) (md-viol-of c) (md-viol-of os)))
+         (f (md-minvec objs dirs))
+         (sub (let ((m (md-opt c "meta" (hash))))
+                (let ((v (md-opt m "sub" 0)))
+                  (if (integer? v) v 0))))
+         (nbrs (let ((nb (md-opt s "neighbors" (list))))
+                 (if (< sub (length nb)) (list-ref nb sub) (list sub))))
+         (nr0 (md-opt s "nr" 2))
+         (nr (if (and (integer? nr0) (>= nr0 0)) nr0 2))
+         (pop (md-opt s "pop" (list))))
+    (let* ((fn (md-normalize s f))
+           (wh (md-opt s "weights-h" #f))
+           (ws (moead:weights s))
+           (wj (lambda (j) (if (hash? wh) (hash-ref wh j (list)) (list-ref ws j)))))
+      (let loop ((ks nbrs) (replaced 0) (pop* pop))
+        (if (or (null? ks) (and (> nr 0) (>= replaced nr)))
+            (hash-set! s "pop" pop*)
+            (let* ((j (car ks))
+                   (e (if (< j (length pop*)) (list-ref pop* j) #f))
+                   ; Both scores are taken against the NEIGHBOUR's weight
+                   ; vector: that is the scalar subproblem j being updated.
+                   (gn (md-penalty viol (md-scalar s fn (wj j))))
+                   (en (if (and e (not (null? (md-objs-of e order))))
+                           (md-penalty (md-viol-of e)
+                                       (md-scalar s (md-normalize s (md-minvec (md-objs-of e order) dirs))
+                                                  (wj j)))
+                           1e308)))
+              (if (<= gn en)
+                  (loop (cdr ks) (+ replaced 1)
+                        (md-set-at pop* j (hash "cand" c "objs" objs "sub" j "viol" viol)))
+                  (loop (cdr ks) replaced pop*))))))
+    (hash-set! s "nfe" (+ 1 (md-opt s "nfe" 0)))
+    (if (md-opt s "dd" #f)
+        (begin
+          (pareto:insert! (md-opt s "archive" #f) c objs)
+          (md-dd-prune! s))
+        #t)))
+
+(define (moead:tell! s cands objs)
+  (if (not (moead-valid? s))
+      #f
+      (let* ((cs (if (list? cands) cands (list)))
+             (os (if (list? objs) objs (list)))
+             (n (length (md-take cs (length os))))
+             (batch-objs (map (lambda (o) (if (list? o) o (md-objs-of o (md-opt s "objectives" #f)))) os)))
+        (md-refresh-extremes! s batch-objs)
+        (let loop ((xs cs) (ys os))
+          (if (or (null? xs) (null? ys))
+              (begin
+                (hash-set! s "slot" (+ (md-opt s "slot" 0) n))
+                (hash-set! s "gen" (+ 1 (md-opt s "gen" 0)))
+                #t)
+              (begin (moead-tell-one s (car xs) (car ys))
+                     (loop (cdr xs) (cdr ys))))))))
+
+(define (moead:run! s eval-fn total)
+  (let ((n (length (moead:weights s))))
+    (let loop ((done 0))
+      (if (>= done total)
+          s
+          (let* ((k (min n (- total done)))
+                 (cs (moead:ask s k))
+                 (es (map (lambda (c) (eval-fn c)) cs)))
+            (moead:tell! s cs es)
+            (loop (+ done k)))))))
+
+(define (moead:front s)
+  (let* ((a (md-opt s "archive" #f))
+         (dd (md-opt s "dd" #f))
+         (order (md-opt s "objectives" #f))
+         (dirs (md-opt s "dirs" (list))))
+    (cond ((and dd (hash? a)) (pareto:front a))
+          (else
+           (let ((items (map (lambda (e) (hash "objs" (md-objs-of e order)
+                                               "viol" (md-viol-of e)))
+                             (md-filter (lambda (e) (not (null? (md-objs-of e order))))
+                                        (md-opt s "pop" (list))))))
+             (if (null? items) (list) (car (pareto:nd-sort items (hash "dirs" dirs)))))))))
+
+(define (moead:report s)
+  (let* ((f (moead:front s))
+         (objs (map (lambda (e) (md-objs-of e (md-opt s "objectives" #f))) f)))
+    (hash "kind" "moead" "gen" (md-opt s "gen" 0) "nfe" (md-opt s "nfe" 0)
+          "subproblems" (length (moead:weights s))
+          "front-size" (length f)
+          "ideal" (md-opt s "ideal" (list))
+          "nadir" (md-opt s "nadir" (list))
+          "hypervolume" (if (null? objs) 0.0
+                            (pareto:hypervolume objs (list 1.1 1.1)
+                                                (hash "dirs" (md-opt s "dirs" (list))))))))
+
