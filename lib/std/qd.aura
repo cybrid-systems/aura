@@ -37,7 +37,7 @@
 (define qd-schema-version 1)
 
 (define (qd:help)
-  "std/qd (#4941): (qd:map-elites (hash \"descriptors\" (list (list \"tokens\" 0 20000 10)) \"quality\" \"success\")) -> m; (qd:insert! m cand quality behavior) -> #t|#f; (qd:elites m) (qd:coverage m) (qd:qd-score m); (qd:novelty m behavior k); (qd:islands (hash \"n\" 4 \"migrate-every\" 20)) with (qd:islands-run! s eval gens); (qd:select-parent m (hash \"policy\" \"score-child\")); (qd:novel-enough? m cand (hash \"min-dist\" 0.05)); (qd:struct-hash genome).")
+  "std/qd (#4941): (qd:map-elites (hash \"descriptors\" (list (list \"tokens\" 0 20000 10)) \"quality\" \"success\" [\"cvt\" k])) -> m; (qd:insert! m cand quality behavior) -> #t|#f; (qd:elites m) (qd:coverage m) (qd:qd-score m) (qd:best m); (qd:novelty m behavior k); (qd:select-parent m (hash \"policy\" \"uniform\"|\"score-child\"|\"novelty\")); (qd:novel-enough? m cand (hash \"min-dist\" 0.05)); (qd:struct-hash genome); (qd:islands (hash \"n\" 4 \"pop\" 12 \"migrate-every\" 5 \"reset-worst\" #t \"mutation\" r \"macro\" p \"macro-window\" w)) with (qd:islands-run! s eval gens), (qd:islands-best s); (qd:heatmap-svg m) (qd:lineage-svg elites); (qd:migrate! s).")
 
 (define (qd:schema) qd-schema-version)
 
@@ -520,18 +520,55 @@
   (let ((lo (qd-num (car b))) (hi (qd-num (car (cdr b)))))
     (if (< x lo) lo (if (> x hi) hi x))))
 
+(define (qd-mutate-rate g bounds dim rate r)
+  (let ((p (if (and (number? rate) (> rate 0.0) (< rate 1.0)) rate
+               (/ 1.0 (* 1.0 (if (< dim 1) 1 dim))))))
+    (let loop ((xs g) (bs bounds) (i 0) (acc (list)))
+      (if (null? xs)
+          (reverse acc)
+          (let* ((b (if (null? bs) (list 0.0 1.0) (car bs)))
+                 (x (qd-num (car xs)))
+                 (y (if (< (qd-rand! r) p)
+                        (+ (qd-num (car b))
+                           (* (qd-rand! r) (- (qd-num (car (cdr b))) (qd-num (car b)))))
+                        x)))
+            (loop (cdr xs) (if (null? bs) bs (cdr bs)) (+ i 1)
+                  (cons (qd-clamp y b) acc)))))))
+
 (define (qd-mutate g bounds dim r)
-  (let loop ((xs g) (bs bounds) (i 0) (acc (list)))
-    (if (null? xs)
-        (reverse acc)
-        (let* ((b (if (null? bs) (list 0.0 1.0) (car bs)))
-               (x (qd-num (car xs)))
-               (y (if (< (qd-rand! r) (/ 1.0 (* 1.0 (if (< dim 1) 1 dim))))
-                      (+ (qd-num (car b))
-                         (* (qd-rand! r) (- (qd-num (car (cdr b))) (qd-num (car b)))))
-                      x)))
-          (loop (cdr xs) (if (null? bs) bs (cdr bs)) (+ i 1)
-                (cons (qd-clamp y b) acc))))))
+  (qd-mutate-rate g bounds dim (/ 1.0 (* 1.0 (if (< dim 1) 1 dim))) r))
+
+; A window mutation: redraw a contiguous run of 1..win genes. Per-gene
+; mutation cannot build a multi-gene building block from a converged
+; population; a window can (it is the macro-mutation step of island-style
+; search, and it stays generic - no knowledge of the objective).
+(define (qd-window-mutate g bounds win r)
+  (let* ((dim (length g))
+         (start (qd-rand-int! r (max 1 dim)))
+         (len (+ 1 (qd-rand-int! r (max 1 win)))))
+    (let loop ((xs g) (bs bounds) (i 0) (acc (list)))
+      (if (null? xs)
+          (reverse acc)
+          (let* ((b (if (null? bs) (list 0.0 1.0) (car bs)))
+                 (off (modulo (- i start) (max 1 dim)))
+                 (x (qd-num (car xs)))
+                 (y (if (< off len)
+                        (+ (qd-num (car b))
+                           (* (qd-rand! r) (- (qd-num (car (cdr b))) (qd-num (car b)))))
+                        x)))
+            (loop (cdr xs) (if (null? bs) bs (cdr bs)) (+ i 1)
+                  (cons (qd-clamp y b) acc)))))))
+
+; Uniform crossover: gene i comes from a or b by a coin flip.
+(define (qd-crossover a b bounds r)
+  (let loop ((xs a) (ys b) (bs bounds) (acc (list)))
+    (cond ((null? xs) (reverse acc))
+          ((null? ys) (append (reverse acc) xs))
+          (else
+           (let* ((bnd (if (null? bs) (list 0.0 1.0) (car bs)))
+                  (v (if (< (qd-rand! r) 0.5) (car xs) (car ys))))
+             (loop (cdr xs) (cdr ys) (if (null? bs) bs (cdr bs))
+                   (cons (qd-clamp (qd-num v) bnd) acc)))))))
 
 (define (qd:islands opts)
   (let* ((o (if (hash? opts) opts (hash)))
@@ -542,16 +579,31 @@
          (dim (let ((d (qd-opt o "dim" 20))) (if (and (integer? d) (>= d 1)) d 20)))
          (bounds (let ((b (qd-opt o "bounds" (list (list 0.0 1.0)))))
                    (if (list? b) b (list (list 0.0 1.0)))))
-         (seed (qd-opt o "seed" 7)))
+         (seed (qd-opt o "seed" 7))
+         (rate (let ((p (qd-opt o "mutation" (/ 1.0 (* 1.0 dim)))))
+                 (if (and (number? p) (> p 0.0) (< p 1.0)) (* 1.0 p)
+                     (/ 1.0 (* 1.0 dim)))))
+         (macro (let ((p (qd-opt o "macro" 0.15)))
+                  (if (and (number? p) (>= p 0.0) (<= p 1.0)) (* 1.0 p) 0.15)))
+         (win (let ((w (qd-opt o "macro-window" (max 1 (quotient dim 4)))))
+                (if (and (integer? w) (>= w 1)) w (max 1 (quotient dim 4)))))
+         (migrant-rate (let ((p (qd-opt o "migrant-rate" 0.25)))
+                         (if (and (number? p) (>= p 0.0) (<= p 1.0)) (* 1.0 p) 0.25)))
+         (immigrants (let ((k (qd-opt o "immigrants" 1)))
+                       (if (and (integer? k) (>= k 0)) k 1))))
     (hash "kind" "qd-islands" "schema" qd-schema-version
           "n" n "migrate-every" every
           "reset-worst" (eq? (qd-opt o "reset-worst" #t) #t)
           "pop" pop "dim" dim "bounds" bounds "seed" seed "gen" 0
+          "mutation" rate "macro" macro "macro-window" win
+          "crossover" (eq? (qd-opt o "crossover" #f) #t)
+          "migrant-rate" migrant-rate "immigrants" immigrants
           "islands" (let loop ((i 0) (acc (list)))
                       (if (>= i n)
                           (reverse acc)
                           (loop (+ i 1)
-                                (cons (hash "i" i "members" (list) "best" #f "stale" 0)
+                                (cons (hash "i" i "members" (list) "best" #f
+                                            "stale" 0 "migrant" #f "resets" 0)
                                       acc)))))))
 
 (define (qd-islands? s)
@@ -584,24 +636,50 @@
       (list)
       (let* ((isl (qd-island-at s i))
              (members (if isl (qd-opt isl "members" (list)) (list)))
+             (migrant (if isl (qd-opt isl "migrant" #f) #f))
              (seed (qd-opt s "seed" 7))
              (gen (qd-opt s "gen" 0))
              (dim (qd-opt s "dim" 20))
-             (bounds (qd-opt s "bounds" (list (list 0.0 1.0)))))
+             (bounds (qd-opt s "bounds" (list (list 0.0 1.0))))
+             (rate (qd-opt s "mutation" (/ 1.0 (* 1.0 dim))))
+             (macro (qd-opt s "macro" 0.15))
+             (win (qd-opt s "macro-window" (max 1 (quotient dim 4))))
+             (xo (eq? (qd-opt s "crossover" #f) #t))
+             (mgr (qd-opt s "migrant-rate" 0.25))
+             (imm (qd-opt s "immigrants" 1)))
         (let loop ((j 0) (acc (list)))
           (if (>= j k)
               (reverse acc)
               (let* ((r (qd-rng seed (+ (* gen 101) j) i))
-                     (parent (if (null? members)
-                                 #f
-                                 (list-ref members (qd-rand-int! r (length members)))))
-                     (g (if (or (not parent) (< (qd-rand! r) 0.1))
-                            (qd-genome dim bounds r)
-                            (qd-mutate (qd-member-genome parent) bounds dim r)))
-                     (c (evo:candidate g (hash "gen" gen
-                                               "slot" (+ (* i 1000) j)
-                                               "parents" (qd-parent-ids parent)
-                                               "meta" (hash "island" i)))))
+                     (fresh (< j imm))
+                     (parent (cond (fresh #f)
+                                   ((and (not (null? members)) (< (qd-rand! r) mgr))
+                                    (if migrant migrant
+                                        (list-ref members (qd-rand-int! r (length members)))))
+                                   ((null? members) #f)
+                                   (else (list-ref members (qd-rand-int! r (length members))))))
+                     (mate (if (and xo (not (null? members)) (not (null? (cdr members))))
+                               (list-ref members (qd-rand-int! r (length members)))
+                               #f))
+                     (base (if (not parent)
+                               (qd-genome dim bounds r)
+                               (if (and xo mate (not (eq? mate parent)))
+                                   (qd-crossover (qd-member-genome parent)
+                                                 (qd-member-genome mate) bounds r)
+                                   (qd-member-genome parent))))
+                     (g (if (not parent)
+                            base
+                            (qd-mutate-rate base bounds dim rate r)))
+                     (g2 (if (and parent (< (qd-rand! r) macro))
+                             (qd-window-mutate g bounds win r)
+                             g))
+                     (ps (let ((p (qd-parent-ids parent)))
+                           (if (and mate (not (eq? mate parent)))
+                               (append p (qd-parent-ids mate)) p)))
+                     (c (evo:candidate g2 (hash "gen" gen
+                                                "slot" (+ (* i 1000) j)
+                                                "parents" ps
+                                                "meta" (hash "island" i)))))
                 (loop (+ j 1) (cons c acc))))))))
 
 (define (qd:island-tell! s i cands quals)
@@ -636,10 +714,16 @@
                                   "stale" (if improved 0 (+ 1 (qd-opt isl "stale" 0)))))
         #t)))
 
-; Ring migration: island i receives the best member of island (i+1) % n,
-; replacing its worst member.
-(define (qd:migrate! s)
+; Ring migration: island i receives the best member of island (i+1) % n.
+; With an evaluator the migrant is *recombined* with the local elite first:
+; building blocks found in different demes meet in one child, which is why
+; the island model beats a panmictic population on decomposable traps.
+(define (qd:migrate! s) (qd-migrate* s #f))
+
+(define (qd-migrate* s eval-fn)
   (let* ((n (qd-opt s "n" 4))
+         (seed (qd-opt s "seed" 7))
+         (gen (qd-opt s "gen" 0))
          (is (qd-opt s "islands" (list))))
     (let loop ((i 0) (acc is))
       (if (>= i n)
@@ -647,8 +731,23 @@
           (let* ((donor (qd-island-at s (modulo (+ i 1) n)))
                  (dbest (if donor (qd-opt donor "best" #f) #f))
                  (me (list-ref acc i))
-                 (members (qd-opt me "members" (list)))
-                 (pop (qd-opt s "pop" 16)))
+                 (lbest (qd-opt me "best" #f))
+                 (bounds (qd-opt s "bounds" (list (list 0.0 1.0))))
+                 (dim (qd-opt s "dim" 20))
+                 (pop (qd-opt s "pop" 16))
+                 (r (qd-rng seed (+ (* gen 131) i) 1))
+                 (child (if (and eval-fn (> n 1) dbest lbest)
+                            (let* ((g (qd-crossover (qd-member-genome lbest)
+                                                    (qd-member-genome dbest) bounds r))
+                                   (c (evo:candidate g (hash "gen" gen
+                                                             "slot" (+ (* i 1000) 999)
+                                                             "parents" (append (qd-parent-ids lbest)
+                                                                               (qd-parent-ids dbest))
+                                                             "meta" (hash "island" i "migrant" #t))))
+                                   (q (eval-fn c)))
+                              (hash "cand" c "q" (qd-num (if (list? q) (car q) q))))
+                            #f))
+                 (members (qd-opt me "members" (list))))
             (if (and dbest (not (null? members)))
                 (let* ((worst (let loop ((xs (cdr members)) (w (car members)))
                                 (if (null? xs) w
@@ -656,11 +755,18 @@
                                           (if (< (qd-num (qd-opt (car xs) "q" 0))
                                                  (qd-num (qd-opt w "q" 0)))
                                               (car xs) w)))))
-                       (merged (cons dbest (qd-filter (lambda (m) (not (eq? m worst))) members)))
-                       (kept (qd-take merged pop)))
+                       (merged0 (cons dbest (qd-filter (lambda (m) (not (eq? m worst))) members)))
+                       (merged (if child (cons child merged0) merged0))
+                       (sorted (sort merged (lambda (a b)
+                                              (> (qd-num (qd-opt a "q" 0))
+                                                 (qd-num (qd-opt b "q" 0))))))
+                       (kept (qd-take sorted pop))
+                       (best (if (null? kept) lbest (car kept))))
                   (loop (+ i 1) (md-replace acc i (hash "i" i "members" kept
-                                                        "best" (qd-opt me "best" #f)
-                                                        "stale" (qd-opt me "stale" 0)))))
+                                                        "best" best
+                                                        "stale" (qd-opt me "stale" 0)
+                                                        "migrant" dbest
+                                                        "resets" (qd-opt me "resets" 0)))))
                 (loop (+ i 1) acc)))))))
 
 (define (md-replace lst i v)
@@ -682,7 +788,9 @@
     (if (and isl (>= (qd-opt isl "stale" 0) (* 2 every)))
         (begin
           (qd-island-put! s worst (hash "i" worst "members" (list)
-                                        "best" (qd-opt isl "best" #f) "stale" 0))
+                                        "best" (qd-opt isl "best" #f) "stale" 0
+                                        "migrant" (qd-opt isl "migrant" #f)
+                                        "resets" (+ 1 (qd-opt isl "resets" 0))))
           #t)
         #f)))
 
@@ -704,7 +812,7 @@
                         (qd:island-tell! s i cs qs)
                         (iloop (+ i 1)))))
                 (let ((gen (+ 1 (qd-opt s "gen" 0))))
-                  (if (= 0 (modulo gen every)) (qd:migrate! s) #t)
+                  (if (= 0 (modulo gen every)) (qd-migrate* s eval-fn) #t)
                   (if (qd-opt s "reset-worst" #f) (qd:reset-worst! s) #t)
                   (hash-set! s "gen" gen))
                 (loop (+ g 1))))))))

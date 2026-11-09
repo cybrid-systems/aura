@@ -488,6 +488,207 @@ static int cmd_log(const std::vector<J>& recs, bool as_json) {
     return 0;
 }
 
+// ── QD heat map and lineage (issue #4941) ──────────────────────────
+// Behaviour descriptors arrive as the v=2 "behavior" member: an array (or
+// an object of numbers) from the evaluator. Two of them are the cell
+// coordinates; the record's score is the cell quality. The grid is the
+// observed bounding box, so the report needs no map configuration.
+struct QdCell {
+    double x = 0, y = 0, q = 0;
+};
+
+static bool behavior_xy(const J& r, double& x, double& y) {
+    const J* b = r.get("behavior");
+    if (!b)
+        return false;
+    std::vector<double> xs;
+    if (b->t == J::T::Arr) {
+        for (const auto& v : b->arr)
+            if (v.t == J::T::Num)
+                xs.push_back(v.n);
+    } else if (b->t == J::T::Obj) {
+        for (const auto& [k, v] : b->obj)
+            if (v.t == J::T::Num)
+                xs.push_back(v.n);
+    }
+    if (xs.size() < 2)
+        return false;
+    x = xs[0];
+    y = xs[1];
+    return true;
+}
+
+static double quality_of(const J& r) {
+    if (auto s = score_of(r))
+        return s->second;
+    return 0.0;
+}
+
+static double clamp01(double t) {
+    return t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
+}
+
+static std::string color_for(double t) {
+    // Blue → amber ramp; t in [0,1].
+    t = clamp01(t);
+    const int r = static_cast<int>(30 + 225 * t);
+    const int g = static_cast<int>(90 + 120 * t);
+    const int b = static_cast<int>(200 - 140 * t);
+    return std::format("rgb({},{},{})", r, g, b);
+}
+
+static std::string qd_heatmap_svg(const std::vector<QdCell>& cells, std::size_t& filled) {
+    constexpr int BINS = 10;
+    constexpr double W = 460, H = 360, PAD = 34;
+    if (cells.empty())
+        return {};
+    double x0 = cells[0].x, x1 = x0, y0 = cells[0].y, y1 = y0, q0 = cells[0].q, q1 = q0;
+    for (const auto& c : cells) {
+        x0 = std::min(x0, c.x);
+        x1 = std::max(x1, c.x);
+        y0 = std::min(y0, c.y);
+        y1 = std::max(y1, c.y);
+        q0 = std::min(q0, c.q);
+        q1 = std::max(q1, c.q);
+    }
+    const double xs = x1 > x0 ? x1 - x0 : 1.0;
+    const double ys = y1 > y0 ? y1 - y0 : 1.0;
+    std::vector<double> best(BINS * BINS, 0.0);
+    std::vector<char> has(BINS * BINS, 0);
+    for (const auto& c : cells) {
+        int i = static_cast<int>((c.x - x0) / xs * BINS);
+        int j = static_cast<int>((c.y - y0) / ys * BINS);
+        i = i < 0 ? 0 : (i >= BINS ? BINS - 1 : i);
+        j = j < 0 ? 0 : (j >= BINS ? BINS - 1 : j);
+        const auto slot = static_cast<std::size_t>(j) * BINS + i;
+        if (!has[slot] || c.q > best[slot]) {
+            best[slot] = c.q;
+            has[slot] = 1;
+        }
+    }
+    filled = 0;
+    const double cw = (W - 2 * PAD) / BINS, ch = (H - 2 * PAD) / BINS;
+    std::string svg =
+        std::format("<svg viewBox=\"0 0 {} {}\" width=\"{}\" height=\"{}\" role=\"img\" "
+                    "aria-label=\"QD heat map\">",
+                    W, H, W, H);
+    svg += std::format("<rect x=\"0\" y=\"0\" width=\"{0}\" height=\"{1}\" fill=\"#fff\"/>", W, H);
+    for (int j = 0; j < BINS; ++j)
+        for (int i = 0; i < BINS; ++i) {
+            const auto slot = static_cast<std::size_t>(j) * BINS + i;
+            if (!has[slot])
+                continue;
+            const double v = best[slot];
+            ++filled;
+            const double t = q1 > q0 ? (v - q0) / (q1 - q0) : 1.0;
+            svg += std::format(
+                "<rect x=\"{:.1f}\" y=\"{:.1f}\" width=\"{:.1f}\" height=\"{:.1f}\" "
+                "fill=\"{}\" stroke=\"#fff\"><title>x={:.4g} y={:.4g} q={:.6g}</title></rect>",
+                PAD + i * cw, PAD + j * ch, cw, ch, color_for(t), x0 + (i + 0.5) * xs / BINS,
+                y0 + (j + 0.5) * ys / BINS, v);
+        }
+    svg += std::format("<text x=\"4\" y=\"{}\" class=\"lb\">{:.4g}</text>"
+                       "<text x=\"4\" y=\"{}\" class=\"lb\">{:.4g}</text>",
+                       H - PAD, y0, PAD + 8, y1);
+    svg += "</svg>";
+    return svg;
+}
+
+struct LNode {
+    std::string id;
+    std::string parent;
+    std::vector<std::string> parents;
+    std::string decision;
+};
+
+// Depth of each node from its parent chain (roots at 0). Records are written
+// in append order, so a parent normally precedes its child; the loop is
+// bounded anyway and stops on a cycle.
+static std::size_t node_at(const std::vector<std::pair<std::string, std::size_t>>& idx,
+                           const std::string& id) {
+    for (const auto& [key, at] : idx)
+        if (key == id)
+            return at;
+    return static_cast<std::size_t>(-1);
+}
+
+static std::size_t node_depth(const std::vector<LNode>& ns,
+                              const std::vector<std::pair<std::string, std::size_t>>& idx,
+                              std::size_t i) {
+    std::size_t d = 0;
+    std::string cur = ns[i].parent;
+    std::size_t guard = 0;
+    while (!cur.empty() && guard++ <= ns.size()) {
+        const std::size_t at = node_at(idx, cur);
+        if (at == static_cast<std::size_t>(-1))
+            break;
+        cur = ns[at].parent;
+        ++d;
+    }
+    return d;
+}
+
+static std::string lineage_svg(const std::vector<LNode>& ns, std::size_t& drawn) {
+    if (ns.empty())
+        return {};
+    std::vector<std::pair<std::string, std::size_t>> idx;
+    idx.reserve(ns.size());
+    for (std::size_t i = 0; i < ns.size(); ++i)
+        idx.emplace_back(ns[i].id, i);
+    std::vector<std::size_t> depth(ns.size());
+    std::size_t maxd = 0;
+    for (std::size_t i = 0; i < ns.size(); ++i) {
+        depth[i] = node_depth(ns, idx, i);
+        maxd = std::max(maxd, depth[i]);
+    }
+    std::vector<std::size_t> per_layer(maxd + 1, 0);
+    for (const auto d : depth)
+        ++per_layer[d];
+    std::size_t widest = 0;
+    for (const auto n : per_layer)
+        widest = std::max(widest, n);
+    constexpr double DX = 64, DY = 42, PAD = 30;
+    const double W = std::max(320.0, PAD * 2 + DX * static_cast<double>(widest));
+    const double H = PAD * 2 + DY * static_cast<double>(maxd + 1);
+    std::vector<std::pair<double, double>> pos(ns.size());
+    std::vector<std::size_t> seen(maxd + 1, 0);
+    for (std::size_t i = 0; i < ns.size(); ++i) {
+        const double x = PAD + DX * static_cast<double>(seen[depth[i]]++) + 8;
+        pos[i] = {x, PAD + DY * static_cast<double>(depth[i])};
+    }
+    std::string svg =
+        std::format("<svg viewBox=\"0 0 {} {}\" width=\"{}\" height=\"{}\" role=\"img\" "
+                    "aria-label=\"lineage tree\">",
+                    W, H, W, H);
+    svg += std::format("<rect x=\"0\" y=\"0\" width=\"{0}\" height=\"{1}\" fill=\"#fff\"/>", W, H);
+    drawn = 0;
+    for (std::size_t i = 0; i < ns.size(); ++i) {
+        const auto edge = [&](const std::string& pid) {
+            const std::size_t at = node_at(idx, pid);
+            if (at == static_cast<std::size_t>(-1))
+                return;
+            svg += std::format("<line x1=\"{:.1f}\" y1=\"{:.1f}\" x2=\"{:.1f}\" y2=\"{:.1f}\" "
+                               "stroke=\"#bbb\"/>",
+                               pos[at].first, pos[at].second, pos[i].first, pos[i].second);
+        };
+        if (!ns[i].parent.empty())
+            edge(ns[i].parent);
+        for (const auto& p : ns[i].parents)
+            if (p != ns[i].parent)
+                edge(p);
+    }
+    for (std::size_t i = 0; i < ns.size(); ++i) {
+        ++drawn;
+        svg += std::format("<circle cx=\"{:.1f}\" cy=\"{:.1f}\" r=\"4\" class=\"{}\" "
+                           "fill=\"{}\"><title>{} {}</title></circle>",
+                           pos[i].first, pos[i].second, ns[i].decision == "KEEP" ? "k" : "r",
+                           ns[i].decision == "KEEP" ? "#1a7f37" : "#cf222e",
+                           html_escape(short_id(ns[i].id)), html_escape(ns[i].decision));
+    }
+    svg += "</svg>";
+    return svg;
+}
+
 static int cmd_report(const std::vector<J>& recs, const std::filesystem::path& dir,
                       const std::filesystem::path& log_path) {
     std::error_code ec;
@@ -553,6 +754,50 @@ static int cmd_report(const std::vector<J>& recs, const std::filesystem::path& d
                                html_escape(metric), v);
         svg += "</svg>";
     }
+    // QD map: one cell per record that carries a 2-D behaviour descriptor.
+    std::vector<QdCell> cells;
+    for (const auto& r : recs) {
+        QdCell c;
+        if (behavior_xy(r, c.x, c.y)) {
+            c.q = quality_of(r);
+            cells.push_back(c);
+        }
+    }
+    std::size_t qd_filled = 0;
+    const std::string qd_svg = qd_heatmap_svg(cells, qd_filled);
+    // Lineage: parent links, including the v=2 multi-parent list.
+    std::vector<LNode> nodes;
+    for (const auto& r : recs) {
+        if (r.str("id").empty())
+            continue;
+        LNode n;
+        n.id = r.str("id");
+        n.parent = r.str("parent");
+        n.decision = r.str("decision");
+        if (const J* ps = r.get("parents"); ps && ps->t == J::T::Arr)
+            for (const auto& p : ps->arr)
+                if (p.t == J::T::Str && !p.s.empty())
+                    n.parents.push_back(p.s);
+        nodes.push_back(std::move(n));
+    }
+    std::size_t lineage_nodes = 0;
+    const std::string lineage_svg_text = lineage_svg(nodes, lineage_nodes);
+    if (!qd_svg.empty()) {
+        std::ofstream f(dir / "qd-heatmap.svg", std::ios::binary | std::ios::trunc);
+        f << qd_svg;
+        if (!f) {
+            std::println(std::cerr, "error: cannot write {}", (dir / "qd-heatmap.svg").string());
+            return 1;
+        }
+    }
+    if (!lineage_svg_text.empty()) {
+        std::ofstream f(dir / "lineage.svg", std::ios::binary | std::ios::trunc);
+        f << lineage_svg_text;
+        if (!f) {
+            std::println(std::cerr, "error: cannot write {}", (dir / "lineage.svg").string());
+            return 1;
+        }
+    }
     std::string h;
     h += "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
          "<title>aura evo report</title><style>"
@@ -572,6 +817,12 @@ static int cmd_report(const std::vector<J>& recs, const std::filesystem::path& d
                      html_escape(log_path.string()), recs.size(), keep, rb);
     if (!svg.empty())
         h += "<h2>Score (" + html_escape(metric) + ")</h2>" + svg;
+    if (!qd_svg.empty())
+        h += std::format("<h2>QD map</h2><p>{} cells filled · {} evaluated candidates</p>",
+                         qd_filled, cells.size()) +
+             qd_svg;
+    if (!lineage_svg_text.empty())
+        h += std::format("<h2>Lineage</h2><p>{} nodes</p>", lineage_nodes) + lineage_svg_text;
     h += "<h2>Timeline</h2><table><tr><th>id</th><th>parent</th><th>kind</th><th>target</th>"
          "<th>decision</th><th>reason</th><th>evidence</th><th>ms</th></tr>";
     for (const auto& r : recs)
