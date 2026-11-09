@@ -1,0 +1,4 @@
+zdt1 dim=2 delay=100ms  seed=7
+  plain  n=1000 hv=1.1034633233252202 wall=101894ms
+  surr   n=300 hv=1.0891030684135343 wall=88425ms
+  claim surrogate(300) >= plain(1000): FAIL

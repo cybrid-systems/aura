@@ -1,0 +1,157 @@
+; tests/bench/zdt1_surrogate_4943.aura — Issue #4943 expensive benchmark
+;
+; Opt-in: this file is NOT part of tests/suite and is never run by the CI
+; suite. ZDT1 with an artificial 100 ms evaluation delay: the plain arm gets
+; 1,000 expensive evaluations, the surrogate arm 300. Claim (issue #4943):
+; surrogate HV >= plain-1000 HV.
+;
+;   AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 ./build/aura \
+;       --load tests/bench/zdt1_surrogate_4943.aura
+;
+; Wall time is ~4-5 minutes (1,300 x 100 ms plus the GP fits). Aura has no
+; sleep primitive, so the delay is a clock-bound yield loop and the process
+; spins one core; it is still a real wall-clock cost per evaluation.
+;
+; Surrogate arm (MOEA/D-EGO style):
+;   1. 60 space-filling genomes (LCG over the box) are evaluated.
+;   2. Each round fits GP(f1) and GP(f2) on the newest 40 evaluations, runs
+;      MOEA/D against the GP predictions for SEARCH evaluations with a fresh
+;      seed, and evaluates the predicted population's genomes (deduplicated
+;      against everything already evaluated).
+; Hypervolume is computed over ALL real evaluations of the arm, never over
+; predicted points.
+
+(require "std/moead" all:)
+(require "std/pareto" all:)
+(require "std/surrogate" all:)
+(require "std/list" all:)
+
+(define DIM 2)                       ; ZDT1 variables; the GP arm needs a
+                                     ; dimension its model can resolve
+(define REF (list 1.2 1.2))
+(define EVAL-MS 100)
+(define PLAIN-BUDGET 1000)
+(define SURR-BUDGET 300)
+(define INITIAL 100)
+(define MAX-N 40)
+(define SEARCH 200)
+(define *real* 0)
+
+(define (sum xs) (foldl (lambda (a x) (+ a x)) 0.0 xs))
+(define (zdt1 g)
+  (let* ((f1 (car g)) (tail (cdr g))
+         (gg (+ 1.0 (* 9.0 (/ (sum tail) (max 1 (length tail)))))))
+    (list f1 (* gg (- 1.0 (sqrt (/ f1 gg)))))))
+
+(define (delay-ms ms)
+  (let ((t0 (monotonic-ms)))
+    (let loop ()
+      (if (< (- (monotonic-ms) t0) ms) (begin (fiber:yield) (loop)) #t))))
+
+(define (expensive g)
+  (delay-ms EVAL-MS)
+  (set! *real* (+ *real* 1))
+  (zdt1 g))
+
+(define (hv-all objs)
+  (if (null? objs) 0.0
+      (pareto:hypervolume objs REF (hash "dirs" (list "min" "min")))))
+
+(define (mk seed)
+  (moead:make (hash "n-obj" 2 "H" 12 "T" 5 "dim" DIM "seed" seed
+                    "dirs" (list "min" "min") "operator" "de")))
+
+(define (tail-n xs n)
+  (let ((len (length xs)))
+    (if (<= len n) xs (list-tail xs (- len n)))))
+
+; deterministic uniform genome from an LCG seed
+(define (uniforms n seed)
+  (let loop ((i 0) (s seed) (acc (quote ())))
+    (if (>= i n) (reverse acc)
+        (let ((s1 (modulo (+ (* s 1664525) 1013904223) 4294967296)))
+          (loop (+ i 1) s1 (cons (/ (* 1.0 s1) 4294967296.0) acc))))))
+(define (rand-genome seed)
+  (let loop ((xs (uniforms DIM seed)) (acc (quote ())))
+    (if (null? xs) (reverse acc) (loop (cdr xs) (cons (car xs) acc)))))
+
+(define (fit2 X O)
+  (if (< (length X) 8) #f
+      (list (surr:fit! (surr:gp (hash "kernel" "matern52" "max-n" MAX-N
+                                      "noise" 1e-6 "sense" "min"))
+                       (tail-n X MAX-N) (tail-n (map car O) MAX-N))
+            (surr:fit! (surr:gp (hash "kernel" "matern52" "max-n" MAX-N
+                                      "noise" 1e-6 "sense" "min"))
+                       (tail-n X MAX-N)
+                       (tail-n (map (lambda (o) (car (cdr o))) O) MAX-N)))))
+
+(define (predict-pair m1 m2 g)
+  (list (car (surr:predict m1 g)) (car (surr:predict m2 g))))
+
+(define (plain budget)
+  (let ((s (mk 7)) (n (length (moead:weights (mk 7)))))
+    (let loop ((done 0) (acc (quote ())))
+      (if (>= done budget) acc
+          (let* ((k (min n (- budget done)))
+                 (cs (moead:ask s k))
+                 (objs (map (lambda (c) (expensive (evo:candidate-genome c))) cs)))
+            (moead:tell! s cs objs)
+            (loop (+ done k) (append acc objs)))))))
+
+(define (ego initial budget)
+  (let ((X (quote ())) (O (quote ())))
+    (let loop0 ((i 0))
+      (if (< i initial)
+          (let* ((g (rand-genome (+ 12345 (* i 7919))))
+                 (o (expensive g)))
+            (set! X (append X (list g)))
+            (set! O (append O (list o)))
+            (loop0 (+ i 1)))
+          #t))
+    (let loop ((done initial) (seen (quote ())))
+      (if (>= done budget) O
+          (let ((m (fit2 X O)))
+            (if (not m) O
+                (let* ((m1 (car m))
+                       (m2 (car (cdr m)))
+                       (ps (mk (+ 7 (* 13 done))))
+                       (_ (moead:run!
+                           ps
+                           (lambda (c) (predict-pair m1 m2 (evo:candidate-genome c)))
+                           SEARCH))
+                       (items (filter (lambda (e) (not (null? (hash-ref e "objs" (list)))))
+                                      (hash-ref ps "pop" (list))))
+                       (cands (map (lambda (e) (hash-ref (hash-ref e "cand") "genome")) items))
+                       (uniq (let loop1 ((xs cands) (acc (quote ())))
+                               (if (null? xs) (reverse acc)
+                                   (if (member? (car xs) acc) (loop1 (cdr xs) acc)
+                                       (loop1 (cdr xs) (cons (car xs) acc))))))
+                       (fresh (filter (lambda (g) (not (member? g seen))) uniq))
+                       (need (min 13 (- budget done)))
+                       (sel (take fresh (min need (length fresh)))))
+                  (if (null? sel)
+                      O
+                      (let ((objs (map expensive sel)))
+                        (set! X (append X sel))
+                        (set! O (append O objs))
+                        (loop (+ done (length sel)) (append seen sel)))))))))))
+
+(define tp (monotonic-ms))
+(define plain-objs (plain PLAIN-BUDGET))
+(define plain-wall (- (monotonic-ms) tp))
+(set! *real* 0)
+(define t1 (monotonic-ms))
+(define surr-objs (ego INITIAL SURR-BUDGET))
+(define surr-wall (- (monotonic-ms) t1))
+
+(display "zdt1 dim=") (display DIM) (display " delay=") (display EVAL-MS)
+(display "ms  seed=7") (newline)
+(display "  plain  n=") (display (length plain-objs))
+(display " hv=") (display (hv-all plain-objs))
+(display " wall=") (display plain-wall) (display "ms") (newline)
+(display "  surr   n=") (display (length surr-objs))
+(display " hv=") (display (hv-all surr-objs))
+(display " wall=") (display surr-wall) (display "ms") (newline)
+(display "  claim surrogate(300) >= plain(1000): ")
+(display (if (>= (hv-all surr-objs) (hv-all plain-objs)) "PASS" "FAIL"))
+(newline)
