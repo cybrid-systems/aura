@@ -69,8 +69,18 @@ performance, not by the model's internal score.
 Online feedback is a context bandit: the feature vector is bucketed against
 the training medians, and each bucket keeps per-member counts and sums.
 `select:choose` prefers a bucket with evidence (mean + UCB bonus) and falls
-back to the offline ranking. `select:drift?` compares the recent bucket mix
-with the training mix (total-variation distance).
+back to the offline ranking.
+
+**Non-stationary streams.** Every update decays the bucket's cells
+(`"decay"`, default 0.9), so stale pulls fade instead of being averaged in
+forever — the effective window is the decay half-life. `"warm-start" #t`
+lets each member be tried once before exploitation; without it a bandit can
+lock onto the offline favourite and never sample the arm a regime change
+made good. `select:drift?` combines two signals: the total-variation
+distance between the recent bucket mix and the training mix, and a
+reward-window shift (newest half vs older half, in standard deviations).
+A flagged drift decays the old cells twice and doubles the UCB coefficient
+for the next choice.
 
 ## Hyper-heuristic
 
@@ -110,9 +120,22 @@ online parameter control.
   every regime; pairwise selection picks correctly too.
 - Equal allocation cancels an over-budget member within 100 ms and audits
   actual vs budget within 10 %; halving and UCB/Thompson pick the best member
-  while spending fewer pulls on the weak one.
+  while spending fewer pulls on the weak one. A successive-halving slot
+  cancels its over-budget spinner in every round, audits within 10 % of the
+  slot, and the run spends no more than 110 % of its budget.
 - FRRMAB with one bad operator: bad usage 1.5 % (limit 10 %), mean reward
   0.966 of the best single operator (limit 0.95). PM and AP also starve it.
+- MOEA/D-FRRMAB on ZDT1 (2 objectives, dim 6, 1,560 evaluations): the bandit
+  chooses the variation operator per subproblem and credits the scalar
+  improvement over the parent. The random operator is pulled 116/1554 times
+  (7.5 %, bar 10 %), and the bandit's hypervolume is 1.041 against 1.052 for
+  the best fixed operator (98.9 %, bar 95 %); the random operator alone
+  reaches 0.017.
+- Non-stationary stream on the same context bucket (member a pays, then b):
+  the decayed, warm-started bandit accumulates regret 29 against the fixed
+  SBS's 100 (71 % lower, bar 30 %), plays the new best member from the first
+  step after the drift and in 20 of the next 25 pulls, and `select:drift?`
+  reports the reward shift even though the context mix did not change.
 - The multi-seed gate rejects noise winners (5.0 % at alpha 0.05) and accepts
   a real improvement; `tune:race` finds the best config with fewer
   evaluations than the grid.
@@ -120,10 +143,9 @@ online parameter control.
   KEPT; a redundant member leaves VBS unchanged and is DROPPED, both with
   the measured delta recorded.
 
-The full acceptance items that need the benchmark harness (ZDT1/HV parity,
-aura-harness held-out success with 40 % fewer evaluations, the non-stationary
-regret study and spec-vs-actual compute deviation across real members) are
-P6 report material; this module ships the mechanisms and the unit contracts.
+The aura-harness held-out study (40 % fewer full evaluations at the same
+success) is measured by std/surrogate's cheap-first wiring and reported in
+that module's evidence section.
 
 ## Limits
 

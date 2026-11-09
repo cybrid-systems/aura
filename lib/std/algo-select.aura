@@ -50,6 +50,18 @@
           "report" #f
           "online" (hash)
           "recent" (quote ())
+          "rewards" (quote ())
+          "drifted" #f
+          ;; non-stationary streams (SKU mix, order peaks, seasons): an
+          ;; exponential window down-weights stale pulls on every update,
+          ;; and a detected drift widens exploration for a while.
+          "decay" (hash-ref o "decay" 0.9)
+          ;; try each member once before exploiting (needed on a
+          ;; non-stationary stream; off by default so an offline selector
+          ;; keeps its prior until there is feedback)
+          "warm-start" (hash-ref o "warm-start" #f)
+          "explore" (hash-ref o "explore" 0.5)
+          "drift-explore" (hash-ref o "drift-explore" 2.0)
           "drift-threshold" (hash-ref o "drift-threshold" 0.35))))
 
 (define (select:features-fn! s f) (hash-set s "features-fn" f))
@@ -348,28 +360,54 @@
   (if (null? xs) "" (if (null? (cdr xs)) (car xs)
                       (string-append (car xs) (select-join (cdr xs))))))
 
+(define (select-arm-score explore total stats n warm sense)
+  (let* ((cell (hash-ref stats n (list 0 0.0)))
+         (cnt (car cell))
+         (mean (if (= cnt 0) 0.0 (/ (cadr cell) cnt)))
+         (bonus (if (= cnt 0)
+                    (if warm (if (string=? sense "min") -1.0e9 1.0e9) 1.0)
+                    (sqrt (/ (* 2.0 (log (max total 2.0))) cnt)))))
+    (cons n (+ mean (* explore bonus)))))
+
 (define (select-online-ranked s bucket)
-  (let* ((online (hash-ref s "online" (hash)))
-         (stats (hash-ref online bucket #f))
-         (sense (hash-ref s "sense" "max")))
-    (if (not (hash? stats)) (quote ())
-      (let* ((names (hash-keys stats))
-             (total (foldl (lambda (acc n)
-                             (+ acc (car (hash-ref stats n (list 0 0.0)))))
-                           0 names))
-             (scored (map (lambda (n)
-                            (let* ((cell (hash-ref stats n (list 0 0.0)))
-                                   (cnt (car cell))
-                                   (mean (if (= cnt 0) 0.0 (/ (cadr cell) cnt)))
-                                   (bonus (if (= cnt 0) 1.0
-                                            (sqrt (/ (* 2.0 (log (max total 2.0)))
-                                                     cnt)))))
-                              (cons n (+ mean (* 0.5 bonus)))))
-                          names))
-             (sorted (sort scored (lambda (a b)
-                                    (if (string=? sense "min") (< (cdr a) (cdr b))
-                                      (> (cdr a) (cdr b)))))))
-        (map car sorted)))))
+  (let* ((stats (hash-ref (hash-ref s "online" (hash)) bucket (hash)))
+         (sense (hash-ref s "sense" "max"))
+         ;; exploration coefficient; a flagged drift doubles it so the
+         ;; bandit re-samples instead of trusting the old window
+         (explore (* (hash-ref s "explore" 0.5)
+                     (if (hash-ref s "drifted" #f)
+                       (hash-ref s "drift-explore" 2.0) 1.0)))
+         ;; rank over *every registered member*, not just the ones this
+         ;; bucket has seen; with warm-start on, an unvisited arm is
+         ;; optimistically valued so it is tried once. Without that the
+         ;; bandit locks onto the offline favourite and never notices a
+         ;; reward regime change.
+         (seen (hash-keys stats))
+         (names (foldl (lambda (acc n) (if (member? n acc) acc (cons n acc)))
+                       (hash-ref s "names" (quote ())) seen))
+         (warm (hash-ref s "warm-start" #f))
+         (total (foldl (lambda (acc n)
+                         (+ acc (car (hash-ref stats n (list 0 0.0)))))
+                       0 names)))
+    (if (or (null? names) (null? seen))
+        (quote ())
+        (map car
+             (sort (map (lambda (n) (select-arm-score explore total stats n warm sense)) names)
+                   (lambda (a b)
+                     (if (string=? sense "min")
+                         (< (cdr a) (cdr b))
+                         (> (cdr a) (cdr b)))))))))
+
+;; Exponential forgetting on one bucket's per-member cells. Applied on
+;; every update, so the effective window is the decay half-life: a reward
+;; regime change is recovered from instead of being averaged in forever.
+(define (select-decay-stats stats f)
+  (foldl (lambda (acc k)
+           (let* ((cell (hash-ref stats k (list 0 0.0)))
+                  (n (* f (car cell)))
+                  (ss (* f (cadr cell))))
+             (hash-set acc k (list n ss))))
+         (hash) (hash-keys stats)))
 
 (define (select:feedback! s inst member result)
   (let* ((feat (select:features s inst))
@@ -379,20 +417,48 @@
                                         (if (number? v) v 0.0)))
                       (else 0.0)))
          (online (hash-ref s "online" (hash)))
-         (stats (hash-ref online bucket (hash)))
+         (decay (max 0.0 (min 1.0 (hash-ref s "decay" 0.9))))
+         (drifted (select:drift? s))
+         ;; a flagged drift forgets faster: the old window is down-weighted
+         ;; twice and select-online-ranked doubles its exploration bonus
+         (f (if drifted (* decay decay) decay))
+         (stats (select-decay-stats (hash-ref online bucket (hash)) f))
          (cell (hash-ref stats member (list 0 0.0)))
          (next (hash-set stats member (list (+ 1 (car cell)) (+ score (cadr cell)))))
          (recent (hash-ref s "recent" (quote ())))
-         (kept (if (> (length recent) 19) (take recent 19) recent)))
-    (hash-set (hash-set s "online" (hash-set online bucket next))
-              "recent" (cons bucket kept))))
+         (kept (if (> (length recent) 19) (take recent 19) recent))
+         (rewards (hash-ref s "rewards" (quote ())))
+         (rkept (if (> (length rewards) 19) (take rewards 19) rewards)))
+    ;; the drift flag is set last, from the pre-update snapshot, and is
+    ;; consumed by the next select:choose
+    (hash-set (hash-set (hash-set (hash-set s "online" (hash-set online bucket next))
+                                  "recent" (cons bucket kept))
+                        "rewards" (cons score rkept))
+              "drifted" drifted)))
 
 ; ── drift ─────────────────────────────────────────────────────
 
 ; Total-variation distance between the recent context buckets and the
 ; training distribution: 0.5 * sum |p_recent - p_train|. 0 when there is
 ; no baseline or too little recent feedback.
-(define (select:drift-score s)
+;
+; A second signal covers the case the context mix cannot see: the same
+; bucket changes its reward regime (a season, a peak). It compares the
+; mean of the newest half of the reward window with the older half in
+; units of the window's standard deviation. Both are clipped to [0,1].
+(define (select-reward-drift s)
+  (let* ((rw (hash-ref s "rewards" (quote ())))
+         (n (length rw)))
+    (if (< n 10) 0.0
+      (let* ((k (min 5 (quotient n 2)))
+             (recent (take rw k))
+             (old (take (list-tail rw k) (min 15 (- n k))))
+             (mr (select-mean recent))
+             (mo (select-mean old))
+             (sd (select-sd (append recent old))))
+        (min 1.0 (/ (abs (- mr mo)) (max sd 1e-9)))))))
+
+(define (select-feature-drift s)
   (let* ((recent (hash-ref s "recent" (quote ())))
          (base (hash-ref s "baseline" #f))
          (n (length recent)))
@@ -406,6 +472,11 @@
                       (+ acc (abs (- pr pb)))))
                   0.0 names)))
         (* 0.5 tv)))))
+
+(define (select:drift-score s)
+  (let ((feature (select-feature-drift s))
+        (reward (select-reward-drift s)))
+    (if (> reward feature) reward feature)))
 
 (define (select:drift? s)
   (> (select:drift-score s) (hash-ref s "drift-threshold" 0.35)))
