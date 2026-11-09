@@ -14,11 +14,13 @@
 ; name ends in !.  Aura lists have no mutators, so list-sort! is the
 ; same value as list-sort (documented, not a silent alias).
 
-(require "std/vector" all:)
 
 (export list-sort list-stable-sort list-sort! list-stable-sort!
         vector-sort vector-stable-sort vector-sort! vector-stable-sort!
         sort sort! sorted?)
+
+(require "std/vector" all:)
+
 
 (define list-stable-sort list-sort)
 (define list-sort! list-sort)

@@ -18,11 +18,13 @@
 
 ; Issue #5005: the file verbs have ONE definition, in std/io.  std/fs
 ; re-exports them for its existing callers and keeps path/dir helpers.
-(require "std/io" all:)
 
 (export path-join path-dirname path-basename path-extname
         file-read file-write file-exists? file-size
         dir-list dir-files dir-dirs)
+
+(require "std/io" all:)
+
 
 ;; ── Path manipulation ──
 
