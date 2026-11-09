@@ -2,11 +2,11 @@
 
 # Primitives (generated)
 
-**528** registrations scanned from `src/**/*.cpp` (96 marked **deprecated** — Issue #1438).
+**528** registrations scanned from `src/**/*.cpp` (103 marked **deprecated** — Issue #1438).
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 435 · **stdlib-candidate** 87 · **delete** 6
+**kernel** 434 · **stdlib-candidate** 88 · **delete** 6
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
@@ -174,18 +174,18 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `abs` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_math.cpp`
 - `acos` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `and` *[core]* `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
-- `api-reference` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
+- `api-reference` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_eval.cpp`
 - `append` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
 - `apply` *[core]* `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `apply-fix` *[core]* `kernel` — `src/compiler/evaluator_primitives_diagnostic.cpp`
-- `arena-offset` *[core]* `kernel` — `src/compiler/evaluator_primitives_misc.cpp`
+- `arena-offset` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_misc.cpp`
 - `arithmetic-shift` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `asin` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `assv` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
 - `atan` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `aura-executable-path` *[core]* `kernel` — `src/compiler/evaluator_primitives_io.cpp`
-- `auto-rollback-on-panic` *[core]* `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
+- `auto-rollback-on-panic` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `bit-count` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `bitwise-and` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `bitwise-ior` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
@@ -227,7 +227,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `check-capability` *[core]* `kernel` — `src/compiler/evaluator_primitives_policy.cpp`
 - `check-module-signature` *[core]* `kernel` — `src/compiler/evaluator_primitives_types.cpp`
 - `check-preconditions` *[core]* `kernel` — `src/compiler/evaluator_primitives_diagnostic.cpp`
-- `check-success` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `check-success` *[core]* `stdlib-candidate` **deprecated** — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check=` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `cons` *[core]* `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
 - `cos` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
@@ -237,9 +237,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `declare-type` *[core]* `kernel` — `src/compiler/evaluator_primitives_types.cpp`
 - `define-linear` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `define-lookup` *[core]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `define-strategy` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `define-strategy` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
 - `deserialize-workspace` *[core]* `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
-- `diagnose` *[core]* `kernel` — `src/compiler/evaluator_primitives_diagnostic.cpp`
+- `diagnose` *[core]* `stdlib-candidate` **deprecated** — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `display` *[core]* `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `drop` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
 - `eof-object?` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -509,7 +509,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## Edsl: (1)
 
-- `edsl:define-struct` *[core]* `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `edsl:define-struct` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_obs_jit.cpp`
 
 ## Engine: (2)
 
@@ -687,7 +687,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ### Mutation safety (must remain primitive) (56)
 
-- `api-reference` `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
+- `api-reference` `kernel` **deprecated** — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:diff` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:generation` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
@@ -774,7 +774,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `append` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
 - `apply` `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `apply-fix` `kernel` — `src/compiler/evaluator_primitives_diagnostic.cpp`
-- `arena-offset` `kernel` — `src/compiler/evaluator_primitives_misc.cpp`
+- `arena-offset` `kernel` **deprecated** — `src/compiler/evaluator_primitives_misc.cpp`
 - `arena:compact` `kernel` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact-with-policy` `kernel` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:request-defrag` `kernel` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
@@ -790,7 +790,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `atomic:hash-update!` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `atomic:update!` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `aura-executable-path` `kernel` — `src/compiler/evaluator_primitives_io.cpp`
-- `auto-rollback-on-panic` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
+- `auto-rollback-on-panic` `kernel` **deprecated** — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `bit-count` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `bitwise-and` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `bitwise-ior` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
@@ -837,7 +837,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `check-capability` `kernel` — `src/compiler/evaluator_primitives_policy.cpp`
 - `check-module-signature` `kernel` — `src/compiler/evaluator_primitives_types.cpp`
 - `check-preconditions` `kernel` — `src/compiler/evaluator_primitives_diagnostic.cpp`
-- `check-success` `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
+- `check-success` `stdlib-candidate` **deprecated** — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check=` `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `closure:free!` `kernel` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `cons` `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
@@ -848,14 +848,14 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `declare-type` `kernel` — `src/compiler/evaluator_primitives_types.cpp`
 - `define-linear` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `define-lookup` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `define-strategy` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `define-strategy` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
 - `deserialize-workspace` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
-- `diagnose` `kernel` — `src/compiler/evaluator_primitives_diagnostic.cpp`
+- `diagnose` `stdlib-candidate` **deprecated** — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `dirty:ppa-reasons` `kernel` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `dirty:reasons` `kernel` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `display` `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `drop` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
-- `edsl:define-struct` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `edsl:define-struct` `kernel` **deprecated** — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `engine:metrics` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `engine:surface` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `eof-object?` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -1229,7 +1229,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (435)
+### kernel (434)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1255,10 +1255,10 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `aot:reload` *[K-ENGINE]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `aot:set-module-version` *[K-ENGINE]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `aot:set-region-mask` *[K-ENGINE]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `api-reference` *[K-CTRL]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `api-reference` *[D-BARE-5006]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `apply` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `apply-fix` *[K-AGENT]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
-- `arena-offset` *[K-GOV]* — `src/compiler/evaluator_primitives_misc.cpp`
+- `arena-offset` *[D-BARE-5006]* — `src/compiler/evaluator_primitives_misc.cpp`
 - `arena:compact` *[D-SINGLE-5006]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact-with-policy` *[D-SINGLE-5006]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:request-defrag` *[D-SINGLE-5006]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -1289,7 +1289,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `atomic:hash-update!` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `atomic:update!` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `aura-executable-path` *[K-IO]* — `src/compiler/evaluator_primitives_io.cpp`
-- `auto-rollback-on-panic` *[K-PANIC]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
+- `auto-rollback-on-panic` *[D-BARE-5006]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `bit-count` *[K-NUM]* — `src/compiler/evaluator_primitives_core.cpp`
 - `bitwise-and` *[K-NUM]* — `src/compiler/evaluator_primitives_core.cpp`
 - `bitwise-ior` *[K-NUM]* — `src/compiler/evaluator_primitives_core.cpp`
@@ -1335,13 +1335,12 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `declare-type` *[K-ENGINE]* — `src/compiler/evaluator_primitives_types.cpp`
 - `define-linear` *[K-ENGINE]* — `src/compiler/evaluator_primitives_math.cpp`
 - `define-lookup` *[K-CTRL]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `define-strategy` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `define-strategy` *[D-BARE-5006]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `deserialize-workspace` *[K-CTRL]* — `src/compiler/evaluator_primitives_persist.cpp`
-- `diagnose` *[K-AGENT]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `dirty:ppa-reasons` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `dirty:reasons` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `display` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
-- `edsl:define-struct` *[K-ENGINE]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `edsl:define-struct` *[D-BARE-5006]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `engine:metrics` *[K-OBS]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `engine:surface` *[K-OBS]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `eof-object?` *[K-VAL]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1667,7 +1666,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `write-file` *[K-IO]* — `src/compiler/evaluator_primitives_file.cpp`
 - `ws:try-mutation` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### stdlib-candidate (87)
+### stdlib-candidate (88)
 
 - `abs` *[S-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
 - `append` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
@@ -1693,9 +1692,10 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `char<?` *[S-CHAR]* — `src/compiler/evaluator_primitives_core.cpp`
 - `char=?` *[S-CHAR]* — `src/compiler/evaluator_primitives_core.cpp`
 - `check` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`
-- `check-success` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `check-success` *[D-BARE-5006]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check=` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `datum->string` *[S-PURE]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `diagnose` *[S-PURE]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `drop` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
 - `equal?` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `f64vector-dot` *[S-F64]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1768,8 +1768,10 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 
 ## Deprecated (Issue #1438)
 
-Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **96** names:
+Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **103** names:
 
+- `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
+- `arena-offset` — `src/compiler/evaluator_primitives_misc.cpp`
 - `arena:compact` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact-with-policy` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:request-defrag` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -1791,9 +1793,14 @@ Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(wo
 - `ast:validate-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:validate-ownership` — `src/compiler/evaluator_primitives_ast.cpp`
 - `ast:validate-post-restore` — `src/compiler/evaluator_primitives_ast.cpp`
+- `auto-rollback-on-panic` — `src/compiler/evaluator_primitives_obs_eval.cpp`
+- `check-success` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `closure:free!` — `src/compiler/evaluator_primitives_memory.cpp`
+- `define-strategy` — `src/compiler/evaluator_primitives_agent.cpp`
+- `diagnose` — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `dirty:ppa-reasons` — `src/compiler/evaluator_primitives_memory.cpp`
 - `dirty:reasons` — `src/compiler/evaluator_primitives_memory.cpp`
+- `edsl:define-struct` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `evaluator:compact-env-frames` — `src/compiler/evaluator_primitives_compile.cpp`
 - `fiber:overlay-begin` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `fiber:overlay-commit` — `src/compiler/evaluator_primitives_fiber_cow.cpp`

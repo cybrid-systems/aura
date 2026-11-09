@@ -7066,6 +7066,10 @@ private:
         pre(target != nullptr); // arena_ is private; impl also asserts via contract_assert
     void init_pair_primitives();
     void register_all_primitives();
+    // Issue #5006: apply the deprecated-alias flags to the whole surface. The
+    // ctor registers the agent / EDSL groups after register_all_primitives, so
+    // it runs this sweep once more when every name exists.
+    void retire_public_surface_names();
     void install_defuse_subsystem();
     void build_primitive_slots();
     // Issue #697: post-registration SV/EDA PrimMeta backfill retired with the

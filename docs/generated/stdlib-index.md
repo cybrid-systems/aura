@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**105** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**106** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -31,6 +31,7 @@
 | `std/csv` | `csv-parse` `csv->rows` `csv->table` `csv-select` `csv-filter` `csv-header` `column-names` | csv.aura — CSV parsing and generation |
 | `std/data` | `make-trie` `trie-insert` `trie-search` `trie-prefix?` `trie-keys` | Aura standard data structures library |
 | `std/datetime` | `;` `Core` `timestamp` `timestamp-ms` `steady-ms` `timestamp->year` `timestamp->month` `timestamp->day` … (+20) | datetime.aura — Date and time utilities |
+| `std/diagnose` | `diagnose` | lib/std/diagnose.aura — error-string → fix plan (#5006) |
 | `std/edsl-test-harness` | `section` `it` `describe` `report` `summary` `total-pass` `total-fail` `reset-totals` … (+2) | Declarative-ish helpers for pure-Aura self-tests without quoting |
 | `std/encoding` | `hex-encode` `hex-decode` `base64-encode` `base64-decode` | lib/std/encoding.aura — Encoding utilities |
 | `std/engine-metrics` | `engine-metrics:get` `engine-metrics:list` `engine-metrics:group` `engine-metrics:prefix` `engine-metrics:all` `engine-metrics:count` | lib/std/engine-metrics.aura — Issue #1433 thin wrappers around (engine:metrics) |
@@ -74,7 +75,7 @@
 | `std/persist` | `persist:save` `persist:load` `persist:info` `persist:version` `persist:format-version` `persist:round-trip?` | lib/std/persist.aura — Issue #1381 |
 | `std/pipeline` | `synthesize:pipeline` | Aura std/pipeline — 代码生成管线 |
 | `std/portfolio` | `portfolio:make` `portfolio:add!` `portfolio:members` `portfolio:member` `portfolio:external` `portfolio:run` `portfolio:matrix` `portfolio:vbs` … (+2) | lib/std/portfolio.aura — Issue #4945 (v0.2 P8): algorithm portfolios, |
-| `std/primitives` | `primitives:help` `primitives:list` `primitives:categories` `primitives:entry-points` `primitives:registry-file` `primitives:discover` | lib/std/primitives.aura — Engine primitives discoverability (#1552) |
+| `std/primitives` | `primitives:help` `primitives:list` `primitives:categories` `primitives:entry-points` `primitives:registry-file` `primitives:discover` `primitives:reference` | lib/std/primitives.aura — Engine primitives discoverability (#1552) |
 | `std/process` | `sh` `sh-ok?` `which` `command-line` `get-environment-variable` `get-environment-variables` | lib/std/process.aura — Process management |
 | `std/prompt` | `build-sys-prompt` `get-api-ref-for-modules` | lib/std/prompt.aura — Unified prompt builder for LLM code generation |
 | `std/proposer` | `prop:help` `prop:schema` `prop:ctx` `prop:propose` `prop:adapt` `prop:mock` `prop:grammar` `prop:llm` … (+32) | lib/std/proposer.aura — Issue #4942 (v0.2 P3): the proposal layer for |
@@ -103,7 +104,7 @@
 | `std/swarm` | `swarm:init` `swarm:step!` `swarm:best` `swarm:population` `swarm:report` `swarm:export` `swarm:kind` `swarm:gen` … (+6) | lib/std/swarm.aura — Issue #2874 / #2875 pluggable swarm control family |
 | `std/synthesize-v2` | `synthesize:test-driven` `synthesize:debug` `synthesize:project` `synthesize:compose` `synthesize:run-tests` `synthesize:eval-test` | lib/std/synthesize-v2.aura -- Synthesize Pipeline v2 |
 | `std/synthesize` | `synthesize:list-templates` `synthesize:list-help` | lib/std/synthesize.aura — synthesize: namespace stdlib wrappers |
-| `std/test` | — | Aura Testing Framework |
+| `std/test` | `check-success` `test-suite` | Aura Testing Framework |
 | `std/time` | `current-second` `current-jiffy` `jiffies-per-second` | lib/std/time.aura — R7RS (scheme time) (Issue #5005) |
 | `std/uuid` | `uuid` `uuid-compact` `uuid-nil` | lib/std/uuid.aura — UUID v4 generation |
 | `std/validate` | `json-type` `err` `check` `validate` `valid?` `error-count` | Aura JSON Schema Validator — 纯函数式 |

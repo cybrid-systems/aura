@@ -263,9 +263,38 @@ library function. `aot:` is the deliberate remainder in this cycle because
 
 | Class | Decision |
 |-------|----------|
-| Scheme evaluation kernel (`car` `cdr` `cons` `eq?`, arithmetic, comparisons, `apply`, type predicates, the native `map`/`list-sort` hot paths) | keep |
+| Scheme evaluation kernel (car cdr cons eq?, arithmetic, comparisons, apply, type predicates, the native map/list-sort hot paths) | keep |
 | Host effects Aura cannot express (file descriptors, process, time, FFI allocation) | keep, and the name says which effect |
-| Pure formatting over metadata (`diagnose`, `check-success`, `api-reference`) and host wrappers `std/ffi` can express | leave (deprecate, then delete) |
+| Pure formatting over metadata (diagnose, check-success) | leave -> std, one release of forwarding |
+| Engine-state reads and writes (api-reference, arena-offset, auto-rollback-on-panic, define-strategy, edsl:define-struct) | leave -> a query / mutate op, one release of forwarding |
+| The C FFI family (c-load c-func c-alloc c-free c-opaque c-struct-size) | keep: dlopen/dlsym/native memory is a host effect; std/ffi is the library face |
+
+The per-name rows the runtime enforces live in `kRetiredBare5006`
+(`src/compiler/evaluator_primitives_registry.cpp`); every name there is
+registered, flagged `PrimMeta.deprecated`, and carries the replacement in its
+doc hint for the alias window. `lib/std` must not call a deprecated name: the
+tier gate fails on it, and the replacement exists in the same commit.
+
+#### The bare names this cycle moves (Issue #5006)
+
+| Name | Replacement | Why it leaves |
+|------|-------------|---------------|
+| `diagnose` | `std/diagnose` - `(require "std/diagnose" all:)` | pure string -> plan table; no engine state |
+| `check-success` | `std/test` - `(require "std/test" all:)` | pure match over output strings |
+| `api-reference` | `(query :api-reference)` | prints the registered primitive table: engine state |
+| `arena-offset` | `(query :arena-offset)` | thread-local arena bump offset: engine state |
+| `auto-rollback-on-panic` | `(mutate :auto-rollback-on-panic #t\|#f)`, `(query :auto-rollback-on-panic)` | panic checkpoint state |
+| `define-strategy` | `(mutate :define-strategy name body ...)` | writes the agent strategy registry |
+| `edsl:define-struct` | `(mutate :define-struct name doc schema)` | records the EDSL struct schema and its counters |
+
+The `c-*` family is the deliberate remainder: `dlopen` / `dlsym` / `malloc` are
+host effects, so no Aura implementation exists. The names stay kernel, keep
+`std/ffi` as their library face, and are recorded in `kernel_exceptions` with
+the `K-FFI-5006` note instead of being silently re-labelled.
+
+`(require "std/test" all:)` and `(require "std/diagnose" all:)` install the
+new implementation, so a file that requires them calls the std function while
+the kernel registration keeps working for code that does not.
 
 The rule that decides a new name is still the one criterion above: atomicity or
 a host effect. "It is a primitive today" is not a reason.

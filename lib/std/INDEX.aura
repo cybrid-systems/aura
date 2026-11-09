@@ -191,6 +191,11 @@
     (list "string"
       (list "String utilities"
             "(string:length \"hello\")"))
+    ; Issue #5006: the error→fix plan the kernel used to register as a bare
+    ; primitive; pure, so it lives here and the bare name is deprecated.
+    (list "diagnose"
+      (list "Error string → (cause target fix-type fix-data explanation) fix plan; #2917 recovery policy lives in std/agent"
+            "(require \"std/diagnose\" all:)(diagnose \"unbound variable: map\")"))
     ; ── TUI (Issues #1334–#1358) ──
     ; ── Atomic resource swap (Issue #1380) ──
     (list "atomic-swap"

@@ -18,6 +18,10 @@
 (require "std/string" all:)
 (require "std/list" all:)
 (require "std/adaptive" all:)
+; #5006: check-success and diagnose are std functions; the kernel names are
+; deprecated aliases for one release cycle.
+(require "std/test")
+(require "std/diagnose")
 
 
 ; ── Known stdlib function → module mapping ──
@@ -195,7 +199,7 @@
                            "(set-code failed)"))
              (output (if (string? run-result) run-result "")))
         ; Step 3: check success
-        (if (check-success output expected)
+        (if (test:check-success output expected)
           (list "healed" current-code output)
           ; Step 4: AST-level diagnose + fix
           (let* ((diag (heal-diagnose output))
@@ -217,7 +221,7 @@
                 (newline)
                 (loop (+ attempt 1) fixed))
               ; Fallback to C++ diagnose/apply-fix
-              (let* ((cpp-diag (try (diagnose output) (catch #f)))
+              (let* ((cpp-diag (try (diagnose:diagnose output) (catch #f)))
                      (cpp-fixed (if (and (pair? cpp-diag) (> (length cpp-diag) 1))
                                   (try (apply-fix current-code cpp-diag) (catch #f))
                                   #f)))

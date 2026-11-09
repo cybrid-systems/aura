@@ -10,7 +10,7 @@
 
 (export primitives:help primitives:list primitives:categories
         primitives:entry-points primitives:registry-file
-        primitives:discover)
+        primitives:discover primitives:reference)
 
 ; Canonical registry TU (central register_all_primitives).
 (define *primitives-registry-file*
@@ -85,6 +85,11 @@
     "Use (primitive:describe name) and query:primitives-meta* for runtime meta."
     "Fiber/mutation hot paths: mutation + mutate + workspace-query + control."
     "Full catalog: docs/generated/primitives.md"))
+
+; (primitives:reference) - the LLM-facing table (#5006): the bare
+; (api-reference) is a deprecated alias for (query :api-reference).
+(define (primitives:reference)
+  (query :api-reference))
 
 ; One-shot discovery payload for Agents.
 (define (primitives:discover)

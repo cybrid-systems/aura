@@ -9874,6 +9874,17 @@ template <typename Ctx> void RegSplitParts::register_mutate_dispatch_primitive(C
         if (op == "atomic" || op == "atomic-batch")
             return call_named("mutate:atomic-batch", rest);
 
+        // Issue #5006: bare names that write engine state are ops of this verb.
+        // The bare registration stays for one release cycle as a deprecated
+        // alias (#5008 channel): the panic rollback flag, the agent strategy
+        // registry, and the EDSL struct schema record.
+        if (op == "auto-rollback-on-panic")
+            return call_named("auto-rollback-on-panic", rest);
+        if (op == "define-strategy")
+            return call_named("define-strategy", rest);
+        if (op == "define-struct" || op == "edsl-define-struct")
+            return call_named("edsl:define-struct", rest);
+
         // Issue #5009: one write verb. A prefixed op is the primitive name
         // itself; a bare op resolves against the retired write prefixes, so
         // (mutate :snapshot) / (mutate :restore id) / (mutate :memory-used-set)

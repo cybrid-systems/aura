@@ -239,6 +239,11 @@ Evaluator::Evaluator() {
     // unauthorized calls.
     backfill_capability_tiers();
 
+    // Issue #5006: the agent / EDSL groups above registered after
+    // register_all_primitives(), so flag the retired public names here too
+    // (idempotent sweep; meta only, hot table comes next).
+    retire_public_surface_names();
+
     // Issue #1356: rebuild HotTierTable after all registrations + meta backfill.
     primitives_.finalize_hot_table();
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
