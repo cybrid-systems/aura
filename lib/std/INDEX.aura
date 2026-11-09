@@ -45,9 +45,10 @@
     (list "workspace"
       (list "Workspace helpers: snapshot, rollback, memory"
             "(ws:snapshot-current)"))
-    (list "core"
-      (list "High-level core builtin wrappers (any/all/zip-with/etc.)"
-            "(core:any (lambda (x) (> x 0)) (list -1 2 -3))"))
+    ; Issue #5003: core:any/all/zip-with duplicated std/list any/all/zip
+    ; and core:group-by duplicated std/iter group-by. std/core stays as a
+    ; deprecated facade only; it is no longer a recommended entry point.
+    ; (list "core" ...) removed from the recommended list.
     ; ── Adaptive + agent helpers ──
     (list "adaptive"
       (list "Adaptive API discovery + diagnostics"
@@ -75,8 +76,9 @@
     (list "fss"
       (list "Fish school search (feeding + volitive expand/contract); swarm kind:fss"
             "(require \"std/fss\" all:)(fss:init 2 16 (list (list -1.0 1.0) (list -1.0 1.0)))"))
+    ; Issue #5003: SRFI-132 sorting is std/sort; algorithmic helpers stay here.
     (list "algorithm"
-      (list "Algorithm utilities (sort, group, partition)"
+      (list "Algorithm utilities (group, partition, min/max-by, binary-search); sorting moved to std/sort"
             "(partition (lambda (x) (> x 0)) (list -1 2 -3))"))
     (list "capability"
       (list "Capability discovery"
@@ -90,12 +92,9 @@
     (list "rule"
       (list "Rule engine helpers"
             "(rule:define)"))
-    (list "edsl"
-      ; Issue #4836: there is no define-syntax / syntax-rules binding and
-      ; no std/edsl module. Point at what actually exists (hygienic macros),
-      ; with a usage line the caller can paste.
-      (list "EDSL syntax macros: (define-hygienic-macro (name args...) body); legacy (defmacro (name args...) body)"
-            "(define-hygienic-macro (or2 a b) (let ((t a)) (if t t b)))"))
+    ; Issue #5003: there is no std/edsl module. Macros are language
+    ; forms, not a stdlib entry; see std/struct and std/record for
+    ; macro-generating libraries. (list "edsl" ...) removed.
     ; ── Pipeline + agent ──
     (list "pipeline"
       (list "Synthesize pipeline v2 (test-driven, debug)"
@@ -105,14 +104,44 @@
             "(orchestrator:spawn)"))
     ; ── Collection + data ──
     (list "list"
-      (list "List utilities (map, filter, foldl, list-sort) [perf-tier:hot #923/#928]"
-            "(sort (list 3 1 2))"))
+      (list "SRFI-1 list utilities (foldl/foldr, any/every, cons*, append-map, filter-map) [perf-tier:hot #923/#928]"
+            "(append-map (lambda (x) (list x x)) (list 1 2))"))
     (list "vector"
-      (list "Vector utilities"
-            "(vector:make 1 2 3)"))
+      (list "SRFI-133 vector library (vector-append, vector-map, vector-fold, vector-count, vector-copy!)"
+            "(vector-append (vector 1) (vector 2 3))"))
+    (list "sort"
+      (list "SRFI-132 sorting (list-sort, vector-sort, vector-sort!, sort!)"
+            "(list-sort < (list 3 1 2))"))
+    (list "bitwise"
+      (list "SRFI-151 bitwise ops (bitwise-and/ior/xor/not, arithmetic-shift, bit-count)"
+            "(bitwise-and 12 10)"))
+    (list "record"
+      (list "SRFI-9 define-record-type records (tagged vector, accessors + mutators)"
+            "(define-record-type <p> (make-p x) p? (x px set-px!))"))
+    (list "char"
+      (list "R7RS (scheme char): comparisons, ASCII case/fold, digit-value"
+            "(char-ci=? (char-upcase 97) 65)"))
+    (list "exception"
+      (list "R7RS exceptions: with-exception-handler, raise-continuable, guard, error-object?"
+            "(guard (e ((string? e) e)) (error \"x\"))"))
+    (list "parameter"
+      (list "R7RS parameters: make-parameter / parameterize (dynamic extent)"
+            "(parameterize ((p 1)) (p))"))
+    (list "lazy"
+      (list "R7RS lazy: delay / force / promise? (memoising promises)"
+            "(force (delay (+ 1 2)))"))
+    (list "case-lambda"
+      (list "R7RS case-lambda: arity-dispatched procedures"
+            "((case-lambda (() 0) ((a) a)) 7)"))
+    (list "bytevector"
+      (list "R7RS bytevectors + UTF-8 (tagged vector; bytevector? discriminates)"
+            "(utf8->string (string->utf8 \"héllo\"))"))
+    (list "r7rs"
+      (list "R7RS-small coverage table (every export: kernel / std / this-version / no)"
+            "(r7rs:status \"eq?\")"))
     (list "hash"
-      (list "Hash utilities"
-            "(hash:set 'k 'v)"))
+      (list "SRFI-125 hash tables + SRFI-128 minimal comparator; hash-set/remove are COPY-ON-WRITE"
+            "(hash-table-ref (alist->hash-table (list (list 'k 1))) 'k)"))
     (list "json"
       (list "JSON utilities"
             "(json:stringify (cons 'a 1))"))
@@ -148,8 +177,8 @@
             "(require \"std/hot-update-monitor\" all:)"))
     ; ── IO / system ──
     (list "io"
-      (list "File I/O host prims (file-exists? → Bool, file-copy/delete/size, directory-list); also via std/fs. Loading needs no effect; file-copy/delete check write at the call (#4919). write-file / make-directory are core: 1 or an io error (#4917)"
-            "(require \"std/io\" all:)"))
+      (list "The one home of the file verbs (file-read/write/exists?/size/copy/delete) plus R7RS ports (string, file, stdin/stdout/stderr). std/fs re-exports these; it no longer defines a second set (#5005)"
+            "(open-input-string \"ab\")"))
     (list "net"
       (list "HTTP client host prims — sandbox requires network effect (#3174)"
             "(require \"std/net\" all:)"))
@@ -166,14 +195,13 @@
       (list "C FFI host prims (c-load/c-func/c-alloc/opaque/struct) — sandbox requires effect:ffi (#3176)"
             "(require \"std/ffi\" all:)"))
     (list "fs"
-      (list "Filesystem helpers"
-            "(fs:read \"/tmp/foo.txt\")"))
-    (list "path"
-      (list "Path manipulation"
-            "(path:join \"a\" \"b\")"))
+      (list "Path + directory helpers (path-join/dirname/basename/extname, dir-list/files/dirs) and re-exported file verbs from std/io"
+            "(path-join \"a\" \"b\")"))
+    ; Issue #5003: no std/path module — path helpers live in std/fs.
+    ; Issue #5005: std/time supplies current-second/current-jiffy.
     (list "time"
-      (list "Time helpers"
-            "(time:now)"))
+      (list "R7RS time: current-second, current-jiffy, jiffies-per-second (wall + monotonic)"
+            "(current-jiffy)"))
     ; ── Engine primitives discoverability (#1552) ──
     (list "primitives"
       (list "Engine PrimRegistrar registry (fiber/mutate/query hot paths) + Agent discovery (#1552)"

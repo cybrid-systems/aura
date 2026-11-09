@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**82** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**86** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -16,6 +16,7 @@
 | `std/ast` | `ast:summary-formatted` `ast:diff-formatted` `ast:validate-summary` `ast:version-summary` `ast:ref-stats` `ast:memory-pressure` `;` `thin` … (+14) | lib/std/ast.aura — High-level AST helpers (Issue #563 / #2734) |
 | `std/atomic-swap` | `make-binding` `binding-id` `binding-target-version` `binding-artifact-id` `binding-pending-target-version` `binding-pending-artifact-id` `binding-dirty?` `binding-target` … (+15) | lib/std/atomic-swap.aura — Issue #1380 |
 | `std/bench` | `all-tasks` `task-count` `run-rounds` `aggregate` `print-report` `run-one` `run-parallel` `bench:list-sort` … (+1) | — |
+| `std/bitwise` | `bitwise-not` `bitwise-and` `bitwise-ior` `bitwise-xor` `arithmetic-shift` `bit-count` `integer-length` `bitwise-if` … (+7) | lib/std/bitwise.aura — SRFI-151 bitwise operations (Issue #5003) |
 | `std/boids` | `boids:vec-add` `boids:vec-sub` `boids:vec-scale` `boids:vec-len` `boids:distance` `boids:separation` `boids:alignment` `boids:cohesion` … (+4) | lib/std/boids.aura — Issue #2879 Boids-style coordination (not physics sim) |
 | `std/capability` | — | std/capability.aura — Capability discovery surface (Issue #4276) |
 | `std/cbuild` | `cbuild-root` `cbuild-set-root!` `cbuild-digest` `cbuild-toolchain-id` `cbuild-key` `cbuild-entry-dir` `cbuild-artifact!` `cbuild-object!` … (+9) | cbuild.aura — 磁盘内容寻址增量构建缓存（Issue #4803） |
@@ -36,7 +37,7 @@
 | `std/fs` | `path-join` `path-dirname` `path-basename` `path-extname` `file-read` `file-write` `file-exists?` `file-size` … (+3) | lib/std/fs.aura — File system utilities |
 | `std/fss` | `fss:init` `fss:init-hash` `fss:step!` `fss:best` `fss:population` `fss:report` `fss:export` `fss:help` … (+8) | lib/std/fss.aura — Issue #2880 Fish School Search surface |
 | `std/git` | `git-status` `git-diff` `git-log` `git-commit` `git-branch-current` `git-stage` `git-rev-parse` | git.aura — Git integration host prims (Issue #3174) |
-| `std/hash` | `hash-set` `hash-ref` `hash-get` `hash-remove` `hash-copy` `hash-keys` `hash-values` `hash-length` … (+8) | hash.aura -- Hash table operations. hash-set / hash-remove are COPY-ON-WRITE (#4614): they return a NEW hash and leave the argument unchanged. |
+| `std/hash` | `hash-set` `hash-ref` `hash-get` `hash-remove` `hash-copy` `hash-keys` `hash-values` `hash-length` … (+39) | hash.aura -- Hash table operations. hash-set / hash-remove are COPY-ON-WRITE (#4614): they return a NEW hash and leave the argument unchanged. |
 | `std/heal` | `heal` | — |
 | `std/hot-strategy` | `hot-strategy:version` `hot-strategy:last-good-body` `hot-strategy:last-good-snap` `hot-strategy:active-name` `hot-strategy:snapshot!` `hot-strategy:register!` `hot-strategy:swap!` `hot-strategy:heal!` … (+3) | lib/std/hot-strategy.aura — Issue #2582 (Aether denseness H7) |
 | `std/hot-update-monitor` | `make-hot-update-monitor` `monitor:poll` `monitor:run-n` `monitor:stop` `monitor:running?` `monitor:last-stats` | lib/std/hot-update-monitor.aura — Issue #1370 |
@@ -50,7 +51,7 @@
 | `std/kir-gpu` | `kir-gpu-check` `kir->cuda` `kir->cuda-unit` `kir->ptx` `kir->triton` `kir-float-text` | kir-gpu.aura — GPU 后端：CUDA C / PTX / Triton（Issue #4802 第三阶段） |
 | `std/kir-sched` | `kir-with-body` `kir-find-loop` `kir-split` `kir-reorder` `kir-tile` `kir-unroll` `kir-vectorize` `kir-sched-apply` … (+1) | kir-sched.aura — 调度变换 = kernel IR 上的 AST 重写（Issue #4802） |
 | `std/kir` | `kir-name` `kir-head` `kir-items` `kir-find` `kir-ty` `kir-params` `kir-body` `kir-ret` … (+19) | kir.aura — 类型化 kernel IR（Issue #4802 第二阶段） |
-| `std/list` | `foldr` `foldl` `map` `for-each` `member?` `zip` `zip3` `take` … (+28) | Aura standard list library |
+| `std/list` | `foldr` `foldl` `map` `for-each` `member?` `zip` `zip3` `take` … (+32) | Aura standard list library |
 | `std/llm` | `aura-llm-call` `aura-verify` `llm:rate-limit-set!` `llm:rate-limit-remaining` `llm:call-sandboxed` `llm:register-template` `llm:list-templates` `llm:apply-template` … (+7) | Aura std/llm — LLM 交互模块 (Issue #929 + #1551 production safety) |
 | `std/math` | `;` `Constants` `pi` `e` `phi` `tau` `Basic` `square` … (+53) | Aura standard math library |
 | `std/maybe` | `maybe?` `maybe-ref` `maybe-default` `map-maybe` `filter-maybe` | maybe.aura — Maybe/Option type |
@@ -68,12 +69,14 @@
 | `std/query` | `query:list-categories` `query:help` `query:nodes-with-marker` `query:find-by-name` `query:subtree` `query:defines` `query:defines-by-marker` `query:calls-by-marker` … (+2) | lib/std/query.aura — query: namespace high-level Agent API |
 | `std/queue` | `make-queue` `enqueue` `dequeue` `queue-front` `queue-rest` `queue-empty?` `queue-length` `queue->list` … (+1) | queue.aura — FIFO queue (pair-based, immutable) |
 | `std/random` | `make-random` `random-next` `random-integer` `random-float` `random-range` `random-vector` `shuffle` `random-seed` | random.aura — Simple pseudo-random number generator |
+| `std/record` | — | lib/std/record.aura — SRFI-9 records (Issue #5003) |
 | `std/refactor` | `refactor:rename-var` `refactor:extract-function` `refactor:inline-function` | — |
 | `std/regex` | `re-match?` `re-find` `re-replace` `re-split` `re-quote` | lib/std/regex.aura — Regular expression utilities |
 | `std/rule` | `rule:define` `rule:apply` `rule:apply-all` `rule:list` `rule:list-violations` `rule:remove` `rule:enable` `rule:disable` … (+3) | Aura std/rule — 代码规范系统 (P2) |
 | `std/safe-refactor` | `safe-refactor:with-snapshot` `safe-refactor:replace-fn` `safe-refactor:check-and-apply` `safe-refactor:rollback` | lib/std/safe-refactor.aura — verification-gated refactoring |
-| `std/set` | `set` `set-add` `set-remove` `set-member?` `set-empty?` `set-union` `set-intersect` `set-difference` … (+5) | set.aura — Set data structure (built on hash tables) |
+| `std/set` | `set` `set?` `set-copy` `set-clear!` `set-adjoin` `set-adjoin!` `set-delete` `set-delete!` … (+37) | lib/std/set.aura — SRFI-113 sets on the unified hash table (Issue #5003) |
 | `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` `tcp-listen` `tcp-local-port` `tcp-accept` `tcp-accept-timeout` | socket.aura — TCP socket library (client + server) |
+| `std/sort` | `list-sort` `list-stable-sort` `list-sort!` `list-stable-sort!` `vector-sort` `vector-stable-sort` `vector-sort!` `vector-stable-sort!` … (+3) | lib/std/sort.aura — SRFI-132 sorting (Issue #5003) |
 | `std/stack` | `make-stack` `stack-push` `stack-pop` `stack-top` `stack-empty?` `stack-length` `stack->list` `list->stack` | stack.aura — LIFO stack (pair-based) |
 | `std/stats` | `get` `list` `contains?` `count` `prefix` `filter` | Aura standard observability / stats module |
 | `std/string` | `string-split` `string-split-words` `string-join` `string-trim` `string-upcase` `string-downcase` `string-contains?` `string-prefix?` … (+20) | Aura standard string library |
@@ -86,6 +89,7 @@
 | `std/uuid` | `uuid` `uuid-compact` `uuid-nil` | lib/std/uuid.aura — UUID v4 generation |
 | `std/validate` | `json-type` `err` `check` `validate` `valid?` `error-count` | Aura JSON Schema Validator — 纯函数式 |
 | `std/vector-math` | `vec:map` `vec:zip` `vec:fold` `vec:sum` `vec:prod` `vec:mean` `vec:dot` `vec:norm` … (+26) | lib/std/vector-math.aura — Numerical vector operations |
+| `std/vector` | `vector?` `make-vector` `vector-length` `vector-ref` `vector-set!` `vector->list` `list->vector` `vector-fill!` … (+16) | lib/std/vector.aura — SRFI-133 vector library (Issue #5003) |
 | `std/verify` | `verify-output` | verify.aura — Output-verified code checking |
 | `std/workspace` | `ws:merge-symbols` `ws:diff` `ws:snapshot-current` `ws:list-snapshots` `ws:rollback-latest` `ws:memory-pressure` `ws:current-stats` | lib/std/workspace.aura — Workspace utilities (Issue #563 / #4274) |
 
@@ -95,7 +99,7 @@ Low-level capabilities are **not** stdlib modules; they are C++ `PrimRegistrar` 
 
 - `(require "std/primitives" all:)` → `primitives:help` / `primitives:list` / `primitives:discover`
 - `(require "std/INDEX" all:)` → `(stdlib:help "primitives")`
-- Full name catalog: [primitives.md](primitives.md) (516 scanned registrations)
+- Full name catalog: [primitives.md](primitives.md) (523 scanned registrations)
 - Registry map: [primitives-registry.md](primitives-registry.md)
 - Authoring scaffold (#2915): [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md)
 

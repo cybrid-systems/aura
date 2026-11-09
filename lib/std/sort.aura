@@ -1,0 +1,58 @@
+; lib/std/sort.aura — SRFI-132 sorting (Issue #5003)
+;
+; (require "std/sort" all:)
+;
+; One implementation: the native list-sort primitive (#923, stable and
+; iterative).  It already accepts both (list-sort lst less?) and the
+; SRFI-132 (list-sort less? lst) shape, so this module exports the
+; primitive name instead of redefining it (a redefine would shadow it,
+; the std/hash hash-ref trap).  std/list's (sort lst [less?]) and
+; std/algorithm's sort-stable/sort-by stay for compatibility; new code
+; should use the names here.
+;
+; Sorting a vector is a list round-trip; it is not in-place unless the
+; name ends in !.  Aura lists have no mutators, so list-sort! is the
+; same value as list-sort (documented, not a silent alias).
+
+(require "std/vector" all:)
+
+(export list-sort list-stable-sort list-sort! list-stable-sort!
+        vector-sort vector-stable-sort vector-sort! vector-stable-sort!
+        sort sort! sorted?)
+
+(define list-stable-sort list-sort)
+(define list-sort! list-sort)
+(define list-stable-sort! list-sort)
+
+(define (vector-sort less? v)
+  (list->vector (list-sort (vector->list v) less?)))
+
+(define vector-stable-sort vector-sort)
+
+(define (vector-sort! less? v)
+  (let ((sorted (vector-sort less? v)))
+    (vector-copy! v 0 sorted)
+    v))
+
+(define vector-stable-sort! vector-sort!)
+
+; (sort seq [less?]) — list or vector.
+(define (sort seq . less)
+  (let ((less? (if (null? less) < (car less))))
+    (if (vector? seq)
+        (vector-sort less? seq)
+        (list-sort seq less?))))
+
+; (sort! seq less?) — vectors really sort in place; lists return the
+; sorted value (there is no list mutator).
+(define (sort! seq less?)
+  (if (vector? seq)
+      (vector-sort! less? seq)
+      (list-sort seq less?)))
+
+(define (sorted? seq less?)
+  (let ((lst (if (vector? seq) (vector->list seq) seq)))
+    (let loop ((xs lst))
+      (cond ((or (null? xs) (null? (cdr xs))) #t)
+            ((less? (car (cdr xs)) (car xs)) #f)
+            (else (loop (cdr xs)))))))

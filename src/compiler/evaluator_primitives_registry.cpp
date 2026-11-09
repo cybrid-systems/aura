@@ -90,7 +90,7 @@ using types::make_void;
 void Evaluator::register_all_primitives() {
     using primitives_detail::full_primitives_enabled;
     // ── S0: language core + AI work surface + metrics facade ──
-    primitives_detail::register_type_and_char_primitives(prim_registrar());
+    primitives_detail::register_type_and_char_primitives(prim_registrar(), *this);
 
     auto* primitive_error_counter = primitive_error_counter_ptr();
 

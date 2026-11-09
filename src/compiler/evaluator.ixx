@@ -2049,7 +2049,8 @@ namespace primitives_detail {
     }
 
     // P2: single forward-decl hub for all primitives_detail::register_* TU entry points.
-    void register_type_and_char_primitives(std::function_ref<void(std::string, PrimFn)> add);
+    void register_type_and_char_primitives(std::function_ref<void(std::string, PrimFn)> add,
+                                           Evaluator& ev);
     void register_pair_and_string_primitives(std::function_ref<void(std::string, PrimFn)> add,
                                              Evaluator& ev, std::pmr::vector<Pair>& pairs,
                                              ::aura::compiler::LockedStringHeap& string_heap,

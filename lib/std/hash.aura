@@ -4,7 +4,18 @@
   hash-keys hash-values hash-length hash->list
   hash-for-each hash-fold
   hash-merge hash-empty? alist->hash frequencies
-  make-hash)
+  make-hash
+  make-hash-table hash-table? hash-table-ref hash-table-set!
+  hash-table-delete! hash-table-exists? hash-table-size
+  hash-table-keys hash-table-values hash-table->alist
+  alist->hash-table hash-table-walk hash-table-update!
+  hash-table-copy hash-table-clear! hash-table-merge!
+  hash-table-has-key?
+  make-comparator comparator? comparator-type-test-predicate
+  comparator-equality-predicate comparator-hash-function
+  comparator-ordered? comparator-ordered-up? comparator-test?
+  default-comparator default-hash default-ordering
+  comparator-hash =? <?)
 
 (require "std/list" all:)
 
@@ -75,12 +86,15 @@
 
 ; Issue #4614: hash-set is copy-on-write, so the in-place builders
 ; below use hash-set! (the mutating primitive) explicitly.
+; Accepts both a dotted pair (k . v) and the 2-element list (k v).
 (define (alist->hash alist)
   (if (null? alist)
       (hash)
       (let ((h (hash)))
         (for-each (lambda (kv)
-          (hash-set! h (car kv) (car (cdr kv)))) alist)
+          (hash-set! h (car kv)
+                     (if (pair? (cdr kv)) (car (cdr kv)) (cdr kv))))
+          alist)
         h)))
 
 (define (hash-merge a b)
@@ -97,3 +111,131 @@
           (hash-set! h x (+ v 1))
           (hash-set! h x 1)))) lst)
     h))
+
+; ═══════════════════════════════════════════════════════════════════
+; SRFI-125 hash tables (Issue #5003)
+; ═══════════════════════════════════════════════════════════════════
+; The table is the same native hash value std/hash already uses, so the
+; SRFI names and the short names are interchangeable.  Every hash-table
+; lookup uses equal? key equality (Aura's hash primitive); a comparator
+; passed to make-hash-table is accepted for SRFI shape but not stored —
+; see docs/stdlib/r7rs-small.md.
+;
+; *hash-absent* is a private unique value; (hash-ref h k default) lets a
+; lookup distinguish "missing" from a #f value.
+
+(define *hash-absent* (vector 'hash-absent))
+
+(define (hash-table-missing? v) (eq? v *hash-absent*))
+
+(define (make-hash-table . comparator)
+  (hash))
+
+(define (hash-table? h) (hash? h))
+
+(define (hash-table-ref h k . failure)
+  (let ((v (hash-ref h k *hash-absent*)))
+    (if (hash-table-missing? v)
+        (if (null? failure)
+            (error "hash-table-ref: key not found")
+            ((car failure)))
+        v)))
+
+(define (hash-table-exists? h k)
+  (not (hash-table-missing? (hash-ref h k *hash-absent*))))
+
+(define hash-table-has-key? hash-table-exists?)
+
+(define (hash-table-set! h k v)
+  (hash-set! h k v)
+  (void))
+
+(define (hash-table-delete! h k)
+  (if (hash-table-exists? h k) (hash-remove! h k))
+  (void))
+
+(define (hash-table-size h) (hash-length h))
+(define (hash-table-keys h) (hash-keys h))
+(define (hash-table-values h) (hash-values h))
+
+(define (hash-table->alist h) (hash->list h))
+
+(define (alist->hash-table alist . comparator)
+  (alist->hash alist))
+
+(define (hash-table-walk proc h)
+  (for-each (lambda (k) (proc k (hash-ref h k))) (hash-keys h))
+  (void))
+
+(define (hash-table-update! h k proc . default)
+  (let ((v (hash-ref h k *hash-absent*)))
+    (if (hash-table-missing? v)
+        (if (null? default)
+            (error "hash-table-update!: key not found")
+            (begin (hash-set! h k (proc (car default))) (void)))
+        (begin (hash-set! h k (proc v)) (void)))))
+
+(define (hash-table-copy h) (hash-copy h))
+
+(define (hash-table-clear! h)
+  (for-each (lambda (k) (hash-remove! h k)) (hash-keys h))
+  (void))
+
+(define (hash-table-merge! a b)
+  (for-each (lambda (k) (hash-set! a k (hash-ref b k))) (hash-keys b))
+  a)
+
+; ═══════════════════════════════════════════════════════════════════
+; SRFI-128 minimal comparator: equality, hash, ordering key
+; ═══════════════════════════════════════════════════════════════════
+; A comparator is #(comparator type-test equality hash ordering), where
+; ordering is #f for an equality-only comparator.
+
+(define (make-comparator type-test equality hash ordering)
+  (vector 'comparator type-test equality hash ordering))
+
+(define (comparator? x)
+  (and (vector? x) (= (vector-length x) 5)
+       (eq? (vector-ref x 0) 'comparator)))
+
+(define (comparator-type-test-predicate c) (vector-ref c 1))
+(define (comparator-equality-predicate c) (vector-ref c 2))
+(define (comparator-hash-function c) (vector-ref c 3))
+(define (comparator-ordered? c) (not (eq? (vector-ref c 4) #f)))
+(define (comparator-ordered-up? c) (not (eq? (vector-ref c 4) #f)))
+(define (comparator-test? c x) ((vector-ref c 1) x))
+(define (comparator-hash c x) ((vector-ref c 3) x))
+
+; Default hash: integers are their own hash; strings sum code points;
+; every other value hashes to 0 (a legal, if coarse, equal?-compatible
+; hash).  Table lookup itself uses equal?, so this only affects pooled
+; consumers that call comparator-hash.
+(define (default-hash x)
+  (cond ((integer? x) x)
+        ((string? x)
+         (let loop ((i 0) (h 0))
+           (if (>= i (string-length x))
+               h
+               (loop (+ i 1) (+ (* h 31) (string-ref x i))))))
+        ((symbol? x) 0)
+        (else 0)))
+
+; Default ordering: numbers numerically, strings lexicographically,
+; anything else compares equal (0).
+(define (default-ordering a b)
+  (cond ((and (number? a) (number? b))
+         (cond ((< a b) -1) ((> a b) 1) (else 0)))
+        ((and (string? a) (string? b))
+         (cond ((string<? a b) -1) ((string>? a b) 1) (else 0)))
+        (else 0)))
+
+(define default-comparator
+  (make-comparator (lambda (x) #t) equal? default-hash default-ordering))
+
+(define (=? comparator a b)
+  ((comparator-equality-predicate comparator) a b))
+
+(define (<? comparator a b)
+  (if (comparator-ordered? comparator)
+      (< ((vector-ref comparator 4) a b) 0)
+      (error "<?: comparator is not ordered")))

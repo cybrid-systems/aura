@@ -1,0 +1,67 @@
+; lib/std/bitwise.aura — SRFI-151 bitwise operations (Issue #5003)
+;
+; (require "std/bitwise" all:)
+;
+; Kernel primitives (evaluator_primitives_core.cpp): bitwise-not,
+; bitwise-and, bitwise-ior, bitwise-xor, arithmetic-shift, bit-count,
+; integer-length. They exist because Aura has no bit operators in the
+; source language and the fixnum payload is a value-representation
+; concern (the #5008 contract: only what Scheme cannot express).
+;
+; Aura has no exact bignums: results outside the fixnum range
+; [-2^62, 2^62-1] promote to an integral float.  Everything below this
+; line is pure Scheme.
+;
+; The kernel names are exported directly (no "define name name" alias:
+; a module-level redefine shadows the primitive, the trap std/hash
+; documents for hash-ref).
+
+(export bitwise-not bitwise-and bitwise-ior bitwise-xor
+        arithmetic-shift bit-count integer-length
+        bitwise-if bitwise-merge
+        bitwise-bit-set? bitwise-first-bit-set
+        bitwise-bit-field
+        bitwise-fold bitwise-for-each bitwise-length)
+
+; (bitwise-if mask a b) — bits of a where mask is 1, of b where mask is 0.
+(define (bitwise-if mask a b)
+  (bitwise-ior (bitwise-and mask a)
+               (bitwise-and (bitwise-not mask) b)))
+
+; (bitwise-merge mask a b) — SRFI-151 alias of bitwise-if.
+(define bitwise-merge bitwise-if)
+
+; (bitwise-bit-set? i k) — is bit k of i set?
+(define (bitwise-bit-set? i k)
+  (not (= 0 (bitwise-and i (arithmetic-shift 1 k)))))
+
+; (bitwise-first-bit-set i) — index of the lowest set bit, -1 for 0.
+(define (bitwise-first-bit-set i)
+  (if (= i 0)
+      -1
+      (let loop ((n i) (k 0))
+        (if (= 0 (bitwise-and n 1))
+            (loop (arithmetic-shift n -1) (+ k 1))
+            k))))
+
+; (bitwise-bit-field i start end) — bits start..end-1, shifted down.
+(define (bitwise-bit-field i start end)
+  (bitwise-and (arithmetic-shift i (- start))
+               (- (arithmetic-shift 1 (- end start)) 1)))
+
+; (bitwise-fold proc seed i) — fold proc bit-by-bit, LSB first.
+(define (bitwise-fold proc seed i)
+  (let loop ((n (if (< i 0) (bitwise-not i) i)) (bit 0) (acc seed))
+    (if (= n 0)
+        acc
+        (loop (arithmetic-shift n -1) (+ bit 1)
+              (if (= 0 (bitwise-and n 1))
+                  acc
+                  (proc bit acc))))))
+
+; (bitwise-for-each proc i) — call proc on each set bit index, LSB first.
+(define (bitwise-for-each proc i)
+  (bitwise-fold (lambda (bit _) (proc bit) #f) #f i))
+
+; (bitwise-length i) — SRFI-151 alias of integer-length.
+(define (bitwise-length i) (integer-length i))
