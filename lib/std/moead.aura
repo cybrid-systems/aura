@@ -31,6 +31,8 @@
 (export moead:make moead:ask moead:tell! moead:run! moead:front moead:weights
         moead:report moead:help moead:schema moead:scalar)
 
+(require "std/list" all:)
+(require "std/math" all:)
 (require "std/evo-core" all:)
 (require "std/pareto" all:)
 
