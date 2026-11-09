@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**106** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**107** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
