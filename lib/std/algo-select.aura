@@ -196,8 +196,8 @@
                                           (- depth 1)))
                      (rm (select-tree-fit (select-gather X ri) (select-gather S ri)
                                           (- depth 1)))
-                     (gain (+ (select-tree-total lm (select-gather S li))
-                              (select-tree-total rm (select-gather S ri)))))
+                     (gain (+ (select-tree-total lm (select-gather X li) (select-gather S li))
+                              (select-tree-total rm (select-gather X ri) (select-gather S ri)))))
                 (loop (cdr cuts)
                       (if (or (not best) (> gain (hash-ref best "gain" -1.0e300)))
                         (hash "key" j "threshold" cut "gain" gain
@@ -212,7 +212,10 @@
 (define (select-gather xs idx)
   (map (lambda (i) (list-ref xs i)) idx))
 
-(define (select-tree-total model S)
+; X and S are row-aligned: X holds the feature vectors and S the member
+; scores. Split both with the same predicate so the feature key is never
+; used to index a score row (features and members have different lengths).
+(define (select-tree-total model X S)
   (cond
     ((hash-ref model "leaf" #f)
      (let ((j (hash-ref model "leaf")))
@@ -222,10 +225,12 @@
     ((hash-ref model "key" #f)
      (let* ((k (hash-ref model "key"))
             (cut (hash-ref model "threshold"))
-            (left (filter (lambda (row) (<= (list-ref row k) cut)) S))
-            (right (filter (lambda (row) (not (<= (list-ref row k) cut))) S)))
-       (+ (select-tree-total (hash-ref model "left") left)
-          (select-tree-total (hash-ref model "right") right))))
+            (li (select-indices (lambda (row) (<= (list-ref row k) cut)) X))
+            (ri (select-indices (lambda (row) (not (<= (list-ref row k) cut))) X)))
+       (+ (select-tree-total (hash-ref model "left")
+                             (select-gather X li) (select-gather S li))
+          (select-tree-total (hash-ref model "right")
+                             (select-gather X ri) (select-gather S ri)))))
     (else 0.0)))
 
 (define (select-best-member-index S m)

@@ -139,6 +139,30 @@
 (assert! (string=? (car (select:choose sf (hash "size" 0 "id" 8) 1)) "a")
          "features-fn is used for both training and query")
 
+; AC4b — a feature key must never index a member-score row (#5060)
+; Seven features, four members: the tree total used to do (list-ref row k)
+; with k a feature index, so it ran past a 4-long score row.
+(display "AC4b features exceed members\n")
+(define f7 (map (lambda (r)
+                  (hash "f0" 1 "f1" 1 "f2" (* 10 r) "f3" 1
+                        "f4" 1 "f5" 1 "f6" 1))
+                (list 0 0 1 1 2 2 3 3)))
+(define f7means (map (lambda (r)
+                       (cond ((= r 0) (list 1.0 0.2 0.1 0.0))
+                             ((= r 1) (list 0.1 1.0 0.2 0.0))
+                             ((= r 2) (list 0.1 0.2 1.0 0.0))
+                             (else (list 0.0 0.1 0.2 1.0))))
+                     (list 0 0 1 1 2 2 3 3)))
+(define f7mat (hash "members" (list "m0" "m1" "m2" "m3")
+                    "instances" f7 "means" f7means))
+(define tr7 (select:offline (select:make (hash "model" "tree")) f7mat (hash)))
+(assert! (number? (hash-ref (select:report tr7) "gap-closure"))
+         "tree selection with 7 features / 4 members returns a report")
+(assert! (member? (car (select:choose tr7 (hash "f0" 1 "f1" 1 "f2" 20 "f3" 1
+                                                    "f4" 1 "f5" 1 "f6" 1) 1))
+                     (list "m0" "m1" "m2" "m3"))
+         "tree selection returns a known member when features > members")
+
 ; ═══════════════════════════════════════════════════════════════════
 ; AC5 — online feedback and drift detection
 ; ═══════════════════════════════════════════════════════════════════
