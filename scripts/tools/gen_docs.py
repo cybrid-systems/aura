@@ -9,6 +9,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from collections import defaultdict
@@ -16,6 +17,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import prim_surface  # noqa: E402 — Issue #5008: one scan for docs + gate
+
 SRC = ROOT / "src"
 STD = ROOT / "lib" / "std"
 OUT = ROOT / "docs" / "generated"
@@ -36,6 +40,8 @@ class Primitive:
     file: str
     category: str = "core"  # Issue #559: classification tag
     deprecated: bool = False  # Issue #1438: surface deprecation in docs
+    tier: str = "unclassified"  # Issue #5008: kernel | stdlib-candidate | delete
+    rule: str = ""  # Issue #5008: rule id from the tier list (audit trail)
 
 
 # Issue #1434–#1437: names marked PrimMeta.deprecated in the engine.
@@ -204,46 +210,41 @@ def classify_primitive(name: str, overrides: dict[str, str]) -> str:
     return "core"
 
 
+def load_tiers() -> tuple[dict[str, dict], dict[str, str]]:
+    """Issue #5008: the one tier list, shared with the CI gate."""
+    path = ROOT / "docs" / "stdlib" / "primitive-tiers.json"
+    if not path.exists():
+        print(
+            f"WARNING: missing {path.relative_to(ROOT)}; rendering tiers as unclassified",
+            file=sys.stderr,
+        )
+        return {}, {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data.get("primitives", {}), data.get("rule_notes", {})
+
+
 def scan_primitives() -> list[Primitive]:
+    """Every registration from BOTH channels, via scripts/tools/prim_surface.py.
+
+    A name-level inventory that only reads register_prim/add() misses the
+    evaluator ctor hot table (+ - * / = < > <= >= not and or eq?), so
+    docs and the tier gate share this one scan (Issue #5008).
+    """
     found: dict[str, Primitive] = {}
     overrides = _load_category_overrides()
-
-    registrar_files = {"ffi_primitives_impl.cpp"}
-    for path in sorted(SRC.rglob("*.cpp")):
-        rel = path.relative_to(ROOT).as_posix()
-        text = path.read_text(encoding="utf-8", errors="replace")
-        use_registrar_add = path.name in registrar_files or path.name.startswith("evaluator_primitives_")
-        if use_registrar_add:
-            for m in FFI_ADD_RE.finditer(text):
-                name = m.group(1)
-                if name not in found:
-                    found[name] = Primitive(
-                        name,
-                        rel,
-                        classify_primitive(name, overrides),
-                        is_deprecated_name(name),
-                    )
-            # Issue #2915: scaffold register_prim(add, ev, "name", ...)
-            for m in REGISTER_PRIM_RE.finditer(text):
-                name = m.group(1)
-                if name not in found:
-                    found[name] = Primitive(
-                        name,
-                        rel,
-                        classify_primitive(name, overrides),
-                        is_deprecated_name(name),
-                    )
-        else:
-            for m in PRIMITIVE_RE.finditer(text):
-                name = m.group(1)
-                if name not in found:
-                    found[name] = Primitive(
-                        name,
-                        rel,
-                        classify_primitive(name, overrides),
-                        is_deprecated_name(name),
-                    )
-
+    tiers, _rule_notes = load_tiers()
+    for reg in prim_surface.scan_registrations():
+        if reg.name in found:
+            continue
+        entry = tiers.get(reg.name, {})
+        found[reg.name] = Primitive(
+            reg.name,
+            reg.file,
+            classify_primitive(reg.name, overrides),
+            is_deprecated_name(reg.name) or bool(entry.get("deprecated")),
+            entry.get("tier", "unclassified"),
+            entry.get("rule", ""),
+        )
     return sorted(found.values(), key=lambda p: p.name)
 
 
@@ -303,13 +304,29 @@ def render_primitives(primitives: list[Primitive]) -> str:
         cat = p.category if p.category in by_cat else "core"
         by_cat[cat].append(p)
     n_dep = sum(1 for p in primitives if p.deprecated)
+    # Issue #5008: tier counts come straight from the tier list.
+    TIER_ORDER = ["kernel", "stdlib-candidate", "delete", "unclassified"]
+    by_tier: dict[str, list[Primitive]] = {t: [] for t in TIER_ORDER}
+    for p in primitives:
+        by_tier[p.tier if p.tier in by_tier else "unclassified"].append(p)
     lines = [
         GENERATED_BANNER,
         "# Primitives (generated)",
         "",
         f"**{len(primitives)}** registrations scanned from `src/**/*.cpp` "
         f"({n_dep} marked **deprecated** — Issue #1438).",
+        "Both registration channels are covered (Issue #5008): `register_prim` / "
+        "`add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot "
+        "table in `src/compiler/evaluator_primitives_builtins.cpp` "
+        "(`+ - * / = < > <= >= not and or eq?` live only there).",
         "Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).",
+        "Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; "
+        "criterion + gate in "
+        "[primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).",
+        f"**kernel** {len(by_tier['kernel'])} · "
+        f"**stdlib-candidate** {len(by_tier['stdlib-candidate'])} · "
+        f"**delete** {len(by_tier['delete'])}"
+        + (f" · **unclassified** {len(by_tier['unclassified'])}" if by_tier["unclassified"] else ""),
         "Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.",
         "",
         "**Authoring (Issue #2915)**: prefer `register_prim` in "
@@ -339,9 +356,10 @@ def render_primitives(primitives: list[Primitive]) -> str:
 
     def _fmt_line(p: Primitive, with_cat: bool = True) -> str:
         dep = " **deprecated**" if p.deprecated else ""
+        tier = f" `{p.tier}`" if p.tier else ""
         if with_cat:
-            return f"- `{p.name}` *[{p.category}]*{dep} — `{p.file}`"
-        return f"- `{p.name}`{dep} — `{p.file}`"
+            return f"- `{p.name}` *[{p.category}]*{tier}{dep} — `{p.file}`"
+        return f"- `{p.name}`{tier}{dep} — `{p.file}`"
 
     # Legacy group-by-prefix rendering (kept for backward
     # compat with the existing primitives.md layout).
@@ -368,6 +386,26 @@ def render_primitives(primitives: list[Primitive]) -> str:
         lines.append("")
         for p in items:
             lines.append(_fmt_line(p, with_cat=False))
+        lines.append("")
+    # Issue #5008: tier sections — the v0.2.0 removal plan reads these.
+    lines.append("## By tier (Issue #5008)")
+    lines.append("")
+    lines.append(
+        "Criterion: a name stays **kernel** only when Aura code cannot implement it "
+        "without losing atomicity or a host effect. **stdlib-candidate** names are "
+        "pure value->value functions Aura can host; **delete** names duplicate "
+        "another registered name. See "
+        "[primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md)."
+    )
+    lines.append("")
+    for tier in TIER_ORDER:
+        items = by_tier[tier]
+        if not items:
+            continue
+        lines.append(f"### {tier} ({len(items)})")
+        lines.append("")
+        for p in items:
+            lines.append(f"- `{p.name}` *[{p.rule}]* — `{p.file}`")
         lines.append("")
     # Issue #1438: collapsed deprecated index
     dep_items = [p for p in primitives if p.deprecated]

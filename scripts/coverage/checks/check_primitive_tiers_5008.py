@@ -1,0 +1,279 @@
+#!/usr/bin/env python3
+"""Primitive tier list + registration-count ratchet (Issue #5008).
+
+Two contracts, both fed by the ONE scan in scripts/tools/prim_surface.py:
+
+1. Tier coverage.  Every name the engine registers (register_prim / add() in
+   src/**/*.cpp *and* the evaluator ctor hot table in
+   src/compiler/evaluator_primitives_builtins.cpp) must have a tier in
+   docs/stdlib/primitive-tiers.json:
+
+     kernel            Aura cannot implement it without losing atomicity or a
+                       host effect
+     stdlib-candidate  pure value->value function Aura can host
+     delete            redundant: another registered name already provides it
+
+   docs/generated/primitives.md is rendered from that same file, so the
+   catalog the docs show and the catalog this gate checks cannot drift.
+
+2. Growth ratchet.  Relative to the landing baseline
+   (docs/generated/primitives-baseline.json) the registration count may only
+   shrink.  A new name must be paid for by removing at least one registration
+   in the same change, or be listed in "kernel_exceptions" (the authoring
+   contract's kernel exception table) with a justification.
+
+3. Retirement channel.  A name still registered from the deprecated set must
+   be flagged "deprecated": true in the tier list; a name flagged deprecated
+   must not be called from lib/std.
+
+Usage:
+  python3 scripts/coverage/checks/check_primitive_tiers_5008.py
+  python3 scripts/coverage/checks/check_primitive_tiers_5008.py --update-baseline
+  python3 scripts/coverage/checks/check_primitive_tiers_5008.py --report
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[3]
+TOOLS = ROOT / "scripts" / "tools"
+sys.path.insert(0, str(TOOLS))
+
+import gen_docs  # noqa: E402 — DEPRECATED_PRIMITIVES (Issue #1438), one source
+import prim_surface  # noqa: E402 — the shared registration scan
+
+TIERS_PATH = ROOT / "docs" / "stdlib" / "primitive-tiers.json"
+BASELINE_PATH = ROOT / "docs" / "generated" / "primitives-baseline.json"
+HOT_TABLE_TU = "src/compiler/evaluator_primitives_builtins.cpp"
+STDLIB_DIR = "lib/std/"
+
+VALID_TIERS = ("kernel", "stdlib-candidate", "delete")
+
+
+def load_tiers() -> dict:
+    return json.loads(TIERS_PATH.read_text(encoding="utf-8"))
+
+
+def write_baseline(names: list[str]) -> None:
+    doc = {
+        "schema": 1,
+        "issue": 5008,
+        "note": (
+            "Registration-count ratchet baseline (Issue #5008). Written by "
+            "check_primitive_tiers_5008.py --update-baseline. The count may only "
+            "shrink; growth needs a matching removal or an entry in "
+            "kernel_exceptions."
+        ),
+        "channels": ["register_prim / add() in src/**/*.cpp", HOT_TABLE_TU],
+        "count": len(names),
+        "names": names,
+    }
+    BASELINE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    BASELINE_PATH.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(f"wrote {BASELINE_PATH.relative_to(ROOT)} ({len(names)} names)")
+
+
+def check_tiers(tiers: dict, catalog: list[str]) -> list[str]:
+    errors: list[str] = []
+    entries: dict[str, dict] = tiers.get("primitives", {})
+    rule_notes: dict[str, str] = tiers.get("rule_notes", {})
+    cur = set(catalog)
+
+    missing = sorted(cur - set(entries))
+    if missing:
+        errors.append(
+            f"{len(missing)} registered primitive(s) have no tier in "
+            f"{TIERS_PATH.relative_to(ROOT)}:\n"
+            + "\n".join(f"  + {n}" for n in missing)
+            + "\n  Assign each one kernel / stdlib-candidate / delete and record the rule."
+        )
+
+    stale = sorted(set(entries) - cur)
+    if stale:
+        errors.append(
+            f"{len(stale)} tier entr(ies) no longer match a registration "
+            f"(renamed or removed without updating the list):\n" + "\n".join(f"  - {n}" for n in stale)
+        )
+
+    bad_tier = sorted(n for n, e in entries.items() if e.get("tier") not in VALID_TIERS)
+    if bad_tier:
+        errors.append(
+            "invalid tier value (expected "
+            + " / ".join(VALID_TIERS)
+            + "):\n"
+            + "\n".join(f"  ? {n}: {entries[n].get('tier')!r}" for n in bad_tier)
+        )
+
+    bad_rule = sorted(n for n, e in entries.items() if not e.get("rule") or e.get("rule") not in rule_notes)
+    if bad_rule:
+        errors.append(
+            "tier entry without a known rule id (rule_notes is the audit trail):\n"
+            + "\n".join(f"  ? {n}: {entries[n].get('rule')!r}" for n in bad_rule)
+        )
+
+    counts = tiers.get("counts")
+    if isinstance(counts, dict):
+        live: dict[str, int] = {t: 0 for t in VALID_TIERS}
+        for e in entries.values():
+            if e.get("tier") in live:
+                live[e["tier"]] += 1
+        if {k: counts.get(k) for k in live} != live:
+            errors.append(f"stale counts block: file says {counts}, entries say {live}")
+
+    exc = tiers.get("kernel_exceptions", [])
+    if not isinstance(exc, list):
+        errors.append("kernel_exceptions must be a list of primitive names")
+        exc = []
+    orphan = sorted(set(exc) - cur)
+    if orphan:
+        errors.append(
+            "kernel_exceptions names that are not registered (remove them):\n" + "\n".join(f"  - {n}" for n in orphan)
+        )
+
+    return errors
+
+
+def check_growth(tiers: dict, catalog: list[str], *, quiet: bool = False) -> list[str]:
+    if not BASELINE_PATH.exists():
+        return [
+            f"missing {BASELINE_PATH.relative_to(ROOT)}; run with --update-baseline once to record the landing count"
+        ]
+    base_doc = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    base = set(base_doc.get("names", []))
+    base_count = int(base_doc.get("count", len(base)))
+    cur = set(catalog)
+    added = sorted(cur - base)
+    removed = sorted(base - cur)
+    exc = set(tiers.get("kernel_exceptions", []))
+    unpaid = [n for n in added if n not in exc]
+
+    errors: list[str] = []
+    if len(unpaid) > len(removed):
+        src = prim_surface.scan_sources()
+        detail = "\n".join(f"  + {n}  ({src.get(n, ['?'])[0]})" for n in unpaid)
+        errors.append(
+            f"primitive catalog grew without paying for it (Issue #5008).\n"
+            f"  baseline {base_count} ({BASELINE_PATH.relative_to(ROOT)}) -> now {len(cur)}\n"
+            f"  {len(added)} added, {len(removed)} removed, "
+            f"{len(unpaid)} addition(s) not paid for:\n{detail}\n"
+            "  Fix one of:\n"
+            "    - remove a registration in the same change (one per added name), or\n"
+            "    - list the name in kernel_exceptions of docs/stdlib/primitive-tiers.json\n"
+            "      (authoring contract: kernel exception table), with a justification."
+        )
+    elif not quiet:
+        print(
+            f"OK: registration count {len(cur)} <= baseline {base_count} ({len(added)} added, {len(removed)} removed)"
+        )
+    return errors
+
+
+def check_retirement(tiers: dict, catalog: list[str]) -> list[str]:
+    errors: list[str] = []
+    entries: dict[str, dict] = tiers.get("primitives", {})
+    cur = set(catalog)
+    refs = prim_surface.stdlib_references(sorted(entries))
+
+    flagged = sorted(n for n, e in entries.items() if e.get("deprecated"))
+    for name in flagged:
+        if name not in cur:
+            errors.append(f"{name!r} is flagged deprecated but no longer registered; drop the flag")
+        if name in refs:
+            errors.append(f"{name!r} is deprecated but lib/std still calls it: " + ", ".join(refs[name][:3]))
+
+    # Issue #5008 acceptance: either the deprecated list is non-empty and
+    # visible, or the retired names are already gone from the catalog.
+    retired_in_catalog = sorted(set(gen_docs.DEPRECATED_PRIMITIVES) & cur)
+    unmarked = [n for n in retired_in_catalog if not entries.get(n, {}).get("deprecated")]
+    if unmarked:
+        errors.append(
+            "deprecated names still registered without a deprecated flag "
+            "(mark them, or finish removing them):\n" + "\n".join(f"  ? {n}" for n in unmarked)
+        )
+
+    deletes = sorted(n for n, e in entries.items() if e.get("tier") == "delete")
+    called = [n for n in deletes if n in refs]
+    if called:
+        errors.append(
+            "delete-tier primitives are still called from lib/std "
+            "(retire the call site first, then delete):\n"
+            + "\n".join(f"  x {n}: " + ", ".join(refs[n][:3]) for n in called)
+        )
+
+    if not errors:
+        print(
+            f"OK: retirement channel — {len(flagged)} deprecated name(s) flagged, "
+            f"{len(gen_docs.DEPRECATED_PRIMITIVES) - len(retired_in_catalog)} retired "
+            f"name(s) absent from the {len(cur)}-name catalog, "
+            f"{len(deletes)} delete-tier name(s) unused by lib/std"
+        )
+    return errors
+
+
+def report(tiers: dict, catalog: list[str]) -> int:
+    """Print the evidence the follow-up deletion issues need."""
+    entries: dict[str, dict] = tiers.get("primitives", {})
+    refs = prim_surface.stdlib_references(catalog)
+    unused = [n for n in catalog if n not in refs]
+    by_tier: dict[str, list[str]] = {t: [] for t in VALID_TIERS}
+    for n in catalog:
+        t = entries.get(n, {}).get("tier")
+        if t in by_tier:
+            by_tier[t].append(n)
+    print(f"catalog: {len(catalog)} names")
+    for t in VALID_TIERS:
+        print(f"  {t:18s} {len(by_tier[t])}")
+    print(f"  referenced by lib/std: {len(catalog) - len(unused)}")
+    print(f"  no lib/std caller    : {len(unused)}")
+    for n in unused:
+        print(f"    {n:42s} {entries.get(n, {}).get('tier', '?'):18s} {prim_surface.scan_sources()[n][0]}")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help="Rewrite docs/generated/primitives-baseline.json from the current scan.",
+    )
+    ap.add_argument("--report", action="store_true", help="Print tier + lib/std usage evidence.")
+    args = ap.parse_args()
+
+    if not TIERS_PATH.exists():
+        print(f"FAIL: missing {TIERS_PATH.relative_to(ROOT)}", file=sys.stderr)
+        return 1
+
+    tiers = load_tiers()
+    catalog = prim_surface.scan_names()
+
+    if args.update_baseline:
+        write_baseline(catalog)
+
+    if args.report:
+        return report(tiers, catalog)
+
+    errors = check_tiers(tiers, catalog)
+    errors += check_growth(tiers, catalog)
+    errors += check_retirement(tiers, catalog)
+
+    if errors:
+        print(f"FAIL: primitive tier contract (Issue #5008) — {len(errors)} problem(s)", file=sys.stderr)
+        for i, err in enumerate(errors, 1):
+            print(f"\n[{i}] {err}", file=sys.stderr)
+        return 1
+
+    print(
+        f"OK: primitive tiers ({len(catalog)} names: "
+        + ", ".join(f"{t} {sum(1 for e in tiers['primitives'].values() if e['tier'] == t)}" for t in VALID_TIERS)
+        + ")"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -18,6 +18,7 @@ Entry points for humans and AI Agents working in this repository.
 Adding or changing built-in primitives follows the **primitive authoring contract**:
 
 - Contract: [stdlib/primitive-authoring-contract.md](stdlib/primitive-authoring-contract.md) (Issue #2915)
+- Tiers + registration gate: [stdlib/primitive-tiers.json](stdlib/primitive-tiers.json) (kernel / stdlib-candidate / delete, Issue #5008)
 - Error-return convention: [stdlib/primitive-error-convention.md](stdlib/primitive-error-convention.md) (Issue #2914)
 - Scaffold header: `src/compiler/prim_registrar_scaffold.hh` (`register_prim` + `PrimSpec`)
 - Central registration map: `src/compiler/evaluator_primitives_registry.cpp` (#1552)

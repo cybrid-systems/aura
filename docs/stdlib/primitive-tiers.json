@@ -1,0 +1,2116 @@
+{
+ "schema": 1,
+ "issue": 5008,
+ "criterion": "A name stays kernel only when Aura code cannot implement it without losing atomicity or a host effect. Otherwise it is stdlib-candidate, or delete when another registered name already provides the same behaviour.",
+ "how_to_change": "Every name registered in src must appear here. Adding a registration requires deleting one elsewhere, or listing the new name in kernel_exceptions with a justification. scripts/coverage/checks/check_primitive_tiers_5008.py enforces this; docs/generated/primitives.md is rendered from this file.",
+ "rule_notes": {
+  "K-HOT": "hot table in evaluator_primitives_builtins.cpp: native dispatch, no Aura body",
+  "K-CLOCK": "host clock (wall/monotonic time)",
+  "K-PANIC": "panic checkpoint/restore is atomic workspace state",
+  "K-VAL": "value model: constructor/accessor/type predicate over a host value representation",
+  "K-STR": "string heap access/allocation; the engine hash function also keys hash tables",
+  "K-NUM": "numeric tower: libm host call or IEEE rounding, no Aura body",
+  "K-NUMDIV": "host integer division semantics (truncating / floor)",
+  "K-CTRL": "control / error / interpreter entry; needs the evaluator itself",
+  "K-IO": "host effect (stdin/stdout/file/env/process/log file)",
+  "K-FFI": "host effect: FFI boundary and raw memory",
+  "K-HOSTLIB": "host library call (regex engine / encoding / byte reinterpretation)",
+  "K-WS": "atomic interpreter/workspace state; Aura cannot preserve the atomicity it provides",
+  "K-ENGINE": "engine internals (AST / compile pipeline / type checker / macro hygiene / module loader)",
+  "K-FIBER": "fiber scheduling / mailbox host state; atomic across fibers",
+  "K-GOV": "process-level governance / memory / counters (atomic host state)",
+  "K-OBS": "observability counters (atomic host state)",
+  "K-QRY": "reads engine-internal indexes (def-use, provenance, AST) under a workspace lock",
+  "K-ORCH": "scheduler/mailbox effect",
+  "K-AGENT": "agent loop state / strategy registry / LLM host effect",
+  "K-VERIFY": "reads compiler state",
+  "S-F64": "derived loop over f64vector-ref/set!/length",
+  "S-PAIR": "composition of car/cdr (R7RS defines them in the library)",
+  "S-LIST": "pure recursion over cons/car/cdr (or vector-ref)",
+  "S-STR": "pure string algorithm over string-ref/length; #1440 kept these core for speed, not for semantics",
+  "S-CHAR": "pure char classification over char->integer",
+  "S-NUM": "derived arithmetic (comparison + + - * fold)",
+  "S-PURE": "pure value->value function; #1440 kept json-*/string-* core for speed, not for semantics",
+  "D-ALIAS": "redundant registration: the same behaviour is already reachable through another name"
+ },
+ "kernel_exceptions": [],
+ "counts": {
+  "delete": 6,
+  "kernel": 423,
+  "stdlib-candidate": 87
+ },
+ "primitives": {
+  "%base64-decode": {
+   "tier": "kernel",
+   "rule": "K-HOSTLIB"
+  },
+  "%base64-encode": {
+   "tier": "kernel",
+   "rule": "K-HOSTLIB"
+  },
+  "%hex-decode": {
+   "tier": "kernel",
+   "rule": "K-HOSTLIB"
+  },
+  "%hex-encode": {
+   "tier": "kernel",
+   "rule": "K-HOSTLIB"
+  },
+  "*": {
+   "tier": "kernel",
+   "rule": "K-HOT"
+  },
+  "*allow-macro-inline*": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "+": {
+   "tier": "kernel",
+   "rule": "K-HOT"
+  },
+  "-": {
+   "tier": "kernel",
+   "rule": "K-HOT"
+  },
+  "/": {
+   "tier": "kernel",
+   "rule": "K-HOT"
+  },
+  "<": {
+   "tier": "kernel",
+   "rule": "K-HOT"
+  },
+  "<=": {
+   "tier": "kernel",
+   "rule": "K-HOT"
+  },
+  "=": {
+   "tier": "kernel",
+   "rule": "K-HOT"
+  },
+  ">": {
+   "tier": "kernel",
+   "rule": "K-HOT"
+  },
+  ">=": {
+   "tier": "kernel",
+   "rule": "K-HOT"
+  },
+  "_agent:list": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "_agent:spawn": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "abs": {
+   "tier": "stdlib-candidate",
+   "rule": "S-NUM"
+  },
+  "acos": {
+   "tier": "kernel",
+   "rule": "K-NUM"
+  },
+  "agent:recover-from-error": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "agent:running?": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "agent:tick": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "and": {
+   "tier": "kernel",
+   "rule": "K-HOT"
+  },
+  "aot:reload": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "aot:set-module-version": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "aot:set-region-mask": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "api-reference": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "append": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "apply": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "apply-fix": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "arena-offset": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "arena:compact": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "arena:compact-with-policy": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "arena:request-defrag": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "arena:set-auto-compact-threshold": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "asin": {
+   "tier": "kernel",
+   "rule": "K-NUM"
+  },
+  "assert": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "assv": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "ast:compact-nodes": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:diff": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:generation": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:recycle-nodes": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:ref-deserialize": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:ref-get": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:ref-mutation-id": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:ref-serialize": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:ref-valid?": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:ref-workspace-id": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:restore": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:snapshot": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:snapshot-fail-reason": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:stable-ref": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:validate-nodes": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:validate-ownership": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ast:validate-post-restore": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "atan": {
+   "tier": "kernel",
+   "rule": "K-NUM"
+  },
+  "atomic:add!": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "atomic:counter": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "atomic:counter-value": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "atomic:hash-update!": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "atomic:update!": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "aura-executable-path": {
+   "tier": "kernel",
+   "rule": "K-IO"
+  },
+  "auto-rollback-on-panic": {
+   "tier": "kernel",
+   "rule": "K-PANIC"
+  },
+  "boolean?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "broadcast": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "bytes->f64vector": {
+   "tier": "kernel",
+   "rule": "K-HOSTLIB"
+  },
+  "bytes-i32-ref": {
+   "tier": "kernel",
+   "rule": "K-HOSTLIB"
+  },
+  "c-alloc": {
+   "tier": "kernel",
+   "rule": "K-FFI"
+  },
+  "c-free": {
+   "tier": "kernel",
+   "rule": "K-FFI"
+  },
+  "c-func": {
+   "tier": "kernel",
+   "rule": "K-FFI"
+  },
+  "c-load": {
+   "tier": "kernel",
+   "rule": "K-FFI"
+  },
+  "c-opaque": {
+   "tier": "kernel",
+   "rule": "K-FFI"
+  },
+  "c-opaque->int": {
+   "tier": "kernel",
+   "rule": "K-FFI"
+  },
+  "c-opaque?": {
+   "tier": "kernel",
+   "rule": "K-FFI"
+  },
+  "c-struct-ref": {
+   "tier": "kernel",
+   "rule": "K-FFI"
+  },
+  "c-struct-set!": {
+   "tier": "kernel",
+   "rule": "K-FFI"
+  },
+  "c-struct-size": {
+   "tier": "kernel",
+   "rule": "K-FFI"
+  },
+  "caaar": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PAIR"
+  },
+  "caadr": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PAIR"
+  },
+  "caar": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PAIR"
+  },
+  "cadar": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PAIR"
+  },
+  "caddr": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PAIR"
+  },
+  "cadr": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PAIR"
+  },
+  "capability-stack": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "capability?": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "car": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "cdaar": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PAIR"
+  },
+  "cdadr": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PAIR"
+  },
+  "cdar": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PAIR"
+  },
+  "cddar": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PAIR"
+  },
+  "cdddr": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PAIR"
+  },
+  "cddr": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PAIR"
+  },
+  "cdr": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "ceil": {
+   "tier": "kernel",
+   "rule": "K-NUM"
+  },
+  "ceiling": {
+   "tier": "delete",
+   "rule": "D-ALIAS",
+   "note": "PrimSpec doc: 'Alias of ceil.' \u2014 same body (std::ceil), second registration"
+  },
+  "channel:close": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "channel:create": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "channel:recv": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "channel:send": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "channel:try-recv": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "char->integer": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "char-alphabetic?": {
+   "tier": "stdlib-candidate",
+   "rule": "S-CHAR"
+  },
+  "char-downcase": {
+   "tier": "stdlib-candidate",
+   "rule": "S-CHAR"
+  },
+  "char-numeric?": {
+   "tier": "stdlib-candidate",
+   "rule": "S-CHAR"
+  },
+  "char-ready?": {
+   "tier": "kernel",
+   "rule": "K-IO"
+  },
+  "char-upcase": {
+   "tier": "stdlib-candidate",
+   "rule": "S-CHAR"
+  },
+  "char-whitespace?": {
+   "tier": "stdlib-candidate",
+   "rule": "S-CHAR"
+  },
+  "char<?": {
+   "tier": "stdlib-candidate",
+   "rule": "S-CHAR"
+  },
+  "char=?": {
+   "tier": "stdlib-candidate",
+   "rule": "S-CHAR"
+  },
+  "char?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "check": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "check-capability": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "check-module-signature": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "check-preconditions": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "check-success": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "check=": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE",
+   "note": "test helper (check + equal?); belongs in std/test, which already documents (check (equal? a b)) as the canonical form. Still used by tests/suite/*.aura, so retire the call sites before deleting the registration."
+  },
+  "closure:free!": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "compile:relower-strategy": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "compile:snapshot": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "cons": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "cos": {
+   "tier": "kernel",
+   "rule": "K-NUM"
+  },
+  "current-time": {
+   "tier": "kernel",
+   "rule": "K-CLOCK"
+  },
+  "current-time-ms": {
+   "tier": "kernel",
+   "rule": "K-CLOCK"
+  },
+  "datum->string": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "declare-type": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "define-linear": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "define-lookup": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "define-strategy": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "deserialize-workspace": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "diagnose": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "dirty:ppa-reasons": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "dirty:reasons": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "display": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "drop": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "edsl:define-struct": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "engine:metrics": {
+   "tier": "kernel",
+   "rule": "K-OBS"
+  },
+  "engine:surface": {
+   "tier": "kernel",
+   "rule": "K-OBS"
+  },
+  "eof-object?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "eq?": {
+   "tier": "kernel",
+   "rule": "K-HOT"
+  },
+  "equal?": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "eqv?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "error": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "error?": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "eval": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "eval-expr": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "eval:async": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "evaluator:compact-env-frames": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "evo:log-path": {
+   "tier": "kernel",
+   "rule": "K-IO"
+  },
+  "evo:record!": {
+   "tier": "kernel",
+   "rule": "K-IO"
+  },
+  "evolve-strategy": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "exact": {
+   "tier": "delete",
+   "rule": "D-ALIAS",
+   "note": "PrimSpec doc: 'Alias of inexact->exact.' \u2014 same lambda"
+  },
+  "exact->inexact": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "exact?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "exit": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "exp": {
+   "tier": "kernel",
+   "rule": "K-NUM"
+  },
+  "f32-bytes->f64vector": {
+   "tier": "kernel",
+   "rule": "K-HOSTLIB"
+  },
+  "f64vector-dot": {
+   "tier": "stdlib-candidate",
+   "rule": "S-F64"
+  },
+  "f64vector-ewma!": {
+   "tier": "stdlib-candidate",
+   "rule": "S-F64"
+  },
+  "f64vector-length": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "f64vector-max-index": {
+   "tier": "stdlib-candidate",
+   "rule": "S-F64"
+  },
+  "f64vector-ref": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "f64vector-set!": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "f64vector-sub!": {
+   "tier": "stdlib-candidate",
+   "rule": "S-F64"
+  },
+  "f64vector-sum": {
+   "tier": "stdlib-candidate",
+   "rule": "S-F64"
+  },
+  "ffi:pin-buffer": {
+   "tier": "kernel",
+   "rule": "K-FFI"
+  },
+  "ffi:unpin-buffer": {
+   "tier": "kernel",
+   "rule": "K-FFI"
+  },
+  "fiber:cancel": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "fiber:join": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "fiber:overlay-begin": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "fiber:overlay-commit": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "fiber:overlay-conflict": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "fiber:overlay-define": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "fiber:overlay-get": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "fiber:overlay-has": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "fiber:overlay-pending": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "fiber:overlay-report": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "fiber:overlay-rollback": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "fiber:overlay-set!": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "fiber:spawn": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "fiber:spawn-backend": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "fiber:yield": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "filter": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "float?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "floor": {
+   "tier": "kernel",
+   "rule": "K-NUM"
+  },
+  "foldl": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "for-each": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "format": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "gc": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "gc-freeze": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "gc-heap": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "gc-heap-reset!": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "gc-module": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "gc-temp": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "gcd": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "generate-type-sigs": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "gensym": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "get-inferred-type": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "get-memory-policy": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "getenv": {
+   "tier": "kernel",
+   "rule": "K-IO"
+  },
+  "hash": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "hash->alist": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "hash-copy": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "hash-has-key?": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "hash-keys": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "hash-length": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "hash-ref": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "hash-remove!": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "hash-set!": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "hash-values": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "hash?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "hot-swap:fn": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "hygiene:allow-macro-mutate?": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "hygiene:protected?": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "hygiene:set-allow-macro-mutate!": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ihash-count": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "ihash-has-key?": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "ihash-keys": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "ihash-ref": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "ihash-remove": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "ihash-set": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "immutable-hash": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "immutable-hash?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "import": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "inexact": {
+   "tier": "delete",
+   "rule": "D-ALIAS",
+   "note": "PrimSpec doc: 'Alias of exact->inexact.' \u2014 same lambda"
+  },
+  "inexact->exact": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "inexact?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "integer->char": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "integer?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "intend": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "intend-analytics": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "intend-history": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "ir-cache-v2:dependents": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "ir-cache-v2:dirty?": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "jit:deopt-fn?": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "jit:exception-fibers-clear": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "json-encode": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "json-get-string": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "json-parse": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "keyword->string": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "keyword?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "lcm": {
+   "tier": "stdlib-candidate",
+   "rule": "S-NUM"
+  },
+  "length": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "list": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "list->string": {
+   "tier": "stdlib-candidate",
+   "rule": "S-STR"
+  },
+  "list->vector": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "list-ref": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "list-sort": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "list?": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "load": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "load-module": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "log": {
+   "tier": "kernel",
+   "rule": "K-NUM"
+  },
+  "log10": {
+   "tier": "kernel",
+   "rule": "K-NUM"
+  },
+  "m4-borrow": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "m4-move": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "m4-return!": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "make-directory": {
+   "tier": "kernel",
+   "rule": "K-IO"
+  },
+  "make-f64vector": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "make-vector": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "map": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "max": {
+   "tier": "stdlib-candidate",
+   "rule": "S-NUM"
+  },
+  "member": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "memory-pressure": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "memv": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "min": {
+   "tier": "stdlib-candidate",
+   "rule": "S-NUM"
+  },
+  "mod": {
+   "tier": "kernel",
+   "rule": "K-NUMDIV"
+  },
+  "module-get": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "module-keys": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "module?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "modulo": {
+   "tier": "kernel",
+   "rule": "K-NUMDIV"
+  },
+  "monotonic-ms": {
+   "tier": "kernel",
+   "rule": "K-CLOCK"
+  },
+  "mutate": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "mutate:check": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "mutate:set-agent-fingerprint": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "mutate:validate-reflected": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "mutation-lightweight-commit": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "mutation-lightweight-rollback": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "mutation-log-compact": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "mutation-log:diff": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "mutation-log:summary": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "my-id": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "newline": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "not": {
+   "tier": "kernel",
+   "rule": "K-HOT"
+  },
+  "null?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "number->string": {
+   "tier": "stdlib-candidate",
+   "rule": "S-STR"
+  },
+  "number?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "offload:await": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "offload:cancel": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "offload:poll": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "offload:snapshot": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "offload:submit": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "or": {
+   "tier": "kernel",
+   "rule": "K-HOT"
+  },
+  "orch:agent-ask": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:agent-directory": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:agent-export-via-token": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:agent-import-via-token": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:agent-join": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:agent-poll": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:agent-recv": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:agent-reply": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:agent-send": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:agent-touch": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:agent-wait-reclaimed": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:compose-workflow": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:join-via-token": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:parallel-intend": {
+   "tier": "delete",
+   "rule": "D-ALIAS",
+   "note": "'(orch:parallel-intend ...) -> alias of (parallel-intend ...)': the body only looks up parallel-intend and forwards"
+  },
+  "orch:reset-metrics": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:run-workflow": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:scope-cancel-all": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:scope-child": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:scope-join-all": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:scope-resolve": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:scope-spawn": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:scope-sweep-reclaimed-pending": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:scope-watch": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orch:supervise-batch": {
+   "tier": "kernel",
+   "rule": "K-ORCH"
+  },
+  "orchestration:tune-gc-frequency": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "pair?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "panic-auto-rollback?": {
+   "tier": "kernel",
+   "rule": "K-PANIC"
+  },
+  "panic-checkpoint": {
+   "tier": "kernel",
+   "rule": "K-PANIC"
+  },
+  "panic-restore": {
+   "tier": "kernel",
+   "rule": "K-PANIC"
+  },
+  "panic-safe-source": {
+   "tier": "kernel",
+   "rule": "K-PANIC"
+  },
+  "parallel-intend": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "pin-stable-refs": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "pin-table-size": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "pow": {
+   "tier": "kernel",
+   "rule": "K-NUM"
+  },
+  "prim-cold-dispatch-fallback": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "prim-hot-dispatch-hits": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "primitives:alias": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "primitives:contract-probe": {
+   "tier": "delete",
+   "rule": "D-ALIAS",
+   "note": "test-only probe (#751) driven from tests/compiler/test_primitives_capture_contract.cpp; move that test onto the C ABI first, then drop the Aura name"
+  },
+  "procedure?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "query": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "query-annotate-functions": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "query-expected-type": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "query-type-of": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "query:as-stable-ref": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:by-marker": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:calls": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:calls-by-marker": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:code": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:defines": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:defines-by-marker": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:dirty-impact": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:dirty-nodes": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:dirty-subtree": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:effects": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:ensure-ref": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:filter": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:last-mutation-provenance": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:module-exports": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:mutation-impact": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:mutations-since": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:node-marker": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:node-provenance": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:node-type": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:node-types": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:pattern": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:provenance-of": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:provenance-of*": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "NOT an alias of query:provenance-of: it takes 0 args and returns every distinct narrowed name (engine index read). Kept kernel."
+  },
+  "query:reaches": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:ref-valid?": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:result-fresh?": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:result-matches": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:root": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:schema": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:stable-ref": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:stable-ref-provenance": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:type-feedback": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "query:where": {
+   "tier": "kernel",
+   "rule": "K-QRY"
+  },
+  "quotient": {
+   "tier": "kernel",
+   "rule": "K-NUMDIV"
+  },
+  "raise": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "read": {
+   "tier": "kernel",
+   "rule": "K-IO"
+  },
+  "read-all-from-string": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "read-byte": {
+   "tier": "kernel",
+   "rule": "K-IO"
+  },
+  "read-file": {
+   "tier": "kernel",
+   "rule": "K-IO"
+  },
+  "read-from-string": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "read-line": {
+   "tier": "kernel",
+   "rule": "K-IO"
+  },
+  "recv": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "reflect-members": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "reflect-module-exports": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "reflect-type": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "reflect:provenance-blame": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "reflect:validate-edsl": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "reflect:validate-macro-body": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "regex-find": {
+   "tier": "kernel",
+   "rule": "K-HOSTLIB"
+  },
+  "regex-match?": {
+   "tier": "kernel",
+   "rule": "K-HOSTLIB"
+  },
+  "regex-replace": {
+   "tier": "kernel",
+   "rule": "K-HOSTLIB"
+  },
+  "regex-split": {
+   "tier": "kernel",
+   "rule": "K-HOSTLIB"
+  },
+  "register-predicate!": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "register-strategy!": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "remainder": {
+   "tier": "kernel",
+   "rule": "K-NUMDIV"
+  },
+  "reply": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "resource:quota-check": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "resource:quota-set": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "reverse": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "rollback": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "rollback-since": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "round": {
+   "tier": "kernel",
+   "rule": "K-NUM"
+  },
+  "run-tests": {
+   "tier": "kernel",
+   "rule": "K-IO"
+  },
+  "runtime:self-heal-on-drift": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "scheduler:pin": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "security:check-effect": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "security:check-tenant-isolation": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "security:grant-capability!": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "security:grant-cross-tenant!": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "security:grant-effect!": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "security:set-audit-persist-dir!": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "security:set-effect-sandbox-mode!": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "security:set-sandbox-mode!": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "security:set-tenant-principal!": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "send": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "serialize-workspace": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "session-active?": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "session:create": {
+   "tier": "kernel",
+   "rule": "K-FIBER"
+  },
+  "set-car!": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "set-cdr!": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "set-memory-policy": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "sin": {
+   "tier": "kernel",
+   "rule": "K-NUM"
+  },
+  "sqrt": {
+   "tier": "kernel",
+   "rule": "K-NUM"
+  },
+  "stats:count": {
+   "tier": "kernel",
+   "rule": "K-OBS"
+  },
+  "stats:get": {
+   "tier": "kernel",
+   "rule": "K-OBS"
+  },
+  "stats:list": {
+   "tier": "kernel",
+   "rule": "K-OBS"
+  },
+  "stats:prefix": {
+   "tier": "kernel",
+   "rule": "K-OBS"
+  },
+  "strategy-field": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "strategy-inspect": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "strategy-set-field!": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "strategy:active": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "strategy:escalate": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "strategy:report-success": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "strategy:set-strategy": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "string->list": {
+   "tier": "stdlib-candidate",
+   "rule": "S-STR"
+  },
+  "string->number": {
+   "tier": "stdlib-candidate",
+   "rule": "S-STR"
+  },
+  "string-append": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "string-copy": {
+   "tier": "stdlib-candidate",
+   "rule": "S-STR"
+  },
+  "string-fill!": {
+   "tier": "stdlib-candidate",
+   "rule": "S-STR"
+  },
+  "string-hash": {
+   "tier": "kernel",
+   "rule": "K-STR"
+  },
+  "string-index": {
+   "tier": "stdlib-candidate",
+   "rule": "S-STR"
+  },
+  "string-join": {
+   "tier": "stdlib-candidate",
+   "rule": "S-STR"
+  },
+  "string-length": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "string-pool:compact": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "string-ref": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "string<=?": {
+   "tier": "stdlib-candidate",
+   "rule": "S-STR"
+  },
+  "string<?": {
+   "tier": "stdlib-candidate",
+   "rule": "S-STR"
+  },
+  "string=?": {
+   "tier": "stdlib-candidate",
+   "rule": "S-STR"
+  },
+  "string>=?": {
+   "tier": "stdlib-candidate",
+   "rule": "S-STR"
+  },
+  "string>?": {
+   "tier": "stdlib-candidate",
+   "rule": "S-STR"
+  },
+  "string?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "substring": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "suggest-annotation-at": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "symbol-append": {
+   "tier": "stdlib-candidate",
+   "rule": "S-STR"
+  },
+  "symbol?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "syntax-marker": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "syntax:get-provenance": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "syntax:propagate-marker": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "syntax:set-marker": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "syntax:set-provenance": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "synthesize:define": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "synthesize:fill": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "synthesize:optimize": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "synthesize:register-template": {
+   "tier": "kernel",
+   "rule": "K-AGENT"
+  },
+  "take": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "tan": {
+   "tier": "kernel",
+   "rule": "K-NUM"
+  },
+  "trunc": {
+   "tier": "kernel",
+   "rule": "K-NUM"
+  },
+  "truncate": {
+   "tier": "delete",
+   "rule": "D-ALIAS",
+   "note": "PrimSpec doc: 'Alias of trunc.' \u2014 same body (std::trunc), second registration"
+  },
+  "type-of": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "type-registry-compact": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "type:set-gradual-permissiveness": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "type:set-typecheck-metrics-tier": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "type?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "typecheck-current": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "typecheck-incremental": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "typecheck-status": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "typed-mutate-atomic": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "unpin-stable-refs": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "use": {
+   "tier": "kernel",
+   "rule": "K-ENGINE"
+  },
+  "vector": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "vector->list": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "vector-copy": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "vector-fill!": {
+   "tier": "stdlib-candidate",
+   "rule": "S-LIST"
+  },
+  "vector-length": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "vector-ref": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "vector-set!": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "vector?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "verify:assertion-failed": {
+   "tier": "kernel",
+   "rule": "K-VERIFY"
+  },
+  "verify:coverage-holes": {
+   "tier": "kernel",
+   "rule": "K-VERIFY"
+  },
+  "verify:parse-assert-failure": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "verify:parse-coverage-feedback": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "verify:parse-formal-cex": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "verify:report-coverage": {
+   "tier": "kernel",
+   "rule": "K-VERIFY"
+  },
+  "verify:suggest-constraint-refine": {
+   "tier": "stdlib-candidate",
+   "rule": "S-PURE"
+  },
+  "void": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "void?": {
+   "tier": "kernel",
+   "rule": "K-VAL"
+  },
+  "while": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "with-capability": {
+   "tier": "kernel",
+   "rule": "K-GOV"
+  },
+  "with-pinned": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace-persist-format-version": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace-persist-info": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace-state": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:can-write?": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:concurrent-mutation-policy": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:conflicts-with": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:delete": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:discard": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:find-define": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:memory-limit": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:memory-used": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:merge-3way": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:resolve-stable-ref": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:rollback-latest": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:rollback-to": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:set-concurrent-mutation-policy": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:set-memory-limit": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:snapshot": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "workspace:sync-from": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  },
+  "write": {
+   "tier": "kernel",
+   "rule": "K-CTRL"
+  },
+  "write-file": {
+   "tier": "kernel",
+   "rule": "K-IO"
+  },
+  "ws:try-mutation": {
+   "tier": "kernel",
+   "rule": "K-WS"
+  }
+ }
+}
