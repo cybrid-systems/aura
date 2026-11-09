@@ -1,0 +1,381 @@
+; Issue #4944 — std/evo-meta: depth-1 recursive self-improvement, meta
+; holdout separation, HGM CMP selection, canary rollback, human approval.
+; No network: the inner factory and the synthetic fitness are local mocks.
+(require "std/evo-meta" all:)
+(require "std/evo-core" all:)
+(require "std/list" all:)
+(require "std/string" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define (close? a b)
+  (and (number? a) (number? b) (< (abs (- a b)) 0.000000001)))
+
+(define (task-ids tasks)
+  (map (lambda (t) (hash-ref t "id" "")) tasks))
+
+; The live meta-policy target, installed once before any loop exists (the
+; evo-core rule: mutate:rebind needs a workspace define).
+(set-code "(define (meta-policy) (hash \"parent-policy\" \"none\"))")
+(eval-current)
+
+(define small-inner (list (hash "id" "i0" "kind" "inner" "offset" 0.0)
+                          (hash "id" "i1" "kind" "inner" "offset" 0.01)))
+(define small-meta (list (hash "id" "m0" "kind" "meta" "offset" 0.0)
+                         (hash "id" "m1" "kind" "meta" "offset" -0.01)))
+(define small-canary (list (hash "id" "c0" "kind" "canary" "offset" 0.0)))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC1 — depth 1 is the only depth; the handle refuses anything deeper
+; ═══════════════════════════════════════════════════════════════════
+(display "AC1 depth guard\n")
+(define m1 (meta:loop (hash "depth" 1 "inner-tasks" small-inner "meta-holdout" small-meta
+                            "canary" small-canary "inner-budget" 2 "pop" 2)))
+(assert! (meta:loop? m1) "depth 1 loop is live")
+(assert! (not (meta:refused? m1)) "depth 1 is not refused")
+(define lr1 (meta:loop-report m1))
+(assert! (= 1 (hash-ref lr1 "depth")) "depth recorded as 1")
+(assert! (= 4 (length (hash-ref lr1 "evolvable"))) "four evolvable knobs")
+(assert! (= 5 (length (hash-ref lr1 "protected"))) "five protected names")
+(assert! (member? "evaluate" (hash-ref lr1 "protected")) "evaluate protected")
+(assert! (member? "gate" (hash-ref lr1 "protected")) "gate protected")
+(assert! (member? "holdout-split" (hash-ref lr1 "protected")) "holdout-split protected")
+(assert! (member? "constraints" (hash-ref lr1 "protected")) "constraints protected")
+(assert! (member? "audit" (hash-ref lr1 "protected")) "audit protected")
+
+(define r2 (meta:loop (hash "depth" 2)))
+(assert! (meta:refused? r2) "depth 2 refused")
+(assert! (not (meta:loop? r2)) "depth 2 is not a live loop")
+(assert! (not (= -1 (string-index (hash-ref (meta:loop-report r2) "reason") "depth" 0)))
+         "refusal names depth")
+(define r0 (meta:loop (hash "depth" 0)))
+(assert! (meta:refused? r0) "depth 0 refused")
+(assert! (meta:refused? (meta:loop (hash "depth" -3))) "negative depth refused")
+; a refused handle is inert: no step, no audit, no live write
+(meta:step! r2)
+(assert! (= 0 (meta:audit-count r2)) "refused handle never steps")
+(assert! (eq? #f (meta:tip r2)) "refused handle has no tip")
+
+(define rp (meta:loop (hash "evolvable" (list "propose-prompt" "evaluate")
+                            "inner-tasks" small-inner "meta-holdout" small-meta)))
+(assert! (meta:refused? rp) "evolving a protected name refused")
+(assert! (not (= -1 (string-index (hash-ref (meta:loop-report rp) "reason") "protected" 0)))
+         "reason names protected")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC2 — the meta holdout never reaches the inner search
+; ═══════════════════════════════════════════════════════════════════
+(display "AC2 meta-holdout isolation\n")
+(assert! (meta:disjoint? small-inner small-meta) "sample sets are disjoint")
+(assert! (not (meta:disjoint? small-inner
+                              (list (hash "id" "i0" "kind" "meta"))))
+         "shared id is not disjoint")
+(define r-ov (meta:loop (hash "depth" 1
+                              "inner-tasks" (list (hash "id" "x" "kind" "inner"))
+                              "meta-holdout" (list (hash "id" "x" "kind" "meta")))))
+(assert! (meta:refused? r-ov) "overlapping inner/meta sets refused")
+(assert! (not (= -1 (string-index (hash-ref (meta:loop-report r-ov) "reason") "holdout" 0)))
+         "refusal names holdout")
+
+(define seen (hash))
+(define (spy-inner ctx)
+  (hash-set! seen "ctx" ctx)
+  (hash-set! seen "keys" (hash-keys ctx))
+  (hash-set! seen "tasks" (task-ids (hash-ref ctx "tasks" (list))))
+  (meta:mock-inner ctx))
+(define m2 (meta:loop (hash "depth" 1 "seed" 2 "inner" spy-inner
+                            "inner-tasks" (meta:mock-task-set "inner" 3 1.0 71)
+                            "meta-holdout" (meta:mock-task-set "meta" 3 1.0 72)
+                            "canary" (meta:mock-task-set "canary" 2 1.0 73)
+                            "inner-budget" 2 "pop" 2 "approval" "auto")))
+(meta:step! m2)
+(assert! (hash? (hash-ref seen "ctx" #f)) "inner factory ran")
+(assert! (not (member? "meta-holdout" (hash-ref seen "keys" (list))))
+         "inner ctx has no meta-holdout key")
+(assert! (not (member? "holdout" (hash-ref seen "keys" (list))))
+         "inner ctx has no holdout key")
+(assert! (equal? (hash-ref seen "tasks" (list))
+                 (task-ids (meta:inner-tasks m2)))
+         "inner ctx carries exactly the inner task ids")
+(assert! (not (member? "meta-0" (hash-ref seen "tasks" (list))))
+         "no meta task id reaches the inner search")
+(assert! (not (meta:leak-check (hash-ref seen "ctx")) ) "inner ctx passes the leak check")
+(assert! (string? (meta:leak-check (hash "tasks" (list (hash "id" "m0" "kind" "meta")))))
+         "leak check flags a meta task")
+(assert! (string? (meta:leak-check (hash "meta-holdout" small-meta)))
+         "leak check flags the key")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC3 — HGM clade metaproductivity selects the expansion node
+; ═══════════════════════════════════════════════════════════════════
+(display "AC3 CMP selection\n")
+(define ns (list (hash "id" "root" "parents" (list) "gen" 0 "score" 0.5)
+                 (hash "id" "a" "parents" (list "root") "gen" 1 "score" 0.2)
+                 (hash "id" "a1" "parents" (list "a") "gen" 2 "score" 0.9)
+                 (hash "id" "b" "parents" (list "root") "gen" 1 "score" 0.8)
+                 (hash "id" "c" "parents" (list "root") "gen" 1 "score" 0.6)))
+(assert! (close? 0.9 (meta:cmp-of ns "a")) "weak node inherits its clade's 0.9")
+(assert! (close? 0.8 (meta:cmp-of ns "b")) "leaf b is worth its own 0.8")
+(assert! (> (meta:cmp-of ns "a") (meta:cmp-of ns "b"))
+         "a weak node with a strong child outranks a stronger leaf")
+(assert! (string=? "a1" (meta:select-node ns))
+         "selection takes the deepest representative of the best clade")
+(assert! (not (string=? "b" (meta:select-node ns)))
+         "the high-scoring leaf b is not expanded")
+(define ns2 (list (hash "id" "p" "parents" (list) "gen" 0 "score" 0.1)
+                  (hash "id" "q" "parents" (list "p") "gen" 1 "score" 0.95)
+                  (hash "id" "r" "parents" (list) "gen" 0 "score" 0.9)))
+(assert! (> (meta:cmp-of ns2 "p") (meta:cmp-of ns2 "r"))
+         "clade 0.95 beats the strong leaf 0.9")
+(assert! (string=? "q" (meta:select-node ns2)) "q is the clade representative")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC4 — the human approval gate: PENDING, reject, approve, auto
+; ═══════════════════════════════════════════════════════════════════
+(display "AC4 approval gate\n")
+(define calls (hash "n" 0))
+(define (count-apply mm node)
+  (hash-set! calls "n" (+ 1 (hash-ref calls "n")))
+  #t)
+
+(define m3 (meta:loop (hash "depth" 1 "seed" 3 "inner-budget" 3 "pop" 3
+                            "approval" "manual" "apply" count-apply)))
+(meta:step! m3)
+(assert! (string=? "PENDING" (meta:decision m3)) "a winning candidate waits for approval")
+(assert! (meta:pending? m3) "the candidate is pending")
+(assert! (eq? #f (meta:tip m3)) "tip did not move before approval")
+(assert! (= 0 (hash-ref calls "n")) "nothing was applied before approval")
+(define pid (car (hash-keys (hash-ref m3 "pending"))))
+(assert! (string? pid) "pending id is a string")
+(assert! (meta:pending? m3 pid) "pending? accepts an id")
+(assert! (not (meta:approved? m3 pid)) "not approved yet")
+
+(define m4 (meta:loop (hash "depth" 1 "seed" 3 "inner-budget" 3 "pop" 3
+                            "approval" "manual" "apply" count-apply)))
+(meta:step! m4)
+(define rid (car (hash-keys (hash-ref m4 "pending"))))
+(meta:reject! m4 rid)
+(assert! (string=? "REJECT" (meta:decision m4)) "reject is recorded")
+(assert! (not (meta:pending? m4)) "rejection clears the pending flag")
+(assert! (eq? #f (meta:tip m4)) "rejection leaves the tip unchanged")
+(assert! (= 0 (hash-ref calls "n")) "rejection applies nothing")
+(assert! (= 0 (hash-ref (meta:report m4) "kept")) "rejection kept nothing")
+
+(meta:approve! m3 pid)
+(assert! (string=? "KEEP" (meta:decision m3)) "approval becomes a KEEP")
+(assert! (string=? pid (meta:tip m3)) "approval advances the tip to that id")
+(assert! (= 1 (hash-ref calls "n")) "approval applies exactly once")
+(assert! (not (meta:pending? m3)) "approval clears the pending flag")
+(assert! (= 1 (hash-ref (meta:report m3) "kept")) "report counts the approved KEEP")
+(assert! (number? (hash-ref (meta:report m3) "tip-score")) "tip score is a number")
+
+(define m5 (meta:loop (hash "depth" 1 "seed" 3 "inner-budget" 3 "pop" 3
+                            "approval" "auto" "apply" count-apply)))
+(meta:step! m5)
+(assert! (string=? "KEEP" (meta:decision m5)) "auto mode keeps without a wait")
+(assert! (not (meta:pending? m5)) "auto mode leaves nothing pending")
+(assert! (= 2 (hash-ref calls "n")) "auto KEEP applied once")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC5 — red team: 10 boundary cases, 100% refused and audited
+; ═══════════════════════════════════════════════════════════════════
+(display "AC5 protected-boundary red team\n")
+(define red
+  (list (hash "evaluate" 1)
+        (hash "gate" 1)
+        (hash "holdout-split" 1)
+        (hash "constraints" 1)
+        (hash "audit" #f)
+        (hash "meta-holdout" (list))
+        (hash "depth" 2)
+        (hash "source" "(define (evaluate x) x)")
+        (hash "source" "(set! gate #f)")
+        (hash "source" "(with-capability 'net (lambda () 1))")))
+(define reasons (map (lambda (g) (meta:check m1 g)) red))
+(assert! (= 10 (length reasons)) "ten cases")
+(assert! (every string? reasons) "all ten genome probes are refused")
+(assert! (not (= -1 (string-index (car reasons) "protected" 0)))
+         "first refusal names protected")
+(assert! (not (= -1 (string-index (list-ref reasons 7) "protected-ref" 0)))
+         "source definition of evaluate is a protected ref")
+(assert! (not (= -1 (string-index (list-ref reasons 8) "gate" 0)))
+         "set! gate is refused")
+(assert! (not (= -1 (string-index (list-ref reasons 9) "capability" 0)))
+         "with-capability is refused")
+; every refusal also checks the live boundary + fixed preset
+(assert! (string? (hash-ref (meta:guard-report) "preset")) "preset is reported")
+(assert! (eq? (hash-ref (meta:guard-report) "preset-ok") #t) "ci preset is allowed")
+(assert! (eq? (hash-ref (meta:guard-report) "boundary-safe") #t) "boundary is safe")
+
+(define (red-propose mm pid)
+  (map (lambda (g) (evo:candidate g (hash "gen" 0 "slot" 0
+                                          "parents" (list pid))))
+       red))
+(define m6 (meta:loop (hash "depth" 1 "seed" 4 "inner-budget" 2 "pop" 2
+                            "inner-tasks" small-inner "meta-holdout" small-meta
+                            "canary" small-canary "approval" "auto"
+                            "propose" red-propose)))
+(meta:step! m6)
+(define r6 (meta:report m6))
+(assert! (= 10 (hash-ref r6 "refused")) "all ten proposals refused at step time")
+(assert! (= 1 (length (hash-ref r6 "archive"))) "no refused genome entered the archive")
+(assert! (string=? "REJECT" (hash-ref r6 "last-decision")) "no candidate means REJECT")
+(assert! (eq? #f (meta:tip m6)) "refusals never move the tip")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC6 — canary regression rolls the whole step back
+; ═══════════════════════════════════════════════════════════════════
+(display "AC6 canary rollback\n")
+(define (evil-eval ctx)
+  (let* ((tasks (hash-ref ctx "tasks" (list)))
+         (kind (if (null? tasks) "" (hash-ref (car tasks) "kind" "")))
+         (pol (hash-ref ctx "policy" (hash)))
+         (sab (equal? (hash-ref pol "parent-policy" "") "sabotage")))
+    (if (equal? kind "canary")
+        (if sab 0.1 0.9)
+        (if sab 0.99 0.9))))
+(define (bad-propose mm pid)
+  (list (evo:candidate (hash "propose-prompt" (list "m3")
+                             "mutation-ops" (list "swap-operator")
+                             "parent-policy" "sabotage"
+                             "budget-split" (hash "explore" 0.4))
+                       (hash "gen" 0 "slot" 0 "parents" (list pid)))))
+(define before-calls (hash-ref calls "n"))
+(define m7 (meta:loop (hash "depth" 1 "seed" 2 "inner-budget" 2 "pop" 2
+                            "approval" "auto" "apply" count-apply
+                            "meta-evaluate" evil-eval "propose" bad-propose
+                            "inner-tasks" (meta:mock-task-set "inner" 2 1.0 81)
+                            "meta-holdout" (meta:mock-task-set "meta" 2 1.0 82)
+                            "canary" (meta:mock-task-set "canary" 2 1.0 83))))
+(assert! (close? 0.9 (hash-ref (hash-ref (meta:report m7) "canary") "base"))
+         "canary baseline is 0.9")
+(meta:step! m7)
+(define r7 (meta:report m7))
+(assert! (string=? "ROLLBACK" (meta:decision m7)) "canary drop is a ROLLBACK")
+(assert! (= 1 (hash-ref r7 "rollbacks")) "rollback counted")
+(assert! (eq? #f (meta:tip m7)) "rollback leaves the tip unset")
+(assert! (= before-calls (hash-ref calls "n")) "rollback applies nothing")
+(assert! (eq? #f (hash-ref (hash-ref r7 "canary") "ok")) "report canary ok is #f")
+(define rolled (car (filter (lambda (a) (number? (hash-ref a "canary")))
+                          (hash-ref r7 "archive"))))
+(assert! (eq? #f (hash-ref rolled "canary-ok")) "the rolled-back node is canary-dirty")
+(assert! (< (hash-ref rolled "canary") 0.9) "its canary score fell below the baseline")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC7 — the same seed rebuilds the same run
+; ═══════════════════════════════════════════════════════════════════
+(display "AC7 determinism\n")
+(define (run-n! m n)
+  (let loop ((i 0))
+    (if (>= i n) m (begin (meta:step! m) (loop (+ i 1))))))
+(define (run-once seed)
+  (let* ((m (meta:loop (hash "depth" 1 "seed" seed "inner-budget" 3 "pop" 3
+                             "approval" "auto")))
+         (rep (begin (run-n! m 3) (meta:report m))))
+    (list (map (lambda (a) (list (hash-ref a "id") (hash-ref a "score")
+                                 (hash-ref a "canary")))
+               (hash-ref rep "archive"))
+          (hash-ref rep "tip")
+          (hash-ref rep "tip-score")
+          (hash-ref rep "last-decision")
+          (map (lambda (e) (hash-ref e "decision")) (meta:audit m)))))
+(assert! (equal? (run-once 11) (run-once 11)) "same seed, identical nodes and decisions")
+(assert! (not (equal? (run-once 11) (run-once 12))) "a different seed diverges")
+
+(define ctx-a (hash "policy" (meta:policy-default) "tasks" (meta:mock-task-set "inner" 3 1.0 5)
+                    "budget" 4 "seed" 9 "gen" 0 "slot" 0))
+(define ctx-b (hash "policy" (meta:policy-default) "tasks" (meta:mock-task-set "inner" 3 1.0 5)
+                    "budget" 4 "seed" 9 "gen" 0 "slot" 0))
+(define ia (meta:mock-inner ctx-a))
+(define ib (meta:mock-inner ctx-b))
+(assert! (equal? (hash-ref ia "history") (hash-ref ib "history")) "inner history reproducible")
+(assert! (close? (hash-ref ia "score") (hash-ref ib "score")) "inner score reproducible")
+
+; the outer budget is a hard stop
+(define m-b (meta:loop (hash "depth" 1 "seed" 8 "inner-budget" 2 "pop" 2
+                             "approval" "auto" "outer-budget" 1)))
+(meta:step! m-b)
+(define a-b (meta:audit-count m-b))
+(meta:step! m-b)
+(assert! (string=? "EXHAUSTED" (meta:decision m-b)) "outer budget stops the loop")
+(assert! (= a-b (meta:audit-count m-b)) "an exhausted step audits nothing")
+(assert! (= 1 (hash-ref (meta:report m-b) "steps")) "exactly the budgeted step ran")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC8 — the evolved proposal policy beats the initial one (5 seeds)
+; ═══════════════════════════════════════════════════════════════════
+(display "AC8 mock acceptance\n")
+(define report-tasks (meta:mock-task-set "report" 6 1.0 101))
+(define (report-score policy)
+  (meta:mock-evaluate (hash "policy" policy "tasks" report-tasks "layer" "report")))
+(define (gain seed)
+  (let* ((m (meta:loop (hash "depth" 1 "seed" seed "inner-budget" 4 "outer-budget" 10
+                             "pop" 4 "approval" "auto"
+                             "inner-tasks" (meta:mock-task-set "inner" 5 1.0 (+ 200 seed))
+                             "meta-holdout" (meta:mock-task-set "meta" 5 1.0 (+ 300 seed))
+                             "canary" (meta:mock-task-set "canary" 3 1.0 (+ 400 seed)))))
+         (rep (begin (run-n! m 10) (meta:report m))))
+    (- (report-score (hash-ref rep "tip-policy"))
+       (report-score (hash-ref m "initial-policy")))))
+(define gains (map gain (list 1 2 3 4 5)))
+(display "  gains: ") (display gains) (newline)
+(define sig (meta:significance gains))
+(display "  significance: ") (display (json-encode sig)) (newline)
+(assert! (>= (hash-ref sig "wins") 4) "at least 4 of 5 seeds improve on the held-out report set")
+(assert! (eq? (hash-ref sig "significant") #t) "the paired sign test is significant (p <= 0.05)")
+(assert! (> (apply min gains) 0.0) "every seed improved (stronger than required)")
+
+
+; ═══════════════════════════════════════════════════════════════════
+; AC9 — live rebind on KEEP, discarded candidates leave no trace,
+;        two log levels fold and expand
+; ═══════════════════════════════════════════════════════════════════
+(display "AC9 live rebind + two-level log\n")
+(assert! (string=? "none" (hash-ref (meta-policy) "parent-policy")) "live policy starts unset")
+(define live-before (meta:policy->source (meta-policy) "meta-policy"))
+(define m9 (meta:loop (hash "depth" 1 "seed" 5 "inner-budget" 3 "pop" 3
+                            "approval" "auto" "live-target" "meta-policy"
+                            "live-name" "meta-policy")))
+(meta:step! m9)
+(assert! (string=? "KEEP" (meta:decision m9)) "the live run KEEPs")
+(assert! (not (string=? "none" (hash-ref (meta-policy) "parent-policy")))
+         "KEEP rebound the live define")
+(assert! (list? (hash-ref (meta-policy) "propose-prompt")) "the live policy carries the evolved knobs")
+(assert! (not (string=? live-before (meta:policy->source (meta-policy) "meta-policy")))
+         "live source changed")
+(define r9 (meta:report m9))
+(assert! (every (lambda (a) (eq? (hash-ref a "isolated") #t))
+                (hash-ref r9 "archive"))
+         "every evaluation was isolated from live")
+; every rejected/pending candidate left no trace in the live worldline was
+; covered by the isolation flags; only the KEEP rebound.
+(assert! (> (hash-ref (hash-ref r9 "layers") "outer") 0) "outer records exist")
+(assert! (> (hash-ref (hash-ref r9 "layers") "inner") 0) "inner records exist")
+(assert! (> (length (meta:fold m9 "expanded")) (length (meta:fold m9 "outer")))
+         "expanded fold shows both levels")
+(assert! (= (length (meta:fold m9 "outer")) (hash-ref (hash-ref r9 "layers") "outer"))
+         "outer fold is the outer layer")
+(define tree (meta:tree m9))
+(assert! (= (length tree) (length (meta:fold m9 "outer"))) "one tree entry per outer record")
+(assert! (> (length (hash-ref (car tree) "children")) 0) "inner records nest under their outer id")
+(assert! (string=? "meta-outer" (hash-ref (car (meta:fold m9 "outer")) "algo"))
+         "outer records carry algo meta-outer")
+(define inner-rec (car (meta:fold m9 "expanded")))
+(assert! (string? (hash-ref inner-rec "candidate")) "records carry a candidate id")
+(assert! (not (= -1 (string-index (meta:help) "4944" 0))) "help mentions 4944")
+
+(if (= *fails* 0)
+    (begin (display "OK-4944 evo-meta\n"))
+    (begin
+      (display "FAIL-4944 fails=")
+      (display *fails*)
+      (newline)
+      (error "4944 suite failed")))

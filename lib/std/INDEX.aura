@@ -86,6 +86,10 @@
     (list "hyper-heuristic"
       (list "FRRMAB operator credit, irace-lite config racing, multi-seed t-gate, parameter adaptation"
             "(require \"std/hyper-heuristic\" all:)(hh:next (hh:make (hash \"low-level\" (list a b))))"))
+    ; Issue #4944: the depth-1 meta layer (recursive self-improvement)
+    (list "evo-meta"
+      (list "Depth-1 RSI: evolvable proposal strategy / mutation ops / parent policy / budget split; protected evaluator/gate/holdout/audit; HGM CMP selection; canary rollback; human approval"
+            "(require \"std/evo-meta\" all:)(meta:report (meta:loop (hash \"depth\" 1 \"meta-holdout\" (list))))"))
     ; ── Aura layer (#5004): agent / orch / evo are written in Aura over the
     ;    primitives; the Scheme layer below is engine + host prims. ──
     (list "agent"
