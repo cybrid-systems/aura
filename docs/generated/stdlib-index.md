@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**81** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**82** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -29,6 +29,7 @@
 | `std/edsl-test-harness` | `section` `it` `describe` `report` `summary` `total-pass` `total-fail` `reset-totals` … (+2) | Declarative-ish helpers for pure-Aura self-tests without quoting |
 | `std/encoding` | `hex-encode` `hex-decode` `base64-encode` `base64-decode` | lib/std/encoding.aura — Encoding utilities |
 | `std/engine-metrics` | `engine-metrics:get` `engine-metrics:list` `engine-metrics:group` `engine-metrics:prefix` `engine-metrics:all` `engine-metrics:count` | lib/std/engine-metrics.aura — Issue #1433 thin wrappers around (engine:metrics) |
+| `std/evo-core` | `evo:help` `evo:schema` `evo:candidate` `evo:candidate?` `evo:child` `evo:candidate-id` `evo:candidate-genome` `evo:candidate-parents` … (+38) | lib/std/evo-core.aura — Issue #4939 (v0.2 P0): the shared base every |
 | `std/evolve` | `evolve-strategy` | evolve.aura -- Strategy evolution from intend analytics |
 | `std/extract` | `extract-code` `trim-str` `find-in-str` | lib/std/extract.aura — Code extraction from LLM responses |
 | `std/ffi` | `c-load` `c-func` `c-alloc` `c-free` `c-opaque` `c-opaque?` `c-opaque->int` `c-struct-size` … (+14) | ffi.aura — C FFI host prims (Issue #3176) |

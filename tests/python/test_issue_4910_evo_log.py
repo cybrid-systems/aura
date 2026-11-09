@@ -111,6 +111,93 @@ class EvoLog(unittest.TestCase):
             self.assertIn("holdout 0.71 &gt;= 0.70", page)
             self.assertNotIn("http://", page.replace("http://www.w3.org", ""))
 
+    # ── Issue #4939: schema v=2 (evo-core) ──────────────────────────
+    V2_PROG = (
+        '(require "std/evo-core" all:)\n'
+        "(define (eval-cand c)\n"
+        '  (hash "objectives" (hash "a" 1.5 "b" 2.5)\n'
+        '        "constraints" (hash "ok" 0.0)\n'
+        '        "behavior" (hash "n" 3)))\n'
+        '(define s (evo:search (hash "algo" "mock" "seed" 5 "budget" 2\n'
+        '                      "pop" 2 "apply" (lambda (s c) #t))))\n'
+        "(evo:run! s eval-cand)\n"
+        '(define best (car (hash-ref (evo:report s) "archive")))\n'
+        "(evo:commit! s best)\n"
+        '(define kid (evo:child best "kid" (hash "target" "score")))\n'
+        '(evo:tell! s (list kid) (list (hash "objectives" (hash "a" 0.5)\n'
+        '                                    "constraints" (hash "ok" 0.0))))\n'
+        "(evo:commit! s kid)\n"
+        '(display (evo:record! "v1-line" "KEEP" "legacy v1" (hash "x" 1))) (newline)\n'
+    )
+
+    @staticmethod
+    def _normalized(rec: dict) -> dict:
+        """Drop the fields that name this process run (id/parent embed the
+        run id; ts_ms/dur_ms are wall clock)."""
+        return {k: v for k, v in rec.items() if k not in ("id", "parent", "run", "ts_ms", "dur_ms")}
+
+    def test_v2_records_and_deterministic_reruns(self) -> None:
+        runs: list[list[dict]] = []
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "p.aura").write_text(self.V2_PROG)
+            for i in range(3):
+                log = Path(d) / f"evo{i}" / "log.jsonl"
+                r = aura(["p.aura"], d, env_for(log))
+                self.assertEqual(r.returncode, 0, r.stderr)
+                recs = [json.loads(line) for line in log.read_text().splitlines()]
+                self.assertTrue(recs, "evo-core wrote nothing")
+                runs.append(recs)
+            # v=2 members are written by ask/trial/tell/commit records.
+            v2 = [x for x in runs[0] if x["kind"] == "record" and x["v"] == 2]
+            self.assertTrue(v2, [x.get("v") for x in runs[0]])
+            scored = [x for x in v2 if x.get("objectives")]
+            self.assertTrue(scored, "no v2 record carries objectives")
+            rec = scored[0]
+            for key in (
+                "algo",
+                "gen",
+                "slot",
+                "search",
+                "candidate",
+                "parents",
+                "behavior",
+                "objectives",
+                "constraints",
+            ):
+                self.assertIn(key, rec)
+            self.assertEqual(rec["objectives"], {"a": 1.5, "b": 2.5})
+            self.assertEqual(rec["constraints"], {"ok": 0.0})
+            # Aura's empty list IS the unit value, so a root candidate's
+            # lineage encodes as null; a derived candidate carries ids.
+            self.assertIn(rec["parents"], (None, []))
+            self.assertEqual(rec["algo"], "mock")
+            derived = [x for x in v2 if x["parents"] and x["candidate"] != x["parents"][0]]
+            self.assertTrue(derived, "no v2 record carries multi-parent lineage")
+            self.assertEqual(len(derived[0]["parents"]), 1)
+            self.assertRegex(derived[0]["parents"][0], "^c[0-9a-f]+$")
+            keeps = [x for x in v2 if x["decision"] == "KEEP"]
+            self.assertTrue(keeps, "commit did not record a KEEP")
+            # v=1 records still share the file, unchanged.
+            v1 = [x for x in runs[0] if x["v"] == 1]
+            self.assertTrue(v1)
+            legacy = next(x for x in v1 if x["kind"] == "record")
+            self.assertEqual(legacy["reason"], "legacy v1")
+            self.assertNotIn("algo", legacy)
+            # Three reruns, same seed: identical bytes modulo run id + clock.
+            for other in runs[1:]:
+                self.assertEqual(
+                    [self._normalized(x) for x in runs[0]],
+                    [self._normalized(x) for x in other],
+                    "evo log is not reproducible across reruns",
+                )
+            # --json reads a v=1 + v=2 mixed file.
+            log0 = Path(d) / "evo0" / "log.jsonl"
+            js = aura(["evo", "log", "--json", "--log", str(log0)], d, env_for(None))
+            self.assertEqual(js.returncode, 0, js.stderr)
+            parsed = json.loads(js.stdout)
+            self.assertEqual(len(parsed), len(runs[0]))
+            self.assertEqual({x["v"] for x in parsed}, {1, 2})
+
     def test_off_by_default_outside_projects(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "p.aura").write_text('(display (evo:record! "c" "KEEP" "r" 1))\n')

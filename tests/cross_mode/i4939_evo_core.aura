@@ -1,0 +1,53 @@
+; Issue #4939 — cross-mode corpus: the evo-core P0 surface must print the
+; same bytes on every pipeline face (default / STRICT=0 / force-soa), run
+; directly or via --load. No timings, no log path, no hash iteration order.
+(require "std/evo-core" all:)
+
+; The live mutation target for the trial below. Install it once, before any
+; search state exists: mutate:rebind needs a live workspace AST, and a
+; second set-code/eval-current would relocate the AST these closures use.
+(set-code "(define (score x) (* x 2))")
+(eval-current)
+
+(define (gsum g)
+  (if (list? g)
+      (let loop ((xs g) (s 0))
+        (if (null? xs) s (loop (cdr xs) (+ s (car xs)))))
+      0))
+
+(define (eval-cand c)
+  (hash "objectives" (hash "a" (gsum (evo:candidate-genome c))
+                           "b" (- 0 (gsum (evo:candidate-genome c))))
+        "constraints" (hash "ok" 0.0)
+        "behavior" (hash "sum" (gsum (evo:candidate-genome c)))))
+
+(define (batch! s n)
+  (let ((cs (evo:ask s n)))
+    (evo:tell! s cs (map eval-cand cs))
+    cs))
+
+(define s (evo:search (hash "algo" "mock" "seed" 9 "budget" 6 "pop" 3 "archive" 4)))
+(define b0 (batch! s 3))
+(define b1 (batch! s 3))
+(display (map evo:candidate-id b0)) (newline)
+(display (map evo:candidate-id b1)) (newline)
+(display (list "gen" (hash-ref (evo:report s) "gen")
+               "spent" (hash-ref (evo:report s) "spent")
+               "feasible" (hash-ref (evo:report s) "feasible"))) (newline)
+(display (map evo:candidate-id (hash-ref (evo:report s) "archive"))) (newline)
+(define rr (evo:rng 9 2 3))
+(display (list "rng" (evo:rng-int! rr 0 1000000) (evo:rng-int! rr 0 1000000))) (newline)
+
+; worldline isolation: the child mutation is invisible to the live define
+(define fp0 (evo:source-fingerprint))
+(define t (evo:trial (evo:candidate "(lambda (x) (* x 7))" (hash "target" "score"))
+                     (hash "apply" (lambda (c) (eq? (mutate:rebind "score"
+                                                                  (evo:candidate-genome c)
+                                                                  "cross-mode") #t))
+                           "evaluate" (lambda (c) (hash "objectives" (hash "v" (score 5))
+                                                        "constraints" (hash "ok" 0.0)
+                                                        "behavior" (hash "n" 1)))
+                           "timeout-ms" 0)))
+(display (list "trial" (hash-ref t "status") (hash-ref t "ok") (evo:objective t "v")
+               (hash-ref t "live-unchanged") (hash-ref t "trial-applied")
+               (= fp0 (evo:source-fingerprint)) (score 5))) (newline)

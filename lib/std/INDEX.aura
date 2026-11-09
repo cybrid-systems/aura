@@ -52,6 +52,10 @@
     (list "adaptive"
       (list "Adaptive API discovery + diagnostics"
             "(get-api-ref stdlib-list)"))
+    ; Issue #4939: the shared base for the v0.2 evolution algorithms
+    (list "evo-core"
+      (list "Candidates/lineage values, ask/tell search handles, worldline-isolated trials, deterministic RNG, evo log v=2"
+            "(require \"std/evo-core\" all:)(evo:ask (evo:search (hash \"algo\" \"mock\" \"seed\" 42 \"budget\" 8)) 2)"))
     (list "agent"
       (list "EDSL closed-loop auto-grow + decision-metrics (#1460)"
             "(auto-grow \"task\" :source \"(define (f x) x)\" :rebind \"f\" \"(lambda (x) (* x 2))\")"))

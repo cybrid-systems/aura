@@ -1,0 +1,277 @@
+; Issue #4939 — std/evo-core: candidate/lineage model, ask/tell handles,
+; worldline-isolated trials, deterministic RNG streams (P0 of #4938).
+(require "std/test" all:)
+(require "std/evo-core" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define (genome-sum g)
+  (if (list? g)
+      (let loop ((xs g) (s 0))
+        (if (null? xs) s (loop (cdr xs) (+ s (car xs)))))
+      0))
+
+; The live mutation target. A define that came from a file is not in the
+; live workspace AST ("no-workspace"), so install it ONCE here with
+; set-code + eval-current, before any evo-core state exists. Everything
+; below mutates this define with mutate:rebind; no later set-code (that
+; would relocate the AST these closures were compiled against).
+(set-code "(define (score x) (* x 2))")
+(eval-current)
+
+; ═══════════════════════════════════════════════════════════════════
+; AC1 — candidates and lineage are VALUES
+; ═══════════════════════════════════════════════════════════════════
+(display "AC1 candidate/lineage\n")
+(define c1 (evo:candidate "(lambda (x) (* x 2))" (hash "thought" "double")))
+(define c1b (evo:candidate "(lambda (x) (* x 2))" (hash "thought" "double")))
+(define c2 (evo:candidate (list 1 2 3)))
+(assert! (evo:candidate? c1) "candidate?")
+(assert! (not (evo:candidate? (hash))) "plain hash is not a candidate")
+(assert! (string? (evo:candidate-id c1)) "candidate has an id")
+(assert! (string=? (evo:candidate-id c1) (evo:candidate-id c1b)) "id is content-addressed")
+(assert! (string=? (evo:candidate-thought c1) "double") "thought carried")
+(assert! (null? (evo:candidate-parents c1)) "root has no parents")
+(define k1 (evo:child c1 "(lambda (x) (* x 3))"))
+(assert! (equal? (evo:candidate-parents k1) (list (evo:candidate-id c1))) "child names its parent")
+(assert! (not (string=? (evo:candidate-id c1) (evo:candidate-id k1))) "child id differs")
+(define k2 (evo:child c1 "(lambda (x) (* x 4))"))
+(assert! (not (string=? (evo:candidate-id k1) (evo:candidate-id k2))) "siblings differ")
+; multi-parent (crossover) shape
+(define cx (evo:candidate "(lambda (x) (+ x 1))"
+                          (hash "parents" (list (evo:candidate-id k1) (evo:candidate-id k2)))))
+(assert! (= 2 (length (evo:candidate-parents cx))) "multi-parent candidate")
+; objectives / constraints / behavior live on the candidate value
+(define scored (evo:candidate "(lambda (x) 7)"
+                              (hash "objectives" (hash "acc" 0.9 "tokens" 120)
+                                    "constraints" (hash "contract-ok" 0.0)
+                                    "behavior" (hash "len" 3))))
+(assert! (= 0.9 (evo:objective scored "acc")) "objective read")
+(assert! (evo:feasible? scored) "feasible with zero violation")
+(assert! (= 0.0 (evo:violations scored)) "no violations")
+; json round-trip of the candidate value
+(define back (json-parse (evo:candidate->json scored)))
+(assert! (string=? (hash-ref back "id") (evo:candidate-id scored)) "json keeps id")
+(assert! (= 0.9 (hash-ref (hash-ref back "objectives") "acc")) "json keeps objectives")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC2 — RNG streams: same (seed, gen, slot) = same sequence, forever
+; ═══════════════════════════════════════════════════════════════════
+(display "AC2 deterministic rng\n")
+(define (draws seed gen slot n)
+  (let ((r (evo:rng seed gen slot)))
+    (let loop ((i 0) (acc (list)))
+      (if (>= i n) (reverse acc) (loop (+ i 1) (cons (evo:rng-next! r) acc))))))
+(assert! (equal? (draws 42 0 0 8) (draws 42 0 0 8)) "same stream twice")
+(assert! (not (equal? (draws 42 0 0 8) (draws 42 0 1 8))) "slot splits the stream")
+(assert! (not (equal? (draws 42 0 0 8) (draws 42 1 0 8))) "gen splits the stream")
+(assert! (not (equal? (draws 42 0 0 8) (draws 43 0 0 8))) "seed selects the stream")
+(assert! (equal? (evo:rng-shuffle! (evo:rng 7 3 1) (list 1 2 3 4 5))
+                 (evo:rng-shuffle! (evo:rng 7 3 1) (list 1 2 3 4 5)))
+         "shuffle reproducible")
+(assert! (let ((r (evo:rng 5 0 0)))
+           (and (>= (evo:rng-int! r 10 12) 10)
+                (<= (evo:rng-int! r 10 12) 12)))
+         "rng-int! within bounds")
+(assert! (let ((r (evo:rng 5 0 0)))
+           (let ((f (evo:rng-float! r))) (and (>= f 0.0) (< f 1.0))))
+         "rng-float! in [0,1)")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC3 — two search handles interleave without touching each other
+; ═══════════════════════════════════════════════════════════════════
+(display "AC3 instance isolation\n")
+(define (mk-search seed)
+  (evo:search (hash "algo" "mock" "seed" seed "budget" 8 "pop" 2)))
+(define a (mk-search 11))
+(define b (mk-search 12))
+(define a-ids (map evo:candidate-id (evo:ask a 2)))
+(define b-ids (map evo:candidate-id (evo:ask b 2)))
+(evo:tell! a (evo:ask a 2)
+           (list (hash "objectives" (hash "v" 1)) (hash "objectives" (hash "v" 2))))
+(define b-ids2 (map evo:candidate-id (evo:ask b 2)))
+; the same seeds run alone must produce exactly the same streams
+(define a2 (mk-search 11))
+(define b2 (mk-search 12))
+(assert! (equal? a-ids (map evo:candidate-id (evo:ask a2 2))) "a: interleaving does not shift its stream")
+(assert! (equal? b-ids (map evo:candidate-id (evo:ask b2 2))) "b: interleaving does not shift its stream")
+(assert! (equal? b-ids2 (map evo:candidate-id (evo:ask b2 2))) "b: next batch unaffected by a's tell")
+(assert! (= 1 (hash-ref (evo:report a) "gen")) "a advanced")
+(assert! (= 0 (hash-ref (evo:report b) "gen")) "b did not advance")
+(assert! (= 2 (hash-ref (evo:report a) "spent")) "a spent 2")
+(assert! (= 0 (hash-ref (evo:report b) "spent")) "b spent 0")
+(assert! (= 6 (evo:budget-left a)) "a budget counts only its own tells")
+(assert! (not (string=? (hash-ref (evo:report a) "id") (hash-ref (evo:report b) "id")))
+         "distinct search ids")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC4 — ask/tell protocol, feasibility-first commit, budget
+; ═══════════════════════════════════════════════════════════════════
+(display "AC4 ask/tell/commit\n")
+(define (text-proposer s gen slot rng)
+  ; Distinct bodies per slot (same genome + same parents is the SAME
+  ; individual: ids are content-addressed, so the evals table would merge).
+  (hash "genome" (string-append "(lambda (x) (* x " (number->string (+ 3 (* 2 slot))) "))")
+        "target" "score"))
+(define s (evo:search (hash "algo" "mock" "seed" 3 "budget" 4 "pop" 2
+                           "proposer" text-proposer)))
+(define batch (evo:ask s 2))
+(assert! (= 2 (length batch)) "ask k")
+(assert! (= 0 (evo:candidate-slot (car batch))) "slot counted from 0")
+(assert! (= 1 (evo:candidate-slot (car (cdr batch)))) "slot increments")
+(assert! (= 0 (evo:candidate-gen (car batch))) "generation tagged")
+(assert! (not (evo:measured s (evo:candidate-id (car batch)))) "not measured before tell")
+(evo:tell! s batch
+           (list (hash "objectives" (hash "v" 10) "constraints" (hash "ok" 0.0)
+                       "behavior" (hash "len" 1))
+                 (hash "objectives" (hash "v" 20) "constraints" (hash "ok" 1.0)
+                       "behavior" (hash "len" 1))))
+(assert! (evo:measured s (evo:candidate-id (car batch))) "tell measures the candidate")
+(assert! (= 10 (evo:objective (evo:measured s (evo:candidate-id (car batch))) "v")) "objectives stored")
+(assert! (evo:feasible? (evo:measured s (evo:candidate-id (car batch)))) "first feasible")
+(assert! (not (evo:feasible? (evo:measured s (evo:candidate-id (car (cdr batch))))))
+         "second infeasible")
+(assert! (= 1 (hash-ref (evo:report s) "gen")) "tell advances the generation")
+(assert! (= 2 (hash-ref (evo:report s) "evaluated")) "two evaluations recorded")
+; an infeasible candidate can never commit: constraint dominance
+(assert! (not (evo:commit! s (car (cdr batch)))) "infeasible commit refused")
+(assert! (string=? (evo:tip s) "") "refusal leaves the tip empty")
+; a feasible one commits and rebinds the live define
+(define before-score (score 1))
+(assert! (evo:commit! s (car batch)) "feasible commit accepted")
+(assert! (not (string=? (evo:tip s) "")) "commit advances the tip")
+(assert! (not (= before-score (score 1))) "commit applied the candidate to live")
+; commit of an unmeasured candidate is refused too
+(assert! (not (evo:commit! s (evo:candidate "(lambda (x) (* x 7))" (hash "target" "score"))))
+         "unmeasured commit refused")
+; run! spends exactly the budget
+(define r (evo:run! (evo:search (hash "algo" "mock" "seed" 4 "budget" 5 "pop" 2))
+                    (lambda (c) (hash "objectives" (hash "v" (genome-sum (evo:candidate-genome c)))
+                                      "constraints" (hash "ok" 0.0)))))
+(assert! (= 5 (hash-ref r "spent")) "run! spends the budget exactly")
+(assert! (= 0 (hash-ref r "budget-left")) "budget exhausted")
+(assert! (= 3 (hash-ref r "gen")) "3 batches of 2,2,1")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC5 — reproducible multi-objective run (in-process "3 reruns")
+; ═══════════════════════════════════════════════════════════════════
+(display "AC5 reproducible run\n")
+(define (mk-opts seed budget pop arch)
+  (hash "algo" "mock" "seed" seed "budget" budget "pop" pop "archive" arch))
+(define (run-once)
+  (evo:run! (evo:search (mk-opts 77 6 3 3))
+            (lambda (c)
+              (hash "objectives" (hash "a" (genome-sum (evo:candidate-genome c))
+                                       "b" (- 0 (genome-sum (evo:candidate-genome c))))
+                    "constraints" (hash "ok" 0.0)
+                    "behavior" (hash "sum" (genome-sum (evo:candidate-genome c)))))))
+(define r1 (run-once))
+(define r2 (run-once))
+(define r3 (run-once))
+(define (arch-ids rep) (map evo:candidate-id (hash-ref rep "archive")))
+(assert! (equal? (arch-ids r1) (arch-ids r2)) "rerun 1 == rerun 2")
+(assert! (equal? (arch-ids r1) (arch-ids r3)) "rerun 1 == rerun 3")
+(assert! (= 3 (hash-ref r1 "feasible")) "archive counts feasible candidates")
+(assert! (= 3 (length (hash-ref r1 "archive"))) "archive bounded by max-archive")
+(assert! (evo:feasible? (evo:best r1)) "best is feasible")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC6 — worldline-isolated trials never write the live workspace
+; ═══════════════════════════════════════════════════════════════════
+(display "AC6 worldline isolation\n")
+; AC4 committed a candidate, so put the live body back (a normal live
+; mutation - the trial below must leave *this* text alone).
+(mutate:rebind "score" "(lambda (x) (* x 2))" "restore")
+(define live0 (evo:source-fingerprint))
+(define trial-cand (evo:candidate "(lambda (x) (* x 9))" (hash "target" "score")))
+(define ok-trial
+  (evo:trial trial-cand
+             (hash "apply" (lambda (cand)
+                             (eq? (mutate:rebind "score" (evo:candidate-genome cand) "trial") #t))
+                   "evaluate" (lambda (cand)
+                                (hash "objectives" (hash "y" (score 5))
+                                      "constraints" (hash "ok" 0.0)
+                                      "behavior" (hash "len" 2)))
+                   "preset" "ci")))
+(assert! (evo:trial-ok? ok-trial) "trial ok")
+(assert! (string=? "ok" (hash-ref ok-trial "status")) "trial status ok")
+(assert! (= 45 (evo:objective ok-trial "y")) "trial evaluated the candidate in the child")
+(assert! (eq? (hash-ref ok-trial "trial-applied") #t) "trial really applied the mutation")
+(assert! (eq? (hash-ref ok-trial "live-unchanged") #t) "live workspace unchanged")
+(assert! (= 10 (score 5)) "live define kept the old body")
+(assert! (= live0 (evo:source-fingerprint)) "live fingerprint identical")
+(assert! (string=? (hash-ref ok-trial "preset") "ci") "preset recorded")
+; a candidate that throws
+(define err-trial
+  (evo:trial trial-cand
+             (hash "apply" (lambda (cand) (error "kaboom"))
+                   "evaluate" (lambda (cand) (hash)))))
+(assert! (not (evo:trial-ok? err-trial)) "throwing trial fails")
+(assert! (string=? "error" (hash-ref err-trial "status")) "throwing trial status")
+(assert! (string? (hash-ref err-trial "error")) "throwing trial names the reason")
+(assert! (eq? (hash-ref err-trial "live-unchanged") #t) "live unchanged after a throw")
+; a candidate the MutationBoundary refuses (parse diagnostic, not an exception)
+(define bad-trial
+  (evo:trial trial-cand
+             (hash "apply" (lambda (cand) (mutate:rebind "score" "(lambda (x)" "trial"))
+                   "evaluate" (lambda (cand) (hash)))))
+(assert! (string=? "error" (hash-ref bad-trial "status")) "parse-error trial status")
+(assert! (not (= -1 (string-index (hash-ref bad-trial "error") "parse-error" 0)))
+         "parse-error named")
+(assert! (= live0 (evo:source-fingerprint)) "live fingerprint after refused mutation")
+; a cooperative deadline
+(define slow-trial
+  (evo:trial trial-cand
+             (hash "apply" (lambda (cand) #t)
+                   "evaluate" (lambda (cand)
+                                (let loop ((i 0)) (if (< i 40000) (loop (+ i 1)) (hash))))
+                   "timeout-ms" 1)))
+(assert! (string=? "timeout" (hash-ref slow-trial "status")) "overrunning trial is a timeout")
+(assert! (eq? (hash-ref slow-trial "live-unchanged") #t) "live unchanged after timeout")
+(assert! (= 10 (score 5)) "live define still untouched")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC7 — the handle is serializable (plain data, importable)
+; ═══════════════════════════════════════════════════════════════════
+(display "AC7 serializable handle\n")
+(define (mk2) (evo:search (hash "algo" "mock" "seed" 21 "budget" 6 "pop" 2)))
+(define h (mk2))
+(evo:tell! h (evo:ask h 2)
+           (list (hash "objectives" (hash "v" 1) "constraints" (hash "ok" 0.0))
+                 (hash "objectives" (hash "v" 2) "constraints" (hash "ok" 0.0))))
+(define blob (evo:export h))
+(assert! (hash? blob) "export is plain data")
+(assert! (string? (json-encode blob)) "export is json-encodable")
+(assert! (not (hash-ref blob "proposer" #f)) "export drops closures")
+(define h2 (evo:import blob))
+(assert! (= (hash-ref blob "gen") (hash-ref (evo:report h2) "gen")) "import keeps gen")
+(assert! (= (hash-ref blob "spent") (hash-ref (evo:report h2) "spent")) "import keeps spent")
+(assert! (= (hash-ref blob "slot") (hash-ref (evo:export h2) "slot")) "import keeps slot")
+(assert! (string=? (evo:tip h2) (evo:tip h)) "import keeps the tip")
+(assert! (evo:measured h2 (car (hash-ref blob "tried"))) "import keeps measurements")
+; the imported handle is independent of the original
+(evo:tell! h2 (evo:ask h2 1) (list (hash "objectives" (hash "v" 9))))
+(assert! (= 2 (hash-ref (evo:report h) "spent")) "original handle untouched")
+(assert! (= 3 (hash-ref (evo:report h2) "spent")) "import advanced on its own")
+; json round-trip
+(define h3 (evo:import (json-parse (json-encode blob))))
+(assert! (= (hash-ref blob "gen") (hash-ref (evo:report h3) "gen")) "json round-trip keeps gen")
+(assert! (= (hash-ref blob "slot") (hash-ref (evo:export h3) "slot")) "json round-trip keeps slot")
+(assert! (string=? (hash-ref blob "algo") (hash-ref (evo:report h3) "algo")) "json round-trip keeps algo")
+(assert! (not (= -1 (string-index (evo:help) "4939" 0))) "help mentions 4939")
+
+(if (= *fails* 0)
+    (begin (display "OK-4939 evo-core\n"))
+    (begin
+      (display "FAIL-4939 fails=")
+      (display *fails*)
+      (newline)
+      (error "4939 suite failed")))

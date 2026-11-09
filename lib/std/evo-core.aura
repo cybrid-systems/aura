@@ -1,0 +1,927 @@
+; lib/std/evo-core.aura — Issue #4939 (v0.2 P0): the shared base every
+; evolution algorithm module (P1 std/pareto+std/moead, P2 std/qd,
+; P3 std/proposer, P4 std/surrogate, P5 std/evo-meta, P8 std/portfolio…)
+; builds on. This module contains NO algorithm: it owns the data model,
+; the ask/tell protocol, worldline isolation, reproducible randomness and
+; the audit trail.
+;
+; Public surface (all values; no process-global state):
+;   (require "std/evo-core" all:)
+;
+;   Candidates + lineage (immutable plain hashes, JSON-encodable):
+;     (evo:candidate genome [opts])        -> candidate
+;     (evo:candidate? v)
+;     (evo:child parent genome [opts])     -> candidate (parents = parent id)
+;     (evo:candidate-id c) (evo:candidate-genome c) (evo:candidate-parents c)
+;     (evo:candidate-objectives c) (evo:candidate-constraints c)
+;     (evo:candidate-behavior c) (evo:candidate-thought c) (evo:candidate-meta c)
+;     (evo:candidate-target c) (evo:candidate-gen c) (evo:candidate-slot c)
+;     (evo:candidate->hash c) (evo:candidate->json c)
+;   Feasibility (hard constraints first; feasibility precedes objectives):
+;     (evo:feasible? c-or-eval) (evo:violations c-or-eval)
+;     (evo:objective c-or-eval name) (evo:constraint c-or-eval name)
+;   Search handle (ask/tell; two handles in one process never interfere):
+;     (evo:search opts)                    -> s
+;     (evo:search? v)
+;     (evo:ask s k)                        -> k candidates
+;     (evo:tell! s cands evals)            -> #t (records, measures, advances gen)
+;     (evo:run! s evaluator)               -> report (ask -> eval -> tell until budget)
+;     (evo:commit! s cand [eval])          -> #t (applied to live) | #f (refused)
+;     (evo:report s) (evo:best s) (evo:measured s id) (evo:tip s)
+;     (evo:budget-left s)                  -> -1 = unlimited
+;     (evo:export s) -> handle blob (plain data); (evo:import blob) -> new s
+;   Worldline isolation:
+;     (evo:trial cand opts) -> result hash (see below)
+;     (evo:trial-ok? r)
+;   Deterministic RNG (one independent stream per (seed, gen, slot)):
+;     (evo:rng seed gen slot) (evo:rng-next! r) (evo:rng-int! r lo hi)
+;     (evo:rng-float! r) (evo:rng-pick! r lst) (evo:rng-shuffle! r lst)
+;   Helpers:
+;     (evo:source-fingerprint) (evo:mock-proposer) (evo:default-apply)
+;     (evo:help)
+;
+; ── Protocol ────────────────────────────────────────────────────────
+; (evo:search (hash "algo" "moead" "seed" 42 "budget" 500 "pop" 4
+;                    "objectives" (list (cons "success" "max")
+;                                       (cons "tokens" "min"))
+;                    "constraints" (list "contract-ok" "boundary-ok")
+;                    "proposer" my-proposer "apply" my-apply
+;                    "accept" my-gate "evaluate" my-eval))
+;   proposer: (lambda (s gen slot rng) -> (hash "genome" g ["parents"…]))
+;   evaluate: (lambda (c) -> (hash "objectives" … "constraints" …
+;                               "behavior" … ["error" …]))
+;   apply:    (lambda (s c) -> #t | #f)    default: mutate:rebind of the
+;             candidate's string genome into its "target" define.
+;   accept:   (lambda (s c eval) -> bool)  optional extra gate (Pareto gate
+;             lives in P1 std/pareto; P0 gates only on feasibility).
+;
+; tell! stores a MEASURED copy of each candidate (the candidate value the
+; caller holds is never mutated) and appends one evo:record! per candidate.
+; commit! refuses an infeasible or unmeasured candidate and records
+; ROLLBACK + reason; only a KEEP advances the search tip.
+;
+; ── Worldline isolation ─────────────────────────────────────────────
+; (evo:trial cand (hash "apply" apply-fn "evaluate" eval-fn
+;                       "timeout-ms" 5000 "preset" "ci"))
+;   -> (hash "status" "ok"|"error"|"timeout"|"isolation-violation"
+;            "ok" bool "objectives" … "constraints" … "behavior" …
+;            "error" string|#f "dur-ms" n "live-unchanged" bool
+;            "live-before" fp "live-after" fp "trial-applied" bool
+;            "preset" … "root" ws-id)
+; The apply+evaluate pair runs in a CHILD workspace; the live workspace is
+; never written. The trial verifies the live workspace fingerprint
+; (evo:source-fingerprint) is unchanged and audits TRIAL / ROLLBACK.
+; timeout-ms is a measured cooperative deadline (see evo:trial doc).
+;
+; ── Host requirements (read this before wiring a stage) ────────────
+; * commit!/trial mutate the LIVE workspace AST, so the target define must
+;   be in it: a define that came from a file / --load is "no-workspace" to
+;   mutate:rebind until (set-code "…") + (eval-current) installs it. Install
+;   once, before creating any search: a second set-code replaces the AST the
+;   module closures were compiled against.
+; * Under Restricted (aura soft) mutate is granted for workspace 0 only, so
+;   a trial's child workspace refuses the mutation; evo:trial then reports
+;   status "error" and leaves the live worldline alone (it never falls back
+;   to mutating live). The suite runs with AURA_SANDBOX=off, like every
+;   tests/suite file.
+; * In the log an empty parent set encodes as null (Aura's () IS the unit
+;   value); a derived candidate carries its parent ids as a JSON array.
+;
+; ── Determinism ─────────────────────────────────────────────────────
+; Candidate ids are content hashes (FNV-1a over the genome + parents), and
+; every RNG stream is derived from (seed, gen, slot) — never from a shared
+; counter — so interleaved searches and repeated runs produce the same
+; candidates and the same evo log bytes (ts_ms / dur_ms excepted).
+; No function here iterates a hash in insertion order for anything
+; observable: lists are ordered, and hash keys are sorted when a stable
+; order is needed.
+;
+; Form order (#2769): export before anything else.
+
+(export evo:help evo:schema
+        evo:candidate evo:candidate? evo:child
+        evo:candidate-id evo:candidate-genome evo:candidate-parents
+        evo:candidate-objectives evo:candidate-constraints evo:candidate-behavior
+        evo:candidate-thought evo:candidate-meta evo:candidate-target
+        evo:candidate-gen evo:candidate-slot
+        evo:candidate->hash evo:candidate->json
+        evo:feasible? evo:violations evo:objective evo:constraint
+        evo:search evo:search? evo:ask evo:tell! evo:run! evo:commit!
+        evo:report evo:best evo:measured evo:tip evo:budget-left
+        evo:export evo:import
+        evo:trial evo:trial-ok?
+        evo:rng evo:rng-next! evo:rng-int! evo:rng-float! evo:rng-pick! evo:rng-shuffle!
+        evo:source-fingerprint evo:mock-proposer evo:default-apply)
+
+; ═══════════════════════════════════════════════════════════════════
+; Small helpers (private; keep the module dependency-free)
+; ═══════════════════════════════════════════════════════════════════
+
+(define evo-schema-version 2)
+
+(define (evo:help)
+  "std/evo-core (#4939): candidate/lineage values, ask/tell search handles, worldline-isolated trials, deterministic RNG streams, evo log v=2. (evo:search (hash \"algo\" \"moead\" \"seed\" 42 \"budget\" 50 \"pop\" 4)) -> s; (evo:ask s 4) -> candidates; (evo:tell! s cands evals) -> #t; (evo:commit! s cand) -> #t|#f; (evo:trial cand (hash \"apply\" f \"evaluate\" g \"timeout-ms\" 5000)) -> status hash; (evo:rng seed gen slot).")
+
+(define (evo:schema) evo-schema-version)
+
+(define (evo-opt h k d)
+  ; An explicit () default: hash-ref without one raises on a missing key
+  ; (#4855), and an optional field must read as absent, not abort.
+  (if (hash? h)
+      (let ((v (hash-ref h k ())))
+        (if (null? v) d v))
+      d))
+
+(define (evo-int v)
+  (cond ((integer? v) v)
+        ((number? v) (inexact->exact v))
+        (else 0)))
+
+(define (evo-join xs sep)
+  (if (null? xs)
+      ""
+      (let loop ((ys (cdr xs)) (acc (car xs)))
+        (if (null? ys)
+            acc
+            (loop (cdr ys) (string-append acc sep (car ys)))))))
+
+(define evo-hex-digits
+  (list "0" "1" "2" "3" "4" "5" "6" "7" "8" "9" "a" "b" "c" "d" "e" "f"))
+
+; FNV-1a 32-bit over a string. Pure integer arithmetic: the same digest on
+; every pipeline face (default / STRICT=0 / force-soa) and every process,
+; which is what makes candidate ids and the live-workspace fingerprint
+; reproducible. (string-hash is not used: it reads a substring view
+; out of bounds on the 99a86dc25 binary, see the #4939 report.)
+(define (evo-fnv str)
+  (let loop ((i 0) (h 2166136261))
+    (if (>= i (string-length str))
+        h
+        (loop (+ i 1)
+              (modulo (* (+ h (char->integer (string-ref str i))) 16777619)
+                      4294967296)))))
+
+(define (evo-hex n)
+  (let loop ((v n) (acc ""))
+    (if (= v 0)
+        (if (string=? acc "") "0" acc)
+        (loop (quotient v 16)
+              (string-append (list-ref evo-hex-digits (modulo v 16)) acc)))))
+
+; Canonical text of a value (stable: lists in order, hash keys sorted).
+(define (evo-value-text v)
+  (cond ((string? v) (string-append "\"" v "\""))
+        ((symbol? v) (symbol->string v))
+        ((number? v) (number->string v))
+        ((boolean? v) (if v "#t" "#f"))
+        ((list? v)
+         (string-append "[" (evo-join (map evo-value-text v) ",") "]"))
+        ((hash? v)
+         (string-append
+           "{"
+           (evo-join
+             (map (lambda (k)
+                    (string-append k "=" (evo-value-text (hash-ref v k))))
+                  (sort (hash-keys v) string<?))
+             ",")
+           "}"))
+        (else "?")))
+
+(define (evo-fp-text str) (evo-hex (evo-fnv str)))
+
+; ═══════════════════════════════════════════════════════════════════
+; Deterministic RNG — one independent stream per (seed, gen, slot)
+; ═══════════════════════════════════════════════════════════════════
+; 32-bit LCG (mod 2^31-1). Every step is < 2^63, so no mode, JIT or
+; sanitizer changes the sequence: same seed + same coordinates = same draws.
+
+(define evo-m31 2147483647)
+
+(define (evo-mix a b c)
+  (let* ((x (modulo (+ (* (modulo a evo-m31) 48271)
+                       (* (modulo b evo-m31) 65537)
+                       (modulo c evo-m31))
+                    evo-m31))
+         (y (modulo (+ (* x 48271) 11) evo-m31))
+         (z (modulo (+ (* y 48271) 7) evo-m31)))
+    (if (= z 0) 1 z)))
+
+(define (evo:rng seed gen slot)
+  (let* ((sd (evo-int (if (number? seed) seed 0)))
+         (g (evo-int (if (number? gen) gen 0)))
+         (sl (evo-int (if (number? slot) slot 0)))
+         (st (evo-mix sd g sl)))
+    (hash "kind" "evo-rng" "schema" evo-schema-version
+          "seed" sd "gen" g "slot" sl "state" st)))
+
+(define (evo:rng-next! r)
+  (let ((n (modulo (+ (* (hash-ref r "state" 1) 1103515245) 12345) evo-m31)))
+    (hash-set! r "state" n)
+    n))
+
+(define (evo:rng-int! r lo hi)
+  (let* ((a (evo-int lo))
+         (b (evo-int hi))
+         (span (if (>= b a) (+ 1 (- b a)) 1)))
+    (+ a (modulo (evo:rng-next! r) span))))
+
+(define (evo:rng-float! r)
+  (/ (evo:rng-next! r) 2147483647.0))
+
+(define (evo:rng-pick! r lst)
+  (if (null? lst)
+      #f
+      (list-ref lst (modulo (evo:rng-next! r) (length lst)))))
+
+(define (evo-decorate r lst)
+  (let loop ((xs lst) (acc (list)))
+    (if (null? xs)
+        (reverse acc)
+        (loop (cdr xs) (cons (cons (evo:rng-next! r) (car xs)) acc)))))
+
+(define (evo:rng-shuffle! r lst)
+  (if (null? lst)
+      (list)
+      (map cdr (sort (evo-decorate r lst)
+                     (lambda (a b) (< (car a) (car b)))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Candidates + lineage
+; ═══════════════════════════════════════════════════════════════════
+
+(define (evo-parent-ids ps)
+  (if (list? ps)
+      (map (lambda (p) (if (hash? p) (evo-opt p "id" "") p)) ps)
+      (list)))
+
+(define (evo-candidate-id genome parents)
+  (string-append "c"
+                 (evo-fp-text
+                   (string-append (evo-value-text genome)
+                                  "|"
+                                  (evo-join (evo-parent-ids parents) ",")))))
+
+(define (evo:candidate genome . rest)
+  (let* ((o (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (parents (evo-parent-ids (evo-opt o "parents" (list))))
+         (id0 (evo-opt o "id" #f))
+         (id (if (string? id0) id0 (evo-candidate-id genome parents))))
+    (hash "kind" "evo-candidate" "schema" evo-schema-version
+          "id" id
+          "genome" genome
+          "thought" (evo-opt o "thought" "")
+          "parents" parents
+          "objectives" (evo-opt o "objectives" (hash))
+          "constraints" (evo-opt o "constraints" (hash))
+          "behavior" (evo-opt o "behavior" (hash))
+          "meta" (evo-opt o "meta" (hash))
+          "target" (evo-opt o "target" #f)
+          "gen" (evo-int (evo-opt o "gen" 0))
+          "slot" (evo-int (evo-opt o "slot" 0))
+          "search" (evo-opt o "search" #f))))
+
+(define (evo:candidate? v)
+  (and (hash? v)
+       (string=? (evo-opt v "kind" "") "evo-candidate")
+       (string? (evo-opt v "id" #f))
+       (list? (evo-opt v "parents" (list)))))
+
+(define (evo:child parent genome . rest)
+  (let* ((o (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (pid (evo-opt parent "id" ""))
+         (ps (evo-opt o "parents" (list pid)))
+         (o2 (hash "parents" ps
+                   "gen" (evo-int (evo-opt o "gen" (evo-opt parent "gen" 0)))
+                   "slot" (evo-int (evo-opt o "slot" 0))
+                   "search" (evo-opt o "search" (evo-opt parent "search" #f))
+                   "target" (evo-opt o "target" (evo-opt parent "target" #f))
+                   "thought" (evo-opt o "thought" "")
+                   "meta" (evo-opt o "meta" (hash))
+                   "id" (evo-opt o "id" #f))))
+    (evo:candidate genome o2)))
+
+(define (evo:candidate-id c) (evo-opt c "id" ""))
+(define (evo:candidate-genome c) (evo-opt c "genome" #f))
+(define (evo:candidate-parents c) (evo-opt c "parents" (list)))
+(define (evo:candidate-objectives c) (evo-opt c "objectives" (hash)))
+(define (evo:candidate-constraints c) (evo-opt c "constraints" (hash)))
+(define (evo:candidate-behavior c) (evo-opt c "behavior" (hash)))
+(define (evo:candidate-thought c) (evo-opt c "thought" ""))
+(define (evo:candidate-meta c) (evo-opt c "meta" (hash)))
+(define (evo:candidate-target c) (evo-opt c "target" #f))
+(define (evo:candidate-gen c) (evo-opt c "gen" 0))
+(define (evo:candidate-slot c) (evo-opt c "slot" 0))
+
+(define (evo:candidate->hash c)
+  (hash "id" (evo-opt c "id" "")
+        "genome" (evo-opt c "genome" #f)
+        "parents" (evo-opt c "parents" (list))
+        "objectives" (evo-opt c "objectives" (hash))
+        "constraints" (evo-opt c "constraints" (hash))
+        "behavior" (evo-opt c "behavior" (hash))
+        "thought" (evo-opt c "thought" "")
+        "gen" (evo-opt c "gen" 0)
+        "slot" (evo-opt c "slot" 0)
+        "target" (evo-opt c "target" #f)))
+
+(define (evo:candidate->json c) (json-encode (evo:candidate->hash c)))
+
+; ═══════════════════════════════════════════════════════════════════
+; Feasibility — hard constraints first (constraint dominance in P1)
+; ═══════════════════════════════════════════════════════════════════
+
+(define (evo-cviol v)
+  (cond ((number? v) v)
+        ((eq? v #t) 1.0)
+        ((eq? v #f) 0.0)
+        (else 0.0)))
+
+(define (evo-constraint-keys e)
+  (let ((cs (evo-opt e "constraints" (hash))))
+    (if (hash? cs) (sort (hash-keys cs) string<?) (list))))
+
+(define (evo:violations e)
+  (let loop ((ks (evo-constraint-keys e)) (acc 0.0))
+    (if (null? ks)
+        acc
+        (let ((v (evo-cviol (hash-ref (evo-opt e "constraints" (hash)) (car ks) 0))))
+          (loop (cdr ks) (if (> v 0.0) (+ acc v) acc))))))
+
+(define (evo:feasible? e)
+  (let loop ((ks (evo-constraint-keys e)))
+    (if (null? ks)
+        #t
+        (let ((v (evo-cviol (hash-ref (evo-opt e "constraints" (hash)) (car ks) 0))))
+          (if (> v 0.0) #f (loop (cdr ks)))))))
+
+(define (evo-violation-names e)
+  (let loop ((ks (evo-constraint-keys e)) (acc ""))
+    (if (null? ks)
+        (if (string=? acc "") "none" acc)
+        (let ((v (evo-cviol (hash-ref (evo-opt e "constraints" (hash)) (car ks) 0))))
+          (loop (cdr ks)
+                (if (> v 0.0)
+                    (if (string=? acc "") (car ks) (string-append acc "," (car ks)))
+                    acc))))))
+
+(define (evo:objective e name)
+  (evo-opt (evo-opt e "objectives" (hash)) name #f))
+
+(define (evo:constraint e name)
+  (evo-opt (evo-opt e "constraints" (hash)) name #f))
+
+; ═══════════════════════════════════════════════════════════════════
+; Evo log (v=2) — every ask / trial / tell / commit is audited
+; ═══════════════════════════════════════════════════════════════════
+; evo:record! arg 8 is the v=2 member hash (see src/compiler/evo_log_4910.hh):
+; algo / gen / slot / search / candidate / parents / behavior /
+; objectives / constraints, written in that fixed order so a re-run is
+; byte-identical.
+
+(define (evo-v2 s extra)
+  (hash "algo" (evo-opt s "algo" "generic")
+        "gen" (evo-opt s "gen" 0)
+        "search" (evo-opt s "id" "")
+        "slot" (evo-opt extra "slot" 0)
+        "candidate" (evo-opt extra "candidate" "")
+        "parents" (evo-opt extra "parents" (list))
+        "behavior" (evo-opt extra "behavior" (hash))
+        "objectives" (evo-opt extra "objectives" (hash))
+        "constraints" (evo-opt extra "constraints" (hash))))
+
+(define (evo-audit s target decision reason evidence dur extra)
+  (evo:record! target decision reason evidence "" dur
+               (evo-opt s "tip" "")
+               (evo-v2 s extra)))
+
+; ═══════════════════════════════════════════════════════════════════
+; Search handle
+; ═══════════════════════════════════════════════════════════════════
+
+(define (evo:mock-proposer s gen slot rng)
+  ; Deterministic mock proposer: CI-safe (no LLM), reproducible from
+  ; (seed, gen, slot). P3 std/proposer replaces it with EoH/ReEvo forms.
+  (hash "genome" (list (evo:rng-int! rng 0 999999)
+                       (evo:rng-int! rng 0 999999))
+        "thought" (string-append "mock gen=" (number->string gen)
+                                 " slot=" (number->string slot))))
+
+(define (evo:default-apply s c)
+  ; Apply a text genome to its target define in the live workspace.
+  ; Contract: an apply fn returns #t only when the candidate is now live;
+  ; #f, an error value or a diagnostic pair is a refusal (mutate:rebind
+  ; returns a (parse-error … . 0) pair, not an exception).
+  (let ((t (evo-opt c "target" #f))
+        (g (evo-opt c "genome" #f)))
+    (if (and (string? t) (string? g))
+        (eq? (mutate:rebind t g (string-append "evo:" (evo-opt c "id" ""))) #t)
+        #f)))
+
+(define (evo:search opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (algo (evo-opt o "algo" "generic"))
+         (seed (evo-int (evo-opt o "seed" 42)))
+         (budget (evo-int (evo-opt o "budget" 0)))
+         (pop (let ((p (evo-int (evo-opt o "pop" 1)))) (if (< p 1) 1 p)))
+         (maxarc (let ((p (evo-int (evo-opt o "archive" 16)))) (if (< p 1) 1 p)))
+         (proposer (evo-opt o "proposer" #f))
+         (apply-fn (evo-opt o "apply" #f))
+         (accept (evo-opt o "accept" #f))
+         (evaluate (evo-opt o "evaluate" #f)))
+    (hash "kind" "evo-search" "schema" evo-schema-version
+          "id" (string-append "s" (evo-fp-text (string-append algo "|" (number->string seed))))
+          "algo" algo
+          "seed" seed
+          "budget" budget
+          "pop" pop
+          "max-archive" maxarc
+          "spent" 0
+          "gen" 0
+          "slot" 0
+          "objectives" (evo-opt o "objectives" (list))
+          "constraints" (evo-opt o "constraints" (list))
+          "target" (evo-opt o "target" #f)
+          "proposer" (if proposer proposer evo:mock-proposer)
+          "apply" (if apply-fn apply-fn evo:default-apply)
+          "accept" accept
+          "evaluate" evaluate
+          "tried" (list)
+          "evals" (hash)
+          "archive" (list)
+          "tip" "")))
+
+(define (evo:search? v)
+  (and (hash? v) (string=? (evo-opt v "kind" "") "evo-search")))
+
+(define (evo-normalize s raw gen slot)
+  (let* ((r (if (hash? raw) raw (hash "genome" raw)))
+         (parents (evo-parent-ids (evo-opt r "parents" (list))))
+         (cand (evo:candidate
+                 (evo-opt r "genome" "")
+                 (hash "gen" gen "slot" slot
+                       "search" (evo-opt s "id" "")
+                       "parents" parents
+                       "target" (evo-opt r "target" (evo-opt s "target" #f))
+                       "thought" (evo-opt r "thought" "")
+                       "objectives" (evo-opt r "objectives" (hash))
+                       "constraints" (evo-opt r "constraints" (hash))
+                       "behavior" (evo-opt r "behavior" (hash))
+                       "meta" (evo-opt r "meta" (hash))
+                       "id" (evo-opt r "id" #f)))))
+    cand))
+
+; One proposal from the (seed, gen, slot) stream. A top-level helper, not a
+; let* inside the loop body: the loop closure then captures only its own
+; iteration variables, so nothing can go stale between calls.
+(define (evo-propose-one s)
+  (let* ((gen (evo-int (hash-ref s "gen" 0)))
+         (slot (evo-int (hash-ref s "slot" 0)))
+         (rng (evo:rng (hash-ref s "seed" 42) gen slot))
+         (pf (evo-opt s "proposer" #f))
+         (raw (if pf (pf s gen slot rng) (evo:mock-proposer s gen slot rng)))
+         (c (evo-normalize s raw gen slot)))
+    (hash-set! s "slot" (+ slot 1))
+    c))
+
+(define (evo-ask-audit s cands n)
+  (let ((last-slot (if (null? cands) 0 (evo-opt (car cands) "slot" 0))))
+    (evo-audit s
+               (if (null? cands) "" (evo:candidate-id (car cands)))
+               "PROPOSE"
+               (string-append "ask k=" (number->string n))
+               (hash "candidates" (map evo:candidate-id cands))
+               0
+               (hash "slot" last-slot))))
+
+(define (evo:ask s k)
+  (let ((n (evo-int k)))
+    (if (<= n 0)
+        (list)
+        (let loop ((i 0) (acc (list)))
+          (if (>= i n)
+              (let ((cands (reverse acc)))
+                (evo-ask-audit s cands n)
+                cands)
+              (loop (+ i 1) (cons (evo-propose-one s) acc)))))))
+
+(define (evo-measure cand ev)
+  (hash "kind" "evo-candidate" "schema" evo-schema-version
+        "id" (evo-opt cand "id" "")
+        "genome" (evo-opt cand "genome" "")
+        "thought" (evo-opt cand "thought" "")
+        "parents" (evo-opt cand "parents" (list))
+        "objectives" (evo-opt ev "objectives" (hash))
+        "constraints" (evo-opt ev "constraints" (hash))
+        "behavior" (evo-opt ev "behavior" (hash))
+        "meta" (hash "candidate" (evo-opt cand "meta" (hash))
+                     "error" (evo-opt ev "error" #f)
+                     "status" (evo-opt ev "status" "ok")
+                     "dur-ms" (evo-opt ev "dur-ms" 0))
+        "target" (evo-opt cand "target" #f)
+        "gen" (evo-opt cand "gen" 0)
+        "slot" (evo-opt cand "slot" 0)
+        "search" (evo-opt cand "search" #f)))
+
+(define (evo-eval-ok? e)
+  (and (hash? e)
+       (let ((st (evo-opt e "status" "ok")))
+         (and (string? st) (string=? st "ok")))
+       (not (evo-opt e "error" #f))))
+
+(define (evo-archive-push s m)
+  (let* ((maxn (evo-opt s "max-archive" 16))
+         (old (evo-opt s "archive" (list)))
+         (all (append (list m) old))
+         (kept (let loop ((xs all) (n 0) (acc (list)))
+                 (if (or (null? xs) (>= n maxn))
+                     (reverse acc)
+                     (loop (cdr xs) (+ n 1) (cons (car xs) acc))))))
+    (hash-set! s "archive" kept)
+    kept))
+
+(define (evo-tell-one s c e)
+  (let* ((id (evo:candidate-id c))
+         (ev (if (evo-eval-ok? e) e #f))
+         (m (if ev (evo-measure c ev) #f))
+         (all (evo-opt s "evals" (hash))))
+    (hash-set! all id (if m m (hash "kind" "evo-candidate" "id" id
+                                    "genome" (evo-opt c "genome" "")
+                                    "parents" (evo-opt c "parents" (list))
+                                    "objectives" (hash) "constraints" (hash)
+                                    "constraints-unknown" #t)))
+    (hash-set! s "evals" all)
+    (hash-set! s "tried" (append (evo-opt s "tried" (list)) (list id)))
+    (hash-set! s "spent" (+ 1 (evo-int (hash-ref s "spent" 0))))
+    (if m (evo-archive-push s m) #f)
+    (let* ((decision (if m "SCORED" "ROLLBACK"))
+           (reason (cond ((not e) "no-eval")
+                         ((not ev) (string-append "eval-status: "
+                                                  (evo-status-text e)))
+                         (else (string-append "feasible="
+                                              (if (evo:feasible? m) "1" "0"))))))
+      (evo-audit s id decision reason
+                 (hash "objectives" (evo-opt (or ev (hash)) "objectives" (hash))
+                       "violations" (if m (evo:violations m) 0.0))
+                 (evo-opt (if ev ev (hash)) "dur-ms" 0)
+                 (hash "slot" (evo-opt c "slot" 0)
+                       "candidate" id
+                       "parents" (evo-opt c "parents" (list))
+                       "behavior" (evo-opt (if ev ev (hash)) "behavior" (hash))
+                       "objectives" (evo-opt (if ev ev (hash)) "objectives" (hash))
+                       "constraints" (evo-opt (if ev ev (hash)) "constraints" (hash)))))))
+
+(define (evo-status-text e)
+  (cond ((not (hash? e)) "no-eval-hash")
+        (else (let ((st (evo-opt e "status" "ok"))
+                    (err (evo-opt e "error" #f)))
+                (if err
+                    (if (string? err) err "error")
+                    (if (string? st) st "unknown"))))))
+
+(define (evo:tell! s cands evals)
+  (let loop ((cs (if (list? cands) cands (list)))
+             (es (if (list? evals) evals (list))))
+    (if (null? cs)
+        (begin
+          (hash-set! s "gen" (+ 1 (evo-int (hash-ref s "gen" 0))))
+          #t)
+        (begin
+          (evo-tell-one s (car cs) (if (null? es) #f (car es)))
+          (loop (cdr cs) (if (null? es) es (cdr es)))))))
+
+(define (evo:measured s id)
+  (evo-opt (evo-opt s "evals" (hash)) id #f))
+
+(define (evo:tip s) (evo-opt s "tip" ""))
+
+(define (evo:budget-left s)
+  (let ((b (evo-int (hash-ref s "budget" 0))))
+    (if (<= b 0) -1 (- b (evo-int (hash-ref s "spent" 0))))))
+
+(define (evo-budget-open? s)
+  (let ((b (evo-int (hash-ref s "budget" 0))))
+    (or (<= b 0) (< (evo-int (hash-ref s "spent" 0)) b))))
+
+(define (evo-map-eval f xs)
+  (let loop ((ys xs) (acc (list)))
+    (if (null? ys)
+        (reverse acc)
+        (loop (cdr ys) (cons (f (car ys)) acc)))))
+
+; One ask -> evaluate -> tell batch; #f when nothing was proposed.
+(define (evo-run-batch! s evaluator)
+  (let* ((pop (let ((p (evo-int (hash-ref s "pop" 1)))) (if (< p 1) 1 p)))
+         (left (evo:budget-left s))
+         (k (if (< left 0) pop (if (< left pop) left pop)))
+         (cands (evo:ask s k)))
+    (if (null? cands)
+        #f
+        (begin
+          (evo:tell! s cands (evo-map-eval evaluator cands))
+          #t))))
+
+(define (evo:run! s evaluator)
+  ; ask -> evaluate -> tell until the evaluation budget is spent.
+  (let loop ()
+    (if (evo-budget-open? s)
+        (if (evo-run-batch! s evaluator)
+            (loop)
+            (evo:report s))
+        (evo:report s))))
+
+(define (evo:commit! s cand . rest)
+  (let* ((id (evo:candidate-id cand))
+         (given (if (and (pair? rest) (hash? (car rest))) (car rest) #f))
+         (ev (or given (evo:measured s id))))
+    (cond
+      ((not ev)
+       (evo-audit s id "ROLLBACK" "no-eval" (hash) 0
+                  (hash "candidate" id))
+       #f)
+      ((not (evo:feasible? ev))
+       (evo-audit s id "ROLLBACK"
+                  (string-append "infeasible: " (evo-violation-names ev))
+                  (hash "violations" (evo:violations ev)) 0
+                  (hash "slot" (evo-opt cand "slot" 0)
+                        "candidate" id
+                        "parents" (evo-opt cand "parents" (list))
+                        "objectives" (evo-opt ev "objectives" (hash))
+                        "constraints" (evo-opt ev "constraints" (hash))
+                        "behavior" (evo-opt ev "behavior" (hash))))
+       #f)
+      (else
+       (let* ((gate (evo-opt s "accept" #f))
+              (ok (if gate (gate s cand ev) #t)))
+         (if (not ok)
+             (begin
+               (evo-audit s id "ROLLBACK" "gate" (hash) 0
+                          (hash "slot" (evo-opt cand "slot" 0)
+                                "candidate" id
+                                "objectives" (evo-opt ev "objectives" (hash))
+                                "constraints" (evo-opt ev "constraints" (hash))))
+               #f)
+             (let* ((apply-fn (evo-opt s "apply" #f))
+                    (r (if apply-fn
+                           (try (apply-fn s cand)
+                                (catch (e) (list 'evo-caught e)))
+                           #f))
+                    (extra (hash "slot" (evo-opt cand "slot" 0)
+                                 "candidate" id
+                                 "parents" (evo-opt cand "parents" (list))
+                                 "objectives" (evo-opt ev "objectives" (hash))
+                                 "constraints" (evo-opt ev "constraints" (hash))
+                                 "behavior" (evo-opt ev "behavior" (hash)))))
+               (cond
+                 ((evo-caught? r)
+                  (evo-audit s id "ROLLBACK"
+                             (string-append "apply-error: " (evo-caught-text r))
+                             (hash) 0 extra)
+                  #f)
+                 ((eq? r #t)
+                  (hash-set! s "tip" id)
+                  (evo-audit s id "KEEP" "committed" (hash "violations" 0.0) 0 extra)
+                  #t)
+                 (else
+                  (evo-audit s id "ROLLBACK"
+                             (string-append "apply-failed: " (evo-reason-of r))
+                             (hash) 0 extra)
+                  #f)))))))))
+
+(define (evo-count-fn xs pred)
+  (let loop ((ys xs) (n 0))
+    (if (null? ys) n (loop (cdr ys) (if (pred (car ys)) (+ n 1) n)))))
+
+(define (evo:best s)
+  (let loop ((xs (evo-opt s "archive" (list))))
+    (cond ((null? xs) #f)
+          ((evo:feasible? (car xs)) (car xs))
+          (else (loop (cdr xs))))))
+
+(define (evo:report s)
+  (let* ((tried (evo-opt s "tried" (list)))
+         (arch (evo-opt s "archive" (list))))
+    (hash "kind" "evo-search" "schema" evo-schema-version
+          "id" (evo-opt s "id" "")
+          "algo" (evo-opt s "algo" "generic")
+          "seed" (evo-opt s "seed" 0)
+          "gen" (evo-opt s "gen" 0)
+          "spent" (evo-opt s "spent" 0)
+          "budget" (evo-opt s "budget" 0)
+          "budget-left" (evo:budget-left s)
+          "pop" (evo-opt s "pop" 1)
+          "evaluated" (length tried)
+          "feasible" (evo-count-fn arch evo:feasible?)
+          "archive" arch
+          "tip" (evo-opt s "tip" "")
+          "objectives" (evo-opt s "objectives" (list))
+          "constraints" (evo-opt s "constraints" (list)))))
+
+; ── Serializable handle ─────────────────────────────────────────────
+; The state (no closures) as plain data: json-encode it for storage and
+; evo:import it into an independent instance. Functions are re-attached
+; by the caller (evo:import accepts them in an opts hash).
+
+(define (evo:export s)
+  (hash "kind" "evo-search-export" "schema" evo-schema-version
+        "id" (evo-opt s "id" "")
+        "algo" (evo-opt s "algo" "generic")
+        "seed" (evo-opt s "seed" 0)
+        "budget" (evo-opt s "budget" 0)
+        "pop" (evo-opt s "pop" 1)
+        "max-archive" (evo-opt s "max-archive" 16)
+        "spent" (evo-opt s "spent" 0)
+        "gen" (evo-opt s "gen" 0)
+        "slot" (evo-opt s "slot" 0)
+        "objectives" (evo-opt s "objectives" (list))
+        "constraints" (evo-opt s "constraints" (list))
+        "target" (evo-opt s "target" #f)
+        "tried" (evo-opt s "tried" (list))
+        "evals" (hash->list (evo-opt s "evals" (hash)))
+        "archive" (evo-opt s "archive" (list))
+        "tip" (evo-opt s "tip" "")))
+
+(define (evo:import blob . rest)
+  (let* ((o (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (s (evo:search
+              (hash "algo" (evo-opt blob "algo" "generic")
+                    "seed" (evo-opt blob "seed" 42)
+                    "budget" (evo-opt blob "budget" 0)
+                    "pop" (evo-opt blob "pop" 1)
+                    "archive" (evo-opt blob "max-archive" 16)
+                    "objectives" (evo-opt blob "objectives" (list))
+                    "constraints" (evo-opt blob "constraints" (list))
+                    "target" (evo-opt blob "target" #f)
+                    "proposer" (evo-opt o "proposer" #f)
+                    "apply" (evo-opt o "apply" #f)
+                    "accept" (evo-opt o "accept" #f)
+                    "evaluate" (evo-opt o "evaluate" #f)))))
+    (hash-set! s "spent" (evo-int (evo-opt blob "spent" 0)))
+    (hash-set! s "gen" (evo-int (evo-opt blob "gen" 0)))
+    (hash-set! s "slot" (evo-int (evo-opt blob "slot" 0)))
+    (hash-set! s "tried" (evo-opt blob "tried" (list)))
+    (hash-set! s "archive" (evo-opt blob "archive" (list)))
+    (hash-set! s "tip" (evo-opt blob "tip" ""))
+    (let ((evs (evo-opt blob "evals" (list))))
+      (hash-set! s "evals"
+                 (let loop ((xs (if (list? evs) evs (list))) (acc (hash)))
+                   (if (null? xs)
+                       acc
+                       (let ((k (car (car xs)))
+                             (v (car (cdr (car xs)))))
+                         (hash-set! acc k v)
+                         (loop (cdr xs) acc))))))
+    s))
+
+; ═══════════════════════════════════════════════════════════════════
+; Worldline isolation
+; ═══════════════════════════════════════════════════════════════════
+
+; Fingerprint of the LIVE workspace's defines (not the file text): a
+; rebind changes it, so "unchanged" is a real isolation proof.
+(define (evo:source-fingerprint)
+  (evo-fnv (current-source :workspace)))
+
+; Why an apply fn did not report success (it must return #t).
+(define (evo-reason-of v)
+  (cond ((eq? v #t) "ok")
+        ((eq? v #f) "returned #f")
+        ((error? v) "error value")
+        ((pair? v) (string-append "diagnostic: " (evo-value-text (car v))))
+        (else (string-append "returned " (evo-value-text v)))))
+
+(define (evo-caught? r)
+  (and (pair? r) (eq? (car r) 'evo-caught)))
+
+(define (evo-caught-text r)
+  (if (evo-caught? r)
+      (let ((e (car (cdr r))))
+        (if (string? e) e (evo-value-text e)))
+      ""))
+
+; (evo:trial cand opts) -> result hash; the live workspace is never
+; written. timeout-ms is a measured deadline: the trial refuses a result
+; that overran it (Aura has no preemptive interrupt in-process; the
+; guarantee here is that an overrunning trial is rejected and rolled back,
+; and the live worldline is untouched).
+; A refused child workspace is a REFUSAL, never a fallback: running the
+; candidate in the live worldline because isolation was unavailable would
+; be exactly the failure this API exists to prevent.
+(define (evo-trial-refused cand o root before why)
+  (evo-audit (hash "algo" (evo-opt cand "algo" "trial")
+                   "gen" (evo-opt cand "gen" 0)
+                   "tip" ""
+                   "id" "")
+             (evo-opt cand "id" "")
+             "ROLLBACK"
+             why
+             (hash "status" "error" "live-before" before "live-after" before)
+             0
+             (hash "slot" (evo-opt cand "slot" 0)
+                   "candidate" (evo-opt cand "id" "")))
+  (hash "kind" "evo-trial" "schema" evo-schema-version
+        "status" "error"
+        "ok" #f
+        "objectives" (hash)
+        "constraints" (hash)
+        "behavior" (hash)
+        "error" why
+        "dur-ms" 0
+        "live-unchanged" #t
+        "live-before" before
+        "live-after" before
+        "trial-applied" #f
+        "preset" (evo-opt o "preset" "default")
+        "root" root))
+
+(define (evo:trial cand opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (apply-fn (evo-opt o "apply" #f))
+         (eval-fn (evo-opt o "evaluate" #f))
+         (timeout (evo-int (evo-opt o "timeout-ms" 5000)))
+         (preset (evo-opt o "preset" "default"))
+         (root (workspace :current))
+         (before (evo:source-fingerprint))
+         (child (workspace :create "evo-trial")))
+    (if (not (and (integer? child) (> child 0)))
+        (evo-trial-refused cand o root before
+                           "isolation-unavailable: workspace:create refused")
+      (if (not (workspace :switch child))
+          (begin
+            (workspace :discard child)
+            (evo-trial-refused cand o root before
+                               "isolation-unavailable: workspace:switch refused"))
+    (let* ((t0 (monotonic-ms))
+           (res (try (let ((ar (if apply-fn (apply-fn cand) #t)))
+                       (cond ((eq? ar #t) (if eval-fn
+                                              (eval-fn cand)
+                                              (hash "objectives" (hash)
+                                                    "constraints" (hash)
+                                                    "behavior" (hash))))
+                             (else (list 'evo-refused ar))))
+                     (catch (e) (list 'evo-caught e))))
+           (t1 (monotonic-ms))
+           (child-fp (evo:source-fingerprint)))
+      (workspace :switch root)
+      (workspace :discard child)
+      (let* ((after (evo:source-fingerprint))
+             (dur (- t1 t0))
+             (caught (evo-caught? res))
+             (refused (and (pair? res) (eq? (car res) 'evo-refused)))
+             (err-val (and (not caught) (not refused) (error? res)))
+             (over (and (> timeout 0) (> dur timeout)))
+             (moved (not (= after before)))
+             (status (cond (caught "error")
+                           (refused "error")
+                           (err-val "error")
+                           (moved "isolation-violation")
+                           (over "timeout")
+                           (else "ok")))
+             (ev (if (and (hash? res) (not caught) (not refused)) res #f))
+             (why (cond ((string=? status "ok") "isolated")
+                        (refused (string-append
+                                   "trial-error: apply-failed: "
+                                   (evo-reason-of (car (cdr res)))))
+                        ((string=? status "error")
+                         (string-append "trial-error: "
+                                        (if caught (evo-caught-text res)
+                                            (evo-status-text res))))
+                        ((string=? status "timeout")
+                         (string-append "timeout: " (number->string dur)
+                                        "ms > " (number->string timeout) "ms"))
+                        (else "isolation-violation: live source changed"))))
+        (evo-audit (hash "algo" (evo-opt cand "algo" "trial")
+                         "gen" (evo-opt cand "gen" 0)
+                         "tip" ""
+                         "id" "")
+                   (evo-opt cand "id" "")
+                   (if (string=? status "ok") "TRIAL" "ROLLBACK")
+                   why
+                   (hash "status" status
+                         "dur-ms" dur
+                         "live-before" before
+                         "live-after" after
+                         "obj-count" (length (hash-keys (evo-opt ev "objectives" (hash)))))
+                   dur
+                   (hash "slot" (evo-opt cand "slot" 0)
+                         "candidate" (evo-opt cand "id" "")
+                         "parents" (evo-opt cand "parents" (list))
+                         "behavior" (evo-opt ev "behavior" (hash))
+                         "objectives" (evo-opt ev "objectives" (hash))
+                         "constraints" (evo-opt ev "constraints" (hash))))
+        (hash "kind" "evo-trial" "schema" evo-schema-version
+              "status" status
+              "ok" (string=? status "ok")
+              "objectives" (evo-opt ev "objectives" (hash))
+              "constraints" (evo-opt ev "constraints" (hash))
+              "behavior" (evo-opt ev "behavior" (hash))
+              "error" (if (string=? status "ok") #f why)
+              "dur-ms" dur
+              "live-unchanged" (not moved)
+              "live-before" before
+              "live-after" after
+              "trial-applied" (not (= child-fp before))
+              "preset" preset
+              "root" root)))))))
+
+(define (evo:trial-ok? r)
+  (and (hash? r) (eq? (evo-opt r "ok" #f) #t)))
