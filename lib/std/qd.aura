@@ -796,7 +796,7 @@
       (cond ((string=? mode "cvt") (qd-svg-cvt m w h pad))
             ((>= (length ds) 2) (qd-svg-grid es ds w h pad qmax))
             (else (qd-svg-strip es w h pad qmax)))
-      "</svg>"))
+      "</svg>")))
 ; (qd:lineage-svg elites) — parent chain: one node per elite, an edge to
 ; every parent id that is also in the set.
 (define (qd:lineage-svg es opts)
@@ -838,11 +838,12 @@
                       "<circle cx=\"" (qd-num-s (col i)) "\" cy=\"" (qd-num-s y)
                       "\" r=\"3\" fill=\"#2563eb\"><title>"
                       (qd-num-s (qd-opt e "quality" 0)) "</title></circle>")))))
-      "</svg>"))
+      "</svg>")))
 
 (define (qd-index-of v xs)
   (let loop ((ys xs) (i 0))
     (cond ((null? ys) -1)
           ((string=? v (car ys)) i)
           (else (loop (cdr ys) (+ i 1))))))
-))
+
+
