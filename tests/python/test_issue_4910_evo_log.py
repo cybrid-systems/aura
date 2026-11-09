@@ -221,5 +221,145 @@ class EvoLog(unittest.TestCase):
             self.assertIn("first", text.stdout)
 
 
+class EvoReportQD(unittest.TestCase):
+    """#4941: the report renders a QD heat map and the parent lineage from
+    the behaviour/lineage members a v=2 log already carries."""
+
+    LOG = [
+        {
+            "v": 2,
+            "id": "r1#1",
+            "parent": "",
+            "run": "r1",
+            "seq": 1,
+            "ts_ms": 0,
+            "kind": "record",
+            "target": "c0",
+            "decision": "KEEP",
+            "reason": "seed",
+            "evidence": {"score": 1.0},
+            "old": "",
+            "new": "",
+            "dur_ms": 1.0,
+            "algo": "mock",
+            "gen": 0,
+            "slot": 0,
+            "search": "s",
+            "candidate": "c0",
+            "parents": [],
+            "behavior": {"x": 0.0, "y": 0.0},
+            "objectives": {"f": 1.0},
+            "constraints": {},
+        },
+        {
+            "v": 2,
+            "id": "r1#2",
+            "parent": "r1#1",
+            "run": "r1",
+            "seq": 2,
+            "ts_ms": 0,
+            "kind": "record",
+            "target": "c1",
+            "decision": "KEEP",
+            "reason": "better",
+            "evidence": {"score": 3.0},
+            "old": "",
+            "new": "",
+            "dur_ms": 1.0,
+            "algo": "mock",
+            "gen": 1,
+            "slot": 1,
+            "search": "s",
+            "candidate": "c1",
+            "parents": ["c0", "c0b"],
+            "behavior": {"x": 1.0, "y": 2.0},
+            "objectives": {"f": 3.0},
+            "constraints": {},
+        },
+        {
+            "v": 2,
+            "id": "r1#3",
+            "parent": "r1#2",
+            "run": "r1",
+            "seq": 3,
+            "ts_ms": 0,
+            "kind": "record",
+            "target": "c2",
+            "decision": "ROLLBACK",
+            "reason": "worse",
+            "evidence": {"score": 2.0},
+            "old": "",
+            "new": "",
+            "dur_ms": 1.0,
+            "algo": "mock",
+            "gen": 2,
+            "slot": 2,
+            "search": "s",
+            "candidate": "c2",
+            "parents": ["r1#2", "r1#1"],
+            "behavior": {"x": 2.0, "y": 1.0},
+            "objectives": {"f": 2.0},
+            "constraints": {},
+        },
+    ]
+
+    def test_qd_heatmap_and_lineage_svg(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "log.jsonl"
+            log.write_text("".join(json.dumps(x) + "\n" for x in self.LOG))
+            out = Path(d) / "report"
+            rep = aura(["evo", "report", "--html", str(out), "--log", str(log)], d, env_for(None))
+            self.assertEqual(rep.returncode, 0, rep.stderr)
+            heat = out / "qd-heatmap.svg"
+            lin = out / "lineage.svg"
+            self.assertTrue(heat.is_file(), rep.stdout)
+            self.assertTrue(lin.is_file(), rep.stdout)
+            h = heat.read_text()
+            self.assertIn('aria-label="QD heat map"', h)
+            self.assertIn("<rect", h)
+            page = (out / "index.html").read_text()
+            self.assertIn("QD map", page)
+            self.assertIn("Lineage", page)
+            self.assertIn("<svg", page)
+            tree = lin.read_text()
+            self.assertIn('aria-label="lineage tree"', tree)
+            self.assertIn("<circle", tree)
+            self.assertIn("<line", tree)  # multi-parent edges are drawn
+
+    def test_no_qd_records_means_no_empty_svg(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "log.jsonl"
+            log.write_text(
+                json.dumps(
+                    {
+                        "v": 1,
+                        "id": "r#1",
+                        "parent": "",
+                        "run": "r",
+                        "seq": 1,
+                        "ts_ms": 0,
+                        "kind": "record",
+                        "target": "c",
+                        "decision": "KEEP",
+                        "reason": "plain",
+                        "evidence": 1,
+                        "old": "",
+                        "new": "",
+                        "dur_ms": 1.0,
+                    }
+                )
+                + "\n"
+            )
+            out = Path(d) / "report"
+            rep = aura(["evo", "report", "--html", str(out), "--log", str(log)], d, env_for(None))
+            self.assertEqual(rep.returncode, 0, rep.stderr)
+            self.assertFalse((out / "qd-heatmap.svg").exists())
+            # A single record is still a lineage (one node); only an empty
+            # behaviour space must not invent a heat map.
+            if (out / "lineage.svg").exists():
+                tree = (out / "lineage.svg").read_text()
+                self.assertGreaterEqual(tree.count("<circle"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
