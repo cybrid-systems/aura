@@ -1,0 +1,1461 @@
+; lib/std/proposer.aura — Issue #4942 (v0.2 P3): the proposal layer for
+; "thought + code" co-evolution (the EoH family), with a CI-reproducible
+; substitute for every LLM path.
+;
+; A PROPOSER IS A CALLABLE VALUE:
+;   (p ctx) -> (list proposal ...)     ; 0..k proposals, k = (ctx "k")
+; ctx carries the parents, the reflection, the goal and the mutable
+; define whitelist. Nothing here touches a process-global: a proposer
+; value holds all the state it has (prop:tree) and every draw comes from
+; an (evo:rng seed gen slot) stream, so two runs with the same seed
+; produce the same proposals and the same evo log bytes (ts_ms/dur_ms
+; excepted, as in std/evo-core).
+;
+;   (define p (prop:grammar (hash "ops" (list 'tweak-literal 'swap-operator)
+;                                 "seed" 7)))
+;   (p (prop:ctx (hash "parents" (list cand) "defines" (list "score"))))
+;
+; proposal (a plain hash; JSON-encodable except meta):
+;   (hash "kind" "prop-proposal"
+;         "genome"   "(define (score x) ...)"   ; source text, 1+ defines
+;         "thought"  "why this should score better"
+;         "target"   "score"                    ; first define it rewrites
+;         "strategy" "m3"                       ; which EoH strategy produced it
+;         "parents"  (list cand-id ...)
+;         "meta"     (hash ...))                ; tokens / dur-ms / node / ...
+;
+; ── The five EoH strategies (as selected here) ─────────────────────
+;   E1  fresh      no parent: a new heuristic from the goal description
+;   E2  diversify  one parent: a new approach inspired by it
+;   M1  thought    rewrite the parent's thought; code follows the thought
+;   M2  crossover  two parents' ideas spliced into one thought
+;   M3  code       keep the parent's thought; mutate its code
+; (prop:strategy-cycle) covers all five in five slots; (prop:select-strategy)
+; draws with the (seed, gen, slot) stream, the way EoH samples operators.
+;
+; ── Scope guard (the boundary is mechanical, not prompt text) ──────
+; A proposal is refused unless EVERY define it writes is in ctx "defines"
+; and none is protected. The guard also refuses: unparsable text, a size
+; overrun, capability-bearing code (net/ffi/process/grants), injection
+; markers (llm:injection-risk?), and a directly self-recursive define
+; with no conditional (it cannot terminate). Every refusal is appended
+; to the ctx audit sink (prop:audit) with a reason string; the proposal
+; never reaches the caller. At run time the engine still enforces the
+; workspace's capability/sandbox grants and the MutationBoundary; this
+; guard is the first, cheap layer, not the last one.
+;
+; ── LLM path (never on in CI) ──────────────────────────────────────
+; prop:llm talks only to an INJECTED transport (a fn request -> response),
+; never to the network. It stays off unless AURA_EVO_LLM=1 or the opts
+; carry "enabled" #t (the test injection point). Token and latency counts
+; are recorded in the proposal meta and in llm:call-stats; the model key
+; is never read, so it cannot leak into a log or a report.
+;
+; Form order (#2769): export before require.
+
+(export prop:help prop:schema
+        prop:ctx prop:propose prop:adapt
+        prop:mock prop:grammar prop:llm prop:tree
+        prop:strategies prop:strategy-cycle prop:select-strategy
+        prop:strategy-brief
+        prop:reflect-short prop:memory-add prop:memory-text
+        prop:memory-record-entry prop:memory-record!
+        prop:parse prop:->text prop:genome-defines
+        prop:scope-check prop:check-proposal prop:node-count
+        prop:audit prop:audit-add prop:audit-entries prop:audit-count
+        prop:prompt
+        prop:set-select prop:set-select-report prop:coverage
+        prop:uct prop:c-effective prop:widening-limit
+        prop:tree-report prop:tree-backprop! prop:tree-node prop:tree-nodes
+        prop:guard-report)
+
+(require "std/string" all:)
+(require "std/list" all:)
+(require "std/evo-core" all:)
+(require "std/llm" all:)
+
+; ═══════════════════════════════════════════════════════════════════
+; Small helpers
+; ═══════════════════════════════════════════════════════════════════
+
+(define prop-schema-version 1)
+
+; An explicit () default: hash-ref without one raises on a missing key
+; (#4855), and an optional field must read as absent, not abort.
+(define (prop-opt h k d)
+  (if (hash? h)
+      (let ((v (hash-ref h k ())))
+        (if (null? v) d v))
+      d))
+
+(define (prop-int v)
+  ; (integer? 3.0) is #t in Aura, so an exactness test comes first: a
+  ; count must never travel as a float into length / list-ref. inexact /
+  ; truncate are #5008 delete-tier prims, so this stays on floor +
+  ; inexact->exact (floor returns a float, the conversion lands an int).
+  (cond ((and (integer? v) (not (inexact? v))) v)
+        ((number? v) (inexact->exact (floor v)))
+        (else 0)))
+
+(define (prop-num v)
+  (cond ((number? v) (* 1.0 v))
+        (else 0.0)))
+
+(define (prop-join xs sep)
+  (if (null? xs)
+      ""
+      (let loop ((ys (cdr xs)) (acc (car xs)))
+        (if (null? ys)
+            acc
+            (loop (cdr ys) (string-append acc sep (car ys)))))))
+
+(define (prop-hash-copy h)
+  (if (not (hash? h))
+      (hash)
+      (let ((o (hash)))
+        (for-each (lambda (k) (hash-set! o k (hash-ref h k))) (hash-keys h))
+        o)))
+
+(define (prop-hash-merge a b)
+  (let ((o (prop-hash-copy a)))
+    (if (hash? b)
+        (begin (for-each (lambda (k) (hash-set! o k (hash-ref b k))) (hash-keys b))
+               o)
+        o)))
+
+(define (prop-env-on? name)
+  (let ((v (getenv name)))
+    (and (string? v)
+         (let ((s (string-downcase v)))
+           (or (string=? s "1") (string=? s "true") (string=? s "yes")
+               (string=? s "on"))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; ctx — everything a proposer may look at
+; ═══════════════════════════════════════════════════════════════════
+; A ctx is a plain hash; every key below is optional except "defines",
+; which the guard treats as the complete whitelist (an empty or missing
+; whitelist refuses every proposal — the fail-closed default).
+
+(define prop-strategy-names (list "e1" "e2" "m1" "m2" "m3"))
+
+(define prop-protected-default
+  (list "eval" "eval-current" "set-code" "mutate:rebind" "workspace:create"
+        "security:grant-capability!"))
+
+(define (prop:ctx opts)
+  (let ((o (if (hash? opts) opts (hash))))
+    (hash "kind" "prop-ctx"
+          "parents" (prop-opt o "parents" (list))
+          "thoughts" (prop-opt o "thoughts" (list))
+          "reflection" (prop-opt o "reflection" (hash "short" "" "long" ""))
+          "memory" (prop-opt o "memory" (list))
+          "goal" (prop-opt o "goal" (hash))
+          "defines" (prop-opt o "defines" (list))
+          "protected" (prop-opt o "protected" prop-protected-default)
+          "k" (let ((k (prop-int (prop-opt o "k" 1)))) (if (< k 1) 1 k))
+          "gen" (prop-int (prop-opt o "gen" 0))
+          "slot" (prop-int (prop-opt o "slot" 0))
+          "seed" (prop-int (prop-opt o "seed" 42))
+          "rng" (prop-opt o "rng" #f)
+          "base" (prop-opt o "base" #f)
+          "audit" (prop-opt o "audit" #f)
+          "strategies" (prop-opt o "strategies" prop-strategy-names)
+          "max-nodes" (prop-int (prop-opt o "max-nodes" 256))
+          "max-chars" (prop-int (prop-opt o "max-chars" 4096))
+          "preset" (prop-opt o "preset" "ci"))))
+
+(define (prop-ctx-k ctx) (let ((k (prop-int (prop-opt ctx "k" 1)))) (if (< k 1) 1 k)))
+(define (prop-ctx-gen ctx) (prop-int (prop-opt ctx "gen" 0)))
+(define (prop-ctx-slot ctx) (prop-int (prop-opt ctx "slot" 0)))
+(define (prop-ctx-seed ctx) (prop-int (prop-opt ctx "seed" 42)))
+(define (prop-ctx-defines ctx) (prop-opt ctx "defines" (list)))
+(define (prop-ctx-protected ctx) (prop-opt ctx "protected" prop-protected-default))
+
+(define (prop-ctx-rng ctx i)
+  ; One independent stream per proposal: (seed, gen, slot + i).
+  (let ((r (prop-opt ctx "rng" #f)))
+    (if (and r (hash? r) (= i 0))
+        r
+        (evo:rng (prop-ctx-seed ctx) (prop-ctx-gen ctx)
+                 (+ (prop-ctx-slot ctx) i)))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Audit sink — refusals are evidence, never silence
+; ═══════════════════════════════════════════════════════════════════
+
+(define (prop:audit)
+  (let ((h (hash "kind" "prop-audit" "entries" (list))))
+    (hash-set! h "add"
+               (lambda (e)
+                 (hash-set! h "entries"
+                            (append (prop-opt h "entries" (list)) (list e)))
+                 e))
+    h))
+
+(define (prop:audit-add a e)
+  (cond ((not (hash? a)) #f)
+        ((procedure? (prop-opt a "add" #f)) ((prop-opt a "add" #f) e))
+        ((procedure? a) (a e))
+        (else #f)))
+
+(define (prop:audit-entries a)
+  (if (hash? a) (prop-opt a "entries" (list)) (list)))
+
+(define (prop:audit-count a) (length (prop:audit-entries a)))
+
+(define (prop-audit! ctx entry)
+  (let ((a (prop-opt ctx "audit" #f)))
+    (if a (prop:audit-add a entry) #f)))
+
+(define (prop-boundary-safe)
+  ; The MutationBoundary signal (#1547/#1553 surface). A held boundary
+  ; means a mutation is in flight, so no proposal may be trusted now.
+  (try (eq? (mutate:boundary-safe?) #t) (catch (e) #t)))
+
+(define (prop-reject stage reason genome strategy ctx)
+  (hash "kind" "prop-rejection"
+        "stage" stage
+        "reason" reason
+        "genome" (let ((g (if (string? genome) genome "")))
+                   (if (> (string-length g) 400) (substring g 0 400) g))
+        "strategy" (if (string? strategy) strategy "")
+        "gen" (prop-ctx-gen ctx)
+        "slot" (prop-ctx-slot ctx)
+        "preset" (prop-opt ctx "preset" "ci")
+        "boundary-safe" (prop-boundary-safe)
+        "at" (monotonic-ms)))
+
+(define (prop:guard-report)
+  (hash "kind" "prop-guard"
+        "boundary-safe" (prop-boundary-safe)
+        "sandbox" (let ((v (getenv "AURA_SANDBOX"))) (if (string? v) v "default"))
+        "preset" (let ((v (getenv "AURA_CAPABILITY_PRESET"))) (if (string? v) v "default"))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Reader / writer — read-from-string (#4746) + a datum writer
+; ═══════════════════════════════════════════════════════════════════
+; read-from-string reads ONE datum and ignores trailing text, so a genome
+; is first split at its top-level form boundaries and each form is read
+; on its own. The splitter only counts parentheses outside strings and
+; char literals; it is not a second reader.
+
+(define (prop:parse text)
+  (if (not (string? text))
+      (hash "ok" #f "forms" (list) "reason" "parse: not-a-string")
+      (let ((sp (prop-split-forms text)))
+        (if (not (prop-opt sp "ok" #f))
+            (hash "ok" #f "forms" (list)
+                  "reason" (prop-opt sp "reason" "parse: no form"))
+            (let loop ((fs (prop-opt sp "forms" (list))) (acc (list)))
+              (cond ((null? fs)
+                     (hash "ok" #t "forms" (reverse acc) "reason" #f))
+                    (else
+                     (let ((d (read-from-string (car fs))))
+                       (if (prop-parse-error? d)
+                           (hash "ok" #f "forms" (list)
+                                 "reason" (string-append "parse: " (prop-parse-message d)))
+                           (loop (cdr fs) (cons d acc)))))))))))
+
+(define (prop-parse-error? v)
+  (and (pair? v) (eq? (car v) 'parse)
+       (pair? (cdr v)) (string? (car (cdr v)))
+       (string-contains? (car (cdr v)) "read-from-string:")))
+
+(define (prop-parse-message v)
+  (if (and (pair? v) (pair? (cdr v)) (string? (car (cdr v))))
+      (car (cdr v))
+      "parse error"))
+
+(define (prop-split-forms s)
+  (let ((n (string-length s)))
+    (if (= n 0)
+        (hash "ok" #f "forms" (list) "reason" "parse: empty")
+        (let loop ((i 0) (depth 0) (start -1) (in-str #f) (esc #f)
+                   (forms (list)) (saw #f))
+          (if (>= i n)
+              (cond ((and (= depth 0) (= start -1) (not in-str))
+                     (hash "ok" (or saw #f) "forms" (reverse forms) "reason" #f))
+                    (in-str (hash "ok" #f "forms" (list) "reason" "parse: unterminated string"))
+                    (else (hash "ok" #f "forms" (list) "reason" "parse: unbalanced")))
+              (let ((c (char->integer (string-ref s i))))
+                (cond
+                  (in-str
+                   (cond ((and esc) (loop (+ i 1) depth start #t #f forms #t))
+                         ((= c 92) (loop (+ i 1) depth start #t #t forms #t))
+                         ((= c 34) (loop (+ i 1) depth start #f #f forms #t))
+                         (else (loop (+ i 1) depth start #t #f forms #t))))
+                  ((= c 59) ; ; comment to end of line
+                   (let nl ((j i))
+                     (if (or (>= j n) (= (char->integer (string-ref s j)) 10))
+                         (loop j depth start #f #f forms saw)
+                         (nl (+ j 1)))))
+                  ((= c 34) ; "
+                   (loop (+ i 1) depth (if (< start 0) i start) #t #f forms #t))
+                  ((= c 35) ; # — possibly a char literal
+                   (if (and (< (+ i 1) n)
+                            (= (char->integer (string-ref s (+ i 1))) 92))
+                       (let ((j (+ i 3)))
+                         (loop (if (< j n) j n) depth (if (< start 0) i start)
+                               #f #f forms #t))
+                       (loop (+ i 1) depth (if (< start 0) i start) #f #f forms #t)))
+                  ((or (= c 40) (= c 91)) ; ( [
+                   (loop (+ i 1) (+ depth 1) (if (< start 0) i start) #f #f forms #t))
+                  ((or (= c 41) (= c 93)) ; ) ]
+                   (if (<= depth 0)
+                       (hash "ok" #f "forms" (list) "reason" "parse: unexpected close")
+                       (if (= depth 1)
+                           (loop (+ i 1) 0 -1 #f #f
+                                 (cons (substring s start (+ i 1)) forms) #t)
+                           (loop (+ i 1) (- depth 1) start #f #f forms #t))))
+                  ((or (= c 32) (= c 9) (= c 10) (= c 13))
+                   (if (and (= depth 0) (>= start 0))
+                       (loop (+ i 1) 0 -1 #f #f (cons (substring s start i) forms) #t)
+                       (loop (+ i 1) depth start #f #f forms #t)))
+                  (else
+                   (loop (+ i 1) depth (if (< start 0) i start) #f #f forms #t)))))))))
+
+(define (prop-escape str)
+  (let loop ((i 0) (acc ""))
+    (if (>= i (string-length str))
+        acc
+        (let ((c (string-ref str i)))
+          (loop (+ i 1)
+                (string-append
+                  acc
+                  (let ((code (char->integer c)))
+                    (cond ((= code 34) (string-append (list->string (list 92)) (list->string (list 34))))
+                          ((= code 92) (string-append (list->string (list 92)) (list->string (list 92))))
+                          ((= code 10) (string-append (list->string (list 92)) "n"))
+                          ((= code 9) (string-append (list->string (list 92)) "t"))
+                          (else (list->string (list c)))))))))))
+
+(define (prop:->text v)
+  (cond ((null? v) "()")
+        ((pair? v) (prop-list-text v))
+        ((string? v) (string-append (list->string (list 34)) (prop-escape v)
+                                    (list->string (list 34))))
+        ((symbol? v) (symbol->string v))
+        ((number? v) (number->string v))
+        ((boolean? v) (if v "#t" "#f"))
+        (else "#<obj>")))
+
+(define (prop-list-text v)
+  (let loop ((xs v) (acc "("))
+    (cond ((null? xs) (string-append acc ")"))
+          ((pair? xs)
+           (loop (cdr xs)
+                 (string-append acc (if (string=? acc "(") "" " ") (prop:->text (car xs)))))
+          (else (string-append acc " . " (prop:->text xs) ")")))))
+
+; ── defines named by a genome ──────────────────────────────────────
+
+(define (prop-form-head f)
+  (if (and (pair? f) (symbol? (car f)))
+      (car f)
+      #f))
+
+(define (prop-form-name f)
+  (if (not (and (pair? f) (pair? (cdr f))))
+      #f
+      (let ((h (car f)) (head (car (cdr f))))
+        (cond ((not (or (eq? h 'define) (eq? h 'define-syntax)
+                        (eq? h 'define-macro) (eq? h 'define-values)))
+               #f)
+              ((symbol? head) (symbol->string head))
+              ((and (pair? head) (symbol? (car head))) (symbol->string (car head)))
+              (else #f)))))
+
+(define (prop-form-is-macro? f)
+  (and (pair? f)
+       (let ((h (car f)))
+         (or (eq? h 'define-syntax) (eq? h 'define-macro)))))
+
+(define (prop:genome-defines text)
+  (let ((p (prop:parse text)))
+    (if (not (prop-opt p "ok" #f))
+        #f
+        (let loop ((fs (prop-opt p "forms" (list))) (acc (list)))
+          (if (null? fs)
+              (reverse acc)
+              (let ((nm (prop-form-name (car fs))))
+                (if nm
+                    (loop (cdr fs) (cons nm acc))
+                    (loop (cdr fs) acc))))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Scope guard
+; ═══════════════════════════════════════════════════════════════════
+
+(define (prop-count-capped v limit)
+  ; Iterative walk with an explicit stack: a hostile 1 MB datum must not
+  ; blow the interpreter stack, and the count stops at the cap.
+  (let loop ((stack (list v)) (n 0))
+    (if (or (null? stack) (> n limit))
+        n
+        (let ((x (car stack)))
+          (cond ((pair? x)
+                 (loop (cons (car x) (cons (cdr x) (cdr stack))) (+ n 1)))
+                (else (loop (cdr stack) (+ n 1))))))))
+
+(define (prop:node-count v) (prop-count-capped v 100000))
+
+(define (prop-find-first-symbol v pred)
+  (let loop ((stack (list v)))
+    (cond ((null? stack) #f)
+          (else
+           (let ((x (car stack)))
+             (cond ((and (symbol? x) (pred x)) x)
+                   ((pair? x) (loop (cons (car x) (cons (cdr x) (cdr stack)))))
+                   (else (loop (cdr stack)))))))))
+
+(define prop-capability-symbols
+  (list "http-get" "http-post" "http-put" "http-delete" "http-request"
+        "socket" "socket-connect" "socket-listen" "socket-accept"
+        "c-load" "c-func" "c-func-ptr"
+        "process-spawn" "process-exec" "system" "shell-exec" "spawn"
+        "security:grant-capability!" "with-capability"))
+
+(define prop-capability-requires
+  (list "std/net" "std/socket" "std/ffi" "std/process"))
+
+(define (prop-capability-require-hit v)
+  (let loop ((stack (list v)))
+    (cond ((null? stack) #f)
+          (else
+           (let ((x (car stack)))
+             (cond ((and (pair? x)
+                         (or (eq? (car x) 'require) (eq? (car x) 'import)))
+                    (let hit ((as (cdr x)))
+                      (cond ((null? as) (loop (cdr stack)))
+                            ((and (string? (car as))
+                                  (member? (car as) prop-capability-requires))
+                             (car as))
+                            (else (hit (cdr as))))))
+                   ((pair? x) (loop (cons (car x) (cons (cdr x) (cdr stack)))))
+                   (else (loop (cdr stack)))))))))
+
+(define (prop-capability-scan v)
+  ; Conservative: any capability symbol anywhere, and any capability
+  ; require/import form, refuses the proposal. False positives are fine
+  ; here — a heuristic never needs to open a socket.
+  (let ((req (prop-capability-require-hit v)))
+    (if req
+        (string-append "capability: " req)
+        (let ((sym (prop-find-first-symbol
+                     v (lambda (s) (member? (symbol->string s) prop-capability-symbols)))))
+          (if sym
+              (string-append "capability: " (symbol->string sym))
+              #f)))))
+
+(define prop-conditional-heads
+  (list 'if 'cond 'when 'unless 'case 'and 'or 'do 'let 'let* 'letrec))
+
+(define (prop-body-forms f)
+  ; (define (name args...) body...) / (define name value)
+  (if (not (and (pair? f) (eq? (car f) 'define) (pair? (cdr f))))
+      (list)
+      (let* ((head (car (cdr f)))
+             (rest (cdr (cdr f))))
+        (cond ((pair? head) rest)
+              ((pair? rest) (list (car rest)))
+              (else (list))))))
+
+(define (prop-has-conditional? v)
+  (let loop ((stack (list v)))
+    (cond ((null? stack) #f)
+          (else
+           (let ((x (car stack)))
+             (cond ((and (pair? x) (member? (car x) prop-conditional-heads)) #t)
+                   ((pair? x) (loop (cons (car x) (cons (cdr x) (cdr stack)))))
+                   (else (loop (cdr stack)))))))))
+
+(define (prop-self-recursive? name v)
+  (let ((target (string->symbol name)))
+    (let loop ((stack (list v)))
+      (cond ((null? stack) #f)
+            (else
+             (let ((x (car stack)))
+               (cond ((and (pair? x) (eq? (car x) target)) #t)
+                     ((pair? x) (loop (cons (car x) (cons (cdr x) (cdr stack)))))
+                     (else (loop (cdr stack))))))))))
+
+(define (prop-termination-check f)
+  ; A define that calls itself and has NO conditional anywhere cannot
+  ; reach a base case: (define (spin x) (spin x)). This is the one static
+  ; termination fact provable cheaply; actual run-time bounds stay with
+  ; evo:trial's measured deadline.
+  (let ((name (prop-form-name f)))
+    (if (not name)
+        #f
+        (let ((bodies (prop-body-forms f)))
+          (if (and (prop-self-recursive? name (if (null? bodies) (list) bodies))
+                   (not (prop-has-conditional? (if (null? bodies) (list) bodies))))
+              (string-append "non-terminating: " name)
+              #f)))))
+
+(define (prop:scope-check genome ctx)
+  (cond
+    ((not (string? genome)) "genome: not-a-string")
+    ((> (string-length genome) (prop-int (prop-opt ctx "max-chars" 4096)))
+     (string-append "size-chars: " (number->string (string-length genome))))
+    (else
+     (let ((p (prop:parse genome)))
+       (cond
+         ((not (prop-opt p "ok" #f)) (prop-opt p "reason" "parse: invalid"))
+         ((null? (prop-opt p "forms" (list))) "parse: no form")
+         (else
+          (let ((nodes (prop-count-capped (prop-opt p "forms" (list)) 100000)))
+            (if (> nodes (prop-int (prop-opt ctx "max-nodes" 256)))
+                (string-append "size-nodes: " (number->string nodes))
+                (prop-scope-forms (prop-opt p "forms" (list)) ctx)))))))))
+
+(define (prop-scope-forms forms ctx)
+  (let ((allowed (prop-ctx-defines ctx))
+        (protected (prop-ctx-protected ctx)))
+    (let loop ((fs forms) (acc #f))
+      (cond
+        (acc acc)
+        ((null? fs) #f)
+        (else
+         (let* ((f (car fs))
+                (name (prop-form-name f))
+                (macro (prop-form-is-macro? f))
+                (head (prop-form-head f)))
+           (cond
+             ((not head) (loop (cdr fs) "not-a-form"))
+             ((not (or (eq? head 'define) (eq? head 'define-syntax)
+                       (eq? head 'define-macro) (eq? head 'define-values)))
+              (loop (cdr fs) (string-append "not-a-define: " (symbol->string head))))
+             (macro (loop (cdr fs) (string-append "macro: " (if name name "?"))))
+             ((not name) (loop (cdr fs) "define: unnamed"))
+             ((member? name protected)
+              (loop (cdr fs) (string-append "protected: " name)))
+             ((not (member? name allowed))
+              (loop (cdr fs) (string-append "scope: " name)))
+             (else
+              (let ((cap (prop-capability-scan f))
+                    (term (prop-termination-check f)))
+                (cond (cap (loop (cdr fs) cap))
+                      (term (loop (cdr fs) term))
+                      (else (loop (cdr fs) #f))))))))))))
+
+(define (prop:check-proposal p ctx)
+  (let ((g (prop-opt p "genome" #f))
+        (t (prop-opt p "thought" "")))
+    (cond
+      ((not (hash? p)) "proposal: not-a-hash")
+      ((not (string? g)) "genome: not-a-string")
+      ((and (string? t) (llm:injection-risk? t)) "injection: thought")
+      ((llm:injection-risk? g) "injection: genome")
+      (else (prop:scope-check g ctx)))))
+
+; ═══════════════════════════════════════════════════════════════════
+; EoH strategies
+; ═══════════════════════════════════════════════════════════════════
+
+(define (prop:strategies) prop-strategy-names)
+
+(define (prop:strategy-brief s)
+  (cond ((string=? s "e1") "write a fresh heuristic from the goal; do not copy the parent")
+        ((string=? s "e2") "explore: invent a new approach inspired by the parent")
+        ((string=? s "m1") "mutate the parent's thought, then let the code follow it")
+        ((string=? s "m2") "crossover: combine the two parents' ideas into one")
+        ((string=? s "m3") "keep the parent's thought and mutate its code")
+        (else "propose one heuristic")))
+
+(define (prop:strategy-cycle st gen slot)
+  (let ((xs (if (and (list? st) (not (null? st))) st prop-strategy-names)))
+    (list-ref xs (modulo (+ (* (prop-int gen) (length xs)) (prop-int slot))
+                         (length xs)))))
+
+(define (prop:select-strategy st gen slot seed)
+  (let* ((xs (if (and (list? st) (not (null? st))) st prop-strategy-names))
+         (r (evo:rng (prop-int seed) (prop-int gen) (prop-int slot))))
+    (list-ref xs (modulo (evo:rng-next! r) (length xs)))))
+
+; ═══════════════════════════════════════════════════════════════════
+; ReEvo — short reflection (two parents) and long-term memory
+; ═══════════════════════════════════════════════════════════════════
+; The language gradient, without a language model: a deterministic
+; comparison of what each parent is better at. The text is an INPUT to
+; the prompt and to the proposal meta, and long-term memory is written
+; to the evo log (prop:memory-record!) so a reviewer can replay it.
+
+(define (prop-uniq xs)
+  (let loop ((ys xs) (acc (list)))
+    (if (null? ys)
+        (reverse acc)
+        (if (member? (car ys) acc)
+            (loop (cdr ys) acc)
+            (loop (cdr ys) (cons (car ys) acc))))))
+
+(define (prop-obj-keys a b)
+  (let* ((oa (prop-opt a "objectives" (hash)))
+         (ob (prop-opt b "objectives" (hash)))
+         (ks (append (if (hash? oa) (hash-keys oa) (list))
+                     (if (hash? ob) (hash-keys ob) (list)))))
+    (sort (prop-uniq ks) string<?)))
+
+(define (prop:reflect-short a b)
+  (let* ((ia (prop-opt a "id" "?"))
+         (ib (prop-opt b "id" "?"))
+         (ks (prop-obj-keys a b)))
+    (if (null? ks)
+        (string-append "short: " ia " vs " ib " (no objectives yet)")
+        (string-append
+          "short: " ia " vs " ib "; "
+          (prop-join
+            (map (lambda (k)
+                   (let* ((va (prop-num (evo:objective a k)))
+                          (vb (prop-num (evo:objective b k))))
+                     (cond ((> va vb) (string-append ia ">" k))
+                           ((< va vb) (string-append ib ">" k))
+                           (else (string-append k "=tie")))))
+                 ks)
+            " ")))))
+
+(define (prop:memory-add mem text)
+  ; Long-term reflection: bounded, newest last, deterministic.
+  (let* ((xs (if (list? mem) mem (list)))
+         (all (append xs (list (if (string? text) text ""))))
+         (limit 16)
+         (n (length all)))
+    (if (<= n limit)
+        all
+        (list-tail all (- n limit)))))
+
+(define (prop:memory-text mem)
+  (if (or (null? mem) (not (list? mem)))
+      ""
+      (prop-join (map (lambda (x) (if (string? x) x "")) mem) " | ")))
+
+(define (prop:memory-record-entry mem ctx)
+  (let ((txt (prop:memory-text mem)))
+    (hash "algo" "proposer"
+          "gen" (prop-ctx-gen ctx)
+          "slot" (prop-ctx-slot ctx)
+          "search" ""
+          "candidate" ""
+          "parents" (list)
+          "behavior" (hash "memory-len" (length mem))
+          "objectives" (hash)
+          "constraints" (hash "memory" (if (string=? txt "") 0.0 1.0))
+          "memory" (if (> (string-length txt) 512) (substring txt 0 512) txt)
+          "count" (length mem))))
+
+(define (prop:memory-record! mem ctx)
+  ; The memory goes to the worldline so it is auditable, not just kept in
+  ; a closure. Returns the record id, or #f when the log is off.
+  (let ((e (prop:memory-record-entry mem ctx)))
+    (try
+      (evo:record! "proposer" "REFLECT" "reevo-memory"
+                   (hash "memory-len" (length mem))
+                   0 "" e)
+      (catch (err) #f))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Prompt (pure, testable; includes the reflections)
+; ═══════════════════════════════════════════════════════════════════
+
+(define (prop-clip s n)
+  (if (and (string? s) (> (string-length s) n))
+      (substring s 0 n)
+      (if (string? s) s "")))
+
+(define (prop-goal-text ctx)
+  (let* ((g (prop-opt ctx "goal" (hash)))
+         (d (prop-opt g "description" #f))
+         (n (prop-opt g "name" #f))
+         (t (prop-opt g "target" #f)))
+    (cond ((string? d) d)
+          ((string? n) n)
+          ((string? t) (string-append "make " t " better"))
+          (else "improve the heuristic"))))
+
+(define (prop-parent-genome ctx)
+  (let ((ps (prop-opt ctx "parents" (list))))
+    (if (or (null? ps) (not (hash? (car ps))))
+        "(none)"
+        (prop-clip (prop-opt (car ps) "genome" "") 400))))
+
+(define (prop:prompt ctx strategy)
+  (string-append
+    "Evolve one Aura heuristic.\n"
+    "Reply with exactly ONE s-expression: (proposal \"<thought>\" \"<define source>\").\n"
+    "Goal: " (prop-goal-text ctx) "\n"
+    "Mutable defines (ONLY these may be written): "
+    (prop-join (prop-ctx-defines ctx) ", ") "\n"
+    "Strategy " strategy ": " (prop:strategy-brief strategy) "\n"
+    "Short reflection: " (prop-clip (prop-opt (prop-opt ctx "reflection" (hash)) "short" "") 400) "\n"
+    "Long-term reflection: " (prop-clip (prop-opt (prop-opt ctx "reflection" (hash)) "long" "") 400) "\n"
+    "Long-term memory: " (prop-clip (prop-join (prop-opt ctx "memory" (list)) " | ") 400) "\n"
+    "Parent: " (prop-parent-genome ctx) "\n"))
+
+; ═══════════════════════════════════════════════════════════════════
+; Proposals
+; ═══════════════════════════════════════════════════════════════════
+
+(define (prop-parent-ids ctx)
+  (let ((ps (prop-opt ctx "parents" (list))))
+    (map (lambda (p) (if (hash? p) (prop-opt p "id" "") "")) ps)))
+
+(define (prop-first-define genome)
+  (let ((ns (prop:genome-defines genome)))
+    (if (and ns (not (null? ns))) (car ns) #f)))
+
+(define (prop-mk genome thought strategy ctx extra)
+  (hash "kind" "prop-proposal"
+        "genome" genome
+        "thought" (if (string? thought) thought "")
+        "target" (prop-first-define genome)
+        "strategy" strategy
+        "parents" (prop-parent-ids ctx)
+        "meta" (prop-hash-merge (hash "gen" (prop-ctx-gen ctx)
+                                      "slot" (prop-ctx-slot ctx)
+                                      "preset" (prop-opt ctx "preset" "ci"))
+                                (if (hash? extra) extra (hash)))))
+
+(define (prop:propose p ctx)
+  (cond ((hash? p)
+         (let ((f (prop-opt p "propose" #f)))
+           (if (procedure? f) (f ctx) (list))))
+        ((procedure? p) (p ctx))
+        (else (list))))
+
+(define (prop-accept! ctx p stage)
+  ; Guard + audit in one place: every proposer funnels through here.
+  (let ((why (prop:check-proposal p ctx)))
+    (if why
+        (begin
+          (prop-audit! ctx (prop-reject stage why (prop-opt p "genome" "")
+                                        (prop-opt p "strategy" "") ctx))
+          #f)
+        #t)))
+
+; ═══════════════════════════════════════════════════════════════════
+; prop:mock — replay a script (CI's only LLM substitute)
+; ═══════════════════════════════════════════════════════════════════
+
+(define (prop-script-entry e)
+  ; -> (hash "genome" g "thought" t) | #f
+  (cond ((string? e) (hash "genome" e "thought" ""))
+        ((hash? e) (hash "genome" (prop-opt e "genome" "")
+                         "thought" (prop-opt e "thought" "")))
+        ((and (pair? e) (eq? (car e) 'proposal))
+         (let ((a (if (pair? (cdr e)) (car (cdr e)) ""))
+               (b (if (and (pair? (cdr e)) (pair? (cdr (cdr e))))
+                      (car (cdr (cdr e))) "")))
+           (hash "genome" (if (string? b) b "")
+                 "thought" (if (string? a) a ""))))
+        ((pair? e) (hash "genome" (prop:->text e) "thought" ""))
+        (else #f)))
+
+(define (prop-script-items script)
+  ; A script is a list of entries, or a path (string) to a .sexp file
+  ; holding (proposal THOUGHT GENOME) forms or bare genomes.
+  (cond ((list? script) script)
+        ((string? script)
+         (if (or (string-suffix? script ".sexp")
+                 (string-contains? script "/"))
+             (let ((text (try (read-file script) (catch (e) ""))))
+               (if (string? text)
+                   (let ((p (prop:parse text)))
+                     (if (prop-opt p "ok" #f)
+                         (prop-script-forms (prop-opt p "forms" (list)))
+                         (list)))
+                   (list)))
+             (list script)))
+        (else (list))))
+
+(define (prop-script-forms fs)
+  ; Unwrap (proposals e1 e2 ...); (proposal t g) forms pass through.
+  (let loop ((xs fs) (acc (list)))
+    (if (null? xs)
+        (reverse acc)
+        (let ((f (car xs)))
+          (if (and (pair? f) (eq? (car f) 'proposals))
+              (loop (cdr xs) (append (reverse (cdr f)) acc))
+              (loop (cdr xs) (cons f acc)))))))
+
+(define (prop:mock opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (script (prop-script-items (prop-opt o "script" (list))))
+         (strategy (prop-opt o "strategy" "mock"))
+         (items (map prop-script-entry script)))
+    (lambda (ctx)
+      (let ((n (length items)))
+        (if (= n 0)
+            (begin (prop-audit! ctx (prop-reject "mock" "empty-script" "" strategy ctx))
+                   (list))
+            (let loop ((i 0) (acc (list)))
+              (if (>= i (prop-ctx-k ctx))
+                  (reverse acc)
+                  (let* ((idx (modulo (+ (prop-ctx-slot ctx) i) n))
+                         (it (list-ref items idx))
+                         (g (prop-opt it "genome" ""))
+                         (p (prop-mk g (prop-opt it "thought" "") strategy ctx
+                                     (hash "script-index" idx))))
+                    (if (prop-accept! ctx p "mock")
+                        (loop (+ i 1) (cons p acc))
+                        (loop (+ i 1) acc))))))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; prop:grammar — seeded syntax mutation, no LLM
+; ═══════════════════════════════════════════════════════════════════
+
+(define prop-grammar-default-ops
+  (list 'tweak-literal 'swap-operator 'scale-body 'drop-branch 'copy-subtree))
+
+(define (prop-op-name op)
+  (let ((s (if (symbol? op) (symbol->string op) (if (string? op) op ""))))
+    (cond ((or (string=? s "tweak-literal") (string=? s "mutate:tweak-literal"))
+           'tweak-literal)
+          ((or (string=? s "swap-operator") (string=? s "mutate:swap-op")) 'swap-operator)
+          ((or (string=? s "scale-body") (string=? s "mutate:widen")) 'scale-body)
+          ((or (string=? s "drop-branch") (string=? s "mutate:drop-branch")) 'drop-branch)
+          ((or (string=? s "copy-subtree") (string=? s "replace-subtree")
+               (string=? s "mutate:replace-subtree"))
+           'copy-subtree)
+          (else 'tweak-literal))))
+
+; ── datum paths ────────────────────────────────────────────────────
+
+(define (prop-path-get v path)
+  (if (null? path)
+      v
+      (let ((xs (prop-list-at v (car path))))
+        (if (pair? xs) (prop-path-get (car xs) (cdr path)) #f))))
+
+(define (prop-list-at v i)
+  (let loop ((xs v) (k 0))
+    (cond ((null? xs) (list))
+          ((= k i) xs)
+          (else (loop (cdr xs) (+ k 1))))))
+
+(define (prop-path-set v path val)
+  (if (null? path)
+      val
+      (let ((i (car path)))
+        (let loop ((xs v) (k 0) (acc (list)))
+          (cond ((null? xs) (reverse acc))
+                ((= k i)
+                 (append (reverse acc)
+                         (cons (prop-path-set (car xs) (cdr path) val) (cdr xs))))
+                (else (loop (cdr xs) (+ k 1) (cons (car xs) acc))))))))
+
+(define (prop-number-paths v path acc)
+  (cond ((number? v) (cons (reverse path) acc))
+        ((pair? v)
+         (let loop ((xs v) (i 0) (acc acc))
+           (if (pair? xs)
+               (loop (cdr xs) (+ i 1) (prop-number-paths (car xs) (cons i path) acc))
+               acc)))
+        (else acc)))
+
+(define (prop-subtree-paths v path acc)
+  ; Only real sub-FORMS (pairs), and never the head position of a list:
+  ; replacing an operator with a value (or a value with an operator) is
+  ; how a syntax mutation turns into nonsense. The root is not a target.
+  (if (not (pair? v))
+      acc
+      (let loop ((xs v) (i 0) (acc acc))
+        (if (pair? xs)
+            (let ((p (reverse (cons i path))))
+              (loop (cdr xs) (+ i 1)
+                    (if (and (pair? (car xs)) (not (= i 0)))
+                        (prop-subtree-paths (car xs) (cons i path) (cons p acc))
+                        (if (and (pair? (car xs)) (not (null? path)))
+                            (cons p acc)
+                            acc))))
+            acc))))
+
+(define (prop-swap-sym s)
+  (cond ((eq? s '+) '-)
+        ((eq? s '-) '+)
+        ((eq? s '*) '+)
+        (else #f)))
+
+(define (prop-operator-paths v path acc)
+  (if (not (pair? v))
+      acc
+      (let* ((acc1 (if (and (symbol? (car v)) (prop-swap-sym (car v)))
+                       (cons (reverse path) acc)
+                       acc)))
+        (let loop ((xs (cdr v)) (i 1) (acc acc1))
+          (if (pair? xs)
+              (loop (cdr xs) (+ i 1) (prop-operator-paths (car xs) (cons i path) acc))
+              acc)))))
+
+(define (prop-if-paths v path acc)
+  (if (not (pair? v))
+      acc
+      (let* ((acc1 (if (and (eq? (car v) 'if) (pair? (cdr v)))
+                       (cons (reverse path) acc)
+                       acc)))
+        (let loop ((xs v) (i 0) (acc acc1))
+          (if (pair? xs)
+              (loop (cdr xs) (+ i 1) (prop-if-paths (car xs) (cons i path) acc))
+              acc)))))
+
+; ── operators ──────────────────────────────────────────────────────
+
+(define (prop-apply-op op d rng)
+  (cond
+    ((eq? op 'tweak-literal)
+     (let ((paths (prop-number-paths d '() (list))))
+       (if (null? paths)
+           d
+           (let* ((p (evo:rng-pick! rng paths))
+                  (n (prop-path-get d p))
+                  (mode (evo:rng-int! rng 0 2))
+                  (n2 (cond ((= mode 0) (+ n 1))
+                            ((= mode 1) (if (> n 1) (- n 1) (+ n 2)))
+                            (else (* n 2)))))
+             (prop-path-set d p n2)))))
+    ((eq? op 'swap-operator)
+     (let ((paths (prop-operator-paths d '() (list))))
+       (if (null? paths)
+           d
+           (let* ((p (evo:rng-pick! rng paths))
+                  (form (prop-path-get d p))
+                  (s (prop-swap-sym (car form))))
+             (prop-path-set d p (cons s (cdr form)))))))
+    ((eq? op 'scale-body)
+     (if (not (and (pair? d) (eq? (car d) 'define) (pair? (cdr d))))
+         d
+         (let* ((head (car (cdr d)))
+                (rest (cdr (cdr d)))
+                (kk (if (= 1 (evo:rng-int! rng 0 1)) 2 0.5)))
+           (if (or (null? rest) (not (pair? head)))
+               d
+               (append (list 'define head)
+                       (list (list '* (car rest) kk))
+                       (cdr rest))))))
+    ((eq? op 'drop-branch)
+     (let ((paths (prop-if-paths d '() (list))))
+       (if (null? paths)
+           d
+           (let* ((p (evo:rng-pick! rng paths))
+                  (form (prop-path-get d p))
+                  (a (if (pair? (cdr form)) (car (cdr form)) #f)))
+             (if a (prop-path-set d p a) d)))))
+    ((eq? op 'copy-subtree)
+     (let ((paths (prop-subtree-paths d '() (list))))
+       (if (< (length paths) 2)
+           d
+           (let* ((src (evo:rng-pick! rng paths))
+                  (dst (evo:rng-pick! rng paths)))
+             (if (equal? src dst)
+                 d
+                 (prop-path-set d dst (prop-path-get d src)))))))
+    (else d)))
+
+(define (prop-grammar-mutate base ops rounds rng)
+  (let loop ((d base) (i 0) (applied 0))
+    (if (>= i rounds)
+        (hash "ok" (> applied 0) "datum" d "applied" applied)
+        (let* ((op (prop-op-name (evo:rng-pick! rng ops)))
+               (d2 (prop-apply-op op d rng)))
+          (loop d2 (+ i 1) (if (equal? d d2) applied (+ applied 1)))))))
+
+(define (prop-grammar-base ctx)
+  (let* ((b (prop-opt ctx "base" #f))
+         (ps (prop-opt ctx "parents" (list)))
+         (g (prop-opt (prop-opt ctx "goal" (hash)) "seed-genome" #f))
+         (defs (prop-ctx-defines ctx))
+         (genome (cond ((string? b) b)
+                       ((and (pair? ps) (hash? (car ps)))
+                        (prop-opt (car ps) "genome" #f))
+                       ((string? g) g)
+                       ((pair? defs) (string-append "(define (" (car defs) " x) x)"))
+                       (else #f))))
+    (if (and (string? genome) (not (string=? genome ""))) genome #f)))
+
+(define (prop-grammar-thought strategy applied seed)
+  (string-append "grammar " strategy " applied=" (number->string applied)
+                 " seed=" (number->string seed)))
+
+(define (prop-grammar-attempt base ops rounds ctx i strategy attempt last-reason)
+  ; A mutation the guard refuses is retried from a fresh stream; each
+  ; refusal is still audited (evidence, not a silent drop). Four tries,
+  ; then the caller moves on with one fewer proposal.
+  (if (>= attempt 4)
+      (begin
+        (prop-audit! ctx (prop-reject "grammar"
+                                      (if last-reason
+                                          (string-append "exhausted: " last-reason)
+                                          "exhausted: no-op")
+                                      (prop:->text base) strategy ctx))
+        #f)
+      (let* ((rng (evo:rng (prop-ctx-seed ctx) (prop-ctx-gen ctx)
+                           (+ (prop-ctx-slot ctx) i (* attempt 977))))
+             (mut (prop-grammar-mutate base ops rounds rng))
+             (genome (prop:->text (prop-opt mut "datum" base))))
+        (if (not (prop-opt mut "ok" #f))
+            (prop-grammar-attempt base ops rounds ctx i strategy (+ attempt 1) "no-op")
+            (let ((pr (prop-mk genome
+                               (prop-grammar-thought strategy
+                                                     (prop-opt mut "applied" 0)
+                                                     (prop-ctx-seed ctx))
+                               strategy ctx
+                               (hash "applied" (prop-opt mut "applied" 0)
+                                     "attempt" attempt))))
+              (if (prop-accept! ctx pr "grammar")
+                  pr
+                  (prop-grammar-attempt base ops rounds ctx i strategy
+                                        (+ attempt 1)
+                                        (prop:check-proposal pr ctx))))))))
+
+(define (prop-grammar-loop base ops rounds ctx strategy)
+  (let loop ((i 0) (acc (list)))
+    (if (>= i (prop-ctx-k ctx))
+        (reverse acc)
+        (let ((pr (prop-grammar-attempt base ops rounds ctx i strategy 0 #f)))
+          (loop (+ i 1) (if pr (cons pr acc) acc))))))
+
+(define (prop-grammar-forms ctx strategy ops rounds)
+  (let ((base-text (prop-grammar-base ctx)))
+    (cond
+      ((not base-text)
+       (prop-audit! ctx (prop-reject "grammar" "no-base" "" strategy ctx))
+       (list))
+      (else
+       (let ((p (prop:parse base-text)))
+         (if (not (prop-opt p "ok" #f))
+             (begin
+               (prop-audit! ctx (prop-reject "grammar"
+                                             (prop-opt p "reason" "parse: base")
+                                             base-text strategy ctx))
+               (list))
+             (prop-grammar-loop (car (prop-opt p "forms" (list)))
+                                ops rounds ctx strategy)))))))
+
+(define (prop:grammar opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (ops (let ((v (prop-opt o "ops" (list))))
+                (if (and (list? v) (not (null? v))) v prop-grammar-default-ops)))
+         (rounds (let ((r (prop-int (prop-opt o "rounds" 2)))) (if (< r 1) 1 r)))
+         (strategy (prop-opt o "strategy" "grammar")))
+    (lambda (ctx)
+      (prop-grammar-forms ctx strategy ops rounds))))
+
+; ═══════════════════════════════════════════════════════════════════
+; prop:llm — injected transport only; off unless asked
+; ═══════════════════════════════════════════════════════════════════
+
+(define (prop-llm-stat! key)
+  (try
+    (let ((st (llm:call-stats)))
+      (hash-set! st key (+ 1 (prop-int (prop-opt st key 0))))
+      #t)
+    (catch (e) #f)))
+
+(define (prop-llm-response-text r)
+  (cond ((string? r) r)
+        ((hash? r) (let ((t (prop-opt r "text" #f))) (if (string? t) t "")))
+        (else "")))
+
+(define (prop-llm-response-tokens r)
+  (if (hash? r) (prop-int (prop-opt r "tokens" 0)) 0))
+
+(define (prop-llm-parse text)
+  ; -> (hash "ok" bool "thought" t "genome" g "reason" why)
+  (let ((p (prop:parse text)))
+    (cond
+      ((not (prop-opt p "ok" #f))
+       (hash "ok" #f "thought" "" "genome" "" "reason" (prop-opt p "reason" "parse")))
+      ((not (= 1 (length (prop-opt p "forms" (list)))))
+       (hash "ok" #f "thought" "" "genome" ""
+             "reason" (string-append "multi-form: "
+                                     (number->string (length (prop-opt p "forms" (list)))))))
+      (else
+       (let ((f (car (prop-opt p "forms" (list)))))
+         (cond
+           ((and (pair? f) (eq? (car f) 'proposal))
+            (let ((a (if (pair? (cdr f)) (car (cdr f)) #f))
+                  (b (if (and (pair? (cdr f)) (pair? (cdr (cdr f))))
+                         (car (cdr (cdr f))) #f)))
+              (if (and (string? a) (string? b))
+                  (hash "ok" #t "thought" a "genome" b "reason" #f)
+                  (hash "ok" #f "thought" "" "genome" ""
+                        "reason" "proposal: expected thought+genome strings"))))
+           ((and (pair? f) (eq? (car f) 'define))
+            (hash "ok" #t "thought" "" "genome" (prop:->text f) "reason" #f))
+           (else (hash "ok" #f "thought" "" "genome" ""
+                       "reason" "not-a-proposal"))))))))
+
+(define (prop-llm-one transport ctx strategy model max-tokens)
+  ; One LLM turn through the injected transport. Returns a proposal or #f;
+  ; every failure path audits and bumps llm:call-stats.
+  (let* ((prompt (prop:prompt ctx strategy))
+         (t0 (monotonic-ms))
+         (res (try (transport (hash "model" model
+                                    "max-tokens" max-tokens
+                                    "prompt" prompt
+                                    "strategy" strategy))
+                   (catch (e) (list 'transport-error e))))
+         (dur (- (monotonic-ms) t0))
+         (failed (and (pair? res) (eq? (car res) 'transport-error))))
+    (if failed
+        (begin
+          (prop-llm-stat! "fail")
+          (prop-audit! ctx (prop-reject "llm" "transport-error" "" strategy ctx))
+          #f)
+        (let* ((text (prop-llm-response-text res))
+               (parsed (prop-llm-parse text)))
+          (if (not (prop-opt parsed "ok" #f))
+              (begin
+                (prop-llm-stat! "parse-err")
+                (prop-audit! ctx (prop-reject "llm"
+                                              (prop-opt parsed "reason" "parse")
+                                              text strategy ctx))
+                #f)
+              (let ((pr (prop-mk (prop-opt parsed "genome" "")
+                                 (prop-opt parsed "thought" "")
+                                 strategy ctx
+                                 (hash "model" model
+                                       "tokens" (prop-llm-response-tokens res)
+                                       "dur-ms" dur
+                                       "transport" "injected"))))
+                (if (prop-accept! ctx pr "llm")
+                    (begin (prop-llm-stat! "success") pr)
+                    #f)))))))
+
+(define (prop:llm opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (model (prop-opt o "model" "injected"))
+         (max-tokens (prop-int (prop-opt o "max-tokens" 2000)))
+         (transport (prop-opt o "transport" #f))
+         (enabled (or (eq? (prop-opt o "enabled" #f) #t)
+                      (prop-env-on? "AURA_EVO_LLM")))
+         (strategies (prop-opt o "strategies" prop-strategy-names))
+         (strategy0 (prop-opt o "strategy" #f)))
+    (lambda (ctx)
+      (cond
+        ((not enabled)
+         (prop-audit! ctx (prop-reject "llm" "llm-disabled" "" "llm" ctx))
+         (list))
+        ((not (procedure? transport))
+         (prop-audit! ctx (prop-reject "llm" "no-transport" "" "llm" ctx))
+         (list))
+        (else
+         (let loop ((i 0) (acc (list)))
+           (if (>= i (prop-ctx-k ctx))
+               (reverse acc)
+               (let* ((strategy (if (string? strategy0)
+                                    strategy0
+                                    (prop:select-strategy strategies
+                                                          (prop-ctx-gen ctx)
+                                                          (+ (prop-ctx-slot ctx) i)
+                                                          (prop-ctx-seed ctx))))
+                      (pr (prop-llm-one transport ctx strategy model max-tokens)))
+                 (loop (+ i 1) (if pr (cons pr acc) acc))))))))))
+
+; prop:tree — MCTS-AHD wrapper (UCT + progressive widening + decay)
+; ═══════════════════════════════════════════════════════════════════
+; The tree is a VALUE: (hash "kind" "prop-tree" "nodes" id->node ...).
+; A step selects by UCT from the root, widens a node when its child count
+; is under k * visits^alpha, asks the inner proposer for that child, and
+; returns the child's proposal. prop:tree-backprop! records a reward.
+
+(define (prop:tree inner opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (c (prop-num (prop-opt o "c" 0.7)))
+         (alpha (prop-num (prop-opt o "alpha" 0.5)))
+         (decay (prop-opt o "decay" "linear"))
+         (widen (prop-num (prop-opt o "k" 1.0)))
+         (tr (hash "kind" "prop-tree"
+                   "inner" inner
+                   "c" c "alpha" alpha "decay" decay "widen" widen
+                   "nodes" (hash)
+                   "seq" 0
+                   "max-depth" 0)))
+    (hash-set! (hash-ref tr "nodes") "n0"
+               (hash "id" "n0" "parent" #f "children" (list)
+                     "visits" 0 "value" 0.0 "depth" 0
+                     "proposal" #f))
+    (hash-set! tr "root" "n0")
+    (hash-set! tr "propose" (lambda (ctx) (prop-tree-step! tr ctx)))
+    tr))
+
+(define (prop:tree-node tr id)
+  (let ((nodes (prop-opt tr "nodes" (hash))))
+    (if (hash? nodes) (prop-opt nodes id #f) #f)))
+
+(define (prop:tree-nodes tr)
+  (let ((nodes (prop-opt tr "nodes" (hash))))
+    (if (hash? nodes) (sort (hash-keys nodes) string<?) (list))))
+
+(define (prop:c-effective c mode alpha depth)
+  ; Exploration decay as the tree deepens: "linear" divides by
+  ; (1 + alpha * depth), "exp" multiplies by alpha^depth. Both are
+  ; strictly decreasing in depth while c > 0.
+  (cond ((string=? mode "exp") (* c (expt (if (<= alpha 0.0) 0.999 alpha) depth)))
+        ((string=? mode "none") c)
+        (else (/ c (+ 1.0 (* alpha depth))))))
+
+(define (prop:widening-limit n k alpha)
+  (if (<= n 0)
+      1
+      (max 1 (prop-int (floor (* k (expt n alpha)))))))
+
+(define (prop:uct q n parent-n c)
+  (if (<= n 0)
+      1000000000.0
+      (+ (/ q n) (* c (sqrt (/ (log (max 1 parent-n)) n))))))
+
+(define (prop-node-uct tr parent nd)
+  (prop:uct (prop-opt nd "value" 0.0)
+            (prop-opt nd "visits" 0)
+            (prop-opt parent "visits" 0)
+            (prop:c-effective (hash-ref tr "c") (hash-ref tr "decay")
+                              (hash-ref tr "alpha") (prop-opt nd "depth" 0))))
+
+(define (prop-tree-best-child tr nd)
+  (let loop ((kids (prop-opt nd "children" (list))) (best #f) (bestv -1e300))
+    (if (null? kids)
+        best
+        (let* ((k (car kids))
+               (cn (prop:tree-node tr k))
+               (v (if cn (prop-node-uct tr nd cn) -1e300)))
+          (if (or (not best) (> v bestv))
+              (loop (cdr kids) k v)
+              (loop (cdr kids) best bestv))))))
+
+(define (prop-tree-visit-path! tr id)
+  (let loop ((cur id))
+    (if (not (string? cur))
+        #f
+        (let ((nd (prop:tree-node tr cur)))
+          (if (not nd)
+              #f
+              (begin
+                (hash-set! nd "visits" (+ 1 (prop-opt nd "visits" 0)))
+                (loop (prop-opt nd "parent" #f))))))))
+
+(define (prop-tree-expand! tr ctx id)
+  (let* ((nodes (hash-ref tr "nodes"))
+         (nd (prop-opt nodes id #f)))
+    (if (not nd)
+        (list)
+        (let* ((kids (prop-opt nd "children" (list)))
+               (seq (+ 1 (prop-int (hash-ref tr "seq" 0))))
+               (cid (string-append "n" (number->string seq)))
+               (seed (prop-ctx-seed ctx))
+               (proposal (prop-opt nd "proposal" #f))
+               (parents (let ((ps (prop-opt ctx "parents" (list))))
+                          (if proposal
+                              (cons proposal ps)
+                              ps)))
+               (child-ctx (prop-hash-merge
+                            ctx
+                            (hash "parents" parents
+                                  "gen" (+ 1 (prop-opt nd "depth" 0))
+                                  "slot" (length kids)
+                                  "seed" seed
+                                  "rng" #f
+                                  "tree-parent" id)))
+               (props (prop:propose (hash-ref tr "inner") child-ctx))
+               (pr (if (null? props) #f (car props))))
+          (hash-set! nodes cid
+                     (hash "id" cid "parent" id "children" (list)
+                           "visits" 0 "value" 0.0
+                           "depth" (+ 1 (prop-opt nd "depth" 0))
+                           "proposal" pr))
+          (hash-set! nd "children" (append kids (list cid)))
+          (hash-set! tr "seq" seq)
+          (if (> (+ 1 (prop-opt nd "depth" 0)) (prop-int (hash-ref tr "max-depth" 0)))
+              (hash-set! tr "max-depth" (+ 1 (prop-opt nd "depth" 0)))
+              #f)
+          (prop-tree-visit-path! tr cid)
+          (if pr
+              (list (prop-hash-merge pr (hash "meta" (prop-hash-merge
+                                                       (prop-opt pr "meta" (hash))
+                                                       (hash "node" cid)))))
+              (list))))))
+
+(define (prop-tree-step! tr ctx)
+  (let loop ((id (hash-ref tr "root")) (guard 0))
+    (if (> guard 128)
+        (list)
+        (let* ((nd (prop:tree-node tr id)))
+          (if (not nd)
+              (list)
+              (let* ((vis (prop-opt nd "visits" 0))
+                     (kids (prop-opt nd "children" (list)))
+                     (limit (prop:widening-limit vis
+                                                 (hash-ref tr "widen")
+                                                 (hash-ref tr "alpha"))))
+                (cond ((= vis 0) (prop-tree-expand! tr ctx id))
+                      ((< (length kids) limit) (prop-tree-expand! tr ctx id))
+                      ((null? kids) (prop-tree-expand! tr ctx id))
+                      (else
+                       (let ((best (prop-tree-best-child tr nd)))
+                         (if (not best)
+                             (prop-tree-expand! tr ctx id)
+                             (loop best (+ guard 1))))))))))))
+
+(define (prop:tree-backprop! tr p value)
+  ; p is a proposal (meta.node names its node) or a node id. A node this
+  ; tree does not own is a refusal: the reward belongs to a tree, not to
+  ; an id a caller made up.
+  (let* ((id (cond ((string? p) p)
+                   ((hash? p) (prop-opt (prop-opt p "meta" (hash)) "node" #f))
+                   (else #f)))
+         (v (prop-num value)))
+    (if (not (and (string? id) (prop:tree-node tr id)))
+        #f
+        (let loop ((cur id))
+          (if (not (string? cur))
+              #t
+              (let ((nd (prop:tree-node tr cur)))
+                (if (not nd)
+                    #t
+                    (begin
+                      (hash-set! nd "value" (+ (prop-opt nd "value" 0.0) v))
+                      (loop (prop-opt nd "parent" #f))))))))))
+
+(define (prop:tree-report tr)
+  (let* ((root (prop:tree-node tr "n0"))
+         (nodes (prop-opt tr "nodes" (hash)))
+         (kids (if root (prop-opt root "children" (list)) (list))))
+    (hash "kind" "prop-tree-report"
+          "nodes" (if (hash? nodes) (length (hash-keys nodes)) 0)
+          "root-visits" (if root (prop-opt root "visits" 0) 0)
+          "root-children" (length kids)
+          "children" kids
+          "max-depth" (prop-opt tr "max-depth" 0)
+          "widening-limit" (prop:widening-limit (if root (prop-opt root "visits" 0) 0)
+                                                (hash-ref tr "widen")
+                                                (hash-ref tr "alpha"))
+          "c-effective" (prop:c-effective (hash-ref tr "c") (hash-ref tr "decay")
+                                          (hash-ref tr "alpha")
+                                          (prop-opt tr "max-depth" 0))
+          "seq" (prop-opt tr "seq" 0))))
+
+; ═══════════════════════════════════════════════════════════════════
+; EoH-S — greedy complementary set selection (monotone submodular)
+; ═══════════════════════════════════════════════════════════════════
+; perf is a list of rows, one per candidate, each a vector of per-instance
+; values. Coverage(S) = sum over instances of max over S, monotone and
+; submodular, so greedy is within (1 - 1/e) of the optimum.
+
+(define (prop-row-at perf i)
+  (let ((row (list-ref perf i)))
+    (if (list? row) row (list))))
+
+(define (prop-row-val row j)
+  (if (< j (length row))
+      (let ((v (list-ref row j))) (if (number? v) (* 1.0 v) 0.0))
+      0.0))
+
+(define (prop-max-cols perf)
+  (let loop ((xs perf) (m 0))
+    (if (null? xs)
+        m
+        (let ((n (if (list? (car xs)) (length (car xs)) 0)))
+          (loop (cdr xs) (if (> n m) n m))))))
+
+(define (prop-col-max perf idxs j)
+  (let loop ((is idxs) (best 0.0))
+    (if (null? is)
+        best
+        (let ((v (prop-row-val (prop-row-at perf (car is)) j)))
+          (loop (cdr is) (if (> v best) v best))))))
+
+(define (prop:coverage perf idxs)
+  (if (or (null? idxs) (null? perf))
+      0.0
+      (let ((cols (prop-max-cols perf)))
+        (let loop ((j 0) (acc 0.0))
+          (if (>= j cols)
+              acc
+              (loop (+ j 1) (+ acc (prop-col-max perf idxs j))))))))
+
+(define (prop-index-member? i xs)
+  (let loop ((ys xs))
+    (cond ((null? ys) #f)
+          ((= (car ys) i) #t)
+          (else (loop (cdr ys))))))
+
+(define (prop-greedy-indices perf k)
+  (let ((n (length perf))
+        (kk (prop-int k)))
+    (if (or (<= kk 0) (= n 0))
+        (list)
+        (let loop ((sel (list)) (step 0))
+          (if (>= step kk)
+              (reverse sel)
+              (let inner ((i 0) (best -1) (bestv -1.0))
+                (if (>= i n)
+                    (if (< best 0)
+                        (reverse sel)
+                        (loop (cons best sel) (+ step 1)))
+                    (if (prop-index-member? i sel)
+                        (inner (+ i 1) best bestv)
+                        (let ((v (prop:coverage perf (cons i sel))))
+                          (if (> v (+ bestv 1e-12))
+                              (inner (+ i 1) i v)
+                              (inner (+ i 1) best bestv)))))))))))
+
+(define (prop:set-select cands perf k)
+  (let ((idx (prop-greedy-indices perf k)))
+    (map (lambda (i) (list-ref cands i)) idx)))
+
+(define (prop:set-select-report cands perf k)
+  (let* ((idx (prop-greedy-indices perf k))
+         (sel (map (lambda (i) (list-ref cands i)) idx)))
+    (hash "kind" "prop-set-select"
+          "indices" idx
+          "selected" sel
+          "coverage" (prop:coverage perf idx)
+          "k" k
+          "n" (length cands))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Adapter to the std/evo-core ask/tell protocol
+; ═══════════════════════════════════════════════════════════════════
+; (evo:search (hash "proposer" (prop:adapt p (hash "defines" (list "score")))))
+; evo:ask calls the fn as (s gen slot rng); the adapter builds a ctx from
+; the search tip and returns one raw proposal. A refusal becomes a
+; candidate with no genome and no target, so the caller's apply refuses
+; it and the evo log records the ROLLBACK instead of a fake success.
+
+(define (prop:adapt p . rest)
+  (let* ((o (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (defines (prop-opt o "defines" (list)))
+         (goal (prop-opt o "goal" (hash))))
+    (lambda (s gen slot rng)
+      (let* ((best (try (evo:best s) (catch (e) #f)))
+             (target (try (prop-opt s "target" #f) (catch (e) #f)))
+             (defs (if (and (list? defines) (not (null? defines)))
+                       defines
+                       (if (string? target) (list target) (list))))
+             (ctx (prop:ctx (hash "parents" (if (hash? best) (list best) (list))
+                                   "defines" defs
+                                   "goal" (if (hash? goal) goal (hash "target" target))
+                                   "gen" gen "slot" slot
+                                   "seed" (prop-opt s "seed" 42)
+                                   "rng" rng
+                                   "audit" (prop-opt o "audit" #f))))
+             (props (prop:propose p ctx)))
+        (if (null? props)
+            (hash "genome" "" "target" #f "thought" "refused"
+                  "meta" (hash "refused" #t))
+            (let ((pr (car props)))
+              (hash "genome" (prop-opt pr "genome" "")
+                    "thought" (prop-opt pr "thought" "")
+                    "target" (prop-opt pr "target" #f)
+                    "parents" (prop-opt pr "parents" (list))
+                    "meta" (let ((m (prop-opt pr "meta" (hash))))
+                             (if (hash? m) m (hash))))))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Help
+; ═══════════════════════════════════════════════════════════════════
+
+(define (prop:schema) prop-schema-version)
+
+(define (prop:help)
+  "std/proposer (#4942): EoH/ReEvo/MCTS-AHD/EoH-S proposers as callables (p ctx) -> proposals; mock/grammar are LLM-free and reproducible from (seed, gen, slot); the scope guard refuses writes outside ctx defines. (define p (prop:grammar (hash \"seed\" 7))) (p (prop:ctx (hash \"defines\" (list \"score\"))))")
