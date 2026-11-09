@@ -1,494 +1,109 @@
-; ── std/orchestrator.aura — Agent 编排框架（交响乐指挥） ──
+; lib/std/orchestrator.aura — one release of forwarding to std/orch (#5004)
 ;
-; 哲学：指挥不弹琴。
-;   - agent:spawn = 聘用乐手（注册一个命名 processor）
-;   - agent:ask   = 指挥给提示（发送任务 + 等结果）
-;   - orch:conduct = 读总谱 + 按步骤推进管线
-;   - orch:parallel = 多声部同时演奏
-;   - orch:parallel-with-yield / orch:conduct 集成 safe yield (#1553)
+; The implementation moved to lib/std/orch.aura, which depends only on
+; fiber:spawn / channel:send / channel:recv / fiber:join / fiber:cancel.
+; This module keeps the pre-#5004 import path working for one release:
 ;
-; 全部纯 Aura，零 C++ 依赖（stdin 模式友好）。
-; 在 serve 模式下自动使用 cross-session send/recv。
+;   (require "std/orchestrator" all:)   ; old name, still green
+;   (require "std/orch" all:)           ; new name, same surface
 ;
-; #1551: LLM-backed roles should use std/llm (llm:chat / templates /
-; sanitize / llm:call-stats) rather than raw http-post. Example:
-;   (require "std/llm" all:)
-;   (llm:register-template "role" (lambda (task) ...))
-;   (agent:spawn "analyst" (lambda (in) (llm:chat "..." (llm:apply-template "role" in))))
+; Forwarded surface
+;   orch:*  — define-role / step / pipeline / conduct / parallel /
+;             parallel-with-yield / supervise / registry-epoch
+;   agent:* — spawn / ask / list / status / stop / restart (lifecycle)
+;   orch:run — the named pipeline form #2768 callers use
 ;
-; #1553: fiber spawn paths call (mutate:safe-yield) / ast:yield-at-boundary
-; before and after work so long mutation holds do not starve peer fibers
-; (aligns #1504 safe yield + #1547 MutationBoundaryGuard).
+; The orch--* captures happen once, right after the require, so the
+; forwards below cannot call themselves (same trap as #4500). Roles,
+; orch:if and orch:retry are value constructors and stay local.
 ;
-; Issue #2768 / #2766: export *before* require so module-private free-vars
-; (*agents*, *registry-epoch*, agent-register, …) capture correctly on the
-; stdin denseness host. Host binder now tolerates either order (#2766), but
-; export-first is the canonical form for span multi-agent composition
-; (Aether / Hermes). Do not reintroduce require-before-export without a
-; free-var regression covering agent:spawn / agent:ask / agent:list.
+; Issue #2768 / #2766: export before require, so module-private cells
+; bind correctly on the stdin denseness host. Do not reintroduce a
+; require above this export without a free-var regression covering
+; agent:spawn / agent:ask / agent:list.
+;
+; Removal: delete this file one release after v0.2.0 callers move to
+; std/orch (see docs/stdlib/orch.md).
 
 (export orch:define-role orch:step orch:pipeline orch:conduct
-        orch:parallel orch:parallel-with-yield
+        orch:parallel orch:parallel-with-yield orch:supervise orch:run
         agent:spawn agent:ask agent:list
         agent:status agent:stop agent:restart
         orch:role orch:step* orch:if orch:retry
         orch:registry-epoch)
 
-(require "std/list" all:)
-(require "std/string" all:)
-(require "std/mutate" all:)
+(require "std/orch" all:)
 
-;; ═══════════════════════════════════════════════════════════════
-;; Section 1: Agent 生命周期（乐手管理）
-;; ═══════════════════════════════════════════════════════════════
+; ── one-time captures (#4500) ──
+(define orch--define-role orch:define-role)
+(define orch--step orch:step)
+(define orch--pipeline orch:pipeline)
+(define orch--conduct orch:conduct)
+(define orch--parallel orch:parallel)
+(define orch--parallel-with-yield orch:parallel-with-yield)
+(define orch--supervise orch:supervise)
+(define orch--registry-epoch orch:registry-epoch)
 
-; ── 全局 agent 注册表 ──
-; 格式: (("name" handler status ts) ...)
-;   handler — 处理函数 (lambda (input) → output)
-;   status  — "running" | "stopped" | "error"
-;   ts      — 创建时间戳
-;
-; Issue #924: fiber-safety. Cooperative fibers (single OS thread per
-; scheduler worker) make list updates atomic w.r.t. preemption only at
-; yield points. *registry-epoch* is bumped on every mutation so concurrent
-; readers can detect mid-update views (retry). Prefer agent-register /
-; agent-set-status over direct *agents* mutation. Multi-worker production
-; should route through serve-mode cross-session APIs.
-(define *agents* (quote ()))
-(define *registry-epoch* 0)
+; ── forwarding ──
+(define (orch:registry-epoch) (orch--registry-epoch))
+(define (orch:define-role name config) (orch--define-role name config))
+(define (orch:step role input) (orch--step role input))
+(define (orch:pipeline steps input) (orch--pipeline steps input))
+(define (orch:conduct steps input) (orch--conduct steps input))
 
-(define (orch:registry-epoch) *registry-epoch*)
-
-(define (agent-register name handler)
-  ; #924: stamp epoch before publish so readers can re-sample on mismatch
-  (set! *registry-epoch* (+ *registry-epoch* 1))
-  (set! *agents* (cons (list name handler "running" (current-time)) *agents*))
-  (set! *registry-epoch* (+ *registry-epoch* 1))
-  name)
-
-(define (agent-lookup name)
-  (let loop ((agents *agents*))
-    (cond ((null? agents) #f)
-          ((string=? (car (car agents)) name)
-           (car (cdr (car agents))))  ; handler
-          (else (loop (cdr agents))))))
-
-(define (agent-get name key)
-  (let loop ((agents *agents*))
-    (cond ((null? agents) #f)
-          ((string=? (car (car agents)) name)
-           (cond ((string=? key "status") (car (cdr (cdr (car agents)))))
-                 ((string=? key "ts") (car (cdr (cdr (cdr (car agents))))))
-                 (else #f)))
-          (else (loop (cdr agents))))))
-
-(define (agent-set-status name new-status)
-  (define (update agents)
-    (if (null? agents) (quote ())
-      (if (string=? (car (car agents)) name)
-        (cons (list (car (car agents))
-                    (car (cdr (car agents)))
-                    new-status
-                    (car (cdr (cdr (cdr (car agents))))))
-              (update (cdr agents)))
-        (cons (car agents) (update (cdr agents))))))
-  (set! *registry-epoch* (+ *registry-epoch* 1))
-  (set! *agents* (update *agents*))
-  (set! *registry-epoch* (+ *registry-epoch* 1))
-  new-status)
-
-; ── agent:status — 查询乐手状态 ──
-;
-; (agent:status name) → "running" | "stopped" | "error" | #f
-(define (agent:status name)
-  (if (string? name)
-    (agent-get name "status")
-    #f))
-
-; ── agent:stop — 乐手休息 ──
-;
-; 标记 agent 为 stopped，不再接收新任务。
-; 返回: name（成功）或 #f
-(define (agent:stop name)
-  (if (and (string? name) (agent-lookup name))
-    (agent-set-status name "stopped")
-    #f))
-
-; ── agent:restart — 乐手重新加入 ──
-;
-; 重启一个已停止的 agent，或替换其 handler。
-; (agent:restart name [new-handler])
-; → name（成功）或 #f
-(define (agent:restart name . handler-arg)
-  (define existing (agent-lookup name))
-  (if (not existing)
-    (apply agent:spawn name handler-arg)  ; 不存在则创建
-    (begin
-      (when (pair? handler-arg)
-        ; 替换 handler
-        (define (update agents)
-          (if (null? agents) (quote ())
-            (if (string=? (car (car agents)) name)
-              (cons (list name (car handler-arg) "running" (current-time))
-                    (update (cdr agents)))
-              (cons (car agents) (update (cdr agents))))))
-        (set! *agents* (update *agents*)))
-      (agent-set-status name "running")
-      name)))
-
-; ── agent:spawn — 聘用乐手 ──
-;
-; Issue #3961: serve-mode spawn failure returns #f (no silent echo-agent
-; fallback); pass a handler for a local agent.
-;
-; 注册一个命名 agent。agent 是一个 handler 函数：(lambda (input) → output)。
-; handler 接收输入，处理后返回输出。
-;
-; 两种用法:
-;   (agent:spawn "planner" (lambda (task) ...))  — 本地 Aura closure
-;   (agent:spawn "coder")                        — cross-session（serve 模式）
-;
-; → agent-name 或错误
-
-(define (agent:spawn name . handler-arg)
-  (cond
-    ; 有 handler: 本地 agent
-    ((pair? handler-arg)
-     (agent-register name (car handler-arg))
-     name)
-    ; 无 handler: 尝试 serve-mode session
-    (else
-      ; Issue #3961: a failed serve-mode spawn must not silently register
-      ; an echo handler and report success — return #f so callers see the
-      ; failure (agent:restart propagates it).
-      (try
-        (let ((sid (_agent:spawn name)))
-          (if (string? sid) sid #f))
-        (catch (e) #f)))))
-
-; ── agent:ask — 指挥给提示 ──
-;
-; 向 agent 发送任务，等待处理结果。
-;
-; (agent:ask target input [timeout])
-;   target:  agent 名（字符串）
-;   input:   输入值
-;   timeout: 超时秒数（默认 30，仅 serve 模式有效）
-; → 输出值，或错误
-
-(define (agent:ask target input . timeout-args)
-  ; 先查本地注册表
-  (define handler (agent-lookup target))
-  ; Issue #3960: a stopped agent must not receive new asks — refuse
-  ; with a structured marker instead of invoking the handler.
-  (if (and (procedure? handler) (string? target)
-           (let ((st (agent:status target)))
-             (and (string? st) (string=? st "stopped"))))
-    (list "agent-stopped" target)
-    (if (procedure? handler)
-    ; 本地 agent：直接调用 handler
-    (try (handler input) (catch (e)
-      (list "agent-error" target e)))
-    
-    ; 本地没有 → 尝试 cross-session messaging
-    (let ((timeout (if (pair? timeout-args) (car timeout-args) 30))
-          (my-id (try (my-id) (catch (e) "default")))
-          (req-id (string-append my-id "-" (number->string (current-time)))))
-      (define request (string-append
-        "{\"id\":\"" req-id "\",\"from\":\"" my-id
-        "\",\"body\":" (json-encode input) "}"))
-      (if (try (send target request) (catch (e) #f))
-        ; 等待回复
-        (let loop ((elapsed 0))
-          (if (>= elapsed timeout)
-            (list "timeout" (string-append "agent:ask timeout after "
-                    (number->string timeout) "s waiting for " target))
-            (let ((reply (try (recv 1) (catch (e) #f))))
-              (cond
-                ((not reply) (loop (+ elapsed 1)))
-                ((string-contains? reply (string-append "\"id\":\"" req-id "\""))
-                 (try (json-get-string reply "body") (catch (e) reply)))
-                (else (loop (+ elapsed 1)))))))
-        (list "send-failed" target))))))
-
-; ── agent:list — 点名 ──
-(define (agent:list)
-  (define names (quote ()))
-  (define (collect agents)
-    (when (pair? agents)
-      (set! names (cons (car (car agents)) names))
-      (collect (cdr agents))))
-  (collect *agents*)
-  names)
-
-;; ═══════════════════════════════════════════════════════════════
-;; Section 2: 角色注册表
-;; ═══════════════════════════════════════════════════════════════
-
-(define *orch-roles* (quote ()))
-
-; ── orch:define-role — 定义角色 ──
-;
-; name:   字符串，角色名
-; config: (action . strategy) 或 (action strategy . opts)
-;   action   — 核心行为函数 (lambda (input) → output)
-;   strategy — "direct" | "agent" (默认 "direct")
-;   opts     — 可选参数 hash: (:agent-id "name")
-;
-; 返回: #t
-(define (orch:define-role name config)
-  (set! *orch-roles* (cons (cons name config) *orch-roles*))
-  #t)
-
-(define (orch:lookup-role name)
-  (let loop ((roles *orch-roles*))
-    (if (null? roles) #f
-      (if (string=? (car (car roles)) name)
-        (cdr (car roles))
-        (loop (cdr roles))))))
-
-;; ═══════════════════════════════════════════════════════════════
-;; Section 3: 步骤执行器（乐手演奏）
-;; ═══════════════════════════════════════════════════════════════
-
-; ── orch:step — 执行单个步骤 ──
-;
-; 指挥说："现在轮到你了"。
-;
-; role:  角色名或配置对
-; input: 输入值
-; → 输出值
-(define (orch:step role input)
-  (define config
-    (if (string? role) (orch:lookup-role role) role))
-  
-  (if (not config)
-    ;; Fallback: check if role name matches a registered agent
-    (if (string? role)
-      (try (agent:ask role input) (catch (e) input))
-      input)
-    (let* ((action (cond
-                    ((procedure? config) config)        ; bare function
-                    ((pair? config) (car config))       ; (fn . strategy)
-                    (else #f)))
-           (rest (if (pair? config) (cdr config) (quote ())))
-           (strategy (cond
-                       ((string? rest) rest)
-                       ((and (pair? rest) (string? (car rest))) (car rest))
-                       (else "direct"))))
-      
-      (if (string=? strategy "direct")
-        ;; 直接调 action
-        (if action
-          (try (action input) (catch (e) (begin
-            (display "[orch] step failed: ")(display e)(newline)
-            input)))
-          input)
-        
-        ;; agent 策略：通过 agent:ask 委托
-        ;; Issue #3959: rest = (strategy <agent-id> ...) — the id is the
-        ;; second element; (car rest) is the strategy string itself.
-        (if (string=? strategy "agent")
-          (let ((agent-name (if (and (pair? rest) (pair? (cdr rest)))
-                              (cadr rest)
-                              "")))
-            (if (string? agent-name)
-              (try (agent:ask agent-name input) (catch (e) input))
-              input))
-          input)))))
-
-;; ═══════════════════════════════════════════════════════════════
-;; Section 4: 管线（总谱）
-;; ═══════════════════════════════════════════════════════════════
-
-; ── orch:pipeline — 顺序管线 ──
-;
-; steps: (step1 step2 ...) — 依次执行
-; input: 初始输入
-; → 最终输出
-(define (orch:pipeline steps input)
-  (if (null? steps) input
-    (let ((result (orch:step (car steps) input)))
-      (if (pair? (cdr steps))
-        (orch:pipeline (cdr steps) result)
-        result))))
-
-; ── orch:if — 条件分支（用于 orch:conduct） ──
-(define (orch:if pred then else)
-  (list 'if pred then else))
-
-; ── orch:retry — 带重试的步骤（用于 orch:conduct） ──
-(define (orch:retry step . max)
-  (list 'retry step (if (pair? max) (car max) 3)))
-
-; ── orch-yield-safe — cooperative yield helper (#1553 / #1504) ──
-; Never yields under MutationBoundaryGuard (engine skips when held).
-(define (orch-yield-safe)
-  (try (mutate:safe-yield) (catch (e) #f)))
-
-; Wrap a worker so each fiber yields at entry (and after work) before
-; joining — multi-agent mutation loops must not hold peer fibers hostage.
-(define (orch-wrap-with-yield f)
-  (lambda (input)
-    (orch-yield-safe)
-    (let ((r (f input)))
-      (orch-yield-safe)
-      r)))
-
-; ── orch:parallel — 并行执行 ──
-;
-; 交响乐指挥说："现在大家一起演奏"。
-; 通过 fiber:spawn 并行执行，支持超时和错误隔离。
-; #1553: each fiber body yields at safe boundary before/after work.
-;
-; fns:  (fn1 fn2 ...) — 函数列表
-; input: 输入值
-; timeout: 可选，秒数（默认等所有完成）
-; → (output1 output2 ...) — 超时/失败的结果为 #f
 (define (orch:parallel fns input . timeout-arg)
-  (define timeout-sec (if (pair? timeout-arg) (car timeout-arg) #f))
-  (if (null? fns) (quote ())
-    (let ((fiber-ids (quote ())))
-      ; Cooperative yield on the conductor before spawning workers.
-      (orch-yield-safe)
-      ; 并行 spawn 所有 fiber（worker 已包 yield）
-      (define (try-fiber remaining)
-        (when (pair? remaining)
-          (define worker (orch-wrap-with-yield (car remaining)))
-          (define fid (try (fiber:spawn (lambda () (worker input)))
-                           (catch (e) 0)))
-          (if (not (= fid 0))
-            (set! fiber-ids (cons fid fiber-ids)))
-          (try-fiber (cdr remaining))))
-      (try-fiber fns)
+  (if (pair? timeout-arg)
+    (orch--parallel fns input (car timeout-arg))
+    (orch--parallel fns input)))
 
-      ; #109: removed serial fallback. The original code fell back to
-      ; sequential evaluation if no fibers could be spawned, which hid
-      ; the parallel-correctness bugs we want to surface. If
-      ; fiber:spawn is unavailable in this runtime (e.g., true single-
-      ; fiber embedded mode), the caller should explicitly use map /
-      ; list-fold instead. Failure to spawn a fiber now propagates as
-      ; an empty result list — orch:parallel is a no-op when there are
-      ; no fibers to join, which is the same observable behavior as the
-      ; old "no fns" case (and we already return () for that above).
-      (if (null? fiber-ids) (quote ())
-        (let* ((timeout-fid (if timeout-sec
-                             (fiber:spawn (lambda ()
-                               (sleep timeout-sec)
-                               'timeout))
-                             #f))
-               (all-ids (if timeout-fid (cons timeout-fid fiber-ids) fiber-ids))
-               (results (quote ())))
-          ; Collect results, handling timeout
-          (define (collect-all ids)
-            (when (pair? ids)
-              (define id (car ids))
-              (define r (try (fiber:join id) (catch (e) 'error)))
-              (if (and timeout-fid (equal? r 'timeout))
-                ; Timeout triggered — remaining fibers get #f
-                (begin
-                  (set! results (cons #f results))
-                  (collect-all (cdr ids)))
-                (begin
-                  (set! results (cons r results))
-                  (collect-all (cdr ids))))))
-          (collect-all (reverse all-ids))
-          (orch-yield-safe)
-          ; If timeout fired, the first result is 'timeout, discard it
-          (if timeout-fid
-            (cdr (reverse results))
-            (reverse results)))))))
-
-; ── orch:parallel-with-yield — explicit #1553 surface ──
-;
-; Same as orch:parallel (which already yields). Kept as a named entry
-; point for Agents / docs that look for "with-yield" in the API surface.
-; Extra timeout arg supported identically.
 (define (orch:parallel-with-yield fns input . timeout-arg)
   (if (pair? timeout-arg)
-    (orch:parallel fns input (car timeout-arg))
-    (orch:parallel fns input)))
+    (orch--parallel-with-yield fns input (car timeout-arg))
+    (orch--parallel-with-yield fns input)))
 
-;; ═══════════════════════════════════════════════════════════════
-;; Section 5: conduct — 总谱指挥
-;; ═══════════════════════════════════════════════════════════════
+(define (orch:supervise fns input . args)
+  (if (pair? args)
+    (orch--supervise fns input (car args))
+    (orch--supervise fns input)))
 
-; ── orch:conduct — 执行总谱 ──
-;
-; 指挥读总谱，按步骤推进，处理条件分支和重试。
-;
-; steps: 步骤列表，支持：
-;   role-string         — 角色名（查 orch:lookup-role）
-;   (action . strategy) — 配置对
-;   (if pred then else) — 条件分支
-;   (retry step n)      — 重试
-;
-; input: 初始输入
-; → 最终输出
+; ── orch:run — named pipeline (kept for #2768 callers) ──
+(define (orch:run name steps input)
+  (orch:pipeline steps input))
 
-(define (orch:conduct steps input)
-  ; #1553: yield between score steps so long mutate roles release peers.
-  (orch-yield-safe)
-  (define (exec-step step)
-    (cond
-      ; 角色字符串 — 必须先检查（防止 and 原语求值 car 导致类型错误）
-      ((string? step) (orch:step step input))
-      
-      ; 直接过程
-      ((procedure? step) (try (step input) (catch (e) input)))
-      
-      ; 条件: (if pred then else)
-      ((and (pair? step) (> (length step) 2) (eq? (car step) (quote if)))
-       (let ((pred (car (cdr step)))
-             (then-step (car (cdr (cdr step))))
-             (else-step (try (car (cdr (cdr (cdr step)))) (catch (e) #f))))
-         (define pred-val (if (procedure? pred) (pred input) pred))
-         (if pred-val
-           (exec-step then-step)
-           (if else-step (exec-step else-step) input))))
-      
-      ; 重试: (retry step n)
-      ; Issue #3935: named let must not be `try` — that shadows the
-      ; exception try/catch, so the inner step never runs. Stop on a
-      ; successful non-#f value (a number is not a pair; the old
-      ; `(not (pair? result))` returned the first #f).
-      ((and (pair? step) (eq? (car step) (quote retry)))
-       (let ((inner (car (cdr step)))
-             (n (if (> (length step) 2) (car (cdr (cdr step))) 3)))
-         (let retry-loop ((attempt 1))
-           (define result (try (exec-step inner) (catch (e) #f)))
-           (if (or result (>= attempt n))
-             result
-             (begin
-               (orch-yield-safe)
-               (retry-loop (+ attempt 1)))))))
-      
-      ; 配置对: (action . strategy)
-      ((pair? step) (orch:step step input))
-      
-      ; 未知
-      (else input)))
-  
-  (if (null? steps) input
-    (let ((result (exec-step (car steps))))
-      (if (pair? (cdr steps))
-        (orch:conduct (cdr steps) result)
-        result))))
+; ── agent:* — pre-#5004 names over the orch actors ──
+; A local spawn returns the name (old contract); a serve-mode spawn
+; returns the session string or #f (#3961: no silent echo agent).
+(define (agent:spawn name . handler-arg)
+  (if (pair? handler-arg)
+    (begin (orch:spawn name (car handler-arg)) name)
+    (orch:spawn name)))
 
-;; ═══════════════════════════════════════════════════════════════
-;; Section 6: 便利构造器
-;; ═══════════════════════════════════════════════════════════════
+(define (agent:ask target input . timeout-args)
+  (if (pair? timeout-args)
+    (orch:ask target input (car timeout-args))
+    (orch:ask target input)))
 
-; ── orch:role — 快捷构造角色配置 ──
+(define (agent:list) (orch:list))
+(define (agent:status name) (orch:status name))
+(define (agent:stop name) (orch:stop name))
+
+(define (agent:restart name . handler-arg)
+  (if (pair? handler-arg)
+    (begin (orch:restart name (car handler-arg)) name)
+    (orch:restart name)))
+
+; ── value constructors (no implementation to forward) ──
 (define (orch:role action . extra)
-  (if (null? extra)
-    (cons action "direct")
-    (cons action extra)))
+  (if (null? extra) (cons action "direct") (cons action extra)))
 
-; ── orch:step* — 命名参数步骤构造器 ──
 (define (orch:step* . args)
-  (define role (try (hash-ref args "role") (catch "unknown")))
-  (define strategy (try (hash-ref args "strategy") (catch "direct")))
-  (cons (lambda (x) x) (if (string=? strategy "agent")
-                          (list strategy (try (hash-ref args "agent-id") (catch "")))
-                          (list strategy))))
+  (let ((role (try (hash-ref (car args) "role") (catch (e) "unknown")))
+        (strategy (try (hash-ref (car args) "strategy") (catch (e) "direct"))))
+    (cons (lambda (x) x)
+          (if (string=? strategy "agent")
+            (list strategy
+                  (try (hash-ref (car args) "agent-id") (catch (e) "")))
+            (list strategy)))))
+
+(define (orch:if pred then else) (list 'if pred then else))
+(define (orch:retry step . max) (list 'retry step (if (pair? max) (car max) 3)))

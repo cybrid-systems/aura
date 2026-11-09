@@ -1,0 +1,154 @@
+; tests/suite/agent_orch_evo.aura — Issue #5004
+; The Aura layer: std/agent (one loop, six phases), std/orch (multi-agent
+; over spawn/send/recv/join/cancel), std/evo (worldline selectors).
+; Fails the load on any broken contract.
+
+(require "std/agent" all:)
+(require "std/orch" all:)
+(require "std/evo" all:)
+(require "std/orchestrator" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+    (begin (display "  pass: ") (display msg) (newline))
+    (begin
+      (set! *fails* (+ *fails* 1))
+      (display "  FAIL: ") (display msg) (newline))))
+
+; ═══════════════════════════════════════════════════════════════
+; AC1: std/agent — one loop, six phases
+; ═══════════════════════════════════════════════════════════════
+(display "AC1 agent phases\n")
+(agent:loop-stats-reset!)
+(define r1 (agent:round "(define (f x) (+ x 1))"
+                        (quote ())
+                        "f" "(lambda (x) (* x 2))"
+                        "suite-r1" #f))
+(assert! (pair? r1) "agent:round returns the round alist")
+(assert! (eq? (cdr (car r1)) #t) "round :ok")
+(assert! (eq? (agent-alist-ref ":decision" r1 'rollback) 'commit) "round commits")
+(assert! (= (f 21) 42) "rebind applied")
+(define st (agent:loop-stats))
+(assert! (> (hash-ref st "commits" 0) 0) "commit counted once per round")
+
+; phases are values in / values out
+(define snap0 (ast:snapshot "suite-observe"))
+(define obs (agent:observe "f"))
+(assert! (hash? obs) "agent:observe returns a hash")
+(assert! (hash? (hash-ref obs "metrics" #f)) "observation carries metrics")
+(assert! (pair? (hash-ref obs "query" #f)) "observation carries query results")
+(define prop (agent:propose (quote ()) "f" "(lambda (x) (+ x 1))" "suite-prop"))
+(assert! (pair? (hash-ref prop "ops" (quote ()))) "agent:propose builds ops")
+(assert! (equal? (agent:check obs) 'commit) "agent:check on a healthy surface says commit")
+(define app (agent:apply prop (ast:snapshot "suite-apply")))
+(assert! (boolean? (hash-ref app "applied" #f)) "agent:apply reports applied")
+(define ver (agent:verify app "(define (f x) (+ x 1))"))
+(assert! (boolean? (hash-ref ver "eval-ok" #f)) "agent:verify reports eval-ok")
+(assert! (pair? (agent:record r1 "suite-record")) "agent:record returns the round")
+
+; recovery policy is part of std/agent now
+(assert! (eq? (agent:recover-plan (list #t 1 "cause" "fix" "src")) 'commit)
+         "recover-plan commit on ok")
+(assert! (eq? (agent:recover-plan (list #f 3 "no-diagnosis" "" (void))) 'escalate)
+         "recover-plan escalate on no-diagnosis")
+(assert! (eq? (agent:recover-plan (list #f 4 "guard" "" (void))) 'back-off)
+         "recover-plan back-off on guard-fail")
+
+; replacement step (the four hot-update modules behind one call)
+(define hr (try (agent:hot-replace "/tmp/aura-no-such-module.so" 0 1)
+                (catch (e) #f)))
+(assert! (hash? hr) "agent:hot-replace returns a hash")
+(assert! (equal? (hash-ref hr "ok" #t) #f) "a missing .so is a refused reload")
+
+; ═══════════════════════════════════════════════════════════════
+; AC2: std/orch — multi-agent over spawn / send / recv / join / cancel
+; ═══════════════════════════════════════════════════════════════
+(display "AC2 orch actors\n")
+(define h1 (orch:spawn "adder" (lambda (x) (+ x 1))))
+(assert! (hash? h1) "orch:spawn returns a handle")
+(assert! (orch:local? "adder") "local actor detected")
+(assert! (= (orch:ask "adder" 41) 42) "ask → 42")
+(assert! (= (orch:ask "adder" 1) 2) "ask is reusable")
+(assert! (member "adder" (orch:list)) "orch:list names the agent")
+(assert! (string=? (orch:status "adder") "running") "status running")
+(assert! (string=? (orch:stop "adder") "stopped") "stop marks stopped")
+(assert! (pair? (orch:ask "adder" 1)) "ask on a stopped agent is refused")
+
+(orch:spawn "lc" (lambda (x) (* x 2)))
+(assert! (string=? (orch:restart "lc") "lc") "restart keeps the name")
+(assert! (= (orch:ask "lc" 5) 10) "restart revives the actor")
+(orch:stop "lc")
+
+(define p (orch:parallel (list (lambda (x) (* x 2)) (lambda (x) (* x 3))) 5))
+(assert! (equal? p (list 10 15)) "orch:parallel fans out")
+(assert! (equal? (orch:supervise (list (lambda (x) (+ x 1))) 1 2) (list 2))
+         "orch:supervise runs a healthy worker")
+(orch:define-role "inc" (orch:role (lambda (x) (+ x 1))))
+(assert! (= (orch:conduct (list "inc" "inc") 0) 2) "conduct chains roles")
+(assert! (= (orch:pipeline (list (lambda (x) (* x 3))) 2) 6) "pipeline")
+(assert! (= (orch:run "named" (list (lambda (x) (+ x 4))) 0) 4) "orch:run")
+
+; pre-#5004 names still work through std/orchestrator
+(assert! (string=? (agent:spawn "legacy" (lambda (x) (+ x 1))) "legacy")
+         "agent:spawn compat")
+(assert! (= (agent:ask "legacy" 1) 2) "agent:ask compat")
+(agent:stop "legacy")
+
+; ═══════════════════════════════════════════════════════════════
+; AC3: std/evo — selectors over the evo:record! worldline
+; ═══════════════════════════════════════════════════════════════
+(display "AC3 evo selectors\n")
+(define recs (list
+  (hash "target" "A" "decision" "KEEP")
+  (hash "target" "A" "decision" "KEEP")
+  (hash "target" "A" "decision" "ROLLBACK")
+  (hash "target" "B" "decision" "KEEP")))
+(define arms (evo:arms recs))
+(assert! (= (length arms) 2) "one row per arm")
+(assert! (string=? (evo:choose-fixed arms) "A") "fixed → first arm")
+(assert! (string=? (evo:choose-ucb arms) "B")
+         "UCB leaves the weaker arm once both are visited")
+(define eps (evo:choose-epsilon arms 0.0 7))
+(assert! (string=? (car eps) "B") "ε-greedy with ε=0 exploits the best arm")
+(assert! (number? (car (cdr eps))) "ε-greedy returns the next seed")
+(assert! (string=? (evo:best-arm recs) "B") "best arm by keep rate")
+
+; a policy is a value: select then report does not touch module state
+(define pol0 (evo:policy "ucb" recs))
+(define sel (evo:policy-select pol0))
+(assert! (string=? (car sel) "B") "policy selects through the same UCB code")
+(assert! (hash? (car (cdr sel))) "policy-select returns (arm next-policy)")
+(define pol1 (evo:policy-report pol0 "A" #t))
+(assert! (equal? (hash-ref pol1 "selector") "ucb") "report keeps the selector")
+(assert! (= (length (hash-ref pol1 "arms" (quote ()))) 2) "report keeps both arms")
+
+; strategy state is a value too
+(define s0 (strategy:new))
+(define s1 (strategy:report-success s0 "fast"))
+(define s2 (strategy:set-strategy s1 "fast"))
+(assert! (string=? (strategy:active s2) "fast") "strategy:active reads the value")
+(assert! (string=? (strategy:best s1) "fast") "strategy:best picks the winner")
+(assert! (= (hash-ref (strategy:escalate s0 "budget") "escalations") 1)
+         "strategy:escalate bumps the value")
+(assert! (void? (strategy:active)) "strategy:active with no state is void")
+
+; worldline read path: empty when the log is off, records when it is on
+(define wl (evo:records))
+(define log-path (try (evo:log-path) (catch (e) #f)))
+(assert! (if (string? log-path) (> (length wl) 0) (= (length wl) 0))
+         "evo:records mirrors the AURA_EVO_LOG setting")
+(if (string? log-path)
+  (begin
+    (assert! (string? (evo:record! "suite" "KEEP" "suite" (hash "ok" #t)))
+             "evo:record! appends when the log is on")
+    (assert! (> (length (evo:records)) (length wl)) "new record is readable"))
+  #f)
+
+(if (= *fails* 0)
+  (begin (display "OK-5004 agent/orch/evo\n"))
+  (begin
+    (display "FAIL-5004 fails=")
+    (display *fails*)
+    (newline)
+    (error "5004 suite failed")))

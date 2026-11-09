@@ -1,0 +1,439 @@
+; lib/std/orch.aura — multi-agent orchestration on the five primitives (#5004)
+;
+; One public surface for multi-agent work. Everything here is built from
+; five primitives and nothing else:
+;   fiber:spawn  → orch:spawn / orch:parallel / orch:supervise
+;   channel:send → orch:send
+;   channel:recv → orch:recv / orch:ask
+;   fiber:join   → orch:join
+;   fiber:cancel → orch:cancel / orch:stop
+;
+; Exports (grouped by role)
+;   lifecycle : orch:spawn orch:handle orch:list orch:status orch:stop
+;               orch:restart orch:local? orch:registry-epoch
+;   messaging : orch:send orch:recv orch:try-recv orch:ask
+;   joining   : orch:join orch:cancel
+;   score     : orch:define-role orch:role orch:step orch:step* orch:if
+;               orch:retry orch:pipeline orch:conduct
+;   fan-out   : orch:parallel orch:parallel-with-yield orch:supervise
+;
+; A local agent is one fiber with an inbox and an outbox channel. The
+; handler owns the work; orch owns delivery, join and cancel. Serve-mode
+; agents (no handler) still fall back to the cross-session send/recv path.
+;
+; Issue #5004: std/orchestrator keeps one release of forwarding; this
+; module is the implementation it forwards to.
+;
+; Form order (#2769): export before require.
+
+(export orch:spawn orch:handle orch:list orch:status orch:stop orch:restart
+        orch:local? orch:registry-epoch
+        orch:send orch:recv orch:try-recv orch:ask
+        orch:join orch:cancel
+        orch:define-role orch:role orch:step orch:step* orch:if orch:retry
+        orch:pipeline orch:conduct
+        orch:parallel orch:parallel-with-yield orch:supervise
+        orch:default-timeout)
+
+(require "std/list" all:)
+(require "std/string" all:)
+(require "std/mutate" all:)
+
+;; ═══════════════════════════════════════════════════════════════
+;; Registry: ((name handle status epoch) ...)
+;;
+;; #924: epoch is bumped on every mutation so readers can detect a
+;; mid-update view and re-sample. The registry is process-local; the
+;; cross-process path is send/recv (serve mode).
+;; ═══════════════════════════════════════════════════════════════
+
+(define *orch-agents* (quote ()))
+(define *orch-epoch* 0)
+(define orch:default-timeout 30)
+
+(define (orch:registry-epoch) *orch-epoch*)
+
+; A channel is an opaque value, not a hash — only false means absent.
+(define (orch-channel? c) (if c #t #f))
+
+(define (orch-bump-epoch!)
+  (set! *orch-epoch* (+ *orch-epoch* 1))
+  *orch-epoch*)
+
+(define (orch-entry name)
+  (let loop ((rows *orch-agents*))
+    (cond ((null? rows) #f)
+          ((string=? (car (car rows)) name) (car rows))
+          (else (loop (cdr rows))))))
+
+(define (orch:handle name)
+  (let ((row (orch-entry name)))
+    (if row (car (cdr row)) #f)))
+
+(define (orch-register! name handle)
+  (define (drop rows)
+    (cond ((null? rows) (quote ()))
+          ((string=? (car (car rows)) name) (drop (cdr rows)))
+          (else (cons (car rows) (drop (cdr rows))))))
+  (orch-bump-epoch!)
+  (set! *orch-agents* (cons (list name handle "running") (drop *orch-agents*)))
+  (orch-bump-epoch!)
+  name)
+
+(define (orch-set-status! name new-status)
+  (define (update rows)
+    (if (null? rows) (quote ())
+      (if (string=? (car (car rows)) name)
+        (cons (list (car (car rows)) (car (cdr (car rows))) new-status)
+              (cdr rows))
+        (cons (car rows) (update (cdr rows))))))
+  (orch-bump-epoch!)
+  (set! *orch-agents* (update *orch-agents*))
+  (orch-bump-epoch!)
+  new-status)
+
+;; ═══════════════════════════════════════════════════════════════
+;; Lifecycle
+;; ═══════════════════════════════════════════════════════════════
+
+; ── orch-worker — the actor loop behind one local agent ──
+; Reads a task, calls the handler, sends the result. "stop" ends the
+; loop. Handler failures become ("agent-error" name e) on the outbox so
+; the caller's recv always makes progress.
+(define (orch-worker name inbox outbox handler)
+  ; Blocking recv is cooperative: the fiber parks and lets the caller run.
+  ; A poll+sleep loop would block the whole scheduler thread instead.
+  (let loop ()
+    (let ((msg (channel:recv inbox)))
+      (cond
+        ((and (hash? msg) (equal? (hash-ref msg "op" "") "stop")) 'stopped)
+        ((and (hash? msg) (equal? (hash-ref msg "op" "") "call"))
+         (channel:send outbox
+                       (try (handler (hash-ref msg "value" #f))
+                            (catch (e) (list "agent-error" name e))))
+         (loop))
+        (else (loop))))))
+
+; ── orch:spawn — start one agent ──
+; (orch:spawn name handler) → handle hash (local actor)
+; (orch:spawn name)         → name on a successful serve-mode spawn, else #f
+; Issue #3961: a failed serve-mode spawn is #f, never a silent echo agent.
+(define (orch:spawn name . handler-arg)
+  (cond
+    ((pair? handler-arg)
+     (let* ((inbox (channel:create))
+            (outbox (channel:create))
+            (fid (fiber:spawn (lambda () (orch-worker name inbox outbox
+                                                      (car handler-arg)))))
+            (h (hash "name" name "inbox" inbox "outbox" outbox
+                     "fiber" fid "handler" (car handler-arg)
+                     "status" "running")))
+       (orch-register! name h)
+       h))
+    (else
+     (try
+       (let ((sid (_agent:spawn name)))
+         (if (string? sid)
+           (begin
+             (orch-register! name (hash "name" name "session" sid
+                                        "status" "running"))
+             name)
+           #f))
+       (catch (e) #f)))))
+
+(define (orch:handle-of name)
+  (if (and (hash? name)) name (orch:handle name)))
+
+(define (orch:local? name)
+  (let ((h (orch:handle name)))
+    (and (hash? h) (orch-channel? (hash-ref h "inbox" #f)))))
+
+(define (orch:list)
+  (let loop ((rows *orch-agents*) (acc (quote ())))
+    (if (null? rows) (reverse acc)
+      (loop (cdr rows) (cons (car (car rows)) acc)))))
+
+(define (orch:status name)
+  (let ((row (orch-entry name)))
+    (if row (car (cdr (cdr row))) #f)))
+
+; ── orch:stop — cancel the fiber (or mark a serve-mode agent stopped) ──
+(define (orch:stop name)
+  (let ((h (orch:handle name)))
+    (cond
+      ((not h) #f)
+      ((equal? (orch:status name) "stopped") "stopped")
+      ((and (hash? h) (orch-channel? (hash-ref h "inbox" #f)))
+       (try (channel:send (hash-ref h "inbox") (hash "op" "stop")) (catch (e) #f))
+       (try (fiber:join (hash-ref h "fiber")) (catch (e) #f))
+       (orch-set-status! name "stopped"))
+      (else (orch-set-status! name "stopped")))))
+
+; ── orch:restart — replace the handler or bring a stopped agent back ──
+(define (orch:restart name . handler-arg)
+  (let* ((h (orch:handle name))
+         (handler (cond ((pair? handler-arg) (car handler-arg))
+                        ((and (hash? h) (hash-ref h "handler" #f))
+                         (hash-ref h "handler" #f))
+                        (else #f))))
+    (cond
+      ((and (hash? h) handler)
+       (try (orch:stop name) (catch (e) #f))
+       (orch:spawn name handler)
+       name)
+      (handler (begin (orch:spawn name handler) name))
+      (h (orch-set-status! name "running") name)
+      (else (orch:spawn name)))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Messaging: send / recv / ask
+;; ═══════════════════════════════════════════════════════════════
+
+(define (orch:send target value . args)
+  (let ((h (orch:handle-of target)))
+    (cond
+      ((and (hash? h) (orch-channel? (hash-ref h "inbox" #f)))
+       (channel:send (hash-ref h "inbox") (hash "op" "call" "value" value)))
+      ((string? target)
+       (try (send target (json-encode value)) (catch (e) #f)))
+      (else #f))))
+
+(define (orch:recv target)
+  (let ((h (orch:handle-of target)))
+    (if (and (hash? h) (orch-channel? (hash-ref h "outbox" #f)))
+      (channel:recv (hash-ref h "outbox"))
+      (try (recv 1) (catch (e) #f)))))
+
+(define (orch:try-recv target)
+  (let ((h (orch:handle-of target)))
+    (if (and (hash? h) (orch-channel? (hash-ref h "outbox" #f)))
+      (channel:try-recv (hash-ref h "outbox"))
+      #f)))
+
+; ── orch:ask — send one task, wait for its result ──
+; A stopped local agent is refused with ("agent-stopped" name) (#3960).
+(define (orch:ask target input . timeout-args)
+  (let ((h (orch:handle-of target)))
+    (cond
+      ((and (hash? h) (orch-channel? (hash-ref h "inbox" #f)))
+       (if (let ((st (orch:status target)))
+             (and (string? st) (string=? st "stopped")))
+         (list "agent-stopped" target)
+         (begin
+           (orch:send target input)
+           (orch:recv target))))
+      ((string? target)
+       (let ((timeout (if (pair? timeout-args) (car timeout-args) 30))
+             (request (try (json-encode input) (catch (e) "null"))))
+         (if (try (send target request) (catch (e) #f))
+           (let loop ((elapsed 0))
+             (if (>= elapsed timeout)
+               (list "timeout" (string-append "orch:ask timeout after "
+                                              (number->string timeout)
+                                              "s waiting for " target))
+               (let ((reply (try (recv 1) (catch (e) #f))))
+                 (if reply reply (loop (+ elapsed 1))))))
+           (list "send-failed" target))))
+      (else (list "unknown-agent" target)))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Join / cancel
+;; ═══════════════════════════════════════════════════════════════
+
+(define (orch:join target)
+  (let ((h (orch:handle-of target)))
+    (if (and (hash? h) (hash-ref h "fiber" #f))
+      (try (fiber:join (hash-ref h "fiber")) (catch (e) 'error))
+      #f)))
+
+(define (orch:cancel target)
+  (let ((h (orch:handle-of target)))
+    (if (and (hash? h) (hash-ref h "fiber" #f))
+      (begin
+        (try (channel:send (hash-ref h "inbox") "stop") (catch (e) #f))
+        (try (fiber:cancel (hash-ref h "fiber")) (catch (e) #f))
+        (orch-set-status! (hash-ref h "name") "stopped"))
+      #f)))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Roles and score
+;; ═══════════════════════════════════════════════════════════════
+
+(define *orch-roles* (quote ()))
+
+(define (orch:define-role name config)
+  (set! *orch-roles* (cons (cons name config) *orch-roles*))
+  #t)
+
+(define (orch-lookup-role name)
+  (let loop ((roles *orch-roles*))
+    (if (null? roles) #f
+      (if (string=? (car (car roles)) name)
+        (cdr (car roles))
+        (loop (cdr roles))))))
+
+(define (orch:role action . extra)
+  (if (null? extra)
+    (cons action "direct")
+    (cons action extra)))
+
+(define (orch-yield-safe)
+  (try (mutate:safe-yield) (catch (e) #f)))
+
+; ── orch:step — run one role ──
+(define (orch:step role input)
+  (define config (if (string? role) (orch-lookup-role role) role))
+  (if (not config)
+    (if (string? role)
+      (if (orch:local? role)
+        (try (orch:ask role input) (catch (e) input))
+        input)
+      input)
+    (let* ((action (cond ((procedure? config) config)
+                         ((pair? config) (car config))
+                         (else #f)))
+           (rest (if (pair? config) (cdr config) (quote ())))
+           (strategy (cond ((string? rest) rest)
+                           ((and (pair? rest) (string? (car rest))) (car rest))
+                           (else "direct"))))
+      (cond
+        ((string=? strategy "direct")
+         (if action
+           (try (action input) (catch (e) input))
+           input))
+        ((string=? strategy "agent")
+         (let ((agent-name (if (and (pair? rest) (pair? (cdr rest)))
+                             (cadr rest)
+                             "")))
+           (if (string? agent-name)
+             (try (orch:ask agent-name input) (catch (e) input))
+             input)))
+        (else input)))))
+
+; ── orch:step* — named-argument step constructor ──
+(define (orch:step* . args)
+  (let ((role (try (hash-ref (car args) "role") (catch (e) "unknown")))
+        (strategy (try (hash-ref (car args) "strategy") (catch (e) "direct"))))
+    (cons (lambda (x) x)
+          (if (string=? strategy "agent")
+            (list strategy
+                  (try (hash-ref (car args) "agent-id") (catch (e) "")))
+            (list strategy)))))
+
+; ── orch:if / orch:retry — score forms ──
+(define (orch:if pred then else)
+  (list 'if pred then else))
+
+(define (orch:retry step . max)
+  (list 'retry step (if (pair? max) (car max) 3)))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Pipelines
+;; ═══════════════════════════════════════════════════════════════
+
+(define (orch:pipeline steps input)
+  (if (null? steps) input
+    (let ((result (orch:step (car steps) input)))
+      (if (pair? (cdr steps))
+        (orch:pipeline (cdr steps) result)
+        result))))
+
+(define (orch:conduct steps input)
+  (orch-yield-safe)
+  (define (exec-step step)
+    (cond
+      ((string? step) (orch:step step input))
+      ((procedure? step) (try (step input) (catch (e) input)))
+      ((and (pair? step) (> (length step) 2) (eq? (car step) (quote if)))
+       (let ((pred (car (cdr step)))
+             (then-step (car (cdr (cdr step))))
+             (else-step (try (car (cdr (cdr (cdr step)))) (catch (e) #f))))
+         (define pred-val (if (procedure? pred) (pred input) pred))
+         (if pred-val
+           (exec-step then-step)
+           (if else-step (exec-step else-step) input))))
+      ((and (pair? step) (eq? (car step) (quote retry)))
+       (let ((inner (car (cdr step)))
+             (n (if (> (length step) 2) (car (cdr (cdr step))) 3)))
+         (let retry-loop ((attempt 1))
+           (define result (try (exec-step inner) (catch (e) #f)))
+           (if (or result (>= attempt n))
+             result
+             (begin (orch-yield-safe) (retry-loop (+ attempt 1)))))))
+      ((pair? step) (orch:step step input))
+      (else input)))
+  (if (null? steps) input
+    (let ((result (exec-step (car steps))))
+      (if (pair? (cdr steps))
+        (orch:conduct (cdr steps) result)
+        result))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Fan-out: parallel / supervise
+;; ═══════════════════════════════════════════════════════════════
+
+(define (orch-wrap-with-yield f)
+  (lambda (input)
+    (orch-yield-safe)
+    (let ((r (f input)))
+      (orch-yield-safe)
+      r)))
+
+; (orch:parallel fns input [timeout-seconds]) → results
+; Each fn runs in its own fiber; join is on this caller (#109: no serial
+; fallback — no fibers means an empty result, not a quiet serial run).
+(define (orch:parallel fns input . timeout-arg)
+  (define timeout-sec (if (pair? timeout-arg) (car timeout-arg) #f))
+  (if (null? fns) (quote ())
+    (let ((fiber-ids (quote ())))
+      (orch-yield-safe)
+      (define (spawn-all remaining)
+        (when (pair? remaining)
+          (define worker (orch-wrap-with-yield (car remaining)))
+          (define fid (try (fiber:spawn (lambda () (worker input)))
+                           (catch (e) 0)))
+          (if (not (= fid 0))
+            (set! fiber-ids (cons fid fiber-ids)))
+          (spawn-all (cdr remaining))))
+      (spawn-all fns)
+      (if (null? fiber-ids) (quote ())
+        (let* ((timeout-fid (if timeout-sec
+                             (fiber:spawn (lambda ()
+                               (sleep timeout-sec)
+                               'timeout))
+                             #f))
+               (all-ids (if timeout-fid (cons timeout-fid fiber-ids) fiber-ids))
+               (results (quote ())))
+          (define (collect-all ids)
+            (when (pair? ids)
+              (define r (try (fiber:join (car ids)) (catch (e) 'error)))
+              (set! results (cons r results))
+              (collect-all (cdr ids))))
+          (collect-all (reverse all-ids))
+          (orch-yield-safe)
+          (if timeout-sec
+            (reverse (cdr results))
+            (reverse results)))))))
+
+(define (orch:parallel-with-yield fns input . timeout-arg)
+  (if (pair? timeout-arg)
+    (orch:parallel fns input (car timeout-arg))
+    (orch:parallel fns input)))
+
+; (orch:supervise fns input [max-restarts]) → results
+; A worker that fails (#f / 'error / raise) is respawned up to
+; max-restarts times; the last outcome is what the caller sees.
+(define (orch:supervise fns input . args)
+  (define max-restarts (if (pair? args) (car args) 1))
+  (define (bad? r) (or (eq? r 'error) (eq? r #f)))
+  (define (run-one f)
+    (let attempt ((n 0) (last #f))
+      (define fid (try (fiber:spawn (lambda () (f input))) (catch (e) 0)))
+      (define r (if (= fid 0) 'error (try (fiber:join fid) (catch (e) 'error))))
+      (if (or (not (bad? r)) (>= n max-restarts))
+        r
+        (attempt (+ n 1) r))))
+  (if (null? fns) (quote ())
+    (let loop ((fs fns) (acc (quote ())))
+      (if (null? fs) (reverse acc)
+        (loop (cdr fs) (cons (run-one (car fs)) acc))))))

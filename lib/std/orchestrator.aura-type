@@ -12,5 +12,8 @@ orch:retry: Any Any ... -> Any
 orch:parallel: Any Any Any ... -> Any
 orch:parallel-with-yield: Any Any Any ... -> Any
 orch:conduct: Any Any -> Any
+orch:supervise: Any Any ... -> Any
+orch:run: Any Any Any -> Any
+orch:registry-epoch: -> Any
 orch:role: Any Any ... -> Any
 orch:step*: Any ... -> Any

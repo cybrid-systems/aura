@@ -1,29 +1,53 @@
-; agent.aura — Self-growing AI agent library (Issue #1460)
+; lib/std/agent.aura — one closed loop, six phases (#5004)
 ;
-; Default path is a true EDSL closed-loop:
-;   set-code / workspace
-;     → query (root / find / def-use)
-;     → agent:decision-metrics (back-off / escalate / commit)
-;     → mutate:atomic-batch-safe (or :rebind convenience)  ; #1553
-;     → eval-current
-;     → observe metrics → commit / restore / escalate
-;     → mutate:safe-yield between rounds                  ; #1553
+; The Aura layer of the agent public surface. One round is a sequence of
+; phases, each a value in and a value out:
 ;
-; Pure LLM prompt path is opt-in via :prompt-only (compat).
+;   observe  → (agent:observe target)        query + source + live metrics
+;   propose  → (agent:propose ...)           ops to apply
+;   check    → (agent:check observed)        commit / back-off / escalate
+;   apply    → (agent:apply proposal snap)   atomic mutation batch
+;   verify   → (agent:verify applied src)    eval-current + post metrics
+;   record   → (agent:record round summary)  evo:record! worldline entry
 ;
-; #1553 bridges engine MutationBoundaryGuard / safe-yield / quota
-; (#1547 / #1504 / #1546) into decision-metrics + closed-loop.
+; (agent:round ...) threads those six and returns the pre-#5004 round
+; alist; agent:closed-loop-once / auto-grow / edsl-fix are its callers.
+;
+; Agent surface exports
+;   round    : agent:closed-loop-once agent:round agent:decide
+;              agent:decision-metrics agent:loop-stats agent:loop-stats-reset!
+;   phases   : agent:observe agent:propose agent:check agent:apply
+;              agent:verify agent:record
+;   recovery : agent:recover-plan agent:recover!
+;   replace  : agent:hot-replace agent:replace-step
+;   llm      : llm-ask extract-code safe-eval (optional model IO)
+;   legacy   : auto-grow edsl-fix
+;
+; The four hot-update modules (std/hot-update, std/hot-update-monitor,
+; std/hot-update-region, std/hot-update-reload) are steps behind
+; agent:hot-replace, not separate public surfaces.
+;
+; The experience layer (std/evo) reads what agent:record writes; the
+; multi-agent layer is std/orch.
 ;
 ; Import: (require "std/agent" all:)
 ;         (require std/agent)
 
 (export auto-grow edsl-fix safe-eval llm-ask extract-code
         agent:decision-metrics agent:decide agent:loop-stats
-        agent:loop-stats-reset! agent:closed-loop-once)
+        agent:loop-stats-reset! agent:closed-loop-once agent:round
+        agent:observe agent:propose agent:check agent:apply agent:verify
+        agent:record agent:recover-plan agent:recover!
+        agent:hot-replace agent:replace-step)
 
 (require std/json)
 (require std/string)
 (require "std/mutate" all:)
+; #5004: experience layer (worldline selectors) + replacement steps.
+(require "std/evo" all:)
+(require "std/hot-update" all:)
+(require "std/hot-update-monitor" all:)
+(require "std/hot-update-region" all:)
 ; #1551: sanitize + structured parse for production LLM path
 (require "std/llm" all:)
 
@@ -309,96 +333,192 @@
     #f))
 
 ; ═══════════════════════════════════════════════════════════════
-; One closed-loop round — positional core (no apply / rest-args).
-; Aura's (apply f args) is unreliable for rest-arg procedures on
-; repeated calls, so auto-grow / edsl-fix call this directly.
-;
-; Returns alist:
-;   ((:ok . #t|#f) (:decision . commit|back-off|escalate|rollback)
-;    (:eval-ok . #t|#f) (:metrics . <hash>))
+; One round, six phases (#5004): observe → propose → check →
+; apply → verify → record. agent:round threads a value between them;
+; the alist it returns is the pre-#5004 contract.
 ; ═══════════════════════════════════════════════════════════════
-(define (agent-closed-loop-core source mutations rebind-name rebind-body
-                                summary skip-set-code?)
-  ; 1) load source
+
+(define (agent:observe target)
+  (hash "query" (agent-query-workspace target)
+        "source" (try (current-source) (catch (e) #f))
+        "metrics" (agent:decision-metrics)))
+
+(define (agent:propose mutations rebind-name rebind-body summary)
+  (let ((s (if (string? summary) summary "closed-loop")))
+    (hash "summary" s
+          "ops" (cond ((pair? mutations) mutations)
+                      ((and (string? rebind-name) (string? rebind-body))
+                       (agent-rebind-ops rebind-name rebind-body s))
+                      (else (quote ())))
+          "rebind" (if (string? rebind-name) rebind-name #f)
+          "body" (if (string? rebind-body) rebind-body #f))))
+
+(define (agent:check observed)
+  (let ((rec (hash-ref (hash-ref observed "metrics" (hash))
+                       "recommendation" "hold")))
+    (cond
+      ((equal? rec "escalate") 'escalate)
+      ((equal? rec "back-off") 'back-off)
+      (else 'commit))))
+
+(define (agent:apply proposal snap)
+  (let ((ok (agent-atomic-mutate! (hash-ref proposal "ops" (quote ()))
+                                  (hash-ref proposal "summary" "closed-loop"))))
+    (hash "applied" (if ok #t #f)
+          "snapshot" (if (number? snap) snap -1)
+          "ops" (hash-ref proposal "ops" (quote ())))))
+
+(define (agent:verify applied pre-src)
+  (let ((eval-ok (try (begin (eval-current) #t) (catch (e) #f))))
+    ; #1553: post-mutate cooperative yield before post metrics.
+    (try (mutate:safe-yield) (catch (e) #f))
+    (hash "eval-ok" eval-ok
+          "snapshot" (hash-ref applied "snapshot" -1)
+          "metrics" (agent:decision-metrics))))
+
+; ── agent:record — one worldline entry per round ──
+; KEEP when the round committed, ROLLBACK otherwise. evo:record! is the
+; #4910 primitive; when AURA_EVO_LOG is off it returns #f and this phase
+; is a no-op (std/evo then reads an empty worldline).
+(define (agent:record round summary)
+  (let ((d (agent-alist-ref ":decision" round 'rollback)))
+    (try (evo:record! "agent:closed-loop"
+                      (if (agent-alist-ref ":ok" round #f) "KEEP" "ROLLBACK")
+                      (symbol->string (if (symbol? d) d 'rollback))
+                      (hash "summary" (if (string? summary) summary "closed-loop")
+                            "eval-ok" (if (agent-alist-ref ":eval-ok" round #f)
+                                        #t #f)))
+         (catch (e) #f)))
+  round)
+
+(define (agent-round-result ok decision eval-ok metrics summary bump)
+  (if (string? bump) (agent-bump! bump) #f)
+  (agent:record
+    (list (cons ":ok" ok)
+          (cons ":decision" decision)
+          (cons ":eval-ok" eval-ok)
+          (cons ":metrics" metrics))
+    summary))
+
+; ── agent:round — one closed loop round ──
+; (agent:round source mutations rebind-name rebind-body summary skip-set-code?)
+; Returns ((:ok . bool) (:decision . sym) (:eval-ok . bool) (:metrics . hash)).
+(define (agent:round source mutations rebind-name rebind-body summary
+                     skip-set-code?)
+  ; 1) observe: load source
   (if (and (string? source) (not skip-set-code?))
     (begin (set-code source) (try (eval-current) (catch (e) #f)))
     #f)
-
-  ; #1553: yield at safe boundary before deciding / mutating so concurrent
-  ; fibers (orchestrator parallel) are not starved by long self-mod holds.
+  ; #1553: yield before deciding / mutating.
   (try (mutate:safe-yield) (catch (e) #f))
-
   (let* ((pre-src (try (current-source) (catch (e) source)))
-         (_q (agent-query-workspace rebind-name))
-         (pre-metrics (agent:decision-metrics))
-         (pre-rec (hash-ref pre-metrics "recommendation" "hold")))
+         (observed (agent:observe rebind-name))
+         (pre-metrics (hash-ref observed "metrics" (hash)))
+         (gate (agent:check observed)))
     (cond
-      ((equal? pre-rec "escalate")
-       (agent-bump! "escalations")
-       (list (cons ":ok" #f)
-             (cons ":decision" 'escalate)
-             (cons ":eval-ok" #f)
-             (cons ":metrics" pre-metrics)))
-      ((equal? pre-rec "back-off")
-       (agent-bump! "back-offs")
-       (list (cons ":ok" #f)
-             (cons ":decision" 'back-off)
-             (cons ":eval-ok" #f)
-             (cons ":metrics" pre-metrics)))
+      ; 2) check refused the round
+      ((eq? gate 'escalate)
+       (agent-round-result #f 'escalate #f pre-metrics summary "escalations"))
+      ((eq? gate 'back-off)
+       (agent-round-result #f 'back-off #f pre-metrics summary "back-offs"))
       (else
-       (let* ((snap (try (ast:snapshot summary) (catch (e) -1)))
-              (ops (if (pair? mutations)
-                     mutations
-                     (if (and (string? rebind-name) (string? rebind-body))
-                       (agent-rebind-ops rebind-name rebind-body summary)
-                       '())))
-              (mut-ok (agent-atomic-mutate! ops summary))
-              (eval-res (try (begin (eval-current) #t) (catch (e) #f)))
-              ; #1553: post-mutate cooperative yield before post metrics
-              (_y (try (mutate:safe-yield) (catch (e) #f)))
-              (post-metrics (agent:decision-metrics))
+       (let* ((proposal (agent:propose mutations rebind-name rebind-body summary))
+              ; 3) apply
+              (snap (try (ast:snapshot (hash-ref proposal "summary" "closed-loop"))
+                         (catch (e) -1)))
+              (applied (agent:apply proposal snap))
+              (mut-ok (hash-ref applied "applied" #f))
+              ; 4) verify
+              (verified (agent:verify applied pre-src))
+              (eval-res (hash-ref verified "eval-ok" #f))
+              (snap2 (hash-ref verified "snapshot" -1))
+              (post-metrics (hash-ref verified "metrics" (hash)))
               (post-rec (hash-ref post-metrics "recommendation" "hold")))
          (cond
            ((not mut-ok)
-            (agent-bump! "rollbacks")
             (agent-restore-source! pre-src)
-            (list (cons ":ok" #f)
-                  (cons ":decision" 'rollback)
-                  (cons ":eval-ok" eval-res)
-                  (cons ":metrics" post-metrics)))
+            (agent-round-result #f 'rollback eval-res post-metrics summary
+                                "rollbacks"))
            ((not eval-res)
-            (agent-bump! "rollbacks")
-            (if (and (number? snap) (>= snap 0))
-              (try (ast:restore snap) (catch (e) (agent-restore-source! pre-src)))
+            (if (and (number? snap2) (>= snap2 0))
+              (try (ast:restore snap2) (catch (e) (agent-restore-source! pre-src)))
               (agent-restore-source! pre-src))
-            (list (cons ":ok" #f)
-                  (cons ":decision" 'rollback)
-                  (cons ":eval-ok" #f)
-                  (cons ":metrics" post-metrics)))
+            (agent-round-result #f 'rollback #f post-metrics summary "rollbacks"))
            ((equal? post-rec "escalate")
-            (agent-bump! "escalations")
-            (if (and (number? snap) (>= snap 0))
-              (try (ast:restore snap) (catch (e) (agent-restore-source! pre-src)))
+            (if (and (number? snap2) (>= snap2 0))
+              (try (ast:restore snap2) (catch (e) (agent-restore-source! pre-src)))
               (agent-restore-source! pre-src))
-            (list (cons ":ok" #f)
-                  (cons ":decision" 'escalate)
-                  (cons ":eval-ok" #t)
-                  (cons ":metrics" post-metrics)))
+            (agent-round-result #f 'escalate #t post-metrics summary
+                                "escalations"))
            ((equal? post-rec "back-off")
-            (agent-bump! "back-offs")
-            (if (and (number? snap) (>= snap 0))
-              (try (ast:restore snap) (catch (e) (agent-restore-source! pre-src)))
+            (if (and (number? snap2) (>= snap2 0))
+              (try (ast:restore snap2) (catch (e) (agent-restore-source! pre-src)))
               (agent-restore-source! pre-src))
-            (list (cons ":ok" #f)
-                  (cons ":decision" 'back-off)
-                  (cons ":eval-ok" #t)
-                  (cons ":metrics" post-metrics)))
+            (agent-round-result #f 'back-off #t post-metrics summary "back-offs"))
            (else
-            (agent-bump! "commits")
-            (list (cons ":ok" #t)
-                  (cons ":decision" 'commit)
-                  (cons ":eval-ok" #t)
-                  (cons ":metrics" post-metrics)))))))))
+            ; 5) record a committed round
+            (agent-round-result #t 'commit #t post-metrics summary "commits"))))))))
+
+; Positional core — kept for auto-grow / edsl-fix callers; same round.
+(define (agent-closed-loop-core source mutations rebind-name rebind-body
+                                summary skip-set-code?)
+  (agent:round source mutations rebind-name rebind-body summary skip-set-code?))
+
+; ── recovery policy (#5004: agent:recover-from-error strategy lives here) ──
+; The engine primitive owns diagnose → fix → clear-hold (#2917). This is
+; the policy over its result: (ok status cause fix-type fixed).
+; → 'commit | 'escalate | 'back-off | 'retry
+(define (agent:recover-plan result)
+  (if (not (pair? result))
+    'escalate
+    (let ((ok (car result))
+          (status (if (pair? (cdr result)) (car (cdr result)) 5)))
+      (cond
+        ((and (boolean? ok) ok) 'commit)
+        ((= status 3) 'escalate)   ; no-diagnosis: nothing to apply
+        ((= status 4) 'back-off)   ; guard-fail: hold, do not retry now
+        ((= status 2) 'retry)      ; diagnosis failed, a new proposal may work
+        (else 'escalate)))))
+
+; ── agent:recover! — run recovery and land it on the worldline ──
+(define (agent:recover! error-text code)
+  (let* ((result (try (agent:recover-from-error error-text code)
+                      (catch (e) #f)))
+         (plan (agent:recover-plan result))
+         (round (list (cons ":ok" (if (eq? plan 'commit) #t #f))
+                      (cons ":decision" plan)
+                      (cons ":eval-ok" #f)
+                      (cons ":metrics" (agent:decision-metrics)))))
+    (agent:record round (string-append "recover:" (symbol->string plan)))))
+
+; ── replacement step: the four hot-update modules, composed ──
+; One call: isolate the region → reload → poll health → restore region.
+; Returns a hash; never raises (a missing/invalid .so is a refused reload).
+(define (agent:hot-replace path . args)
+  (define agent-id (if (pair? args) (car args) 0))
+  (define polls (if (and (pair? args) (pair? (cdr args))) (cadr args) 1))
+  (define prev-region (try (region:get) (catch (e) 0)))
+  (define isolated (try (region:isolate! agent-id) (catch (e) #f)))
+  (define reloaded (try (hot-update:reload path) (catch (e) #f)))
+  (define monitor (try (make-hot-update-monitor (lambda (stats) stats))
+                       (catch (e) #f)))
+  (define health (try (monitor:run-n monitor polls) (catch (e) #f)))
+  (try (if (and (number? prev-region) (not (= prev-region 0)))
+         (hot-update:set-region! prev-region)
+         (region:clear!))
+       (catch (e) #f))
+  (hash "ok" (if reloaded #t #f)
+        "path" (if (string? path) path "")
+        "isolated" (if isolated #t #f)
+        "reload" (if reloaded #t #f)
+        "health" health
+        "region" (if (number? prev-region) prev-region 0)))
+
+(define (agent:replace-step path . args)
+  (cond
+    ((null? args) (agent:hot-replace path))
+    ((null? (cdr args)) (agent:hot-replace path (car args)))
+    (else (agent:hot-replace path (car args) (cadr args)))))
 
 ; Keyword wrapper for agents / tests (single-shot rest-args is OK).
 (define (agent:closed-loop-once . args)
