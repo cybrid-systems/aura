@@ -57,6 +57,13 @@
     (list "evo-core"
       (list "Candidates/lineage values, ask/tell search handles, worldline-isolated trials, deterministic RNG, evo log v=2"
             "(require \"std/evo-core\" all:)(evo:ask (evo:search (hash \"algo\" \"mock\" \"seed\" 42 \"budget\" 8)) 2)"))
+    ; Issue #4940: the multi-objective layer of the v0.2 search stack
+    (list "pareto"
+      (list "Pareto archive/commit gate, non-dominated sort, crowding, exact 2/3-objective HV, IGD, NSGA-II"
+            "(require \"std/pareto\" all:)(pareto:nd-sort (list (list 1 2) (list 2 1)) (hash \"dirs\" (list \"min\" \"min\")))"))
+    (list "moead"
+      (list "MOEA/D decomposition search (Tchebycheff/PBI/weighted sum), Das-Dennis weights, MOEA/DD archive"
+            "(require \"std/moead\" all:)(moead:ask (moead:make (hash \"n-obj\" 2 \"H\" 12)) 4)"))
     ; ── Aura layer (#5004): agent / orch / evo are written in Aura over the
     ;    primitives; the Scheme layer below is engine + host prims. ──
     (list "agent"
