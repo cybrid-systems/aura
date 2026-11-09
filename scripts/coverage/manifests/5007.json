@@ -1,0 +1,50 @@
+{
+  "issue": 5007,
+  "title": "one search protocol; swarm modules demoted; synthesize strategy moved to aura",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "lib/std/search.aura",
+      "contains": [
+        "search:init",
+        "search:step",
+        "search:best",
+        "search:export",
+        "es      (μ, λ)",
+        "anneal  simulated annealing",
+        "bandit  UCB / Thompson",
+        "beam    beam search"
+      ]
+    },
+    {
+      "ac": "AC1-state",
+      "path": "lib/std/search.aura",
+      "contains": ["State: alist (string keys)"]
+    },
+    {
+      "ac": "AC2",
+      "path": "lib/std/INDEX.aura",
+      "contains": [
+        "search\"",
+        "Legacy (use std/search kind pso)",
+        "Legacy (use std/search kind abc)",
+        "Legacy (use std/search kind fss)",
+        "Coordination example for std/orch"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "lib/std/INDEX.aura",
+      "contains": ["not a parallel surface"]
+    },
+    {
+      "ac": "AC4",
+      "path": "lib/std/synthesize.aura",
+      "contains": ["kernel contract owns state Aura cannot reach"]
+    },
+    {
+      "ac": "AC5",
+      "forbid": ["tests/suite/test_issue_5007.cpp", "docs/design/5007-"]
+    }
+  ]
+}

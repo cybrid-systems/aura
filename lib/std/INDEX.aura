@@ -68,22 +68,28 @@
     (list "evo"
       (list "Aura layer: experience from the evo:record! worldline — fixed / epsilon-greedy / UCB selectors (#5004)"
             "(require \"std/evo\" all:)(evo:choose-ucb (evo:arms (evo:records)))"))
-    ; Issue #2874: pluggable swarm intelligence (grid|pso|ant) next to std/ant
+    (list "search"
+      (list "Aura layer: one search protocol — init/step/best/export; kinds grid/pso/abc/fss/ant/es/anneal/bandit/beam (#5007)"
+            "(require \"std/search\" all:)(search:run (search:init \"es\" (hash \"dim\" 2 \"pop\" 8)) fitness 10)"))
+    ; ── Legacy swarm surfaces (#5007): importable, NOT recommended. ──
+    ; Use std/search for the same algorithms through search:step. pso/abc/
+    ; fss/ant keep their module names for one release; boids is coupling
+    ; between agents, so the orchestration example lives in std/orch.
     (list "swarm"
-      (list "Pluggable swarm search: grid / pso / ant / abc / boids / fss + flat fiber fitness"
-            "(require \"std/swarm\" all:)(swarm:init (hash \"kind\" \"pso\" \"dim\" 2 \"pop\" 12))"))
+      (list "Legacy (use std/search): process-state swarm family grid/pso/ant/abc/boids/fss"
+            "(require \"std/search\" all:)(search:init \"pso\" (hash \"dim\" 2 \"pop\" 12))"))
     (list "pso"
-      (list "Particle swarm surface (std/swarm kind:pso)"
-            "(require \"std/pso\" all:)(pso:init 2 12 (list (list -1.0 1.0) (list -1.0 1.0)))"))
+      (list "Legacy (use std/search kind pso): particle swarm surface"
+            "(require \"std/search\" all:)(search:init \"pso\" (hash \"dim\" 2 \"pop\" 12))"))
     (list "abc"
-      (list "Artificial bee colony surface (std/swarm kind:abc) employ/onlooker/scout"
-            "(require \"std/abc\" all:)(abc:init 2 12 (list (list -1.0 1.0) (list -1.0 1.0)))"))
+      (list "Legacy (use std/search kind abc): artificial bee colony surface"
+            "(require \"std/search\" all:)(search:init \"abc\" (hash \"dim\" 2 \"pop\" 12))"))
     (list "boids"
-      (list "Boids flocking coordination (sep/align/cohere); swarm kind:boids"
+      (list "Coordination example for std/orch, not a search kind: separation/alignment/cohesion"
             "(require \"std/boids\" all:)(boids:step positions velocities (hash \"sep\" 1.0))"))
     (list "fss"
-      (list "Fish school search (feeding + volitive expand/contract); swarm kind:fss"
-            "(require \"std/fss\" all:)(fss:init 2 16 (list (list -1.0 1.0) (list -1.0 1.0)))"))
+      (list "Legacy (use std/search kind fss): fish school search surface"
+            "(require \"std/search\" all:)(search:init \"fss\" (hash \"dim\" 2 \"pop\" 16))"))
     ; Issue #5003: SRFI-132 sorting is std/sort; algorithmic helpers stay here.
     (list "algorithm"
       (list "Algorithm utilities (group, partition, min/max-by, binary-search); sorting moved to std/sort"
@@ -105,8 +111,8 @@
     ; macro-generating libraries. (list "edsl" ...) removed.
     ; ── Pipeline + agent ──
     (list "pipeline"
-      (list "Synthesize pipeline v2 (test-driven, debug)"
-            "(synthesize:run-tests code tests)"))
+      (list "Synthesize pipeline names (v2 implementation detail of std/synthesize; not a parallel surface)"
+            "(require \"std/synthesize\" all:)(synthesize:run-tests code tests)"))
     (list "orchestrator"
       (list "One-release forwarder to std/orch (#5004); import std/orch in new code"
             "(require \"std/orch\" all:)(orch:pipeline steps input)"))

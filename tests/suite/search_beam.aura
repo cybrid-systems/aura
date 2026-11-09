@@ -1,0 +1,57 @@
+; tests/suite/search_beam.aura — Issue #5007
+; Beam search over a finite edit tree returns the highest-scored complete
+; candidate; width and scoring belong to the caller.
+
+(require "std/search" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+    (begin (display "  pass: ") (display msg) (newline))
+    (begin
+      (set! *fails* (+ *fails* 1))
+      (display "  FAIL: ") (display msg) (newline))))
+
+; root → a → {a1, a2}, root → b → b1. Leaves are complete candidates.
+(define tree (hash "root" (list "a" "b")
+                   "a" (list "a1" "a2")
+                   "b" (list "b1")
+                   "a1" (list) "a2" (list) "b1" (list)))
+
+(define (score path)
+  (cond ((equal? path (list "root" "a" "a2")) 5.0)
+        ((equal? path (list "root" "b" "b1")) 3.0)
+        ((equal? path (list "root" "a" "a1")) 1.0)
+        (else 0.0)))
+
+(display "AC1 beam returns the best complete candidate\n")
+(define b0 (search:init "beam" (hash "root" "root" "tree" tree "width" 2)))
+(assert! (equal? (search:pending b0) (list (list "root"))) "beam starts at the root")
+(define b1 (search:run b0 score 3))
+(assert! (equal? (search:best b1) (list "root" "a" "a2"))
+         "beam finds the highest-scored complete edit sequence")
+(assert! (= 5.0 (search:best-score b1)) "beam keeps the leaf score")
+(assert! (<= (length (search:pending b1)) 2) "beam width bounds the frontier")
+
+display "AC2 width 1"
+(display "AC2 width one still completes\n")
+(define w1 (search:run (search:init "beam" (hash "root" "root" "tree" tree "width" 1))
+                       score 3))
+(assert! (pair? (search:best w1)) "width-1 beam returns a candidate")
+(assert! (member (car (reverse (search:best w1))) (list "a1" "a2" "b1" "a" "b"))
+         "width-1 best is a node of the tree")
+
+(display "AC3 export\n")
+(define ex (search:export b1))
+(assert! (equal? (hash-ref (search:export b1) "kind" #f) "beam") "export keeps the kind")
+(assert! (equal? (hash-ref (search:export b1) "best" #f) (list "root" "a" "a2"))
+         "export keeps the best candidate")
+(assert! (= 3 (hash-ref (search:export b1) "gen" 0)) "export keeps the generation")
+
+(if (= *fails* 0)
+  (begin (display "OK-5007 beam\n"))
+  (begin
+    (display "FAIL-5007-beam fails=")
+    (display *fails*)
+    (newline)
+    (error "5007 beam suite failed")))

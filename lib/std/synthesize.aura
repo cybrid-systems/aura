@@ -8,6 +8,18 @@
 ; surface; list-templates returns empty until a host accessor
 ; is re-homed. This module keeps the stdlib name.
 ;
+; Issue #5007 (v0.2.0): synthesize:fill / synthesize:optimize /
+; synthesize:define / synthesize:register-template stay in the engine
+; because the kernel contract owns state Aura cannot reach:
+;   * register-template / fill write g_template_patterns, an engine-private
+;     map with no Aura-visible accessor after #3175 sank query:templates;
+;   * fill and define perform the LLM HTTP call and re-evaluate the
+;     candidate inside the live mutation boundary;
+;   * optimize runs its genetic strategy over the engine's probe/commit
+;     state (Issue #5033).
+; The searchable strategy part is std/search (kinds es / anneal / beam) and
+; the closed loop is std/agent; nothing here is a parallel public surface.
+;
 ; The 3 remaining C++ synthesize:* primitives
 ; (synthesize:register-template, synthesize:fill,
 ; synthesize:optimize) remain in the engine — they all touch
