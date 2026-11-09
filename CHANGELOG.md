@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.2
+
+Patch release on the 0.1 channel. The API is still not stable; this version installs and runs the shipped examples.
+
+- The REPL is an editing surface. `:focus` names the definition being edited; `:src` prints its live source; `:propose EXPR` rewrites it behind a keep-or-rollback `:gate` with a four-line before/after diff; `:undo`, `:redo` and `:at N` walk that definition's worldline. `:context` reports the focused source, the last error and the worldline, and `:ask` feeds a model answer into `:propose` when a model is configured. A proposal budget (`:fuel`, default 100000) stops a runaway loop, and Ctrl-C rolls the current proposal back.
+- The REPL records one evaluation per form on a pipe: one record line per form with `status/value/type/wrote/focus`, a refused form is a record instead of an empty line, and an open phrase continues on a `..` prompt on a TTY. `:doc`, `:type` and the grey hint answer from the primitive table; Tab completes the word at the cursor; readline emacs keys and Ctrl-R history search work over the extracted edit core; an error value prints its cause and marks the failing column with a caret.
+- `tcp-listen` accepts an optional IPv4 host: `(tcp-listen port)` still binds 127.0.0.1, and `(tcp-listen port host)` takes a literal such as `"0.0.0.0"`.
+- An exhausted EnvFrame arena is a catchable `OutOfMemory` diagnostic instead of `abort()`: a program holding more than 1,048,576 live capture frames gets `error: out of memory: EnvFrame arena exhausted (...)`, and an Aura `(try ... (catch (e) ...))` can handle it. File mode reclaims dead capture frames from a live EnvId root set (including every parked fiber's Envs and its cap-snapshot chain), so the arena budget tracks live frames. `(engine:metrics)` exposes live frames, high water, freelist hits/misses and reclaimed frames.
+- A cell store that landed while another body grew the cell vector could be lost, leaving a named-let binding unreadable (`cannot call: loop`). The store now serializes with the growth.
+- Type checker: `(if (and ...))` and `(format ...)` stop producing false Bool/String warnings in the soft REPL; a Dynamic argument is a checked boundary, not a type error; the check-mode pass keeps an `if` condition; a type-var callee keeps the gradual Dynamic return (#4316); a recursive definition is installable at runtime again (#5052).
+- Parser: a malformed character literal in an `if`/lambda operand no longer hangs the reader (#5051), and a formatted parse error keeps its message.
+- Orchestration: an agent body waits for the spawn to publish its handle (#5053), and the orchestration scheduler counters are observable outside `--serve-async` (#5054).
+- Install and smoke coverage is unchanged: Ubuntu 24.04, Ubuntu 26.10, Debian 12, Rocky Linux 9, and openEuler 24.03 LTS SP4, on x86_64 and arm64.
+- `AURA_VERSION=v0.1.2` selects the GitHub Release asset `aura-0.1.2-linux-<arch>.tar.gz`; the default install remains nightly. Images: `ghcr.io/cybrid-systems/aura:0.1.2`, `:0.1`, and `:latest`. `:nightly` stays the rolling build from `main`.
+- A binary whose version is `X.Y.Z` makes `aura new` pin that channel. `0.1.2` writes `ghcr.io/cybrid-systems/aura:0.1.2`. `dev` and `nightly` write `:nightly`. `:latest` is never written into a new project.
+- A tag release runs the chaos SOAK (300s, 8 workers, 256 fibers) and the production concurrency gate before assets are uploaded.
+
+Not in this version:
+
+- macOS, Windows, and other Linux distributions.
+- The evolve-strategy kit is not pinned to this tag yet.
+
 ## 0.1.1
 
 Patch release on the 0.1 channel. The API is still not stable; this version installs and runs the shipped examples.
