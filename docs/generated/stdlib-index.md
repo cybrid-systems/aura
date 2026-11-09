@@ -71,7 +71,7 @@
 | `std/orch` | `orch:spawn` `orch:handle` `orch:list` `orch:status` `orch:stop` `orch:restart` `orch:local?` `orch:registry-epoch` … (+18) | lib/std/orch.aura — multi-agent orchestration on the five primitives (#5004) |
 | `std/orchestrator` | `orch:define-role` `orch:step` `orch:pipeline` `orch:conduct` `orch:parallel` `orch:parallel-with-yield` `orch:supervise` `orch:run` … (+11) | lib/std/orchestrator.aura — one release of forwarding to std/orch (#5004) |
 | `std/parameter` | `make-parameter` `parameterize` `parameter?` `parameter-set!` | lib/std/parameter.aura — R7RS parameters (Issue #5005) |
-| `std/pareto` | `pareto:archive` `pareto:archive?` `pareto:insert!` `pareto:entries` `pareto:front` `pareto:size` `pareto:dominates?` `pareto:cd-dominates?` … (+16) | lib/std/pareto.aura — Issue #4940 (v0.2 P1): algorithm-independent Pareto |
+| `std/pareto` | `pareto:archive` `pareto:archive?` `pareto:insert!` `pareto:entries` `pareto:front` `pareto:size` `pareto:dominates?` `pareto:cd-dominates?` … (+17) | lib/std/pareto.aura — Issue #4940 (v0.2 P1): algorithm-independent Pareto |
 | `std/persist` | `persist:save` `persist:load` `persist:info` `persist:version` `persist:format-version` `persist:round-trip?` | lib/std/persist.aura — Issue #1381 |
 | `std/pipeline` | `synthesize:pipeline` | Aura std/pipeline — 代码生成管线 |
 | `std/portfolio` | `portfolio:make` `portfolio:add!` `portfolio:members` `portfolio:member` `portfolio:external` `portfolio:run` `portfolio:matrix` `portfolio:vbs` … (+2) | lib/std/portfolio.aura — Issue #4945 (v0.2 P8): algorithm portfolios, |

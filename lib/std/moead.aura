@@ -188,10 +188,18 @@
     (if (or (null? fs) (null? ws)) s
         (loop (cdr fs) (cdr ws) (+ s (* (md-num (car fs)) (md-num (car ws))))))))
 
+; Tchebycheff on ideal-shifted coordinates. The absolute value is not
+; decoration: z* moves between batches, and a candidate that another
+; subproblem has already taken below z*_i (f_i < z*_i) must still be
+; penalised. Without |.| that term can never win the max, so a point is
+; rewarded for driving one objective arbitrarily negative — one half of the
+; ZDT2 collapse (#4940); the other half was the generation-local ideal
+; point, see md-normalize.
 (define (md-tch f w)
   (let loop ((fs f) (ws w) (m 0.0))
     (if (or (null? fs) (null? ws)) m
-        (loop (cdr fs) (cdr ws) (max m (* (md-num (car fs)) (md-num (car ws))))))))
+        (loop (cdr fs) (cdr ws)
+              (max m (* (md-num (car ws)) (abs (md-num (car fs)))))))))
 
 (define (md-wnorm w)
   (sqrt (let loop ((ws w) (s 0.0))
@@ -256,19 +264,66 @@
                  (if ideal (md-fold-min ideal g) g)
                  (if nadir (md-fold-max nadir g) g))))
         (else
-         (hash-set! s "ideal" (if ideal ideal (list)))
-         (hash-set! s "nadir" (if nadir nadir (list))))))))
+         ; z* is the component-wise best ever seen (monotone): an ideal
+         ; point that can drift back up makes the aggregate non-stationary
+         ; and lets a subproblem "improve" by forgetting (#4940).
+         (let* ((prev (md-opt s "zmin" (list)))
+                (zmin (cond ((null? ideal) prev)
+                            ((null? prev) ideal)
+                            (else (md-fold-min prev ideal))))
+                (pmax (md-opt s "zmax" (list)))
+                (zmax (cond ((null? nadir) pmax)
+                            ((null? pmax) nadir)
+                            (else (md-fold-max pmax nadir))))
+                (span0 (md-opt s "span0" (list)))
+                (span0* (if (null? span0)
+                            (map (lambda (a b) (let ((d (- (md-num b) (md-num a))))
+                                                 (if (> d 1e-12) d 1.0)))
+                                 zmin zmax)
+                            span0)))
+           (hash-set! s "ideal" (if ideal ideal (list)))
+           (hash-set! s "nadir" (if nadir nadir (list)))
+           (hash-set! s "zmin" zmin)
+           (hash-set! s "zmax" zmax)
+           (hash-set! s "span0" span0*)
+           (hash-set! s "span-floor"
+                      (map (lambda (v) (/ (md-num v) 64.0)) span0*))))))))
 
+; Normalisation: (f - z*) / (upper - z*), with z* the monotone best-ever
+; ideal point (Zhang & Li keep z* over every evaluation, not over the
+; current generation). Shifting by a generation-local minimum is not just
+; a scale choice: it puts z* ABOVE the values a better candidate reaches,
+; so the aggregate penalises exactly the moves that improve the objective
+; the population has not covered yet. On ZDT2 that blocks the f2 axis
+; outright and every subproblem drifts to the f1=0 corner (#4940).
+;
+; The scale "upper" is the current population's worst value ("dynamic",
+; default), the worst ever seen ("ever"), or z*+1 ("none"). The span is
+; floored at 1/64 of the initial span: a population that has collapsed
+; onto one objective leaves the other span at ~1e-12, and dividing by it
+; turns numerical dust into a dominant term that locks the collapse in.
 (define (md-normalize s f)
-  (let ((ideal (md-opt s "ideal" (list)))
-        (nadir (md-opt s "nadir" (list))))
-    (let loop ((xs f) (is ideal) (ns nadir) (acc (list)))
-      (if (or (null? xs) (null? is) (null? ns))
+  (let* ((mode (md-opt s "norm" "dynamic"))
+         (nostyle (and (string? mode) (string=? mode "none")))
+         (ever (and (string? mode) (string=? mode "ever")))
+         (shift (let ((z (md-opt s "zmin" (list))))
+                  (if (null? z) (md-opt s "ideal" (list)) z)))
+         (upper (cond (nostyle (list))
+                      (ever (md-opt s "zmax" (list)))
+                      (else (md-opt s "nadir" (list)))))
+         (floor (if (list? (md-opt s "span-floor" #f)) (md-opt s "span-floor" (list)) (list))))
+    (let loop ((xs f) (ss shift) (us upper) (fl floor) (acc (list)))
+      (if (or (null? xs) (null? ss))
           (reverse acc)
-          (let* ((span (- (md-num (car ns)) (md-num (car is))))
-                 (sp (if (> span 0.0) span 1.0)))
-            (loop (cdr xs) (cdr is) (cdr ns)
-                  (cons (/ (- (md-num (car xs)) (md-num (car is))) sp) acc)))))))
+          (let* ((d (- (md-num (car xs)) (md-num (car ss))))
+                 (span (if (null? us) 0.0 (- (md-num (car us)) (md-num (car ss)))))
+                 (fmin (if (null? fl) 0.0 (md-num (car fl))))
+                 (sp (cond (nostyle 1.0)
+                           ((> span 0.0) (max span fmin))
+                           (else 1.0))))
+            (loop (cdr xs) (cdr ss) (if (null? us) us (cdr us))
+                  (if (null? fl) fl (cdr fl))
+                  (cons (/ d sp) acc)))))))
 
 ; ── state ───────────────────────────────────────────────────────────
 (define (moead:make opts)
@@ -312,8 +367,11 @@
           "operator" (md-opt o "operator" "de")
           "proposer" (md-opt o "proposer" #f)
           "dd" (eq? (md-opt o "dd" #f) #t)
+          "ref" (let ((rf (md-opt o "ref" #f))) (if (list? rf) rf #f))
           "dirs" dirs "objectives" (md-opt o "objectives" #f)
-          "ideal" (list) "nadir" (list)
+          "norm" (let ((nm (md-opt o "norm" "dynamic"))) (if (string? nm) nm "dynamic"))
+          "ideal" (list) "nadir" (list) "zmin" (list) "zmax" (list)
+          "span0" (list) "span-floor" (list)
           "pop" pop "gen" 0 "slot" n "nfe" 0
           "archive" (pareto:archive (hash "dirs" dirs "cap" n "trim" "hv")))))
 
@@ -340,8 +398,18 @@
   (let* ((op (md-opt s "operator" "de"))
          (dim (md-opt s "dim" 10))
          (bounds (md-opt s "bounds" (list (list 0.0 1.0))))
+         (all (md-iota (length (moead:weights s))))
+         ; delta: with probability delta the parents come from the T nearest
+         ; subproblems, otherwise from the whole population (Zhang & Li
+         ; Alg. 2). Without it a subproblem can only ever recombine inside
+         ; its own neighbourhood, so a front that needs a long-range move
+         ; (ZDT2's concave arm) never gets one.
+         (delta (md-opt s "delta" 0.9))
          (nbrs (let ((nb (md-opt s "neighbors" (list))))
-                 (if (< sub (length nb)) (list-ref nb sub) (list sub))))
+                 (let ((near (if (< sub (length nb)) (list-ref nb sub) (list sub))))
+                   (if (and (number? delta) (< (md-rand! r) delta))
+                       near
+                       (if (null? all) near all)))))
          (base (md-pop-at s sub))
          (bg (md-genome-of base))
          (pf (md-opt s "proposer" #f)))
@@ -368,7 +436,11 @@
               (jrand (md-rand-int! r dim)))
          (let loop ((xs g1) (ys g2) (zs g3) (bs bounds) (i 0) (acc (list)))
            (if (or (null? xs) (null? ys) (null? zs))
-               (reverse acc)
+               ; MOEA/D-DE (Li & Zhang 2009) pairs the differential
+               ; operator with polynomial mutation. DE alone keeps
+               ; contracting differences inside a small neighbourhood and
+               ; stalls on objectives whose scale it has not resolved.
+               (md-poly-mut (reverse acc) bounds 20.0 (/ 1.0 dim) r)
                (let* ((b (if (null? bs) (list 0.0 1.0) (car bs)))
                       (v (+ (md-num (car xs)) (* F (- (md-num (car ys)) (md-num (car zs))))))
                       (u (md-rand! r))
@@ -583,15 +655,24 @@
                                         (md-opt s "pop" (list))))))
              (if (null? items) (list) (car (pareto:nd-sort items (hash "dirs" dirs)))))))))
 
+; The report's hypervolume is measured against a reference point derived
+; from the front itself (pareto:ref-point), not against a hard-coded
+; (1.1 1.1): the objectives of a caller's problem are arbitrary, and a
+; literal reference silently reports 0 whenever they exceed it — which is
+; what MOEA/DD's report did (#4940). "ref" in the state overrides it.
 (define (moead:report s)
   (let* ((f (moead:front s))
-         (objs (map (lambda (e) (md-objs-of e (md-opt s "objectives" #f))) f)))
+         (dirs (md-opt s "dirs" (list)))
+         (objs (map (lambda (e) (md-objs-of e (md-opt s "objectives" #f))) f))
+         (ref (md-opt s "ref" #f))
+         (ref* (if (list? ref) ref (pareto:ref-point objs dirs 0.1))))
     (hash "kind" "moead" "gen" (md-opt s "gen" 0) "nfe" (md-opt s "nfe" 0)
           "subproblems" (length (moead:weights s))
           "front-size" (length f)
-          "ideal" (md-opt s "ideal" (list))
+          "ideal" (let ((z (md-opt s "zmin" (list))))
+                    (if (null? z) (md-opt s "ideal" (list)) z))
           "nadir" (md-opt s "nadir" (list))
+          "ref" ref*
           "hypervolume" (if (null? objs) 0.0
-                            (pareto:hypervolume objs (list 1.1 1.1)
-                                                (hash "dirs" (md-opt s "dirs" (list))))))))
+                            (pareto:hypervolume objs ref* (hash "dirs" dirs))))))
 
