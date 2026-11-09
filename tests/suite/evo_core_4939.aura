@@ -112,35 +112,6 @@
 (assert! (not (string=? (hash-ref (evo:report a) "id") (hash-ref (evo:report b) "id")))
          "distinct search ids")
 
-; Ordering note: this block runs before AC4 on purpose. After the first
-; live mutate:rebind, a module closure can read a previous call constants
-; under the file-heap reclaim sweep (reproduced: the 3rd run saw seed=3
-; budget=4 pop=2); with AURA_GC_RECLAIM_OFF=1 the corruption disappears.
-; Keep reproducibility independent of that unrelated reclaim bug.
-; ═══════════════════════════════════════════════════════════════════
-; AC5 — reproducible multi-objective run (in-process "3 reruns")
-; ═══════════════════════════════════════════════════════════════════
-(display "AC5 reproducible run\n")
-(define (mk-opts seed budget pop arch)
-  (hash "algo" "mock" "seed" seed "budget" budget "pop" pop "archive" arch))
-(define (run-once)
-  (evo:run! (evo:search (mk-opts 77 6 3 3))
-            (lambda (c)
-              (hash "objectives" (hash "a" (genome-sum (evo:candidate-genome c))
-                                       "b" (- 0 (genome-sum (evo:candidate-genome c))))
-                    "constraints" (hash "ok" 0.0)
-                    "behavior" (hash "sum" (genome-sum (evo:candidate-genome c)))))))
-(define r1 (run-once))
-(define r2 (run-once))
-(define r3 (run-once))
-(define (arch-ids rep) (map evo:candidate-id (hash-ref rep "archive")))
-(assert! (equal? (arch-ids r1) (arch-ids r2)) "rerun 1 == rerun 2")
-(assert! (equal? (arch-ids r1) (arch-ids r3)) "rerun 1 == rerun 3")
-(assert! (= 3 (hash-ref r1 "feasible")) "archive counts feasible candidates")
-(assert! (= 3 (length (hash-ref r1 "archive"))) "archive bounded by max-archive")
-(assert! (evo:feasible? (evo:best r1)) "best is feasible")
-
-; ═══════════════════════════════════════════════════════════════════
 ; ═══════════════════════════════════════════════════════════════════
 ; AC4 — ask/tell protocol, feasibility-first commit, budget
 ; ═══════════════════════════════════════════════════════════════════
@@ -189,6 +160,56 @@
 (assert! (= 0 (hash-ref r "budget-left")) "budget exhausted")
 (assert! (= 3 (hash-ref r "gen")) "3 batches of 2,2,1")
 
+; ═══════════════════════════════════════════════════════════════════
+; AC5 — reproducible multi-objective run (in-process "3 reruns")
+; ═══════════════════════════════════════════════════════════════════
+; Issue #5059: this block runs AFTER AC4's first live mutate:rebind on
+; purpose. A reclaimed EnvFrame slot kept the previous occupant's
+; "live-safe EMPTY top_ capture" marker, so the first (run-once) after a
+; file-heap sweep materialised evo:run! over that slot, took the live
+; top_ consult and resolved its parameter `s` to the test's global `s` —
+; the AC4 handle — returning the PREVIOUS search's options (seed 3 budget
+; 4 pop 2, archive above the cap). The reruns below must be identical
+; with the reclaim on (no AURA_GC_RECLAIM_OFF needed).
+(display "AC5 reproducible run\n")
+(define (mk-opts seed budget pop arch)
+  (hash "algo" "mock" "seed" seed "budget" budget "pop" pop "archive" arch))
+(define (run-once)
+  (evo:run! (evo:search (mk-opts 77 6 3 3))
+            (lambda (c)
+              ; Issue #5059: sweep the file heap while evo:run!'s loop is
+              ; live. Deterministic trigger — the loop's capture frame is
+              ; reclaimed mid-call, and a slot that kept the previous
+              ; occupant's live-safe-top marker used to make evo:run! read
+              ; its parameter from the global of the same name (the AC4
+              ; handle), i.e. the PREVIOUS search's options.
+              (gc-heap)
+              (hash "objectives" (hash "a" (genome-sum (evo:candidate-genome c))
+                                       "b" (- 0 (genome-sum (evo:candidate-genome c))))
+                    "constraints" (hash "ok" 0.0)
+                    "behavior" (hash "sum" (genome-sum (evo:candidate-genome c)))))))
+(define r1 (run-once))
+(define r2 (run-once))
+(define r3 (run-once))
+(define (arch-ids rep) (map evo:candidate-id (hash-ref rep "archive")))
+(assert! (equal? (arch-ids r1) (arch-ids r2)) "rerun 1 == rerun 2")
+(assert! (equal? (arch-ids r1) (arch-ids r3)) "rerun 1 == rerun 3")
+(assert! (= 3 (hash-ref r1 "feasible")) "archive counts feasible candidates")
+(assert! (= 3 (length (hash-ref r1 "archive"))) "archive bounded by max-archive")
+(assert! (evo:feasible? (evo:best r1)) "best is feasible")
+; Issue #5059 regression: every rerun reports ITS OWN options, not an
+; earlier search's. Before the fix the first rerun after the sweep
+; reported seed 3 / budget 4 / pop 2 (AC4's handle) in all three fields.
+(assert! (= 77 (hash-ref r1 "seed")) "rerun 1 seed is its own")
+(assert! (= 6 (hash-ref r1 "budget")) "rerun 1 budget is its own")
+(assert! (= 3 (hash-ref r1 "pop")) "rerun 1 pop is its own")
+(assert! (= 77 (hash-ref r2 "seed")) "rerun 2 seed is its own")
+(assert! (= 77 (hash-ref r3 "seed")) "rerun 3 seed is its own")
+(assert! (= (hash-ref r1 "budget") (hash-ref r3 "budget")) "rerun 3 budget stable")
+(assert! (= (hash-ref r1 "spent") (hash-ref r3 "spent")) "rerun 3 spent stable")
+(assert! (= 3 (length (hash-ref r3 "archive"))) "rerun 3 archive bounded by max-archive")
+
+; ═══════════════════════════════════════════════════════════════════
 ; AC6 — worldline-isolated trials never write the live workspace
 ; ═══════════════════════════════════════════════════════════════════
 (display "AC6 worldline isolation\n")
