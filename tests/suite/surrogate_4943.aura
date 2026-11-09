@@ -1,0 +1,241 @@
+; Issue #4943 — std/surrogate: small-sample GP (rbf/matern52), kNN
+; fallback, EI/LCB/TS prescreening with audit, multi-fidelity staged
+; evaluation and statistical racing. Oracle: the 1D quadratic
+; f(x) = (x - 0.3)^2, whose optimum and value are known analytically.
+(require "std/surrogate" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define (f x) (* (- x 0.3) (- x 0.3)))
+(define Xa (map (lambda (i) (list (/ i 10.0))) (range 0 11)))
+(define ya (map (lambda (p) (f (car p))) Xa))
+(define grid (map (lambda (i) (list (/ i 100.0))) (range 0 101)))
+(define (absdiff a b) (abs (- a b)))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC1 — GP on a small sample reproduces the function and its interval
+; ═══════════════════════════════════════════════════════════════════
+(display "AC1 GP rbf/matern52 + prediction interval\n")
+(define mgp (surr:fit! (surr:gp (hash "kernel" "rbf" "noise" 1e-6)) Xa ya))
+(assert! (hash-ref mgp "fitted" #t) "rbf fit produced a model")
+(assert! (= 11 (hash-ref mgp "n" 0)) "model keeps all 11 samples")
+; interpolation at the training points
+(define train-err
+  (apply max (map (lambda (p) (absdiff (f (car p)) (car (surr:predict mgp p)))) Xa)))
+(assert! (< train-err 0.01) "mean reproduces y at every training point")
+; optimum prediction
+(define p03 (surr:predict mgp (list 0.3)))
+(assert! (< (absdiff (car p03) 0.0) 0.02) "mean at the optimum is near 0")
+(assert! (< (cdr p03) 0.01) "variance at the optimum is small")
+; prediction interval: off-sample the truth stays within 4 sigma
+(define yscale (hash-ref mgp "yscale" 1.0))
+(define max-res
+  (apply max (map (lambda (x) (absdiff (f x) (car (surr:predict mgp (list x)))))
+                  (map car grid))))
+(assert! (< max-res 0.01) "mean stays within 0.01 of the truth off-sample")
+; the coverage claim, stated only where sigma is meaningful (a GP reports a
+; vanishing sigma near a sample, so the check is on sd >= 0.01)
+(define (wide-z x)
+  (let* ((p (surr:predict mgp (list x)))
+         (sd (sqrt (+ (cdr p) (* 1e-6 yscale yscale)))))
+    (if (< sd 0.01) 0.0 (/ (absdiff (f x) (car p)) sd))))
+(assert! (< (apply max (map wide-z (map car grid))) 4.0)
+         "4-sigma coverage wherever the interval is wide")
+; variance structure: training points are known, the gap between them is not
+(define v-train (cdr (surr:predict mgp (list 0.1))))
+(define v-gap (cdr (surr:predict mgp (list 0.25))))
+(assert! (< v-train 1e-4) "variance at a sample is the noise floor")
+(assert! (> v-gap (* 10.0 v-train)) "variance grows between samples")
+; matern52 kernel
+(define mmat (surr:fit! (surr:gp (hash "kernel" "matern52")) Xa ya))
+(define mat-err
+  (apply max (map (lambda (p) (absdiff (f (car p)) (car (surr:predict mmat p)))) Xa)))
+(assert! (< mat-err 0.02) "matern52 interpolates the sample")
+(assert! (< (absdiff (car (surr:predict mmat (list 0.3))) 0.0) 0.03)
+         "matern52 predicts the optimum")
+; unstable input does not silently return garbage: a spike is either fit
+; or covered by a large variance, never a confident wrong answer.
+(define yn (map (lambda (p) (+ (f (car p)) (if (= (car p) 0.3) 0.5 0.0))) Xa))
+(define mn (surr:fit! (surr:gp (hash)) Xa yn))
+(define spike (surr:predict mn (list 0.3)))
+(assert! (or (< (absdiff (car spike) 0.5) 0.05)
+             (> (sqrt (cdr spike)) 0.05))
+         "spiky data: fit the spike or widen the interval")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC2 — kNN fallback for tiny / high-dimensional feature spaces
+; ═══════════════════════════════════════════════════════════════════
+(display "AC2 kNN fallback\n")
+(assert! (string=? (hash-ref (surr:auto 2 1 (hash)) "kind") "knn")
+         "auto: tiny sample goes to kNN")
+(assert! (string=? (hash-ref (surr:auto 12 3 (hash)) "kind") "gp")
+         "auto: numeric sample goes to GP")
+(assert! (string=? (hash-ref (surr:auto 40 128 (hash)) "kind") "knn")
+         "auto: high-dimensional AST features go to kNN")
+(define mk (surr:fit! (surr:knn (hash "k" 5)) Xa ya))
+(assert! (hash-ref mk "fitted" #f) "kNN fit")
+(define kp (surr:predict mk (list 0.3)))
+(assert! (< (absdiff (car kp) 0.0) 0.05) "kNN mean at the optimum")
+(assert! (> (cdr kp) 0.0) "kNN reports a positive variance")
+(assert! (< (absdiff (car (surr:predict mk (list 0.55))) (f 0.55)) 0.06)
+         "kNN tracks a point between samples")
+(define unfit (surr:predict (surr:knn (hash)) (list 0.0)))
+(assert! (> (cdr unfit) 1e9) "unfitted model returns no confidence")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC3 — EI / LCB / TS prescreen, with an audit row per candidate
+; ═══════════════════════════════════════════════════════════════════
+(display "AC3 acquisition prescreen + audit\n")
+(define ps (surr:prescreen mgp grid 5 (hash "acq" "ei" "best" 0.0)))
+(define sel (hash-ref ps "selected"))
+(define sel-x (map (lambda (r) (car (hash-ref r "candidate"))) sel))
+(assert! (= 5 (length sel)) "EI returns k candidates")
+(assert! (every (lambda (x) (< (absdiff x 0.3) 0.15)) sel-x)
+         "EI prescreens a narrow band around the optimum")
+(assert! (= 101 (length (hash-ref ps "audit"))) "one audit row per candidate")
+(assert! (= 101 (+ (length (hash-ref ps "rejected")) 5))
+         "selected + rejected covers every candidate")
+(define row0 (car (hash-ref ps "audit")))
+(assert! (and (number? (hash-ref row0 "mean" #f))
+              (number? (hash-ref row0 "var" #f))
+              (number? (hash-ref row0 "score" #f)))
+         "audit row carries mean, var and score")
+(assert! (eq? (hash-ref row0 "sent") #t) "audit marks what went to full eval")
+(assert! (not (hash-ref (car (hash-ref ps "rejected")) "sent" #f))
+         "rejected candidates are marked as not sent")
+(assert! (< (hash-ref (car (hash-ref ps "rejected")) "score" 0.0)
+            (hash-ref (car (hash-ref ps "selected")) "score" 0.0))
+         "selection is ordered by acquisition score")
+; LCB
+(define pl (surr:prescreen mgp grid 5 (hash "acq" "lcb" "best" 0.0)))
+(assert! (every (lambda (x) (< (absdiff x 0.3) 0.15))
+                (map (lambda (r) (car (hash-ref r "candidate")))
+                     (hash-ref pl "selected")))
+         "LCB prescreens around the optimum")
+; Thompson sampling is reproducible under a fixed seed
+(define t1 (surr:prescreen mgp grid 5 (hash "acq" "ts" "seed" 7)))
+(define t2 (surr:prescreen mgp grid 5 (hash "acq" "ts" "seed" 7)))
+(assert! (equal? (map (lambda (r) (hash-ref r "index")) (hash-ref t1 "selected"))
+                 (map (lambda (r) (hash-ref r "index")) (hash-ref t2 "selected")))
+         "TS prescreen is deterministic for a fixed seed")
+(assert! (not (equal? (map (lambda (r) (hash-ref r "index")) (hash-ref t1 "selected"))
+                      (map (lambda (r) (hash-ref r "index")) (hash-ref ps "selected"))))
+         "TS is a different acquisition from EI")
+; maximization sense
+(define ymax (map (lambda (p) (- (f (car p)))) Xa))
+(define mmax (surr:fit! (surr:gp (hash "sense" "max")) Xa ymax))
+(define pmax (surr:prescreen mmax grid 3 (hash "acq" "ei" "best" 0.0)))
+(assert! (every (lambda (x) (< (absdiff x 0.3) 0.15))
+                (map (lambda (r) (car (hash-ref r "candidate")))
+                     (hash-ref pmax "selected")))
+         "EI handles the max sense")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC4 — staged evaluation stops at the first failing level
+; ═══════════════════════════════════════════════════════════════════
+(display "AC4 multi-fidelity staged-eval\n")
+(define calls (list 0 0 0))
+(define (bump i)
+  (set! calls (map (lambda (c k) (if (= k i) (+ c 1) c)) calls (list 0 1 2))))
+(define r1 (evo:staged-eval 'cand
+  (list (cons "parse+contract" (lambda (c) (bump 0) #f))
+        (cons "smoke-10" (lambda (c) (bump 1) 1.0))
+        (cons "holdout-80" (lambda (c) (bump 2) 2.0)))))
+(assert! (not (hash-ref r1 "ok")) "a level-1 failure fails the candidate")
+(assert! (= 1 (hash-ref r1 "evaluations")) "only the cheap level ran")
+(assert! (equal? calls (list 1 0 0)) "the expensive levels were not called")
+(assert! (= 0 (hash-ref r1 "stopped-at")) "stopped-at names the failing level")
+(assert! (string=? (hash-ref r1 "stage") "parse+contract") "failing stage reported")
+(define r2 (evo:staged-eval 'cand
+  (list (cons "a" (lambda (c) 1.0))
+        (cons "b" (lambda (c) (hash "ok" #t "score" 7)))
+        (cons "c" (lambda (c) 9.0)))))
+(assert! (hash-ref r2 "ok") "all levels pass")
+(assert! (= 3 (hash-ref r2 "evaluations")) "every level ran")
+(assert! (= 9.0 (hash-ref r2 "score")) "score comes from the deepest level")
+(assert! (= 3 (length (hash-ref r2 "stages"))) "per-level audit keeps three rows")
+(assert! (every (lambda (row) (number? (hash-ref row "ms" #f)))
+                (hash-ref r2 "stages"))
+         "per-level timing is recorded")
+(define r3 (evo:staged-eval 'cand
+  (list (cons "schema" (lambda (c) (hash "ok" #f)))
+        (cons "full" (lambda (c) 5.0)))))
+(assert! (not (hash-ref r3 "ok")) "(hash \"ok\" #f) is a failure")
+(assert! (= 1 (hash-ref r3 "evaluations")) "the deeper level was skipped")
+(define r4 (evo:staged-eval 'cand
+  (list (cons "boom" (lambda (c) (error "stage blew up")))
+        (cons "full" (lambda (c) 5.0)))))
+(assert! (not (hash-ref r4 "ok")) "a throwing stage fails the candidate")
+(assert! (= 1 (hash-ref r4 "evaluations")) "a throwing stage stops the ladder")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC5 — racing drops clearly worse candidates with fewer evaluations
+; ═══════════════════════════════════════════════════════════════════
+(display "AC5 statistical race\n")
+(define insts (range 0 8))
+(define (ev-clear c inst) (- 100 (* c 10)))
+(define rc (evo:race (list 1 2 3 4) ev-clear (hash "instances" insts "batch" 1)))
+(assert! (= 1 (hash-ref rc "winner")) "race finds the clearly best candidate")
+(assert! (< (hash-ref rc "evaluations") (* 4 (length insts)))
+         "race spends fewer evaluations than the full grid")
+(assert! (>= (length (hash-ref rc "rounds")) 2) "race ran at least two rounds")
+(assert! (= 1 (length (hash-ref rc "ranking"))) "ranking keeps the survivor")
+; minimization sense: costs, not rewards
+(define (ev-cost c inst) (* 10 c))
+(define rmin (evo:race (list 3 1 2) ev-cost (hash "instances" insts "sense" "min")))
+(assert! (= 1 (hash-ref rmin "winner")) "race honours the min sense")
+; noisy but ordered: the best survives, the worst is dropped early
+(define (ev-noisy c inst) (+ c (* 0.5 (- inst 3.5))))
+(define rn (evo:race (list 1 2 3) ev-noisy (hash "instances" insts)))
+(assert! (= 3 (hash-ref rn "winner")) "noise does not flip a clear ordering")
+(assert! (< (hash-ref rn "evaluations") (* 3 (length insts)))
+         "noisy race still saves evaluations")
+(assert! (number? (hash-ref (car (hash-ref rn "rounds")) "kept" #f))
+         "each round records how many survived")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC6 — false-kill accounting + determinism
+; ═══════════════════════════════════════════════════════════════════
+(display "AC6 false-kill audit + determinism\n")
+(define rows (list (hash "sampled" #t "true" 9.0)
+                   (hash "sampled" #t "true" 1.0)
+                   (hash "true" 10.0)
+                   (hash "true" 8.0)
+                   (hash "true" 2.0)))
+(define fk (surr:false-kill-rate rows 2))
+(assert! (= 2 (hash-ref fk "sampled")) "counts the sampled rejects")
+(assert! (= 1 (hash-ref fk "killed")) "counts the ones that would be top-k")
+(assert! (< (absdiff (hash-ref fk "rate") 0.5) 1e-9) "rate is killed / sampled")
+; end-to-end: sample the rejects, fill in the oracle, measure the rate
+(define pa (surr:prescreen mgp grid 5 (hash "acq" "ei" "best" 0.0 "audit-sample" 0.5)))
+(define audited (map (lambda (r) (hash-set r "true" (f (car (hash-ref r "candidate")))))
+                     (hash-ref pa "audit")))
+(define fk2 (surr:false-kill-rate audited 5))
+(assert! (> (hash-ref fk2 "sampled") 0) "some rejects were spot-checked")
+(assert! (<= (hash-ref fk2 "rate") 0.5) "false-kill rate on a smooth oracle stays low")
+(display "  false-kill rate: ") (display (hash-ref fk2 "rate")) (newline)
+; determinism: same sample, same answers
+(define ma (surr:fit! (surr:gp (hash)) Xa ya))
+(define mb (surr:fit! (surr:gp (hash)) Xa ya))
+(assert! (equal? (map (lambda (x) (surr:predict ma x)) grid)
+                 (map (lambda (x) (surr:predict mb x)) grid))
+         "fit/predict is deterministic for a fixed sample")
+(assert! (not (equal? (hash-ref ps "selected") (hash-ref pl "selected")))
+         "EI and LCB are distinct acquisitions")
+(assert! (not (= -1 (string-index (surr:help) "4943" 0))) "help mentions 4943")
+
+(if (= *fails* 0)
+    (begin (display "OK-4943 surrogate\n"))
+    (begin
+      (display "FAIL-4943 fails=")
+      (display *fails*)
+      (newline)
+      (error "4943 suite failed")))

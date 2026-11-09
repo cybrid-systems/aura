@@ -1,0 +1,692 @@
+; lib/std/surrogate.aura — Issue #4943 (v0.2 P4): cheap prescreening for
+; expensive evaluations — small-sample Gaussian processes, a kNN fallback,
+; EI / LCB / Thompson acquisition, multi-fidelity staged evaluation and
+; statistical racing.
+;
+; Why: one agent-variant evaluation replays tasks, runs the safety checks
+; and a regression. A surrogate fitted on the candidates already measured
+; ranks the rest before paying that price (MOEA/D-EGO, Zhang et al. 2010;
+; ShinkaEvolve's cheap-checks-first gate, arXiv:2509.19349).
+;
+; Everything is a value: a model is a hash, a prescreen returns its audit
+; rows, and the staged evaluator / race return counters. No module state.
+;
+; Import: (require "std/surrogate" all:)
+;
+;   (surr:gp (hash "kernel" "rbf" "noise" 1e-6 "max-n" 200 "sense" "min"))
+;   (surr:knn (hash "k" 5))
+;   (surr:auto n d (hash ...))          ; knn for tiny/high-d samples, else gp
+;   (surr:fit! m X y)                   ; X = list of points, y = list of nums
+;   (surr:predict m x)                  ; -> (mean . var)
+;   (surr:ei m x best)                  ; expected improvement (maximize this)
+;   (surr:lcb m x kappa)                ; lower confidence bound
+;   (surr:ts m x)                       ; one Thompson sample
+;   (surr:prescreen m cands k opts)     ; -> hash "selected" / "rejected" / "audit"
+;   (surr:false-kill-rate rows k)       ; sampled-reject false-kill rate
+;   (evo:staged-eval cand stages)       ; cheap -> mid -> full, stop at first fail
+;   (evo:race cands evaluator opts)     ; paired statistical racing
+;
+; Conventions
+;   - "sense" is "min" (default) or "max". EI / LCB / TS read it.
+;   - A model standardizes X per dimension and y to zero mean / unit sd,
+;     which is what keeps the Cholesky factor well conditioned for the
+;     raw numeric genes (weights, parameters) the GP is meant for.
+;   - Code candidates: their AST features are sparse and high-dimensional,
+;     where a small-sample GP is both slow and inaccurate. (surr:auto)
+;     therefore falls back to kNN, per the issue's design note.
+;   - Prescreen never lies about what it skipped: every candidate gets one
+;     audit row with mean, variance, acquisition score and "sent".
+
+(export surr:gp surr:knn surr:auto surr:model?
+        surr:fit! surr:predict surr:ei surr:lcb surr:ts
+        surr:prescreen surr:false-kill-rate
+        surr:kernel surr:help
+        evo:staged-eval evo:race)
+
+(require "std/list" all:)
+
+; ── small numeric helpers ──────────────────────────────────────
+
+(define surr-sqrt2 1.4142135623730951)
+(define surr-sqrt5 2.23606797749979)
+(define surr-sqrt2pi 2.5066282746310002)
+(define surr-2pi 6.283185307179586)
+
+(define (surr-sum xs)
+  (foldl (lambda (acc x) (+ acc x)) 0.0 xs))
+
+(define (surr-list-ref xs i)
+  (if (or (< i 0) (null? xs)) #f
+    (if (= i 0) (car xs) (surr-list-ref (cdr xs) (- i 1)))))
+
+(define (surr-head xs k)
+  (if (or (<= k 0) (null? xs)) (quote ())
+    (cons (car xs) (surr-head (cdr xs) (- k 1)))))
+
+(define (surr-tail xs k)
+  (if (or (<= k 0) (null? xs)) xs (surr-tail (cdr xs) (- k 1))))
+
+(define (surr-mean xs)
+  (if (null? xs) 0.0 (/ (surr-sum xs) (length xs))))
+
+(define (surr-var xs)
+  (if (< (length xs) 2) 0.0
+    (let* ((m (surr-mean xs))
+           (ss (surr-sum (map (lambda (x) (let ((d (- x m))) (* d d))) xs))))
+      (/ ss (- (length xs) 1)))))
+
+(define (surr-sd xs) (sqrt (surr-var xs)))
+
+; erf via Abramowitz & Stegun 7.1.26 (|error| <= 1.5e-7)
+(define (surr-erf x)
+  (let* ((s (if (< x 0.0) -1.0 1.0))
+         (ax (abs x))
+         (t (/ 1.0 (+ 1.0 (* 0.3275911 ax))))
+         (poly (+ (* t (+ 0.254829592
+                          (* t (+ -0.284496736
+                                  (* t (+ 1.421413741
+                                          (* t (+ -1.453152027
+                                                  (* t 1.061405429)))))))))))
+         (y (- 1.0 (* poly (exp (- (* ax ax)))))))
+    (* s y)))
+
+(define (surr-norm-cdf z) (* 0.5 (+ 1.0 (surr-erf (/ z surr-sqrt2)))))
+(define (surr-norm-pdf z) (/ (exp (- (/ (* z z) 2.0))) surr-sqrt2pi))
+
+; Deterministic PRNG for Thompson sampling. (seed) -> state;
+; (state) -> (uniform . next-state).
+(define (surr-rng seed)
+  (let ((s (modulo (+ (* (if (number? seed) seed 1) 2654435761) 1013904223)
+                   4294967296)))
+    (if (= s 0) 1 s)))
+
+(define (surr-rand st)
+  (let* ((s (if (= st 0) 1 st))
+         (s1 (modulo (+ (* s 1664525) 1013904223) 4294967296)))
+    (cons (/ (* 1.0 s1) 4294967296.0) s1)))
+
+; Box-Muller; returns (z . next-state).
+(define (surr-rand-normal st)
+  (let* ((r1 (surr-rand st))
+         (u1 (if (< (car r1) 1e-12) 1e-12 (car r1)))
+         (r2 (surr-rand (cdr r1)))
+         (u2 (car r2)))
+    (cons (* (sqrt (* -2.0 (log u1))) (cos (* surr-2pi u2)))
+          (cdr r2))))
+
+; ── kernels ────────────────────────────────────────────────────
+
+; (surr:kernel name r2) — r2 is the squared normalized distance.
+; rbf: exp(-r2/2); matern52: (1 + sqrt5 r + 5r2/3) exp(-sqrt5 r).
+(define (surr:kernel name r2)
+  (cond
+    ((string=? name "matern52")
+     (let ((r (sqrt r2)))
+       (* (+ 1.0 (* surr-sqrt5 r) (* (/ 5.0 3.0) r2))
+          (exp (- (* surr-sqrt5 r))))))
+    ((string=? name "linear") (max 0.0 (- 1.0 (/ r2 2.0))))
+    (else (exp (- (/ r2 2.0))))))
+
+; ── model construction ─────────────────────────────────────────
+
+(define (surr-model kind opts)
+  (let ((o (if (hash? opts) opts (hash))))
+    (hash "kind" kind
+          "kernel" (hash-ref o "kernel" "rbf")
+          "noise" (hash-ref o "noise" 1e-6)
+          "max-n" (hash-ref o "max-n" 200)
+          "k" (hash-ref o "k" 5)
+          "sense" (hash-ref o "sense" "min")
+          "xi" (hash-ref o "xi" 0.01)
+          "kappa" (hash-ref o "kappa" 2.0)
+          "seed" (hash-ref o "seed" 42)
+          "ls" (hash-ref o "ls" 0.5)
+          "fitted" #f
+          "n" 0 "d" 0
+          "xmean" (quote ()) "xscale" (quote ())
+          "ymean" 0.0 "yscale" 1.0
+          "X" (quote ()) "y" (quote ())
+          "alpha" (quote ()) "chol" (quote ())
+          "jitter" 0.0)))
+
+(define (surr:gp opts) (surr-model "gp" opts))
+(define (surr:knn opts) (surr-model "knn" opts))
+(define (surr:model? m) (and (hash? m) (string? (hash-ref m "kind" #f))))
+
+; (surr:auto n d opts) — small or high-dimensional samples go to kNN;
+; numeric parameter searches use the GP.
+(define (surr:auto n d opts)
+  (let ((o (if (hash? opts) opts (hash))))
+    (if (or (< n 4) (> d 32))
+      (surr:knn o)
+      (surr:gp o))))
+
+; ── standardization ────────────────────────────────────────────
+
+(define (surr-column X j)
+  (map (lambda (row) (let ((v (surr-list-ref row j))) (if (number? v) v 0.0))) X))
+
+(define (surr-col-stats X d)
+  (let loop ((j 0) (means (quote ())) (scales (quote ())))
+    (if (>= j d) (list (reverse means) (reverse scales))
+      (let* ((col (surr-column X j))
+             (m (surr-mean col))
+             (s (surr-sd col))
+             (s (if (< s 1e-12) 1.0 s)))
+        (loop (+ j 1) (cons m means) (cons s scales))))))
+
+(define (surr-normalize-point x means scales)
+  (let loop ((xs x) (ms means) (ss scales) (acc (quote ())))
+    (if (or (null? xs) (null? ms) (null? ss)) (reverse acc)
+      (loop (cdr xs) (cdr ms) (cdr ss)
+            (cons (/ (- (if (number? (car xs)) (car xs) 0.0) (car ms)) (car ss))
+                  acc)))))
+
+(define (surr-normalize-X X means scales)
+  (map (lambda (row) (surr-normalize-point row means scales)) X))
+
+(define (surr-sq-dist a b)
+  (let loop ((xs a) (ys b) (acc 0.0))
+    (if (or (null? xs) (null? ys)) acc
+      (let ((d (- (car xs) (car ys))))
+        (loop (cdr xs) (cdr ys) (+ acc (* d d)))))))
+
+; ── Cholesky (small dense n, pure Aura) ────────────────────────
+
+; (surr-chol A n) -> (cons 'ok L) | (cons 'fail i)
+(define (surr-chol A n)
+  (let ((L (make-vector n #f)))
+    (let loop-i ((i 0))
+      (if (>= i n) (cons 'ok L)
+        (let ((row (make-vector n 0.0)))
+          (vector-set! L i row)
+          (let loop-j ((j 0))
+            (cond
+              ((>= j (+ i 1)) (loop-i (+ i 1)))
+              (else
+               (let* ((ai (vector-ref A i))
+                      (s0 (- (vector-ref ai j)
+                             (let sum-k ((k 0) (acc 0.0))
+                               (if (>= k j) acc
+                                 (sum-k (+ k 1)
+                                        (+ acc (* (vector-ref (vector-ref L i) k)
+                                                  (vector-ref (vector-ref L j) k)))))))))
+                 (if (= i j)
+                   (if (<= s0 1e-14)
+                     (cons 'fail i)
+                     (begin
+                       (vector-set! row j (sqrt s0))
+                       (loop-j (+ j 1))))
+                   (begin
+                     (vector-set! row j (/ s0 (vector-ref (vector-ref L j) j)))
+                     (loop-j (+ j 1)))))))))))))
+
+; Solve L L^T x = b (forward then back substitution).
+(define (surr-chol-solve L n b)
+  (let ((y (make-vector n 0.0)))
+    (let loop-i ((i 0))
+      (if (>= i n)
+        (let ((x (make-vector n 0.0)))
+          (let loop-b ((i (- n 1)))
+            (if (< i 0) x
+              (let* ((li (vector-ref L i))
+                     (s (let sum-k ((k (+ i 1)) (acc 0.0))
+                          (if (>= k n) acc
+                            ;; L^T[i][k] = L[k][i] — L itself is lower triangular.
+                            (sum-k (+ k 1)
+                                   (+ acc (* (vector-ref (vector-ref L k) i)
+                                             (vector-ref x k))))))))
+                (vector-set! x i (/ (- (vector-ref y i) s) (vector-ref li i)))
+                (loop-b (- i 1))))))
+        (let* ((li (vector-ref L i))
+               (s (let sum-k ((k 0) (acc 0.0))
+                    (if (>= k i) acc
+                      (sum-k (+ k 1) (+ acc (* (vector-ref li k) (vector-ref y k))))))))
+          (vector-set! y i (/ (- (vector-ref b i) s) (vector-ref li i)))
+          (loop-i (+ i 1)))))))
+
+; ── fitting ────────────────────────────────────────────────────
+
+(define (surr-fit-kernel m Xn jitter)
+  (let* ((n (length Xn))
+         (kernel (hash-ref m "kernel" "rbf"))
+         (ls (max 1e-6 (hash-ref m "ls" 0.5)))
+         (ls2 (* ls ls))
+         (noise (+ (hash-ref m "noise" 1e-6) jitter))
+         (A (make-vector n #f)))
+    (let loop-i ((i 0))
+      (if (>= i n) A
+        (let* ((xi (surr-list-ref Xn i))
+               (row (make-vector n 0.0)))
+          (vector-set! A i row)
+          (let loop-j ((j 0))
+            (if (>= j n) (loop-i (+ i 1))
+              (begin
+                (vector-set! row j
+                             (if (= i j)
+                               (+ 1.0 noise)
+                               (surr:kernel kernel
+                                            (/ (surr-sq-dist xi (surr-list-ref Xn j))
+                                               ls2))))
+                (loop-j (+ j 1))))))))))
+
+(define (surr-max-abs-vec v)
+  (let loop ((i 0) (acc 0.0))
+    (if (>= i (vector-length v)) acc
+      (loop (+ i 1) (max acc (abs (vector-ref v i)))))))
+
+(define (surr-vec-of xs)
+  (let* ((n (length xs)) (v (make-vector n 0.0)))
+    (let loop ((i 0) (ys xs))
+      (if (< i n)
+        (begin (vector-set! v i (car ys)) (loop (+ i 1) (cdr ys)))))
+    v))
+
+(define (surr-store-fit m n d means scales ym ysd Xn yn alpha L)
+  (let* ((m1 (hash-set m "fitted" #t))
+         (m2 (hash-set m1 "n" n))
+         (m3 (hash-set m2 "d" d))
+         (m4 (hash-set m3 "xmean" means))
+         (m5 (hash-set m4 "xscale" scales))
+         (m6 (hash-set m5 "ymean" ym))
+         (m7 (hash-set m6 "yscale" ysd))
+         (m8 (hash-set m7 "X" Xn))
+         (m9 (hash-set m8 "y" yn)))
+    (hash-set (hash-set m9 "alpha" alpha) "chol" L)))
+
+(define (surr-fit-raw m X y)
+  (if (or (null? X) (null? y) (not (= (length X) (length y))))
+    (hash-set m "fitted" #f)
+    (let* ((n (length X))
+           (d (length (car X)))
+           (maxn (hash-ref m "max-n" 200))
+           (trunc (if (> n maxn) maxn n))
+           (X0 (surr-head X trunc))
+           (y0 (surr-head y trunc))
+           (st (surr-col-stats X0 d))
+           (means (car st))
+           (scales (car (cdr st)))
+           (ym (surr-mean y0))
+           (raw-sd (surr-sd y0))
+           (ysd (if (< raw-sd 1e-12) 1.0 raw-sd))
+           (Xn (surr-normalize-X X0 means scales))
+           (yn (map (lambda (v) (/ (- v ym) ysd)) y0))
+           (gamma (surr-vec-of yn)))
+      (let try-jitter ((jitter 0.0) (attempt 0))
+        (cond
+          ((> attempt 8) (hash-set m "fitted" #f))
+          (else
+           (let* ((A (surr-fit-kernel m Xn jitter))
+                  (c (surr-chol A trunc)))
+             (if (eq? (car c) 'fail)
+               (try-jitter (if (= jitter 0.0) 1e-8 (* jitter 10.0)) (+ attempt 1))
+               (let* ((L (cdr c))
+                      (alpha (surr-chol-solve L trunc gamma)))
+                 ;; A near-singular K can still factor but produces wild
+                 ;; alpha; that is silent garbage, so treat it like a
+                 ;; failed factorization and regularize instead.
+                 (if (> (surr-max-abs-vec alpha) 1.0e4)
+                   (try-jitter (if (= jitter 0.0) 1e-6 (* jitter 10.0))
+                               (+ attempt 1))
+                   (surr-store-fit m trunc d means scales ym ysd Xn yn alpha L)))))))))))
+
+; (surr:fit! m X y) — refit and return a NEW model.
+(define (surr:fit! m X y)
+  (let ((m (if (surr:model? m) m (surr:gp (hash)))))
+    (if (string=? (hash-ref m "kind" "gp") "knn")
+      (if (or (null? X) (not (= (length X) (length y))))
+        (hash-set m "fitted" #f)
+        (let* ((n (length X))
+               (d (length (car X)))
+               (st (surr-col-stats X d))
+               (means (car st))
+               (scales (car (cdr st)))
+               (m1 (hash-set (hash-set (hash-set (hash-set m "fitted" #t) "n" n)
+                                       "d" d)
+                             "xmean" means)))
+          (hash-set
+           (hash-set (hash-set m1 "xscale" scales)
+                     "X" (surr-normalize-X X means scales))
+           "y" y)))
+      (surr-fit-raw m X y))))
+
+; ── prediction ─────────────────────────────────────────────────
+
+(define (surr-gp-predict m x)
+  (let* ((Xn (hash-ref m "X" (quote ())))
+         (n (hash-ref m "n" 0))
+         (L (hash-ref m "chol" #f))
+         (alpha (hash-ref m "alpha" (quote ())))
+         (noise (hash-ref m "noise" 1e-6))
+         (xn (surr-normalize-point x (hash-ref m "xmean" (quote ()))
+                                   (hash-ref m "xscale" (quote ()))))
+         (kernel (hash-ref m "kernel" "rbf"))
+         (ls2 (let ((ls (hash-ref m "ls" 0.5))) (* ls ls)))
+         (kvec (make-vector (max n 1) 0.0)))
+    (let loop ((i 0) (rows Xn))
+      (if (< i n)
+        (begin
+          (vector-set! kvec i
+                       (surr:kernel kernel
+                                    (/ (surr-sq-dist xn (car rows)) ls2)))
+          (loop (+ i 1) (cdr rows)))))
+    (let* ((alphav (if (vector? alpha) alpha (surr-vec-of alpha)))
+           (meanN (let loop ((i 0) (acc 0.0))
+                    (if (>= i n) acc
+                      (loop (+ i 1) (+ acc (* (vector-ref kvec i)
+                                              (vector-ref alphav i)))))))
+           (v (if (vector? L) (surr-chol-solve L n kvec) (vector 0.0)))
+           (vn (let loop ((i 0) (acc 0.0))
+                 (if (>= i n) acc
+                   (loop (+ i 1) (+ acc (* (vector-ref v i) (vector-ref v i)))))))
+           (varN (max 0.0 (- (+ 1.0 noise) vn)))
+           (ys (hash-ref m "yscale" 1.0))
+           (ym (hash-ref m "ymean" 0.0)))
+      (cons (+ ym (* ys meanN)) (max 1e-12 (* ys ys varN))))))
+
+(define (surr-knn-predict m x)
+  (let* ((Xn (hash-ref m "X" (quote ())))
+         (y (hash-ref m "y" (quote ())))
+         (n (length Xn))
+         (k (min (hash-ref m "k" 5) n))
+         (xn (surr-normalize-point x (hash-ref m "xmean" (quote ()))
+                                   (hash-ref m "xscale" (quote ()))))
+         (rows (map (lambda (xi yi) (cons (surr-sq-dist xn xi) yi))
+                    Xn y))
+         (sorted (sort rows (lambda (a b) (< (car a) (car b)))))
+         (near (map cdr (surr-head sorted k)))
+         (mean (surr-mean near))
+         (sd (surr-sd near)))
+    (cons mean (max 1e-12 (* sd sd)))))
+
+(define (surr:predict m x)
+  (if (not (and (surr:model? m) (hash-ref m "fitted" #f)))
+    (cons (hash-ref m "ymean" 0.0) 1e12)
+    (if (string=? (hash-ref m "kind" "gp") "knn")
+      (surr-knn-predict m x)
+      (surr-gp-predict m x))))
+
+; ── acquisitions ───────────────────────────────────────────────
+
+(define (surr-sense m) (hash-ref m "sense" "min"))
+
+; Expected improvement over best (the incumbent's objective value).
+(define (surr:ei m x best)
+  (let* ((p (surr:predict m x))
+         (mu (car p))
+         (sigma (sqrt (cdr p)))
+         (xi (hash-ref m "xi" 0.01))
+         (sign (if (string=? (surr-sense m) "max") 1.0 -1.0))
+         (improve (- (* sign (- mu best)) xi)))
+    (if (<= sigma 1e-9)
+      (max 0.0 improve)
+      (let* ((z (/ improve sigma)))
+        (+ (* improve (surr-norm-cdf z)) (* sigma (surr-norm-pdf z)))))))
+
+; Lower confidence bound; minimize it for "min" sense, maximize for "max".
+(define (surr:lcb m x . rest)
+  (let* ((p (surr:predict m x))
+         (kappa (if (null? rest) (hash-ref m "kappa" 2.0) (car rest)))
+         (sigma (sqrt (cdr p))))
+    (if (string=? (surr-sense m) "max")
+      (+ (car p) (* kappa sigma))
+      (- (car p) (* kappa sigma)))))
+
+; Deterministic seed from a point: scales coordinates to integers.
+(define (surr-point-seed base x)
+  (let loop ((xs x) (acc base))
+    (if (null? xs) acc
+      (loop (cdr xs)
+            (modulo (+ (* acc 31)
+                       (if (number? (car xs))
+                         (abs (round (* 1000.0 (car xs))))
+                         7))
+                    2147483647)))))
+
+; One Thompson sample: deterministic for a given (model seed, x).
+(define (surr:ts m x . rest)
+  (let* ((p (surr:predict m x))
+         (seed (if (and (pair? rest) (number? (car rest)))
+                 (car rest)
+                 (surr-point-seed (hash-ref m "seed" 42) x)))
+         (camp (surr-rand-normal (surr-rng seed))))
+    (+ (car p) (* (sqrt (cdr p)) (car camp)))))
+
+; ── prescreening with audit ────────────────────────────────────
+
+(define (surr-acq-score m cand opts)
+  (let ((acq (hash-ref opts "acq" "ei"))
+        (best (hash-ref opts "best" #f))
+        (seed (hash-ref opts "seed" (hash-ref m "seed" 42))))
+    (cond
+      ((string=? acq "lcb")
+       (let ((b (surr:lcb m cand (hash-ref opts "kappa" (hash-ref m "kappa" 2.0)))))
+         (if (string=? (surr-sense m) "max") b (- b))))
+      ((string=? acq "ts") (surr:ts m cand seed))
+      (else
+       (let* ((p (surr:predict m cand))
+              (b (if (number? best) best (car p))))
+         (surr:ei m cand b))))))
+
+(define (surr-audit-row m cand idx opts)
+  (let* ((p (surr:predict m cand))
+         (score (surr-acq-score m cand opts)))
+    (hash "index" idx
+          "candidate" cand
+          "mean" (car p)
+          "var" (cdr p)
+          "score" score
+          "sent" #f)))
+
+(define (surr-memq-row row rows)
+  (let loop ((xs rows))
+    (if (null? xs) #f
+      (if (eq? (car xs) row) #t (loop (cdr xs))))))
+
+; (surr:prescreen m cands k opts) -> hash
+;   "selected" top-k rows in acquisition order
+;   "rejected" the rest
+;   "audit"    every row (mean, var, score, sent)
+;   "sampled"  rejected rows picked for a full-evaluation spot check
+; opts: "acq" "ei"|"lcb"|"ts", "best", "audit-sample" (0..1)
+(define (surr:prescreen m cands k . rest)
+  (let* ((opts (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (rows (let loop ((cs cands) (i 0) (acc (quote ())))
+                 (if (null? cs) (reverse acc)
+                   (loop (cdr cs) (+ i 1)
+                         (cons (surr-audit-row m (car cs) i opts) acc)))))
+         (ranked (sort rows (lambda (a b) (> (hash-ref a "score" 0.0)
+                                             (hash-ref b "score" 0.0)))))
+         (kk (max 0 k))
+         (sel (surr-head ranked kk))
+         (rej (if (>= (length ranked) kk) (surr-tail ranked kk) (quote ())))
+         (frac (hash-ref opts "audit-sample" 0.0))
+         (sample-n (if (<= frac 0.0) 0
+                     (min (length rej) (max 1 (round (* frac (length rej)))))))
+         (sampled (surr-head rej sample-n))
+         (sel-marked (map (lambda (r) (hash-set r "sent" #t)) sel))
+         (audit (append sel-marked
+                        (map (lambda (r) (if (surr-memq-row r sampled)
+                                           (hash-set r "sampled" #t)
+                                           r))
+                             rej))))
+    (hash "selected" sel-marked
+          "rejected" rej
+          "audit" audit
+          "sampled" sampled
+          "k" kk
+          "acq" (hash-ref opts "acq" "ei"))))
+
+; (surr:false-kill-rate rows k) — of the rejected candidates that were
+; spot-checked (rows with "sampled" #t and a "true" score filled in by the
+; caller), what fraction would have made the true top-k? That is the
+; prescreen's false-kill rate; report it instead of hiding it.
+(define (surr:false-kill-rate rows k)
+  (let* ((sampled (filter (lambda (r) (and (hash-ref r "sampled" #f)
+                                           (number? (hash-ref r "true" #f))))
+                          rows))
+         (known (filter (lambda (r) (number? (hash-ref r "true" #f))) rows))
+         (best (sort known (lambda (a b) (> (hash-ref a "true" 0.0)
+                                            (hash-ref b "true" 0.0)))))
+         (cut (if (and (>= (length best) k) (> k 0))
+                (hash-ref (car (surr-tail best (- k 1))) "true" 0.0)
+                -1.0e300))
+         (killed (length (filter (lambda (r) (>= (hash-ref r "true" 0.0) cut))
+                                 sampled))))
+    (hash "sampled" (length sampled)
+          "killed" killed
+          "cut" cut
+          "rate" (if (null? sampled) 0.0 (/ (* 1.0 killed) (length sampled))))))
+
+; ── multi-fidelity staged evaluation ───────────────────────────
+
+(define (surr-stage-ok? v)
+  (cond
+    ((eq? v #f) #f)
+    ((hash? v) (if (hash-ref v "ok" #t) #t #f))
+    (else #t)))
+
+(define (surr-stage-score v)
+  (cond
+    ((number? v) v)
+    ((hash? v) (hash-ref v "score" #f))
+    (else #f)))
+
+; (evo:staged-eval cand stages [opts])
+; stages: ((name . fn) ...) cheap -> expensive. fn is (lambda (cand) value):
+;   #f or (hash "ok" #f)           -> failed here; later stages never run
+;   number                         -> pass, score
+;   (hash "ok" #t "score" n)       -> pass, score n
+;   #t / anything else             -> pass, no score
+; Result: "ok", "stage" (last reached), "score", "stages" (per-stage audit
+; with ms), "evaluations" (how many stage fns ran), "stopped-at".
+(define (evo:staged-eval cand stages . rest)
+  (let loop ((ss stages) (names (quote ())) (rows (quote ()))
+             (count 0) (ok #t) (score #f))
+    (if (or (null? ss) (not ok))
+      (hash "candidate" cand
+            "ok" ok
+            "stage" (if (null? names) #f (car names))
+            "score" score
+            "stages" (reverse rows)
+            "evaluations" count
+            ;; 0-based index of the failing level (0 = the first stage).
+            "stopped-at" (if ok #f (- count 1)))
+      (let* ((name (car (car ss)))
+             (fn (cdr (car ss)))
+             (t0 (monotonic-ms))
+             (v (try (fn cand) (catch (e) (list 'error e))))
+             (ms (- (monotonic-ms) t0))
+             (threw (and (pair? v) (eq? (car v) 'error)))
+             (stage-ok (and (not threw) (surr-stage-ok? v)))
+             (row (hash "name" name
+                        "ok" stage-ok
+                        "value" (if threw 'error v)
+                        "ms" ms)))
+        (loop (cdr ss)
+              (cons name names)
+              (cons row rows)
+              (+ count 1)
+              stage-ok
+              (if stage-ok (surr-stage-score v) score))))))
+
+; ── statistical racing ─────────────────────────────────────────
+
+; one-sided z for common alphas
+(define (surr-z alpha)
+  (cond ((<= alpha 0.01) 2.326)
+        ((<= alpha 0.025) 1.96)
+        ((<= alpha 0.05) 1.645)
+        ((<= alpha 0.10) 1.282)
+        (else 1.0)))
+
+(define (surr-eval-score v)
+  (cond ((number? v) v)
+        ((hash? v) (let ((s (hash-ref v "score" #f)))
+                     (if (number? s) s 0.0)))
+        ((eq? v #t) 1.0)
+        (else 0.0)))
+
+(define (surr-score-list evaluator sign c insts)
+  (map (lambda (i) (* sign (surr-eval-score (evaluator c i)))) insts))
+
+(define (surr-mean-score evaluator sign c insts)
+  (surr-mean (surr-score-list evaluator sign c insts)))
+
+; paired mean/se of (a - b) over equal-length score lists
+(define (surr-paired a b)
+  (let* ((ds (map (lambda (x y) (- x y)) a b))
+         (n (length ds))
+         (m (surr-mean ds))
+         (se (if (< n 2) 0.0 (/ (surr-sd ds) (sqrt n)))))
+    (cons m se)))
+
+; (evo:race cands evaluator opts)
+;   evaluator: (lambda (cand instance) value)
+;   opts: "alpha" 0.05, "instances" (list ...), "sense" "max", "batch" 1,
+;         "min-samples" 2
+; Successive rounds: every survivor gets the next batch of instances; a
+; survivor is dropped when its paired mean is worse than the incumbent by
+; more than z * se (clearly worse, not noise). Returns the winner, the
+; final ranking, per-round audit and the evaluation count.
+(define (evo:race cands evaluator . rest)
+  (let* ((opts (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (alpha (hash-ref opts "alpha" 0.05))
+         (instances (hash-ref opts "instances" (list #f)))
+         (batch (max 1 (hash-ref opts "batch" 1)))
+         (min-n (max 2 (hash-ref opts "min-samples" 2)))
+         (sense (hash-ref opts "sense" "max"))
+         (z (surr-z alpha))
+         (sign (if (string=? sense "max") 1.0 -1.0)))
+    (let loop ((alive cands) (used (quote ())) (rounds (quote ())) (count 0))
+      (let* ((block (surr-head (surr-tail instances (length used)) batch)))
+        (if (or (null? (cdr alive)) (null? block))
+          (let* ((ranked (sort (map (lambda (c)
+                                      (cons (surr-mean-score evaluator sign c used) c))
+                                    alive)
+                               (lambda (a b) (> (car a) (car b)))))
+                 (winner (if (null? ranked) #f (cdr (car ranked)))))
+            (hash "winner" winner
+                  "ranking" (map cdr ranked)
+                  "scores" (map car ranked)
+                  "rounds" (reverse rounds)
+                  "evaluations" count
+                  "instances-used" (length used)))
+          (let* ((new-used (append used block))
+                 (full (map (lambda (c)
+                              (cons c (surr-mean-score evaluator sign c new-used)))
+                            alive))
+                 (best (foldl (lambda (acc e)
+                                (if (or (not acc) (> (cdr e) (cdr acc))) e acc))
+                              #f full))
+                 (best-c (car best))
+                 (best-scores (surr-score-list evaluator sign best-c new-used))
+                 (keep (filter
+                        (lambda (e)
+                          (let* ((c (car e))
+                                 (cs (surr-score-list evaluator sign c new-used))
+                                 (p (surr-paired cs best-scores))
+                                 (m (car p))
+                                 (se (cdr p))
+                                 (n (length cs)))
+                            (or (equal? c best-c)
+                                (< n min-n)
+                                (> m (* -1.0 z (max se 1e-9))))))
+                        full))
+                 (round (hash "block" block
+                              "means" (map (lambda (e) (cons (cdr e) (car e))) full)
+                              "kept" (length keep)
+                              "best" best-c)))
+            (loop (map car keep) new-used (cons round rounds)
+                  (+ count (* (length alive) (length block))))))))))
+
+(define (surr:help)
+  (string-append
+   "std/surrogate (#4943)\n"
+   "  (surr:gp (hash \"kernel\" \"rbf\"|\"matern52\" \"noise\" 1e-6 \"max-n\" 200))\n"
+   "  (surr:knn (hash \"k\" 5))            ; fallback for AST / high-d features\n"
+   "  (surr:fit! m X y) (surr:predict m x) ; -> (mean . var)\n"
+   "  (surr:ei m x best) (surr:lcb m x kappa) (surr:ts m x)\n"
+   "  (surr:prescreen m cands k (hash \"acq\" \"ei\"|\"lcb\"|\"ts\"))\n"
+   "  (evo:staged-eval cand (list (cons \"parse+contract\" f1) (cons \"holdout-80\" f2)))\n"
+   "  (evo:race cands evaluator (hash \"alpha\" 0.05))\n"))
