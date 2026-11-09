@@ -80,9 +80,17 @@ class FirstErrorStops(unittest.TestCase):
         self.assertEqual(p.returncode, 1, p.stderr)
         self.assertEqual(p.stdout, "a\nstill running\n3\n", p.stderr)
 
-    def test_query_op_names_primitive(self) -> None:
+    def test_query_ops_dispatch_and_reject_unknown(self) -> None:
+        # Issue #5009 replaced the query:<name> surface with (query :op):
+        # :code is now a valid op that dispatches to the query:code primitive.
         p = _run([], "(display (query :code))\n")
-        self.assertIn("did you mean (query:code", p.stdout + p.stderr)
+        out = p.stdout + p.stderr
+        self.assertIn("no-workspace", out)
+        self.assertNotIn("unknown query op", out)
+
+        p = _run([], "(display (query :zzz))\n")
+        out = p.stdout + p.stderr
+        self.assertIn("unknown query op", out)
 
 
 if __name__ == "__main__":
