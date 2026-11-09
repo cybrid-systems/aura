@@ -1,0 +1,129 @@
+; tests/suite/search_protocol.aura — Issue #5007
+; One protocol: search:init / search:step / search:best / search:export.
+; State is a value. Covers grid / pso / abc / fss / ant (the former
+; #2875-#2880 module-per-algorithm invariants) through search:step.
+
+(require "std/search" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+    (begin (display "  pass: ") (display msg) (newline))
+    (begin
+      (set! *fails* (+ *fails* 1))
+      (display "  FAIL: ") (display msg) (newline))))
+
+(define (sphere v)
+  (let loop ((xs v) (s 0.0))
+    (if (null? xs) (- 0.0 s) (loop (cdr xs) (+ s (* (car xs) (car xs)))))))
+
+(define (in-bounds? v bounds)
+  (let loop ((xs v) (bs bounds))
+    (cond ((null? xs) #t)
+          ((null? bs) #t)
+          ((and (>= (car xs) (car (car bs)))
+                (<= (car xs) (car (cdr (car bs)))))
+           (loop (cdr xs) (cdr bs)))
+          (else #f))))
+
+; ── protocol shape ──
+(display "AC1 protocol shape\n")
+(define s0 (search:init "grid" (hash "dim" 1 "pop" 4 "bins" 4
+                                     "bounds" (list (list -1.0 1.0)))))
+(assert! (pair? (search:pending s0)) "init yields pending candidates")
+(assert! (= 4 (length (search:pending s0))) "grid window = pop")
+(assert! (not (search:complete? s0)) "pending is not empty at init")
+(assert! (= 0 (search:gen s0)) "gen starts at 0")
+(assert! (not (pair? (search:best s0))) "no best before a score")
+(define s1 (search:step s0 (sphere (car (search:pending s0)))))
+(assert! (pair? (search:best s1)) "one score produces a best")
+(assert! (number? (search:best-score s1)) "best-score is a number")
+(assert! (equal? (hash-ref (search:export s1) "best-score" #f)
+                  (search:best-score s1))
+         "export carries the best score")
+
+; two states do not share progress
+(define a (search:batch s0 sphere))
+(define b (search:batch s0 sphere))
+(assert! (= (search:gen a) (search:gen b)) "same input → same generation")
+(define c (search:batch a sphere))
+(assert! (> (search:gen c) (search:gen b)) "one state advances alone")
+(assert! (= (search:gen b) 1) "the other state stayed put")
+(assert! (hash? (search:export c)) "export is a persistable value")
+(assert! (equal? (hash-ref (search:export c) "kind" #f) "grid")
+         "export keeps the kind")
+
+; ── grid: windowed discrete product ──
+(display "AC2 grid\n")
+(define g (search:run (search:init "grid" (hash "dim" 1 "pop" 5 "bins" 5
+                                               "bounds" (list (list -1.0 1.0))))
+                      sphere 2))
+(assert! (= 0.0 (search:best-score g)) "grid finds the optimum of a 5-bin sphere")
+(assert! (< (abs (car (search:best g))) 0.01) "grid best vector is the zero point")
+
+; ── pso: bounded, improves ──
+(display "AC3 pso\n")
+(define bounds2 (list (list -2.0 2.0) (list -2.0 2.0)))
+(define p0 (search:init "pso" (hash "dim" 2 "pop" 10 "bounds" bounds2 "seed" 11)))
+(define p1 (search:run p0 sphere 15))
+(assert! (string=? (search:kind p1) "pso") "kind survives steps")
+(assert! (in-bounds? (search:best p1) bounds2) "pso keeps candidates inside bounds")
+(assert! (> (search:best-score p1) (search:best-score (search:batch p0 sphere)))
+         "pso improves on its first generation")
+(assert! (> (search:best-score p1) -0.05) "pso reaches near the optimum")
+(define p2 (search:run (search:init "pso" (hash "dim" 2 "pop" 10 "bounds" bounds2
+                                                 "seed" 11)) sphere 15))
+(assert! (equal? (search:best p1) (search:best p2)) "pso is deterministic per seed")
+
+; ── abc: population preserved, improves ──
+(display "AC4 abc\n")
+(define abc0 (search:init "abc" (hash "dim" 2 "pop" 10 "bounds" bounds2
+                                          "limit" 4 "start" (list 2.0 2.0))))
+(define abc1 (search:run abc0 sphere 12))
+(assert! (= 10 (length (search:pending abc1))) "abc keeps its food sources")
+(assert! (> (search:best-score abc1) -8.0) "abc improves on a far start")
+(assert! (< (abs (car (search:best abc1))) 2.0) "abc left the worse start")
+(assert! (in-bounds? (search:best abc1) bounds2) "abc stays inside bounds")
+
+; ── fss: feeding + volitive move, improves ──
+(display "AC5 fss\n")
+(define f0 (search:init "fss" (hash "dim" 2 "pop" 12 "bounds" bounds2
+                                        "step" 0.2 "start" (list 2.0 2.0))))
+(define f1 (search:run f0 sphere 15))
+(assert! (= 12 (length (search:pending f1))) "fss keeps the school size")
+(assert! (> (search:best-score f1) -8.0) "fss improves on a far start")
+(assert! (< (abs (car (search:best f1))) 2.0) "fss left the worse start")
+(assert! (in-bounds? (search:best f1) bounds2) "fss stays inside bounds")
+
+; ── ant: pheromone ranking of operator names ──
+(display "AC6 ant\n")
+(define ops (list "weak" "strong"))
+(define (op-score op) (if (string=? op "strong") 1.0 0.2))
+(define ant1 (search:run (search:init "ant" (hash "ops" ops "pop" 4
+                                                  "evaporate" 0.5)) op-score 15))
+(assert! (string=? (search:best ant1) "strong")
+         "ant ranks the higher-reward operator first")
+(assert! (= 1.0 (search:best-score ant1)) "ant keeps the observed reward")
+(assert! (= 4 (length (search:pending ant1))) "ant samples pop operators per step")
+
+; ── kind discipline ──
+(display "AC7 kinds\n")
+(assert! (member "es" (search:kinds)) "es is a kind")
+(assert! (member "anneal" (search:kinds)) "anneal is a kind")
+(assert! (member "bandit" (search:kinds)) "bandit is a kind")
+(assert! (member "beam" (search:kinds)) "beam is a kind")
+(assert! (not (member "boids" (search:kinds))) "boids is not a kind")
+(assert! (equal? (try (search:init "boids" (hash)) (catch (e) 'refused)) 'refused)
+         "boids does not initialise as a search")
+(assert! (equal? (try (search:init "cma-es" (hash)) (catch (e) 'refused)) 'refused)
+         "reserved kind cma-es is refused")
+(assert! (equal? (try (search:init "mcts" (hash)) (catch (e) 'refused)) 'refused)
+         "reserved kind mcts is refused")
+
+(if (= *fails* 0)
+  (begin (display "OK-5007 search protocol\n"))
+  (begin
+    (display "FAIL-5007 fails=")
+    (display *fails*)
+    (newline)
+    (error "5007 protocol suite failed")))

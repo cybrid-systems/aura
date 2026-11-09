@@ -1,0 +1,42 @@
+; tests/suite/search_annealing.aura — Issue #5007
+; Simulated annealing leaves a worse start on a small discrete neighborhood.
+
+(require "std/search" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+    (begin (display "  pass: ") (display msg) (newline))
+    (begin
+      (set! *fails* (+ *fails* 1))
+      (display "  FAIL: ") (display msg) (newline))))
+
+(define (quad v) (let ((x (car v))) (- 0.0 (* (- x 1.0) (- x 1.0)))))
+
+(display "AC1 annealing from a worse start\n")
+(define opts (hash "start" (list 5.0) "step" 0.8 "temp" 2.0
+                   "cooling" 0.9 "bounds" (list (list -5.0 5.0))))
+(define a0 (search:init "anneal" opts))
+(assert! (= 1 (length (search:pending a0))) "annealing proposes one edit at a time")
+(define start-score (quad (list 5.0)))
+(define a1 (search:run a0 quad 60))
+(assert! (> (search:best-score a1) start-score) "best beats the worse start")
+(assert! (< (abs (- (car (search:best a1)) 1.0))
+            (abs (- 5.0 1.0)))
+         "best moved toward the optimum")
+(assert! (= 60 (search:gen a1)) "every accepted step advances a generation")
+
+; a colder run explores less and still keeps the best seen
+(define a2 (search:run (search:init "anneal" (hash "start" (list 5.0) "step" 0.3
+                                                   "temp" 0.2 "cooling" 0.8
+                                                   "bounds" (list (list -5.0 5.0))))
+                       quad 40))
+(assert! (> (search:best-score a2) start-score) "cold annealing still improves")
+
+(if (= *fails* 0)
+  (begin (display "OK-5007 annealing\n"))
+  (begin
+    (display "FAIL-5007-anneal fails=")
+    (display *fails*)
+    (newline)
+    (error "5007 annealing suite failed")))

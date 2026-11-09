@@ -1,0 +1,55 @@
+; tests/suite/search_evolution_strategy.aura — Issue #5007
+; (μ, λ) evolution strategy on a quadratic, plus a discrete GA.
+; No network: fitness is arithmetic.
+
+(require "std/search" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+    (begin (display "  pass: ") (display msg) (newline))
+    (begin
+      (set! *fails* (+ *fails* 1))
+      (display "  FAIL: ") (display msg) (newline))))
+
+(define (quad v) (let ((x (car v))) (- 0.0 (* (- x 1.0) (- x 1.0)))))
+(define (ones v) (foldl (lambda (acc x) (+ acc x)) 0.0 v))
+
+; ── continuous ES ──
+(display "AC1 evolution strategy on a quadratic\n")
+(define opts (hash "dim" 1 "pop" 8 "mu" 4 "lambda" 8 "sigma" 0.8
+                   "bounds" (list (list -5.0 5.0))))
+(define e0 (search:init "es" opts))
+(define e1 (search:batch e0 quad))
+(define e2 (search:run e0 quad 20))
+(assert! (string=? (search:kind e2) "es") "kind is es")
+(assert! (> (search:best-score e2) (search:best-score e1))
+         "ES improves on its first generation")
+(assert! (> (search:best-score e2) -0.01) "ES reaches near x=1")
+(assert! (< (abs (- (car (search:best e2)) 1.0)) 0.2) "best gene is close to 1")
+(assert! (= 8 (length (search:pending e2))) "λ offspring are pending each step")
+
+; deterministic per seed
+(define e3 (search:run (search:init "es" opts) quad 20))
+(assert! (equal? (search:best e2) (search:best e3)) "ES is deterministic per seed")
+
+; ── discrete GA: crossover + mutation + elites ──
+(display "AC2 genetic algorithm on a bit string\n")
+(define gopts (hash "dim" 8 "pop" 8 "mu" 4 "lambda" 8 "discrete" #t
+                    "bounds" (list (list 0 1))))
+(define g1 (search:run (search:init "es" gopts) ones 12))
+(assert! (>= (search:best-score g1) 6.0) "GA keeps at least six ones")
+(assert! (= 8 (length (search:best g1))) "GA candidate is a full bit string")
+(assert! (let loop ((xs (search:best g1)))
+           (cond ((null? xs) #t)
+                 ((or (= (car xs) 0) (= (car xs) 1)) (loop (cdr xs)))
+                 (else #f)))
+         "GA genes are 0 or 1")
+
+(if (= *fails* 0)
+  (begin (display "OK-5007 evolution strategy\n"))
+  (begin
+    (display "FAIL-5007-es fails=")
+    (display *fails*)
+    (newline)
+    (error "5007 ES suite failed")))

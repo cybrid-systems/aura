@@ -1,0 +1,841 @@
+; lib/std/search.aura — one search protocol over the program space (#5007)
+;
+; A search is a VALUE and one step of it is one score:
+;
+;   (search:init kind options)  → state
+;   (search:pending state)      → candidates still needing a score
+;   (search:step state score)   → state          ; score the head candidate
+;   (search:batch state fitness)→ state          ; score all pending
+;   (search:run state fitness n)→ state          ; n batches
+;   (search:best state)         → candidate
+;   (search:export state)       → persistable value (no closures)
+;
+; Higher is better. The caller owns fitness and commit; this module only
+; proposes candidates. State lives in an alist value, never in a module
+; variable, so two searches can run side by side.
+;
+; Candidates
+;   vector  — list of numbers              (grid pso abc fss es anneal)
+;   arm     — a string name                (ant bandit)
+;   edits   — ordered list of edit names   (beam)
+;
+; Kinds
+;   grid    discrete linspace product, windowed (#2875 baseline)
+;   pso     particle swarm, inertia w / cognitive c1 / social c2 (#2877)
+;   abc     artificial bee colony: employ / onlooker / scout (#2878)
+;   fss     fish school search: feeding + volitive (#2880)
+;   ant     mutation-operator pheromone ranking (#2876)
+;   es      (μ, λ) evolution strategy; "discrete" #t → GA with elites
+;   anneal  simulated annealing over one candidate
+;   bandit  UCB / Thompson over arms (shared with std/evo)
+;   beam    beam search over a finite edit tree
+;
+; boids is not a kind: it is coupling between agents, and it stays a
+; std/orch coordination example (#5007).
+;
+; Reserved kind names (not implemented in this version): "cma-es",
+; "mcts", "bayes-opt". search:init refuses them.
+;
+; Import: (require "std/search" all:)
+
+(export search:init search:step search:batch search:run search:pending
+        search:best search:best-score search:export search:kind search:gen
+        search:kinds search:complete? search:help)
+
+(require "std/list" all:)
+(require "std/string" all:)
+
+;; ═══════════════════════════════════════════════════════════════
+;; State: alist (string keys). Values only — export is the same shape
+;; with closures (none today) and channels excluded.
+;; ═══════════════════════════════════════════════════════════════
+
+(define (sget st key default)
+  (let loop ((xs st))
+    (cond ((null? xs) default)
+          ((equal? (car (car xs)) key) (cdr (car xs)))
+          (else (loop (cdr xs))))))
+
+(define (sput st key val)
+  (cond ((null? st) (list (cons key val)))
+        ((equal? (car (car st)) key) (cons (cons key val) (cdr st)))
+        (else (cons (car st) (sput (cdr st) key val)))))
+
+
+; options may be a hash (the documented form) or an alist (internal reuse)
+(define (oget o key default)
+  (cond ((hash? o) (hash-ref o key default))
+        ((pair? o) (sget o key default))
+        (else default)))
+
+(define (search:kind st) (sget st "kind" "grid"))
+(define (search:gen st) (sget st "gen" 0))
+(define (search:pending st) (sget st "pending" (quote ())))
+(define (search:best st) (sget st "best" #f))
+(define (search:best-score st) (sget st "best-score" -1000000000.0))
+(define (search:complete? st) (= 0 (length (search:pending st))))
+
+(define (search:kinds)
+  (list "grid" "pso" "abc" "fss" "ant" "es" "anneal" "bandit" "beam"))
+
+(define (search:help)
+  (list
+    (list "grid" "discrete linspace product; options: dim pop bins bounds")
+    (list "pso" "particle swarm; options: dim pop bounds w c1 c2")
+    (list "abc" "bee colony; options: dim pop bounds limit")
+    (list "fss" "fish school; options: dim pop bounds step volitive")
+    (list "ant" "operator pheromone ranking; options: ops pop evaporate")
+    (list "es" "evolution strategy / GA; options: dim pop mu lambda sigma bounds discrete genes")
+    (list "anneal" "simulated annealing; options: start step cooling iterations")
+    (list "bandit" "UCB / Thompson arms; options: arms policy")
+    (list "beam" "beam search; options: root tree width")))
+
+;; ═══════════════════════════════════════════════════════════════
+;; PRNG (LCG, value-threaded)
+;; ═══════════════════════════════════════════════════════════════
+
+(define (search-next-seed s)
+  (modulo (+ (* s 1103515245) 12345) 2147483647))
+
+; → (value . next-seed)
+(define (search-rand s)
+  (let ((n (search-next-seed (search-next-seed s))))
+    (cons (/ n 2147483647.0) n)))
+
+(define (search-gauss s)
+  (let* ((a (search-rand s))
+         (b (search-rand (cdr a)))
+         (c (search-rand (cdr b))))
+    (cons (+ -1.5 (* 3.0 (+ (* 0.5 (car a)) (* 0.3 (car b)) (* 0.2 (car c)))))
+          (cdr c))))
+
+(define (search-clip x lo hi)
+  (if (< x lo) lo (if (> x hi) hi x)))
+
+(define (search-bound opts d)
+  (let ((b (oget opts "bounds" (quote ()))))
+    (if (null? b)
+      (list -1.0 1.0)
+      (if (< d (length b)) (list-ref b d) (car b)))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; Vector candidates
+;; ═══════════════════════════════════════════════════════════════
+
+(define (search-rand-vec opts dim s)
+  (let loop ((d 0) (acc (quote ())) (seed s))
+    (if (>= d dim) (cons (reverse acc) seed)
+      (let* ((b (search-bound opts d))
+             (r (search-rand seed))
+             (lo (car b))
+             (hi (car (cdr b))))
+        (loop (+ d 1) (cons (+ lo (* (car r) (- hi lo))) acc) (cdr r))))))
+
+(define (search-clip-vec opts v)
+  (let loop ((d 0) (xs v) (acc (quote ())))
+    (if (null? xs) (reverse acc)
+      (let* ((b (search-bound opts d))
+             (x (search-clip (car xs) (car b) (car (cdr b)))))
+        (loop (+ d 1) (cdr xs) (cons x acc))))))
+
+(define (search-list-ref lst i)
+  (let loop ((xs lst) (k i))
+    (if (null? xs) 0.0
+      (if (= k 0) (car xs) (loop (cdr xs) (- k 1))))))
+
+(define (search-list-set lst i val)
+  (if (null? lst) (quote ())
+    (if (= i 0) (cons val (cdr lst))
+      (cons (car lst) (search-list-set (cdr lst) (- i 1) val)))))
+
+(define (search-map f lst)
+  (if (null? lst) (quote ()) (cons (f (car lst)) (search-map f (cdr lst)))))
+
+; ── grid: index → bin vector (discrete linspace product, windowed) ──
+(define (search-grid-point opts index)
+  (let* ((dim (oget opts "dim" 1))
+         (bins (max 2 (oget opts "bins" 4))))
+    (let loop ((d 0) (idx index) (acc (quote ())))
+      (if (>= d dim) (reverse acc)
+        (let* ((b (search-bound opts d))
+               (t (modulo idx bins))
+               (lo (car b))
+               (hi (car (cdr b)))
+               (x (+ lo (* (/ (* 1.0 t) (- bins 1)) (- hi lo)))))
+          (loop (+ d 1) (quotient idx bins) (cons x acc)))))))
+
+(define (search-grid-batch opts gen pop)
+  (let loop ((i 0) (acc (quote ())))
+    (if (>= i pop) (reverse acc)
+      (loop (+ i 1) (cons (search-grid-point opts (+ (* gen pop) i)) acc)))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; init
+;; ═══════════════════════════════════════════════════════════════
+
+(define (search-init-state kind opts gen pending pop extra)
+  (list (cons "kind" kind) (cons "opts" opts) (cons "gen" gen)
+        (cons "pop" pop) (cons "pending" pending) (cons "scored" (quote ()))
+        (cons "best" #f) (cons "best-score" -1000000000.0)
+        (cons "seed" (oget opts "seed" 424242)) (cons "extra" extra)))
+
+(define (search:init kind options)
+  (let* ((opts (if (hash? options) options (hash)))
+         (kind (if (string? kind) kind "grid"))
+         (pop (max 1 (oget opts "pop" 8)))
+         (dim (max 1 (oget opts "dim" 1)))
+         (seed (oget opts "seed" 424242))
+         (bounds (if (null? (oget opts "bounds" (quote ())))
+                   (list (list -1.0 1.0))
+                   (oget opts "bounds" (quote ())))))
+    (cond
+      ((string=? kind "grid")
+       (search-init-state kind opts 0 (search-grid-batch opts 0 pop) pop (quote ())))
+      ((string=? kind "pso")
+       (let loop ((i 0) (ps (quote ())) (s seed))
+         (if (>= i pop)
+           (search-init-state kind opts 0
+                              (map (lambda (p) (sget p "pos" (quote ())))
+                                   (reverse ps))
+                              pop (reverse ps))
+           (let* ((rv (search-rand-vec opts dim s))
+                  (p (list (cons "pos" (car rv)) (cons "vel" (search-zero-vec dim))
+                           (cons "pbest" (car rv))
+                           (cons "pbest-score" -1000000000.0))))
+             (loop (+ i 1) (cons p ps) (cdr rv))))))
+      ((string=? kind "abc")
+       (let loop ((i 0) (foods (quote ())) (s seed))
+         (if (>= i pop)
+           (search-init-state kind opts 0
+                              (map (lambda (f) (sget f "pos" (quote ()))) (reverse foods))
+                              pop (reverse foods))
+           (let ((rv (if (and (= i 0) (pair? (oget opts "start" #f)))
+                       (cons (oget opts "start" #f) s)
+                       (search-rand-vec opts dim s))))
+             (loop (+ i 1)
+                   (cons (list (cons "pos" (car rv)) (cons "trials" 0)) foods)
+                   (cdr rv))))))
+      ((string=? kind "fss")
+       (let loop ((i 0) (fish (quote ())) (s seed))
+         (if (>= i pop)
+           (search-init-state kind opts 0
+                              (map (lambda (f) (sget f "pos" (quote ()))) (reverse fish))
+                              pop (list (cons "fish" (reverse fish))
+                                        (cons "prev-best" -1000000000.0)))
+           (let ((rv (if (and (= i 0) (pair? (oget opts "start" #f)))
+                       (cons (oget opts "start" #f) s)
+                       (search-rand-vec opts dim s))))
+             (loop (+ i 1) (cons (list (cons "pos" (car rv))) fish) (cdr rv))))))
+      ((string=? kind "ant")
+       (let ((ops (oget opts "ops" (quote ()))))
+         (search-init-state kind opts 0
+                            (search-ant-sample ops pop (oget opts "seed" 424242))
+                            pop
+                            (list (cons "tau"
+                                        (map (lambda (op) (cons op 1.0)) ops))))))
+      ((string=? kind "es")
+       (let loop ((i 0) (parents (quote ())) (s seed))
+         (if (>= i (oget opts "mu" 4))
+           (let* ((lambda-n (max 1 (oget opts "lambda" pop)))
+                  (plist (map (lambda (v) (list (cons "pos" v)
+                                                (cons "score" -1000000000.0)))
+                              (reverse parents)))
+                  (off (search-es-offspring opts (reverse parents) lambda-n s)))
+             (search-init-state kind opts 0 (car off) pop
+                                (list (cons "parents" plist)
+                                      (cons "seed" (cdr off)))))
+           (let ((rv (if (oget opts "discrete" #f)
+                       (search-rand-genes opts dim s)
+                       (search-rand-vec opts dim s))))
+             (loop (+ i 1) (cons (car rv) parents) (cdr rv))))))
+      ((string=? kind "anneal")
+       (let ((rv (if (oget opts "start" #f)
+                   (cons (oget opts "start" #f) seed)
+                   (search-rand-vec opts dim seed))))
+         (search-init-state kind opts 0 (list (car rv)) 1
+                            (list (cons "temp" (oget opts "temp" 1.0))
+                                  (cons "cur" (car rv))
+                                  (cons "cur-score" -1000000000.0)))))
+      ((string=? kind "bandit")
+       (let ((arms (oget opts "arms" (quote ()))))
+         (search-init-state kind opts 0 (list (car arms)) 1
+                            (list (cons "arms" (search-arm-rows arms))
+                                  (cons "policy" (oget opts "policy" "ucb"))))))
+      ((string=? kind "beam")
+       (let ((root (oget opts "root" "root")))
+         (search-init-state kind opts 0 (list (list root)) 1
+                            (list (cons "beam" (list (list root)))
+                                  (cons "width" (max 1 (oget opts "width" 2)))
+                                  (cons "tree" (oget opts "tree" (hash)))
+                                  (cons "done" (quote ()))))))
+      (else (error (string-append "search:init: unknown kind " kind))))))
+
+(define (search-zero-vec n)
+  (let loop ((i 0) (acc (quote ())))
+    (if (>= i n) (reverse acc) (loop (+ i 1) (cons 0.0 acc)))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; step / batch / run
+;; ═══════════════════════════════════════════════════════════════
+
+(define (search:step state score)
+  (if (null? (sget state "pending" (quote ())))
+    state
+    (search-step-pending state score)))
+
+(define (search-step-pending state score)
+  (let* ((pending (sget state "pending" (quote ())))
+         (scored (sget state "scored" (quote ())))
+         (idx (length scored))
+         (cand (if (< idx (length pending)) (list-ref pending idx) #f))
+         (best (sget state "best" #f))
+         (best-score (sget state "best-score" -1000000000.0))
+         (num (if (number? score) score 0.0))
+         (state1 (sput state "scored" (append scored (list score))))
+         (state2 (if (or (not best) (> num best-score))
+                   (sput (sput state1 "best" cand) "best-score" num)
+                   state1)))
+    (if (>= (+ idx 1) (length pending))
+      (search-advance state2)
+      state2)))
+
+(define (search:batch state fitness)
+  (let ((pending (sget state "pending" (quote ()))))
+    (let loop ((s state) (xs pending))
+      (if (null? xs) s
+        (let ((score (try (fitness (car xs)) (catch (e) 0.0))))
+          (loop (search:step s score) (cdr xs)))))))
+
+(define (search:run state fitness n)
+  (let loop ((s state) (k 0))
+    (if (>= k n) s (loop (search:batch s fitness) (+ k 1)))))
+
+; ── advance: all pending scored, produce the next pending set ──
+(define (search-advance state)
+  (let* ((kind (sget state "kind" "grid"))
+         (opts (sget state "opts" (hash)))
+         (gen (+ 1 (sget state "gen" 0)))
+         (pending (sget state "pending" (quote ())))
+         (scores (sget state "scored" (quote ())))
+         (pairs (search-zip pending scores))
+         (state1 (sput (sput (sput state "gen" gen) "scored" (quote ()))
+                       "pending" (quote ()))))
+    (cond
+      ((string=? kind "grid")
+       (sput state1 "pending"
+             (search-grid-batch opts gen (sget state "pop" 8))))
+      ((string=? kind "pso") (search-advance-pso state1 pairs))
+      ((string=? kind "abc") (search-advance-abc state1 pairs))
+      ((string=? kind "fss") (search-advance-fss state1 pairs))
+      ((string=? kind "ant") (search-advance-ant state1 pairs))
+      ((string=? kind "es") (search-advance-es state1 pairs))
+      ((string=? kind "anneal") (search-advance-anneal state1 pairs))
+      ((string=? kind "bandit") (search-advance-bandit state1 pairs))
+      ((string=? kind "beam") (search-advance-beam state1 pairs))
+      (else state1))))
+
+(define (search-zip a b)
+  (if (or (null? a) (null? b)) (quote ())
+    (cons (cons (car a) (car b)) (search-zip (cdr a) (cdr b)))))
+
+(define (search-pairs-best pairs)
+  (if (null? pairs) #f
+    (let loop ((xs (cdr pairs)) (best (car pairs)))
+      (cond ((null? xs) best)
+            ((> (cdr (car xs)) (cdr best)) (loop (cdr xs) (car xs)))
+            (else (loop (cdr xs) best))))))
+
+;; ── pso ──
+(define (search-advance-pso state pairs)
+  (let* ((opts (sget state "opts" (hash)))
+         (w (oget opts "w" 0.7))
+         (c1 (oget opts "c1" 1.4))
+         (c2 (oget opts "c2" 1.4))
+         (particles (sget state "extra" (quote ())))
+         (gbest (car (search-pairs-best pairs)))
+         (updated
+          (let loop ((ps particles) (i 0) (s (sget state "seed" 424242)) (acc (quote ())))
+            (if (null? ps) (cons (reverse acc) s)
+              (let* ((p (car ps))
+                     (pos (sget p "pos" (quote ())))
+                     (score (cdr (nth pairs i (cons #f 0.0))))
+                     (pb (sget p "pbest" pos))
+                     (pb-score (sget p "pbest-score" -1000000000.0))
+                     (new-pb (if (> score pb-score) pos pb))
+                     (new-pb-score (if (> score pb-score) score pb-score))
+                     (r1 (search-rand s))
+                     (r2 (search-rand (cdr r1)))
+                     (vel (sget p "vel" (quote ())))
+                     (moved
+                      (let loop2 ((d 0) (accv (quote ())) (accp (quote ())))
+                        (if (>= d (length pos))
+                          (list (reverse accv) (reverse accp))
+                          (let* ((v (+ (* w (search-list-ref vel d))
+                                       (* c1 (car r1)
+                                          (- (search-list-ref new-pb d)
+                                             (search-list-ref pos d)))
+                                       (* c2 (car r2)
+                                          (- (search-list-ref gbest d)
+                                             (search-list-ref pos d)))))
+                                 (b (search-bound opts d))
+                                 (xp (search-clip (+ (search-list-ref pos d) v)
+                                                  (car b) (car (cdr b)))))
+                            (loop2 (+ d 1) (cons v accv) (cons xp accp)))))))
+                (loop (cdr ps) (+ i 1) (cdr r2)
+                      (cons (list (cons "pos" (car (cdr moved)))
+                                  (cons "vel" (car moved))
+                                  (cons "pbest" new-pb)
+                                  (cons "pbest-score" new-pb-score))
+                            acc))))))
+         (ps2 (car updated)))
+    (sput (sput state "extra" ps2)
+          "pending" (map (lambda (p) (sget p "pos" (quote ()))) ps2))))
+
+(define (search-reverse-pairs lst)
+  (let loop ((xs lst) (acc (quote ())))
+    (if (null? xs) acc (loop (cdr xs) (cons (car xs) acc)))))
+
+(define (nth lst i default)
+  (let loop ((xs lst) (k i))
+    (if (null? xs) default
+      (if (= k 0) (car xs) (loop (cdr xs) (- k 1))))))
+
+;; ── abc: employed + onlooker neighbor search, scout reset ──
+(define (search-advance-abc state pairs)
+  (let* ((opts (sget state "opts" (hash)))
+         (limit (oget opts "limit" 5))
+         (foods (sget state "extra" (quote ())))
+         (updated
+          (let loop ((fs foods) (i 0) (s (sget state "seed" 424242)) (acc (quote ())))
+            (if (null? fs) (cons (reverse acc) s)
+              (let* ((f (car fs))
+                     (score (cdr (nth pairs i (cons #f 0.0))))
+                     (pos (sget f "pos" (quote ())))
+                     (b (search-bound opts 0))
+                     (r (search-rand s))
+                     (d (modulo (search-next-seed (cdr r)) (max 1 (length pos))))
+                     (trials (+ 1 (sget f "trials" 0)))
+                     (scale (/ (* 0.5 (- (car (cdr b)) (car b)))
+                               (+ 1.0 (* 1.0 (+ 1 (sget state "gen" 0))) trials)))
+                     (neighbor (search-clip-vec opts
+                                 (search-list-set pos d
+                                   (search-clip (+ (search-list-ref pos d)
+                                                   (* scale (- (* 2.0 (car r)) 1.0)))
+                                                (car b) (car (cdr b)))))))
+                (if (> score (sget f "last-score" -1000000000.0))
+                  (loop (cdr fs) (+ i 1) (cdr r)
+                        (cons (list (cons "pos" pos) (cons "trials" 0)
+                                    (cons "last-score" score)) acc))
+                  (if (>= trials limit)
+                    (let ((rv (search-rand-vec opts (length pos) (cdr r))))
+                      (loop (cdr fs) (+ i 1) (cdr rv)
+                            (cons (list (cons "pos" (car rv)) (cons "trials" 0)
+                                        (cons "last-score" -1000000000.0)) acc)))
+                    (loop (cdr fs) (+ i 1) (cdr r)
+                          (cons (list (cons "pos" neighbor) (cons "trials" trials)
+                                      (cons "last-score" score)) acc))))))))
+         (fs2 (car updated)))
+    (sput (sput (sput state "extra" fs2)
+                "pending" (map (lambda (f) (sget f "pos" (quote ()))) fs2))
+          "seed" (cdr updated))))
+
+;; ── fss: feeding (fitness-weighted) + collective move toward the barycenter ──
+(define (search-advance-fss state pairs)
+  (let* ((opts (sget state "opts" (hash)))
+         (extra (sget state "extra" (quote ())))
+         (base-step (oget opts "step" 0.1))
+         (fish (sget extra "fish" (quote ())))
+         (n (max 1 (length fish)))
+         (sum (foldl (lambda (acc p) (+ acc (cdr p))) 0.0 pairs))
+         (avg (/ (* 1.0 sum) n))
+         (best-pair (search-pairs-best pairs))
+         (prev (sget extra "prev-best" -1000000000.0))
+         ; volitive: expand on improvement, contract on stagnation
+         (step (if (> (cdr best-pair) prev)
+                 (min 1.0 (* base-step 1.2))
+                 (max 0.02 (* base-step 0.55))))
+         (bary (search-barycenter pairs))
+         (updated (search-fss-move fish pairs opts step avg best-pair bary
+                                   (sget state "seed" 424242)))
+         (fs2 (car updated))
+         (extra2 (list (cons "fish" fs2)
+                       (cons "prev-best" (cdr best-pair)))))
+    (sput (sput (sput state "extra" extra2)
+                "pending" (map (lambda (f) (sget f "pos" (quote ()))) fs2))
+          "seed" (cdr updated))))
+
+(define (search-fss-move fish pairs opts step avg best-pair bary seed)
+  (let loop ((fs fish) (ps pairs) (s seed) (acc (quote ())))
+    (if (null? fs) (cons (reverse acc) s)
+      (let* ((f (car fs))
+             (pos (sget f "pos" (quote ())))
+             (score (cdr (car ps)))
+             (den (- (cdr best-pair) avg))
+             (w (if (= 0.0 den) 0.0 (/ (- score avg) (search-abs den))))
+             (r (search-rand s))
+             (new-pos (search-fss-step-vec pos bary w step opts (car r))))
+        (loop (cdr fs) (cdr ps) (cdr r)
+              (cons (list (cons "pos" (search-clip-vec opts new-pos))) acc))))))
+
+(define (search-fss-step-vec pos bary w step opts rnd)
+  (let loop ((d 0) (acc (quote ())))
+    (if (>= d (length pos))
+      (reverse acc)
+      (let* ((b (search-bound opts d))
+             (pull (* step w (- (search-list-ref bary d) (search-list-ref pos d))))
+             (jitter (* step (- (* 2.0 rnd) 1.0)))
+             (x (+ (search-list-ref pos d) pull jitter)))
+        (loop (+ d 1) (cons (search-clip x (car b) (car (cdr b))) acc))))))
+
+(define (search-abs x) (if (< x 0.0) (- 0.0 x) x))
+
+(define (search-barycenter pairs)
+  (if (null? pairs) (quote ())
+    (let* ((first (car (car pairs)))
+           (dim (length first)))
+      (let loop ((d 0) (acc (quote ())))
+        (if (>= d dim) (reverse acc)
+          (let ((sum (foldl (lambda (s p)
+                              (+ s (search-list-ref (car p) d)))
+                            0.0 pairs)))
+            (loop (+ d 1) (cons (/ sum (length pairs)) acc))))))))
+
+;; ── ant: pheromone-weighted operator sampling ──
+(define (search-ant-pick ops tau seed)
+  (if (null? ops) #f
+    (let* ((total (foldl (lambda (acc op)
+                           (+ acc (cdr (assoc op tau))))
+                         0.0 ops))
+           (r (search-rand seed))
+           (target (* (car r) (max 0.0001 total))))
+      (let loop ((os ops) (acc 0.0))
+        (if (null? os) (car ops)
+          (let ((w (cdr (assoc (car os) tau))))
+            (if (<= target (+ acc w))
+              (car os)
+              (loop (cdr os) (+ acc w)))))))))
+
+(define (search-ant-sample ops pop seed)
+  (let loop ((i 0) (acc (quote ())) (s seed))
+    (if (>= i pop) (reverse acc)
+      (let* ((r (search-rand s))
+             (pick (modulo (search-next-seed (cdr r)) (max 1 (length ops)))))
+        (loop (+ i 1) (cons (list-ref ops pick) acc) (cdr r))))))
+
+(define (search-advance-ant state pairs)
+  (let* ((opts (sget state "opts" (hash)))
+         (evap (oget opts "evaporate" 0.9))
+         (ops (oget opts "ops" (quote ())))
+         (extra (sget state "extra" (quote ())))
+         (tau (sget extra "tau" (map (lambda (op) (cons op 1.0)) ops)))
+         (deposit
+          (foldl (lambda (tau0 p)
+                   (let* ((op (car p)) (score (cdr p))
+                          (old (cdr (assoc op tau0))))
+                     (if old
+                       (search-alist-set tau0 op
+                                         (+ (* evap old)
+                                            (if (number? score) score 0.0)))
+                       tau0)))
+                 tau pairs))
+         (seed (sget state "seed" 424242))
+         (batch (let loop ((i 0) (acc (quote ())) (s seed))
+                  (if (>= i (sget state "pop" 8)) (list (reverse acc) s)
+                    (let* ((r (search-rand s))
+                           (pick (search-ant-pick ops deposit (cdr r))))
+                      (loop (+ i 1) (cons pick acc) (cdr r)))))))
+    (sput (sput (sput state "extra" (list (cons "tau" deposit)))
+                "pending" (car batch))
+          "seed" (car (cdr batch)))))
+
+(define (search-alist-set al key val)
+  (cond ((null? al) (list (cons key val)))
+        ((equal? (car (car al)) key) (cons (cons key val) (cdr al)))
+        (else (cons (car al) (search-alist-set (cdr al) key val)))))
+
+;; ── es: (μ, λ) strategy, or GA with crossover + elites when discrete ──
+(define (search-es-offspring opts parents n seed)
+  (let ((discrete (oget opts "discrete" #f))
+        (sigma (oget opts "sigma" 0.3))
+        (dim (oget opts "dim" 1)))
+    (let loop ((i 0) (acc (quote ())) (s seed))
+      (if (>= i n)
+        (cons (reverse acc) s)
+        (if discrete
+          (loop (+ i 1)
+                (cons (search-ga-offspring parents dim s) acc)
+                (search-next-seed s))
+          (let* ((r (search-rand s))
+                 (parent (search-list-ref parents
+                           (modulo (search-next-seed (cdr r))
+                                   (max 1 (length parents)))))
+                 (mut (search-mutate-vec parent sigma dim (cdr r))))
+            (loop (+ i 1)
+                  (cons (search-clip-vec opts (car mut)) acc)
+                  (cdr mut))))))))
+
+(define (search-mutate-vec parent sigma dim seed)
+  (let loop ((d 0) (acc (quote ())) (s seed))
+    (if (>= d dim) (cons (reverse acc) s)
+      (let* ((g (search-gauss s))
+             (x (+ (search-list-ref parent d) (* sigma (car g)))))
+        (loop (+ d 1) (cons x acc) (cdr g))))))
+
+(define (search-ga-offspring parents dim seed)
+  (let* ((r (search-rand seed))
+         (p1 (search-list-ref parents
+               (modulo (search-next-seed seed) (max 1 (length parents)))))
+         (r2 (search-rand (cdr r)))
+         (p2 (search-list-ref parents
+               (modulo (search-next-seed (cdr r2)) (max 1 (length parents))))))
+    (search-ga-child p1 p2 dim (cdr r2))))
+
+(define (search-ga-child p1 p2 dim seed)
+  (let* ((r (search-rand seed))
+         (cut (modulo (search-next-seed (cdr r)) (max 1 dim)))
+         (base (let loop ((d 0) (acc (quote ())))
+                 (if (>= d dim) (reverse acc)
+                   (loop (+ d 1)
+                         (cons (if (< d cut)
+                                 (search-list-ref p1 d)
+                                 (search-list-ref p2 d))
+                               acc))))))
+    (search-list-set base cut (if (= 0 (modulo (search-next-seed (cdr r)) 2)) 0 1))))
+
+(define (search-advance-es state pairs)
+  (let* ((opts (sget state "opts" (hash)))
+         (mu (max 1 (oget opts "mu" 4)))
+         (lambda-n (max 1 (oget opts "lambda" (sget state "pop" 8))))
+         (extra (sget state "extra" (quote ())))
+         (parents (sget extra "parents" (quote ())))
+         (pool (search-append-pairs
+                 (map (lambda (p)
+                        (cons (sget p "pos" (quote ()))
+                              (sget p "score" -1000000000.0)))
+                      parents)
+                 pairs))
+         (sorted (search-sort-pairs-desc pool))
+         (next-parents (map car (search-take sorted mu)))
+         (next-scores (map cdr (search-take sorted mu)))
+         (plist (let loop ((ps next-parents) (ss next-scores) (acc (quote ())))
+                  (if (or (null? ps) (null? ss)) (reverse acc)
+                    (loop (cdr ps) (cdr ss)
+                          (cons (list (cons "pos" (car ps))
+                                      (cons "score" (car ss))) acc)))))
+         (off (search-es-offspring opts next-parents lambda-n
+                                   (sget extra "seed" (sget state "seed" 424242)))))
+    (sput (sput state "extra"
+                (list (cons "parents" plist) (cons "seed" (cdr off))))
+          "pending" (car off))))
+
+(define (search-append-pairs a b)
+  (cond ((null? a) b)
+        (else (cons (car a) (search-append-pairs (cdr a) b)))))
+
+(define (search-sort-pairs-desc pairs)
+  (sort pairs (lambda (a b) (> (cdr a) (cdr b)))))
+
+(define (search-take lst n)
+  (if (or (null? lst) (<= n 0)) (quote ())
+    (cons (car lst) (search-take (cdr lst) (- n 1)))))
+
+(define (search-rand-genes opts dim s)
+  (let loop ((d 0) (acc (quote ())) (seed s))
+    (if (>= d dim) (cons (reverse acc) seed)
+      (let ((r (search-rand seed)))
+        (loop (+ d 1) (cons (if (< (car r) 0.5) 0 1) acc) (cdr r))))))
+
+;; ── anneal ──
+(define (search-advance-anneal state pairs)
+  (let* ((opts (sget state "opts" (hash)))
+         (extra (sget state "extra" (quote ())))
+         (temp (sget extra "temp" 1.0))
+         (cool (oget opts "cooling" 0.95))
+         (step (oget opts "step" 0.3))
+         (cur (sget extra "cur" (sget state "best" (quote ()))))
+         (cur-score (sget extra "cur-score" -1000000000.0))
+         (score (if (null? pairs) cur-score (cdr (car pairs))))
+         (accept (if (> score cur-score) #t
+                   (let ((r (search-rand (sget state "seed" 424242))))
+                     (< (car r) (search-exp (/ (- score cur-score) (max 0.0001 temp)))))))
+         (chosen (if accept (car (car pairs)) cur))
+         (chosen-score (if accept score cur-score))
+         (t2 (* cool temp))
+         (r (search-rand (search-next-seed (sget state "seed" 424242))))
+         (neighbor
+          (let loop ((d 0) (acc (quote ())) (s (sget state "seed" 424242)))
+            (if (>= d (max 1 (length chosen))) (cons (reverse acc) s)
+              (let* ((g (search-gauss s))
+                     (b (search-bound opts d))
+                     (x (search-clip (+ (search-list-ref chosen d) (* step (car g)))
+                                     (car b) (car (cdr b)))))
+                (loop (+ d 1) (cons x acc) (cdr g)))))))
+    (sput (sput (sput state "extra"
+                      (list (cons "temp" t2) (cons "cur" chosen)
+                            (cons "cur-score" chosen-score)))
+                "pending" (list (car neighbor)))
+          "seed" (cdr neighbor))))
+
+(define (search-exp x)
+  ; exp for the annealing ratio (x <= 0 here); the polynomial below is only
+  ; used near zero, far tails are 0 instead of a diverging alternating series.
+  (if (< x -20.0) 0.0
+   (let loop ((k 16) (acc (+ 1.0 x)))
+    (if (<= k 1) (if (< acc 0.0) 0.0 acc)
+        (loop (- k 1) (+ acc (/ (search-expt x k) (search-fact k))))))))
+
+(define (search-expt x k)
+  (let loop ((i 0) (acc 1.0))
+    (if (>= i k) acc (loop (+ i 1) (* acc x)))))
+
+(define (search-fact k)
+  (let loop ((i 2) (acc 1.0))
+    (if (> i k) acc (loop (+ i 1) (* acc i)))))
+
+;; ── bandit: UCB / Thompson over arms (same arithmetic as std/evo) ──
+(define (search-arm-rows arms)
+  (map (lambda (a) (list (cons "arm" a) (cons "n" 0) (cons "keeps" 0))) arms))
+
+(define (search-arm-get row key default)
+  (let loop ((xs row))
+    (if (null? xs) default
+      (if (equal? (car (car xs)) key) (cdr (car xs)) (loop (cdr xs))))))
+
+(define (search-arm-set row key val)
+  (cond ((not (pair? row)) (list (cons key val)))
+        ((equal? (car (car row)) key) (cons (cons key val) (cdr row)))
+        (else (cons (car row) (search-arm-set (cdr row) key val)))))
+
+(define (search-arm-pick rows policy seed)
+  (cond
+    ((null? rows) #f)
+    ((string=? policy "thompson")
+     (let ((best
+            (let loop ((xs rows) (best #f) (s seed))
+              (if (null? xs) best
+                (let* ((row (car xs))
+                       (n (search-arm-get row "n" 0))
+                       (mean (if (= 0 n) 0.0
+                               (/ (* 1.0 (search-arm-get row "keeps" 0)) n)))
+                       (sd (if (= 0 n) 1.0 (/ 1.0 n)))
+                       (g (search-gauss s))
+                       (sample (+ mean (* sd (car g)))))
+                  (loop (cdr xs)
+                        (if (or (not best) (> sample (car best)))
+                          (cons sample (search-arm-get row "arm" ""))
+                          best)
+                        (cdr g)))))))
+       (if (pair? best) (cdr best) #f)))
+    (else
+     ; UCB1 with unvisited arms first
+     (let ((un (find (lambda (r) (= 0 (search-arm-get r "n" 0))) rows)))
+       (if (pair? un)
+         (search-arm-get un "arm" "")
+         (let* ((total (foldl (lambda (acc r)
+                                (+ acc (search-arm-get r "n" 0)))
+                              0 rows))
+                (score (lambda (r)
+                         (let ((n (search-arm-get r "n" 1)))
+                           (+ (if (= 0 n) 0.0
+                                (/ (* 1.0 (search-arm-get r "keeps" 0)) n))
+                              (search-sqrt (/ (* 2.0 (search-ln total)) n)))))))
+           (let loop ((xs rows) (best #f))
+             (if (null? xs) best
+               (let ((sc (score (car xs))))
+                 (loop (cdr xs)
+                       (if (or (not best) (> sc (car best)))
+                         (cons sc (search-arm-get (car xs) "arm" ""))
+                         best)))))))))))
+
+(define (search-sqrt x)
+  (if (<= x 0.0) 0.0
+    (let loop ((g (/ x 2.0)) (k 0))
+      (if (>= k 20) g
+        (loop (/ (+ g (/ x g)) 2.0) (+ k 1))))))
+
+(define (search-ln x)
+  ; atanh series: ln x = 2 atanh((x-1)/(x+1))
+  (if (<= x 0.0) 0.0
+    (let* ((y (/ (- x 1.0) (+ x 1.0))))
+      (let loop ((k 1) (acc 0.0))
+        (if (> k 41) (* 2.0 acc)
+          (loop (+ k 2) (+ acc (/ (search-expt y k) k))))))))
+
+(define (search-advance-bandit state pairs)
+  (let* ((extra (sget state "extra" (quote ())))
+         (rows (sget extra "arms" (quote ())))
+         (policy (sget extra "policy" "ucb"))
+         (chosen (car (car pairs)))
+         (score (cdr (car pairs)))
+         (updated
+          (map (lambda (row)
+                 (if (equal? (search-arm-get row "arm" "") chosen)
+                   (search-arm-set
+                     (search-arm-set row "n" (+ 1 (search-arm-get row "n" 0)))
+                     "keeps" (+ (if (and (number? score) (> score 0)) 1 0)
+                                (search-arm-get row "keeps" 0)))
+                   row))
+               rows)))
+    (let* ((seed (sget state "seed" 424242))
+           (pick (search-arm-pick updated policy seed)))
+      (sput (sput (sput state "extra" (list (cons "arms" updated)
+                                            (cons "policy" policy)))
+                  "pending" (list pick))
+            "seed" (search-next-seed seed)))))
+
+;; ── beam ──
+(define (search-tree-children tree node)
+  (if (hash? tree)
+    (let ((kids (hash-ref tree node #f)))
+      (if (pair? kids) kids (quote ())))
+    (if (pair? tree)
+      (let ((entry (assoc node tree)))
+        (if entry (if (pair? (cdr entry)) (cdr entry) (quote ())) (quote ())))
+      (quote ()))))
+
+(define (search-advance-beam state pairs)
+  (let* ((extra (sget state "extra" (quote ())))
+         (width (sget extra "width" 2))
+         (tree (sget extra "tree" (hash)))
+         (done (sget extra "done" (quote ())))
+         (children
+          (foldl (lambda (acc p)
+                   (let* ((path (car p))
+                          (node (car (reverse path)))
+                          (kids (search-tree-children tree node)))
+                     (if (null? kids)
+                       acc
+                       (search-append-pairs
+                         acc
+                         (map (lambda (k) (cons (append path (list k)) 0.0)) kids)))))
+                 (quote ()) pairs))
+         ; complete = leaf paths, keep their score
+         (leaves (foldl
+                   (lambda (acc p)
+                     (let* ((path (car p))
+                            (node (car (reverse path))))
+                       (if (null? (search-tree-children tree node))
+                         (cons p acc)
+                         acc)))
+                   (quote ()) pairs))
+         (next-beam (search-take (search-sort-pairs-desc (search-append-pairs children leaves))
+                                 width)))
+    (sput (sput state "extra"
+                (list (cons "beam" (map car next-beam))
+                      (cons "width" width) (cons "tree" tree)
+                      (cons "done" (search-append-pairs leaves done))))
+          "pending" (map car next-beam))))
+
+;; ═══════════════════════════════════════════════════════════════
+;; export
+;; ═══════════════════════════════════════════════════════════════
+
+(define (search:export state)
+  (hash "kind" (sget state "kind" "grid")
+        "gen" (sget state "gen" 0)
+        "best" (sget state "best" #f)
+        "best-score" (sget state "best-score" -1000000000.0)
+        "pop" (sget state "pop" 8)
+        "seed" (sget state "seed" 424242)
+        "opts" (sget state "opts" (hash))
+        "pending" (sget state "pending" (quote ()))))

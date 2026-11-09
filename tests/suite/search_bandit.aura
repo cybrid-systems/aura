@@ -1,0 +1,46 @@
+; tests/suite/search_bandit.aura — Issue #5007
+; Bandit over arms: UCB and Thompson pick the higher-reward arm under
+; fixed rewards. Shared arithmetic with std/evo selectors.
+
+(require "std/search" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+    (begin (display "  pass: ") (display msg) (newline))
+    (begin
+      (set! *fails* (+ *fails* 1))
+      (display "  FAIL: ") (display msg) (newline))))
+
+(define arms (list "low" "mid" "high"))
+(define (reward arm)
+  (cond ((string=? arm "high") 1.0)
+        ((string=? arm "mid") 0.5)
+        (else 0.0)))
+
+(display "AC1 UCB\n")
+(define u (search:run (search:init "bandit" (hash "arms" arms "policy" "ucb"))
+                      reward 30))
+(assert! (string=? (search:best u) "high") "UCB settles on the best arm")
+(assert! (= 1.0 (search:best-score u)) "best score is the high arm's reward")
+
+(display "AC2 Thompson\n")
+(define t (search:run (search:init "bandit" (hash "arms" arms "policy" "thompson"))
+                      reward 30))
+(assert! (string=? (search:best t) "high") "Thompson settles on the best arm")
+
+(display "AC3 state is a value\n")
+(define b0 (search:init "bandit" (hash "arms" arms "policy" "ucb")))
+(define b1 (search:run b0 reward 10))
+(assert! (= 0 (search:gen b0)) "the original state did not advance")
+(assert! (< (search:gen b0) (search:gen b1)) "the returned state advanced")
+(assert! (number? (hash-ref (search:export b1) "best-score" #f))
+         "export carries the best score")
+
+(if (= *fails* 0)
+  (begin (display "OK-5007 bandit\n"))
+  (begin
+    (display "FAIL-5007-bandit fails=")
+    (display *fails*)
+    (newline)
+    (error "5007 bandit suite failed")))
