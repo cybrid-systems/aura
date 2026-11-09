@@ -1,0 +1,229 @@
+; lib/std/r7rs.aura — R7RS-small coverage table (Issue #5005)
+;
+; (require "std/r7rs" all:)
+; (r7rs:libraries)        -> ("base" "case-lambda" ...)
+; (r7rs:coverage "base")  -> list of (name status where)
+; (r7rs:status "eq?")     -> (status where) across every library
+; (r7rs:missing)          -> every binding whose status is "no"
+;
+; Status is one of:
+;   "kernel"        — an engine primitive or a language special form
+;   "std:<module>"  — provided by that std module (where = require line)
+;   "this-version"  — added for v0.2.0 (where = module, or "syntax")
+;   "no"            — deliberately not in this version; where = replacement
+;
+; The table is the SSOT behind docs/stdlib/r7rs-small.md.  Every export
+; of the 16 R7RS-small libraries is listed; none is silently absent.
+;
+; Existing decisions that do NOT change here:
+;   * exact integer / truncates toward zero; there are no exact
+;     rationals and no 7/2 literal (#4498/#4499).  rational? is #t for
+;     integers (and for integral floats, #4469) and #f for everything
+;     else; complex? is exactly number? — Aura has no complex numbers.
+;   * first-class continuations (call/cc) are not implemented; fibers
+;     are the suspension model, so dynamic-wind is not offered (a wind
+;     that cannot compose with fiber cancellation would be worse than
+;     none).  See docs/stdlib/fiber-cancel.md.
+;   * characters are code points stored as integers; case ops are
+;     ASCII-only.
+;   * bytevectors and ports are tagged vectors (no new heap tag), so
+;     vector? is #t for a bytevector; bytevector? is the discriminator.
+
+(require "std/list" all:)   ; assoc with equal?
+(require "std/string" all:) ; string->symbol for symbol-keyed binding rows
+
+(export r7rs:libraries r7rs:coverage r7rs:status r7rs:missing
+        r7rs:library-exports)
+
+(define (rows status where names)
+  (map (lambda (n) (list n status where)) names))
+
+(define *r7rs-table*
+  (list
+    (list "base"
+      (append
+        (rows "kernel" "primitive" '(* + - / < <= = > >= abs append apply assoc assq assv
+            begin boolean? car case cdr cdar cddr caar cadr ceiling char->integer
+            char-ready? char<=? char<? char=? char>=? char>? char? cond cons
+            define do else eq? equal? eqv? error even? exact exact? expt floor
+            for-each gcd if inexact inexact? integer->char integer? lambda lcm
+            length let let* letrec letrec* list list->string list->vector list-ref
+            list-tail list? make-string make-vector map max member memq memv min
+            modulo negative? newline not null? number->string number? odd? or
+            pair? positive? procedure? quasiquote quote quotient raise remainder
+            reverse round set! set-car! set-cdr! string string->list
+            string->number string->symbol string-append string-length string-ref
+            string<=? string<? string=? string>=? string>? string? substring
+            symbol->string symbol? truncate values vector vector-fill! vector-length
+            vector-ref vector-set! vector? when unless zero?))
+        (rows "std:list" "(require \"std/list\" all:)" '(list-copy list-set! make-list
+            vector-map vector->list call-with-values))
+        (rows "kernel" "parser special form parse_let_values (sequential flag for let*-values), Issue #4496/#5005"
+              '(let-values let*-values))
+        (rows "kernel" "primitive (write / display)" '(display write))
+        (rows "this-version" "std/io.aura" '(read-line read-string))
+        (rows "std:vector" "(require \"std/vector\" all:)" '(vector-append vector-copy
+            vector-copy! vector-for-each))
+        (rows "std:string" "(require \"std/string\" all:)" '(string-copy string-copy!
+            string-fill! string-for-each string-map vector->string string->vector))
+        (rows "kernel" "primitive (exact? + integer?)" '(exact-integer?))
+        (rows "this-version" "std/record.aura (syntax)" '(define-record-type))
+        (rows "this-version" "std/parameter.aura" '(make-parameter))
+        (rows "kernel" "parser special form parse_parameterize, Issue #5005"
+              '(parameterize))
+        (rows "this-version" "std/lazy.aura" '(delay force make-promise promise?))
+        (rows "this-version" "std/exception.aura" '(guard with-exception-handler
+            raise-continuable error-object? error-object-message error-object-irritants))
+        (rows "this-version" "std/io.aura" '(port? current-input-port current-output-port
+            current-error-port open-input-string open-output-string get-output-string
+            open-input-file open-output-file close-input-port close-output-port
+            close-port read-char peek-char write-char write-string eof-object eof-object?))
+        (rows "this-version" "std/bytevector.aura" '(bytevector bytevector? make-bytevector
+            bytevector-length bytevector-u8-ref bytevector-u8-set! bytevector-copy
+            bytevector-copy! bytevector-append string->utf8 utf8->string))
+        (rows "no" "fiber:spawn / fiber:join (no first-class continuations)"
+              '(call-with-current-continuation call/cc dynamic-wind))
+        (rows "no" "no exact rationals (#4498/#4499): use / (truncating) with quotient/remainder"
+              '(rational? numerator denominator rationalize))
+        (rows "no" "no complex tower; complex? is number?"
+              '(complex? real? imag-part real-part magnitude angle make-rectangular make-polar))
+        (rows "no" "no binary ports (textual string/file ports only)"
+              '(binary-port? textual-port? input-port? output-port? input-port-open?
+                output-port-open? open-input-bytevector open-output-bytevector
+                get-output-bytevector read-u8 peek-u8 read-byte u8-ready?
+                call-with-port flush-output-port))
+        (rows "no" "no exact-integer-sqrt / exact->inexact split; use expt/sqrt"
+              '(exact-integer-sqrt))
+        (rows "no" "no rational floor/truncate division pack; use quotient/remainder/modulo"
+              '(floor/ floor-quotient floor-remainder truncate/ truncate-quotient
+                truncate-remainder))
+        (rows "no" "define-syntax/syntax-rules not implemented; use define-hygienic-macro / defmacro"
+              '(define-syntax let-syntax letrec-syntax syntax-rules syntax-error))
+        (rows "no" "no reader conditional; feature list is empty"
+              '(cond-expand features))
+        (rows "no" "no include at runtime; require a module file instead"
+              '(include include-ci))
+        (rows "no" "(scheme read) not implemented; use read-line/read-byte"
+              '(read))
+        (rows "no" "boolean=? has no primitive; compare with eq?"
+              '(boolean=?))
+        (rows "no" "symbol=? has no primitive; compare interned symbols with eq?"
+              '(symbol=?))))
+    (list "case-lambda"
+      (rows "this-version" "std/case-lambda.aura (syntax)" '(case-lambda)))
+    (list "char"
+      (append
+        (rows "kernel" "primitive" '(char-alphabetic? char-numeric? char-whitespace?
+            char-upcase char-downcase char->integer integer->char char=? char<?))
+        (rows "this-version" "std/char.aura" '(char>? char<=? char>=? char-ci=?
+            char-ci<? char-ci>? char-ci<=? char-ci>=? char-foldcase
+            char-upper-case? char-lower-case? digit-value))))
+    (list "complex"
+      (rows "no" "no complex tower; real numbers only"
+            '(angle imag-part magnitude make-polar make-rectangular real-part)))
+    (list "cxr"
+      (rows "kernel" "primitive" '(caaar caadr cadar caddr cdaar cdadr cddar cdddr
+            caaaar caaadr caadar caaddr cadaar cadadr caddar cadddr
+            cdaaar cdaadr cdadar cdaddr cddaar cddadr cdddar cddddr
+            caar cadr cdar cddr)))
+    (list "eval"
+      (rows "no" "eval is EDSL-only; (eval str) exists as a sandboxed one-shot"
+            '(environment eval)))
+    (list "file"
+      (append
+        (rows "this-version" "std/io.aura" '(open-input-file open-output-file
+            call-with-input-file call-with-output-file with-input-from-file
+            with-output-to-file))
+        (rows "std:io" "(require \"std/io\" all:)" '(file-exists? delete-file))
+        (rows "no" "binary file ports are not offered (textual only)"
+              '(open-binary-input-file open-binary-output-file))))
+    (list "inexact"
+      (rows "kernel" "primitive" '(acos asin atan cos exp log sin sqrt tan)))
+    (list "lazy"
+      (rows "this-version" "std/lazy.aura" '(delay force make-promise promise?)))
+    (list "load"
+      (rows "no" "module require / aura run; no load primitive"
+            '(load)))
+    (list "process-context"
+      (rows "this-version" "std/process.aura" '(command-line
+            get-environment-variable get-environment-variables))
+      )
+    (list "read"
+      (rows "no" "(scheme read) not implemented; std/io read-char + string-number"
+            '(read)))
+    (list "repl"
+      (rows "no" "no interaction-environment; REPL is the aura repl command"
+            '(interaction-environment)))
+    (list "time"
+      (rows "this-version" "std/time.aura" '(current-second current-jiffy
+            jiffies-per-second)))
+    (list "write"
+      (rows "kernel" "primitive" '(display write)))
+    (list "r5rs"
+      (rows "kernel" "primitive where present; the rest are aliases of base"
+            '(* + - / < <= = > >= abs acos and angle append apply asin assoc assq
+              assv atan begin boolean? caar cadr call-with-current-continuation
+              call-with-values car case cdr ceiling char->integer char-alphabetic?
+              char-ci<=? char-ci<? char-ci=? char-ci>=? char-ci>? char-downcase
+              char-lower-case? char-numeric? char-upcase char-upper-case?
+              char-whitespace? char<=? char<? char=? char>=? char>? char?
+              close-input-port close-output-port complex? cond cons cos
+              current-input-port current-output-port define delay denominator do
+              display dynamic-wind eof-object eof-object? eq? equal? eqv? eval
+              even? exact->inexact exact? exp expt floor for-each force gcd
+              if imag-part inexact->exact inexact? input-port? integer->char
+              integer? interaction-environment lambda lcm length let let*
+              letrec list list->string list->vector list-ref list-tail list?
+              load log magnitude make-polar make-rectangular make-string
+              make-vector map max member memq memv min modulo negative?
+              newline not null? number->string number? numerator odd?
+              open-input-file open-output-file or output-port? pair? peek-char
+              positive? procedure? quasiquote quote quotient rational?
+              rationalize read read-char real-part remainder reverse round
+              scheme-report-environment set! set-car! set-cdr! sin sqrt string
+              string->list string->number string->symbol string-append
+              string-ci<=? string-ci<? string-ci=? string-ci>=? string-ci>?
+              string-copy string-fill! string-length string-ref string-set!
+              string<=? string<? string=? string>=? string>? string? substring
+              symbol->string symbol? tan truncate values vector vector->list
+              vector-fill! vector-length vector-ref vector-set! vector? with-output-to-file
+              write zero?))
+      )))
+
+(define (r7rs:libraries)
+  (map car *r7rs-table*))
+
+(define (r7rs:library-exports lib)
+  (let ((row (assoc lib *r7rs-table*)))
+    (if row (car (cdr row)) (list))))
+
+(define (r7rs:coverage lib-or-name)
+  (let ((row (assoc lib-or-name *r7rs-table*)))
+    (if row
+        (car (cdr row))
+        (let ((hit (r7rs:status lib-or-name)))
+          (if hit (list (list lib-or-name (car hit) (car (cdr hit)))) (list))))))
+
+(define (r7rs:status name)
+  (let ((key (if (string? name) (string->symbol name) name)))
+   (let loop ((libs *r7rs-table*))
+    (if (null? libs)
+        #f
+        (let ((hit (assoc key (car (cdr (car libs))))))
+          (if hit
+              (list (car (cdr hit)) (car (cdr (cdr hit))))
+              (loop (cdr libs))))))))
+
+(define (r7rs:missing)
+  (let loop ((libs *r7rs-table*) (acc (list)))
+    (if (null? libs)
+        (reverse acc)
+        (let ((lib (car (car libs)))
+              (rows (car (cdr (car libs)))))
+          (let inner ((rs rows) (acc acc))
+            (if (null? rs)
+                (loop (cdr libs) acc)
+                (inner (cdr rs)
+                       (if (equal? "no" (car (cdr (car rs))))
+                           (cons (list lib (car (car rs))) acc)
+                           acc))))))))

@@ -3,7 +3,12 @@
 ; (require "std/process" all:)
 ;
 
-(export sh sh-ok? which)
+; Issue #5005: R7RS (scheme process-context) surface.  command-line is
+; the existing deferred host prim (installed when std/process loads);
+; get-environment-variable(s) are host prims registered in
+; evaluator_primitives_file.cpp and gated by io-read at the call.
+(export sh sh-ok? which
+        command-line get-environment-variable get-environment-variables)
 
 (define (sh cmd) (shell cmd))
 (define (sh-ok? cmd) (= (shell cmd) 0))

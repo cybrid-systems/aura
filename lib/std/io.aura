@@ -1,49 +1,191 @@
-; Aura standard I/O library
-; Import with: (import "std/io")
+; lib/std/io.aura — file verbs + R7RS ports (Issues #5003, #5005)
 ;
-; Wraps raw C++ I/O primitives into a consistent API.
-; Primitive names (file-exists?, read-file, write-file, etc.)
-; are available globally without import; this module provides
-; convenience aliases and structured readers.
-
+; (require "std/io" all:)
+;
+; This is the ONE module that defines the file verbs.  std/fs re-exports
+; these names and keeps path/dir helpers; it no longer defines a second
+; file-read/file-write/file-exists?/file-size.
+;
+; File verbs (host primitives; io-read / io-write are checked at the
+; call, not at module load — #4919):
+;   file-exists? file-size file-copy file-delete
+;   file-read   (read-file)
+;   file-write  (write-file, #t on success, io error value otherwise)
+;   file->string string->file  (aliases)
+;   file->lines file->words    (structured readers)
+;
+; Ports (#5005).  A port is #(port kind buffer pos path):
+;   string input   kind 'input       buffer = string, pos = next index
+;   stdin          kind 'stdin       buffer = #f until first read
+;   string output  kind 'output      buffer = reversed list of strings
+;   file output    kind 'file-output buffer = reversed list, path = file
+;   stdout/stderr  kind 'stdout / 'stderr
+; port? checks the tag.  There is no separate port heap object — this is
+; the tagged-vector representation recorded in docs/stdlib/r7rs-small.md.
+;
+; File input ports read the whole file through file-read at open time;
+; file output ports buffer and write through file-write at
+; close-output-port.  So file ports use the existing host prims, not a
+; second file API.
+;
+; read-char on the stdin port decodes UTF-8 straight from read-byte
+; (one code point at a time).  read-char on a string port indexes the
+; string by code point.  write-char to an output port appends to its
+; buffer; to stdout it displays the character.  current-error-port is a
+; port object, but Aura has no stderr writer primitive, so characters
+; written to it go to stdout (noted in the R7RS table).
 
 (export file-exists? file-size file-copy file-delete
         file-read file-write file->string string->file
-        file->lines file->words)
+        file->lines file->words
+        port? current-input-port current-output-port current-error-port
+        open-input-string open-output-string get-output-string
+        open-input-file open-output-file
+        close-input-port close-output-port close-port
+        read-char peek-char write-char write-string
+        eof-object eof-object?)
 
-(require std/string)
+(require "std/string" all:)
 
-
-; ── Raw primitives (re-exported) ────────────────────
-; These are already available at global scope as C++ primitives.
-; The module makes them accessible via (import "std/io").
-
-(define file-exists? file-exists?)
-(define file-size  file-size)
-(define file-copy  file-copy)
-(define file-delete file-delete)
-
-; ── Read/write aliases ─────────────────────────────
-
+; ── File verbs ───────────────────────────────────────────────────
+; Export-only names for the host primitives (no "define x x": that can
+; shadow the primitive, the std/hash hash-ref trap).
 (define (file-read path)
   (read-file path))
 
 (define (file-write path content)
-  (write-file path content))
+  (let ((r (write-file path content)))
+    (if (error? r) r #t)))
 
-(define (file->string path)
-  (read-file path))
-
-(define (string->file path content)
-  (write-file path content))
-
-; ── Structured read ─────────────────────────────────
+(define (file->string path) (file-read path))
+(define (string->file path content) (file-write path content))
 
 (define (file->lines path)
   (let ((content (file-read path)))
     (if (equal? content "") (list)
-      (string-split content "\n"))))
+        (string-split content "\n"))))
 
 (define (file->words path)
-  (let ((content (file-read path)))
-    (string-split-words content)))
+  (string-split-words (file-read path)))
+
+; ── Ports ────────────────────────────────────────────────────────
+
+(define *stdout-port* (vector 'port 'stdout (list) 0 #f))
+(define *stderr-port* (vector 'port 'stderr (list) 0 #f))
+(define *stdin-port* (vector 'port 'stdin #f 0 #f))
+
+(define (current-output-port) *stdout-port*)
+(define (current-error-port) *stderr-port*)
+(define (current-input-port) *stdin-port*)
+
+(define (port? x)
+  (and (vector? x)
+       (= (vector-length x) 5)
+       (eq? (vector-ref x 0) 'port)))
+
+(define (open-input-string s)
+  (vector 'port 'input s 0 #f))
+
+(define (open-output-string)
+  (vector 'port 'output (list) 0 #f))
+
+(define (get-output-string p)
+  (apply string-append (reverse (vector-ref p 2))))
+
+(define (open-input-file path)
+  (vector 'port 'input (file-read path) 0 path))
+
+(define (open-output-file path)
+  (vector 'port 'file-output (list) 0 path))
+
+(define (close-port p)
+  (let ((kind (vector-ref p 1)))
+    (if (eq? kind 'file-output)
+        (file-write (vector-ref p 4) (get-output-string p)))
+    (vector-set! p 1 'closed)
+    (void)))
+
+(define (close-input-port p) (close-port p))
+(define (close-output-port p) (close-port p))
+
+(define (eof-object) (void))
+
+; Read one UTF-8 code point from stdin bytes.  read-byte returns a byte
+; or void at EOF; a continuation that is missing or ill-formed is an
+; error (never a silent replacement character).
+(define (read-stdin-char)
+  (let ((b0 (read-byte)))
+    (if (eof-object? b0)
+        (eof-object)
+        (let ((need (cond ((< b0 128) 0)
+                          ((< b0 224) 1)
+                          ((< b0 240) 2)
+                          (else 3)))
+              (cp (cond ((< b0 128) b0)
+                        ((< b0 224) (bitwise-and b0 31))
+                        ((< b0 240) (bitwise-and b0 15))
+                        (else (bitwise-and b0 7)))))
+          (let cont ((k 1) (cp cp))
+            (if (> k need)
+                cp
+                (let ((b (read-byte)))
+                  (if (or (eof-object? b)
+                          (not (= 128 (bitwise-and b 192))))
+                      (error "read-char: truncated UTF-8 sequence"))
+                  (cont (+ k 1)
+                        (bitwise-ior (arithmetic-shift cp 6)
+                                     (bitwise-and b 63))))))))))
+
+(define (read-char . port)
+  (let ((p (if (null? port) (current-input-port) (car port))))
+    (cond
+      ((eq? (vector-ref p 1) 'stdin)
+       (read-stdin-char))
+      ((eq? (vector-ref p 1) 'input)
+       (let* ((s (vector-ref p 2))
+              (i (vector-ref p 3)))
+         (if (or (not (string? s)) (>= i (string-length s)))
+             (eof-object)
+             (begin
+               (vector-set! p 3 (+ i 1))
+               (string-ref s i)))))
+      (else (error "read-char: not an input port")))))
+
+(define (peek-char . port)
+  (let ((p (if (null? port) (current-input-port) (car port))))
+    (if (eq? (vector-ref p 1) 'input)
+        (let* ((s (vector-ref p 2))
+               (i (vector-ref p 3)))
+          (if (or (not (string? s)) (>= i (string-length s)))
+              (eof-object)
+              (string-ref s i)))
+        (error "peek-char: only string/file input ports can peek"))))
+
+(define (write-char c . port)
+  (let ((p (if (null? port) (current-output-port) (car port)))
+        (s (list->string (list c))))
+    (cond
+      ((or (eq? (vector-ref p 1) 'output)
+           (eq? (vector-ref p 1) 'file-output))
+       (vector-set! p 2 (cons s (vector-ref p 2)))
+       (void))
+      ((eq? (vector-ref p 1) 'stdout)
+       (display s)
+       (void))
+      ((eq? (vector-ref p 1) 'stderr)
+       (display s)
+       (void))
+      (else (error "write-char: not an output port")))))
+
+(define (write-string s . port)
+  (let ((p (if (null? port) (current-output-port) (car port))))
+    (cond
+      ((or (eq? (vector-ref p 1) 'output)
+           (eq? (vector-ref p 1) 'file-output))
+       (vector-set! p 2 (cons s (vector-ref p 2)))
+       (void))
+      ((or (eq? (vector-ref p 1) 'stdout)
+           (eq? (vector-ref p 1) 'stderr))
+       (display s)
+       (void))
+      (else (error "write-string: not an output port")))))

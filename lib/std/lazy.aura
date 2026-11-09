@@ -1,0 +1,44 @@
+; lib/std/lazy.aura — R7RS (scheme lazy) (Issue #5005)
+;
+; (require "std/lazy" all:)
+;
+; (delay expr ...) -> promise.  A promise is #(promise forced? value
+; thunk); the thunk runs once and the value is memoised.  force returns
+; the memoised value; a promise passed to force again is a no-op.
+;
+; (make-promise v) returns an already-forced promise for v (so
+; force/make-promise round-trip), and re-returns a promise unchanged.
+;
+; The delay macro emits the vector construction directly (no reference
+; to a module-private helper) so it expands in any module that has
+; required std/lazy.  The tag symbol is 'promise; promise? checks the
+; shape, which accepts only values built by delay / make-promise.
+
+(export delay force promise? make-promise)
+
+(define (promise? x)
+  (and (vector? x)
+       (= (vector-length x) 4)
+       (eq? (vector-ref x 0) 'promise)))
+
+(define (make-promise v)
+  (if (promise? v)
+      v
+      (vector 'promise #t v #f)))
+
+(define (force p)
+  (if (promise? p)
+      (if (vector-ref p 1)
+          (vector-ref p 2)
+          (let ((v ((vector-ref p 3))))
+            (vector-set! p 2 v)
+            (vector-set! p 1 #t)
+            v))
+      p))
+
+; Layout: #(promise forced? value thunk).  delay fills forced? and
+; value with #f and puts the thunk in slot 3; make-promise fills value
+; and leaves slot 3 #f (already forced).
+(defmacro (delay . body)
+  (list 'vector (list 'quote 'promise) #f #f
+        (list 'lambda '() (cons 'begin body))))

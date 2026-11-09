@@ -1,0 +1,71 @@
+; lib/std/exception.aura — R7RS (scheme base) exception surface (Issue #5005)
+;
+; (require "std/exception" all:)
+;
+; Condition shape: Aura's try/catch binds the *raised value*.  For
+; (error "msg") and (raise "msg") that value is the string "msg"; for
+; (raise obj) it is obj unchanged.  There is no distinct error-object
+; heap tag, so:
+;   (error-object? x)   -> #t for an error value or a string (the shape
+;                          a catch clause receives for (error ...))
+;   (error-object-message x) -> the string, else ""
+;   (error-object-irritants x) -> () (Aura's error carries no irritants)
+; This is the same condition object guard and try/catch see — there is
+; one exception path, not two.
+;
+; (with-exception-handler handler thunk) installs handler for the
+; dynamic extent of thunk.  It is built on try/catch: an escaping error
+; is delivered to the innermost handler; if none is installed, it is
+; re-raised.  The handler stack is process-wide (module-level cell), so
+; it is shared by fibers spawned inside the extent.
+;
+; (raise-continuable obj) calls the innermost handler and returns its
+; value; with no handler it raises obj.  A handler that returns from a
+; non-continuable raise still returns a value here (Aura has no
+; continuation to abort to) — documented deviation.
+;
+; (guard (var clause ...) body ...) — clause tests see var bound to the
+; raised value; with no matching clause the condition is re-raised, so
+; an outer guard/handler can take it.
+
+(export with-exception-handler raise-continuable
+        error-object? error-object-message error-object-irritants
+        guard raise)
+
+(define *handlers* (list))
+
+(define (with-exception-handler handler thunk)
+  (let ((prev *handlers*))
+    (set! *handlers* (cons handler *handlers*))
+    (let ((r (try (thunk)
+                  (catch e
+                    (begin
+                      ;; This frame installed handler; pop it and deliver
+                      ;; the condition.  A handler that re-raises reaches
+                      ;; the outer frame/handler.
+                      (set! *handlers* prev)
+                      (handler e))))))
+      (set! *handlers* prev)
+      r)))
+
+(define (raise-continuable obj)
+  (if (null? *handlers*)
+      (raise obj)
+      ((car *handlers*) obj)))
+
+(define (error-object? x)
+  (or (error? x) (string? x)))
+
+(define (error-object-message x)
+  (if (string? x) x ""))
+
+(define (error-object-irritants x)
+  (list))
+
+(defmacro (guard spec . body)
+  (let ((var (car spec))
+        (clauses (cdr spec)))
+    `(try (begin ,@body)
+          (catch (,var)
+                 (cond ,@clauses
+                       (else (raise ,var)))))))

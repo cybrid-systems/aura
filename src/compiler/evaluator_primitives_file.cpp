@@ -413,6 +413,48 @@ void RegSplitParts::register_file_probe_primitives(PrimRegistrar add, Evaluator&
         // Issue #4919: a predicate — #t / #f, as std/fs documents.
         return make_bool(::lstat(resolved.c_str(), &st) == 0);
     });
+    // Issue #5005: R7RS (scheme process-context) environment access.
+    // Deferred with the other recon probes and io-read-gated at the
+    // call (#2478: environment variables may hold secrets).  A missing
+    // variable is #f, not an error; get-environment-variable(s) never
+    // mutate.
+    ev.defer_std_host_prim(
+        "get-environment-variable", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            if (auto denied = file_deny_io(ev, aura::compiler::security::kCapIoRead,
+                                           "capability denied: io-read required");
+                is_error(denied))
+                return denied;
+            if (a.empty() || !is_string(a[0]))
+                return make_bool(false);
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return make_bool(false);
+            const std::string name = ev.string_at(idx);
+            if (const char* v = ::getenv(name.c_str()))
+                return make_string(ev.string_heap_.mint(v));
+            return make_bool(false);
+        });
+    ev.defer_std_host_prim("get-environment-variables", [&ev](const auto&) -> EvalValue {
+        if (auto denied = file_deny_io(ev, aura::compiler::security::kCapIoRead,
+                                       "capability denied: io-read required");
+            is_error(denied))
+            return denied;
+        EvalValue out = make_void(); // () is void in Aura; build backwards.
+        for (char** e = environ; e && *e; ++e) {
+            const std::string_view entry(*e);
+            const auto eq = entry.find('=');
+            if (eq == std::string_view::npos)
+                continue;
+            const auto name_idx = ev.string_heap_.mint(entry.substr(0, eq));
+            const auto val_idx = ev.string_heap_.mint(entry.substr(eq + 1));
+            const auto pidx = ev.pairs_.size();
+            ev.pairs_.push_back({make_string(name_idx), make_string(val_idx)});
+            const auto lidx = ev.pairs_.size();
+            ev.pairs_.push_back({make_pair(pidx), out});
+            out = make_pair(lidx);
+        }
+        return out;
+    });
 }
 
 // Issue #5033: file-copy / file-delete / file-size — one-path entry operations.

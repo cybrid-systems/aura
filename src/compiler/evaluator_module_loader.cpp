@@ -318,7 +318,8 @@ types::EvalValue Evaluator::ensure_std_host_prims(std::string_view module_path) 
         else if (want == (1u << 2))
             match = name.starts_with("git-");
         else if (want == (1u << 3))
-            match = name == "shell" || name.starts_with("command-") || name.starts_with("sys-");
+            match = name == "shell" || name.starts_with("command-") || name.starts_with("sys-") ||
+                    name.starts_with("get-environment-");
         else if (want == (1u << 0))
             match = name.starts_with("file-") || name == "directory-list";
         else if (want == (1u << 4))

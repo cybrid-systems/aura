@@ -1,0 +1,47 @@
+; lib/std/char.aura — R7RS (scheme char) surface (Issue #5005)
+;
+; (require "std/char" all:)
+;
+; Aura characters are code points stored as integers (char->integer /
+; integer->char are identity on the integer payload), so comparisons are
+; integer comparisons.  The kernel supplies char=?, char<?,
+; char-alphabetic?, char-numeric?, char-whitespace?, char-upcase and
+; char-downcase; the rest of the R7RS char library lives here.
+;
+; Case mapping and folding are ASCII-only (a-z / A-Z), matching the
+; kernel char-upcase/char-downcase.  Unicode simple folding would need
+; a case table; it is listed as "not in this version" in
+; docs/stdlib/r7rs-small.md.
+
+(export char=? char<? char>? char<=? char>=?
+        char-ci=? char-ci<? char-ci>? char-ci<=? char-ci>=?
+        char-alphabetic? char-numeric? char-whitespace?
+        char-upper-case? char-lower-case?
+        char-upcase char-downcase char-foldcase digit-value
+        char->integer integer->char)
+
+(define (char>? a b) (char<? b a))
+(define (char<=? a b) (not (char<? b a)))
+(define (char>=? a b) (not (char<? a b)))
+
+; ASCII-only simple case fold.
+(define (char-foldcase c)
+  (char-downcase (char-upcase c)))
+
+(define (char-ci=? a b) (char=? (char-foldcase a) (char-foldcase b)))
+(define (char-ci<? a b) (char<? (char-foldcase a) (char-foldcase b)))
+(define (char-ci>? a b) (char>? (char-foldcase a) (char-foldcase b)))
+(define (char-ci<=? a b) (char<=? (char-foldcase a) (char-foldcase b)))
+(define (char-ci>=? a b) (char>=? (char-foldcase a) (char-foldcase b)))
+
+(define (char-upper-case? c)
+  (and (>= c 65) (<= c 90)))
+
+(define (char-lower-case? c)
+  (and (>= c 97) (<= c 122)))
+
+; (digit-value c) — 0..9 for '0'..'9', #f otherwise (R7RS).
+(define (digit-value c)
+  (if (and (>= c 48) (<= c 57))
+      (- c 48)
+      #f))
