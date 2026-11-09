@@ -10,9 +10,10 @@
 
 (export foldr foldl map for-each member? zip zip3 take skip take-while drop-while
         partition sort range sum product last flatten intersperse
-        intersperse-iterative any all
+        intersperse-iterative any every all
         make-list list-tail find count remove delete
-        assoc assq iota vector-map vector-fill! vector-copy
+        assoc assq iota cons* append-map filter-map
+        vector-map vector-fill! vector-copy
         values call-with-values)
 
 ; foldl: left fold (iterative — constant stack; preferred hot path #923/#928)
@@ -102,17 +103,20 @@
       (reverse acc)
       (loop (+ i 1) (cons i acc)))))
 
-; take: R7RS / SRFI-1 (lst k) — align with native #4177; Soft oneshot
+; take: SRFI-1 / R7RS (lst k) — align with native #4177; Soft oneshot
 ; previously shadowed native with count-first (take n lst) (#4221).
-; A non-integer count must be an error value. Coercing it through
-; (- k 1) prints a type mismatch and returns a list, so error? is false.
+; SRFI-1 contract: k must be a non-negative integer AND the list must
+; have at least k elements; otherwise it is an error (it used to
+; silently return a short list).
 (define (take lst n)
   (if (integer? n)
     (if (>= n 0)
       (let loop ((k n) (xs lst) (acc (list)))
-        (if (or (= k 0) (null? xs))
+        (if (= k 0)
           (reverse acc)
-          (loop (- k 1) (cdr xs) (cons (car xs) acc))))
+          (if (null? xs)
+            (error "take: list shorter than count")
+            (loop (- k 1) (cdr xs) (cons (car xs) acc)))))
       (error "take: count must be a non-negative integer"))
     (error "take: count must be a non-negative integer")))
 
@@ -158,16 +162,26 @@
 ; Alias for callers that want an explicit iterative name (AC #1549).
 (define intersperse-iterative intersperse)
 
-; any / all: iterative (Issue #928 TCO-friendly)
-(define (any pred lst)
-  (let loop ((xs lst))
-    (if (null? xs) #f
-      (if (pred (car xs)) #t (loop (cdr xs))))))
+; any / every: SRFI-1 shapes (Issue #5003) — any number of lists,
+; stopping at the shortest; any returns the first true value, every the
+; last one (#t on an empty/all-true walk). all stays the boolean form
+; for callers that only want #t/#f.
+(define (any pred . lists)
+  (let loop ((ls lists))
+    (if (or (null? ls) (null? (car ls)))
+      #f
+      (let ((r (apply pred (map car ls))))
+        (if r r (loop (map cdr ls)))))))
 
-(define (all pred lst)
-  (let loop ((xs lst))
-    (if (null? xs) #t
-      (if (pred (car xs)) (loop (cdr xs)) #f))))
+(define (every pred . lists)
+  (let loop ((ls lists) (last #t))
+    (if (or (null? ls) (null? (car ls)))
+      last
+      (let ((r (apply pred (map car ls))))
+        (if r (loop (map cdr ls) r) #f)))))
+
+(define (all pred . lists)
+  (if (apply every (cons pred lists)) #t #f))
 
 ; R7RS make-list — Soft oneshot gap (#4189/#4203). Iterative O(1) stack.
 (define (make-list n fill)
@@ -218,6 +232,31 @@
       (if (equal? (car xs) x)
         (loop (cdr xs) acc)
         (loop (cdr xs) (cons (car xs) acc))))))
+
+; ── SRFI-1 additions (Issue #5003) ───────────────────────────────
+
+; (cons* x ... tail) — like list, but the last argument is the tail.
+(define (cons* . args)
+  (if (null? args)
+      (error "cons*: needs at least one argument")
+      (let build ((xs args))
+        (if (null? (cdr xs))
+            (car xs)
+            (cons (car xs) (build (cdr xs)))))))
+
+; (append-map f lst ...) — map then append the results.
+(define (append-map f . lists)
+  (let loop ((rs (apply map (cons f lists))) (acc (list)))
+    (if (null? rs)
+        (reverse acc)
+        (loop (cdr rs) (append (reverse (car rs)) acc)))))
+
+; (filter-map f lst ...) — map, then keep every non-#f result.
+(define (filter-map f . lists)
+  (let loop ((rs (apply map (cons f lists))) (acc (list)))
+    (if (null? rs)
+        (reverse acc)
+        (loop (cdr rs) (if (car rs) (cons (car rs) acc) acc)))))
 
 ; ── Issue #4496: common R7RS list/vector bindings ─────────────────
 

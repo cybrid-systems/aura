@@ -1,42 +1,184 @@
-; set.aura — Set data structure (built on hash tables)
-(export set set-add set-remove set-member? set-empty? set-union set-intersect set-difference set->list list->set set-size set-subset? set-equal?)
+; lib/std/set.aura — SRFI-113 sets on the unified hash table (Issue #5003)
+;
+; (require "std/set" all:)
+;
+; Representation: an Aura hash table whose keys are the members and whose
+; values are #t.  There is no separate set heap object, so (set? x) is
+; (hash? x) — documented in docs/stdlib/r7rs-small.md.
+;
+; Copy semantics match std/hash (#4614): set-adjoin / set-delete /
+; set-union / ... return a NEW set and leave their arguments unchanged.
+; The in-place forms are the SRFI-113 bang names: set-adjoin!,
+; set-delete!, set-union!, set-intersection!, set-difference!,
+; set-xor!, set-clear!.  The old set-add / set-remove aliases follow
+; the copy-on-write rule too (they used to mutate — the exact mismatch
+; this issue removes).
+;
+; All constructors build a fresh table and use the native hash-set!
+; internally; user-visible modifiers never mutate an argument.
 
-(define (for-each f lst)
-  (if (null? lst) #t
-    (begin (f (car lst)) (for-each f (cdr lst)))))
+(export set set? set-copy set-clear!
+        set-adjoin set-adjoin! set-delete set-delete!
+        set-member? set-contains? set-size set-empty?
+        set-union set-union! set-intersection set-intersection!
+        set-difference set-difference! set-xor set-xor!
+        set=? set-subset? set-superset?
+        set->list list->set
+        set-for-each set-map set-filter set-fold
+        set-count set-any? set-every?
+        ; legacy names keep working with the copy-on-write rule
+        set-add set-remove set-intersect set-equal?)
+
+(define *absent* (vector 'absent))
+
+(define (hash-member? h k)
+  (not (eq? (hash-ref h k *absent*) *absent*)))
+
+(define (set-copy s)
+  (let ((out (hash)))
+    (for-each (lambda (k) (hash-set! out k #t)) (hash-keys s))
+    out))
+
+(define (set-clear! s)
+  (for-each (lambda (k) (hash-remove! s k)) (hash-keys s))
+  s)
+
+(define (set . items)
+  (let ((s (hash)))
+    (for-each (lambda (x) (hash-set! s x #t)) items)
+    s))
+
+; set? is hash? — the representation is a hash table (see header).
+(define (set? x) (hash? x))
 
 (define (set->list s) (hash-keys s))
 
 (define (list->set lst)
   (let ((s (hash)))
-    (for-each (lambda (x) (hash-set! s x #t)) lst) s))
+    (for-each (lambda (x) (hash-set! s x #t)) lst)
+    s))
 
-(define (set . items) (list->set items))
-
-(define (set-add s x) (hash-set! s x #t) s)
-
-(define (set-remove s x) (hash-remove! s x) s)
-
-(define (set-member? s x) (not (null? (hash-ref s x))))
-
+(define (set-member? s x) (hash-member? s x))
+(define set-contains? set-member?)
+(define (set-size s) (hash-length s))
 (define (set-empty? s) (= (hash-length s) 0))
 
-(define (set-size s) (hash-length s))
+; ── copy-on-write modifiers ──────────────────────────────────────
+; (set-adjoin s x ...) — SRFI-113 accepts several members.
+(define (set-adjoin s . xs)
+  (let ((out (set-copy s)))
+    (for-each (lambda (x) (hash-set! out x #t)) xs)
+    out))
 
+(define (set-delete s . xs)
+  (let ((out (set-copy s)))
+    (for-each (lambda (x) (if (hash-member? out x) (hash-remove! out x))) xs)
+    out))
+
+; ── in-place modifiers ───────────────────────────────────────────
+(define (set-adjoin! s . xs)
+  (for-each (lambda (x) (hash-set! s x #t)) xs)
+  s)
+
+(define (set-delete! s . xs)
+  (for-each (lambda (x) (if (hash-member? s x) (hash-remove! s x))) xs)
+  s)
+
+; ── whole-set operations (copy-on-write) ─────────────────────────
 (define (set-union a b)
-  (let ((r (hash)))
-    (for-each (lambda (k) (hash-set! r k #t)) (hash-keys a))
-    (for-each (lambda (k) (hash-set! r k #t)) (hash-keys b)) r))
+  (let ((out (set-copy a)))
+    (for-each (lambda (k) (hash-set! out k #t)) (hash-keys b))
+    out))
 
-(define (set-intersect a b)
-  (let ((r (hash)))
-    (for-each (lambda (k) (if (not (null? (hash-ref b k))) (hash-set! r k #t))) (hash-keys a)) r))
+(define (set-intersection a b)
+  (let ((out (hash)))
+    (for-each (lambda (k) (if (hash-member? b k) (hash-set! out k #t)))
+              (hash-keys a))
+    out))
 
 (define (set-difference a b)
-  (let ((r (hash)))
-    (for-each (lambda (k) (if (null? (hash-ref b k)) (hash-set! r k #t))) (hash-keys a)) r))
+  (let ((out (hash)))
+    (for-each (lambda (k) (if (not (hash-member? b k)) (hash-set! out k #t)))
+              (hash-keys a))
+    out))
 
-(define (set-subset? a b) (null? (hash-keys (set-difference a b))))
+(define (set-xor a b)
+  (set-union (set-difference a b) (set-difference b a)))
 
-(define (set-equal? a b)
-  (and (= (hash-length a) (hash-length b)) (null? (hash-keys (set-difference a b)))))
+; ── whole-set operations (in place, first argument) ──────────────
+(define (set-union! a b)
+  (for-each (lambda (k) (hash-set! a k #t)) (hash-keys b))
+  a)
+
+(define (set-intersection! a b)
+  (for-each (lambda (k) (if (not (hash-member? b k)) (hash-remove! a k)))
+            (hash-keys a))
+  a)
+
+(define (set-difference! a b)
+  (for-each (lambda (k) (if (hash-member? b k) (hash-remove! a k)))
+            (hash-keys a))
+  a)
+
+(define (set-xor! a b)
+  (let ((only-b (set-difference b a)))
+    (set-difference! a b)
+    (set-union! a only-b)))
+
+; ── predicates ───────────────────────────────────────────────────
+(define (set=? a b)
+  (and (= (hash-length a) (hash-length b))
+       (set-subset? a b)))
+
+(define (set-subset? a b)
+  (let loop ((ks (hash-keys a)))
+    (cond ((null? ks) #t)
+          ((hash-member? b (car ks)) (loop (cdr ks)))
+          (else #f))))
+
+(define (set-superset? a b) (set-subset? b a))
+
+; ── iteration ────────────────────────────────────────────────────
+(define (set-for-each f s)
+  (for-each (lambda (k) (f k)) (hash-keys s))
+  (void))
+
+(define (set-map f s)
+  (let ((out (hash)))
+    (for-each (lambda (k) (hash-set! out (f k) #t)) (hash-keys s))
+    out))
+
+(define (set-filter pred s)
+  (let ((out (hash)))
+    (for-each (lambda (k) (if (pred k) (hash-set! out k #t))) (hash-keys s))
+    out))
+
+(define (set-fold kons knil s)
+  (let loop ((ks (hash-keys s)) (acc knil))
+    (if (null? ks)
+        acc
+        (loop (cdr ks) (kons (car ks) acc)))))
+
+(define (set-count pred s)
+  (let loop ((ks (hash-keys s)) (n 0))
+    (if (null? ks)
+        n
+        (loop (cdr ks) (if (pred (car ks)) (+ n 1) n)))))
+
+(define (set-any? pred s)
+  (let loop ((ks (hash-keys s)))
+    (cond ((null? ks) #f)
+          ((pred (car ks)) #t)
+          (else (loop (cdr ks))))))
+
+(define (set-every? pred s)
+  (let loop ((ks (hash-keys s)))
+    (cond ((null? ks) #t)
+          ((pred (car ks)) (loop (cdr ks)))
+          (else #f))))
+
+; ── legacy names (copy-on-write, same as std/hash) ───────────────
+(define set-add set-adjoin)
+(define set-remove set-delete)
+(define set-intersect set-intersection)
+(define set-equal? set=?)

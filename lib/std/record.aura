@@ -1,0 +1,73 @@
+; lib/std/record.aura — SRFI-9 records (Issue #5003)
+;
+; (require "std/record" all:)
+;
+; (define-record-type <name> (constructor field ...) predicate
+;   (field accessor [mutator]) ...)
+;
+; A record is a vector whose slot 0 is the record-type tag symbol:
+;   #(<name> field0 field1 ...)
+; Aura already uses tagged vectors for std/struct, so records interop
+; with vector-ref and are equal?-comparable by contents.  The predicate
+; checks the tag, so two record types never accept each other.
+;
+; Unlike std/struct's define-struct (make-Name / Name? / Name-field),
+; this follows the SRFI-9 shape: every name is chosen by the caller.
+; define-struct stays for its existing users.
+;
+; The mutator's return value is void (R7RS says unspecified).
+;
+; The expansion is built with list/cons, not quasiquote: inside this
+; defmacro a quasiquoted literal 0 in head position comes back as '()
+; (observed while landing #5003), so numeric slots are emitted as
+; explicit list arguments.
+
+(defmacro (define-record-type tname ctor pred . field-specs)
+  (let* ((ctor-name (car ctor))
+         (ctor-formals (cdr ctor))
+         (rfields (map car field-specs)))
+    (let ((field-index
+            (lambda (f)
+              (let loop ((fs rfields) (i 0))
+                (cond ((null? fs) #f)
+                      ((equal? (car fs) f) i)
+                      (else (loop (cdr fs) (+ i 1)))))))
+          (ctor-index
+            (lambda (f)
+              (let loop ((fs ctor-formals) (i 0))
+                (cond ((null? fs) #f)
+                      ((equal? (car fs) f) i)
+                      (else (loop (cdr fs) (+ i 1))))))))
+      (let* ((pred-def
+               (list 'define (list pred 'obj)
+                     (list 'and
+                           (list 'vector? 'obj)
+                           (list '>= (list 'vector-length 'obj) 1)
+                           (list 'eq? (list 'vector-ref 'obj 0)
+                                 (list 'quote tname)))))
+             (ctor-refs
+               (map (lambda (f)
+                      (let ((ci (ctor-index f)))
+                        (if ci (list-ref ctor-formals ci) #f)))
+                    rfields))
+             (ctor-def
+               (list 'define (cons ctor-name ctor-formals)
+                     (cons 'vector (cons (list 'quote tname) ctor-refs))))
+             (acc-defs
+               (map (lambda (spec)
+                      (let* ((f (car spec))
+                             (acc (car (cdr spec)))
+                             (rest (cdr (cdr spec)))
+                             (mut (if (null? rest) #f (car rest)))
+                             (fi (+ 1 (field-index f))))
+                        (if mut
+                            (list 'begin
+                                  (list 'define (list acc 'obj)
+                                        (list 'vector-ref 'obj fi))
+                                  (list 'define (list mut 'obj 'val)
+                                        (list 'vector-set! 'obj fi 'val)
+                                        (list 'void)))
+                            (list 'define (list acc 'obj)
+                                  (list 'vector-ref 'obj fi)))))
+                    field-specs)))
+        (cons 'begin (cons pred-def (cons ctor-def acc-defs)))))))

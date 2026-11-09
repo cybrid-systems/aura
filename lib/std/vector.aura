@@ -1,0 +1,168 @@
+; lib/std/vector.aura — SRFI-133 vector library (Issue #5003)
+;
+; (require "std/vector" all:)
+;
+; This is the canonical home of the SRFI-133 names.  std/list keeps its
+; older vector-map/vector-fill!/vector-copy exports for compatibility;
+; new code should require std/vector.  Native helpers (vector-length,
+; vector-ref, vector-set!, vector-fill!, vector-copy, vector->list,
+; list->vector) stay primitives and are exported here unchanged — no
+; module-level redefine, which would shadow them.
+;
+; Aura has no exact rationals and vectors are mutable; every *_copy
+; below returns a fresh vector (the #4614 copy-on-write rule).
+
+(export vector? make-vector vector-length vector-ref vector-set!
+        vector->list list->vector vector-fill! vector-copy
+        vector-append vector-concatenate vector-empty?
+        vector-map vector-for-each vector-fold vector-fold-right
+        vector-count vector-index vector-any vector-every
+        vector-copy! vector-reverse! vector-reverse-copy
+        vector-binary-search)
+
+; Length of the shortest vector among v and vs (SRFI-133 truncation).
+(define (min-length v vs)
+  (let loop ((rest vs) (m (vector-length v)))
+    (if (null? rest)
+        m
+        (loop (cdr rest) (min m (vector-length (car rest)))))))
+
+; (vector-append v ...) — concatenate any number of vectors.
+(define (vector-append . vs)
+  (let* ((total (let loop ((rest vs) (n 0))
+                   (if (null? rest) n (loop (cdr rest) (+ n (vector-length (car rest)))))))
+         (out (make-vector total 0)))
+    (let loop ((rest vs) (at 0))
+      (if (null? rest)
+          out
+          (let* ((v (car rest))
+                 (n (vector-length v)))
+            (let copy ((i 0))
+              (if (>= i n)
+                  (loop (cdr rest) (+ at n))
+                  (begin (vector-set! out (+ at i) (vector-ref v i))
+                         (copy (+ i 1))))))))))
+
+; (vector-concatenate list-of-vectors) — SRFI-133 spelling.
+(define (vector-concatenate vs)
+  (apply vector-append vs))
+
+(define (vector-empty? v) (= 0 (vector-length v)))
+
+; (vector-map f v ...) — result is as long as the shortest argument.
+(define (vector-map f v . vs)
+  (let* ((all (cons v vs))
+         (len (min-length v vs))
+         (out (make-vector len 0)))
+    (let loop ((i 0))
+      (if (>= i len)
+          out
+          (begin
+            (vector-set! out i (apply f (map (lambda (x) (vector-ref x i)) all)))
+            (loop (+ i 1)))))))
+
+; (vector-for-each f v ...) — stops at the shortest vector; returns void.
+(define (vector-for-each f v . vs)
+  (let* ((len (min-length v vs)))
+    (let loop ((i 0))
+      (if (>= i len)
+          (void)
+          (begin
+            (apply f (map (lambda (x) (vector-ref x i)) (cons v vs)))
+            (loop (+ i 1)))))))
+
+; (vector-fold kons knil v ...) — kons gets (state elt ...).
+(define (vector-fold kons knil v . vs)
+  (let* ((len (min-length v vs)))
+    (let loop ((i 0) (acc knil))
+      (if (>= i len)
+          acc
+          (loop (+ i 1)
+                (apply kons (cons acc (map (lambda (x) (vector-ref x i)) (cons v vs)))))))))
+
+; (vector-fold-right kons knil v ...) — right-to-left.
+(define (vector-fold-right kons knil v . vs)
+  (let* ((len (min-length v vs)))
+    (let loop ((i (- len 1)) (acc knil))
+      (if (< i 0)
+          acc
+          (loop (- i 1)
+                (apply kons (cons acc (map (lambda (x) (vector-ref x i)) (cons v vs)))))))))
+
+; (vector-count pred v ...) — number of index positions where pred is true.
+(define (vector-count pred v . vs)
+  (let* ((len (min-length v vs)))
+    (let loop ((i 0) (n 0))
+      (if (>= i len)
+          n
+          (loop (+ i 1)
+                (if (apply pred (map (lambda (x) (vector-ref x i)) (cons v vs)))
+                    (+ n 1)
+                    n))))))
+
+; (vector-index pred v ...) — first matching index, #f when none.
+(define (vector-index pred v . vs)
+  (let* ((len (min-length v vs)))
+    (let loop ((i 0))
+      (if (>= i len)
+          #f
+          (if (apply pred (map (lambda (x) (vector-ref x i)) (cons v vs)))
+              i
+              (loop (+ i 1)))))))
+
+; (vector-any pred v ...) — first true predicate value, #f when none.
+(define (vector-any pred v . vs)
+  (let* ((len (min-length v vs)))
+    (let loop ((i 0))
+      (if (>= i len)
+          #f
+          (let ((r (apply pred (map (lambda (x) (vector-ref x i)) (cons v vs)))))
+            (if r r (loop (+ i 1))))))))
+
+; (vector-every pred v ...) — last true value, #t when all true, #f early.
+(define (vector-every pred v . vs)
+  (let* ((len (min-length v vs)))
+    (let loop ((i 0) (last #t))
+      (if (>= i len)
+          last
+          (let ((r (apply pred (map (lambda (x) (vector-ref x i)) (cons v vs)))))
+            (if r (loop (+ i 1) r) #f))))))
+
+; (vector-copy! to at from [start [end]]) — copy into to, returns to.
+(define (vector-copy! to at from . range)
+  (let* ((start (if (null? range) 0 (car range)))
+         (end (if (or (null? range) (null? (cdr range))) (vector-length from) (car (cdr range)))))
+    (let loop ((i start) (j at))
+      (if (>= i end)
+          to
+          (begin (vector-set! to j (vector-ref from i))
+                 (loop (+ i 1) (+ j 1)))))))
+
+(define (vector-reverse-copy v)
+  (let* ((n (vector-length v)) (out (make-vector n 0)))
+    (let loop ((i 0))
+      (if (>= i n)
+          out
+          (begin (vector-set! out i (vector-ref v (- n 1 i)))
+                 (loop (+ i 1)))))))
+
+(define (vector-reverse! v)
+  (let loop ((i 0) (j (- (vector-length v) 1)))
+    (if (>= i j)
+        v
+        (let ((tmp (vector-ref v i)))
+          (vector-set! v i (vector-ref v j))
+          (vector-set! v j tmp)
+          (loop (+ i 1) (- j 1))))))
+
+; (vector-binary-search vec value cmp) — cmp is (lambda (a b) ...) returning
+; a negative / zero / positive number; index or #f.
+(define (vector-binary-search vec value cmp)
+  (let loop ((lo 0) (hi (- (vector-length vec) 1)))
+    (if (> lo hi)
+        #f
+        (let* ((mid (quotient (+ lo hi) 2))
+               (c (cmp (vector-ref vec mid) value)))
+          (cond ((= c 0) mid)
+                ((< c 0) (loop (+ mid 1) hi))
+                (else (loop lo (- mid 1))))))))

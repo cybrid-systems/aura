@@ -1,0 +1,192 @@
+; Issue #5003 — SRFI-shaped stdlib: list / vector / hash-table / set /
+; sort / bitwise / record.
+;
+; Each check fails the run: the file calls (error ...), and --load turns
+; an escaped top-level error value into exit status 1 (the aura file
+; runner's judge).  (test-suite ...) alone only registers forms and is
+; not used here, so a red check cannot look green.
+
+(require "std/list" all:)
+(require "std/vector" all:)
+(require "std/hash" all:)
+(require "std/set" all:)
+(require "std/sort" all:)
+(require "std/bitwise" all:)
+(require "std/record" all:)
+
+(define *failures* 0)
+
+(define (t= name expected actual)
+  (if (equal? expected actual)
+      #t
+      (begin
+        (set! *failures* (+ *failures* 1))
+        (display "FAIL ") (display name)
+        (display ": expected ") (display expected)
+        (display ", got ") (display actual) (newline)
+        (error (string-append "test failed: " name)))))
+
+(define (t-true name v) (t= name #t (if v #t #f)))
+(define (t-false name v) (t= name #f (if v #t #f)))
+
+; ── SRFI-1 list ───────────────────────────────────────────────────
+(t= "cons*" (list 1 2 3 4 5) (cons* 1 2 3 (list 4 5)))
+(t= "cons* dotted tail" (cons 1 2) (cons* 1 2))
+(t= "append-map" (list 1 1 2 2) (append-map (lambda (x) (list x x)) (list 1 2)))
+(t= "filter-map" (list 2 4) (filter-map (lambda (x) (if (even? x) x #f)) (list 1 2 3 4)))
+(t= "any returns true value" 3 (any (lambda (x) (if (> x 2) x #f)) (list 1 3 4)))
+(t= "any over two lists" 5
+   (any (lambda (a b) (if (> a 2) (+ a b) #f)) (list 0 0 5) (list 0 0 0)))
+(t= "every returns last value" 9 (every (lambda (x) (if (< x 5) 9 #f)) (list 1 2)))
+(t-false "every sees a false" (every (lambda (x) (> x 1)) (list 2 1)))
+(t-true "all boolean form" (all (lambda (x) (> x 1)) (list 2 3)))
+(t= "take exact" (list 1 2) (take (list 1 2 3) 2))
+(t-true "take too short is an error"
+        (try (take (list 1) 2) (catch e #t)))
+(t= "iota" (list 0 1 2) (iota 3))
+(t= "assoc" (cons 'b 2) (assoc 'b (list (cons 'a 1) (cons 'b 2))))
+
+; ── SRFI-133 vector ───────────────────────────────────────────────
+(t= "vector-append" (vector 1 2 3) (vector-append (vector 1) (vector 2 3)))
+(t= "vector-concatenate" (vector 1 2 3)
+   (vector-concatenate (list (vector 1) (vector 2 3))))
+(t-true "vector-empty?" (vector-empty? (vector)))
+(t= "vector-map shortest" (vector 11 22) (vector-map + (vector 1 2) (vector 10 20)))
+(t= "vector-for-each count"
+   (let ((n (vector 0)))
+     (vector-for-each (lambda (x) (vector-set! n 0 (+ (vector-ref n 0) 1)))
+                      (vector 1 2 3))
+     (vector-ref n 0))
+   3)
+(t= "vector-fold" 6 (vector-fold (lambda (acc x) (+ acc x)) 0 (vector 1 2 3)))
+(t= "vector-fold-right" (list 1 2 3)
+   (vector-fold-right (lambda (acc x) (cons x acc)) (list) (vector 1 2 3)))
+(t= "vector-count" 2 (vector-count even? (vector 1 2 3 4)))
+(t= "vector-index" 2 (vector-index even? (vector 1 3 4)))
+(t-false "vector-index miss" (vector-index even? (vector 1 3 5)))
+(t= "vector-any" #t (if (vector-any odd? (vector 2 4 5)) #t #f))
+(t= "vector-every" #t (if (vector-every odd? (vector 1 3 5)) #t #f))
+(t= "vector-copy! returns target"
+   (let ((to (vector 0 0 0)))
+     (vector-copy! to 0 (vector 7 8))
+     to)
+   (vector 7 8 0))
+(t= "vector-reverse-copy" (vector 3 2 1) (vector-reverse-copy (vector 1 2 3)))
+(t= "vector-binary-search" 1
+   (vector-binary-search (vector 10 20 30) 20 (lambda (a b) (- a b))))
+
+; ── SRFI-125 hash table + SRFI-128 comparator ─────────────────────
+(define h (make-hash-table))
+(t-true "hash-table?" (hash-table? h))
+(hash-table-set! h 'a 1)
+(hash-table-set! h 'b 2)
+(t= "hash-table-ref" 1 (hash-table-ref h 'a))
+(t= "hash-table-size" 2 (hash-table-size h))
+(t-true "hash-table-exists?" (hash-table-exists? h 'a))
+(t-false "hash-table-exists? miss" (hash-table-exists? h 'z))
+(t= "hash-table-ref failure thunk" 'gone (hash-table-ref h 'z (lambda () 'gone)))
+(t-true "hash-table-ref missing raises"
+        (try (hash-table-ref h 'z) (catch e #t)))
+(hash-table-update! h 'a (lambda (x) (+ x 41)))
+(t= "hash-table-update!" 42 (hash-table-ref h 'a))
+(hash-table-update! h 'c (lambda (x) x) 7)
+(t= "hash-table-update! default" 7 (hash-table-ref h 'c))
+(hash-table-delete! h 'b)
+(t-false "hash-table-delete!" (hash-table-exists? h 'b))
+(t= "hash-table-keys count" 2 (length (hash-table-keys h)))
+(t-true "hash-table->alist" (pair? (hash-table->alist h)))
+(t= "alist->hash-table" 5
+   (hash-table-ref (alist->hash-table (list (cons 'k 5))) 'k))
+(t= "hash-table-merge!" 2
+   (let* ((a (alist->hash-table (list (cons 'x 1))))
+          (b (alist->hash-table (list (cons 'x 2)))))
+     (hash-table-merge! a b)
+     (hash-table-ref a 'x)))
+(t= "hash-table-walk count"
+   (let ((n 0)) (hash-table-walk (lambda (k v) (set! n (+ n 1))) h) n)
+   (hash-table-size h))
+(t-true "comparator?" (comparator? default-comparator))
+(t-true "=?" (=? default-comparator 'a 'a))
+(t-false "=? false" (=? default-comparator "a" "b"))
+(t-true "<?" (<? default-comparator 1 2))
+(t= "comparator-hash stable" (comparator-hash default-comparator "abc")
+   (comparator-hash default-comparator "abc"))
+(t-true "comparator-test?" (comparator-test? default-comparator 42))
+
+; ── SRFI-113 set (copy-on-write, same rule as std/hash) ───────────
+(define s (set 1 2 3))
+(t-true "set?" (set? s))
+(t= "set-size" 3 (set-size s))
+(t-true "set-member?" (set-member? s 2))
+(t-false "set-member? miss" (set-member? s 9))
+(define s2 (set-adjoin s 4))
+(t= "set-adjoin is copy-on-write: original size" 3 (set-size s))
+(t= "set-adjoin is copy-on-write: new size" 4 (set-size s2))
+(define s3 (set-delete s 1))
+(t= "set-delete is copy-on-write: original" 3 (set-size s))
+(t= "set-delete is copy-on-write: new" 2 (set-size s3))
+(t= "set-adjoin! mutates" 4 (set-size (set-adjoin! s 4)))
+(t-true "set-adjoin! visible" (set-member? s 4))
+(t= "set-union" 5 (set-size (set-union (set 1 2) (set 3 4 5))))
+(t= "set-intersection" (list 2)
+   (set->list (set-intersection (set 1 2) (set 2 3))))
+(t= "set-difference" (list 1)
+   (set->list (set-difference (set 1 2) (set 2 3))))
+(t-true "set=?" (set=? (set 1 2) (set 2 1)))
+(t-true "set-subset?" (set-subset? (set 1) (set 1 2)))
+(t-true "set-superset?" (set-superset? (set 1 2) (set 1)))
+(t= "set-fold" 6 (set-fold + 0 (set 1 2 3)))
+(t= "set-count" 2 (set-count even? (set 1 2 3 4)))
+(t-true "set-any?" (set-any? even? (set 1 3 4)))
+(t= "set-map" 2 (set-size (set-map (lambda (x) (+ x 10)) s3)))
+(t= "set-filter" 1 (set-size (set-filter odd? (set 2 4 5))))
+(t= "list->set/set->list roundtrip" (list 1 2 3)
+   (list-sort < (let ((r (list->set (list 1 2 3)))) (set->list r))))
+
+; ── SRFI-132 sort ─────────────────────────────────────────────────
+(t= "list-sort SRFI order" (list 1 2 3) (list-sort < (list 3 1 2)))
+(t= "list-sort data order" (list 1 2 3) (list-sort (list 3 1 2) <))
+(t= "list-stable-sort" (list 1 1 2) (list-stable-sort < (list 1 2 1)))
+(t= "vector-sort" (vector 1 2 3) (vector-sort < (vector 3 1 2)))
+(t= "vector-sort! mutates"
+   (let ((v (vector 3 1 2))) (vector-sort! < v) v)
+   (vector 1 2 3))
+(t= "sort list default" (list 1 2 3) (sort (list 3 1 2)))
+(t= "sort vector default" (vector 1 2 3) (sort (vector 3 1 2)))
+(t-true "sorted?" (sorted? (list 1 2 3) <))
+(t-false "sorted? false" (sorted? (list 2 1) <))
+
+; ── SRFI-151 bitwise ──────────────────────────────────────────────
+(t= "bitwise-not" -6 (bitwise-not 5))
+(t= "bitwise-and" 8 (bitwise-and 12 10))
+(t= "bitwise-and no args" -1 (bitwise-and))
+(t= "bitwise-ior" 14 (bitwise-ior 12 10))
+(t= "bitwise-ior no args" 0 (bitwise-ior))
+(t= "bitwise-xor" 6 (bitwise-xor 12 10))
+(t= "arithmetic-shift left" 8 (arithmetic-shift 2 2))
+(t= "arithmetic-shift right" 2 (arithmetic-shift 8 -2))
+(t= "arithmetic-shift negative right" -2 (arithmetic-shift -8 -2))
+(t= "bit-count positive" 3 (bit-count 7))
+(t= "bit-count -1" -1 (bit-count -1))
+(t= "integer-length" 3 (integer-length 7))
+(t= "integer-length 0" 0 (integer-length 0))
+(t= "bitwise-if" 11 (bitwise-if 12 10 7))
+(t-true "bitwise-bit-set?" (bitwise-bit-set? 8 3))
+(t-false "bitwise-bit-set? clear" (bitwise-bit-set? 8 2))
+(t= "bitwise-first-bit-set" 3 (bitwise-first-bit-set 8))
+(t= "bitwise-bit-field" 1 (bitwise-bit-field 10 1 3))
+(t= "bitwise-fold" 3 (bitwise-fold (lambda (bit acc) (+ acc 1)) 0 7))
+(t= "bitwise-length" 3 (bitwise-length 7))
+
+; ── SRFI-9 record ─────────────────────────────────────────────────
+(define-record-type <pare> (kons x y) pare? (x kar set-kar!) (y kdr))
+(define p (kons 1 2))
+(t-true "record predicate" (pare? p))
+(t-false "record predicate rejects other tag" (pare? (vector 'other 1 2)))
+(t-false "record predicate rejects non-vector" (pare? 42))
+(t= "record accessor x" 1 (kar p))
+(t= "record accessor y" 2 (kdr p))
+(set-kar! p 9)
+(t= "record mutator" 9 (kar p))
+(define-record-type <point> (mk-point x) point? (x point-x))
+(t-false "records of different types do not alias" (point? p))
