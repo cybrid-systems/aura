@@ -1,0 +1,93 @@
+; Issue #4942 — manual calibration for prop:grammar as a MOEA/D operator on
+; the evolve-strategy starter kit. The CI cell lives in
+; tests/suite/proposer_4942.aura (AC11, 10 seeds x 120 evaluations); this
+; fixture runs the same ten fixed seeds at 400 evaluations and prints the
+; front size, hypervolume and ratio against the kit's analytic front.
+;
+;   ./build/aura tests/fixtures/bench/proposer_4942_starter_kit.aura
+;
+; No LLM, no network: the kit evaluator is analytic and the proposer is
+; prop:grammar. Numbers are reproducible from the seeds; nothing here is a
+; gate (the gate is AC11).
+
+(require "std/moead" all:)
+(require "std/pareto" all:)
+(require "std/proposer" all:)
+(require "std/evo-core" all:)
+
+(define kit-genome "(define (strategy-config) (list 3 2 1))")
+(define kit-dirs (list "max" "min"))
+(define kit-ref (list 0.0 5000.0))
+
+(define (kit-sum xs)
+  (let loop ((ys xs) (a 0.0)) (if (null? ys) a (loop (cdr ys) (+ a (car ys))))))
+(define (kit-params genome)
+  (let ((d (try (read-from-string genome) (catch (e) #f))))
+    (if (not (pair? d))
+        #f
+        (let ((body (if (and (pair? (cdr d)) (pair? (cdr (cdr d))))
+                        (car (cdr (cdr d))) #f)))
+          (if (and (pair? body) (eq? (car body) 'list) (= 4 (length body))
+                   (number? (car (cdr body)))
+                   (number? (car (cdr (cdr body))))
+                   (number? (car (cdr (cdr (cdr body))))))
+              (list (car (cdr body)) (car (cdr (cdr body)))
+                    (car (cdr (cdr (cdr body)))))
+              #f)))))
+(define (kit-eval c)
+  (let ((ps (kit-params (evo:candidate-genome c))))
+    (if (not ps)
+        (hash "objs" (list 0.0 100000.0) "constraints" (hash "invalid" 1.0))
+        (let* ((a (max 1 (min 12 (exact->inexact (car ps)))))
+               (r (max 1 (min 10 (exact->inexact (car (cdr ps))))))
+               (t (max 1 (min 8 (exact->inexact (car (cdr (cdr ps)))))))
+               (succ (- 1.0 (exp (- (/ (* a r) 12.0)))))
+               (cost (+ (* 40.0 a) (* 25.0 r) (* 5.0 t))))
+          (hash "objs" (list succ cost) "constraints" (hash "ok" 0.0))))))
+
+(define kit-grid
+  (let loop ((a 1) (acc (list)))
+    (if (> a 12)
+        (reverse acc)
+        (loop (+ a 1)
+              (let inner ((r 1) (b acc))
+                (if (> r 10)
+                    b
+                    (inner (+ r 1)
+                           (cons (list (- 1.0 (exp (- (/ (* a r) 12.0))))
+                                       (+ (* 40.0 a) (* 25.0 r) 5.0))
+                                 b))))))))
+(define kit-grid-hv
+  (pareto:hypervolume (car (pareto:nd-sort kit-grid (hash "dirs" kit-dirs)))
+                      kit-ref (hash "dirs" kit-dirs)))
+(display "kit reference HV=") (display kit-grid-hv) (newline)
+
+(define (kit-run seed evals)
+  (let* ((s (moead:make (hash "n-obj" 2 "H" 9 "T" 8 "dim" 3 "seed" seed
+                              "dirs" kit-dirs "init-genome" kit-genome
+                              "operator" (prop:moead-operator
+                                           (prop:grammar (hash "seed" seed))
+                                           (hash "defines" (list "strategy-config"))))))
+         (t0 (monotonic-ms)))
+    (moead:run! s kit-eval evals)
+    (let* ((objs (map (lambda (e) (hash-ref e "objs")) (moead:front s)))
+           (hv (pareto:hypervolume objs kit-ref (hash "dirs" kit-dirs))))
+      (display "seed=") (display seed)
+      (display " evals=") (display evals)
+      (display " front=") (display (length objs))
+      (display " hv=") (display hv)
+      (display " ratio=") (display (/ hv kit-grid-hv))
+      (display " ms=") (display (- (monotonic-ms) t0)) (newline)
+      objs)))
+
+(define first-front #f)
+(define last-front #f)
+(let loop ((i 0))
+  (if (>= i 10)
+      (begin
+        (display "reproducible=") (display (equal? first-front last-front)) (newline)
+        (display "OK-4942 starter-kit\n"))
+      (let ((fr (kit-run (+ 100 i) 400)))
+        (if (= i 0) (set! first-front fr) #t)
+        (if (= i 0) (set! last-front (kit-run 100 400)) #t)
+        (loop (+ i 1)))))
