@@ -84,6 +84,35 @@
              (list (list 9.0 9.0)))
 (assert! (equal? (car (pop-objs two)) (list 9.0 9.0))
          "smaller violation replaces the larger one")
+; Boundary cases of Deb's rule (#4940):
+; * exactly 0 is feasible, 1e-12 is not — the gate is on the zero set, not
+;   on a tolerance, so a nearly-feasible point never displaces a feasible
+;   neighbour even when its objectives are far better.
+(define eps (moead:make (hash "n-obj" 2 "weights" (list (list 0.5 0.5)) "T" 1 "dim" 3 "seed" 5)))
+(moead:tell! eps (list (evo:candidate (list 0.5 0.5 0.5) (hash "constraints" (hash "ok" 0.0))))
+             (list (list 10.0 10.0)))
+(moead:tell! eps (list (evo:candidate (list 0.5 0.5 0.5) (hash "constraints" (hash "ok" 1.0e-12))))
+             (list (list 0.0 0.0)))
+(assert! (equal? (car (pop-objs eps)) (list 10.0 10.0))
+         "a 1e-12 violation is infeasible and cannot replace")
+; * equal violations fall through to the objectives: the better scalar wins.
+(define tie (moead:make (hash "n-obj" 2 "weights" (list (list 0.5 0.5)) "T" 1 "dim" 3 "seed" 5
+                              "dirs" (list "min" "min"))))
+(moead:tell! tie (list (evo:candidate (list 0.0 0.0 0.0) (hash "constraints" (hash "ok" 1.0))))
+             (list (list 10.0 10.0)))
+(moead:tell! tie (list (evo:candidate (list 0.0 0.0 0.0) (hash "constraints" (hash "ok" 1.0))))
+             (list (list 1.0 1.0)))
+(assert! (equal? (car (pop-objs tie)) (list 1.0 1.0))
+         "equal violation: the better objective replaces")
+; * two feasible points compare on the scalar only: a dominated one stays out.
+(define feas2 (moead:make (hash "n-obj" 2 "weights" (list (list 0.5 0.5)) "T" 1 "dim" 3 "seed" 5
+                                "dirs" (list "min" "min"))))
+(moead:tell! feas2 (list (evo:candidate (list 0.0 0.0 0.0) (hash "constraints" (hash "ok" 0.0))))
+             (list (list 1.0 1.0)))
+(moead:tell! feas2 (list (evo:candidate (list 0.0 0.0 0.0) (hash "constraints" (hash "ok" 0.0))))
+             (list (list 5.0 5.0)))
+(assert! (equal? (car (pop-objs feas2)) (list 1.0 1.0))
+         "a dominated feasible candidate does not replace")
 
 ; ═══════════════════════════════════════════════════════════════════
 ; AC4 — MOEA/DD archive
@@ -191,19 +220,31 @@
 ; Every cell is reproduced by
 ; tests/fixtures/bench/pareto_4940_calibration.aura. CI gates the 6k
 ; numbers; the 0.97/0.95/0.90 targets are the 20k cells.
+; The bench snapshots the hypervolume against the FIXED (1.1 1.1) reference
+; after the first generation as well as at the end. The report's own HV is
+; not usable for this: its reference point is derived from the front, so a
+; front that moves outward (g still falling) lowers the volume even while
+; the search improves in raw terms (measured: 1.31 -> 1.13 on ZDT1 at 1200).
 (define (bench opts fit true-hv dims reff evals)
   (let* ((s (moead:make opts))
+         (n (length (moead:weights s)))
+         (fn (lambda (c) (fit (evo:candidate-genome c))))
          (t0 (monotonic-ms)))
-    (moead:run! s (lambda (c) (fit (evo:candidate-genome c))) evals)
-    (let* ((ms (- (monotonic-ms) t0))
-           (front (moead:front s))
-           (hv (pareto:hypervolume front reff (hash "dirs" dims))))
-      (list ms front (/ hv true-hv)))))
+    (moead:run! s fn n)
+    (let ((hv0 (pareto:hypervolume (moead:front s) reff (hash "dirs" dims))))
+      (moead:run! s fn (- evals n))
+      (let* ((ms (- (monotonic-ms) t0))
+             (front (moead:front s))
+             (hv (pareto:hypervolume front reff (hash "dirs" dims))))
+        (hash "ms" ms "front" front "ratio" (/ hv true-hv)
+              "hv0" hv0 "hv" hv)))))
 
 (define (report-cell label r)
-  (display "  ") (display label) (display ": ms=") (display (car r))
-  (display " front=") (display (length (car (cdr r))))
-  (display " ratio=") (display (car (cdr (cdr r)))) (newline))
+  (display "  ") (display label) (display ": ms=") (display (hash-ref r "ms"))
+  (display " front=") (display (length (hash-ref r "front")))
+  (display " ratio=") (display (hash-ref r "ratio"))
+  (display " hv0=") (display (hash-ref r "hv0"))
+  (display " hv=") (display (hash-ref r "hv")) (newline))
 
 (define r1 (bench (hash "n-obj" 2 "H" 9 "T" 8 "dim" 30 "seed" 3 "dirs" (list "min" "min"))
                   zdt1 t1 (list "min" "min") ref 1200))
@@ -211,14 +252,21 @@
 ; HV calibration is in tests/fixtures/bench/pareto_4940_calibration.aura and the
 ; #4940 table (20k: ZDT1 0.976 / ZDT2 0.962 / DTLZ2 0.903). CI runs a 1200-eval
 ; smoke here because the 6k cells exceed the 240 s per-file cap.
-(assert! (pairwise-nd? (car (cdr r1)) (list "min" "min")) "ZDT1 front is non-dominated")
-(assert! (>= (length (car (cdr r1))) 5) "ZDT1 keeps a populated front")
+(assert! (pairwise-nd? (hash-ref r1 "front") (list "min" "min")) "ZDT1 front is non-dominated")
+(assert! (>= (length (hash-ref r1 "front")) 5) "ZDT1 keeps a populated front")
+(assert! (> (hash-ref r1 "hv") (hash-ref r1 "hv0"))
+         "ZDT1 hypervolume improves from the first generation")
 
 (define r2 (bench (hash "n-obj" 2 "H" 9 "T" 8 "dim" 30 "seed" 4 "dirs" (list "min" "min"))
                   zdt2 t2 (list "min" "min") ref 1200))
 (report-cell "zdt2" r2)
 ; ZDT2 HV: see the calibration fixture / #4940 table.
-(assert! (pairwise-nd? (car (cdr r2)) (list "min" "min")) "ZDT2 front is non-dominated")
+(assert! (pairwise-nd? (hash-ref r2 "front") (list "min" "min")) "ZDT2 front is non-dominated")
+; No front-improvement assertion for this cell: ZDT2's g is still ~1.8 at
+; 1200 evaluations, so every front point is outside the fixed (1.1 1.1)
+; reference box and its HV is 0 at both snapshots. The 6k cell (0.852) and
+; the 20k cell (0.962) are the calibrated ZDT2 gates; a 1200-evaluation
+; improvement gate would only measure the starved phase (#4940).
 
 ; DTLZ2 3-objective HV is calibrated in tests/fixtures/bench/pareto_4940_calibration.aura
 ; (6k 0.866 / 20k 0.903); it is not a CI cell because the 6k run pushes the

@@ -37,3 +37,19 @@ Usage:
 ## Unrelated
 
 - `run_bench_all.py` — multi-model LLM EDSL comparison (paths still point at a personal layout; not the C++ suite).
+
+## Multi-objective search perf gate (#4940)
+
+`tests/fixtures/bench/moead_4940_perf.aura` is the strict perf item for
+`std/moead`: ZDT1 at 30 dim / 20 000 evaluations must finish within 30 s on
+the reference `dev:v1.1.1` x86_64 walker.
+
+```bash
+./build/aura tests/fixtures/bench/moead_4940_perf.aura                 # measure + print
+AURA_PERF_GATE=1 ./build/aura tests/fixtures/bench/moead_4940_perf.aura  # enforce 30 s
+```
+
+Without `AURA_PERF_GATE` the run always exits 0 (a slow arm64 dev box or a
+loaded CI walker is not an x86 regression); the HV ratio and nfe it prints
+are deterministic and match the 20k ZDT1 line of
+`tests/fixtures/bench/pareto_4940_calibration.aura`.

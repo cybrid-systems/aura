@@ -424,6 +424,10 @@ class EvoReportMultiObjective(unittest.TestCase):
             self.assertIn("Hypervolume", page)
             self.assertIn("Surrogate pre-screen", page)
             self.assertIn("mean", page)
+            # #4940: the representative (KEEP) trajectory on the score curve:
+            # a best-so-far path through the KEEP records plus their markers.
+            self.assertIn('aria-label="score curve"', page)
+            self.assertIn('class="tip"', page)
             # Outer (generation) and inner (candidate) folds.
             self.assertEqual(page.count('class="fold"'), 2)
             self.assertIn("gen 0", page)
