@@ -31,12 +31,21 @@
   "S-CHAR": "pure char classification over char->integer",
   "S-NUM": "derived arithmetic (comparison + + - * fold)",
   "S-PURE": "pure value->value function; #1440 kept json-*/string-* core for speed, not for semantics",
-  "D-ALIAS": "redundant registration: the same behaviour is already reachable through another name"
+  "D-ALIAS": "redundant registration: the same behaviour is already reachable through another name",
+  "K-EXC-5003": "Kernel exceptions added with the SRFI-151 baseline: bitwise/bit-count/arithmetic-shift cannot be expressed in Aura before any bit primitive exists (#5003)."
  },
- "kernel_exceptions": [],
+ "kernel_exceptions": [
+  "arithmetic-shift",
+  "bit-count",
+  "bitwise-and",
+  "bitwise-ior",
+  "bitwise-not",
+  "bitwise-xor",
+  "integer-length"
+ ],
  "counts": {
   "delete": 6,
-  "kernel": 423,
+  "kernel": 430,
   "stdlib-candidate": 87
  },
  "primitives": {
@@ -176,6 +185,11 @@
    "tier": "kernel",
    "rule": "K-GOV"
   },
+  "arithmetic-shift": {
+   "tier": "kernel",
+   "rule": "K-NUM",
+   "note": "SRFI-151 bitwise integer op; no Aura body exists without it (#5003)"
+  },
   "asin": {
    "tier": "kernel",
    "rule": "K-NUM"
@@ -287,6 +301,31 @@
   "auto-rollback-on-panic": {
    "tier": "kernel",
    "rule": "K-PANIC"
+  },
+  "bit-count": {
+   "tier": "kernel",
+   "rule": "K-NUM",
+   "note": "SRFI-151 bitwise integer op; no Aura body exists without it (#5003)"
+  },
+  "bitwise-and": {
+   "tier": "kernel",
+   "rule": "K-NUM",
+   "note": "SRFI-151 bitwise integer op; no Aura body exists without it (#5003)"
+  },
+  "bitwise-ior": {
+   "tier": "kernel",
+   "rule": "K-NUM",
+   "note": "SRFI-151 bitwise integer op; no Aura body exists without it (#5003)"
+  },
+  "bitwise-not": {
+   "tier": "kernel",
+   "rule": "K-NUM",
+   "note": "SRFI-151 bitwise integer op; no Aura body exists without it (#5003)"
+  },
+  "bitwise-xor": {
+   "tier": "kernel",
+   "rule": "K-NUM",
+   "note": "SRFI-151 bitwise integer op; no Aura body exists without it (#5003)"
   },
   "boolean?": {
    "tier": "kernel",
@@ -415,7 +454,7 @@
   "ceiling": {
    "tier": "delete",
    "rule": "D-ALIAS",
-   "note": "PrimSpec doc: 'Alias of ceil.' \u2014 same body (std::ceil), second registration"
+   "note": "PrimSpec doc: 'Alias of ceil.' — same body (std::ceil), second registration"
   },
   "channel:close": {
    "tier": "kernel",
@@ -641,7 +680,7 @@
   "exact": {
    "tier": "delete",
    "rule": "D-ALIAS",
-   "note": "PrimSpec doc: 'Alias of inexact->exact.' \u2014 same lambda"
+   "note": "PrimSpec doc: 'Alias of inexact->exact.' — same lambda"
   },
   "exact->inexact": {
    "tier": "kernel",
@@ -934,7 +973,7 @@
   "inexact": {
    "tier": "delete",
    "rule": "D-ALIAS",
-   "note": "PrimSpec doc: 'Alias of exact->inexact.' \u2014 same lambda"
+   "note": "PrimSpec doc: 'Alias of exact->inexact.' — same lambda"
   },
   "inexact->exact": {
    "tier": "kernel",
@@ -947,6 +986,11 @@
   "integer->char": {
    "tier": "kernel",
    "rule": "K-VAL"
+  },
+  "integer-length": {
+   "tier": "kernel",
+   "rule": "K-NUM",
+   "note": "SRFI-151 bitwise integer op; no Aura body exists without it (#5003)"
   },
   "integer?": {
    "tier": "kernel",
@@ -1894,7 +1938,7 @@
   "truncate": {
    "tier": "delete",
    "rule": "D-ALIAS",
-   "note": "PrimSpec doc: 'Alias of trunc.' \u2014 same body (std::trunc), second registration"
+   "note": "PrimSpec doc: 'Alias of trunc.' — same body (std::trunc), second registration"
   },
   "type-of": {
    "tier": "kernel",

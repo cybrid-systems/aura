@@ -151,7 +151,9 @@ through `kernel_exceptions`, which is the contract's kernel exception table:
 > A name may be added when it is genuinely kernel (no Aura implementation
 > without atomicity / host-effect loss) and no removable name exists in the
 > same change. List it in `kernel_exceptions` with the justification, in the
-> same commit. The list is currently empty.
+> same commit. The list stays empty by default; the first entries are the
+> SRFI-151 bitwise names added with #5003, whose justification is recorded in
+> `rule_notes` (no bit operation existed in Aura before them).
 
 Run it directly (`python3 scripts/coverage/checks/check_primitive_tiers_5008.py`) or
 through `./build.py gate --changed`, which auto-discovers `check_*.py`.

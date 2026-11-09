@@ -99,11 +99,101 @@ def stdlib_texts() -> dict[str, str]:
     }
 
 
+def _blank_quoted_lists(text: str) -> str:
+    """Blank the contents of '(...) data lists, preserving line numbers.
+
+    A quoted list such as the R7RS coverage table names primitives as data,
+    not as calls.  Treating those tokens as references makes a delete-tier
+    name look "used by lib/std" only because a documentation table mentions
+    it.  Strings stay intact (they can name a primitive for stats:get).
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    skip: int | None = None
+    in_str = False
+    esc = False
+    while i < n:
+        c = text[i]
+        if skip is not None:
+            out.append("\n" if c == "\n" else " ")
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    in_str = False
+            elif c == '"':
+                in_str = True
+            elif c == "(":
+                skip += 1
+            elif c == ")":
+                skip -= 1
+                if skip == 0:
+                    skip = None
+            i += 1
+            continue
+        if c == '"':
+            out.append(c)
+            i += 1
+            while i < n:
+                ch = text[i]
+                out.append(ch)
+                if ch == "\\" and i + 1 < n:
+                    i += 1
+                    out.append(text[i])
+                elif ch == '"':
+                    break
+                i += 1
+            i += 1
+            continue
+        if c == "'":
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            if j < n and text[j] == "(":
+                for k in range(i, j + 1):
+                    out.append("\n" if text[k] == "\n" else " ")
+                skip = 1
+                i = j + 1
+                continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _tokens(text: str) -> list[str]:
     """Call-site tokens: drop ; comments, keep quoted names as bare tokens."""
     body = _COMMENT_RE.sub(" ", text)
     body = body.replace('"', " ")
     return re.findall(r"[^\s()\[\]{},']+", body)
+
+
+_STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"')
+_CALL_RE = re.compile(r"\(\s*([^\s()\[\]{},']+)")
+
+
+def stdlib_call_references(names: list[str]) -> dict[str, list[str]]:
+    """name -> file:line for names used in call position (symbols only).
+
+    The delete/deprecated gate asks whether lib/std still needs a name.
+    Strings and quoted data may mention a name as documentation (the R7RS
+    coverage table lists every export), so only a symbolic call head counts
+    here.  stdlib_references stays broad for usage reports.
+    """
+    wanted = set(names)
+    out: dict[str, list[str]] = {}
+    for rel, text in stdlib_texts().items():
+        text = _blank_quoted_lists(text)
+        text = _COMMENT_RE.sub(" ", text)
+        text = _STRING_RE.sub('""', text)
+        for lineno, line in enumerate(text.splitlines(), 1):
+            for m in _CALL_RE.finditer(line):
+                tok = m.group(1)
+                if tok in wanted:
+                    out.setdefault(tok, []).append(f"{rel}:{lineno}")
+    return {n: sorted(v) for n, v in sorted(out.items())}
 
 
 def stdlib_references(names: list[str] | None = None) -> dict[str, list[str]]:
@@ -115,6 +205,7 @@ def stdlib_references(names: list[str] | None = None) -> dict[str, list[str]]:
     wanted = set(names) if names is not None else None
     out: dict[str, list[str]] = {}
     for rel, text in stdlib_texts().items():
+        text = _blank_quoted_lists(text)
         for lineno, line in enumerate(text.splitlines(), 1):
             for tok in _tokens(line):
                 if wanted is not None and tok not in wanted:
