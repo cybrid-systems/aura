@@ -1,0 +1,1189 @@
+; lib/std/evo-meta.aura — Issue #4944 (v0.2 P5): the meta layer of the
+; v0.2 search stack. The meta layer evolves *how* the inner search improves:
+; the proposal strategy, the mutation operators, the parent policy and the
+; budget split are Aura values in the outer loop, while the evaluator, the
+; gate, the holdout split, the constraints and the audit stay protected.
+;
+; Import: (require "std/evo-meta" all:)
+;
+;   (define m (meta:loop (hash "inner" my-inner-search
+;                             "evolvable" (list "propose-prompt" "mutation-ops"
+;                                               "parent-policy" "budget-split")
+;                             "protected" (list "evaluate" "gate"
+;                                               "holdout-split" "constraints" "audit")
+;                             "meta-holdout" meta-tasks
+;                             "inner-tasks" inner-tasks
+;                             "inner-budget" 200 "outer-budget" 20
+;                             "depth" 1 "select" "cmp")))
+;   (meta:step! m)          ; runs one outer generation; mutates the handle
+;   (meta:approve! m id)    ; manual gate: apply a pending candidate
+;   (meta:reject! m id)     ; manual gate: drop it
+;   (meta:report m)
+;
+; ── The five hard safety rules (all enforced here, not by convention) ──
+; 1. PROTECTED. A meta-genome may only carry the keys named by "evolvable".
+;    "evaluate", "gate", "holdout-split", "constraints" and "audit" (and the
+;    loop's own wiring: depth, inner, meta-holdout, approval, canary, preset,
+;    capability) are refused. A "source" form is parsed and every symbol it
+;    mentions is checked: a protected name, an audit switch, or a capability
+;    (net / ffi / process / with-capability / evo:record!) refuses it. Every
+;    refusal is audited. Interception also checks the MutationBoundary
+;    (mutate:boundary-safe?): a proposal is not trusted while a mutation is
+;    in flight, and the loop's capability preset is fixed for its lifetime.
+; 2. META HOLDOUT. The outer loop selects on "meta-holdout". The inner
+;    factory receives only "inner-tasks"; the two sets must be disjoint by
+;    task id at construction (a refused loop otherwise), and the inner ctx
+;    never carries the meta-holdout key. (meta:leak-check ctx) audits a
+;    factory's ctx.
+; 3. DEPTH 1. "depth" must be exactly 1. v0.2 does not open depth 2; a loop
+;    with any other depth is a refused handle (status "refused"), and its
+;    step/approve entry points are no-ops.
+; 4. CANARY. A fixed canary task set is measured when the loop is built. A
+;    candidate whose canary score drops below that baseline (minus
+;    "canary-margin") is never applied: the step is ROLLBACK and the tip
+;    does not move. "Each KEEP is canary-clean" is therefore a property of
+;    the only path that mutates live.
+; 5. APPROVAL. "approval" defaults to "manual": a winning candidate is
+;    PENDING until (meta:approve! m id). "auto" skips the wait. A rejected
+;    candidate is never applied.
+;
+; ── Outer loop and CMP ─────────────────────────────────────────────
+; Every outer candidate runs a full inner search through the injected
+; "inner" factory. The evaluation is pure: it never touches live (the node
+; records before/after evo:source-fingerprint as "isolated"), so a discarded
+; candidate leaves no trace. Only the selected meta-policy is rebound to
+; live, through "apply" or mutate:rebind of "live-target".
+;
+; HGM (arXiv:2510.21614) expands a clade by its best descendant, not by the
+; node's own score: (meta:cmp-of nodes id) is the maximum score reached
+; below id (a leaf is worth its own score), and (meta:select-node nodes)
+; picks the deepest representative of the most productive clade. A weak
+; node whose descendant is strong therefore outranks a strong leaf, and a
+; high-scoring dead end is never expanded while a better clade exists.
+;
+; ── Determinism ───────────────────────────────────────────────────
+; All draws come from (evo:rng seed gen slot), candidate ids are evo-core
+; content hashes, and the outer log is plain data. The same seed and the same
+; injected factories rebuild the same nodes, decisions and report (audit
+; "at" timestamps excepted), which the #4944 suite asserts.
+;
+; ── Log ───────────────────────────────────────────────────────────
+; Each decision is also a record with algo "meta-outer" / "meta-inner" and an
+; evidence hash carrying {"layer","outer","gen","slot","reason"}. The CLI
+; "aura evo log --json" shows the layer directly; (meta:fold m "outer") and
+; (meta:fold m "expanded") collapse or expand the two levels in process, and
+; (meta:tree m) nests inner records under their outer parent.
+;
+; Form order (#2769): export before require.
+
+(export meta:help meta:schema
+        meta:loop meta:loop? meta:refused? meta:loop-report
+        meta:step! meta:approve! meta:reject! meta:approved? meta:pending?
+        meta:decision meta:tip meta:tip-policy
+        meta:policy meta:policy? meta:policy-default meta:policy->source
+        meta:propose meta:mutate
+        meta:check meta:guard-report meta:boundary-safe? meta:preset meta:preset-ok?
+        meta:evolvable meta:protected meta:inner-tasks meta:holdout
+        meta:disjoint? meta:leak-check
+        meta:nodes meta:cmp meta:cmp-of meta:select-node
+        meta:mock meta:mock-inner meta:mock-evaluate meta:mock-task-set
+        meta:quality meta:noise
+        meta:canary-score meta:canary-ok?
+        meta:significance
+        meta:report meta:fold meta:fold-records meta:tree meta:record-entry
+        meta:audit meta:audit-count)
+(require "std/string" all:)
+(require "std/list" all:)
+(require "std/evo-core" all:)
+(require "std/mutate" all:)
+
+; ═══════════════════════════════════════════════════════════════════
+; Small helpers
+; ═══════════════════════════════════════════════════════════════════
+
+(define meta-schema-version 1)
+
+(define (meta:help)
+  "std/evo-meta (#4944): depth-1 recursive self-improvement. Evolves the proposal strategy / mutation ops / parent policy / budget split as Aura values; protects evaluate/gate/holdout-split/constraints/audit; selects on a disjoint meta holdout with HGM CMP; requires a canary-clean KEEP and (by default) human approval. (meta:loop (hash \"inner\" f \"meta-holdout\" tasks \"depth\" 1)) -> m; (meta:step! m); (meta:report m); (meta:approve! m id).")
+
+(define (meta:schema) meta-schema-version)
+
+; An explicit () default: hash-ref without one raises on a missing key
+; (#4855), and an optional field must read as absent, not abort. A value
+; that is legitimately () reads as absent too — callers pass lists, never
+; the unit as a meaningful field.
+(define (meta-opt h k d)
+  (if (hash? h)
+      (let ((v (hash-ref h k ())))
+        (if (null? v) d v))
+      d))
+
+(define (meta-int v)
+  (cond ((and (integer? v) (not (inexact? v))) v)
+        ((number? v) (inexact->exact (floor v)))
+        (else 0)))
+
+(define (meta-num v)
+  (cond ((number? v) (* 1.0 v))
+        (else 0.0)))
+
+(define (meta-join xs sep)
+  (if (null? xs)
+      ""
+      (let loop ((ys (cdr xs)) (acc (car xs)))
+        (if (null? ys)
+            acc
+            (loop (cdr ys) (string-append acc sep (car ys)))))))
+
+(define (meta-mean xs)
+  (if (null? xs)
+      0.0
+      (/ (foldl + 0.0 xs) (length xs))))
+
+(define (meta-clamp x lo hi)
+  (cond ((< x lo) lo)
+        ((> x hi) hi)
+        (else x)))
+
+(define (meta-max2 a b)
+  (cond ((not (number? a)) b)
+        ((not (number? b)) a)
+        ((>= a b) a)
+        (else b)))
+
+(define (meta-any? pred xs)
+  (cond ((null? xs) #f)
+        ((pred (car xs)) #t)
+        (else (meta-any? pred (cdr xs)))))
+
+(define (meta-count pred xs)
+  (foldl (lambda (n x) (if (pred x) (+ n 1) n)) 0 xs))
+
+(define (meta-alist-ref key al d)
+  (cond ((null? al) d)
+        ((equal? (car (car al)) key) (cdr (car al)))
+        (else (meta-alist-ref key (cdr al) d))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Policies — the evolvable objects (plain data; ids are content hashes)
+; ═══════════════════════════════════════════════════════════════════
+
+(define meta-strategy-pool (list "e1" "e2" "m1" "m2" "m3"))
+(define meta-operator-pool (list "rename" "tweak-literal" "wrap-conditional" "swap-operator"))
+(define meta-parent-pool (list "best" "recent" "diverse" "cmp"))
+
+; Mock landscape means. They are static data: the fitness is synthetic and
+; reproducible, and the numbers are not read from anything at run time.
+(define meta-strategy-means
+  (list (cons "e1" 0.20) (cons "e2" 0.35) (cons "m1" 0.50)
+        (cons "m2" 0.55) (cons "m3" 0.75)))
+(define meta-operator-means
+  (list (cons "rename" 0.30) (cons "tweak-literal" 0.60)
+        (cons "wrap-conditional" 0.50) (cons "swap-operator" 0.70)))
+(define meta-parent-means
+  (list (cons "best" 0.40) (cons "recent" 0.50)
+        (cons "diverse" 0.65) (cons "cmp" 0.75)))
+
+(define (meta:policy-default)
+  (hash "propose-prompt" (list "e1" "e2" "m1" "m2" "m3")
+        "mutation-ops" (list "rename" "tweak-literal" "wrap-conditional" "swap-operator")
+        "parent-policy" "best"
+        "budget-split" (hash "explore" 0.2 "exploit" 0.8)))
+
+(define (meta:policy? v)
+  (and (hash? v)
+       (list? (meta-opt v "propose-prompt" (list)))
+       (list? (meta-opt v "mutation-ops" (list)))
+       (string? (meta-opt v "parent-policy" #f))
+       (hash? (meta-opt v "budget-split" #f))))
+
+(define (meta:policy opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (d (meta:policy-default)))
+    (hash "propose-prompt" (meta-opt o "propose-prompt" (meta-opt d "propose-prompt" (list)))
+          "mutation-ops" (meta-opt o "mutation-ops" (meta-opt d "mutation-ops" (list)))
+          "parent-policy" (meta-opt o "parent-policy" (meta-opt d "parent-policy" "best"))
+          "budget-split" (meta-opt o "budget-split" (meta-opt d "budget-split" (hash))))))
+
+; Aura source for a policy value, so a KEEP can rebind a live define.
+(define (meta-escape s)
+  (let loop ((i 0) (acc ""))
+    (if (>= i (string-length s))
+        acc
+        (let ((c (string-ref s i)))
+          (loop (+ i 1)
+                (cond ((= (char->integer c) 34) (string-append acc "\\\""))
+                      ((= (char->integer c) 92) (string-append acc "\\\\"))
+                      ((= (char->integer c) 10) (string-append acc "\\n"))
+                      (else (string-append acc (list->string (list c))))))))))
+
+(define (meta-value-text v)
+  (cond ((string? v) (string-append "\"" (meta-escape v) "\""))
+        ((symbol? v) (symbol->string v))
+        ((boolean? v) (if v "#t" "#f"))
+        ((number? v) (number->string v))
+        ((list? v)
+         (if (null? v)
+             "(list)"
+             (string-append "(list " (meta-join (map meta-value-text v) " ") ")")))
+        ((hash? v)
+         (let ((ks (sort (hash-keys v) string<?)))
+           (if (null? ks)
+               "(hash)"
+               (string-append
+                 "(hash "
+                 (meta-join
+                   (map (lambda (k)
+                          (string-append (meta-value-text k) " "
+                                         (meta-value-text (hash-ref v k))))
+                        ks)
+                   " ")
+                 ")"))))
+        (else "\"#<obj>\"")))
+
+(define (meta:policy->source p . rest)
+  (let ((name (if (and (pair? rest) (string? (car rest))) (car rest) "meta-policy")))
+    (string-append "(define (" name ") " (meta-value-text p) ")")))
+
+; ═══════════════════════════════════════════════════════════════════
+; Synthetic fitness (mock). Deterministic, no network, no clock.
+; ═══════════════════════════════════════════════════════════════════
+
+(define (meta:noise seed a b c)
+  (let ((r (evo:rng (+ (meta-int seed) (* 7919 (meta-int a))) (meta-int b) (meta-int c))))
+    (- (* 2.0 (evo:rng-float! r)) 1.0)))
+
+(define (meta-strategy-score s)
+  (if (string? s) (meta-alist-ref s meta-strategy-means 0.2) 0.2))
+
+(define (meta-operator-score s)
+  (if (string? s) (meta-alist-ref s meta-operator-means 0.3) 0.3))
+
+(define (meta-parent-score s)
+  (if (string? s) (meta-alist-ref s meta-parent-means 0.4) 0.4))
+
+(define (meta-budget-score bs)
+  (let ((x (meta-num (meta-opt bs "explore" 0.2))))
+    (meta-clamp (- 1.0 (* 2.0 (abs (- x 0.4)))) 0.0 1.0)))
+
+(define (meta:quality p)
+  (let* ((pol (if (meta:policy? p) p (meta:policy-default)))
+         (ss (meta-opt pol "propose-prompt" (list)))
+         (os (meta-opt pol "mutation-ops" (list)))
+         (sq (meta-mean (map meta-strategy-score ss)))
+         (oq (meta-mean (map meta-operator-score os)))
+         (pq (meta-parent-score (meta-opt pol "parent-policy" "best")))
+         (bq (meta-budget-score (meta-opt pol "budget-split" (hash)))))
+    (meta-clamp (+ (* 0.40 sq) (* 0.25 pq) (* 0.20 bq) (* 0.15 oq)) 0.0 1.0)))
+
+; A task is a plain hash: {"id","kind","gain","offset"}. The offset is a
+; fixed per-task term so paired comparisons (same tasks, two policies) are
+; not dominated by task difficulty.
+(define (meta:mock-task-set kind n gain seed)
+  (let loop ((i 0) (acc (list)))
+    (if (>= i (meta-int n))
+        (reverse acc)
+        (loop (+ i 1)
+              (cons (hash "id" (string-append kind "-" (number->string i))
+                          "kind" kind
+                          "gain" (meta-num gain)
+                          "offset" (* 0.02 (meta:noise seed i 0 0)))
+                    acc)))))
+
+; (meta:mock-evaluate ctx) -> number. ctx: policy, tasks, layer, seed.
+; Expected success = 0.5 + 0.5*quality + mean(task offset). Pure.
+(define (meta:mock-evaluate ctx)
+  (let* ((policy (meta-opt ctx "policy" (meta:policy-default)))
+         (tasks (meta-opt ctx "tasks" (list)))
+         (q (meta:quality policy))
+         (off (meta-mean (map (lambda (t) (meta-num (meta-opt t "offset" 0.0))) tasks))))
+    (+ 0.5 (* 0.5 q) off)))
+
+; (meta:mock-inner ctx) -> inner result. The factory runs a budget-bounded
+; proposal loop: each draw mutates the candidate policy once and scores it
+; on the INNER tasks only (ctx carries no meta-holdout). The best variant is
+; the inner search's answer.
+(define (meta:mock-inner ctx)
+  (let* ((policy (meta-opt ctx "policy" (meta:policy-default)))
+         (budget (let ((b (meta-int (meta-opt ctx "budget" 8)))) (if (< b 1) 1 b)))
+         (tasks (meta-opt ctx "tasks" (list)))
+         (evaluate (meta-opt ctx "evaluate" meta:mock-evaluate))
+         (seed (meta-int (meta-opt ctx "seed" 42)))
+         (gen (meta-int (meta-opt ctx "gen" 0)))
+         (slot (meta-int (meta-opt ctx "slot" 0)))
+         (proposer (meta-opt ctx "proposer" #f)))
+    (let loop ((i 0) (best policy) (best-score #f) (hist (list)))
+      (if (>= i budget)
+          (let ((start (evaluate (hash "policy" policy "tasks" tasks
+                                       "seed" seed "layer" "inner"))))
+            (hash "kind" "meta-inner" "layer" "inner"
+                  "score" (if (number? best-score) best-score start)
+                  "policy" best
+                  "start" start
+                  "evaluated" budget
+                  "history" (reverse hist)))
+          (let* ((rng (evo:rng (+ seed i 1) gen slot))
+                 (v (if (procedure? proposer)
+                        (proposer policy rng)
+                        (meta-mutate-one policy rng)))
+                 (s (evaluate (hash "policy" v "tasks" tasks
+                                    "seed" (+ seed i) "layer" "inner"))))
+            (if (and (number? s) (or (not (number? best-score)) (> s best-score)))
+                (loop (+ i 1) v s (cons s hist))
+                (loop (+ i 1) best best-score (cons s hist))))))))
+
+(define (meta:mock)
+  (hash "inner" meta:mock-inner
+        "evaluate" meta:mock-evaluate
+        "policy" (meta:policy-default)
+        "inner-tasks" (meta:mock-task-set "inner" 4 1.0 11)
+        "meta-holdout" (meta:mock-task-set "meta" 4 1.0 29)
+        "canary" (meta:mock-task-set "canary" 3 1.0 47)))
+
+; ═══════════════════════════════════════════════════════════════════
+; Mutation of a policy (the outer operators)
+; ═══════════════════════════════════════════════════════════════════
+
+(define (meta-list-set lst i v)
+  (let loop ((xs lst) (k 0) (acc (list)))
+    (cond ((null? xs) (reverse acc))
+          ((= k i) (loop (cdr xs) (+ k 1) (cons v acc)))
+          (else (loop (cdr xs) (+ k 1) (cons (car xs) acc))))))
+
+(define (meta-list-pick rng lst)
+  (if (null? lst) #f (list-ref lst (modulo (evo:rng-next! rng) (length lst)))))
+
+(define (meta-mutate-one policy rng)
+  (let* ((p (if (meta:policy? policy) policy (meta:policy-default)))
+         (kind (evo:rng-int! rng 0 3)))
+    (cond
+      ((= kind 0)
+       (let* ((ss (meta-opt p "propose-prompt" (list)))
+              (i (evo:rng-int! rng 0 (max 0 (- (length ss) 1))))
+              (v (meta-list-pick rng meta-strategy-pool)))
+         (hash-set p "propose-prompt" (meta-list-set ss i v))))
+      ((= kind 1)
+       (let* ((os (meta-opt p "mutation-ops" (list)))
+              (i (evo:rng-int! rng 0 (max 0 (- (length os) 1))))
+              (v (meta-list-pick rng meta-operator-pool)))
+         (hash-set p "mutation-ops" (meta-list-set os i v))))
+      ((= kind 2)
+       (hash-set p "parent-policy" (meta-list-pick rng meta-parent-pool)))
+      (else
+       (let* ((bs (meta-opt p "budget-split" (hash "explore" 0.2)))
+              (x (meta-num (meta-opt bs "explore" 0.2)))
+              (d (meta-list-pick rng (list -0.15 -0.1 0.1 0.15)))
+              (nx (meta-clamp (+ x d) 0.0 1.0)))
+         (hash-set p "budget-split" (hash "explore" nx "exploit" (- 1.0 nx))))))))
+
+(define (meta:mutate policy rng)
+  (let* ((p (if (meta:policy? policy) policy (meta:policy-default)))
+         (n (evo:rng-int! rng 1 3)))
+    (let loop ((i 0) (cur p))
+      (if (>= i n)
+          cur
+          (loop (+ i 1) (meta-mutate-one cur rng))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Guard — protected scope, audit, boundary, preset
+; ═══════════════════════════════════════════════════════════════════
+
+(define meta-default-evolvable
+  (list "propose-prompt" "mutation-ops" "parent-policy" "budget-split"))
+
+(define meta-default-protected
+  (list "evaluate" "gate" "holdout-split" "constraints" "audit"))
+
+; Always refused, even if a caller's "protected" list drops one: these are
+; the loop's own wiring and the safety boundary itself.
+(define meta-hard-protected
+  (list "evaluate" "gate" "holdout-split" "constraints" "audit"
+        "meta-holdout" "depth" "inner" "approval" "canary" "protected"
+        "evolvable" "preset" "capability" "self" "recursion"))
+
+(define meta-capability-symbols
+  (list "http-get" "http-post" "http-put" "http-request" "socket"
+        "socket-connect" "socket-listen" "c-load" "c-func" "c-func-ptr"
+        "process-spawn" "process-exec" "system" "shell-exec" "spawn"
+        "security:grant-capability!" "with-capability" "evo:record!"
+        "mutate:rebind" "mutate:atomic-batch" "set-code" "eval-current"))
+
+(define (meta:preset)
+  (let ((v (getenv "AURA_CAPABILITY_PRESET")))
+    (if (string? v) v "ci")))
+
+(define (meta:preset-ok?)
+  (let ((p (meta:preset)))
+    (not (or (string=? p "unrestricted") (string=? p "none")))))
+
+(define (meta:boundary-safe?)
+  (try (eq? (mutate:boundary-safe?) #t) (catch (e) #t)))
+
+(define (meta:evolvable m)
+  (let ((v (meta-opt m "evolvable" meta-default-evolvable)))
+    (if (list? v) v meta-default-evolvable)))
+
+(define (meta:protected m)
+  (let ((v (meta-opt m "protected" meta-default-protected)))
+    (if (list? v) v meta-default-protected)))
+
+(define (meta-protected-all m)
+  (append (meta:protected m) meta-hard-protected))
+
+(define (meta:guard-report)
+  (hash "kind" "meta-guard" "schema" meta-schema-version
+        "preset" (meta:preset)
+        "preset-ok" (meta:preset-ok?)
+        "boundary-safe" (meta:boundary-safe?)
+        "sandbox" (let ((v (getenv "AURA_SANDBOX"))) (if (string? v) v "default"))
+        "protected" meta-default-protected
+        "evolvable" meta-default-evolvable))
+
+(define (meta-parse-error? v)
+  (and (pair? v) (eq? (car v) 'parse)))
+
+(define (meta-scan-symbols v m)
+  (let loop ((stack (list v)))
+    (cond
+      ((null? stack) #f)
+      (else
+       (let ((x (car stack)))
+         (cond
+           ((symbol? x)
+            (let* ((n (symbol->string x))
+                   (hit (and (or (member? n (meta-protected-all m))
+                                 (string-contains? n "audit"))
+                             n))
+                   (cap (and (member? n meta-capability-symbols) n)))
+              (cond (hit (string-append "protected-ref: " n))
+                    (cap (string-append "capability: " n))
+                    (else (loop (cdr stack))))))
+           ((pair? x) (loop (cons (car x) (cons (cdr x) (cdr stack)))))
+           (else (loop (cdr stack)))))))))
+
+(define (meta-check-source genome m)
+  (let ((src (meta-opt genome "source" #f)))
+    (if (not (string? src))
+        #f
+        (let ((d (try (read-from-string src) (catch (e) 'meta-parse-error))))
+          (cond
+            ((meta-parse-error? d) "source: parse-error")
+            ((eq? d 'meta-parse-error) "source: parse-error")
+            (else (meta-scan-symbols d m)))))))
+
+; (meta:check m genome) -> #f | reason string. Mechanical: a genome is a
+; hash; only "evolvable" keys (+ optional "source") are allowed; protected
+; names are refused by key; the source is parsed and symbol-scanned for
+; protected refs, audit switches and capability calls. The MutationBoundary
+; and the fixed capability preset gate the whole check.
+(define (meta:check m genome)
+  (cond
+    ((not (meta:loop? m))
+     (string-append "loop: " (meta-opt m "reason" "refused")))
+    ((not (hash? genome)) "genome: not-a-hash")
+    ((not (meta:boundary-safe?)) "boundary: held")
+    ((not (meta:preset-ok?)) (string-append "preset: " (meta:preset)))
+    (else
+     (let ((ev (meta:evolvable m))
+           (prot (meta-protected-all m)))
+       (let loop ((ks (hash-keys genome)) (acc #f))
+         (cond
+           (acc acc)
+           ((null? ks) (meta-check-source genome m))
+           (else
+            (let ((k (car ks)))
+              (cond
+                ((member? k prot) (loop (cdr ks) (string-append "protected: " k)))
+                ((and (not (member? k ev)) (not (string=? k "source")))
+                 (loop (cdr ks) (string-append "scope: " k)))
+                (else (loop (cdr ks) #f)))))))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Holdout separation
+; ═══════════════════════════════════════════════════════════════════
+
+(define (meta-task-ids tasks)
+  (map (lambda (t) (if (hash? t) (meta-opt t "id" "") (if (string? t) t ""))) tasks))
+
+(define (meta:disjoint? a b)
+  (let ((bs (meta-task-ids b)))
+    (not (meta-any? (lambda (x) (member? x bs)) (meta-task-ids a)))))
+
+; (meta:leak-check ctx) -> #f | reason. The inner factory ctx must not carry
+; the meta-holdout, and must not carry a task whose kind is "meta".
+(define (meta:leak-check ctx)
+  (cond
+    ((not (hash? ctx)) "ctx: not-a-hash")
+    ((meta-opt ctx "meta-holdout" #f) "leak: meta-holdout")
+    ((meta-any? (lambda (t) (and (hash? t) (string=? (meta-opt t "kind" "") "meta")))
+                (meta-opt ctx "tasks" (list)))
+     "leak: meta-task")
+    (else #f)))
+
+(define (meta:inner-tasks m) (meta-opt m "inner-tasks" (list)))
+(define (meta:holdout m) (meta-opt m "meta-holdout" (list)))
+
+; ═══════════════════════════════════════════════════════════════════
+; The loop handle
+; ═══════════════════════════════════════════════════════════════════
+
+(define (meta-refused opts reason)
+  (hash "kind" "meta-loop" "schema" meta-schema-version
+        "status" "refused" "reason" reason "ok" #f
+        "depth" (meta-int (meta-opt opts "depth" 1))
+        "audit" (list) "log" (list) "nodes" (list)
+        "steps" 0 "gen" 0 "kept" 0 "rollbacks" 0 "pending" (hash)
+        "approved" (hash) "rejected" (hash)))
+
+(define (meta:loop opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (depth (meta-int (meta-opt o "depth" 1)))
+         (ev (meta-opt o "evolvable" meta-default-evolvable))
+         (prot (meta-opt o "protected" meta-default-protected))
+         (inner-tasks (meta-opt o "inner-tasks" (meta:mock-task-set "inner" 4 1.0 11)))
+         (holdout (meta-opt o "meta-holdout" (meta:mock-task-set "meta" 4 1.0 29)))
+         (canary (meta-opt o "canary" (meta:mock-task-set "canary" 3 1.0 47)))
+         (policy (meta:policy (meta-opt o "policy" (meta:policy-default)))))
+    (cond
+      ((not (= depth 1))
+       (meta-refused o (string-append
+                         "depth: only 1 is supported (#4944), got "
+                         (number->string depth))))
+      ((not (list? ev)) (meta-refused o "evolvable: not-a-list"))
+      ((not (list? prot)) (meta-refused o "protected: not-a-list"))
+      ((meta-any? (lambda (k) (member? k prot)) ev)
+       (meta-refused o "protected: an evolvable key is protected"))
+      ((not (meta:disjoint? inner-tasks holdout))
+       (meta-refused o "holdout: inner-tasks overlap meta-holdout"))
+      ((not (list? canary)) (meta-refused o "canary: not-a-list"))
+      (else
+       (let* ((m (hash "kind" "meta-loop" "schema" meta-schema-version
+                       "status" "ok" "reason" #f "ok" #t
+                       "depth" 1
+                       "evolvable" ev
+                       "protected" prot
+                       "inner-tasks" inner-tasks
+                       "meta-holdout" holdout
+                       "canary" canary
+                       "canary-margin" (meta-num (meta-opt o "canary-margin" 0.0))
+                       "inner-budget" (meta-int (meta-opt o "inner-budget" 200))
+                       "outer-budget" (meta-int (meta-opt o "outer-budget" 20))
+                       "pop" (let ((p (meta-int (meta-opt o "pop" 4)))) (if (< p 1) 1 p))
+                       "select" (meta-opt o "select" "cmp")
+                       "seed" (meta-int (meta-opt o "seed" 42))
+                       "approval" (meta-opt o "approval" "manual")
+                       "inner" (meta-opt o "inner" meta:mock-inner)
+                       "evaluate" (meta-opt o "evaluate" meta:mock-evaluate)
+                       "meta-evaluate" (meta-opt o "meta-evaluate" meta:mock-evaluate)
+                       "canary-evaluate" (meta-opt o "canary-evaluate"
+                                                   (meta-opt o "meta-evaluate" meta:mock-evaluate))
+                       "propose" (meta-opt o "propose" #f)
+                       "apply" (meta-opt o "apply" #f)
+                       "live-target" (meta-opt o "live-target" #f)
+                       "live-name" (meta-opt o "live-name" "meta-policy")
+                       "initial-policy" policy
+                       "tip" #f "tip-score" #f "pending" (hash)
+                       "approved" (hash) "rejected" (hash)
+                       "nodes" (list) "log" (list) "audit" (list)
+                       "steps" 0 "gen" 0 "kept" 0 "rollbacks" 0
+                       "last-decision" #f)))
+         ; A root node makes CMP well-defined before the first step.
+         (hash-set! m "nodes"
+                    (list (meta-node-make
+                            (evo:candidate-id (evo:candidate policy))
+                            policy (list) 0 #f #f #f #f #t)))
+         ; Canary baseline: measured once, on the initial policy.
+         (hash-set! m "canary-base"
+                    (meta-eval-on m policy canary "canary"))
+         (hash-set! m "base-score"
+                    (meta-eval-on m policy holdout "outer"))
+         m)))))
+
+(define (meta:loop? m)
+  (and (hash? m)
+       (string=? (meta-opt m "kind" "") "meta-loop")
+       (string=? (meta-opt m "status" "") "ok")))
+
+(define (meta:refused? m)
+  (and (hash? m)
+       (string=? (meta-opt m "kind" "") "meta-loop")
+       (string=? (meta-opt m "status" "") "refused")))
+
+(define (meta:loop-report m)
+  (hash "status" (meta-opt m "status" "refused")
+        "reason" (meta-opt m "reason" #f)
+        "depth" (meta-opt m "depth" 1)
+        "evolvable" (meta:evolvable m)
+        "protected" (meta:protected m)))
+
+; ═══════════════════════════════════════════════════════════════════
+; Nodes, clade metaproductivity (HGM CMP)
+; ═══════════════════════════════════════════════════════════════════
+
+(define (meta-node-make id policy parents gen score inner canary canary-ok isolated)
+  (hash "id" (if (string? id) id "")
+        "policy" policy
+        "parents" (if (list? parents) parents (list))
+        "gen" (meta-int (if (number? gen) gen 0))
+        "score" score
+        "inner" inner
+        "canary" canary
+        "canary-ok" (eq? canary-ok #t)
+        "isolated" (eq? isolated #t)))
+
+(define (meta:nodes m)
+  (let ((v (meta-opt m "nodes" (list))))
+    (if (list? v) v (list))))
+
+(define (meta-node m id)
+  (let loop ((xs (meta:nodes m)))
+    (cond ((null? xs) #f)
+          ((string=? (meta-opt (car xs) "id" "") id) (car xs))
+          (else (loop (cdr xs))))))
+
+(define (meta-ancestor? nodes from id)
+  ; #t when "from" is "id" or descends from it (parents chain).
+  (if (string=? from id)
+      #t
+      (let ((node (let loop ((xs nodes))
+                    (cond ((null? xs) #f)
+                          ((string=? (meta-opt (car xs) "id" "") from) (car xs))
+                          (else (loop (cdr xs)))))))
+        (if (not node)
+            #f
+            (let loop ((ps (meta-opt node "parents" (list))))
+              (cond ((null? ps) #f)
+                    ((meta-ancestor? nodes (car ps) id) #t)
+                    (else (loop (cdr ps)))))))))
+
+; (meta:cmp-of nodes id) -> clade metaproductivity: the best score reached
+; BELOW id (a leaf's value is its own score). Excluding the node itself is
+; what makes the signal about descendants: the root cannot win every tie by
+; containing the best node. (meta:select-node) then breaks a tie toward the
+; deeper node, so the expansion target is the representative of the most
+; productive clade.
+(define (meta:cmp-of nodes id)
+  (let ((own (let loop ((xs nodes))
+               (cond ((null? xs) #f)
+                     ((string=? (meta-opt (car xs) "id" "") id)
+                      (meta-opt (car xs) "score" #f))
+                     (else (loop (cdr xs))))))
+        (below (foldl (lambda (acc n)
+                        (if (and (not (string=? (meta-opt n "id" "") id))
+                                 (meta-ancestor? nodes (meta-opt n "id" "") id)
+                                 (number? (meta-opt n "score" #f)))
+                            (meta-max2 acc (meta-opt n "score" #f))
+                            acc))
+                      #f nodes)))
+    (if (number? below) below own)))
+
+(define (meta:cmp m)
+  (let ((ns (meta:nodes m)))
+    (let loop ((xs ns) (acc (hash)))
+      (if (null? xs)
+          acc
+          (let ((id (meta-opt (car xs) "id" "")))
+            (loop (cdr xs) (hash-set acc id (meta:cmp-of ns id))))))))
+
+; HGM: expand the node whose CLADE has the best score, not the best node.
+; Equal CMP breaks toward the deeper node (the representative of the
+; productive clade), then by id, so the choice is stable.
+(define (meta:select-node nodes)
+  (let loop ((xs nodes) (best #f) (best-cmp #f) (best-gen 0) (best-id ""))
+    (cond
+      ((null? xs) (if best best-id #f))
+      (else
+       (let* ((n (car xs))
+              (id (meta-opt n "id" ""))
+              (gen (meta-int (meta-opt n "gen" 0)))
+              (cmp (meta:cmp-of nodes id))
+              (better (or (not (number? best-cmp))
+                          (and (number? cmp)
+                               (or (> cmp best-cmp)
+                                   (and (= cmp best-cmp) (> gen best-gen))
+                                   (and (= cmp best-cmp) (= gen best-gen)
+                                        (string<? id best-id)))))))
+         (if better
+             (loop (cdr xs) n cmp gen id)
+             (loop (cdr xs) best best-cmp best-gen best-id)))))))
+
+(define (meta:select-score nodes)
+  ; Opt-in "select" "score": expand the best node by its own score (the
+  ; pre-HGM baseline). "cmp" (the default) uses the clade value.
+  (let loop ((xs nodes) (best #f) (best-score #f))
+    (cond
+      ((null? xs) (if best (meta-opt best "id" #f) #f))
+      (else
+       (let* ((n (car xs)) (s (meta-opt n "score" #f)))
+         (if (and (number? s) (or (not (number? best-score)) (> s best-score)))
+             (loop (cdr xs) n s)
+             (loop (cdr xs) best best-score)))))))
+
+(define (meta:select m)
+  (if (string=? (meta-opt m "select" "cmp") "score")
+      (meta:select-score (meta:nodes m))
+      (meta:select-node (meta:nodes m))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Evaluation
+; ═══════════════════════════════════════════════════════════════════
+
+(define (meta-eval-on m policy tasks layer)
+  (if (null? tasks)
+      #f
+      (let ((f (if (string=? layer "canary")
+                   (meta-opt m "canary-evaluate" meta:mock-evaluate)
+                   (meta-opt m "meta-evaluate" meta:mock-evaluate))))
+        (if (procedure? f)
+            (try (f (hash "policy" policy "tasks" tasks
+                          "seed" (meta-opt m "seed" 42)
+                          "layer" layer "preset" (meta:preset)))
+                 (catch (e) #f))
+            #f))))
+
+(define (meta:canary-score m policy)
+  (meta-eval-on m policy (meta-opt m "canary" (list)) "canary"))
+
+(define (meta:canary-ok? m score)
+  (let ((base (meta-opt m "canary-base" #f))
+        (margin (meta-num (meta-opt m "canary-margin" 0.0))))
+    (cond ((null? (meta-opt m "canary" (list))) #t)
+          ((not (number? score)) #f)
+          ((not (number? base)) #t)
+          (else (>= score (- base margin))))))
+
+; Proposed outer candidates: pop children of "parent", each a policy hash
+; (content-addressed by evo-core) with the parent id.
+(define (meta-propose-raw m parent gen)
+  (let* ((pop (meta-opt m "pop" 4))
+         (seed (meta-opt m "seed" 42))
+         (pid (meta-opt parent "id" ""))
+         (base (meta-opt parent "policy" (meta-opt m "initial-policy" (meta:policy-default)))))
+    (let loop ((slot 0) (acc (list)))
+      (if (>= slot pop)
+          (reverse acc)
+          (let* ((rng (evo:rng seed gen slot))
+                 (pol (meta:mutate base rng))
+                 (c (evo:candidate pol (hash "gen" gen "slot" slot
+                                             "parents" (list pid)
+                                             "meta" (hash "layer" "outer")))))
+            (loop (+ slot 1) (cons c acc)))))))
+
+(define (meta:propose m)
+  (if (not (meta:loop? m))
+      (list)
+      (let* ((sel (meta:select m))
+             (parent (if sel (meta-node m sel) #f))
+             (inject (meta-opt m "propose" #f)))
+        (if (procedure? inject)
+            (inject m (meta-opt parent "id" ""))
+            (meta-propose-raw m parent (meta-opt m "gen" 0))))))
+
+; Guard + evaluate one candidate. Returns
+;   {"ok":#t,"node":node} | {"ok":#f,"reason":s,"id":id,"refused":#t}
+(define (meta-evaluate-candidate m cand gen)
+  (let* ((genome (meta-opt cand "genome" #f))
+         (id (evo:candidate-id cand))
+         (reason (meta:check m genome)))
+    (if reason
+        (begin
+          (meta-audit! m "REFUSE" id reason (hash "gen" gen))
+          (hash "ok" #f "refused" #t "id" id "reason" reason))
+        (let* ((slot (meta-opt cand "slot" 0))
+               (policy (meta:policy genome))
+               (inner (meta-opt m "inner" meta:mock-inner))
+               (ictx (hash "policy" policy
+                           "tasks" (meta:inner-tasks m)
+                           "budget" (meta-opt m "inner-budget" 200)
+                           "seed" (+ (meta-opt m "seed" 42) gen slot)
+                           "gen" gen "slot" slot
+                           "layer" "inner"
+                           "preset" (meta:preset)
+                           "evaluate" (meta-opt m "evaluate" meta:mock-evaluate)))
+               (leak (meta:leak-check ictx))
+               (before (try (evo:source-fingerprint) (catch (e) #f))))
+          (if leak
+              (begin
+                (meta-audit! m "REFUSE" id leak (hash "gen" gen "slot" slot))
+                (hash "ok" #f "refused" #t "id" id "reason" leak))
+              (let ((r (try (if (procedure? inner) (inner ictx) #f)
+                            (catch (e) (hash "error" (if (string? e) e "inner-error"))))))
+                (if (not (hash? r))
+                    (begin
+                      (meta-audit! m "REJECT" id "inner-error" (hash "gen" gen))
+                      (hash "ok" #f "refused" #f "id" id "reason" "inner-error"))
+                    (let* ((ipol (meta:policy (meta-opt r "policy" policy)))
+                           (mscore (meta-eval-on m ipol (meta:holdout m) "outer"))
+                           (cscore (meta:canary-score m ipol))
+                           (after (try (evo:source-fingerprint) (catch (e) #f)))
+                           (isolated (or (not (string? before)) (equal? before after)))
+                           (ok? (meta:canary-ok? m cscore))
+                           (node (meta-node-make id ipol
+                                                 (meta-opt cand "parents" (list))
+                                                 gen mscore r cscore ok? isolated)))
+                      (meta-log-inner! m id gen slot (meta-opt r "score" #f))
+                      (meta-audit! m "CANDIDATE" id
+                                     (if ok? "evaluated" "canary-drop")
+                                     (hash "gen" gen "slot" slot
+                                           "score" mscore "canary" cscore
+                                           "inner-score" (meta-opt r "score" #f)
+                                           "isolated" isolated))
+                      (hash "ok" #t "refused" #f "node" node)))))))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Apply + approval
+; ═══════════════════════════════════════════════════════════════════
+
+(define (meta-apply! m id node)
+  (let ((apply-fn (meta-opt m "apply" #f))
+        (target (meta-opt m "live-target" #f))
+        (policy (meta-opt node "policy" (meta:policy-default))))
+    (cond
+      ((procedure? apply-fn)
+       (try (apply-fn m node) (catch (e) #f)))
+      ((string? target)
+       (try (eq? (mutate:rebind target
+                                (meta:policy->source policy (meta-opt m "live-name" "meta-policy"))
+                                (string-append "meta:" id))
+                 #t)
+            (catch (e) #f)))
+      (else "virtual"))))
+
+(define (meta-apply-ok? v) (or (eq? v #t) (and (string? v) (string=? v "virtual"))))
+
+(define (meta-set-decision! m d) (hash-set! m "last-decision" d) m)
+
+(define (meta:approve! m id)
+  (cond
+    ((not (meta:loop? m)) m)
+    ((not (string? id)) m)
+    (else
+     (let* ((node (meta-node m id))
+            (pending (meta-opt m "pending" (hash)))
+            (is-pending (eq? (meta-opt pending id #f) #t)))
+       (cond
+         ((not node)
+          (meta-audit! m "APPROVE" id "no-node" (hash))
+          (meta-set-decision! m "APPROVE"))
+         ((not is-pending)
+          (meta-audit! m "APPROVE" id "no-pending" (hash))
+          (meta-set-decision! m "APPROVE"))
+         (else
+          (let* ((res (meta-apply! m id node))
+                 (ok (meta-apply-ok? res)))
+            (hash-set! m "pending" (hash-set pending id #f))
+            (hash-set! m "approved" (hash-set (meta-opt m "approved" (hash)) id #t))
+            (if ok
+                (begin
+                  (hash-set! m "tip" id)
+                  (hash-set! m "tip-score" (meta-opt node "score" #f))
+                  (hash-set! m "kept" (+ 1 (meta-opt m "kept" 0))))
+                #f)
+            (meta-audit! m (if ok "KEEP" "REJECT") id
+                          (if ok "approved" "apply-refused")
+                          (hash "gen" (meta-opt node "gen" 0)))
+            (meta-set-decision! m (if ok "KEEP" "REJECT")))))))))
+
+(define (meta:reject! m id)
+  (cond
+    ((not (meta:loop? m)) m)
+    ((not (string? id)) m)
+    (else
+     (let ((pending (meta-opt m "pending" (hash))))
+       (hash-set! m "pending" (hash-set pending id #f))
+       (hash-set! m "rejected" (hash-set (meta-opt m "rejected" (hash)) id #t))
+       (meta-audit! m "REJECT" id "approval-rejected" (hash))
+       (meta-set-decision! m "REJECT")))))
+
+(define (meta:approved? m id)
+  (and (hash? m) (eq? (meta-opt (meta-opt m "approved" (hash)) id #f) #t)))
+
+(define (meta:pending? m . rest)
+  (let ((p (meta-opt m "pending" (hash))))
+    (if (and (pair? rest) (string? (car rest)))
+        (eq? (meta-opt p (car rest) #f) #t)
+        (meta-any? (lambda (k) (eq? (hash-ref p k #f) #t)) (hash-keys p)))))
+
+(define (meta:decision m) (meta-opt m "last-decision" #f))
+(define (meta:tip m) (meta-opt m "tip" #f))
+(define (meta:tip-policy m)
+  (let ((t (meta:tip m)))
+    (if t
+        (meta-opt (meta-node m t) "policy" #f)
+        (meta-opt m "initial-policy" #f))))
+
+; ═══════════════════════════════════════════════════════════════════
+; One outer generation
+; ═══════════════════════════════════════════════════════════════════
+
+(define (meta-choose-best results)
+  ; results: list of {"ok":#t,"node":node}. Highest score wins; ties by id.
+  (let loop ((xs results) (best #f) (best-score #f))
+    (cond
+      ((null? xs) best)
+      (else
+       (let* ((n (meta-opt (car xs) "node" #f))
+              (s (if n (meta-opt n "score" #f) #f)))
+         (if (and (number? s)
+                  (or (not (number? best-score)) (> s best-score)
+                      (and (= s best-score)
+                           (string<? (meta-opt n "id" "") (meta-opt best "id" "")))))
+             (loop (cdr xs) n s)
+             (loop (cdr xs) best best-score)))))))
+
+(define (meta:step! m)
+  (cond
+    ((not (meta:loop? m)) m)
+    ((>= (meta-opt m "steps" 0) (meta-opt m "outer-budget" 20))
+     ; The outer budget is a hard stop: no evaluation past it.
+     (meta-set-decision! m "EXHAUSTED"))
+    (else
+     (let* ((gen (meta-opt m "gen" 0))
+            (raw (meta:propose m))
+            (cands (filter evo:candidate? raw))
+            (results (map (lambda (c) (meta-evaluate-candidate m c gen)) cands))
+            (good (filter (lambda (r) (and (eq? (meta-opt r "ok" #f) #t)
+                                           (meta-opt r "node" #f))) results))
+            (best (meta-choose-best good))
+            (base (meta-opt m "base-score" #f))
+            (tip-score (meta-opt m "tip-score" #f))
+            (cur (if (number? tip-score) tip-score base))
+            (margin 0.0000001))
+       ; Every evaluated node joins the archive, kept or not: CMP expands
+       ; clades, not just winners.
+       (hash-set! m "nodes"
+                  (append (meta:nodes m)
+                          (map (lambda (r) (meta-opt r "node" #f)) good)))
+       (hash-set! m "gen" (+ gen 1))
+       (hash-set! m "steps" (+ 1 (meta-opt m "steps" 0)))
+       (cond
+         ((not best)
+          (meta-audit! m "REJECT" "" "no-candidate" (hash "gen" gen))
+          (meta-set-decision! m "REJECT"))
+         ((not (eq? (meta-opt best "canary-ok" #f) #t))
+          ; Rule 4: a canary drop rolls the whole step back; the tip never
+          ; moves and nothing is applied.
+          (hash-set! m "rollbacks" (+ 1 (meta-opt m "rollbacks" 0)))
+          (meta-audit! m "ROLLBACK" (meta-opt best "id" "")
+                        "canary-drop"
+                        (hash "gen" gen
+                              "canary" (meta-opt best "canary" #f)
+                              "canary-base" (meta-opt m "canary-base" #f)))
+          (meta-set-decision! m "ROLLBACK"))
+         ((and (number? cur) (<= (meta-opt best "score" 0.0) (+ cur margin)))
+          (meta-audit! m "REJECT" (meta-opt best "id" "") "no-improvement"
+                        (hash "gen" gen "score" (meta-opt best "score" #f) "tip-score" cur))
+          (meta-set-decision! m "REJECT"))
+         ((and (not (string=? (meta-opt m "approval" "manual") "auto"))
+               (not (meta:approved? m (meta-opt best "id" ""))))
+          ; Rule 5: manual gate. The candidate is parked, not applied.
+          (hash-set! m "pending"
+                     (hash-set (meta-opt m "pending" (hash)) (meta-opt best "id" "") #t))
+          (meta-audit! m "PENDING" (meta-opt best "id" "") "approval-required"
+                        (hash "gen" gen "score" (meta-opt best "score" #f)))
+          (meta-set-decision! m "PENDING"))
+         (else
+          (let* ((id (meta-opt best "id" ""))
+                 (res (meta-apply! m id best))
+                 (ok (meta-apply-ok? res)))
+            (if ok
+                (begin
+                  (hash-set! m "tip" id)
+                  (hash-set! m "tip-score" (meta-opt best "score" #f))
+                  (hash-set! m "kept" (+ 1 (meta-opt m "kept" 0)))
+                  (meta-audit! m "KEEP" id "improved"
+                                (hash "gen" gen "score" (meta-opt best "score" #f)
+                                      "previous" cur)))
+                (meta-audit! m "REJECT" id "apply-refused"
+                              (hash "gen" gen)))
+            (meta-set-decision! m (if ok "KEEP" "REJECT")))))
+       m))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Audit + two-level log
+; ═══════════════════════════════════════════════════════════════════
+
+(define (meta:record-entry layer id decision reason evidence parent)
+  (hash "v" 2 "kind" "record"
+        "target" (string-append "meta:" layer)
+        "decision" decision
+        "reason" reason
+        "evidence" evidence
+        "algo" (string-append "meta-" layer)
+        "gen" (meta-opt evidence "gen" 0)
+        "slot" (meta-opt evidence "slot" 0)
+        "search" "meta-loop"
+        "candidate" id
+        "parents" (if (string? parent) (list parent) (list))))
+
+(define (meta-emit! m layer id decision reason evidence parent)
+  (try
+    (evo:record! (string-append "meta:" layer) decision reason evidence "" 0 parent
+                 (hash "algo" (string-append "meta-" layer)
+                       "gen" (meta-opt evidence "gen" 0)
+                       "slot" (meta-opt evidence "slot" 0)
+                       "search" "meta-loop"
+                       "candidate" id
+                       "parents" (if (string? parent) (list parent) (list))
+                       "behavior" (hash "layer" layer)))
+    (catch (e) #f))
+  m)
+
+(define (meta-audit! m decision id reason detail)
+  (let* ((e (hash "kind" "meta-audit" "layer" "outer"
+                  "decision" decision "id" id "reason" reason
+                  "detail" (if (hash? detail) detail (hash))
+                  "gen" (meta-opt m "gen" 0)
+                  "slot" (meta-opt detail "slot" 0)
+                  "preset" (meta:preset)
+                  "boundary-safe" (meta:boundary-safe?)
+                  "at" (monotonic-ms)))
+         (ev (hash "layer" "outer" "outer" id
+                   "gen" (meta-opt e "gen" 0)
+                   "slot" (meta-opt e "slot" 0)
+                   "reason" reason))
+         (log (meta-opt m "audit" (list))))
+    (hash-set! m "audit" (append log (list e)))
+    (hash-set! m "log" (append (meta-opt m "log" (list))
+                               (list (meta:record-entry "outer" id decision reason ev #f))))
+    (meta-emit! m "outer" id decision reason ev #f)
+    m))
+
+; One inner record per outer candidate: the two levels are distinguishable
+; by algo ("meta-inner") and by evidence {"layer":"inner","outer":<id>}.
+(define (meta-log-inner! m outer gen slot score)
+  (let ((ev (hash "layer" "inner" "outer" outer "gen" gen
+                  "slot" slot "score" score)))
+    (hash-set! m "log" (append (meta-opt m "log" (list))
+                               (list (meta:record-entry "inner" outer "CANDIDATE"
+                                                        "inner-search" ev outer))))
+    (meta-emit! m "inner" outer "CANDIDATE" "inner-search" ev outer)
+    m))
+
+(define (meta:audit m) (meta-opt m "audit" (list)))
+(define (meta:audit-count m) (length (meta:audit m)))
+
+; Two-level folding over the in-process record list (and over any parsed
+; evo log the caller feeds meta:fold-records).
+(define (meta-record-layer rec)
+  (let* ((a (meta-opt rec "algo" ""))
+         (ev (meta-opt rec "evidence" (hash)))
+         (l (meta-opt ev "layer" #f)))
+    (cond ((string=? a "meta-inner") "inner")
+          ((string=? a "meta-outer") "outer")
+          ((and (string? l) (not (string=? l ""))) l)
+          (else "outer"))))
+
+(define (meta:fold-records recs mode)
+  (let ((rs (if (list? recs) recs (list))))
+    (if (or (string=? mode "expanded") (string=? mode "all"))
+        rs
+        (filter (lambda (r) (string=? (meta-record-layer r) "outer")) rs))))
+
+(define (meta:fold m mode)
+  (meta:fold-records (meta-opt m "log" (list)) mode))
+
+(define (meta:tree m)
+  (let* ((recs (meta-opt m "log" (list)))
+         (outers (filter (lambda (r) (string=? (meta-record-layer r) "outer")) recs))
+         (inners (filter (lambda (r) (string=? (meta-record-layer r) "inner")) recs)))
+    (map (lambda (o)
+           (let* ((e (meta-opt o "evidence" (hash)))
+                  (oid (meta-opt e "outer" #f))
+                  (kids (if (string? oid)
+                            (filter (lambda (r)
+                                      (string=? (meta-opt (meta-opt r "evidence" (hash))
+                                                          "outer" "")
+                                                oid))
+                                    inners)
+                            (list))))
+             (hash-set o "children" kids)))
+         outers)))
+
+; ═══════════════════════════════════════════════════════════════════
+; Significance (paired sign test)
+; ═══════════════════════════════════════════════════════════════════
+
+(define (meta-comb n k)
+  (cond ((or (< k 0) (> k n)) 0)
+        ((or (= k 0) (= k n)) 1)
+        (else
+         (let loop ((i 1) (acc 1))
+           (if (> i k)
+               acc
+               (loop (+ i 1) (quotient (* acc (+ (- n k) i)) i)))))))
+
+(define (meta-binom-tail k n)
+  ; P(X >= k) for X ~ Binomial(n, 1/2), exact in integer arithmetic then
+  ; divided once. n is small (one entry per seed).
+  (if (> k n)
+      0.0
+      (let loop ((i k) (acc 0))
+        (if (> i n)
+            (/ (* 1.0 acc) (expt 2.0 n))
+            (loop (+ i 1) (+ acc (meta-comb n i)))))))
+
+; (meta:significance deltas) -> {"n","wins","losses","p","significant"}.
+; Zeros are ignored (they carry no sign), as in the sign test.
+(define (meta:significance deltas)
+  (let* ((ds (filter number? deltas))
+         (wins (meta-count (lambda (d) (> d 0.0)) ds))
+         (losses (meta-count (lambda (d) (< d 0.0)) ds))
+         (n (+ wins losses))
+         (p (if (= n 0) 1.0 (meta-binom-tail wins n))))
+    (hash "n" n "wins" wins "losses" losses
+          "p" p "significant" (<= p 0.05))))
+
+; ═══════════════════════════════════════════════════════════════════
+; Report
+; ═══════════════════════════════════════════════════════════════════
+
+(define (meta:report m)
+  (let* ((nodes (meta:nodes m))
+         (log (meta-opt m "log" (list)))
+         (outers (filter (lambda (r) (string=? (meta-record-layer r) "outer")) log))
+         (inners (filter (lambda (r) (string=? (meta-record-layer r) "inner")) log))
+         (tip (meta:tip m))
+         (tip-node (if tip (meta-node m tip) #f)))
+    (hash "kind" "meta-report" "schema" meta-schema-version
+          "status" (meta-opt m "status" "refused")
+          "reason" (meta-opt m "reason" #f)
+          "depth" (meta-opt m "depth" 1)
+          "select" (meta-opt m "select" "cmp")
+          "approval" (meta-opt m "approval" "manual")
+          "gen" (meta-opt m "gen" 0)
+          "steps" (meta-opt m "steps" 0)
+          "outer-budget" (meta-opt m "outer-budget" 20)
+          "inner-budget" (meta-opt m "inner-budget" 200)
+          "kept" (meta-opt m "kept" 0)
+          "rollbacks" (meta-opt m "rollbacks" 0)
+          "pending" (meta-count (lambda (k) (eq? (hash-ref (meta-opt m "pending" (hash)) k #f) #t))
+                                (hash-keys (meta-opt m "pending" (hash))))
+          "refused" (meta-count (lambda (e) (string=? (meta-opt e "decision" "") "REFUSE"))
+                                (meta:audit m))
+          "rejected" (meta-count (lambda (e) (string=? (meta-opt e "decision" "") "REJECT"))
+                                 (meta:audit m))
+          "tip" tip
+          "tip-score" (meta-opt m "tip-score" #f)
+          "base-score" (meta-opt m "base-score" #f)
+          "tip-policy" (if tip-node (meta-opt tip-node "policy" #f) #f)
+          "canary" (hash "base" (meta-opt m "canary-base" #f)
+                         "last" (if tip-node (meta-opt tip-node "canary" #f) #f)
+                         "ok" (if tip-node (meta-opt tip-node "canary-ok" #f) #f))
+          "archive" (map (lambda (n)
+                           (hash "id" (meta-opt n "id" "")
+                                 "gen" (meta-opt n "gen" 0)
+                                 "score" (meta-opt n "score" #f)
+                                 "canary" (meta-opt n "canary" #f)
+                                 "canary-ok" (meta-opt n "canary-ok" #f)
+                                 "isolated" (meta-opt n "isolated" #f)
+                                 "parents" (meta-opt n "parents" (list))
+                                 "cmp" (meta:cmp-of nodes (meta-opt n "id" ""))))
+                         nodes)
+          "layers" (hash "outer" (length outers) "inner" (length inners))
+          "fold" (hash "outer" (length (meta:fold m "outer"))
+                       "expanded" (length (meta:fold m "expanded")))
+          "last-decision" (meta:decision m)
+          "audit-count" (meta:audit-count m)
+          "preset" (meta:preset)
+          "boundary-safe" (meta:boundary-safe?))))
