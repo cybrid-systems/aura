@@ -1,0 +1,21 @@
+; lib/std/time.aura — R7RS (scheme time) (Issue #5005)
+;
+; (require "std/time" all:)
+;
+; Mapping to the existing kernel primitives:
+;   current-second      = current-time (Unix epoch seconds, integer)
+;   jiffies-per-second  = 1000
+;   current-jiffy       = monotonic-ms (milliseconds since an arbitrary
+;                         origin, so only differences are meaningful)
+;
+; std/datetime keeps the date/format helpers; it re-exports nothing from
+; here.  current-time-ms (wall-clock milliseconds) stays available for
+; callers that need sub-second wall time.
+
+(export current-second current-jiffy jiffies-per-second)
+
+(define (current-second) (current-time))
+
+(define (current-jiffy) (monotonic-ms))
+
+(define (jiffies-per-second) 1000)

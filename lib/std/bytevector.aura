@@ -1,0 +1,153 @@
+; lib/std/bytevector.aura — R7RS bytevectors + UTF-8 (Issue #5005)
+;
+; (require "std/bytevector" all:)
+;
+; Aura has no bytevector heap tag.  A bytevector is a tagged vector:
+;   #(bytevector b0 b1 ...)   each bi is an integer 0..255
+; The tag lives at slot 0, so bytevector-length is (- (vector-length) 1).
+; (vector? bv) is therefore #t and (bytevector? v) is the distinguishing
+; test; this deviation is recorded in docs/stdlib/r7rs-small.md.
+;
+; string->utf8 / utf8->string are pure Scheme over string-ref (code
+; points) and the SRFI-151 bitwise primitives (#5003), so the string
+; heap keeps owning text; bytevectors are only the wire/storage form.
+; Only well-formed UTF-8 is produced; utf8->string rejects a truncated
+; or ill-formed sequence with an error.
+
+(export bytevector? make-bytevector bytevector-length
+        bytevector-u8-ref bytevector-u8-set!
+        bytevector-copy bytevector-copy!
+        bytevector-append bytevector->list list->bytevector
+        string->utf8 utf8->string)
+
+(define (bytevector? x)
+  (and (vector? x)
+       (>= (vector-length x) 1)
+       (eq? (vector-ref x 0) 'bytevector)))
+
+(define (bytevector-length bv) (- (vector-length bv) 1))
+
+(define (make-bytevector n . fill)
+  (let ((f (if (null? fill) 0 (car fill))))
+    (let ((bv (make-vector (+ n 1) f)))
+      (vector-set! bv 0 'bytevector)
+      bv)))
+
+(define (bytevector-u8-ref bv k)
+  (if (or (< k 0) (>= k (bytevector-length bv)))
+      (error "bytevector-u8-ref: index out of range"))
+  (vector-ref bv (+ k 1)))
+
+(define (bytevector-u8-set! bv k v)
+  (if (or (< k 0) (>= k (bytevector-length bv)))
+      (error "bytevector-u8-set!: index out of range"))
+  (if (or (< v 0) (> v 255))
+      (error "bytevector-u8-set!: value is not a byte"))
+  (vector-set! bv (+ k 1) v)
+  (void))
+
+(define (bytevector-copy bv . range)
+  (let* ((start (if (null? range) 0 (car range)))
+         (end (if (or (null? range) (null? (cdr range)))
+                  (bytevector-length bv)
+                  (car (cdr range))))
+         (out (make-bytevector (- end start) 0)))
+    (let loop ((i start))
+      (if (>= i end)
+          out
+          (begin (vector-set! out (+ (- i start) 1) (vector-ref bv (+ i 1)))
+                 (loop (+ i 1)))))))
+
+(define (bytevector-copy! to at from . range)
+  (let* ((start (if (null? range) 0 (car range)))
+         (end (if (or (null? range) (null? (cdr range)))
+                  (bytevector-length from)
+                  (car (cdr range)))))
+    (let loop ((i start) (j at))
+      (if (>= i end)
+          to
+          (begin (vector-set! to (+ j 1) (vector-ref from (+ i 1)))
+                 (loop (+ i 1) (+ j 1)))))))
+
+(define (bytevector-append . bvs)
+  (let* ((total (let loop ((rest bvs) (n 0))
+                  (if (null? rest) n
+                      (loop (cdr rest) (+ n (bytevector-length (car rest)))))))
+         (out (make-bytevector total 0)))
+    (let loop ((rest bvs) (at 0))
+      (if (null? rest)
+          out
+          (begin
+            (bytevector-copy! out at (car rest))
+            (loop (cdr rest) (+ at (bytevector-length (car rest)))))))))
+
+(define (bytevector->list bv)
+  (let loop ((i (- (bytevector-length bv) 1)) (acc (list)))
+    (if (< i 0)
+        acc
+        (loop (- i 1) (cons (bytevector-u8-ref bv i) acc)))))
+
+(define (list->bytevector xs)
+  (let* ((n (length xs)) (bv (make-bytevector n 0)))
+    (let loop ((i 0) (rest xs))
+      (if (null? rest)
+          bv
+          (begin (bytevector-u8-set! bv i (car rest))
+                 (loop (+ i 1) (cdr rest)))))))
+
+; ── UTF-8 ─────────────────────────────────────────────────────────
+
+(define (string->utf8 s)
+  (let* ((n (string-length s))
+         (bv (make-bytevector (* n 4) 0))
+         (at 0))
+    (let loop ((i 0) (at 0))
+      (if (>= i n)
+          (bytevector-copy bv 0 at)
+          (let ((cp (string-ref s i)))
+            (cond
+              ((< cp 128)
+               (vector-set! bv (+ at 1) cp)
+               (loop (+ i 1) (+ at 1)))
+              ((< cp 2048)
+               (vector-set! bv (+ at 1) (bitwise-ior 192 (arithmetic-shift cp -6)))
+               (vector-set! bv (+ at 2) (bitwise-ior 128 (bitwise-and cp 63)))
+               (loop (+ i 1) (+ at 2)))
+              ((< cp 65536)
+               (vector-set! bv (+ at 1) (bitwise-ior 224 (arithmetic-shift cp -12)))
+               (vector-set! bv (+ at 2) (bitwise-ior 128 (bitwise-and (arithmetic-shift cp -6) 63)))
+               (vector-set! bv (+ at 3) (bitwise-ior 128 (bitwise-and cp 63)))
+               (loop (+ i 1) (+ at 3)))
+              (else
+               (vector-set! bv (+ at 1) (bitwise-ior 240 (arithmetic-shift cp -18)))
+               (vector-set! bv (+ at 2) (bitwise-ior 128 (bitwise-and (arithmetic-shift cp -12) 63)))
+               (vector-set! bv (+ at 3) (bitwise-ior 128 (bitwise-and (arithmetic-shift cp -6) 63)))
+               (vector-set! bv (+ at 4) (bitwise-ior 128 (bitwise-and cp 63)))
+               (loop (+ i 1) (+ at 4)))))))))
+
+(define (utf8->string bv)
+  (let ((n (bytevector-length bv)))
+    (let loop ((i 0) (acc (list)))
+      (if (>= i n)
+          (list->string (reverse acc))
+          (let* ((b0 (bytevector-u8-ref bv i))
+                 (need (cond ((< b0 128) 0)
+                             ((< b0 224) 1)
+                             ((< b0 240) 2)
+                             (else 3))))
+            (if (> (+ i need) (- n 1))
+                (error "utf8->string: truncated UTF-8 sequence"))
+            (let* ((cp (cond ((= need 0) b0)
+                             ((= need 1) (bitwise-and b0 31))
+                             ((= need 2) (bitwise-and b0 15))
+                             (else (bitwise-and b0 7))))
+                   (cp (let cont ((k 1) (cp cp))
+                         (if (> k need)
+                             cp
+                             (let ((b (bytevector-u8-ref bv (+ i k))))
+                               (if (not (= 128 (bitwise-and b 192)))
+                                   (error "utf8->string: invalid continuation byte"))
+                               (cont (+ k 1)
+                                     (bitwise-ior (arithmetic-shift cp 6)
+                                                  (bitwise-and b 63))))))))
+              (loop (+ i need 1) (cons cp acc))))))))

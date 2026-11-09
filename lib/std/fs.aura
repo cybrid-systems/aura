@@ -16,6 +16,10 @@
 ;   (dir-files path)           → list of files only
 ;   (dir-dirs path)            → list of directories only
 
+; Issue #5005: the file verbs have ONE definition, in std/io.  std/fs
+; re-exports them for its existing callers and keeps path/dir helpers.
+(require "std/io" all:)
+
 (export path-join path-dirname path-basename path-extname
         file-read file-write file-exists? file-size
         dir-list dir-files dir-dirs)
@@ -61,23 +65,8 @@
               (if (= c 47) "" (d (- i 1))))))))))
 
 ;; ── File operations ──
-
-(define (file-read path)
-  (let ((v (read-file path)))
-    (if (string? v) v "")))
-
-(define (file-write path content)
-  ;; Issue #4917: a failed write is an error value, not a silent #t.
-  (let ((r (write-file path content)))
-    (if (error? r) r #t)))
-
-;; Issue #4919: the host prim (lstat; Bool). One definition: std/io
-;; re-exports the same prim. Loading std/fs needs no effect.
-(define file-exists? file-exists?)
-
-(define (file-size path)
-  (let ((v (read-file path)))
-    (if (string? v) (string-length v) 0)))
+;; file-read / file-write / file-exists? / file-size come from std/io
+;; (issue #5005: one set of file verbs, not two).
 
 (define (dir-list path)
   (let ((v (directory-list path)))

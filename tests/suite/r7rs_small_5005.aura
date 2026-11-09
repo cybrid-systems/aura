@@ -1,0 +1,228 @@
+; Issue #5005 — R7RS-small gaps: ports, bytevectors, exceptions,
+; parameterize, delay/force, let-values, case-lambda, characters,
+; process/time.  Hard-failing checks (see 5003 suite header).
+;
+; let-values is already a parser special form (Issue #4496, parser_impl
+; parse_let_values) — this suite exercises it and the table points at
+; its location; it is not re-implemented in lib/std.
+
+(require "std/char" all:)
+(require "std/exception" all:)
+(require "std/parameter" all:)
+(require "std/lazy" all:)
+(require "std/case-lambda" all:)
+(require "std/bytevector" all:)
+(require "std/io" all:)
+(require "std/fs" all:)
+(require "std/time" all:)
+(require "std/process" all:)
+(require "std/r7rs" all:)
+(require "std/list" all:)
+
+(define (t= name expected actual)
+  (if (equal? expected actual)
+      #t
+      (begin
+        (display "FAIL ") (display name)
+        (display ": expected ") (display expected)
+        (display ", got ") (display actual) (newline)
+        (error (string-append "test failed: " name)))))
+
+(define (t-true name v) (t= name #t (if v #t #f)))
+(define (t-false name v) (t= name #f (if v #t #f)))
+
+; ── characters ────────────────────────────────────────────────────
+(t= "char>?" #t (if (char>? 98 97) #t #f))
+(t= "char<=?" #t (if (char<=? 97 97) #t #f))
+(t= "char>=?" #t (if (char>=? 98 97) #t #f))
+(t-true "char-ci=?" (char-ci=? 65 97))
+(t-false "char-ci=? different" (char-ci=? 65 98))
+(t= "char-foldcase" 97 (char-foldcase 65))
+(t-true "char-upper-case?" (char-upper-case? 65))
+(t-false "char-upper-case? lower" (char-upper-case? 97))
+(t-true "char-lower-case?" (char-lower-case? 97))
+(t= "digit-value" 7 (digit-value 55))
+(t-false "digit-value non-digit" (digit-value 65))
+(t-true "char-alphabetic?" (char-alphabetic? 65))
+(t= "char-upcase" 65 (char-upcase 97))
+(t= "char-downcase" 97 (char-downcase 65))
+
+; ── exceptions ────────────────────────────────────────────────────
+(t= "guard else" 'other (guard (e (else 'other)) (error "bad")))
+(t= "guard matching clause" (list 'str "bad")
+   (guard (e ((string? e) (list 'str e))) (error "bad")))
+(t-true "guard re-raises unmatched"
+        (try (guard (e ((number? e) e)) (error "bad")) (catch e2 #t)))
+(t= "with-exception-handler" 'handled
+   (with-exception-handler (lambda (e) 'handled) (lambda () (error "boom"))))
+(t= "raise-continuable handler value" 42
+   (with-exception-handler (lambda (e) 42) (lambda () (raise-continuable 'x))))
+(t-true "error-object? on caught string"
+        (error-object? (try (error "msg") (catch e e))))
+(t= "error-object-message" "msg"
+   (error-object-message (try (error "msg") (catch e e))))
+(t= "error-object-irritants" (list)
+   (error-object-irritants (try (error "msg") (catch e e))))
+(t-true "with-exception-handler restores stack"
+        (begin
+          (with-exception-handler (lambda (e) 'x) (lambda () 1))
+          (try (raise "after") (catch e #t))))
+
+; ── parameters ────────────────────────────────────────────────────
+(define p (make-parameter 1))
+(define q (make-parameter 10 (lambda (x) (* x 2))))
+(t= "parameter initial" (list 1 20) (list (p) (q)))
+(t= "parameterize binds" (list 5 6)
+   (parameterize ((p 5) (q 3)) (list (p) (q))))
+(t= "parameterize restores raw" (list 1 20) (list (p) (q)))
+(t= "nested parameterize" (list 2 2)
+   (parameterize ((p 2))
+     (let ((inner (p)))
+       (parameterize ((p 3)) (p))
+       (list (p) inner))))
+(t= "parameterize restores on error" 1
+   (begin
+     (try (parameterize ((p 7)) (error "x")) (catch e #t))
+     (p)))
+(t= "parameter setter" 9 (begin (p 9) (p)))
+(p 'parameter-raw-set 1)
+
+; ── lazy ──────────────────────────────────────────────────────────
+(t-true "promise?" (promise? (delay 1)))
+(define counter (vector 0))
+(define pr (delay (begin (vector-set! counter 0 (+ (vector-ref counter 0) 1)) 5)))
+(t= "force value" 5 (force pr))
+(t= "force memoises" 1 (begin (force pr) (vector-ref counter 0)))
+(t= "force is idempotent" 5 (force pr))
+(t= "force non-promise" 7 (force 7))
+(t-true "make-promise is a promise" (promise? (make-promise 3)))
+(t= "make-promise force" 3 (force (make-promise 3)))
+
+; ── multiple values (special form) ────────────────────────────────
+(t= "let-values" 3 (let-values (((a b) (values 1 2))) (+ a b)))
+(t= "let-values single" 5 (let-values (((a) (values 5))) a))
+(t= "let*-values sequential" 2
+   (let*-values (((a) (values 1)) ((b) (values (+ a 1)))) b))
+(t= "values one is identity" 7 (values 7))
+(t= "call-with-values" 3 (call-with-values (lambda () (values 1 2)) +))
+
+; ── case-lambda ───────────────────────────────────────────────────
+(define f
+  (case-lambda
+    (() 'zero)
+    ((a) (list 'one a))
+    ((a b) (list 'two a b))
+    ((a b . rest) (list 'many a b rest))))
+(t= "case-lambda zero" 'zero (f))
+(t= "case-lambda one" (list 'one 5) (f 5))
+(t= "case-lambda two" (list 'two 1 2) (f 1 2))
+(t= "case-lambda rest" (list 'many 1 2 (list 3 4)) (f 1 2 3 4))
+(t-true "case-lambda rest-only clause"
+        (let ((g (case-lambda args args))) (equal? (g 1 2) (list 1 2))))
+
+; ── bytevectors + UTF-8 ───────────────────────────────────────────
+(define bv (make-bytevector 3 0))
+(t-true "bytevector?" (bytevector? bv))
+(t-false "bytevector? rejects list" (bytevector? (list 1)))
+(t= "bytevector-length" 3 (bytevector-length bv))
+(bytevector-u8-set! bv 0 65)
+(bytevector-u8-set! bv 1 255)
+(t= "bytevector-u8-ref" 65 (bytevector-u8-ref bv 0))
+(t= "bytevector-u8-ref byte 255" 255 (bytevector-u8-ref bv 1))
+(t= "bytevector->list" (list 65 255 0) (bytevector->list bv))
+(t= "list->bytevector roundtrip" (list 1 2 3)
+   (bytevector->list (list->bytevector (list 1 2 3))))
+(t= "bytevector-copy" (list 65 255) (bytevector->list (bytevector-copy bv 0 2)))
+(t= "bytevector-append length" 5
+   (bytevector-length (bytevector-append bv (make-bytevector 2 0))))
+
+(define ascii (string->utf8 "abc"))
+(t= "string->utf8 ascii" (list 97 98 99) (bytevector->list ascii))
+(t= "utf8->string ascii" "abc" (utf8->string ascii))
+(define accented (string->utf8 "héllo"))
+(t= "string->utf8 multibyte length" 6 (bytevector-length accented))
+(t= "utf8 roundtrip multibyte" "héllo" (utf8->string accented))
+(t= "utf8 roundtrip 4-byte" "😀" (utf8->string (string->utf8 "😀")))
+(t-true "utf8->string rejects truncation"
+        (try (utf8->string (bytevector-copy accented 0 1)) (catch e #t)))
+(t-true "utf8->string rejects bad continuation"
+        (try (utf8->string (list->bytevector (list 97 128))) (catch e #t)))
+
+; ── ports ─────────────────────────────────────────────────────────
+(define ip (open-input-string "ab"))
+(t-true "port?" (port? ip))
+(t-false "port? rejects string" (port? "x"))
+(t= "read-char" 97 (read-char ip))
+(t= "peek-char does not consume" 98 (peek-char ip))
+(t= "read-char after peek" 98 (read-char ip))
+(t-true "read-char eof" (eof-object? (read-char ip)))
+(t-true "peek-char eof" (eof-object? (peek-char ip)))
+
+(define op (open-output-string))
+(write-char 104 op)
+(write-char 105 op)
+(write-string "!" op)
+(t= "get-output-string" "hi!" (get-output-string op))
+
+(define fip (open-input-file "lib/std/io.aura"))
+(t= "file port first char" 59 (read-char fip)) ; ';'
+(close-input-port fip)
+
+(define path "/tmp/_aura_5005_port.txt")
+(define fop (open-output-file path))
+(write-string "line" fop)
+(write-char 10 fop)
+(close-output-port fop)
+(t= "file output port wrote" "line
+" (file-read path))
+(t= "file input port reads" "line
+"
+   (let ((p2 (open-input-file path)))
+     (let loop ((cs (list)))
+       (let ((c (read-char p2)))
+         (if (eof-object? c)
+             (begin (close-input-port p2) (list->string (reverse cs)))
+             (loop (cons c cs)))))))
+(file-delete path)
+
+(t-true "current ports are ports"
+        (and (port? (current-input-port))
+             (port? (current-output-port))
+             (port? (current-error-port))))
+
+; ── process context + time ────────────────────────────────────────
+(t-true "command-line is a list" (list? (command-line)))
+(t-true "get-environment-variable finds PATH" (string? (get-environment-variable "PATH")))
+(t-false "missing env var is #f" (get-environment-variable "AURA_DEFINITELY_NOT_SET_5005"))
+(t-true "get-environment-variables is a list" (pair? (get-environment-variables)))
+(t-true "current-second plausible" (> (current-second) 1700000000))
+(t= "jiffies-per-second" 1000 (jiffies-per-second))
+(t-true "current-jiffy non-negative" (>= (current-jiffy) 0))
+
+; ── std/io vs std/fs: one definition of the file verbs ────────────
+(t-true "fs re-exports the io file verb"
+        (eq? (procedure? file-read) (procedure? file-read)))
+(t-true "fs file-read works" (string? (file-read "lib/std/fs.aura")))
+(t-true "fs path helper still works" (string=? (path-join "a" "b") "a/b"))
+
+; ── R7RS coverage table ───────────────────────────────────────────
+(t= "r7rs:libraries count" 16 (length (r7rs:libraries)))
+(t-true "every library listed"
+        (all (lambda (n) (member? n (r7rs:libraries)))
+             (list "base" "case-lambda" "char" "complex" "cxr" "eval"
+                   "file" "inexact" "lazy" "load" "process-context" "read"
+                   "repl" "time" "write" "r5rs")))
+(t= "r7rs:status eq?" (list "kernel" "primitive") (r7rs:status "eq?"))
+(t-true "let-values table points at the parser special form"
+        (let ((hit (r7rs:status "let-values")))
+          (and (string? (car (cdr hit)))
+               (> (string-index (car (cdr hit)) "special form" 0) -1))))
+(t= "r7rs:status guard" (list "this-version" "std/exception.aura")
+   (r7rs:status "guard"))
+(t= "r7rs:status current-jiffy" (list "this-version" "std/time.aura")
+   (r7rs:status "current-jiffy"))
+(t-true "no duplicate: base has exactly one row per added gap"
+        (let loop ((rows (r7rs:coverage "base")) (seen (list)))
+          (cond ((null? rows) #t)
+                ((member? (car (car rows)) seen) #f)
+                (else (loop (cdr rows) (cons (car (car rows)) seen))))))

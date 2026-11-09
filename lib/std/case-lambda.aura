@@ -1,0 +1,54 @@
+; lib/std/case-lambda.aura — R7RS (scheme case-lambda) (Issue #5005)
+;
+; (require "std/case-lambda" all:)
+;
+; (case-lambda (formals body ...) ...) -> procedure
+;   formals may be (), (a b ...), a rest-only symbol, or (a b . rest).
+;
+; Expansion: a variadic lambda over the argument list, then an if-chain
+; on (length args).  Each matched clause applies a fixed-formals lambda
+; to the argument list, so the clause body sees ordinary bindings.  There
+; is no fall-through: no matching clause raises an error.
+;
+; The argument-list temporary is the fixed symbol __case-lambda-args__.
+; A clause formals list that binds that exact name would shadow it; the
+; name is reserved (and documented) rather than hygienically generated
+; because gensym-produced binders do not resolve through this defmacro
+; path (observed while landing #5005).
+
+(export case-lambda)
+
+(defmacro (case-lambda . clauses)
+  (let ((args '__case-lambda-args__))
+    ; Recursive (not reverse-based) build: clause 1 becomes the outermost
+    ; if, so clause order is the dispatch priority and a later
+    ; (a b . rest) clause cannot shadow an earlier (a b) clause.
+    ; Manual reverse (car/cdr/cons only), then the same forward wrap as
+    ; the original builder: the first clause ends up outermost, so clause
+    ; order is the dispatch priority.
+    ; defmacro rest-binding flattens a single clause whose formals is a
+    ; bare symbol: (case-lambda args body) gives clauses = (args body)
+    ; instead of ((args body)).  Normalize so both spellings dispatch.
+    (let ((cls (if (pair? (car clauses)) clauses (list clauses))))
+    (let ((rev (let rev-build ((cs cls) (acc (list)))
+                 (if (null? cs) acc (rev-build (cdr cs) (cons (car cs) acc))))))
+      (let build ((cs rev) (acc (list 'error "case-lambda: no matching clause")))
+        (if (null? cs)
+            (list 'lambda args acc)
+            (let* ((cl (car cs))
+                   (formals (car cl))
+                   (body (cdr cl))
+                   (fixed (let count ((f formals) (k 0))
+                            (if (pair? f) (count (cdr f) (+ k 1)) k)))
+                   (dotted? (and (pair? formals) (not (list? formals))))
+                   (applyform
+                     (list 'apply
+                           (cons 'lambda (cons formals body))
+                           args))
+                   (test (cond ((symbol? formals) #f)
+                               (dotted? (list '>= (list 'length args) fixed))
+                               (else (list '= (list 'length args) fixed)))))
+              (build (cdr cs)
+                     (if test
+                         (list 'if test applyform acc)
+                         applyform)))))))))

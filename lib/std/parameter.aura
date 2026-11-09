@@ -1,0 +1,49 @@
+; lib/std/parameter.aura — R7RS parameters (Issue #5005)
+;
+; (require "std/parameter" all:)
+;
+; (make-parameter init [converter]) -> parameter procedure
+;   (p)          -> current value
+;   (p v)        -> convert and set, returns the new value   (Aura extension)
+;   (p 'parameter-raw-set v) -> set without conversion       (internal)
+;
+; (parameterize ((p v) ...) body ...) — dynamically bind each parameter
+; for the dynamic extent of body, restoring the previous raw values on
+; normal exit and on a raised error (same condition objects as
+; try/catch — std/exception's guard uses the same path).
+;
+; A parameter is a closure over a private #(value converter) cell, so it
+; is a first-class value.  The dynamic extent is process-wide, not a
+; fiber-local binding: a parameter set inside one fiber is visible to a
+; fiber spawned inside that extent, and restored when the extent ends.
+; (There is no fiber-local dynamic binding in this version; see
+; docs/stdlib/r7rs-small.md.)
+;
+; parameterize is a PARSER special form (Issue #5005, parser_impl.cpp
+; parse_parameterize).  It desugars to fresh-name lets + try/catch that
+; call the parameter with (p 'parameter-raw-set old) to restore.  Making
+; it syntax instead of a defmacro is deliberate: a macro cannot reliably
+; bind the caller's parameter references across nested expansions, and
+; the parser gives each save a unique name.  The R7RS table points at
+; that location.
+
+(export make-parameter parameterize parameter? parameter-set!)
+
+(define (make-parameter init . conv)
+  (let ((cell (vector (if (null? conv) init ((car conv) init))
+                      (if (null? conv) (lambda (x) x) (car conv)))))
+    (lambda args
+      (cond ((null? args) (vector-ref cell 0))
+            ((and (= (length args) 2) (eq? (car args) 'parameter-raw-set))
+             (vector-set! cell 0 (car (cdr args)))
+             (vector-ref cell 0))
+            ((= (length args) 1)
+             (vector-set! cell 0 ((vector-ref cell 1) (car args)))
+             (vector-ref cell 0))
+            (else (error "parameter: expected 0, 1, or (parameter-raw-set v)"))))))
+
+(define (parameter? p) (procedure? p))
+
+; Explicit setter (the (p v) call form is the documented one).
+(define (parameter-set! p v) (p v))
+

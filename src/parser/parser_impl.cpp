@@ -577,7 +577,8 @@ static NodeId read_unquote_operand_4760(ParserState& s) {
 
 NodeId parse_case(ParserState& s);
 NodeId parse_do(ParserState& s);
-NodeId parse_let_values(ParserState& s);
+NodeId parse_let_values(ParserState& s, bool sequential);
+NodeId parse_parameterize(ParserState& s); // Issue #5005
 
 NodeId parse_list(ParserState& s) {
     auto tok = s.lex.peek(); // '(' or first token
@@ -672,7 +673,16 @@ NodeId parse_list(ParserState& s) {
         if (kw == "do")
             return parse_do(s);
         if (kw == "let-values")
-            return parse_let_values(s);
+            return parse_let_values(s, /*sequential=*/false);
+        // Issue #5005: let*-values is the sequential R7RS spelling.
+        if (kw == "let*-values")
+            return parse_let_values(s, /*sequential=*/true);
+        // Issue #5005: R7RS parameterize.  Desugared here (not a macro)
+        // because a defmacro cannot reliably bind the parameter
+        // references across nested expansions; the parser has fresh
+        // symbols and real Variable nodes.
+        if (kw == "parameterize")
+            return parse_parameterize(s);
         if (kw == "cast")
             return parse_cast(s);
         if (kw == "check")
@@ -2763,8 +2773,8 @@ NodeId parse_do(ParserState& s) {
 // (let-values (((a b ...) expr) ...) body ...)
 //   → (let ((tmp expr)) (let ((a (list-ref tmp 0)) ...) body ...))
 // `values` (std/list) returns its one argument as is, else a list.
-NodeId parse_let_values(ParserState& s) {
-    s.lex.consume(); // 'let-values'
+NodeId parse_let_values(ParserState& s, bool sequential) {
+    s.lex.consume(); // 'let-values' or 'let*-values'
     if (s.lex.consume().kind != TokenKind::LParen)
         return NULL_NODE;
     struct Group {
@@ -2791,7 +2801,9 @@ NodeId parse_let_values(ParserState& s) {
     auto body = parse_body_seq(s);
     if (body == NULL_NODE || s.lex.consume().kind != TokenKind::RParen)
         return NULL_NODE;
-    // Evaluate every expr before binding any formal (let, not let*).
+    // let-values evaluates every expr before binding any formal;
+    // let*-values nests each group's tmp let inside the previous one, so
+    // group N sees group N-1's bindings.
     std::vector<SymId> tmps;
     for (std::size_t gi = 0; gi < groups.size(); ++gi)
         tmps.push_back(fresh_desugar_sym(s, "lv"));
@@ -2800,21 +2812,94 @@ NodeId parse_let_values(ParserState& s) {
         const auto& g = groups[gi];
         if (g.formals.size() == 1) {
             inner = s.flat.add_let(g.formals[0], s.flat.add_variable(tmps[gi]), inner);
-            continue;
+        } else {
+            for (std::size_t k = g.formals.size(); k-- > 0;) {
+                auto ref = s.flat.add_call(
+                    s.flat.add_variable(s.pool.intern("list-ref")),
+                    std::vector<NodeId>{s.flat.add_variable(tmps[gi]),
+                                        s.flat.add_literal(static_cast<std::int64_t>(k))});
+                inner = s.flat.add_let(g.formals[k], ref, inner);
+            }
         }
-        for (std::size_t k = g.formals.size(); k-- > 0;) {
-            auto ref = s.flat.add_call(
-                s.flat.add_variable(s.pool.intern("list-ref")),
-                std::vector<NodeId>{s.flat.add_variable(tmps[gi]),
-                                    s.flat.add_literal(static_cast<std::int64_t>(k))});
-            inner = s.flat.add_let(g.formals[k], ref, inner);
-        }
+        if (sequential)
+            inner = s.flat.add_let(tmps[gi], g.expr, inner);
     }
-    for (std::size_t gi = groups.size(); gi-- > 0;)
-        inner = s.flat.add_let(tmps[gi], groups[gi].expr, inner);
+    if (!sequential) {
+        for (std::size_t gi = groups.size(); gi-- > 0;)
+            inner = s.flat.add_let(tmps[gi], groups[gi].expr, inner);
+    }
     return inner;
 }
 
+
+// (parameterize ((p v) ...) body ...)   [Issue #5005]
+//   -> nested lets with parser-fresh symbols:
+//      (let ((old p))
+//        (p v)
+//        (let ((res (try body
+//                        (catch (ex) (begin (p 'parameter-raw-set old)
+//                                           (raise ex))))))
+//          (p 'parameter-raw-set old)
+//          res))
+// A parameter procedure accepts (p 'parameter-raw-set v): set without
+// running the converter (restore semantics).  Nested / sequential forms
+// get distinct fresh names, so Aura's single-frame let cannot shadow an
+// outer save.
+NodeId parse_parameterize(ParserState& s) {
+    s.lex.consume(); // 'parameterize'
+    if (s.lex.peek().kind != TokenKind::LParen)
+        return NULL_NODE;
+    s.lex.consume();
+    std::vector<std::pair<NodeId, NodeId>> binds;
+    while (s.lex.peek().kind == TokenKind::LParen) {
+        s.lex.consume();
+        auto p = parse_expr(s);
+        auto v = parse_expr(s);
+        if (p == NULL_NODE || v == NULL_NODE || s.lex.consume().kind != TokenKind::RParen)
+            return NULL_NODE;
+        binds.emplace_back(p, v);
+    }
+    if (s.lex.consume().kind != TokenKind::RParen) // end of binding list
+        return NULL_NODE;
+    auto body = parse_body_seq(s);
+    if (body == NULL_NODE)
+        return NULL_NODE;
+    if (s.lex.peek().kind != TokenKind::RParen)
+        return NULL_NODE;
+    s.lex.consume(); // end of parameterize
+
+    auto sym = [&](std::string_view name) { return s.flat.add_variable(s.pool.intern(name)); };
+    auto raw_set_key = [&]() {
+        return s.flat.add_quote(s.flat.add_variable(s.pool.intern("parameter-raw-set")));
+    };
+    auto restore_call = [&](NodeId param, NodeId old) {
+        return s.flat.add_call(param, std::vector<NodeId>{raw_set_key(), s.flat.add_variable(old)});
+    };
+
+    NodeId inner = body;
+    for (std::size_t i = binds.size(); i-- > 0;) {
+        auto param = binds[i].first;
+        auto value = binds[i].second;
+        auto old = fresh_desugar_sym(s, "pold");
+        auto res = fresh_desugar_sym(s, "pres");
+        auto ex = fresh_desugar_sym(s, "pe");
+        auto old_init = s.flat.add_call(param, std::vector<NodeId>{});
+        auto set_call = s.flat.add_call(param, std::vector<NodeId>{value});
+        auto raise_call =
+            s.flat.add_call(sym("raise"), std::vector<NodeId>{s.flat.add_variable(ex)});
+        auto handler = s.flat.add_begin(std::vector<NodeId>{restore_call(param, old), raise_call});
+        auto catch_call = s.flat.add_call(
+            sym("catch"),
+            std::vector<NodeId>{s.flat.add_call(s.flat.add_variable(ex), {}), handler});
+        auto try_form = s.flat.add_call(sym("try"), std::vector<NodeId>{inner, catch_call});
+        auto res_body = s.flat.add_begin(
+            std::vector<NodeId>{restore_call(param, old), s.flat.add_variable(res)});
+        auto res_let = s.flat.add_let(res, try_form, res_body);
+        inner =
+            s.flat.add_let(old, old_init, s.flat.add_begin(std::vector<NodeId>{set_call, res_let}));
+    }
+    return inner;
+}
 
 } // namespace aura::parser::detail
 
