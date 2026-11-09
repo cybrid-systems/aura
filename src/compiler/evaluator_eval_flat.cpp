@@ -1745,22 +1745,35 @@ void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {
     }
 }
 
-// Issue #5057: the EnvId side of collect_tw_inflight_roots. Same
-// tw_frames registry (current / tail / pinned), but the Env objects
-// themselves, so the file-mode sweep can root their parent_id and
-// cap-snapshot source frames instead of rooting every frame.
+// Issue #5057: the EnvId side of collect_tw_inflight_roots. Same segment
+// set the value collector walks -- this thread's current segment, its
+// default segment, and every registered fiber segment parked for the STW
+// epoch -- but the Env objects themselves, so the file-mode sweep can root
+// their parent_id and cap-snapshot source frames. A fiber parked between
+// yields still holds Envs whose frames are live; missing them let the
+// frame sweep freelist a live capture frame and alias the binding (CI face:
+// "cannot call: loop" in the 32-fiber churn).
 void Evaluator::collect_tw_inflight_envs(std::vector<const Env*>& out) {
-    for (const auto& fr : tw_frames()) {
-        if (fr.current && *fr.current)
-            out.push_back(*fr.current);
-        if (fr.tail && *fr.tail)
-            out.push_back(&**fr.tail);
-        if (!fr.pinned)
-            continue;
-        for (const auto& p : *fr.pinned) {
-            if (p)
-                out.push_back(p.get());
+    std::vector<types::EvalValue> ignored;
+    TwRootSet* self_cur = t_tw_cur;
+    TwRootSet* self_def = t_tw_default.seg;
+    if (self_cur)
+        collect_tw_root_segment(self_cur->frames, self_cur->results, self_cur->vecs,
+                                self_cur->spans, out, ignored);
+    if (self_def && self_def != self_cur)
+        collect_tw_root_segment(self_def->frames, self_def->results, self_def->vecs,
+                                self_def->spans, out, ignored);
+    TwStwHandle stw;
+    if (tw_stw_begin(stw, kTwStwInflightBudget)) {
+        for (const auto& sp : stw.snapshot) {
+            TwRootSet* set = sp.get();
+            if (set == self_cur || set == self_def || !set->fiber_owned)
+                continue;
+            if (set->dead.load(std::memory_order_acquire))
+                continue;
+            collect_tw_root_segment(set->frames, set->results, set->vecs, set->spans, out, ignored);
         }
+        tw_stw_end(stw);
     }
 }
 
