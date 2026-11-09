@@ -8,6 +8,15 @@
 //   {"v":1,"id","parent","run","seq","ts_ms","kind","target","decision",
 //    "reason","evidence"(JSON value),"old","new","dur_ms"}
 // kind: an op name (mutate:rebind, ast:restore, …) or "record" (evo:record!).
+//
+// Schema v=2 (#4939) adds optional members after dur_ms — multi-objective,
+// constrained, multi-parent and behavior-description records:
+//   {"v":2,…,"dur_ms":D,"algo":S,"gen":N,"slot":N,"search":S,"candidate":S,
+//    "parents":[S…],"behavior":J,"objectives":J,"constraints":J}
+// Only the members the caller supplies are written, always in that fixed
+// order (never hash iteration order) so identical runs stay byte-identical.
+// Readers must accept v=1 and v=2 in the same file: the JSONL shape is
+// additive and "aura evo log --json" echoes each line verbatim.
 // decision: KEEP | ROLLBACK | user string. The worldline tip advances on KEEP;
 // a candidate's parent is the tip when it was recorded (or the explicit
 // parent evo:record! names), so `aura evo log` can draw the tree.
@@ -130,6 +139,8 @@ struct Entry {
     std::string_view new_src;
     std::string_view parent; // empty → current worldline tip
     double dur_ms = 0.0;
+    std::string_view extras_json; // #4939: pre-rendered "k":v,… members, or empty
+    int version = 1;              // #4939: 1, or 2 when extras_json is set
 };
 
 // Appends one line; returns the new record id ("" when off or on I/O error).
@@ -151,7 +162,9 @@ inline std::string log_append(const Entry& e)
                         .count();
     std::string line;
     line.reserve(256 + e.old_src.size() + e.new_src.size() + e.evidence_json.size());
-    line += "{\"v\":1,\"id\":";
+    line += "{\"v\":";
+    line += std::to_string(e.version);
+    line += ",\"id\":";
     json_escape_into(line, id);
     line += ",\"parent\":";
     json_escape_into(line, parent);
@@ -175,6 +188,10 @@ inline std::string log_append(const Entry& e)
     json_escape_into(line, e.new_src);
     line += ",\"dur_ms\":";
     line += std::format("{:.3f}", e.dur_ms);
+    if (!e.extras_json.empty()) {
+        line += ",";
+        line += e.extras_json;
+    }
     line += "}\n";
     std::error_code ec;
     const std::filesystem::path p(s.path);

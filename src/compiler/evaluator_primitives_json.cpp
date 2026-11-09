@@ -513,9 +513,20 @@ void RegSplitParts::register_json_evo_primitives(
     // gates land in the same log as mutate:* / ast:restore. Evidence is any
     // json-encode-able value (hash / list / number / string). Returns the
     // record id, or #f when the log is off (AURA_EVO_LOG unset).
+    //
+    // Issue #4939: an optional 8th argument is a hash of v=2 members
+    // (multi-objective / constrained / multi-parent / behavior records).
+    // They are emitted in the FIXED order below — never in hash iteration
+    // order — so two identical runs write byte-identical lines. An unknown
+    // key is an error, not a silent drop: a stage that logs "behavior" must
+    // not lose it.
+    static constexpr std::string_view kEvoV2Keys[] = {"algo",     "gen",        "slot",
+                                                      "search",   "candidate",  "parents",
+                                                      "behavior", "objectives", "constraints"};
     register_prim(
         add, ev, "evo:record!",
-        [&ev, &string_heap](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, &string_heap, &pairs, &error_values,
+         primitive_error_counter](std::span<const EvalValue> a) -> EvalValue {
             if (!aura::evo::log_enabled())
                 return make_bool(false);
             auto text = [&](std::size_t i) -> std::string {
@@ -562,6 +573,75 @@ void RegSplitParts::register_json_evo_primitives(
             const std::string evidence = json(3);
             const std::string new_src = text(4);
             const std::string parent = text(6);
+            // Issue #4939: v=2 members.
+            int version = 1;
+            std::string extras;
+            if (a.size() > 7 && !is_void(a[7])) {
+                if (!is_hash(a[7]))
+                    return make_primitive_error(string_heap, error_values,
+                                                "evo:record!: v2 members must be a hash",
+                                                primitive_error_counter);
+                auto hkeys = ev.primitives().lookup("hash-keys");
+                auto href = ev.primitives().lookup("hash-ref");
+                if (!hkeys || !href)
+                    return make_primitive_error(string_heap, error_values,
+                                                "evo:record!: hash-keys/hash-ref unavailable",
+                                                primitive_error_counter);
+                const EvalValue ks = (*hkeys)({a[7]});
+                std::vector<std::string> names;
+                for (EvalValue cur = ks; is_pair(cur); cur = pairs[as_pair_idx(cur)].cdr) {
+                    const EvalValue k = pairs[as_pair_idx(cur)].car;
+                    if (!is_string(k))
+                        continue;
+                    const auto ki = as_string_idx(k);
+                    const std::string name =
+                        ki < string_heap.size() ? std::string(ev.string_at(ki)) : std::string();
+                    bool known = false;
+                    for (const auto known_key : kEvoV2Keys)
+                        known = known || name == known_key;
+                    if (!known)
+                        return make_primitive_error(
+                            string_heap, error_values,
+                            "evo:record!: unknown v2 key '" + name +
+                                "' (allowed: algo gen slot search candidate parents behavior "
+                                "objectives constraints)",
+                            primitive_error_counter);
+                    names.push_back(name);
+                }
+                version = 2;
+                bool first = true;
+                for (const auto known_key : kEvoV2Keys) {
+                    // Presence comes from the key scan above, not from the
+                    // value: () is a legitimate member (an empty parents
+                    // list) and is indistinguishable from "absent" as a
+                    // hash-ref default.
+                    if (std::find(names.begin(), names.end(), known_key) == names.end())
+                        continue;
+                    const auto key = types::make_string(string_heap.mint(std::string(known_key)));
+                    const EvalValue v = (*href)({a[7], key});
+                    auto fn = ev.primitives().lookup("json-encode");
+                    if (!fn)
+                        return make_primitive_error(string_heap, error_values,
+                                                    "evo:record!: json-encode unavailable",
+                                                    primitive_error_counter);
+                    const EvalValue enc = (*fn)({v});
+                    if (!is_string(enc))
+                        return make_primitive_error(string_heap, error_values,
+                                                    "evo:record!: v2 member '" +
+                                                        std::string(known_key) +
+                                                        "' is not json-encode-able",
+                                                    primitive_error_counter);
+                    const auto ei = as_string_idx(enc);
+                    if (ei >= string_heap.size())
+                        continue;
+                    if (!first)
+                        extras += ",";
+                    first = false;
+                    aura::evo::json_escape_into(extras, known_key);
+                    extras += ":";
+                    extras += ev.string_at(ei);
+                }
+            }
             const std::string id = aura::evo::log_append({.kind = "record",
                                                           .target = target,
                                                           .decision = decision,
@@ -570,15 +650,19 @@ void RegSplitParts::register_json_evo_primitives(
                                                           .old_src = {},
                                                           .new_src = new_src,
                                                           .parent = parent,
-                                                          .dur_ms = dur});
+                                                          .dur_ms = dur,
+                                                          .extras_json = extras,
+                                                          .version = version});
             if (id.empty())
                 return make_bool(false);
             return types::make_string(string_heap.mint(id));
         },
         aura::compiler::impure_general(
             255,
-            "(evo:record! candidate decision reason evidence [new-src dur-ms parent]) -> id|#f",
-            "Append a worldline record to the evolution log (AURA_EVO_LOG; #4910)."));
+            "(evo:record! candidate decision reason evidence [new-src dur-ms parent extras]) -> "
+            "id|#f",
+            "Append a worldline record to the evolution log (AURA_EVO_LOG; #4910/#4939: "
+            "an extras hash writes schema v=2)."));
 
     // Issue #4910: (evo:log-path) -> the active evolution log path, or #f.
     register_prim(
