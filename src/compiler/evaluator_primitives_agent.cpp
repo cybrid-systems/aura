@@ -2239,6 +2239,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     RegSplitParts::register_orch_stats_primitives(ev, add);
     RegSplitParts::register_agent_token_primitives(ev, add);
     RegSplitParts::register_join_via_token_primitive(ev, add);
+    // Issue #5006: the five orchestration verbs come last; everything else in
+    // this group retires through the #5008 alias window into std/orch. They
+    // register through add_raw because they are aliases: the target primitive
+    // (fiber:/channel:) already enforces its own capability, and gating the
+    // alias on kCapStrategy would deny a plain fiber spawn.
+    RegSplitParts::register_orch_verb_primitives(ev, add_raw);
 }
 
 // Issue #5033: (intend ...) loop orchestration surface.
@@ -10051,5 +10057,34 @@ RegSplitParts::resolve_join_fail_policy(std::string_view name,
     return std::nullopt;
 }
 
+
+// Issue #5006: five orchestration verbs — spawn / send / recv / join / cancel.
+// The kernel face of orchestration is one name per primitive: spawn is
+// fiber:spawn, send/recv are the channel pair, join and cancel are fiber:join /
+// fiber:cancel. std/orch composes exactly these five and owns everything else
+// the orch: prefix used to carry (workflow, supervision, tokens, directory,
+// metrics). The prefixed names they replace stay registered one release cycle
+// as deprecated aliases (#5008 channel).
+template <typename AddFn>
+void RegSplitParts::register_orch_verb_primitives(Evaluator& ev, AddFn& add) {
+    auto alias = [&ev](const char* target, std::span<const EvalValue> a) -> EvalValue {
+        auto fn = ev.primitives().lookup(target);
+        if (!fn)
+            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                        std::string("orch verb: missing ") + target,
+                                        ev.primitive_error_counter_ptr());
+        return (*fn)(a);
+    };
+    add("orch:spawn",
+        [alias](std::span<const EvalValue> a) -> EvalValue { return alias("fiber:spawn", a); });
+    add("orch:send",
+        [alias](std::span<const EvalValue> a) -> EvalValue { return alias("channel:send", a); });
+    add("orch:recv",
+        [alias](std::span<const EvalValue> a) -> EvalValue { return alias("channel:recv", a); });
+    add("orch:join",
+        [alias](std::span<const EvalValue> a) -> EvalValue { return alias("fiber:join", a); });
+    add("orch:cancel",
+        [alias](std::span<const EvalValue> a) -> EvalValue { return alias("fiber:cancel", a); });
+}
 
 } // namespace aura::compiler::primitives_detail

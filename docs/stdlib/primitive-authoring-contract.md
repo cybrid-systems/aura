@@ -236,3 +236,36 @@ read is `(query :fiber-backend)`.
 wrappers over the two algebras: they compose, format and default, and every
 engine call they make is a verb. Do not add a second synonym for an op that
 already exists.
+
+## Five orchestration verbs (Issue #5006)
+
+`orch:` keeps `spawn` `send` `recv` `join` `cancel` — the scheduler/mailbox
+surface Aura cannot implement itself. Each verb is the kernel's name for
+exactly one primitive — `spawn` = `fiber:spawn`, `send`/`recv` = the
+`channel:` pair, `join` = `fiber:join`, `cancel` = `fiber:cancel` — and
+`std/orch` composes exactly those five.
+
+Everything else the prefix used to carry (workflow composition, supervision,
+handoff tokens, the agent directory, metrics reset) is `std/orch`; those names
+stay registered one release cycle as deprecated aliases. `_agent:spawn` /
+`_agent:list` stay as the underscore-plane kernel entry points, and
+`agent:recover-from-error` / `agent:tick` / `agent:running?` stay as
+agent-loop kernel state.
+
+**Single-use prefixes are not kernel.** `session:` `closure:` `hot-swap:`
+`string-pool:` `scheduler:` `evaluator:` `runtime:` `ir-cache-v2:` `jit:`
+`hygiene:` `arena:` `orchestration:` are the same class of duplicate: each is
+deprecated in favour of an `engine:metrics` / `mutate` / `query` op or a std
+library function. `aot:` is the deliberate remainder in this cycle because
+`lib/std/hot-update*` still calls it; it moves when that library gets its verb.
+
+### The keep/leave table for bare names
+
+| Class | Decision |
+|-------|----------|
+| Scheme evaluation kernel (`car` `cdr` `cons` `eq?`, arithmetic, comparisons, `apply`, type predicates, the native `map`/`list-sort` hot paths) | keep |
+| Host effects Aura cannot express (file descriptors, process, time, FFI allocation) | keep, and the name says which effect |
+| Pure formatting over metadata (`diagnose`, `check-success`, `api-reference`) and host wrappers `std/ffi` can express | leave (deprecate, then delete) |
+
+The rule that decides a new name is still the one criterion above: atomicity or
+a host effect. "It is a primitive today" is not a reason.

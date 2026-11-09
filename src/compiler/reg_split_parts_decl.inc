@@ -513,6 +513,8 @@ struct RegSplitParts {
     static void register_agent_token_primitives(Evaluator& ev, AddFn& add);
     template <typename AddFn>
     static void register_join_via_token_primitive(Evaluator& ev, AddFn& add);
+    // Issue #5006: spawn / send / recv / join / cancel — the only public orch: verbs.
+    template <typename AddFn> static void register_orch_verb_primitives(Evaluator& ev, AddFn& add);
     // Issue #5033: shared orch hash / keyword / handoff helpers.
     static EvalValue build_orch_hash(Evaluator& ev,
                                      std::span<const std::pair<std::string, EvalValue>> kv);
