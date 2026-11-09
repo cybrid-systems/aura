@@ -68,6 +68,10 @@
     (list "qd"
       (list "MAP-Elites (grid/CVT), novelty, island model, DGM parent selection, structural de-duplication"
             "(require \"std/qd\" all:)(qd:coverage (qd:map-elites (hash \"descriptors\" (list (list \"tokens\" 0 20000 10)))))"))
+    ; Issue #4942: proposal layer over evo-core — EoH/ReEvo/MCTS-AHD/EoH-S
+    (list "proposer"
+      (list "EoH/ReEvo/MCTS-AHD/EoH-S proposers as callables; mock/grammar proposals reproducible from (seed,gen,slot); scope guard on the mutable defines (#4942)"
+            "(require \"std/proposer\" all:)(prop:propose (prop:grammar (hash \"seed\" 7)) (prop:ctx (hash \"defines\" (list \"score\"))))"))
     ; ── Aura layer (#5004): agent / orch / evo are written in Aura over the
     ;    primitives; the Scheme layer below is engine + host prims. ──
     (list "agent"
