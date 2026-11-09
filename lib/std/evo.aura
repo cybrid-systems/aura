@@ -1,0 +1,273 @@
+; lib/std/evo.aura — experience layer over the evo:record! worldline (#5004)
+;
+; The worldline is what evo:record! (#4910) already wrote: one JSON object
+; per line in AURA_EVO_LOG, each record carrying target / decision /
+; reason / evidence. This module reads that log and turns it into arm
+; statistics + a strategy choice. It never invents counters: with no log
+; (log off) every reader returns an empty worldline.
+;
+; Exports
+;   worldline  : evo:records evo:worldline evo:parse-line evo:parse-log
+;                evo:record-count evo:keep? evo:arm-of
+;   statistics : evo:arm-stats evo:arms evo:best-arm evo:mean
+;   selectors  : evo:choose evo:choose-fixed evo:choose-epsilon
+;                evo:choose-ucb
+;   policy     : evo:policy evo:policy-select evo:policy-report
+;                evo:policy-arm evo:policy-selector
+;   strategy   : strategy:new strategy:active strategy:set-strategy
+;                strategy:report-success strategy:escalate strategy:arms
+;                strategy:best
+;
+; State is a value everywhere: a policy or a strategy state is a hash the
+; caller threads through. No module-level selection state.
+;
+; Import: (require "std/evo" all:)
+
+(export evo:records evo:worldline evo:parse-line evo:parse-log
+        evo:record-count evo:keep? evo:arm-of
+        evo:arm-stats evo:arms evo:best-arm evo:mean
+        evo:choose evo:choose-fixed evo:choose-epsilon evo:choose-ucb
+        evo:policy evo:policy-select evo:policy-report evo:policy-arm
+        evo:policy-selector
+        strategy:new strategy:active strategy:set-strategy
+        strategy:report-success strategy:escalate strategy:arms
+        strategy:best)
+
+(require "std/string" all:)
+(require "std/list" all:)
+
+; ── worldline ──────────────────────────────────────────────────
+; (evo:log-path) is the engine primitive (#4910); #f means the log is off.
+
+(define (evo:parse-line line)
+  (if (or (not (string? line)) (string=? (string-trim line) ""))
+    #f
+    (try
+      (let ((v (json-parse line)))
+        (if (hash? v) v #f))
+      (catch (e) #f))))
+
+(define (evo:parse-log text)
+  (if (not (string? text))
+    (quote ())
+    (let loop ((lines (string-split text "\n")) (acc (quote ())))
+      (if (null? lines)
+        (reverse acc)
+        (let ((rec (evo:parse-line (car lines))))
+          (loop (cdr lines) (if rec (cons rec acc) acc)))))))
+
+(define (evo:records)
+  (let ((path (try (evo:log-path) (catch (e) #f))))
+    (if (string? path)
+      (evo:parse-log (try (read-file path) (catch (e) "")))
+      (quote ()))))
+
+(define (evo:worldline)
+  (evo:records))
+
+(define (evo:record-count) (length (evo:records)))
+(define (evo:record-count-of records) (length records))
+
+(define (evo:keep? rec)
+  (and (hash? rec) (equal? (hash-ref rec "decision" "") "KEEP")))
+
+(define (evo:arm-of rec)
+  (if (hash? rec)
+    (let ((t (hash-ref rec "target" #f)))
+      (if (string? t) t "unattributed"))
+    "unattributed"))
+
+; ── statistics ─────────────────────────────────────────────────
+; (evo:mean n keeps) → keep rate; n = 0 → 0.0.
+
+(define (evo:mean n keeps)
+  (if (= n 0) 0.0 (/ (* 1.0 keeps) n)))
+
+(define (evo-arm-row arm)
+  (list (cons "arm" arm) (cons "n" 0) (cons "keeps" 0)))
+
+(define (evo-alist-row row key default)
+  (let loop ((xs row))
+    (if (null? xs) default
+      (if (equal? (car (car xs)) key)
+        (cdr (car xs))
+        (loop (cdr xs))))))
+
+(define (evo-row-set row key val)
+  (cond
+    ((null? row) (list (cons key val)))
+    ((equal? (car (car row)) key) (cons (cons key val) (cdr row)))
+    (else (cons (car row) (evo-row-set (cdr row) key val)))))
+
+(define (evo-row-find rows arm)
+  (let loop ((xs rows))
+    (if (null? xs) #f
+      (if (equal? (evo-alist-row (car xs) "arm" "") arm) (car xs)
+        (loop (cdr xs))))))
+
+; (evo:arm-stats records) → list of alists
+;   ((("arm" . name) ("n" . attempts) ("keeps" . keeps) ("mean" . rate)) ...)
+(define (evo:rows-with-mean rows)
+  (map (lambda (row)
+         (evo-row-set row "mean"
+                      (evo:mean (evo-alist-row row "n" 0)
+                                (evo-alist-row row "keeps" 0))))
+       rows))
+
+(define (evo:arm-stats records)
+  (let loop ((rs records) (rows (quote ())))
+    (cond
+      ((null? rs) (evo:rows-with-mean (reverse rows)))
+      (else
+       (let* ((rec (car rs))
+              (arm (evo:arm-of rec))
+              (row (evo-row-find rows arm))
+              (n (+ 1 (if row (evo-alist-row row "n" 0) 0)))
+              (k (+ (if (evo:keep? rec) 1 0)
+                    (if row (evo-alist-row row "keeps" 0) 0)))
+              (base (if row row (evo-arm-row arm)))
+              (next (evo-row-set (evo-row-set base "n" n) "keeps" k)))
+         (loop (cdr rs)
+               (if row
+                 (map (lambda (r) (if (eq? r row) next r)) rows)
+                 (cons next rows))))))))
+
+(define (evo:arms records) (evo:arm-stats records))
+
+(define (evo-best-row rows)
+  (let loop ((xs (cdr rows)) (best (car rows)))
+    (cond
+      ((null? xs) best)
+      ((> (evo-alist-row (car xs) "mean" 0.0)
+          (evo-alist-row best "mean" 0.0))
+       (loop (cdr xs) (car xs)))
+      (else (loop (cdr xs) best)))))
+
+(define (evo:best-arm records)
+  (let ((rows (evo:arm-stats records)))
+    (if (null? rows) #f (evo-alist-row (evo-best-row rows) "arm" #f))))
+
+; ── selectors ──────────────────────────────────────────────────
+; Fixed: first arm (declaration order of the worldline).
+(define (evo:choose-fixed arms)
+  (if (null? arms) #f (evo-alist-row (car arms) "arm" #f)))
+
+; ε-greedy: exploit the best empirical arm; with probability ε pull a
+; uniformly random arm instead. Returns (arm next-seed).
+(define (evo-next-seed seed)
+  (modulo (+ (* seed 1103515245) 12345) 2147483647))
+
+(define (evo:choose-epsilon arms epsilon seed)
+  (if (null? arms) (list #f seed)
+    (let* ((next (evo-next-seed seed))
+           (coin (/ (modulo next 10000) 10000.0))
+           (pick (modulo next (length arms)))
+           (chosen (if (< coin epsilon)
+                     (list-ref arms pick)
+                     (evo-best-row arms))))
+      (list (evo-alist-row chosen "arm" #f) next))))
+
+; UCB1: mean + sqrt(2 ln N / n); unvisited arms are tried first.
+(define (evo:choose-ucb arms)
+  (if (null? arms) #f
+    (let* ((total (foldl (lambda (acc row)
+                           (+ acc (evo-alist-row row "n" 0)))
+                         0 arms))
+           (unvisited (find (lambda (row) (= 0 (evo-alist-row row "n" 0))) arms)))
+      (if (pair? unvisited)
+        (evo-alist-row unvisited "arm" #f)
+        (let ((score (lambda (row)
+                       (let ((n (evo-alist-row row "n" 1)))
+                         (+ (evo-alist-row row "mean" 0.0)
+                            (sqrt (/ (* 2.0 (log total)) n)))))))
+          (evo-alist-row (evo-best-row (map (lambda (row)
+                                              (evo-row-set row "mean" (score row)))
+                                            arms))
+                         "arm" #f))))))
+
+; Generic dispatch: selector is "fixed" | "epsilon" | "ucb".
+(define (evo:choose selector arms . args)
+  (cond
+    ((string=? selector "epsilon")
+     (evo:choose-epsilon arms
+       (if (pair? args) (car args) 0.1)
+       (if (and (pair? args) (pair? (cdr args))) (cadr args) 424242)))
+    ((string=? selector "ucb") (evo:choose-ucb arms))
+    (else (evo:choose-fixed arms))))
+
+; ── policy: a value, never a module variable ───────────────────
+(define (evo:policy selector records)
+  (hash "selector" (if (string? selector) selector "fixed")
+        "arms" (evo:arm-stats (if (pair? records) records (quote ())))
+        "seed" 424242
+        "pulls" 0))
+
+(define (evo:policy-selector p) (hash-ref p "selector" "fixed"))
+
+(define (evo:policy-arm p)
+  (evo:choose (evo:policy-selector p) (hash-ref p "arms" (quote ()))
+              (hash-ref p "epsilon" 0.1) (hash-ref p "seed" 424242)))
+
+; (evo:policy-select p) → (list arm next-policy)
+(define (evo:policy-select p)
+  (let* ((sel (evo:policy-selector p))
+         (arms (hash-ref p "arms" (quote ())))
+         (choice (evo:choose sel arms
+                             (hash-ref p "epsilon" 0.1)
+                             (hash-ref p "seed" 424242))))
+    (if (list? choice)
+      (list (car choice)
+            (hash-set (hash-set p "seed" (car (cdr choice))) "pulls"
+                      (+ 1 (hash-ref p "pulls" 0))))
+      (list choice p))))
+
+; (evo:policy-report p arm reward) → next policy with that arm updated
+(define (evo:policy-report p arm reward)
+  (let* ((arms (hash-ref p "arms" (quote ())))
+         (row (evo-row-find arms arm))
+         (base (if row row (evo-arm-row arm)))
+         (n (+ 1 (evo-alist-row base "n" 0)))
+         (k (+ (if reward 1 0) (evo-alist-row base "keeps" 0)))
+         (next (evo-row-set (evo-row-set base "n" n) "keeps" k))
+         (rows (if row
+                 (map (lambda (r) (if (eq? r row) next r)) arms)
+                 (cons next arms))))
+    (hash-set p "arms" (evo:rows-with-mean rows))))
+
+; ── strategy: the four names the old engine primitives held ────
+; Value-based. (strategy:active) with no state returns void, matching the
+; primitive's empty answer when nothing is active.
+
+(define (strategy:new)
+  (hash "active" #f "arms" (quote ()) "escalations" 0))
+
+(define (strategy:active . args)
+  (if (null? args) (void)
+    (hash-ref (car args) "active" #f)))
+
+(define (strategy:set-strategy st name)
+  (hash-set st "active" (if (string? name) name (strategy:best-arm
+                                                  (hash-ref st "arms" (quote ()))))))
+
+(define (strategy:arms st) (hash-ref st "arms" (quote ())))
+
+(define (strategy:best st)
+  (let ((rows (hash-ref st "arms" (quote ()))))
+    (if (null? rows) #f (evo-alist-row (evo-best-row rows) "arm" #f))))
+
+(define (strategy:report-success st arm)
+  (let* ((arms (hash-ref st "arms" (quote ())))
+         (row (evo-row-find arms arm))
+         (base (if row row (evo-arm-row arm)))
+         (n (+ 1 (evo-alist-row base "n" 0)))
+         (k (+ 1 (evo-alist-row base "keeps" 0)))
+         (next (evo-row-set (evo-row-set base "n" n) "keeps" k)))
+    (hash-set st "arms"
+              (if row
+                (map (lambda (r) (if (eq? r row) next r)) arms)
+                (cons next arms)))))
+
+(define (strategy:escalate st reason)
+  (hash-set (hash-set st "escalations"
+                      (+ 1 (hash-ref st "escalations" 0)))
+            "escalation-reason" (if (string? reason) reason "unspecified")))

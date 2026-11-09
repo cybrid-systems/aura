@@ -57,9 +57,17 @@
     (list "evo-core"
       (list "Candidates/lineage values, ask/tell search handles, worldline-isolated trials, deterministic RNG, evo log v=2"
             "(require \"std/evo-core\" all:)(evo:ask (evo:search (hash \"algo\" \"mock\" \"seed\" 42 \"budget\" 8)) 2)"))
+    ; ── Aura layer (#5004): agent / orch / evo are written in Aura over the
+    ;    primitives; the Scheme layer below is engine + host prims. ──
     (list "agent"
-      (list "EDSL closed-loop auto-grow + decision-metrics (#1460)"
-            "(auto-grow \"task\" :source \"(define (f x) x)\" :rebind \"f\" \"(lambda (x) (* x 2))\")"))
+      (list "Aura layer: one closed loop — observe/propose/check/apply/verify/record + hot-replace step (#5004)"
+            "(agent:closed-loop-once :source \"(define (f x) (+ x 1))\" :rebind \"f\" \"(lambda (x) (* x 2))\")"))
+    (list "orch"
+      (list "Aura layer: multi-agent over spawn/send/recv/join/cancel — spawn, ask, pipeline, parallel, supervise (#5004)"
+            "(require \"std/orch\" all:)(orch:spawn \"worker\" (lambda (x) (* x 2)))(orch:ask \"worker\" 21)"))
+    (list "evo"
+      (list "Aura layer: experience from the evo:record! worldline — fixed / epsilon-greedy / UCB selectors (#5004)"
+            "(require \"std/evo\" all:)(evo:choose-ucb (evo:arms (evo:records)))"))
     ; Issue #2874: pluggable swarm intelligence (grid|pso|ant) next to std/ant
     (list "swarm"
       (list "Pluggable swarm search: grid / pso / ant / abc / boids / fss + flat fiber fitness"
@@ -100,8 +108,8 @@
       (list "Synthesize pipeline v2 (test-driven, debug)"
             "(synthesize:run-tests code tests)"))
     (list "orchestrator"
-      (list "Agent orchestrator (multi-agent, spawn)"
-            "(orchestrator:spawn)"))
+      (list "One-release forwarder to std/orch (#5004); import std/orch in new code"
+            "(require \"std/orch\" all:)(orch:pipeline steps input)"))
     ; ── Collection + data ──
     (list "list"
       (list "SRFI-1 list utilities (foldl/foldr, any/every, cons*, append-map, filter-map) [perf-tier:hot #923/#928]"
@@ -162,18 +170,20 @@
     (list "hot-strategy"
       (list "Pure-Aura hot strategy swap + snapshot heal (mutate:rebind; not AOT)"
             "(require \"std/hot-strategy\" all:)(hot-strategy:swap! \"strat\" \"(lambda (x) x)\" \"v2\")"))
-    ; ── AOT hot-update (Issue #1370) ──
+    ; ── AOT hot-update (Issue #1370): replacement steps behind std/agent ──
+    ; #5004: these four are no longer separate public surfaces. The agent
+    ; replacement step composes them: (agent:hot-replace path agent-id polls).
     (list "hot-update"
-      (list "AOT .so hot-reload + region + health (not pure-Aura strategy rebind)"
-            "(require \"std/hot-update\" all:)"))
+      (list "Replacement step of std/agent: AOT .so reload (agent:hot-replace composes region+reload+monitor)"
+            "(require \"std/agent\" all:)(agent:hot-replace \"/path/module.so\" 0 1)"))
     (list "hot-update-reload"
-      (list "AOT reload strategies (manual, threshold, composite)"
+      (list "Replacement step of std/agent: AOT reload strategies (manual, threshold, composite)"
             "(require \"std/hot-update-reload\" all:)"))
     (list "hot-update-region"
-      (list "Multi-agent region isolation helpers"
+      (list "Replacement step of std/agent: region isolation used by agent:hot-replace"
             "(require \"std/hot-update-region\" all:)"))
     (list "hot-update-monitor"
-      (list "Hot-update health monitor poll helpers"
+      (list "Replacement step of std/agent: health polling used by agent:hot-replace"
             "(require \"std/hot-update-monitor\" all:)"))
     ; ── IO / system ──
     (list "io"
