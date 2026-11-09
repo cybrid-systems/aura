@@ -1,0 +1,1 @@
+std/proposer (#4942): EoH/ReEvo/MCTS-AHD/EoH-S proposers as callables (p ctx) -> proposals; mock/grammar are LLM-free and reproducible from (seed, gen, slot); the scope guard refuses writes outside ctx defines. (define p (prop:grammar (hash "seed" 7))) (p (prop:ctx (hash "defines" (list "score"))))

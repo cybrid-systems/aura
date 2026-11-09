@@ -27,6 +27,50 @@ under `~/.aura/<version>` and links `~/.local/bin/aura`. Settings:
 | `AURA_BIN_DIR` | `~/.local/bin` | where the `aura` link goes |
 | `AURA_DOWNLOAD_BASE` | the GitHub release URL | a mirror, or a local directory holding the tarballs |
 
+## From the install line to a report
+
+The v0.2 search demo is the end-to-end path: install, scaffold `evolve-moo`,
+run 240 mock proposals (no LLM, no network) and write the report.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/cybrid-systems/aura/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+aura new evolve-moo demo && cd demo
+aura run                      # evaluated 240  front 30  qd coverage ...
+aura evo report --html out/report
+```
+
+Measured on 2026-11-09 with a fresh `$HOME` under `mktemp -d`, the public
+install line and the `nightly` tarball (40 MB), twice:
+
+| step | command | run 1 | run 2 |
+|---|---|---|---|
+| download + install | `curl … \| sh` | 53.9 s | 22.6 s |
+| scaffold | `aura new evolve-moo demo` | 0.01 s | 0.01 s |
+| search | `aura run` | 0.8 s | 0.8 s |
+| report | `aura evo report --html out/report` | 0.02 s | 0.01 s |
+| **install → report** | | **54.7 s** | **23.4 s** |
+
+Host: Ubuntu 26.10, aarch64. The download dominates and the two runs differ
+only there (cold vs warm network); the demo itself is under a second. The
+budget is 10 minutes (#4948).
+
+`aura run` printed `evaluated 240  front 30  qd coverage 0.953125`, and the
+report wrote `index.html`, `pareto.svg`, `hv-curve.svg`, `qd-heatmap.svg`
+and `lineage.svg`.
+
+**Platform coverage.** Ubuntu 24.04 on x86_64 and on arm64 is checked by
+`.github/workflows/dist.yml` (`verify` job) on every push: it installs the
+bundle on both bare runners, then scaffolds `evolve-moo`, runs it, writes the
+report and fails if install → report exceeds 600 s. That cell has not been
+observed on this host (arm64, no container engine): the Ubuntu 24.04/x86_64
+number comes from that CI job once it runs, not from a local measurement.
+
+**Host packages.** None beyond a stock Ubuntu 24.04 image: `install.sh` uses
+`sh`, `tar`, `gzip`, `sha256sum` and `curl` (or `wget`), plus
+`ca-certificates` for the HTTPS download. The bundle carries its own glibc, so
+no compiler, Python or C++ runtime is needed.
+
 ## What runs where
 
 Each tarball carries its own dynamic loader, glibc and libstdc++ (`rt/`), and

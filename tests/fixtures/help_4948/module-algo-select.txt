@@ -1,0 +1,7 @@
+std/algo-select (#4945)
+  (select:make (hash "model" "knn"|"tree"|"pairwise" "k" 3))
+  (select:features-fn! s (lambda (inst) features-hash))
+  (select:offline s matrix)     ; matrix from portfolio:matrix
+  (select:choose s inst k)      ; -> k member names
+  (select:feedback! s inst member result)
+  (select:report s)             ; SBS/VBS, gap closure, regret

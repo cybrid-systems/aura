@@ -1,0 +1,7 @@
+std/hyper-heuristic (#4945)
+  (hh:make (hash "low-level" (list op1 op2) "credit" "frr"|"pm"|"ap"
+                   "window" 50 "decay" 0.5))
+  (hh:next hh)        ; -> (op . next-hh)
+  (hh:credit! hh op reward) (hh:report hh) (hh:usage hh)
+  (tune:gate cand base)  ; multi-seed paired t gate
+  (tune:race configs opts) (tune:adapt! params key opts)

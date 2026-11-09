@@ -1,0 +1,8 @@
+std/surrogate (#4943)
+  (surr:gp (hash "kernel" "rbf"|"matern52" "noise" 1e-6 "max-n" 200))
+  (surr:knn (hash "k" 5))            ; fallback for AST / high-d features
+  (surr:fit! m X y) (surr:predict m x) ; -> (mean . var)
+  (surr:ei m x best) (surr:lcb m x kappa) (surr:ts m x)
+  (surr:prescreen m cands k (hash "acq" "ei"|"lcb"|"ts"))
+  (evo:staged-eval cand (list (cons "parse+contract" f1) (cons "holdout-80" f2)))
+  (evo:race cands evaluator (hash "alpha" 0.05))
