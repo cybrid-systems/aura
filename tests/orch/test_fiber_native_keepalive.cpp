@@ -539,7 +539,12 @@ int run_test_fiber_native_keepalive() {
               "3954: body entry stamped before clock freeze");
         h.liveness->body_progress_us.store(1, std::memory_order_release);
         const auto n0 = h.mailbox ? h.mailbox->size() : 0;
-        auto wr = watch_agent_liveness(h, /*stall_timeout_ms=*/20, /*cancel_on_stall=*/true);
+        // CI red 2026-11-09 (issue-farm shard 3/4): a 20 ms stall window for
+        // a 15 ms helper pulse is a 5 ms margin, so one descheduled helper
+        // tick read as "helper stalled". The body clock is frozen to 1 us, so
+        // it is Stalled at any window; give the live-helper half real slack
+        // (20x the interval) instead of pinning scheduler jitter.
+        auto wr = watch_agent_liveness(h, /*stall_timeout_ms=*/300, /*cancel_on_stall=*/true);
         const auto n1 = h.mailbox ? h.mailbox->size() : 0;
         CHECK(wr.status == KeepaliveWatchStatus::Stalled, "3954: hung body is Stalled");
         CHECK(wr.body_stalled, "3954: body_stalled");
