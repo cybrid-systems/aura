@@ -19,7 +19,7 @@
   (display name)
   (display " ===\n")
   (newline)
-  (define sid (ast:snapshot (string-append "pipeline-" name)))
+  (define sid (mutate :snapshot (string-append "pipeline-" name)))
   (let loop ((remaining steps) (n 1))
     (if (null? remaining)
       (begin
@@ -55,5 +55,5 @@
             (display n)
             (newline)
             (display "  Rolling back...\n")
-            (ast:restore sid)
+            (mutate :restore sid)
             #f))))))

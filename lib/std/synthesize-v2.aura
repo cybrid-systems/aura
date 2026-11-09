@@ -116,14 +116,14 @@ Rules:\n\
 ; ── try-attempt ──
 (define (try-attempt goal-name code tests max-a model
                      attempt-num best-code best-score . extra)
-  (let* ((sn (ast:snapshot "synth-v2"))
+  (let* ((sn (mutate :snapshot "synth-v2"))
          (tr (synthesize:run-tests code tests))
          (p (list-ref tr 0)) (t (list-ref tr 1)) (fl (list-ref tr 2))
          (score (* 100 (/ p (max t 1))))
          (is-b (or (= best-score -1) (> score best-score)))
          (nb (if is-b code best-code))
          (ns (if is-b score best-score)))
-    (ast:restore sn)
+    (mutate :restore sn)
     (if (= p t) (list #t code (list p t fl))
       (if (>= attempt-num max-a) (list #f code ns)
         (let* ((fb (build-diagnostic goal-name code p t fl))

@@ -346,12 +346,12 @@
          (ref (find-first-ref expected-str))
          ;; #4738: entry checkpoint. Restored on every non-success exit so a
          ;; failed search never leaves its last mutation installed.
-         (snap (ast:snapshot))
+         (snap (mutate :snapshot))
          ;; Queried before the first attempt (pristine workspace).
          (groups (colony-literal-groups fns))
          (fgroups (colony-float-groups fns)))
     (if (null? fns)
-        (begin (ast:restore snap)
+        (begin (mutate :restore snap)
                (list #f "" "colony:no-fns"))
       (let* ((r1 (if ref (colony-try-refs src fns ref expected-str max-variants)
                      (list #f 0 "" "")))
@@ -367,7 +367,7 @@
                 (if (car r3)
                     (list #t (car (cdr (cdr r3))) (car (cdr (cdr (cdr r3)))))
                   (begin
-                    (ast:restore snap)
+                    (mutate :restore snap)
                     ;; Output is "" — the restored workspace is the entry
                     ;; state, so no partial-run output is meaningful.
                     (list #f ""

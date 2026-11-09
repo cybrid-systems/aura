@@ -4875,7 +4875,7 @@ void register_workspace_query_dispatch_parts(WorkspaceQueryPrims& P, PrimRegistr
     // ── Issue #1435 / #2628: (query :op …) unified dispatcher ─────
     // Canonical surface for core structural ops. Aliases live in private
     // q_impls / stats_impl only (no public add registrations).
-    add("query", [&ev, mev, q_impls](std::span<const EvalValue> a) -> EvalValue {
+    add("query", [&ev, &string_heap, mev, q_impls](std::span<const EvalValue> a) -> EvalValue {
         auto kw_name = [&](const EvalValue& v) -> std::string {
             if (!is_keyword(v))
                 return {};
@@ -4887,6 +4887,19 @@ void register_workspace_query_dispatch_parts(WorkspaceQueryPrims& P, PrimRegistr
             if (!k.empty() && k[0] == ':')
                 k = k.substr(1);
             return k;
+        };
+        // Issue #5009: the op may be a keyword (:node-type) or a string.
+        // A string spells the retired primitive name verbatim ("ast:stable-ref"),
+        // which is how the long tail of reads stays reachable without a
+        // second public name.
+        auto as_text = [&](const EvalValue& v) -> std::string {
+            if (is_string(v)) {
+                auto i = as_string_idx(v);
+                if (i < string_heap.size())
+                    return std::string(string_heap[i]);
+                return {};
+            }
+            return kw_name(v);
         };
         auto call_named = [&](const char* prim, std::span<const EvalValue> args) -> EvalValue {
             // Issue #2628: prefer private impl table / stats_impl (public aliases removed).
@@ -4903,12 +4916,16 @@ void register_workspace_query_dispatch_parts(WorkspaceQueryPrims& P, PrimRegistr
             return (*fn)(args);
         };
 
-        if (a.empty() || !is_keyword(a[0]))
+        if (a.empty())
             return mev("bad-arg",
                        "usage: (query :op …)  ops: :node :children :parent :find :def-use "
                        ":mutation-log");
 
-        const std::string op = kw_name(a[0]);
+        const std::string op = as_text(a[0]);
+        if (op.empty())
+            return mev("bad-arg",
+                       "usage: (query :op …)  ops: :node :children :parent :find :def-use "
+                       ":mutation-log");
         auto rest = a.subspan(1);
 
         // (query :node id)
@@ -4997,6 +5014,42 @@ void register_workspace_query_dispatch_parts(WorkspaceQueryPrims& P, PrimRegistr
         // (query :root) — handy extra (not in the 6, but zero-cost)
         if (op == "root")
             return call_named("query:root", rest);
+
+        // Issue #5009: (query :fiber-backend) replaces (fiber:spawn-backend).
+        if (op == "fiber-backend" || op == "spawn-backend")
+            return call_named("fiber:spawn-backend", rest);
+
+        // Issue #5009: the long tail of reads shares this one verb. An op that
+        // carried a prefix is the primitive name itself ("ast:stable-ref");
+        // a bare op is resolved against the retired read prefixes in a fixed
+        // order, so (query :memory-used) and (query :reasons) stay reachable
+        // while ast:/workspace:/dirty:/mutation-log:/syntax: leave the public
+        // surface.
+        {
+            auto try_named = [&](const std::string& prim) -> std::optional<EvalValue> {
+                if (q_impls) {
+                    auto it = q_impls->find(prim);
+                    if (it != q_impls->end())
+                        return it->second(rest);
+                }
+                if (auto sfn = ObservabilityPrims::lookup_stats_impl(prim))
+                    return (*sfn)(rest);
+                if (auto fn = ev.primitives().lookup(prim))
+                    return (*fn)(rest);
+                return std::nullopt;
+            };
+            if (op.find(':') != std::string::npos) {
+                if (auto hit = try_named(op))
+                    return *hit;
+                return mev("no-prim", "query dispatch: missing " + op);
+            }
+            static constexpr const char* kReadPrefixes[] = {
+                "query:", "ast:", "workspace:", "dirty:", "mutation-log:", "syntax:", "fiber:"};
+            for (const char* prefix : kReadPrefixes) {
+                if (auto hit = try_named(std::string(prefix) + op))
+                    return *hit;
+            }
+        }
 
         // Issue #4909: `(query :code)` is not an op, but the primitive
         // `query:code` exists — say so instead of only listing the ops.

@@ -77,7 +77,12 @@ def main() -> int:
     # is the C++ workspace-source path. Bare current-source must stay gone.
     ws = _read("lib/std/workspace.aura")
     must("workspace:sync-from" in ws, "AC4: lib/std/workspace.aura merges via sync-from")
-    must("ast:snapshot" in ws, "AC4: lib/std/workspace.aura snapshots via ast:snapshot")
+    # Issue #5009: the write surface is (mutate :op); ast:snapshot is the
+    # deprecated alias it forwards to.
+    must(
+        "(mutate :snapshot" in ws or "ast:snapshot" in ws,
+        "AC4: lib/std/workspace.aura snapshots via (mutate :snapshot)",
+    )
     must("(current-source)" not in ws, "AC4: lib/std/workspace.aura residual bare current-source")
 
     suite = _read("tests/suite/ast_snapshot_workspace_2918.aura")

@@ -46,3 +46,62 @@
 (test-suite "query:callers-nonexistent"
   (set-code "(display 42)")
   (check (null? (query:callers-of "nobody"))))
+
+; ── Issue #5009: one read verb, one write verb ─────────────────
+; (query :op …) and (mutate :op …) are the public surface; the duplicate
+; ast: / workspace: / dirty: / mutation-log: / ws: / syntax: prefixes stay
+; registered for one release cycle behind the alias window. Run the same
+; operation through both and require identical results.
+; Failures exit 1 so the suite runner actually gates on them.
+
+(define fails5009 0)
+(define (ok5009 cond name)
+  (if cond
+      #t
+      (begin (set! fails5009 (+ fails5009 1))
+             (display "FAIL-5009 ") (display name) (newline))))
+
+(set-code "(define (helper x) (* x 2)) (define (main y) (+ (helper y) 1)) (display (main 5))")
+
+(ok5009 (equal? (query :generation) (ast:generation)) "query :generation")
+(ok5009 (equal? (query "ast:generation") (ast:generation)) "string op names the primitive")
+(ok5009 (equal? (query :memory-used) (workspace:memory-used)) "query :memory-used")
+(ok5009 (equal? (query :memory-limit) (workspace:memory-limit)) "query :memory-limit")
+(ok5009 (equal? (query :reasons 0) (dirty:reasons 0)) "query :reasons")
+(ok5009 (equal? (query :validate-nodes) (ast:validate-nodes)) "query :validate-nodes")
+
+; The short op resolves the modern query:stable-ref; the legacy ast: ref
+; format is reached with the explicit name, so no caller silently changes shape.
+(ok5009 (equal? (query "ast:stable-ref" 0) (ast:stable-ref 0)) "query ast:stable-ref")
+(ok5009 (not (equal? (query :stable-ref 0) (ast:stable-ref 0)))
+        "short :stable-ref is not the ast: shape")
+
+; Hashes compare by identity, so compare the numeric projection both faces
+; build from the same mutation log.
+(let* ((a (query "mutation-log:summary"))
+       (b (mutation-log:summary))
+       (pick (lambda (h) (list (hash-ref h "total" -1)
+                               (hash-ref h "committed" -1)
+                               (hash-ref h "last-mutation-id" -1)))))
+  (ok5009 (and (hash? a) (hash? b)) "mutation-log summary is a hash")
+  (ok5009 (equal? (pick a) (pick b)) "mutation-log summary projection"))
+
+(let* ((a (mutate :snapshot "algebra-a"))
+       (b (ast:snapshot "algebra-b"))
+       (ra (mutate :restore a))
+       (rb (ast:restore b)))
+  (ok5009 (and (integer? a) (integer? b)) "snapshot ids are ints")
+  (ok5009 (equal? ra rb) "restore agrees"))
+
+(let ((sid (mutate :snapshot "algebra-diff")))
+  (ok5009 (equal? (query :diff sid) (ast:diff sid)) "query :diff"))
+
+; Unknown ops fail loudly rather than answering with a default.
+(define badq (try (query :no-such-op-5009) (catch (caught) caught)))
+(ok5009 (and (pair? badq) (equal? (car badq) "bad-arg")) "query rejects unknown op")
+(define badm (try (mutate :no-such-op-5009) (catch (caught) caught)))
+(ok5009 (and (pair? badm) (equal? (car badm) "bad-arg")) "mutate rejects unknown op")
+
+(if (= fails5009 0)
+    (display "OK-5009 one read verb, one write verb\n")
+    (exit 1))

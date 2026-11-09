@@ -172,6 +172,11 @@ def _tokens(text: str) -> list[str]:
 
 _STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"')
 _CALL_RE = re.compile(r"\(\s*([^\s()\[\]{},']+)")
+# Issue #5009: a definition head is not a call. lib/std keeps compatibility
+# helpers named after a retired primitive (ast:generation wraps the stats key);
+# (define (ast:generation) …) must not read as "lib/std still calls ast:generation".
+_DEFINE_HEAD_RE = re.compile(r"\(\s*define\s+\(\s*[^\s()\[\]{},']+")
+_DEFINE_VALUE_RE = re.compile(r"\(\s*define\s+[^\s()\[\]{},']+")
 
 
 def stdlib_call_references(names: list[str]) -> dict[str, list[str]]:
@@ -188,6 +193,8 @@ def stdlib_call_references(names: list[str]) -> dict[str, list[str]]:
         text = _blank_quoted_lists(text)
         text = _COMMENT_RE.sub(" ", text)
         text = _STRING_RE.sub('""', text)
+        text = _DEFINE_HEAD_RE.sub("(define", text)
+        text = _DEFINE_VALUE_RE.sub("(define", text)
         for lineno, line in enumerate(text.splitlines(), 1):
             for m in _CALL_RE.finditer(line):
                 tok = m.group(1)

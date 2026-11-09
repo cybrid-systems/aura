@@ -77,10 +77,10 @@
       (string-append "no help available for: " key))))
 
 ; ── (query:nodes-with-marker marker) — high-level wrapper
-;     around (query:by-marker marker) with safe input check.
+;     around (query :by-marker marker) with safe input check.
 (define (query:nodes-with-marker marker)
   (if (string? marker)
-    (query:by-marker marker)
+    (query :by-marker marker)
     (list)))
 
 ; ── (query:find-by-name name) — high-level wrapper around

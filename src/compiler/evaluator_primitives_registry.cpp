@@ -87,6 +87,57 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
+namespace {
+
+    // Issue #5009: one read verb, one write verb. These prefixes leave the public
+    // surface: names stay registered for one release cycle (the #5008 alias
+    // window), are flagged PrimMeta.deprecated with the replacement hint, and
+    // lib/std calls (query …) / (mutate …) instead. The tier list carries the same
+    // flag (docs/stdlib/primitive-tiers.json), so docs and runtime agree.
+    struct RetiredPrefix5009 {
+        std::string_view prefix;
+        std::string_view verb; // the verb whose op now names this primitive
+    };
+
+    constexpr RetiredPrefix5009 kRetiredPrefixes5009[] = {
+        {"ast:", "query"},
+        {"workspace:", "query"},
+        {"dirty:", "query"},
+        {"mutation-log:", "query"},
+        {"syntax:", "query"},
+        {"ws:", "mutate"},
+        {"fiber:overlay-", "mutate"},
+        {"fiber:spawn-backend", "query"},
+    };
+
+    void retire_name(Primitives& prims, std::size_t slot, std::string_view hint) {
+        const std::string& name = prims.name_for_slot(slot);
+        PrimMeta meta = prims.meta_for_slot(slot);
+        meta.deprecated = true;
+        meta.category = "deprecated";
+        if (meta.doc.empty() || meta.doc.find("DEPRECATED") == std::string::npos)
+            meta.doc = meta.doc.empty() ? std::string(hint) : std::string(hint) + ". " + meta.doc;
+        prims.set_meta_for_name(name, std::move(meta));
+    }
+
+    void mark_retired_surface_5009(Primitives& prims) {
+        const std::size_t slots = prims.slot_count();
+        for (std::size_t slot = 0; slot < slots; ++slot) {
+            const std::string& name = prims.name_for_slot(slot);
+            const std::string_view view(name);
+            for (const auto& entry : kRetiredPrefixes5009) {
+                if (!view.starts_with(entry.prefix))
+                    continue;
+                retire_name(prims, slot,
+                            "DEPRECATED (#5009): prefer (" + std::string(entry.verb) +
+                                " …) — this name retires after the v0.2.0 alias window.");
+                break;
+            }
+        }
+    }
+
+} // namespace
+
 void Evaluator::register_all_primitives() {
     using primitives_detail::full_primitives_enabled;
     // ── S0: language core + AI work surface + metrics facade ──
@@ -200,6 +251,10 @@ void Evaluator::register_all_primitives() {
             prim_registrar(), *this, [this](std::int32_t idx) { return make_string(idx); },
             [this](std::int64_t v) { return make_int(v); }, mev);
     }
+
+    // Issue #5009: after every group has registered, retire the duplicate
+    // read/write prefixes from the public surface (deprecated, not deleted).
+    mark_retired_surface_5009(primitives_);
 }
 
 } // namespace aura::compiler

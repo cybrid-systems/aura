@@ -40,16 +40,16 @@
 
 ; ── safe-refactor:with-snapshot — snapshot/restore wrapper ──
 (define (safe-refactor:with-snapshot tag thunk)
-  (let ((snap-id (ast:snapshot tag)))
+  (let ((snap-id (mutate :snapshot tag)))
     (let ((result (try (thunk) (catch (e) 'error-raised))))
       (cond
         ((equal? result 'error-raised)
          (begin
-           (ast:restore snap-id)
+           (mutate :restore snap-id)
            (list 'rolled-back "error-raised")))
         ((equal? result 'fail)
          (begin
-           (ast:restore snap-id)
+           (mutate :restore snap-id)
            (list 'rolled-back "explicit-fail")))
         (else result)))))
 
@@ -59,13 +59,13 @@
     ((not (pre-verify))
      (list 'rejected "pre-verify-failed"))
     (else
-     (let* ((snap-id (ast:snapshot "safe-refactor-check"))
+     (let* ((snap-id (mutate :snapshot "safe-refactor-check"))
             (apply-result
               (try (apply-fn) (catch (e) 'apply-error-raised))))
        (cond
          ((equal? apply-result 'apply-error-raised)
           (begin
-            (ast:restore snap-id)
+            (mutate :restore snap-id)
             (list 'error "apply-error-raised")))
          ; Issue #4266: post-verify runs INSIDE the restore path — it used
          ; to sit outside every try, so a throwing post-verify escaped
@@ -75,11 +75,11 @@
             (cond
               ((equal? pv 'post-verify-error-raised)
                (begin
-                 (ast:restore snap-id)
+                 (mutate :restore snap-id)
                  (list 'error "post-verify-error-raised")))
               ((not pv)
                (begin
-                 (ast:restore snap-id)
+                 (mutate :restore snap-id)
                  (list 'rolled-back "post-verify-failed")))
               (else
                (list 'applied apply-result))))))))))
@@ -97,7 +97,7 @@
         #f
         (let loop ((s snaps) (last-id #f))
           (if (null? s)
-              (if last-id (ast:restore last-id) #f)
+              (if last-id (mutate :restore last-id) #f)
               (let ((entry (car s)))
                 (loop (cdr s)
                       (if (pair? entry) (car entry) last-id))))))))
@@ -124,11 +124,11 @@
 (define (safe-refactor:replace-fn fn-name new-body)
   ; Issue #2918: user-script intent → :workspace (not current eval frame).
   (let* ((current (try (current-source :workspace) (catch (e) "")))
-         (snap-id (ast:snapshot (string-append "replace-" fn-name))))
+         (snap-id (mutate :snapshot (string-append "replace-" fn-name))))
     (cond
       ((or (= (string-length current) 0) (= (string-length new-body) 0))
        (begin
-         (ast:restore snap-id)
+         (mutate :restore snap-id)
          (list 'rejected "empty-source-or-body")))
       (else
        (let* ((rebuilt
@@ -154,7 +154,7 @@
          (cond
            ((equal? apply-result 'tc-error-raised)
             (begin
-              (ast:restore snap-id)
+              (mutate :restore snap-id)
               (list 'rejected "typecheck-failed")))
            ; Issue #4266: applied ONLY on the structured ok status (#t).
            ; Anything else (diagnostics report / #f) restores the snapshot
@@ -164,7 +164,7 @@
             (list 'applied snap-id))
            (else
             (begin
-              (ast:restore snap-id)
+              (mutate :restore snap-id)
               (list 'rejected
                     (if (string? apply-result)
                         apply-result

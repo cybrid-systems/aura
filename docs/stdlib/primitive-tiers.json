@@ -32,7 +32,8 @@
   "S-NUM": "derived arithmetic (comparison + + - * fold)",
   "S-PURE": "pure value->value function; #1440 kept json-*/string-* core for speed, not for semantics",
   "D-ALIAS": "redundant registration: the same behaviour is already reachable through another name",
-  "K-EXC-5003": "Kernel exceptions added with the SRFI-151 baseline: bitwise/bit-count/arithmetic-shift cannot be expressed in Aura before any bit primitive exists (#5003)."
+  "K-EXC-5003": "Kernel exceptions added with the SRFI-151 baseline: bitwise/bit-count/arithmetic-shift cannot be expressed in Aura before any bit primitive exists (#5003).",
+  "D-PREFIX-5009": "retired duplicate prefix (#5009): the same behaviour is the op of one (query …) / (mutate …) verb; kept registered and flagged deprecated for one release cycle"
  },
  "kernel_exceptions": [
   "arithmetic-shift",
@@ -44,9 +45,9 @@
   "integer-length"
  ],
  "counts": {
-  "delete": 6,
   "kernel": 430,
-  "stdlib-candidate": 87
+  "stdlib-candidate": 87,
+  "delete": 6
  },
  "primitives": {
   "%base64-decode": {
@@ -204,71 +205,105 @@
   },
   "ast:compact-nodes": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:diff": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:generation": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:recycle-nodes": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:ref-deserialize": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:ref-get": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:ref-mutation-id": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:ref-serialize": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:ref-valid?": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:ref-workspace-id": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:restore": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:snapshot": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:snapshot-fail-reason": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:stable-ref": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:validate-nodes": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:validate-ownership": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "ast:validate-post-restore": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "atan": {
    "tier": "kernel",
@@ -599,11 +634,15 @@
   },
   "dirty:ppa-reasons": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "dirty:reasons": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "display": {
    "tier": "kernel",
@@ -663,7 +702,7 @@
   },
   "evaluator:compact-env-frames": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "K-GOV"
   },
   "evo:log-path": {
    "tier": "kernel",
@@ -752,43 +791,63 @@
   },
   "fiber:overlay-begin": {
    "tier": "kernel",
-   "rule": "K-FIBER"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(mutate …)"
   },
   "fiber:overlay-commit": {
    "tier": "kernel",
-   "rule": "K-FIBER"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(mutate …)"
   },
   "fiber:overlay-conflict": {
    "tier": "kernel",
-   "rule": "K-FIBER"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(mutate …)"
   },
   "fiber:overlay-define": {
    "tier": "kernel",
-   "rule": "K-FIBER"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(mutate …)"
   },
   "fiber:overlay-get": {
    "tier": "kernel",
-   "rule": "K-FIBER"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(mutate …)"
   },
   "fiber:overlay-has": {
    "tier": "kernel",
-   "rule": "K-FIBER"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(mutate …)"
   },
   "fiber:overlay-pending": {
    "tier": "kernel",
-   "rule": "K-FIBER"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(mutate …)"
   },
   "fiber:overlay-report": {
    "tier": "kernel",
-   "rule": "K-FIBER"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(mutate …)"
   },
   "fiber:overlay-rollback": {
    "tier": "kernel",
-   "rule": "K-FIBER"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(mutate …)"
   },
   "fiber:overlay-set!": {
    "tier": "kernel",
-   "rule": "K-FIBER"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(mutate …)"
   },
   "fiber:spawn": {
    "tier": "kernel",
@@ -796,7 +855,9 @@
   },
   "fiber:spawn-backend": {
    "tier": "kernel",
-   "rule": "K-FIBER"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "fiber:yield": {
    "tier": "kernel",
@@ -920,19 +981,19 @@
   },
   "hot-swap:fn": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "K-GOV"
   },
   "hygiene:allow-macro-mutate?": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "K-GOV"
   },
   "hygiene:protected?": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "K-GOV"
   },
   "hygiene:set-allow-macro-mutate!": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "K-GOV"
   },
   "ihash-count": {
    "tier": "stdlib-candidate",
@@ -1010,19 +1071,19 @@
   },
   "ir-cache-v2:dependents": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "K-GOV"
   },
   "ir-cache-v2:dirty?": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "K-GOV"
   },
   "jit:deopt-fn?": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "K-GOV"
   },
   "jit:exception-fibers-clear": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "K-GOV"
   },
   "json-encode": {
    "tier": "stdlib-candidate",
@@ -1194,11 +1255,15 @@
   },
   "mutation-log:diff": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "mutation-log:summary": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "my-id": {
    "tier": "kernel",
@@ -1302,7 +1367,7 @@
   },
   "orch:parallel-intend": {
    "tier": "delete",
-   "rule": "D-ALIAS",
+   "rule": "K-ORCH",
    "note": "'(orch:parallel-intend ...) -> alias of (parallel-intend ...)': the body only looks up parallel-intend and forwards"
   },
   "orch:reset-metrics": {
@@ -1681,11 +1746,11 @@
   },
   "runtime:self-heal-on-drift": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "K-GOV"
   },
   "scheduler:pin": {
    "tier": "kernel",
-   "rule": "K-FIBER"
+   "rule": "K-GOV"
   },
   "security:check-effect": {
    "tier": "kernel",
@@ -1737,7 +1802,7 @@
   },
   "session:create": {
    "tier": "kernel",
-   "rule": "K-FIBER"
+   "rule": "K-GOV"
   },
   "set-car!": {
    "tier": "kernel",
@@ -1893,19 +1958,27 @@
   },
   "syntax:get-provenance": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "syntax:propagate-marker": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "syntax:set-marker": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "syntax:set-provenance": {
    "tier": "kernel",
-   "rule": "K-ENGINE"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "synthesize:define": {
    "tier": "kernel",
@@ -2082,67 +2155,99 @@
   },
   "workspace:can-write?": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "workspace:concurrent-mutation-policy": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "workspace:conflicts-with": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "workspace:delete": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "workspace:discard": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "workspace:find-define": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "workspace:memory-limit": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "workspace:memory-used": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "workspace:merge-3way": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "workspace:resolve-stable-ref": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "workspace:rollback-latest": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "workspace:rollback-to": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "workspace:set-concurrent-mutation-policy": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "workspace:set-memory-limit": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "workspace:snapshot": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "workspace:sync-from": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(query …)"
   },
   "write": {
    "tier": "kernel",
@@ -2154,7 +2259,19 @@
   },
   "ws:try-mutation": {
    "tier": "kernel",
-   "rule": "K-WS"
+   "rule": "D-PREFIX-5009",
+   "deprecated": true,
+   "replaces": "(mutate …)"
   }
+ },
+ "retired_prefixes_5009": {
+  "ast:": "query",
+  "workspace:": "query",
+  "dirty:": "query",
+  "mutation-log:": "query",
+  "syntax:": "query",
+  "ws:": "mutate",
+  "fiber:overlay-": "mutate",
+  "fiber:spawn-backend": "query"
  }
 }

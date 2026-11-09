@@ -41,10 +41,10 @@
       (query :find (symbol->string name))
       (query :find name)))
 
-;; ── query:nodes-with-marker → (query:by-marker m) ──
+;; ── query:nodes-with-marker → (query :by-marker m) ──
 ;; Demoted per query-namespace-decision.md #35.
 (define (query:nodes-with-marker marker)
-  (query:by-marker marker))
+  (query :by-marker marker))
 
 ;; ── query:subtree → (fold-tree self cons) ──
 ;; Pending stdlib helper. Today the shim returns the same flat
