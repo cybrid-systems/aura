@@ -361,5 +361,90 @@ class EvoReportQD(unittest.TestCase):
                 self.assertGreaterEqual(tree.count("<circle"), 1)
 
 
+class EvoReportMultiObjective(unittest.TestCase):
+    """#4948: Pareto scatter, HV curve, generation folds, surrogate audit and
+    the `evo log --front/--lineage` selectors."""
+
+    @staticmethod
+    def _rec(i: int, objs: tuple[float, float], gen: int, parents: list[str], extra: dict | None = None) -> dict:
+        rec = {
+            "v": 2,
+            "id": f"r#{i}",
+            "parent": parents[0] if parents else "",
+            "run": "r",
+            "seq": i,
+            "ts_ms": 0,
+            "kind": "record",
+            "target": f"c{i}",
+            "decision": "KEEP" if i % 2 else "ROLLBACK",
+            "reason": "gate",
+            "evidence": {"score": objs[0]},
+            "old": "",
+            "new": "",
+            "dur_ms": 1.0,
+            "algo": "mock",
+            "gen": gen,
+            "slot": i,
+            "search": "s",
+            "candidate": f"c{i}",
+            "parents": parents,
+            "behavior": {"x": float(i), "y": float(4 - i)},
+            "objectives": {"loss": objs[0], "cost": objs[1]},
+            "constraints": {},
+        }
+        if extra:
+            rec.update(extra)
+        return rec
+
+    def _write(self, d: str) -> Path:
+        log = Path(d) / "log.jsonl"
+        recs = [
+            self._rec(1, (1.0, 4.0), 0, [], {"surrogate": {"mean": 0.2, "var": 0.1, "sent": True}}),
+            self._rec(2, (2.0, 2.0), 0, ["r#1"]),
+            self._rec(3, (3.0, 1.0), 1, ["r#2", "r#1"]),
+            self._rec(4, (4.0, 3.0), 1, ["r#3"]),
+        ]
+        log.write_text("".join(json.dumps(x) + "\n" for x in recs))
+        return log
+
+    def test_report_pareto_hv_folds_and_surrogate(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            log = self._write(d)
+            out = Path(d) / "report"
+            rep = aura(["evo", "report", "--html", str(out), "--log", str(log)], d, env_for(None))
+            self.assertEqual(rep.returncode, 0, rep.stderr)
+            pareto = out / "pareto.svg"
+            hv = out / "hv-curve.svg"
+            self.assertTrue(pareto.is_file(), rep.stdout)
+            self.assertTrue(hv.is_file(), rep.stdout)
+            self.assertIn('aria-label="pareto scatter"', pareto.read_text())
+            self.assertIn('aria-label="hypervolume curve"', hv.read_text())
+            page = (out / "index.html").read_text()
+            self.assertIn("Pareto front", page)
+            self.assertIn("Hypervolume", page)
+            self.assertIn("Surrogate pre-screen", page)
+            self.assertIn("mean", page)
+            # Outer (generation) and inner (candidate) folds.
+            self.assertEqual(page.count('class="fold"'), 2)
+            self.assertIn("gen 0", page)
+            self.assertIn("gen 1", page)
+
+    def test_log_front_and_lineage(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            log = self._write(d)
+            whole = aura(["evo", "log", "--log", str(log)], d, env_for(None))
+            self.assertEqual(whole.returncode, 0, whole.stderr)
+            front = aura(["evo", "log", "--front", "--log", str(log)], d, env_for(None))
+            self.assertEqual(front.returncode, 0, front.stderr)
+            # (2,2) dominates (4,3); the other three are non-dominated.
+            self.assertIn("(3 candidates:", front.stdout)
+            self.assertNotIn("(4 candidates:", front.stdout)
+            chain = aura(["evo", "log", "--lineage", "3", "--log", str(log)], d, env_for(None))
+            self.assertEqual(chain.returncode, 0, chain.stderr)
+            self.assertIn("(3 candidates:", chain.stdout)
+            self.assertIn("parent #2", chain.stdout)
+            self.assertIn("parent -", chain.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

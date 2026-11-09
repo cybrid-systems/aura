@@ -926,18 +926,19 @@ static int aura_new_4913(int argc, char** argv) {
         tpl = argv[2];
         dir = argv[3];
     } else {
-        std::println(std::cerr, "usage: aura new [app|evolve|agent] <dir>");
+        std::println(std::cerr, "usage: aura new [app|evolve|evolve-moo|agent] <dir>");
         return 1;
     }
     if (dir.starts_with("-") || tpl.starts_with("-")) {
         std::println(std::cerr, "error: unknown option '{}'", dir.starts_with("-") ? dir : tpl);
-        std::println(std::cerr, "usage: aura new [app|evolve|agent] <dir>");
+        std::println(std::cerr, "usage: aura new [app|evolve|evolve-moo|agent] <dir>");
         return 1;
     }
     if (!known(tpl)) {
         std::println(std::cerr, "error: unknown template '{}'", tpl);
         std::println(std::cerr, "hint: app (modules + tests), evolve (prints KEEP / ROLLBACK "
-                                "in the terminal), agent (two orch roles in a dialogue)");
+                                "in the terminal), evolve-moo (multi-objective + QD, no LLM), "
+                                "agent (two orch roles in a dialogue)");
         return 1;
     }
     namespace fs = std::filesystem;
@@ -1068,12 +1069,13 @@ struct SubHelp4935 {
 };
 inline constexpr SubHelp4935 kSubHelp4935[] = {
     {"new", "create a project (aura.toml, tests, CI, README)",
-     "usage: aura new [app|evolve|agent] <dir>\n"
+     "usage: aura new [app|evolve|evolve-moo|agent] <dir>\n"
      "\n"
      "Scaffold a project in <dir> (must not exist or be empty).\n"
-     "  app     modules + tests (default)\n"
-     "  evolve  live AST: each KEEP / ROLLBACK printed in the terminal\n"
-     "  agent   orchestrated workflow\n"},
+     "  app         modules + tests (default)\n"
+     "  evolve      live AST: each KEEP / ROLLBACK printed in the terminal\n"
+     "  evolve-moo  multi-objective + QD search (mock proposer, no LLM)\n"
+     "  agent       orchestrated workflow\n"},
     {"demo", "watch a definition evolve in the terminal",
      "usage: aura demo [evolve|agent]\n"
      "\n"
@@ -1095,8 +1097,14 @@ inline constexpr SubHelp4935 kSubHelp4935[] = {
      "Commands inside: :load FILE, :reload FILE, :ws, :worldline, :snapshot,\n"
      ":restore ID, :help\n"},
     {"evo", "inspect a project's evolution worldline",
-     "usage: aura evo log [--json] [--all] [--run ID|last]\n"
-     "       aura evo report --html DIR\n"},
+     "usage: aura evo log [--json] [--all] [--run ID|last] [--front] "
+     "[--lineage ID]\n"
+     "       aura evo report --html DIR\n"
+     "\n"
+     "  log --front      only the non-dominated candidates (first two objectives)\n"
+     "  log --lineage ID  the parent chain of one candidate\n"
+     "  report            score curve, Pareto scatter, HV curve, QD heat map,\n"
+     "                    lineage tree, candidate folds, surrogate pre-screen\n"},
     {"lsp", "language server on stdio (see docs/editor.md)", "usage: aura lsp\n"},
     {"soft", "run a file with Restricted Mutate on its workspace",
      "usage: aura soft [--allow ffi,write] [--load] file.aura\n"
@@ -2872,8 +2880,8 @@ static void print_denseness_usage(const char*, std::ostream& out = std::cerr) {
     std::println(out, "");
     std::println(out, "Projects (#4913):");
     std::println(out,
-                 "  {} new [app|evolve|agent] <dir>  scaffold aura.toml, tests/, CI, "
-                 "README",
+                 "  {} new [app|evolve|evolve-moo|agent] <dir>  scaffold aura.toml, "
+                 "tests/, CI, README",
                  prog);
     std::println(out,
                  "  {} run [entry.aura] [options]    run the project entry with its "
@@ -2890,12 +2898,10 @@ static void print_denseness_usage(const char*, std::ostream& out = std::cerr) {
     std::println(out, "  (require \"lib/x\") in a project resolves from the project root.");
     std::println(out, "Evolution (#4910):");
     std::println(out,
-                 "  {} evo log [--json] [--run ID|last]  worldline: KEEP/ROLLBACK, reason, "
-                 "evidence, diff",
+                 "  {} evo log [--json] [--front] [--lineage ID]  worldline: KEEP/ROLLBACK, "
+                 "reason, evidence, diff",
                  prog);
-    std::println(out,
-                 "  {} evo report --html DIR             static HTML timeline, score curve, "
-                 "diffs",
+    std::println(out, "  {} evo report --html DIR  Pareto/HV/QD/lineage SVG + score curve + diffs",
                  prog);
     std::println(out, "REPL (#4911):");
     std::println(out,

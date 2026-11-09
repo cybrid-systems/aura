@@ -14,7 +14,7 @@ lines = [
     "};",
     "inline constexpr TemplateFile4913 kTemplates4913[] = {",
 ]
-for t in ("app", "evolve", "agent"):
+for t in ("app", "evolve", "evolve-moo", "agent"):
     for f in sorted((src / t).rglob("*")):
         if not f.is_file() or f.name in ("run.sh",) or "out" in f.relative_to(src / t).parts:
             continue

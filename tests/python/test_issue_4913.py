@@ -152,6 +152,41 @@ class FrontDoor(unittest.TestCase):
         self.assertFalse((p / "out" / "audit.tsv").exists())
         self.assertEqual(run(["test"], p).returncode, 0)
 
+    def test_evolve_moo_reports_front_and_qd(self) -> None:
+        p = self.new("evolve-moo", "demo")
+        for f in (
+            "aura.toml",
+            "main.aura",
+            "lib/moo.aura",
+            "tests/moo_test.aura",
+            "tests/moo_test.golden",
+            ".github/workflows/ci.yml",
+            "README.md",
+        ):
+            self.assertTrue((p / f).is_file(), f)
+        t0 = time.monotonic()
+        r = run(["run"], p)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertLess(time.monotonic() - t0, 60.0)
+        self.assertIn("evaluated 240", r.stdout)
+        self.assertIn("qd coverage", r.stdout)
+        self.assertIn("wrote out/pareto.svg and out/qd.svg", r.stdout)
+        self.assertIn("<svg", (p / "out" / "pareto.svg").read_text())
+        self.assertIn("<rect", (p / "out" / "qd.svg").read_text())
+        self.assertEqual(run(["test"], p).returncode, 0)
+        # The run logged every candidate, so the report has objective and
+        # behaviour space to draw: Pareto scatter, QD map, lineage.
+        self.assertTrue((p / ".aura" / "evo" / "log.jsonl").is_file())
+        rep = run(["evo", "report", "--html", "out/report"], p)
+        self.assertEqual(rep.returncode, 0, rep.stderr)
+        for f in ("pareto.svg", "hv-curve.svg", "qd-heatmap.svg", "lineage.svg"):
+            self.assertTrue((p / "out" / "report" / f).is_file(), f)
+        page = (p / "out" / "report" / "index.html").read_text()
+        self.assertIn("Pareto front", page)
+        self.assertIn("Hypervolume", page)
+        self.assertIn("QD map", page)
+        self.assertIn("Lineage", page)
+
     def test_agent(self) -> None:
         p = self.new("agent", "demo")
         r = run(["run"], p)

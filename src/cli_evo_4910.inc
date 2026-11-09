@@ -392,11 +392,201 @@ static std::string short_id(const std::string& id) {
     return h == std::string::npos ? id : id.substr(h);
 }
 
+static std::string html_escape(std::string_view s); // defined below
+
+// ── objective space: Pareto scatter + hypervolume curve (#4948) ──────
+struct ObjPt {
+    double x = 0, y = 0, z = 0;
+    bool has_z = false;
+    std::size_t seq = 0;
+    std::string id;
+};
+
+static bool objectives_xyz(const J& r, double& x, double& y, double& z, bool& has_z) {
+    const J* o = r.get("objectives");
+    if (!o)
+        return false;
+    std::vector<double> vs;
+    if (o->t == J::T::Arr) {
+        for (const auto& v : o->arr)
+            if (v.t == J::T::Num)
+                vs.push_back(v.n);
+    } else if (o->t == J::T::Obj) {
+        for (const auto& [k, v] : o->obj)
+            if (v.t == J::T::Num)
+                vs.push_back(v.n);
+    }
+    if (vs.size() < 2)
+        return false;
+    x = vs[0];
+    y = vs[1];
+    has_z = vs.size() >= 3;
+    z = has_z ? vs[2] : 0.0;
+    return true;
+}
+
+static bool objectives_xy(const J& r, double& x, double& y) {
+    double z = 0;
+    bool has_z = false;
+    return objectives_xyz(r, x, y, z, has_z);
+}
+
+static bool dominates2(const ObjPt& a, const ObjPt& b) {
+    return a.x <= b.x && a.y <= b.y && (a.x < b.x || a.y < b.y);
+}
+
+static std::vector<ObjPt> pareto2(std::vector<ObjPt> pts) {
+    std::vector<ObjPt> front;
+    for (const auto& p : pts) {
+        bool beaten = false;
+        for (const auto& q : pts)
+            if (dominates2(q, p)) {
+                beaten = true;
+                break;
+            }
+        if (!beaten)
+            front.push_back(p);
+    }
+    std::ranges::sort(front, [](const ObjPt& a, const ObjPt& b) {
+        return a.x < b.x || (a.x == b.x && a.y < b.y);
+    });
+    return front;
+}
+
+// Exact 2-D hypervolume (min/min) of a front against a reference corner.
+static double hv2(const std::vector<ObjPt>& front, double rx, double ry) {
+    if (front.empty())
+        return 0.0;
+    double hv = 0.0;
+    for (std::size_t i = 0; i < front.size(); ++i) {
+        const double x1 = i + 1 < front.size() ? front[i + 1].x : rx;
+        const double w = x1 - front[i].x;
+        const double h = ry - front[i].y;
+        if (w > 0 && h > 0)
+            hv += w * h;
+    }
+    return hv;
+}
+
+struct Axis2 {
+    double x0 = 0, x1 = 1, y0 = 0, y1 = 1;
+};
+
+static Axis2 bounds2(const std::vector<ObjPt>& pts) {
+    Axis2 b;
+    if (pts.empty())
+        return b;
+    b.x0 = b.x1 = pts[0].x;
+    b.y0 = b.y1 = pts[0].y;
+    for (const auto& p : pts) {
+        b.x0 = std::min(b.x0, p.x);
+        b.x1 = std::max(b.x1, p.x);
+        b.y0 = std::min(b.y0, p.y);
+        b.y1 = std::max(b.y1, p.y);
+    }
+    if (b.x1 <= b.x0) {
+        b.x1 = b.x0 + 1.0;
+        b.x0 -= 0.5;
+    }
+    if (b.y1 <= b.y0) {
+        b.y1 = b.y0 + 1.0;
+        b.y0 -= 0.5;
+    }
+    return b;
+}
+
+static std::string pareto_svg(const std::vector<ObjPt>& pts, const std::vector<ObjPt>& front) {
+    constexpr double W = 460, H = 340, PAD = 38;
+    const Axis2 b = bounds2(pts);
+    auto X = [&](double v) { return PAD + (W - 2 * PAD) * (v - b.x0) / (b.x1 - b.x0); };
+    auto Y = [&](double v) { return H - PAD - (H - 2 * PAD) * (v - b.y0) / (b.y1 - b.y0); };
+    std::string svg =
+        std::format("<svg viewBox=\"0 0 {} {}\" width=\"{}\" height=\"{}\" role=\"img\" "
+                    "aria-label=\"pareto scatter\">",
+                    W, H, W, H);
+    svg += std::format("<rect x=\"0\" y=\"0\" width=\"{0}\" height=\"{1}\" fill=\"#fff\"/>", W, H);
+    svg += std::format("<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" class=\"ax\"/>"
+                       "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" class=\"ax\"/>",
+                       PAD, H - PAD, W - PAD, H - PAD, PAD, H - PAD, PAD, PAD);
+    double z0 = 0, z1 = 0;
+    bool any_z = false;
+    for (const auto& p : pts)
+        if (p.has_z) {
+            if (!any_z) {
+                z0 = z1 = p.z;
+                any_z = true;
+            }
+            z0 = std::min(z0, p.z);
+            z1 = std::max(z1, p.z);
+        }
+    for (const auto& p : pts) {
+        const bool on = std::any_of(front.begin(), front.end(), [&](const ObjPt& f) {
+            return f.id == p.id && f.x == p.x && f.y == p.y;
+        });
+        const double zt = p.has_z && z1 > z0 ? (p.z - z0) / (z1 - z0) : 0.5;
+        const double radius = on ? 4.5 : (any_z ? 2.0 + 3.0 * zt : 3.0);
+        svg += std::format("<circle cx=\"{:.1f}\" cy=\"{:.1f}\" r=\"{:.1f}\" class=\"{}\" "
+                           "fill=\"{}\"><title>{} ({:.6g}, {:.6g})</title></circle>",
+                           X(p.x), Y(p.y), radius, on ? "k" : "o", on ? "#1a7f37" : "#9aa4af",
+                           html_escape(short_id(p.id)), p.x, p.y);
+    }
+    svg += std::format("<text x=\"4\" y=\"{}\" class=\"lb\">{:.4g}</text>"
+                       "<text x=\"4\" y=\"{}\" class=\"lb\">{:.4g}</text>",
+                       PAD + 6, b.y1, H - PAD, b.y0);
+    svg += "</svg>";
+    return svg;
+}
+
+static std::string hv_svg(const std::vector<double>& hv) {
+    constexpr double W = 460, H = 200, PAD = 34;
+    double hi = 0.0;
+    for (const double v : hv)
+        hi = std::max(hi, v);
+    if (hi <= 0.0)
+        hi = 1.0;
+    auto X = [&](std::size_t i) {
+        return PAD + (W - 2 * PAD) * static_cast<double>(i) /
+                         static_cast<double>(std::max<std::size_t>(hv.size() - 1, 1));
+    };
+    auto Y = [&](double v) { return H - PAD - (H - 2 * PAD) * (v / hi); };
+    std::string path;
+    for (std::size_t i = 0; i < hv.size(); ++i)
+        path += std::format("{}{:.1f},{:.1f} ", i == 0 ? "M" : "L", X(i), Y(hv[i]));
+    std::string svg =
+        std::format("<svg viewBox=\"0 0 {} {}\" width=\"{}\" height=\"{}\" role=\"img\" "
+                    "aria-label=\"hypervolume curve\">",
+                    W, H, W, H);
+    svg += std::format("<rect x=\"0\" y=\"0\" width=\"{0}\" height=\"{1}\" fill=\"#fff\"/>", W, H);
+    svg += std::format("<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" class=\"ax\"/>"
+                       "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" class=\"ax\"/>",
+                       PAD, H - PAD, W - PAD, H - PAD, PAD, H - PAD, PAD, PAD);
+    svg += "<path d=\"" + path + "\" class=\"tip\"/>";
+    svg += std::format("<text x=\"4\" y=\"{}\" class=\"lb\">{:.4g}</text>", PAD + 6, hi);
+    svg += "</svg>";
+    return svg;
+}
+
+static bool surrogate_record(const J& r) {
+    if (r.get("surrogate"))
+        return true;
+    const J* e = r.get("evidence");
+    if (e && e->t == J::T::Obj)
+        for (const char* k : {"surrogate", "mean", "var", "sent"})
+            if (e->get(k))
+                return true;
+    return false;
+}
+
+
 static int usage(const char* argv0) {
-    std::println(std::cerr, "usage: {} evo log [--json] [--all] [--run ID|last] [--log FILE]",
+    std::println(std::cerr,
+                 "usage: {} evo log [--json] [--all] [--run ID|last] [--front] "
+                 "[--lineage ID] [--log FILE]",
                  argv0);
     std::println(std::cerr, "       {} evo report --html DIR [--all] [--run ID|last] [--log FILE]",
                  argv0);
+    std::println(std::cerr, "note: --front keeps the candidates non-dominated on the first two "
+                            "objectives (min/min); report adds Pareto, HV, QD, lineage");
     std::println(std::cerr,
                  "hint: records come from AURA_EVO_LOG (aura run in a project defaults it to "
                  ".aura/evo/log.jsonl); see docs/evo.md");
@@ -435,6 +625,67 @@ static bool user_verdicts(const std::vector<J>& recs, const std::string* run) {
         if ((!run || r.str("run") == *run) && r.str("kind") == "record")
             return true;
     return false;
+}
+
+// --front and --lineage filters (#4948). The log carries objective values
+// but not their directions, so the front uses the same documented
+// minimization projection as the report scatter: both objectives smaller is
+// better, and a point is on the front when nothing beats it on both.
+static std::vector<J> front_filter(const std::vector<J>& recs) {
+    std::vector<ObjPt> pts;
+    std::vector<std::size_t> at;
+    for (std::size_t i = 0; i < recs.size(); ++i) {
+        ObjPt p;
+        if (objectives_xy(recs[i], p.x, p.y)) {
+            p.id = recs[i].str("id");
+            pts.push_back(p);
+            at.push_back(i);
+        }
+    }
+    const std::vector<ObjPt> front = pareto2(pts);
+    std::vector<J> out;
+    for (std::size_t k = 0; k < pts.size(); ++k) {
+        const bool on = std::any_of(front.begin(), front.end(), [&](const ObjPt& f) {
+            return f.x == pts[k].x && f.y == pts[k].y;
+        });
+        if (on)
+            out.push_back(recs[at[k]]);
+    }
+    return out;
+}
+
+// The ancestor chain of one candidate: walk "parent" to the root, then keep
+// the records whose id is on the chain (oldest first).
+static std::vector<J> lineage_filter(const std::vector<J>& recs, const std::string& target) {
+    auto matches = [&](const std::string& id) {
+        if (id == target)
+            return true;
+        const auto h = id.rfind('#');
+        return h != std::string::npos && id.substr(h + 1) == target;
+    };
+    std::string cur;
+    for (const auto& r : recs)
+        if (matches(r.str("id"))) {
+            cur = r.str("id");
+            break;
+        }
+    std::vector<std::string> chain;
+    std::size_t guard = 0;
+    while (!cur.empty() && guard++ <= recs.size() + 1) {
+        chain.push_back(cur);
+        std::string next;
+        for (const auto& r : recs)
+            if (r.str("id") == cur) {
+                next = r.str("parent");
+                break;
+            }
+        cur = next;
+    }
+    std::vector<J> out;
+    for (const auto& r : recs)
+        if (std::find(chain.begin(), chain.end(), r.str("id")) != chain.end())
+            out.push_back(r);
+    return out;
 }
 
 static int cmd_log(const std::vector<J>& recs, bool as_json) {
@@ -782,6 +1033,52 @@ static int cmd_report(const std::vector<J>& recs, const std::filesystem::path& d
     }
     std::size_t lineage_nodes = 0;
     const std::string lineage_svg_text = lineage_svg(nodes, lineage_nodes);
+    // Objective space: scatter (first two numeric objectives) and the
+    // cumulative hypervolume curve of the front after each measurement.
+    std::vector<ObjPt> opts;
+    for (const auto& r : recs) {
+        ObjPt p;
+        if (objectives_xyz(r, p.x, p.y, p.z, p.has_z)) {
+            p.seq = opts.size();
+            p.id = r.str("id");
+            opts.push_back(p);
+        }
+    }
+    const std::vector<ObjPt> front2 = pareto2(opts);
+    const std::string pareto_svg_text = opts.size() >= 2 ? pareto_svg(opts, front2) : std::string();
+    std::vector<double> hv_curve;
+    double final_hv = 0.0;
+    if (opts.size() >= 2) {
+        const Axis2 b = bounds2(opts);
+        const double rx = b.x1 + 0.1 * (b.x1 - b.x0);
+        const double ry = b.y1 + 0.1 * (b.y1 - b.y0);
+        std::vector<ObjPt> prefix;
+        for (const auto& r : recs) {
+            ObjPt p;
+            if (!objectives_xy(r, p.x, p.y))
+                continue;
+            p.id = r.str("id");
+            prefix.push_back(p);
+            final_hv = hv2(pareto2(prefix), rx, ry);
+            hv_curve.push_back(final_hv);
+        }
+    }
+    const std::string hv_svg_text = hv_curve.size() >= 2 ? hv_svg(hv_curve) : std::string();
+    std::vector<std::string> surrogate_rows;
+    for (const auto& r : recs) {
+        if (!surrogate_record(r))
+            continue;
+        const J* e = r.get("evidence");
+        std::string cells;
+        for (const char* k : {"mean", "var", "score", "sent", "surrogate"}) {
+            const J* v = e && e->t == J::T::Obj ? e->get(k) : nullptr;
+            cells +=
+                std::format("<td>{}</td>", v ? html_escape(v->t == J::T::Str ? v->s : v->raw) : "");
+        }
+        surrogate_rows.push_back(std::format(
+            "<tr><td>{}</td><td>{}</td><td>{}</td>{}</tr>", html_escape(short_id(r.str("id"))),
+            html_escape(r.str("decision")), html_escape(r.str("reason")), cells));
+    }
     if (!qd_svg.empty()) {
         std::ofstream f(dir / "qd-heatmap.svg", std::ios::binary | std::ios::trunc);
         f << qd_svg;
@@ -795,6 +1092,22 @@ static int cmd_report(const std::vector<J>& recs, const std::filesystem::path& d
         f << lineage_svg_text;
         if (!f) {
             std::println(std::cerr, "error: cannot write {}", (dir / "lineage.svg").string());
+            return 1;
+        }
+    }
+    if (!pareto_svg_text.empty()) {
+        std::ofstream f(dir / "pareto.svg", std::ios::binary | std::ios::trunc);
+        f << pareto_svg_text;
+        if (!f) {
+            std::println(std::cerr, "error: cannot write {}", (dir / "pareto.svg").string());
+            return 1;
+        }
+    }
+    if (!hv_svg_text.empty()) {
+        std::ofstream f(dir / "hv-curve.svg", std::ios::binary | std::ios::trunc);
+        f << hv_svg_text;
+        if (!f) {
+            std::println(std::cerr, "error: cannot write {}", (dir / "hv-curve.svg").string());
             return 1;
         }
     }
@@ -817,12 +1130,30 @@ static int cmd_report(const std::vector<J>& recs, const std::filesystem::path& d
                      html_escape(log_path.string()), recs.size(), keep, rb);
     if (!svg.empty())
         h += "<h2>Score (" + html_escape(metric) + ")</h2>" + svg;
+    if (!pareto_svg_text.empty())
+        h += std::format("<h2>Pareto front</h2><p>{} points, {} non-dominated "
+                         "(first two objectives; a third is the point size)</p>",
+                         opts.size(), front2.size()) +
+             pareto_svg_text;
+    if (!hv_svg_text.empty())
+        h += std::format("<h2>Hypervolume</h2><p>final HV {:.6g} over {} measurements</p>",
+                         final_hv, hv_curve.size()) +
+             hv_svg_text;
     if (!qd_svg.empty())
         h += std::format("<h2>QD map</h2><p>{} cells filled · {} evaluated candidates</p>",
                          qd_filled, cells.size()) +
              qd_svg;
     if (!lineage_svg_text.empty())
         h += std::format("<h2>Lineage</h2><p>{} nodes</p>", lineage_nodes) + lineage_svg_text;
+    if (!surrogate_rows.empty()) {
+        h += std::format("<h2>Surrogate pre-screen</h2><p>{} record(s)</p>"
+                         "<table><tr><th>id</th><th>decision</th><th>reason</th>"
+                         "<th>mean</th><th>var</th><th>score</th><th>sent</th></tr>",
+                         surrogate_rows.size());
+        for (const auto& row : surrogate_rows)
+            h += row;
+        h += "</table>";
+    }
     h += "<h2>Timeline</h2><table><tr><th>id</th><th>parent</th><th>kind</th><th>target</th>"
          "<th>decision</th><th>reason</th><th>evidence</th><th>ms</th></tr>";
     for (const auto& r : recs)
@@ -834,26 +1165,49 @@ static int cmd_report(const std::vector<J>& recs, const std::filesystem::path& d
                          html_escape(r.str("decision")), html_escape(r.str("reason")),
                          html_escape(evidence_text(r.get("evidence"))), r.num("dur_ms"));
     h += "</table><h2>Candidates</h2>";
+    // Outer fold: one group per generation (v=2 "gen", else the worldline);
+    // inner fold: one per candidate, as before.
+    std::vector<std::string> gen_keys;
+    std::vector<std::vector<std::size_t>> gen_rows;
     for (std::size_t k = 0; k < recs.size(); ++k) {
-        const auto& r = recs[k];
-        h += std::format("<details id=\"c{}\"{}><summary><b>{}</b> <span class=\"{}\">{}</span> "
-                         "{} {}</summary>",
-                         html_escape(r.str("id")), r.str("decision") == "KEEP" ? " open" : "",
-                         html_escape(short_id(r.str("id"))), html_escape(r.str("decision")),
-                         html_escape(r.str("decision")), html_escape(r.str("kind")),
-                         html_escape(r.str("target")));
-        if (const auto why = r.str("reason"); !why.empty())
-            h += "<p>reason: " + html_escape(why) + "</p>";
-        if (const J* e = r.get("evidence"); e && e->t != J::T::Null)
-            h += "<pre>" + html_escape(e->raw) + "</pre>";
-        if (!r.str("new").empty() || !olds[k].empty()) {
-            h += "<pre>";
-            for (const auto& d : diff(olds[k], r.str("new"))) {
-                const char* cls = d.op == '+' ? "add" : d.op == '-' ? "del" : "";
-                h += std::format("<span class=\"{}\">{} {}</span>\n", cls, d.op,
-                                 html_escape(d.text));
+        std::string key = "worldline";
+        if (const J* g = recs[k].get("gen"); g && g->t == J::T::Num)
+            key = std::format("gen {}", static_cast<long long>(g->n));
+        auto it = std::find(gen_keys.begin(), gen_keys.end(), key);
+        if (it == gen_keys.end()) {
+            gen_keys.push_back(key);
+            gen_rows.emplace_back();
+            gen_rows.back().push_back(k);
+        } else {
+            gen_rows[static_cast<std::size_t>(it - gen_keys.begin())].push_back(k);
+        }
+    }
+    for (std::size_t g = 0; g < gen_keys.size(); ++g) {
+        h += std::format("<details class=\"fold\"><summary>{} — {} candidate(s)</summary>",
+                         html_escape(gen_keys[g]), gen_rows[g].size());
+        for (const std::size_t k : gen_rows[g]) {
+            const auto& r = recs[k];
+            h +=
+                std::format("<details id=\"c{}\"{}><summary><b>{}</b> <span class=\"{}\">{}</span> "
+                            "{} {}</summary>",
+                            html_escape(r.str("id")), r.str("decision") == "KEEP" ? " open" : "",
+                            html_escape(short_id(r.str("id"))), html_escape(r.str("decision")),
+                            html_escape(r.str("decision")), html_escape(r.str("kind")),
+                            html_escape(r.str("target")));
+            if (const auto why = r.str("reason"); !why.empty())
+                h += "<p>reason: " + html_escape(why) + "</p>";
+            if (const J* e = r.get("evidence"); e && e->t != J::T::Null)
+                h += "<pre>" + html_escape(e->raw) + "</pre>";
+            if (!r.str("new").empty() || !olds[k].empty()) {
+                h += "<pre>";
+                for (const auto& d : diff(olds[k], r.str("new"))) {
+                    const char* cls = d.op == '+' ? "add" : d.op == '-' ? "del" : "";
+                    h += std::format("<span class=\"{}\">{} {}</span>\n", cls, d.op,
+                                     html_escape(d.text));
+                }
+                h += "</pre>";
             }
-            h += "</pre>";
+            h += "</details>";
         }
         h += "</details>";
     }
@@ -877,8 +1231,8 @@ static int aura_evo_4910(int argc, char** argv) {
     if (argc < 3)
         return usage(argv[0]);
     const std::string_view sub(argv[2]);
-    bool as_json = false, all = false;
-    std::string run, html, log_arg;
+    bool as_json = false, all = false, front = false;
+    std::string run, html, log_arg, lineage_id;
     for (int i = 3; i < argc; ++i) {
         const std::string_view a(argv[i]);
         auto val = [&](std::string_view flag) -> std::optional<std::string> {
@@ -898,6 +1252,10 @@ static int aura_evo_4910(int argc, char** argv) {
             html = *v;
         } else if (auto v = val("--log")) {
             log_arg = *v;
+        } else if (auto v = val("--lineage")) {
+            lineage_id = *v;
+        } else if (a == "--front") {
+            front = true;
         } else {
             std::println(std::cerr, "error: unknown argument '{}'", a);
             return usage(argv[0]);
@@ -943,6 +1301,10 @@ static int aura_evo_4910(int argc, char** argv) {
                 shown.push_back(std::move(r));
         recs = std::move(shown);
     }
+    if (!lineage_id.empty())
+        recs = lineage_filter(recs, lineage_id);
+    if (front)
+        recs = front_filter(recs);
     if (sub == "log")
         return cmd_log(recs, as_json);
     return cmd_report(recs, html, log_path);

@@ -59,6 +59,15 @@ class Help(unittest.TestCase):
                 self.assertIn(f"usage: aura {sub}", r.stdout, args)
         self.assertEqual(list(self.d.iterdir()), [])
 
+    def test_evo_dx_help_snapshot(self) -> None:
+        # #4948: the new template and the new report/log switches are in help.
+        new = run(["help", "new"], self.d)
+        self.assertIn("evolve-moo", new.stdout)
+        evo = run(["help", "evo"], self.d)
+        for needle in ("--front", "--lineage", "Pareto", "HV curve", "QD heat map", "lineage tree"):
+            self.assertIn(needle, evo.stdout)
+        self.assertIn("usage: aura evo log", evo.stdout)
+
     def test_unknown_command(self) -> None:
         r = run(["nwe"], self.d)
         self.assertEqual(r.returncode, 1)
