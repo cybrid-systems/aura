@@ -112,6 +112,35 @@
 (assert! (not (string=? (hash-ref (evo:report a) "id") (hash-ref (evo:report b) "id")))
          "distinct search ids")
 
+; Ordering note: this block runs before AC4 on purpose. After the first
+; live mutate:rebind, a module closure can read a previous call constants
+; under the file-heap reclaim sweep (reproduced: the 3rd run saw seed=3
+; budget=4 pop=2); with AURA_GC_RECLAIM_OFF=1 the corruption disappears.
+; Keep reproducibility independent of that unrelated reclaim bug.
+; ═══════════════════════════════════════════════════════════════════
+; AC5 — reproducible multi-objective run (in-process "3 reruns")
+; ═══════════════════════════════════════════════════════════════════
+(display "AC5 reproducible run\n")
+(define (mk-opts seed budget pop arch)
+  (hash "algo" "mock" "seed" seed "budget" budget "pop" pop "archive" arch))
+(define (run-once)
+  (evo:run! (evo:search (mk-opts 77 6 3 3))
+            (lambda (c)
+              (hash "objectives" (hash "a" (genome-sum (evo:candidate-genome c))
+                                       "b" (- 0 (genome-sum (evo:candidate-genome c))))
+                    "constraints" (hash "ok" 0.0)
+                    "behavior" (hash "sum" (genome-sum (evo:candidate-genome c)))))))
+(define r1 (run-once))
+(define r2 (run-once))
+(define r3 (run-once))
+(define (arch-ids rep) (map evo:candidate-id (hash-ref rep "archive")))
+(assert! (equal? (arch-ids r1) (arch-ids r2)) "rerun 1 == rerun 2")
+(assert! (equal? (arch-ids r1) (arch-ids r3)) "rerun 1 == rerun 3")
+(assert! (= 3 (hash-ref r1 "feasible")) "archive counts feasible candidates")
+(assert! (= 3 (length (hash-ref r1 "archive"))) "archive bounded by max-archive")
+(assert! (evo:feasible? (evo:best r1)) "best is feasible")
+
+; ═══════════════════════════════════════════════════════════════════
 ; ═══════════════════════════════════════════════════════════════════
 ; AC4 — ask/tell protocol, feasibility-first commit, budget
 ; ═══════════════════════════════════════════════════════════════════
@@ -160,30 +189,6 @@
 (assert! (= 0 (hash-ref r "budget-left")) "budget exhausted")
 (assert! (= 3 (hash-ref r "gen")) "3 batches of 2,2,1")
 
-; ═══════════════════════════════════════════════════════════════════
-; AC5 — reproducible multi-objective run (in-process "3 reruns")
-; ═══════════════════════════════════════════════════════════════════
-(display "AC5 reproducible run\n")
-(define (mk-opts seed budget pop arch)
-  (hash "algo" "mock" "seed" seed "budget" budget "pop" pop "archive" arch))
-(define (run-once)
-  (evo:run! (evo:search (mk-opts 77 6 3 3))
-            (lambda (c)
-              (hash "objectives" (hash "a" (genome-sum (evo:candidate-genome c))
-                                       "b" (- 0 (genome-sum (evo:candidate-genome c))))
-                    "constraints" (hash "ok" 0.0)
-                    "behavior" (hash "sum" (genome-sum (evo:candidate-genome c)))))))
-(define r1 (run-once))
-(define r2 (run-once))
-(define r3 (run-once))
-(define (arch-ids rep) (map evo:candidate-id (hash-ref rep "archive")))
-(assert! (equal? (arch-ids r1) (arch-ids r2)) "rerun 1 == rerun 2")
-(assert! (equal? (arch-ids r1) (arch-ids r3)) "rerun 1 == rerun 3")
-(assert! (= 3 (hash-ref r1 "feasible")) "archive counts feasible candidates")
-(assert! (= 3 (length (hash-ref r1 "archive"))) "archive bounded by max-archive")
-(assert! (evo:feasible? (evo:best r1)) "best is feasible")
-
-; ═══════════════════════════════════════════════════════════════════
 ; AC6 — worldline-isolated trials never write the live workspace
 ; ═══════════════════════════════════════════════════════════════════
 (display "AC6 worldline isolation\n")
