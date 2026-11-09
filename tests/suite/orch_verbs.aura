@@ -1,0 +1,56 @@
+; Issue #5006 — orchestration is five verbs: spawn / send / recv / join / cancel.
+;
+; Each verb is the kernel's name for exactly one primitive (spawn=fiber:spawn,
+; send/recv=the channel pair, join=fiber:join, cancel=fiber:cancel), and
+; std/orch composes those five. The prefixed orch: names stay callable for one
+; release cycle as deprecated aliases (the #5008 channel), so both spellings
+; must agree. Which names are public is pinned by
+; docs/stdlib/primitive-tiers.json; this suite pins the behaviour and exits 1
+; on a mismatch so the runner gates on it.
+
+(define fails5006 0)
+(define (ok5006 cond name)
+  (if cond
+      #t
+      (begin (set! fails5006 (+ fails5006 1))
+             (display "FAIL-5006 ") (display name) (newline))))
+
+; Two separate error values are never eq?, so compare the observable signature
+; instead of the raw value.
+(define (sig5006 r)
+  (cond
+    ((string? r) (string-append "error:" r))
+    ((and (pair? r) (equal? (car r) "bad-arg")) "bad-arg")
+    ((and (hash? r) (hash-has-key? r "ok"))
+     (list "hash" (hash-ref r "ok") (hash-ref r "status" #f)))
+    (else r)))
+
+(define (same5006 new-call old-call)
+  (equal? (sig5006 (try (new-call) (catch (caught) caught)))
+          (sig5006 (try (old-call) (catch (caught) caught)))))
+
+; A non-callable body is refused the same way on both faces.
+(ok5006 (same5006 (lambda () (orch:spawn 5))
+                  (lambda () (fiber:spawn 5)))
+        "orch:spawn is fiber:spawn")
+(ok5006 (same5006 (lambda () (orch:send 0 "x"))
+                  (lambda () (channel:send 0 "x")))
+        "orch:send is channel:send")
+(ok5006 (same5006 (lambda () (orch:recv 0))
+                  (lambda () (channel:recv 0)))
+        "orch:recv is channel:recv")
+(ok5006 (same5006 (lambda () (orch:join 0))
+                  (lambda () (fiber:join 0)))
+        "orch:join is fiber:join")
+
+; Fiber 0 is the host: never cancellable, same answer on both faces.
+(ok5006 (eq? (orch:cancel 0) (fiber:cancel 0)) "orch:cancel is fiber:cancel")
+(ok5006 (eq? (orch:cancel 0) #f) "cancel of fiber 0 is #f")
+
+; A bad target is a typed error, not a silent #f that reads as "already done".
+(define badcancel5006 (try (orch:cancel "not-an-id") (catch (caught) caught)))
+(ok5006 (string? badcancel5006) "cancel of a non-id string is refused")
+
+(if (= fails5006 0)
+    (display "OK-5006 orch verbs\n")
+    (exit 1))

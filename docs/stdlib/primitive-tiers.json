@@ -33,7 +33,11 @@
   "S-PURE": "pure value->value function; #1440 kept json-*/string-* core for speed, not for semantics",
   "D-ALIAS": "redundant registration: the same behaviour is already reachable through another name",
   "K-EXC-5003": "Kernel exceptions added with the SRFI-151 baseline: bitwise/bit-count/arithmetic-shift cannot be expressed in Aura before any bit primitive exists (#5003).",
-  "D-PREFIX-5009": "retired duplicate prefix (#5009): the same behaviour is the op of one (query …) / (mutate …) verb; kept registered and flagged deprecated for one release cycle"
+  "D-PREFIX-5009": "retired duplicate prefix (#5009): the same behaviour is the op of one (query …) / (mutate …) verb; kept registered and flagged deprecated for one release cycle",
+  "K-ORCH-VERB-5006": "orchestration verb: scheduler/mailbox host state; Aura cannot implement it without the fiber scheduler",
+  "D-SINGLE-5006": "single-use prefix (#5006): the engine name stays for one release cycle as a deprecated alias; the operation is a query/mutate op or a std library function",
+  "K-EXC-5006": "Kernel exceptions added with the five orchestration verbs (#5006): they replace 24 prefixed orch: names, the deprecated aliases retire next cycle, and no removable name was left in the same change.",
+  "D-ORCH-5006": "retired orch: prefix (#5006): workflow, supervision, tokens, directory and metrics live in std/orch; keep registered + deprecated for the v0.2.0 alias window"
  },
  "kernel_exceptions": [
   "arithmetic-shift",
@@ -42,10 +46,15 @@
   "bitwise-ior",
   "bitwise-not",
   "bitwise-xor",
-  "integer-length"
+  "integer-length",
+  "orch:spawn",
+  "orch:send",
+  "orch:recv",
+  "orch:join",
+  "orch:cancel"
  ],
  "counts": {
-  "kernel": 430,
+  "kernel": 435,
   "stdlib-candidate": 87,
   "delete": 6
  },
@@ -172,19 +181,27 @@
   },
   "arena:compact": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "arena:compact-with-policy": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "arena:request-defrag": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "arena:set-auto-compact-threshold": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "arithmetic-shift": {
    "tier": "kernel",
@@ -578,7 +595,9 @@
   },
   "closure:free!": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "compile:relower-strategy": {
    "tier": "kernel",
@@ -702,7 +721,9 @@
   },
   "evaluator:compact-env-frames": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "evo:log-path": {
    "tier": "kernel",
@@ -981,19 +1002,27 @@
   },
   "hot-swap:fn": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "hygiene:allow-macro-mutate?": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "hygiene:protected?": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "hygiene:set-allow-macro-mutate!": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "ihash-count": {
    "tier": "stdlib-candidate",
@@ -1071,19 +1100,27 @@
   },
   "ir-cache-v2:dependents": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "ir-cache-v2:dirty?": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "jit:deopt-fn?": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "jit:exception-fibers-clear": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "json-encode": {
    "tier": "stdlib-candidate",
@@ -1315,104 +1352,154 @@
   },
   "orch:agent-ask": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:agent-directory": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:agent-export-via-token": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:agent-import-via-token": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:agent-join": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:agent-poll": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:agent-recv": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:agent-reply": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:agent-send": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:agent-touch": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:agent-wait-reclaimed": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:compose-workflow": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:join-via-token": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:parallel-intend": {
    "tier": "delete",
-   "rule": "K-ORCH",
-   "note": "'(orch:parallel-intend ...) -> alias of (parallel-intend ...)': the body only looks up parallel-intend and forwards"
+   "rule": "D-ORCH-5006",
+   "note": "'(orch:parallel-intend ...) -> alias of (parallel-intend ...)': the body only looks up parallel-intend and forwards",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:reset-metrics": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:run-workflow": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:scope-cancel-all": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:scope-child": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:scope-join-all": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:scope-resolve": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:scope-spawn": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:scope-sweep-reclaimed-pending": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:scope-watch": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orch:supervise-batch": {
    "tier": "kernel",
-   "rule": "K-ORCH"
+   "rule": "D-ORCH-5006",
+   "deprecated": true,
+   "replaces": "(std/orch)"
   },
   "orchestration:tune-gc-frequency": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "pair?": {
    "tier": "kernel",
@@ -1746,11 +1833,15 @@
   },
   "runtime:self-heal-on-drift": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "scheduler:pin": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "security:check-effect": {
    "tier": "kernel",
@@ -1802,7 +1893,9 @@
   },
   "session:create": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "set-car!": {
    "tier": "kernel",
@@ -1906,7 +1999,9 @@
   },
   "string-pool:compact": {
    "tier": "kernel",
-   "rule": "K-GOV"
+   "rule": "D-SINGLE-5006",
+   "deprecated": true,
+   "replaces": "engine:metrics / mutate / query"
   },
   "string-ref": {
    "tier": "kernel",
@@ -2262,6 +2357,26 @@
    "rule": "D-PREFIX-5009",
    "deprecated": true,
    "replaces": "(mutate …)"
+  },
+  "orch:spawn": {
+   "tier": "kernel",
+   "rule": "K-ORCH-VERB-5006"
+  },
+  "orch:send": {
+   "tier": "kernel",
+   "rule": "K-ORCH-VERB-5006"
+  },
+  "orch:recv": {
+   "tier": "kernel",
+   "rule": "K-ORCH-VERB-5006"
+  },
+  "orch:join": {
+   "tier": "kernel",
+   "rule": "K-ORCH-VERB-5006"
+  },
+  "orch:cancel": {
+   "tier": "kernel",
+   "rule": "K-ORCH-VERB-5006"
   }
  },
  "retired_prefixes_5009": {

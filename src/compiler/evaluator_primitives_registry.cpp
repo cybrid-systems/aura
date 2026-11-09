@@ -110,6 +110,21 @@ namespace {
         {"fiber:spawn-backend", "query"},
     };
 
+    // Issue #5006: single-use prefixes are not kernel. They stay registered for
+    // one release cycle; the operation is an engine:metrics / mutate / query op or
+    // a std library function.
+    constexpr std::string_view kRetiredSingles5006[] = {
+        "session:", "closure:",     "hot-swap:", "string-pool:", "scheduler:", "evaluator:",
+        "runtime:", "ir-cache-v2:", "jit:",      "hygiene:",     "arena:",     "orchestration:",
+    };
+
+    // Issue #5006: the five public orchestration verbs. Everything else in orch:
+    // moves to std/orch.
+    bool is_orch_verb_5006(std::string_view name) noexcept {
+        return name == "orch:spawn" || name == "orch:send" || name == "orch:recv" ||
+               name == "orch:join" || name == "orch:cancel";
+    }
+
     void retire_name(Primitives& prims, std::size_t slot, std::string_view hint) {
         const std::string& name = prims.name_for_slot(slot);
         PrimMeta meta = prims.meta_for_slot(slot);
@@ -120,17 +135,37 @@ namespace {
         prims.set_meta_for_name(name, std::move(meta));
     }
 
-    void mark_retired_surface_5009(Primitives& prims) {
+    void mark_retired_surfaces(Primitives& prims) {
         const std::size_t slots = prims.slot_count();
         for (std::size_t slot = 0; slot < slots; ++slot) {
             const std::string& name = prims.name_for_slot(slot);
             const std::string_view view(name);
+            bool retired = false;
             for (const auto& entry : kRetiredPrefixes5009) {
                 if (!view.starts_with(entry.prefix))
                     continue;
                 retire_name(prims, slot,
                             "DEPRECATED (#5009): prefer (" + std::string(entry.verb) +
                                 " …) — this name retires after the v0.2.0 alias window.");
+                retired = true;
+                break;
+            }
+            if (retired)
+                continue;
+            if (view.starts_with("orch:") && !is_orch_verb_5006(view)) {
+                retire_name(
+                    prims, slot,
+                    "DEPRECATED (#5006): choose orchestration from std/orch; the kernel keeps "
+                    "orch:spawn/send/recv/join/cancel.");
+                continue;
+            }
+            for (const auto single : kRetiredSingles5006) {
+                if (!view.starts_with(single))
+                    continue;
+                retire_name(
+                    prims, slot,
+                    "DEPRECATED (#5006): single-use prefix; use an engine:metrics / mutate / "
+                    "query op or the std library.");
                 break;
             }
         }
@@ -254,7 +289,7 @@ void Evaluator::register_all_primitives() {
 
     // Issue #5009: after every group has registered, retire the duplicate
     // read/write prefixes from the public surface (deprecated, not deleted).
-    mark_retired_surface_5009(primitives_);
+    mark_retired_surfaces(primitives_);
 }
 
 } // namespace aura::compiler
