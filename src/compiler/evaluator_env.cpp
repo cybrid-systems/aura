@@ -578,8 +578,13 @@ std::optional<EvalValue> Env::lookup(std::string_view n) const {
     // parent_ and must resolve there first. Consulting live top_ ahead of
     // that chain answered the global cell a top-level let's own child env
     // shadows (#4618: (let ((x 42)) ((lambda () x))) read 0).
+    // Issue #5059: "empty" means BOTH arrays empty, exactly as the #4595
+    // contract above states — a symid-only env (#1482: bindings_ stays empty
+    // by design, bindings_symid_ carries the content) is NOT live-safe-empty
+    // and must keep capture-first order, or the live top_ consult answers a
+    // real local/parameter with the same-named global.
     const bool host_empty_capture4595 =
-        aura::serve::g_current_fiber == nullptr && bindings_.empty();
+        aura::serve::g_current_fiber == nullptr && bindings_.empty() && bindings_symid_.empty();
     if (owner_ && parent_ == nullptr && host_empty_capture4595 &&
         (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()) ||
          cap_snap_->live_safe_top)) {
@@ -1603,6 +1608,15 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
         fr.parent_id = parent_id;
         fr.primitives_ = primitives;
         fr.pool_ = nullptr;
+        // Issue #5059: a reclaimed slot keeps its scalars, so the previous
+        // occupant's "live-safe EMPTY top_ capture" marker (set when the
+        // frame was a lambda's empty top_ capture, #4595/#4373) used to
+        // survive into the new occupant. A closure materialised over that
+        // frame then took the live top_ consult FIRST and resolved a free
+        // variable — even a real parameter — to the same-named global, i.e.
+        // to the PREVIOUS call's value (evo:run!'s seed/budget/pop came from
+        // the earlier evo:search). Reset every marker the reuse restamps.
+        fr.live_safe_top_ = false;
         fr.version_ = defuse_version_.load(std::memory_order_acquire);
         fr.env_gen_stamp_ = env_generation_;
         fr.set_owner(this);
@@ -4891,8 +4905,9 @@ EvalValue* Env::lookup_cell_ptr(std::string_view n, std::vector<EvalValue>* cell
     // Issue #4595 (#4618): see Env::lookup — the consult is for a
     // MATERIALIZED capture env (no raw parent_); a stack child env resolves
     // set! lexically through parent_ first.
+    // Issue #5059: both arrays empty, not just the legacy string mirror.
     const bool host_empty_capture4595 =
-        aura::serve::g_current_fiber == nullptr && bindings_.empty();
+        aura::serve::g_current_fiber == nullptr && bindings_.empty() && bindings_symid_.empty();
     if (owner_ && parent_ == nullptr && host_empty_capture4595 &&
         (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()) ||
          cap_snap_->live_safe_top)) {
@@ -5066,8 +5081,9 @@ std::optional<std::uint64_t> Env::lookup_cell_index(std::string_view n) const {
     // Issue #4595 (#4618): see Env::lookup — the consult is for a
     // MATERIALIZED capture env (no raw parent_); a stack child env resolves
     // its cell lexically through parent_ first.
+    // Issue #5059: both arrays empty, not just the legacy string mirror.
     const bool host_empty_capture4595 =
-        aura::serve::g_current_fiber == nullptr && bindings_.empty();
+        aura::serve::g_current_fiber == nullptr && bindings_.empty() && bindings_symid_.empty();
     if (owner_ && parent_ == nullptr && host_empty_capture4595 &&
         (!cap_snap_ || (cap_snap_->bindings_.empty() && cap_snap_->bindings_symid_.empty()) ||
          cap_snap_->live_safe_top)) {

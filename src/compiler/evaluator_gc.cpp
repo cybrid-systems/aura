@@ -1981,6 +1981,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
                 fr.bindings_symid_.clear();
                 fr.bindings_linear_ownership_state_.clear();
                 fr.pool_ = nullptr;
+                fr.live_safe_top_ = false; // Issue #5059
                 fr.version_ = INVALID_VERSION;
             }
             env_frame_on_freelist_[i] = 1;
@@ -2486,6 +2487,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                 fr.bindings_symid_.clear();
                 fr.bindings_linear_ownership_state_.clear();
                 fr.pool_ = nullptr;
+                fr.live_safe_top_ = false; // Issue #5059
                 fr.version_ = INVALID_VERSION;
             }
             env_frame_on_freelist_[i] = 1;
