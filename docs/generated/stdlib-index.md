@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**100** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**105** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -10,6 +10,7 @@
 | `std/abc` | `abc:init` `abc:init-hash` `abc:step!` `abc:best` `abc:population` `abc:report` `abc:export` `abc:help` … (+7) | lib/std/abc.aura — Issue #2878 Artificial Bee Colony surface |
 | `std/adaptive` | `string-index` `string-contains?` `string-trim` `measure-distance` `structured-diagnosis` `pid:analyze` `get-api-ref` `get-full-api-ref` | lib/std/adaptive.aura -- adaptive intend decision module |
 | `std/agent` | `auto-grow` `edsl-fix` `safe-eval` `llm-ask` `extract-code` `agent:decision-metrics` `agent:decide` `agent:loop-stats` … (+13) | lib/std/agent.aura — one closed loop, six phases (#5004) |
+| `std/algo-select` | `select:make` `select:features-fn!` `select:offline` `select:choose` `select:feedback!` `select:report` `select:drift?` `select:drift-score` … (+2) | lib/std/algo-select.aura — Issue #4945 (v0.2 P8): choose the algorithm |
 | `std/algorithm` | `sort-stable` `sort-by` `binary-search` `merge-sorted` `merge` `sorted?` `unique` `min-by` … (+3) | Aura standard algorithm library |
 | `std/ant` | `pheromone:init` `pheromone:update` `pheromone:rank` `pheromone:score` `pheromone:export` `pheromone:evaporate!` `pheromone:types` `colony:search` | lib/std/ant.aura -- mutation-type pheromone ranking + colony:search |
 | `std/ast-viz` | `ast:to-dot` `ast:to-dot-node` `mutation:trace` `mutation:trace-node` | — |
@@ -49,6 +50,7 @@
 | `std/hot-update-region` | `region:own-mask` `region:isolate!` `region:get` `region:compatible?` `region:clear!` | lib/std/hot-update-region.aura — Issue #1370 |
 | `std/hot-update-reload` | `make-manual-reload` `make-threshold-reload` `make-composite-reload` `make-once-reload` | lib/std/hot-update-reload.aura — Issue #1370 |
 | `std/hot-update` | `hot-update:make-config` `hot-update:default-config` `hot-update:config-version` `hot-update:config-retries` `hot-update:config-telemetry?` `hot-update:reload` `hot-update:reload-with` `hot-update:reload-version` … (+7) | lib/std/hot-update.aura — Issue #1370 |
+| `std/hyper-heuristic` | `hh:make` `hh:next` `hh:credit!` `hh:report` `hh:usage` `hh:help` `tune:gate` `tune:race` … (+3) | lib/std/hyper-heuristic.aura — Issue #4945 (v0.2 P8): adaptive operator |
 | `std/io` | `file-exists?` `file-size` `file-copy` `file-delete` `file-read` `file-write` `file->string` `string->file` … (+20) | lib/std/io.aura — file verbs + R7RS ports (Issues #5003, #5005) |
 | `std/iter` | `;;` `List` `operations` `any?` `every?` `find` `find-index` `count` … (+24) | iter.aura — Iterator and collection utilities |
 | `std/json` | `json-stringify` `json-escape` `json-value` `c2s` `json-arr-items` `json-obj-items` | Aura JSON library -- product names over C++ hot-path prims (#1440). |
@@ -71,9 +73,11 @@
 | `std/pareto` | `pareto:archive` `pareto:archive?` `pareto:insert!` `pareto:entries` `pareto:front` `pareto:size` `pareto:dominates?` `pareto:cd-dominates?` … (+16) | lib/std/pareto.aura — Issue #4940 (v0.2 P1): algorithm-independent Pareto |
 | `std/persist` | `persist:save` `persist:load` `persist:info` `persist:version` `persist:format-version` `persist:round-trip?` | lib/std/persist.aura — Issue #1381 |
 | `std/pipeline` | `synthesize:pipeline` | Aura std/pipeline — 代码生成管线 |
+| `std/portfolio` | `portfolio:make` `portfolio:add!` `portfolio:members` `portfolio:member` `portfolio:external` `portfolio:run` `portfolio:matrix` `portfolio:vbs` … (+2) | lib/std/portfolio.aura — Issue #4945 (v0.2 P8): algorithm portfolios, |
 | `std/primitives` | `primitives:help` `primitives:list` `primitives:categories` `primitives:entry-points` `primitives:registry-file` `primitives:discover` | lib/std/primitives.aura — Engine primitives discoverability (#1552) |
 | `std/process` | `sh` `sh-ok?` `which` `command-line` `get-environment-variable` `get-environment-variables` | lib/std/process.aura — Process management |
 | `std/prompt` | `build-sys-prompt` `get-api-ref-for-modules` | lib/std/prompt.aura — Unified prompt builder for LLM code generation |
+| `std/proposer` | `prop:help` `prop:schema` `prop:ctx` `prop:propose` `prop:adapt` `prop:mock` `prop:grammar` `prop:llm` … (+32) | lib/std/proposer.aura — Issue #4942 (v0.2 P3): the proposal layer for |
 | `std/pso` | `pso:init` `pso:init-hash` `pso:step!` `pso:best` `pso:population` `pso:report` `pso:export` `pso:help` … (+12) | lib/std/pso.aura — Issue #2877 Particle Swarm Optimization surface |
 | `std/qd` | `qd:map-elites` `qd:insert!` `qd:elites` `qd:coverage` `qd:qd-score` `qd:best` `qd:novelty` `qd:select-parent` … (+11) | lib/std/qd.aura — Issue #4941 (v0.2 P2): quality diversity and open-ended |
 | `std/query-workspace` | `query:macro-introduced-calls` `query:macro-introduced-defines` | — |
@@ -95,6 +99,7 @@
 | `std/string` | `string-split` `string-split-words` `string-join` `string-trim` `string-upcase` `string-downcase` `string-contains?` `string-prefix?` … (+20) | Aura standard string library |
 | `std/struct` | — | Aura struct library — define-struct as a macro |
 | `std/surface` | `;` `──` `string` `(stdlib` `composition)` `string-split` `string-split-words` `string-join` … (+89) | lib/std/surface.aura — recommended public convenience surface (P3) |
+| `std/surrogate` | `surr:gp` `surr:knn` `surr:auto` `surr:model?` `surr:fit!` `surr:predict` `surr:ei` `surr:lcb` … (+7) | lib/std/surrogate.aura — Issue #4943 (v0.2 P4): cheap prescreening for |
 | `std/swarm` | `swarm:init` `swarm:step!` `swarm:best` `swarm:population` `swarm:report` `swarm:export` `swarm:kind` `swarm:gen` … (+6) | lib/std/swarm.aura — Issue #2874 / #2875 pluggable swarm control family |
 | `std/synthesize-v2` | `synthesize:test-driven` `synthesize:debug` `synthesize:project` `synthesize:compose` `synthesize:run-tests` `synthesize:eval-test` | lib/std/synthesize-v2.aura -- Synthesize Pipeline v2 |
 | `std/synthesize` | `synthesize:list-templates` `synthesize:list-help` | lib/std/synthesize.aura — synthesize: namespace stdlib wrappers |
