@@ -6,6 +6,7 @@ import os
 import re
 import resource
 import select
+import signal
 import subprocess
 import sys
 import tempfile
@@ -401,13 +402,27 @@ def test_cross_session():
     # next fuzz_edsl run to hit its 180s timeout (cascading
     # p0 failure).
     try:
-        r = subprocess.run(
+        # CI flake: run the child in its own process group so a
+        # timeout can kill only THIS test's serve process. The former
+        # cleanup used pkill -9 -f "aura --serve", which also matches
+        # "aura --serve-async" and killed the parallel orchestration stress
+        # suite running in a sibling suite job (signal9 in CI). Never kill by
+        # a pattern that can match another test's process.
+        proc = subprocess.Popen(
             [sys.executable, str(REPO / "tests" / "test_cross_session.py")],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=60,
             cwd=str(REPO),
+            start_new_session=True,
         )
+        try:
+            stdout, stderr = proc.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            stdout, stderr = proc.communicate()
+            raise
+        r = subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
         for line in r.stdout.split("\n"):
             if "passed" in line and "/" in line:
                 print(f"  cross-session: {line.strip()}")
@@ -415,17 +430,9 @@ def test_cross_session():
         if r.returncode != 0:
             print(f"  ⚠ cross-session: rc={r.returncode} (non-critical — serve-async session model differs)")
     except subprocess.TimeoutExpired:
-        # Issue p0-regression: if --serve-async times out, the
-        # subprocess leaves an orphan aura --serve-async process
-        # that consumes 99% CPU and breaks subsequent tests
-        # (fuzz_edsl etc.). Defensive cleanup: kill any aura
-        # subprocesses that may have been left over.
-        print("  ⚠ cross-session: outer 60s timeout hit — cleaning up orphans")
-        subprocess.run(
-            ["pkill", "-9", "-f", "aura --serve"],
-            capture_output=True,
-            timeout=5,
-        )
+        # The process group was killed above; nothing else in the container
+        # is touched.
+        print("  ⚠ cross-session: outer 60s timeout hit — killed this test's process group")
     except Exception as e:
         print(f"  ⚠ cross-session: {e} (non-critical)")
 
@@ -5982,16 +5989,11 @@ print(f"\nP0 snippets rc={snippet_rc}; subprocess {passed_s}/{passed_s + failed_
 # have left orphaned aura --serve-async processes (even on
 # success, depending on how stdin closed). Kill them all so the
 # next p0 run doesn't inherit a 99%-CPU process.
-subprocess.run(
-    ["pkill", "-9", "-f", "aura --serve"],
-    capture_output=True,
-    timeout=5,
-)
-subprocess.run(
-    ["pkill", "-9", "-f", "aura --serve-async"],
-    capture_output=True,
-    timeout=5,
-)
+# CI flake: no broad pkill here. "aura --serve" is a substring
+# of "aura --serve-async", so this cleanup killed sibling suites that were
+# running in parallel (parallel_orchestration_stress died with signal9 in CI).
+# test_cross_session now runs in its own process group and cleans that group
+# on timeout; leave every other process alone.
 
 sys.exit(1 if (snippet_rc != 0 or failed_s > 0) else 0)
 
