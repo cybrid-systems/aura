@@ -29,11 +29,15 @@
 ;   * bytevectors and ports are tagged vectors (no new heap tag), so
 ;     vector? is #t for a bytevector; bytevector? is the discriminator.
 
-(require "std/list" all:)   ; assoc with equal?
-(require "std/string" all:) ; string->symbol for symbol-keyed binding rows
+; assoc with equal?
+; string->symbol for symbol-keyed binding rows
 
 (export r7rs:libraries r7rs:coverage r7rs:status r7rs:missing
         r7rs:library-exports)
+
+(require "std/list" all:)
+(require "std/string" all:)
+
 
 (define (rows status where names)
   (map (lambda (n) (list n status where)) names))

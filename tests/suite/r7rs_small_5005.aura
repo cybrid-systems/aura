@@ -84,6 +84,14 @@
    (begin
      (try (parameterize ((p 7)) (error "x")) (catch e #t))
      (p)))
+; Regression: after an error unwinds a parameterize, a nested
+; parameterize in the same session must still bind (the parser special
+; form replaced the failing macro expansion path).
+(t= "parameterize nested after error unwind" (list 2 2)
+   (parameterize ((p 2))
+     (let ((inner (p)))
+       (parameterize ((p 3)) (p))
+       (list (p) inner))))
 (t= "parameter setter" 9 (begin (p 9) (p)))
 (p 'parameter-raw-set 1)
 
