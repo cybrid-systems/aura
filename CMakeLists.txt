@@ -929,7 +929,11 @@ add_library(aura_test_objects SHARED
     # aura_jit_runtime.cpp is already set directory-wide above).
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
-    src/compiler/aura_jit_bridge.cpp)
+    src/compiler/aura_jit_bridge.cpp
+    # Issue #4946: in-process evaluation ABI (aura_eval_*). Lives in this
+    # shared runtime so an embedder links the evaluator it already drives
+    # instead of forking `aura --serve`.
+    src/eval/aura_eval.cpp)
 set_property(TARGET aura_test_objects PROPERTY CXX_MODULE_STD ON)
 set_target_properties(aura_test_objects PROPERTIES
     POSITION_INDEPENDENT_CODE ON
@@ -954,6 +958,22 @@ target_compile_options(aura_test_objects PRIVATE ${AURA_CONTRACT_FLAG})
 target_link_libraries(aura_test_objects PUBLIC stdc++ stdc++exp aura-reflect aura_tl_arena)
 # Production binary also compiles aura_jit_runtime.cpp (no longer defines g_tl_arena).
 target_link_libraries(aura PRIVATE aura_tl_arena)
+
+# Issue #4946: aura::eval — the in-process evaluation ABI (src/eval/aura_eval.h).
+# A host links this to run Aura source in its own process:
+#   target_link_libraries(my_app PRIVATE aura::eval)
+#   aura_eval_session* s = aura_eval_session_create("app");
+# The C entry points live in the shared runtime library aura::eval points at
+# (libaura_test_objects.so, i.e. the evaluated runtime the test suite drives);
+# that library is not installed yet, so aura::eval is a build-tree target.
+# Migrating it behind a dedicated production .so means one more compile of the
+# whole evaluator graph — that split is not part of #4946.
+add_library(aura_eval INTERFACE)
+add_library(aura::eval ALIAS aura_eval)
+target_link_libraries(aura_eval INTERFACE aura_test_objects)
+target_include_directories(aura_eval INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+install(FILES src/eval/aura_eval.h
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/aura/eval COMPONENT aura_core)
 
 # Shared LLVM JIT objects for issue tests (and similar binaries).
 # Previously every aura_issue_test_link_llvm_jit() consumer recompiled
@@ -4198,6 +4218,23 @@ target_link_libraries(test_aura_core_embed PRIVATE aura::core)
 add_test(NAME test_aura_core_embed_verification COMMAND ./test_aura_core_embed)
 if(TARGET all_test_issue_targets)
     add_dependencies(all_test_issue_targets test_aura_core_embed)
+endif()
+
+# Issue #4946: links ONLY aura::eval (the in-process evaluation ABI) and
+# includes nothing but eval/aura_eval.h — no module import, no
+# aura_test_objects source, no "aura --serve" child. Proves a host can
+# create a session, eval source, require std/moead, and read errors back.
+add_executable(test_aura_eval_embed tests/core/test_aura_eval_embed.cpp)
+target_compile_options(test_aura_eval_embed PRIVATE -Wall -Wextra)
+target_compile_definitions(test_aura_eval_embed PRIVATE
+    AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(test_aura_eval_embed PRIVATE aura::eval)
+add_test(NAME test_aura_eval_embed_verification COMMAND ./test_aura_eval_embed)
+set_tests_properties(test_aura_eval_embed_verification PROPERTIES
+    ENVIRONMENT "AURA_PATH=${CMAKE_SOURCE_DIR}/lib;AURA_SANDBOX=off;AURA_STDLIB_DIR=${CMAKE_SOURCE_DIR}/lib/std;AURA_PIPELINE_STRICT=0"
+    TIMEOUT 300)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_aura_eval_embed)
 endif()
 
 # Domain batch: Arena compact hooks / dtor / force compact ACs (Stream A9) (7 members + driver). Stream S2.
