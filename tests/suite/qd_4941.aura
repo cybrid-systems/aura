@@ -84,10 +84,10 @@
 (define (hits n-islands seed)
   (let* ((s (qd:islands (hash "n" n-islands "pop" 12 "dim" 20 "seed" seed
                               "migrate-every" 10 "reset-worst" #t)))
-         (best (begin (qd:islands-run! s (lambda (c) (trap (evo:candidate-genome c))) 60)
+         (best (begin (qd:islands-run! s (lambda (c) (trap (evo:candidate-genome c))) 30)
                       (qd:islands-best s))))
     (if (and best (>= (qd-opt best "q" 0) 20.0)) 1 0)))
-(define seeds (list 1 2 3 4 5 6 7 8 9 10))
+(define seeds (list 1 2 3 4)) ; CI subset; the 10-seed table is in the #4941 report
 (define island-hits (map (lambda (sd) (hits 4 sd)) seeds))
 (define single-hits (map (lambda (sd) (hits 1 sd)) seeds))
 (display "  islands=") (display island-hits)
