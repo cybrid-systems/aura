@@ -1,0 +1,476 @@
+; lib/std/algo-select.aura — Issue #4945 (v0.2 P8): choose the algorithm
+; per instance from features, offline from a performance matrix and online
+; from real feedback. No Free Lunch (Wolpert & Macready 1997) is the
+; premise: a portfolio needs a *selector*, not a champion.
+;
+; References: Kerschke, Hoos, Neumann, Trautmann, "Automated Algorithm
+; Selection" (2019, arXiv:1811.11597); MOEA/D-FRRMAB (Li et al., TEVC 2014)
+; for the online credit assignment that std/hyper-heuristic implements.
+;
+; Import: (require "std/algo-select" all:)
+;
+;   (define s (select:make (hash "model" "knn" "k" 3 "sense" "max")))
+;   (define s (select:features-fn! s (lambda (inst) (hash "kind" (inst-kind inst)))))
+;   (define s (select:offline s matrix))          ; from portfolio:matrix
+;   (select:choose s inst 2)                      ; -> ("member-a" "member-c")
+;   (select:report s)                             ; SBS/VBS, gap closure, regret
+;   (define s (select:feedback! s inst "member-b" 0.9))   ; online update
+;   (select:drift? s)
+;
+; Models: "knn" (k nearest feature-space neighbours, mean score per
+; member), "tree" (one decision stump over the numeric features), and
+; "pairwise" (pairwise wins among the k nearest neighbours).
+;
+; Everything is a value: the selector is a hash, offline training returns a
+; new selector, feedback returns a new selector. Features must be numeric
+; (hash values); that is what the AST summaries and instance descriptors
+; are reduced to before they reach this module.
+
+(export select:make select:features-fn! select:offline select:choose
+        select:feedback! select:report select:drift? select:drift-score
+        select:features select:help)
+
+(require "std/list" all:)
+
+; ── handle ────────────────────────────────────────────────────
+
+(define (select:make opts)
+  (let ((o (if (hash? opts) opts (hash))))
+    (hash "features-fn" (hash-ref o "features-fn" #f)
+          "model" (hash-ref o "model" "knn")
+          "k" (hash-ref o "k" 3)
+          "sense" (hash-ref o "sense" "max")
+          "names" (quote ())
+          "keys" (quote ())
+          "scales" (quote ())
+          "medians" (quote ())
+          "X" (quote ())
+          "S" (quote ())
+          "matrix" #f
+          "report" #f
+          "online" (hash)
+          "recent" (quote ())
+          "drift-threshold" (hash-ref o "drift-threshold" 0.35))))
+
+(define (select:features-fn! s f) (hash-set s "features-fn" f))
+
+(define (select:features s inst)
+  (let ((f (hash-ref s "features-fn" #f)))
+    (if (procedure? f) (f inst) inst)))
+
+; ── feature plumbing ──────────────────────────────────────────
+
+(define (select-numeric? v) (number? v))
+
+; keys present as numbers in at least half of the feature hashes
+(define (select-keys feats)
+  (let* ((n (length feats))
+         (half (max 1 (quotient n 2)))
+         (all (foldl (lambda (acc h)
+                       (if (hash? h)
+                         (append acc (filter (lambda (k) (select-numeric? (hash-ref h k #f)))
+                                             (hash-keys h)))
+                         acc))
+                     (quote ()) feats))
+         (uniq (foldl (lambda (acc k)
+                        (if (member? k acc) acc (cons k acc)))
+                      (quote ()) all)))
+    (filter (lambda (k)
+              (>= (length (filter (lambda (h) (select-numeric? (hash-ref h k #f)))
+                                  feats))
+                  half))
+            uniq)))
+
+(define (select-mean xs)
+  (if (null? xs) 0.0 (/ (foldl (lambda (a x) (+ a x)) 0.0 xs) (length xs))))
+
+(define (select-sd xs)
+  (if (< (length xs) 2) 1.0
+    (let* ((m (select-mean xs))
+           (ss (foldl (lambda (a x) (+ a (* (- x m) (- x m)))) 0.0 xs)))
+      (let ((v (/ ss (- (length xs) 1))))
+        (if (< v 1e-12) 1.0 (sqrt v))))))
+
+(define (select-median xs)
+  (if (null? xs) 0.0
+    (let ((sorted (sort xs <)))
+      (list-ref sorted (quotient (length sorted) 2)))))
+
+(define (select-scale-keys X keys)
+  (map (lambda (k) (select-sd (map (lambda (row) (hash-ref row k 0.0)) X))) keys))
+
+(define (select-vector row keys scales)
+  (map (lambda (k sc)
+         (let ((v (hash-ref row k 0.0)))
+           (/ (if (number? v) (* 1.0 v) 0.0) sc)))
+       keys scales))
+
+(define (select-vectors X keys scales)
+  (map (lambda (row) (select-vector row keys scales)) X))
+
+(define (select-dist a b)
+  (let loop ((xs a) (ys b) (acc 0.0))
+    (if (or (null? xs) (null? ys)) acc
+      (let ((d (- (car xs) (car ys))))
+        (loop (cdr xs) (cdr ys) (+ acc (* d d)))))))
+
+; ── predictions ───────────────────────────────────────────────
+
+(define (select-index-of xs x)
+  (let loop ((ys xs) (i 0))
+    (cond ((null? ys) #f)
+          ((equal? (car ys) x) i)
+          (else (loop (cdr ys) (+ i 1))))))
+
+(define (select-row-mean j rows)
+  (select-mean (map (lambda (row) (list-ref row j)) rows)))
+
+(define (select-neighbours v X k)
+  (let* ((pairs (map (lambda (x i) (cons (select-dist v x) i))
+                     X (iota (length X))))
+         (sorted (sort pairs (lambda (a b) (< (car a) (car b))))))
+    (map cdr (if (> (length sorted) k) (take sorted k) sorted))))
+
+(define (select-knn-scores v X S k)
+  (let* ((idx (select-neighbours v X k))
+         (rows (map (lambda (i) (list-ref S i)) idx)))
+    (if (null? rows) (quote ())
+      (map (lambda (j) (select-row-mean j rows))
+           (iota (length (car rows)))))))
+
+(define (select-pairwise-rows rows m sense)
+  (map (lambda (a)
+         (let loop ((ri 0) (wins 0))
+           (if (>= ri (length rows)) (* 1.0 wins)
+             (let* ((row (list-ref rows ri))
+                    (sa (list-ref row a))
+                    (w (let loop-b ((b 0) (c 0))
+                         (if (>= b m) c
+                           (loop-b (+ b 1)
+                                   (if (= a b) c
+                                     (let ((sb (list-ref row b)))
+                                       (if (string=? sense "min")
+                                         (if (< sa sb) (+ c 1) c)
+                                         (if (> sa sb) (+ c 1) c)))))))))
+               (loop (+ ri 1) (+ wins w))))))
+       (iota m)))
+
+(define (select-indices pred X)
+  (let loop ((xs X) (i 0) (acc (quote ())))
+    (if (null? xs) (reverse acc)
+      (loop (cdr xs) (+ i 1) (if (pred (car xs)) (cons i acc) acc)))))
+
+; A depth-limited regression-style stump tree. Leaves pick the member with
+; the best mean score in that leaf; splits are chosen to maximize the summed
+; best-member score over both sides (so a leaf covering more rows matters
+; more). Depth 2 resolves three feature regions, which is what instance
+; families with a small number of regimes need.
+(define (select-tree-model X S)
+  (select-tree-fit X S 2))
+
+(define (select-tree-fit X S depth)
+  (let* ((n (length X))
+         (m (if (null? S) 0 (length (car S)))))
+    (if (or (<= depth 0) (< n 3) (= m 0))
+      (hash "leaf" (select-best-member-index S m))
+      (let* ((d (if (= n 0) 0 (length (car X))))
+             (best (let loop ((j 0) (best #f))
+                     (if (>= j d) best
+                       (loop (+ j 1)
+                             (select-tree-best-cut X S j depth best))))))
+        (if best best (hash "leaf" (select-best-member-index S m)))))))
+
+(define (select-tree-best-cut X S j depth best)
+  (let* ((col (map (lambda (row) (list-ref row j)) X))
+         (vals (sort col <))
+         (lo (car vals))
+         (hi (car (reverse vals))))
+    (if (< (abs (- hi lo)) 1e-12) best
+      (let loop ((cuts (select-cuts lo hi)) (best best))
+        (if (null? cuts) best
+          (let* ((cut (car cuts))
+                 (li (select-indices (lambda (row) (<= (list-ref row j) cut)) X))
+                 (ri (select-indices (lambda (row) (not (<= (list-ref row j) cut))) X)))
+            (if (or (null? li) (null? ri)) (loop (cdr cuts) best)
+              (let* ((lm (select-tree-fit (select-gather X li) (select-gather S li)
+                                          (- depth 1)))
+                     (rm (select-tree-fit (select-gather X ri) (select-gather S ri)
+                                          (- depth 1)))
+                     (gain (+ (select-tree-total lm (select-gather S li))
+                              (select-tree-total rm (select-gather S ri)))))
+                (loop (cdr cuts)
+                      (if (or (not best) (> gain (hash-ref best "gain" -1.0e300)))
+                        (hash "key" j "threshold" cut "gain" gain
+                              "left" lm "right" rm)
+                        best))))))))))
+
+(define (select-cuts lo hi)
+  (list (/ (+ lo hi) 2.0)
+        (+ lo (* 0.25 (- hi lo)))
+        (+ lo (* 0.75 (- hi lo)))))
+
+(define (select-gather xs idx)
+  (map (lambda (i) (list-ref xs i)) idx))
+
+(define (select-tree-total model S)
+  (cond
+    ((hash-ref model "leaf" #f)
+     (let ((j (hash-ref model "leaf")))
+       (foldl (lambda (acc row)
+                (+ acc (if (and (>= j 0) (< j (length row))) (list-ref row j) 0.0)))
+              0.0 S)))
+    ((hash-ref model "key" #f)
+     (let* ((k (hash-ref model "key"))
+            (cut (hash-ref model "threshold"))
+            (left (filter (lambda (row) (<= (list-ref row k) cut)) S))
+            (right (filter (lambda (row) (not (<= (list-ref row k) cut))) S)))
+       (+ (select-tree-total (hash-ref model "left") left)
+          (select-tree-total (hash-ref model "right") right))))
+    (else 0.0)))
+
+(define (select-best-member-index S m)
+  (if (or (null? S) (= m 0)) 0
+    (let loop ((j 0) (best 0) (bv -1.0e300))
+      (if (>= j m) best
+        (let ((v (select-row-mean j S)))
+          (loop (+ j 1) (if (> v bv) j best) (if (> v bv) v bv)))))))
+
+(define (select-tree-scores v model m)
+  (let* ((leaf (select-tree-leaf v model))
+         (scores (make-vector m 0.0)))
+    (if (and leaf (>= leaf 0) (< leaf m))
+      (begin (vector-set! scores leaf 1.0) (vector->list scores))
+      (vector->list scores))))
+
+(define (select-tree-leaf v model)
+  (cond
+    ((hash-ref model "leaf" #f) (hash-ref model "leaf"))
+    ((hash-ref model "key" #f)
+     (let* ((k (hash-ref model "key"))
+            (cut (hash-ref model "threshold"))
+            (go-left (<= (list-ref v k) cut)))
+       (select-tree-leaf v (if go-left (hash-ref model "left")
+                             (hash-ref model "right")))))
+    (else #f)))
+
+; ── offline ───────────────────────────────────────────────────
+
+(define (select-rows-matrix matrix)
+  (let ((rows (hash-ref matrix "means" (hash-ref matrix "scores" (quote ())))))
+    rows))
+
+(define (select:offline s matrix opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (names (hash-ref matrix "members" (quote ())))
+         (insts (hash-ref matrix "instances" (quote ())))
+         (rows (select-rows-matrix matrix))
+         (feats (map (lambda (inst) (select:features s inst)) insts))
+         (keys (select-keys feats))
+         (scales (select-scale-keys feats keys))
+         (X (select-vectors feats keys scales))
+         (s1 (hash-set (hash-set (hash-set (hash-set s "matrix" matrix) "names" names)
+                                 "keys" keys)
+                       "scales" scales))
+         (s2 (hash-set (hash-set (hash-set s1 "X" X) "S" rows)
+                       "medians" (map (lambda (k) (select-median
+                                                   (map (lambda (f) (hash-ref f k 0.0)) feats)))
+                                      keys))))
+    (let* ((buckets (map (lambda (f) (select-bucket s2 f)) feats))
+           (n (max 1 (length buckets)))
+           (base (foldl (lambda (acc b)
+                          (let ((c (hash-ref acc b 0)))
+                            (hash-set acc b (+ c 1))))
+                        (hash) buckets))
+           (base-freq (foldl (lambda (acc b)
+                               (hash-set acc b (/ (* 1.0 (hash-ref base b 0)) n)))
+                             (hash) (hash-keys base)))
+           (s3 (hash-set s2 "baseline" base-freq))
+           (s4 (hash-set s3 "tree" (select-tree-model X rows))))
+      (hash-set s4 "report" (select:report s4)))))
+
+(define (select-predict s v)
+  (let* ((model (hash-ref s "model" "knn"))
+         (k (max 1 (hash-ref s "k" 3)))
+         (X (hash-ref s "X" (quote ())))
+         (S (hash-ref s "S" (quote ())))
+         (m (length (hash-ref s "names" (quote ())))))
+    (cond
+      ((null? X) (make-list* m 0.0))
+      ((string=? model "tree")
+       (select-tree-scores v (hash-ref s "tree" (hash)) m))
+      ((string=? model "pairwise")
+       (let ((idx (select-neighbours v X (min k (length X)))))
+         (select-pairwise-rows (map (lambda (i) (list-ref S i)) idx) m
+                               (hash-ref s "sense" "max"))))
+      (else (select-knn-scores v X S (min k (length X)))))))
+
+(define (make-list* n v)
+  (if (<= n 0) (quote ()) (cons v (make-list* (- n 1) v))))
+
+(define (select-ranked s v)
+  (let* ((scores (select-predict s v))
+         (names (hash-ref s "names" (quote ())))
+         (sense (hash-ref s "sense" "max"))
+         (pairs (map (lambda (name sc) (cons name sc)) names scores)))
+    (sort pairs (lambda (a b)
+                  (if (string=? sense "min") (< (cdr a) (cdr b))
+                    (> (cdr a) (cdr b)))))))
+
+(define (select:choose s inst k . rest)
+  (let* ((v (select-vector (select:features s inst) (hash-ref s "keys" (quote ()))
+                           (hash-ref s "scales" (quote ()))))
+         (offline (map car (select-ranked s v)))
+         (bucket (select-bucket s (select:features s inst)))
+         (online (select-online-ranked s bucket))
+         (names (if (null? online) offline (append online offline)))
+         (uniq (foldl (lambda (acc n)
+                        (if (member? n acc) acc (cons n acc)))
+                      (quote ()) names)))
+    (take (reverse uniq) (min k (length uniq)))))
+
+; ── online context bandit ─────────────────────────────────────
+
+(define (select-bucket s feat)
+  (let ((keys (hash-ref s "keys" (quote ())))
+        (medians (hash-ref s "medians" (quote ()))))
+    (let loop ((ks keys) (ms medians) (acc (quote ())))
+      (if (or (null? ks) (null? ms)) (string-append "b:" (select-join (reverse acc)))
+        (let ((v (hash-ref feat (car ks) 0.0)))
+          (loop (cdr ks) (cdr ms)
+                (cons (if (and (number? v) (> (* 1.0 v) (car ms))) "1" "0") acc)))))))
+
+(define (select-join xs)
+  (if (null? xs) "" (if (null? (cdr xs)) (car xs)
+                      (string-append (car xs) (select-join (cdr xs))))))
+
+(define (select-online-ranked s bucket)
+  (let* ((online (hash-ref s "online" (hash)))
+         (stats (hash-ref online bucket #f))
+         (sense (hash-ref s "sense" "max")))
+    (if (not (hash? stats)) (quote ())
+      (let* ((names (hash-keys stats))
+             (total (foldl (lambda (acc n)
+                             (+ acc (car (hash-ref stats n (list 0 0.0)))))
+                           0 names))
+             (scored (map (lambda (n)
+                            (let* ((cell (hash-ref stats n (list 0 0.0)))
+                                   (cnt (car cell))
+                                   (mean (if (= cnt 0) 0.0 (/ (cadr cell) cnt)))
+                                   (bonus (if (= cnt 0) 1.0
+                                            (sqrt (/ (* 2.0 (log (max total 2.0)))
+                                                     cnt)))))
+                              (cons n (+ mean (* 0.5 bonus)))))
+                          names))
+             (sorted (sort scored (lambda (a b)
+                                    (if (string=? sense "min") (< (cdr a) (cdr b))
+                                      (> (cdr a) (cdr b)))))))
+        (map car sorted)))))
+
+(define (select:feedback! s inst member result)
+  (let* ((feat (select:features s inst))
+         (bucket (select-bucket s feat))
+         (score (cond ((number? result) result)
+                      ((hash? result) (let ((v (hash-ref result "score" #f)))
+                                        (if (number? v) v 0.0)))
+                      (else 0.0)))
+         (online (hash-ref s "online" (hash)))
+         (stats (hash-ref online bucket (hash)))
+         (cell (hash-ref stats member (list 0 0.0)))
+         (next (hash-set stats member (list (+ 1 (car cell)) (+ score (cadr cell)))))
+         (recent (hash-ref s "recent" (quote ())))
+         (kept (if (> (length recent) 19) (take recent 19) recent)))
+    (hash-set (hash-set s "online" (hash-set online bucket next))
+              "recent" (cons bucket kept))))
+
+; ── drift ─────────────────────────────────────────────────────
+
+; Total-variation distance between the recent context buckets and the
+; training distribution: 0.5 * sum |p_recent - p_train|. 0 when there is
+; no baseline or too little recent feedback.
+(define (select:drift-score s)
+  (let* ((recent (hash-ref s "recent" (quote ())))
+         (base (hash-ref s "baseline" #f))
+         (n (length recent)))
+    (if (or (< n 5) (not (hash? base))) 0.0
+      (let* ((names (foldl (lambda (acc b) (if (member? b acc) acc (cons b acc)))
+                           (hash-keys base) recent))
+             (tv (foldl
+                  (lambda (acc b)
+                    (let ((pr (/ (* 1.0 (length (filter (lambda (x) (equal? x b)) recent))) n))
+                          (pb (hash-ref base b 0.0)))
+                      (+ acc (abs (- pr pb)))))
+                  0.0 names)))
+        (* 0.5 tv)))))
+
+(define (select:drift? s)
+  (> (select:drift-score s) (hash-ref s "drift-threshold" 0.35)))
+
+; ── report: SBS / VBS / LOO gap closure ───────────────────────
+
+(define (select:report s)
+  (let* ((rows (hash-ref s "S" (quote ())))
+         (names (hash-ref s "names" (quote ())))
+         (X (hash-ref s "X" (quote ())))
+         (n (length rows))
+         (m (length names)))
+    (if (or (= n 0) (= m 0))
+      (hash "sbs" 0.0 "vbs" 0.0 "loo" 0.0 "gap-closure" 0.0 "regret" 0.0
+            "instances" 0 "per-member" (quote ()))
+      (let* ((sense (hash-ref s "sense" "max"))
+             (best-at (map (lambda (row)
+                             (foldl (lambda (acc v)
+                                      (if (or (not acc)
+                                              (if (string=? sense "min") (< v acc) (> v acc)))
+                                        v acc))
+                                    #f row))
+                           rows))
+             (per-member (map (lambda (j) (select-row-mean j rows)) (iota m)))
+             (sbs-best (foldl (lambda (acc v)
+                                (if (or (not acc)
+                                        (if (string=? sense "min") (< v acc) (> v acc)))
+                                  v acc))
+                              #f per-member))
+             (loo (map (lambda (i)
+                         (let* ((train-idx (filter (lambda (j) (not (= j i))) (iota n)))
+                                (Xt (map (lambda (j) (list-ref X j)) train-idx))
+                                (St (map (lambda (j) (list-ref rows j)) train-idx))
+                                (s2 (hash-set (hash-set s "X" Xt) "S" St))
+                                ;; the tree is part of the fitted model, so
+                                ;; refit it on this fold as well.
+                                (s2 (if (string=? (hash-ref s "model" "knn") "tree")
+                                      (hash-set s2 "tree" (select-tree-model Xt St))
+                                      s2))
+                                (ranked (select-ranked s2 (list-ref X i)))
+                                (chosen-name (if (null? ranked) #f (car (car ranked))))
+                                ;; The report compares *performance*, not the
+                                ;; model's internal score (pairwise scores are
+                                ;; win counts, tree scores are leaf indicators).
+                                (chosen-idx (select-index-of names chosen-name))
+                                (chosen (if (and chosen-idx (>= chosen-idx 0))
+                                          (list-ref (list-ref rows i) chosen-idx)
+                                          0.0)))
+                           chosen))
+                       (iota n)))
+             (vbs (select-mean best-at))
+             (los (select-mean loo))
+             (gap (if (< (abs (- vbs sbs-best)) 1e-12) 1.0
+                    (/ (- los sbs-best) (- vbs sbs-best))))
+             (regret (select-mean (map (lambda (b c) (- b c)) best-at loo))))
+        (hash "sbs" sbs-best
+              "vbs" vbs
+              "loo" los
+              "gap-closure" gap
+              "regret" regret
+              "instances" n
+              "members" names
+              "per-member" per-member)))))
+
+(define (select:help)
+  (string-append
+   "std/algo-select (#4945)\n"
+   "  (select:make (hash \"model\" \"knn\"|\"tree\"|\"pairwise\" \"k\" 3))\n"
+   "  (select:features-fn! s (lambda (inst) features-hash))\n"
+   "  (select:offline s matrix)     ; matrix from portfolio:matrix\n"
+   "  (select:choose s inst k)      ; -> k member names\n"
+   "  (select:feedback! s inst member result)\n"
+   "  (select:report s)             ; SBS/VBS, gap closure, regret\n"))

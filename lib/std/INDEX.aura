@@ -76,6 +76,16 @@
     (list "surrogate"
       (list "GP (rbf/matern52) + kNN surrogate, EI/LCB/TS prescreen with audit, staged eval, statistical race"
             "(require \"std/surrogate\" all:)(surr:prescreen (surr:fit! (surr:gp (hash)) X y) cands 5 (hash \"acq\" \"ei\"))"))
+    ; Issue #4945: algorithm portfolio + selection + hyper-heuristic (NFL)
+    (list "portfolio"
+      (list "Algorithm portfolio: budgeted member runs (equal/halving/UCB/Thompson), performance matrix, VBS/SBS"
+            "(require \"std/portfolio\" all:)(portfolio:run (portfolio:add! (portfolio:make (hash)) \"moead\" f) inst (hash \"budget-ms\" 8000))"))
+    (list "algo-select"
+      (list "Per-instance algorithm selection: offline kNN/tree/pairwise from a performance matrix, online context bandit, drift"
+            "(require \"std/algo-select\" all:)(select:choose (select:offline (select:make (hash)) mtx) inst 2)"))
+    (list "hyper-heuristic"
+      (list "FRRMAB operator credit, irace-lite config racing, multi-seed t-gate, parameter adaptation"
+            "(require \"std/hyper-heuristic\" all:)(hh:next (hh:make (hash \"low-level\" (list a b))))"))
     ; ── Aura layer (#5004): agent / orch / evo are written in Aura over the
     ;    primitives; the Scheme layer below is engine + host prims. ──
     (list "agent"

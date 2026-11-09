@@ -1,0 +1,395 @@
+; lib/std/hyper-heuristic.aura — Issue #4945 (v0.2 P8): adaptive operator
+; selection and irace-style configuration racing.
+;
+; No Free Lunch means an operator set cannot have a permanent champion
+; either. This module credits operators online (FRRMAB — Li, Fialho, Kwong,
+; Zhang, IEEE TEVC 2014), and races configurations with a multi-seed
+; statistical gate so a lucky single seed cannot become a "winner"
+; (the winner's curse the downstream hit when a training-set gain did not
+; survive the holdout).
+;
+; Import: (require "std/hyper-heuristic" all:)
+;
+;   (define hh (hh:make (hash "low-level" (list "crossover" "mutate" "ls")
+;                            "credit" "frr" "window" 50 "decay" 0.5)))
+;   (define step (hh:next hh))          ; (op . next-hh)
+;   (define hh2 (hh:credit! (cdr step) (car step) reward))
+;
+;   (tune:gate cand-seeds base-seeds (hash "alpha" 0.05))
+;   (tune:race configs (hash "instances" insts "seeds" 5
+;                            "evaluate" (lambda (cfg inst seed) score)))
+;   (tune:adapt! params "time-ms" (hash "rule" "1/5" "success" #t))
+;
+; Credit rules: "frr" (fitness rank ratio + UCB), "pm" (probability
+; matching on the rank ratio), "ap" (adaptive pursuit).
+
+(export hh:make hh:next hh:credit! hh:report hh:usage hh:help
+        tune:gate tune:race tune:adapt! tune:t-crit tune:help)
+
+(require "std/list" all:)
+
+; ── state ─────────────────────────────────────────────────────
+
+(define (hh:make opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (names (hash-ref o "low-level" (list "op1" "op2")))
+         (ops (map (lambda (name)
+                     (hash "name" name "window" (quote ()) "n" 0 "sum" 0.0
+                           "p" (/ 1.0 (max 1 (length names)))))
+                   names)))
+    (hash "ops" ops
+          "credit" (hash-ref o "credit" "frr")
+          "window" (max 2 (hash-ref o "window" 50))
+          "decay" (hash-ref o "decay" 0.5)
+          "c" (hash-ref o "c" 0.5)
+          "beta" (hash-ref o "beta" 0.2)
+          "seed" (hash-ref o "seed" 42)
+          "pulls" 0)))
+
+(define (hh:help)
+  (string-append
+   "std/hyper-heuristic (#4945)\n"
+   "  (hh:make (hash \"low-level\" (list op1 op2) \"credit\" \"frr\"|\"pm\"|\"ap\"\n"
+   "                   \"window\" 50 \"decay\" 0.5))\n"
+   "  (hh:next hh)        ; -> (op . next-hh)\n"
+   "  (hh:credit! hh op reward) (hh:report hh) (hh:usage hh)\n"
+   "  (tune:gate cand base)  ; multi-seed paired t gate\n"
+   "  (tune:race configs opts) (tune:adapt! params key opts)\n"))
+
+; ── credit ────────────────────────────────────────────────────
+
+; exponentially weighted mean over the (newest-first) window
+(define (hh-ewma op decay)
+  (let loop ((ws (hash-ref op "window" (quote ()))) (age 0) (num 0.0) (den 0.0))
+    (if (null? ws) (if (= den 0.0) 0.0 (/ num den))
+      (let ((w (expt decay age)))
+        (loop (cdr ws) (+ age 1) (+ num (* w (car ws))) (+ den w))))))
+
+(define (hh-frr hh)
+  (let* ((ops (hash-ref hh "ops" (quote ())))
+         (decay (hash-ref hh "decay" 0.5))
+         (means (map (lambda (op) (cons (hh-ewma op decay)
+                                        (hash-ref op "name" #f)))
+                     ops))
+         (best (foldl (lambda (acc e) (if (or (not acc) (> (car e) (car acc))) e acc))
+                      #f means))
+         (top (if best (if (= (car best) 0.0) 1.0 (car best)) 1.0)))
+    (map (lambda (op)
+           (let ((m (hh-ewma op decay)))
+             (cons (hash-ref op "name" #f)
+                   (if (< m 0.0) 0.0 (/ m top)))))
+         ops)))
+
+(define (hh-score hh op ratio)
+  (let* ((n (hash-ref op "n" 0))
+         (total (max 1 (hash-ref hh "pulls" 0)))
+         (c (hash-ref hh "c" 0.5))
+         (bonus (if (= n 0) 1.0 (* c (sqrt (/ (* 2.0 (log total)) n))))))
+    (+ ratio bonus)))
+
+(define (hh-next-seed s) (modulo (+ (* s 1664525) 1013904223) 4294967296))
+
+(define (hh:next hh)
+  (let* ((ops (hash-ref hh "ops" (quote ())))
+         (rule (hash-ref hh "credit" "frr"))
+         (ratios (hh-frr hh))
+         (picks (map (lambda (op) (cons (hash-ref op "name" #f) op)) ops))
+         (unvisited (find (lambda (op) (= 0 (hash-ref op "n" 0))) ops))
+         (chosen
+          (cond
+            ((null? ops) #f)
+            ;; warm start: every operator is tried once before credit exists
+            ((not (null? unvisited)) (hash-ref unvisited "name" #f))
+            ((string=? rule "pm")
+             (hh-probability-match hh ratios))
+            ((string=? rule "ap")
+             (let ((op (hh-best-p (hash-ref hh "ops"))))
+               (if op (hash-ref op "name" #f) (car (car picks)))))
+            (else
+             (let* ((scored (map (lambda (op)
+                                   (let ((hit (find (lambda (e)
+                                                      (equal? (car e) (hash-ref op "name" #f)))
+                                                    ratios))
+                                         (r (if (pair? hit) (cdr hit) 0.0)))
+                                     (cons (hash-ref op "name" #f) (hh-score hh op r))))
+                                 ops))
+                    (best (foldl (lambda (acc e) (if (or (not acc) (> (cdr e) (cdr acc))) e acc))
+                                 #f scored)))
+               (car best))))))
+    (cons chosen (hash-set hh "seed" (hh-next-seed (hash-ref hh "seed" 42))))))
+
+(define (hh-probability-match hh ratios)
+  ;; floor keeps a currently-unlucky operator alive, which is what lets
+  ;; probability matching recover when the landscape changes.
+  (let* ((ratios (map (lambda (e) (cons (car e) (+ 0.05 (cdr e)))) ratios))
+         (total (foldl (lambda (acc e) (+ acc (cdr e))) 0.0 ratios))
+         (u (/ (modulo (+ (* (hash-ref hh "seed" 42) 1664525) 1013904223) 4294967296)
+               4294967296.0)))
+    (if (or (<= total 0.0) (null? ratios)) (if (null? ratios) #f (car (car ratios)))
+      (let loop ((xs ratios) (cum 0.0))
+        (cond
+          ((null? xs) (car (car ratios)))
+          ((< u (+ cum (/ (cdr (car xs)) total))) (car (car xs)))
+          (else (loop (cdr xs) (+ cum (/ (cdr (car xs)) total)))))))))
+
+(define (hh-best-p ops)
+  (let ((best (foldl (lambda (acc op)
+                       (if (or (not acc) (> (hash-ref op "p" 0.0)
+                                            (hash-ref acc "p" 0.0)))
+                         op acc))
+                     #f ops)))
+    best))
+
+(define (hh:credit! hh name reward)
+  (let* ((r (if (number? reward) reward 0.0))
+         (win (max 2 (hash-ref hh "window" 50)))
+         (ops (hash-ref hh "ops" (quote ())))
+         (updated (map (lambda (op)
+                         (if (equal? (hash-ref op "name" #f) name)
+                           (let* ((w (hash-ref op "window" (quote ())))
+                                  (w2 (if (>= (length w) win)
+                                        (take (cons r w) win)
+                                        (cons r w))))
+                             (hash-set (hash-set (hash-set op "window" w2)
+                                                 "n" (+ 1 (hash-ref op "n" 0)))
+                                       "sum" (+ (hash-ref op "sum" 0.0) r)))
+                           op))
+                       ops))
+         (hh1 (hash-set (hash-set hh "ops" updated)
+                        "pulls" (+ 1 (hash-ref hh "pulls" 0)))))
+    (if (string=? (hash-ref hh "credit" "frr") "ap")
+      (hh-pursuit hh1 name)
+      hh1)))
+
+; adaptive pursuit: the best arm's probability grows toward 1, the rest
+; share the remainder (beta per pull).
+(define (hh-pursuit hh name)
+  (let* ((ops (hash-ref hh "ops" (quote ())))
+         (best (hh-best-p ops))
+         (best-name (if best (hash-ref best "name" #f) name))
+         (beta (hash-ref hh "beta" 0.2))
+         (k (max 1 (length ops)))
+         (nextp (map (lambda (op)
+                       (if (equal? (hash-ref op "name" #f) best-name)
+                         (+ (hash-ref op "p" 0.0)
+                            (* beta (- 1.0 (hash-ref op "p" 0.0))))
+                         (* (hash-ref op "p" 0.0) (- 1.0 beta))))
+                     ops))
+         (total (foldl (lambda (acc p) (+ acc p)) 0.0 nextp))
+         (norm (if (< total 1e-12) nextp
+                 (map (lambda (p) (/ p total)) nextp))))
+    (hash-set hh "ops"
+              (map (lambda (op p) (hash-set op "p" p)) ops norm))))
+
+(define (hh:usage hh)
+  (foldl (lambda (acc op)
+           (hash-set acc (hash-ref op "name" #f) (hash-ref op "n" 0)))
+         (hash) (hash-ref hh "ops" (quote ()))))
+
+(define (hh:report hh)
+  (let* ((ops (hash-ref hh "ops" (quote ())))
+         (decay (hash-ref hh "decay" 0.5)))
+    (hash "pulls" (hash-ref hh "pulls" 0)
+          "credit" (hash-ref hh "credit" "frr")
+          "ops" (map (lambda (op)
+                       (list (hash-ref op "name" #f)
+                             (hash-ref op "n" 0)
+                             (hh-ewma op decay)))
+                     ops))))
+
+; ── multi-seed statistical gate ───────────────────────────────
+
+; one-sided Student-t critical values for alpha = 0.10 / 0.05 / 0.01.
+(define (tune:t-crit df alpha)
+  (let ((a (if (<= alpha 0.01) 0.01 (if (<= alpha 0.05) 0.05 0.10))))
+    (cond
+      ((= a 0.01)
+       (cond ((<= df 1) 31.821) ((= df 2) 6.965) ((= df 3) 4.541)
+             ((= df 4) 3.747) ((= df 5) 3.365) ((= df 6) 3.143)
+             ((= df 7) 2.998) ((= df 8) 2.896) ((= df 9) 2.821)
+             ((<= df 12) 2.681) ((<= df 15) 2.602) ((<= df 20) 2.528)
+             ((<= df 30) 2.457) ((<= df 60) 2.390) (else 2.326)))
+      ((= a 0.05)
+       (cond ((<= df 1) 6.314) ((= df 2) 2.920) ((= df 3) 2.353)
+             ((= df 4) 2.132) ((= df 5) 2.015) ((= df 6) 1.943)
+             ((= df 7) 1.895) ((= df 8) 1.860) ((= df 9) 1.833)
+             ((<= df 12) 1.782) ((<= df 15) 1.753) ((<= df 20) 1.725)
+             ((<= df 30) 1.697) ((<= df 60) 1.671) (else 1.645)))
+      (else
+       (cond ((<= df 1) 3.078) ((= df 2) 1.886) ((= df 3) 1.638)
+             ((= df 4) 1.533) ((= df 5) 1.476) ((= df 6) 1.440)
+             ((= df 7) 1.415) ((= df 8) 1.397) ((= df 9) 1.383)
+             ((<= df 12) 1.356) ((<= df 15) 1.341) ((<= df 20) 1.325)
+             ((<= df 30) 1.310) ((<= df 60) 1.296) (else 1.282))))))
+
+(define tune-mean
+  (lambda (xs) (if (null? xs) 0.0 (/ (foldl (lambda (a x) (+ a x)) 0.0 xs) (length xs)))))
+
+(define (tune-sd xs)
+  (if (< (length xs) 2) 0.0
+    (let* ((m (tune-mean xs))
+           (ss (foldl (lambda (a x) (+ a (* (- x m) (- x m)))) 0.0 xs)))
+      (sqrt (/ ss (- (length xs) 1))))))
+
+; (tune:gate cand base [opts]) — paired test on seed-level results.
+; keep = the candidate is better by more than the noise, at alpha.
+; Returns "keep", "t", "df", "crit", "alpha", "mean-diff", "sd-diff", "n".
+(define (tune:gate cand base . rest)
+  (let* ((opts (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (alpha (hash-ref opts "alpha" 0.05))
+         (sense (hash-ref opts "sense" "max"))
+         ;; improvement is positive when the candidate is better
+         (diffs (map (lambda (c b) (if (string=? sense "min") (- b c) (- c b)))
+                     cand base))
+         (n (length diffs))
+         (m (tune-mean diffs))
+         (sd (tune-sd diffs))
+         (se (if (< n 2) 0.0 (/ sd (sqrt n))))
+         (df (max 1 (- n 1)))
+         (crit (tune:t-crit df alpha))
+         (t (if (<= se 1e-12) (if (> m 0.0) 1.0e9 0.0) (/ m se))))
+    (hash "keep" (and (>= n 2) (> m 0.0) (> t crit))
+          "t" t
+          "df" df
+          "crit" crit
+          "alpha" alpha
+          "mean-diff" m
+          "sd-diff" sd
+          "n" n)))
+
+; ── irace-lite: race configurations with the multi-seed gate ──
+
+(define (tune-config-name cfg i)
+  (let ((n (hash-ref cfg "name" #f)))
+    (if n n (string-append "cfg-" (number->string i)))))
+
+(define (tune-take xs k)
+  (if (or (<= k 0) (null? xs)) (quote ())
+    (cons (car xs) (tune-take (cdr xs) (- k 1)))))
+
+(define (tune-drop xs k)
+  (if (or (<= k 0) (null? xs)) xs (tune-drop (cdr xs) (- k 1))))
+
+(define (tune-eval-block evaluator cfg insts seeds sense)
+  (map (lambda (inst)
+         (let ((vals (map (lambda (seed)
+                            (let ((v (try (evaluator cfg inst seed) (catch (e) 0.0))))
+                              (if (number? v) v 0.0)))
+                          seeds)))
+           (if (string=? sense "min") (- (tune-mean vals)) (tune-mean vals))))
+       insts))
+
+; (tune:race configs opts)
+;   opts: "instances", "seeds", "evaluate" (cfg inst seed), "alpha" 0.05,
+;         "sense" "max", "batch" 1, "min-instances" 2
+; Successive elimination: every survivor gets the next block of instances
+; (each instance averaged over seeds). A survivor is dropped only when the
+; multi-seed gate says the incumbent is better — the gain must survive the
+; paired test. Returns the winner, ranking, rounds and the evaluation count.
+(define (tune:race configs . rest)
+  (let* ((opts (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (instances (hash-ref opts "instances" (list 0)))
+         (seeds (let ((s (hash-ref opts "seeds" (list 1))))
+                  (if (number? s) (list s) s)))
+         (evaluator (hash-ref opts "evaluate" (lambda (cfg inst seed) 0.0)))
+         (alpha (hash-ref opts "alpha" 0.05))
+         (sense (hash-ref opts "sense" "max"))
+         (batch (max 1 (hash-ref opts "batch" 1)))
+         (min-inst (max 2 (hash-ref opts "min-instances" 2)))
+         (named (let loop ((cs configs) (i 0) (acc (quote ())))
+                  (if (null? cs) (reverse acc)
+                    (loop (cdr cs) (+ i 1)
+                          (cons (hash "name" (tune-config-name (car cs) i)
+                                      "cfg" (car cs) "means" (quote ()))
+                                acc))))))
+    (let loop ((alive named) (used (quote ())) (rounds (quote ())) (count 0))
+      (let* ((block (tune-take (tune-drop instances (length used)) batch)))
+        (if (or (null? (cdr alive)) (null? block))
+          (let* ((means (map (lambda (e) (cons (hash-ref e "name")
+                                               (tune-mean (hash-ref e "means"))))
+                             alive))
+                 (ranked (sort means (lambda (a b) (> (cdr a) (cdr b)))))
+                 (winner (if (null? ranked) #f (car (car ranked)))))
+            (hash "winner" winner
+                  "ranking" (map car ranked)
+                  "scores" (map cdr ranked)
+                  "rounds" (reverse rounds)
+                  "evaluations" count
+                  "instances-used" (length used)
+                  "alpha" alpha))
+          (let* ((advanced (map (lambda (e)
+                                  (hash-set e "means"
+                                            (append (hash-ref e "means")
+                                                    (tune-eval-block evaluator
+                                                                     (hash-ref e "cfg")
+                                                                     block seeds sense))))
+                                alive))
+                 (best (foldl (lambda (acc e)
+                                (if (or (not acc)
+                                        (> (tune-mean (hash-ref e "means"))
+                                           (tune-mean (hash-ref acc "means"))))
+                                  e acc))
+                              #f advanced))
+                 (best-name (hash-ref best "name"))
+                 (keep
+                  (filter
+                   (lambda (e)
+                     (let* ((n (length (hash-ref e "means")))
+                            (gate (tune:gate (hash-ref best "means")
+                                             (hash-ref e "means")
+                                             (hash "alpha" alpha "sense" "max"))))
+                       (or (equal? (hash-ref e "name") best-name)
+                           (< n min-inst)
+                           (not (hash-ref gate "keep" #f)))))
+                   advanced))
+                 (round (hash "block" block
+                              "kept" (length keep)
+                              "best" best-name)))
+            (loop keep (append used block) (cons round rounds)
+                  (+ count (* (length alive) (length block) (length seeds))))))))))
+
+; ── parameter adaptation ──────────────────────────────────────
+
+; (tune:adapt! p key opts)
+;   p: (hash "time-ms" 5.0 "successes" 0 "trials" 0 "step" 0.1)
+;   opts: "rule" "1/5" | "success-history", "success" bool
+; 1/5 rule: raise the value when > 20% of trials succeed, lower it when
+; fewer do. Success-history: move toward the median of recent successful
+; values, shrinking the step on failure.
+(define (tune:adapt! p key . rest)
+  (let* ((opts (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (rule (hash-ref opts "rule" "1/5"))
+         (success (if (hash-ref opts "success" #f) #t #f))
+         (v (hash-ref p key 1.0))
+         (step (hash-ref p "step" 0.1))
+         (s (+ (if success 1 0) (hash-ref p "successes" 0)))
+         (n (+ 1 (hash-ref p "trials" 0))))
+    (if (string=? rule "success-history")
+      (let* ((hist (hash-ref p (string-append key "-history") (quote ())))
+             (hist (if success (tune-take (cons v hist) 10) hist))
+             (target (if (null? hist) v (tune-median hist)))
+             (nv (if success (+ v (* step (- target v)))
+                   (* v (if success 1.0 (- 1.0 (* 0.5 step)))))))
+        (hash-set (hash-set (hash-set (hash-set p key nv)
+                                      "successes" s)
+                            "trials" n)
+                  (string-append key "-history") hist))
+      (let* ((rate (/ (* 1.0 s) n))
+             (factor (if (> rate 0.2) (+ 1.0 step) (- 1.0 (* 0.5 step))))
+             (nv (max 1.0e-9 (* v factor))))
+        (hash-set (hash-set (hash-set p key nv) "successes" s) "trials" n)))))
+
+(define (tune-median xs)
+  (if (null? xs) 0.0
+    (let ((s (sort xs <)))
+      (list-ref s (quotient (length s) 2)))))
+
+(define (tune:help)
+  (string-append
+   "std/hyper-heuristic (#4945)\n"
+   "  (hh:make (hash \"low-level\" ops \"credit\" \"frr\" \"window\" 50))\n"
+   "  (hh:next hh) (hh:credit! hh op reward) (hh:report hh)\n"
+   "  (tune:gate cand-seeds base-seeds (hash \"alpha\" 0.05))\n"
+   "  (tune:race configs (hash \"instances\" is \"seeds\" 5\n"
+   "                           \"evaluate\" (lambda (cfg inst seed) score)))\n"
+   "  (tune:adapt! params \"time-ms\" (hash \"rule\" \"1/5\" \"success\" #t))\n"))

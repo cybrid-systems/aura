@@ -1,0 +1,454 @@
+; lib/std/portfolio.aura — Issue #4945 (v0.2 P8): algorithm portfolios,
+; compute alignment and budget allocation. No Free Lunch (Wolpert &
+; Macready, IEEE TEVC 1997): no algorithm wins on every instance, so the
+; library ships the *combination* mechanism — register members behind one
+; interface, run them under one budget, and report which one won.
+;
+; Import: (require "std/portfolio" all:)
+;
+;   (define pf (portfolio:make (hash "sense" "max")))
+;   (portfolio:add! pf "moead" moead-factory (hash "kind" "moo"))
+;   (portfolio:add! pf "wall" (portfolio:external "build/pack" "space=0"))
+;   (portfolio:run pf inst (hash "budget-ms" 8000 "alloc" "equal"))
+;   (portfolio:matrix pf instances (hash "seeds" (list 1 2 3)))
+;   (portfolio:vbs pf m) (portfolio:sbs pf m)
+;
+; A member factory is (lambda (instance ctx) score) where score is a number
+; or (hash "score" n ...). ctx carries "budget-ms", "member", "instance" and
+; "clock" (a thunk returning milliseconds).
+;
+; Compute alignment is first class. With "budget-ms" set, every member runs
+; in its own fiber and a watchdog cancels it at its deadline; the run's
+; audit records the budget it was given and the time it actually used.
+; Cancellation is cooperative (a fiber observes it at a safepoint:
+; fiber:yield, channel send/recv, fiber:join). Members that never yield a
+; long CPU-bound loop cannot be interrupted; give them a yield in the loop
+; (the AC test does exactly that and asserts the cancellation lands within
+; 100 ms of the budget).
+;
+; Allocation:
+;   "equal"             every member gets budget / n, all in parallel
+;   "successive-halving" rounds; the worse half is dropped each round
+;   "ucb" / "thompson"  slot pulls, chosen by a bandit on observed scores
+
+(export portfolio:make portfolio:add! portfolio:members portfolio:member
+        portfolio:external portfolio:run portfolio:matrix
+        portfolio:vbs portfolio:sbs portfolio:help)
+
+(require "std/list" all:)
+(require "std/string" all:)
+
+; ── the registry (a value) ─────────────────────────────────────
+
+(define (portfolio:make opts)
+  (let ((o (if (hash? opts) opts (hash))))
+    (hash "members" (quote ())
+          "sense" (hash-ref o "sense" "max")
+          "seed" (hash-ref o "seed" 42))))
+
+(define (portfolio:members pf) (hash-ref pf "members" (quote ())))
+
+(define (portfolio:member pf name)
+  (let ((hit (find (lambda (m) (equal? (hash-ref m "name" #f) name))
+                   (portfolio:members pf))))
+    ;; std/list find returns () when nothing matches; members are hashes,
+    ;; not pairs, so the emptiness test is null?, not pair?.
+    (if (null? hit) #f hit)))
+
+(define (portfolio:add! pf name factory . rest)
+  (let* ((meta (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (entry (hash "name" name "factory" factory "meta" meta))
+         (old (portfolio:members pf))
+         (kept (filter (lambda (m) (not (equal? (hash-ref m "name" #f) name))) old)))
+    (hash-set pf "members" (append kept (list entry)))))
+
+; ── external member ───────────────────────────────────────────
+; (portfolio:external cmd args [opts]) → factory. The default runner is
+; command-output; opts "runner" replaces it (tests use a pure function, so
+; the adapter is exercised without spawning a process). The member's score
+; is the last number on the last non-empty output line.
+
+(define (portfolio-last-line text)
+  (let* ((lines (filter (lambda (s) (not (string=? (string-trim s) "")))
+                        (string-split text "\n")))
+         (n (length lines)))
+    (if (= n 0) "" (string-trim (list-ref lines (- n 1))))))
+
+(define (portfolio-parse-score out)
+  (if (not (string? out))
+    (hash "score" #f "error" "external: no output")
+    (let ((line (portfolio-last-line out)))
+      (let ((v (try (string->number line) (catch (e) #f))))
+        (if (number? v)
+          (hash "score" v "raw" line)
+          (hash "score" #f "error" (string-append "external: not a number: " line)
+                "output" out))))))
+
+(define (portfolio:external cmd args . rest)
+  (let* ((opts (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (runner (hash-ref opts "runner" #f))
+         (full (string-append cmd (if (string=? args "") "" " ")
+                              (if (string? args) args ""))))
+    (lambda (instance ctx)
+      (portfolio-parse-score
+       (if runner
+         (runner full)
+         (command-output full))))))
+
+; ── score helpers ─────────────────────────────────────────────
+
+(define (portfolio-score v)
+  (cond ((number? v) v)
+        ((hash? v) (let ((s (hash-ref v "score" #f)))
+                     (if (number? s) s #f)))
+        (else #f)))
+
+(define (portfolio-sense pf) (hash-ref pf "sense" "max"))
+
+(define (portfolio-better? pf a b)
+  (cond ((not (number? a)) #f)
+        ((not (number? b)) #t)
+        ((string=? (portfolio-sense pf) "min") (< a b))
+        (else (> a b))))
+
+(define (portfolio-pick pf rows)
+  (let loop ((rs rows) (best #f) (score #f))
+    (cond
+      ((null? rs) (cons best score))
+      ((not (equal? (hash-ref (car rs) "status" "") "ok"))
+       (loop (cdr rs) best score))
+      (else
+       (let ((s (hash-ref (car rs) "score" #f)))
+         (if (portfolio-better? pf s score)
+           (loop (cdr rs) (hash-ref (car rs) "member") s)
+           (loop (cdr rs) best score)))))))
+
+(define (portfolio-sum xs) (foldl (lambda (a x) (+ a x)) 0.0 xs))
+
+; ── one member, with a deadline ───────────────────────────────
+
+(define portfolio-default-clock (lambda () (monotonic-ms)))
+
+(define (portfolio-await deadline clock)
+  (if (< (clock) deadline)
+    (begin (fiber:yield) (portfolio-await deadline clock))
+    #t))
+
+(define (portfolio-finish start)
+  (let* ((m (hash-ref start "member"))
+         (fid (hash-ref start "fid" #f))
+         (wd (hash-ref start "watchdog" #f))
+         (t0 (hash-ref start "t0" 0))
+         (clock (hash-ref start "clock" portfolio-default-clock))
+         (budget (hash-ref start "budget" 0))
+         (raw (if fid (try (fiber:join fid) (catch (e) (list 'error e))) #f))
+         (elapsed (- (clock) t0))
+         (stop (lambda ()
+                 (if wd
+                   (begin (try (fiber:cancel wd) (catch (e) #f))
+                          (try (fiber:join wd) (catch (e) #f))))))
+         (value (if (and (pair? raw) (eq? (car raw) 'ok)) (car (cdr raw)) #f))
+         (status (cond ((not (pair? raw)) "error")
+                       ((eq? (car raw) 'error) (if (and (> budget 0) (>= elapsed budget))
+                                                 "cancelled" "error"))
+                       ((and (> budget 0) (>= elapsed budget)) "cancelled")
+                       (else "ok"))))
+    (stop)
+    (hash "member" (hash-ref m "name" #f)
+          "budget-ms" budget
+          "actual-ms" elapsed
+          "status" status
+          "score" (portfolio-score value)
+          "value" value)))
+
+(define (portfolio-run-member m inst budget clock)
+  (let* ((factory (hash-ref m "factory"))
+         (ctx (hash "budget-ms" budget "member" (hash-ref m "name")
+                    "instance" inst "clock" clock))
+         (t0 (clock)))
+    (if (or (<= budget 0) (not (procedure? factory)))
+      (let* ((raw (try (list 'ok (factory inst ctx)) (catch (e) (list 'error e))))
+             (elapsed (- (clock) t0)))
+        (hash "member" (hash-ref m "name" #f)
+              "budget-ms" budget
+              "actual-ms" elapsed
+              "status" (if (eq? (car raw) 'ok) "ok" "error")
+              "score" (if (eq? (car raw) 'ok) (portfolio-score (car (cdr raw))) #f)
+              "value" (if (eq? (car raw) 'ok) (car (cdr raw)) raw)))
+      (let* ((fid (try (fiber:spawn
+                        (lambda ()
+                          (try (list 'ok (factory inst ctx))
+                               (catch (e) (list 'error e)))))
+                       (catch (e) #f)))
+             (deadline (+ t0 budget))
+             (wd (and fid
+                      (try (fiber:spawn (lambda ()
+                                          (portfolio-await deadline clock)
+                                          (fiber:cancel fid)))
+                           (catch (e) #f)))))
+        (if (not fid)
+          (let* ((raw (try (list 'ok (factory inst ctx)) (catch (e) (list 'error e))))
+                 (elapsed (- (clock) t0)))
+            (hash "member" (hash-ref m "name" #f)
+                  "budget-ms" budget
+                  "actual-ms" elapsed
+                  "status" (if (eq? (car raw) 'ok) "ok" "error")
+                  "score" (if (eq? (car raw) 'ok) (portfolio-score (car (cdr raw))) #f)
+                  "value" raw))
+          (portfolio-finish (hash "member" m "fid" fid "watchdog" wd
+                                  "t0" t0 "clock" clock "budget" budget
+                                  "deadline" deadline)))))))
+
+; ── allocation: equal ─────────────────────────────────────────
+
+(define (portfolio-per budget n)
+  (if (or (<= budget 0) (<= n 0)) 0 (max 1 (quotient budget n))))
+
+(define (portfolio-run-equal pf inst opts)
+  (let* ((ms (portfolio:members pf))
+         (budget (hash-ref opts "budget-ms" 0))
+         (clock (hash-ref opts "clock" portfolio-default-clock))
+         (per (portfolio-per budget (length ms)))
+         (rows (map (lambda (m) (portfolio-run-member m inst per clock)) ms))
+         (w (portfolio-pick pf rows)))
+    (hash "alloc" "equal"
+          "rows" rows
+          "winner" (car w)
+          "winner-score" (cdr w)
+          "budget-ms" budget
+          "spent-ms" (portfolio-sum (map (lambda (r) (hash-ref r "actual-ms" 0)) rows)))))
+
+; ── allocation: successive halving ────────────────────────────
+
+(define (portfolio-rounds n)
+  (if (<= n 1) 1
+    (let loop ((k n) (r 0) (slots 0))
+      (if (<= k 0) (list r slots)
+        (loop (quotient k 2) (+ r 1) (+ slots k))))))
+
+(define (portfolio-keep-n n) (max 1 (quotient (+ n 1) 2)))
+
+(define (portfolio-run-halving pf inst opts)
+  (let* ((budget (hash-ref opts "budget-ms" 0))
+         (clock (hash-ref opts "clock" portfolio-default-clock))
+         (plan (portfolio-rounds (length (portfolio:members pf))))
+         (slot (portfolio-per budget (car (cdr plan))))
+         (rounds (car plan)))
+    (let loop ((alive (portfolio:members pf)) (r 0) (acc (quote ())) (spent 0.0))
+      (if (or (null? alive) (>= r rounds))
+        (let ((w (portfolio-pick pf acc)))
+          (hash "alloc" "successive-halving"
+                "rows" (reverse acc)
+                "winner" (car w)
+                "winner-score" (cdr w)
+                "rounds" r
+                "budget-ms" budget
+                "spent-ms" spent))
+        (let* ((rows (map (lambda (m) (portfolio-run-member m inst slot clock)) alive))
+               (scored (filter (lambda (row) (number? (hash-ref row "score" #f))) rows))
+               (ranked (sort scored (lambda (a b)
+                                      (portfolio-better? pf (hash-ref a "score" #f)
+                                                         (hash-ref b "score" #f)))))
+               (keep (portfolio-keep-n (length alive)))
+               (survivors (map (lambda (row)
+                                 (portfolio:member pf (hash-ref row "member" #f)))
+                               (if (> keep (length ranked)) ranked (take ranked keep))))
+               (survivors (if (null? survivors)
+                            (take alive (min keep (length alive)))
+                            survivors)))
+          (loop survivors (+ r 1) (append (reverse rows) acc)
+                (+ spent (portfolio-sum (map (lambda (row) (hash-ref row "actual-ms" 0))
+                                             rows)))))))))
+
+; ── allocation: bandit slots (ucb / thompson) ─────────────────
+
+(define (portfolio-arm-name m) (hash-ref m "name" #f))
+
+(define (portfolio-row-name row) (car row))
+(define (portfolio-row-mean row) (car (cdr row)))
+(define (portfolio-row-n row) (car (cdr (cdr row))))
+
+(define (portfolio-ucb-pick arms c)
+  (let ((un (find (lambda (row) (= 0 (portfolio-row-n row))) arms)))
+    (if (pair? un) (portfolio-row-name un)
+      (let* ((total (portfolio-sum (map portfolio-row-n arms)))
+             (scored (map (lambda (row)
+                            (cons (portfolio-row-name row)
+                                  (+ (portfolio-row-mean row)
+                                     (* c (sqrt (/ (* 2.0 (log (max total 1.0)))
+                                                   (max (portfolio-row-n row) 1)))))))
+                          arms))
+             (best (foldl (lambda (acc e) (if (or (not acc) (> (cdr e) (cdr acc))) e acc))
+                          #f scored)))
+        (car best)))))
+
+(define (portfolio-thompson-pick arms seed)
+  (let loop ((rows arms) (best #f) (s seed))
+    (if (null? rows) (if best (cdr best) #f)
+      (let* ((row (car rows))
+             (n (portfolio-row-n row))
+             (mean (portfolio-row-mean row))
+             (sd (if (= n 0) 1.0 (sqrt n)))
+             (s1 (modulo (+ (* s 1664525) 1013904223) 4294967296))
+             (u1 (max 1e-12 (/ (* 1.0 s1) 4294967296.0)))
+             (s2 (modulo (+ (* s1 1664525) 1013904223) 4294967296))
+             (u2 (/ (* 1.0 s2) 4294967296.0))
+             (z (* (sqrt (* -2.0 (log u1))) (cos (* 2.0 3.141592653589793 u2))))
+             (sample (+ mean (* sd z))))
+        (loop (cdr rows)
+              (if (or (not best) (> sample (car best))) (cons sample (portfolio-row-name row)) best)
+              s2)))))
+
+(define (portfolio-run-slots pf inst opts)
+  (let* ((ms (portfolio:members pf))
+         (n (length ms))
+         (budget (hash-ref opts "budget-ms" 0))
+         (clock (hash-ref opts "clock" portfolio-default-clock))
+         (policy (hash-ref opts "alloc" "ucb"))
+         (slots (max n (hash-ref opts "slots" (* 2 n))))
+         (slot (portfolio-per budget slots))
+         (c (hash-ref opts "c" 0.8))
+         (seed (hash-ref pf "seed" 42)))
+    (let loop ((i 0) (arms (map (lambda (m) (list (portfolio-arm-name m) 0.0 0)) ms))
+               (s seed) (rows (quote ())) (spent 0.0))
+      (if (>= i slots)
+        (let* ((best (foldl (lambda (acc row)
+                              (if (or (not acc) (> (portfolio-row-mean row)
+                                                   (portfolio-row-mean acc)))
+                                row acc))
+                            #f arms))
+               (w (if best (portfolio-row-name best) #f))
+               (wscore (if best (portfolio-row-mean best) #f)))
+          (hash "alloc" policy
+                "rows" (reverse rows)
+                "winner" w
+                "winner-score" wscore
+                "pulls" (if best (portfolio-row-n best) 0)
+                "arms" arms
+                "budget-ms" budget
+                "spent-ms" spent))
+        (let* ((s1 (modulo (+ (* s 1664525) 1013904223) 4294967296))
+               (pick (if (string=? policy "thompson")
+                       (portfolio-thompson-pick arms s1)
+                       (portfolio-ucb-pick arms c)))
+               (m (portfolio:member pf pick))
+               (row (if m (portfolio-run-member m inst slot clock)
+                      (hash "member" pick "status" "error" "score" #f
+                            "budget-ms" slot "actual-ms" 0)))
+               (score (hash-ref row "score" #f))
+               (norm (if (number? score)
+                       (if (string=? (portfolio-sense pf) "min") (- score) score)
+                       0.0))
+               (arms2 (map (lambda (a)
+                             (if (equal? (portfolio-row-name a) pick)
+                               (list (portfolio-row-name a)
+                                     (/ (+ (* (portfolio-row-mean a) (portfolio-row-n a)) norm)
+                                        (+ 1 (portfolio-row-n a)))
+                                     (+ 1 (portfolio-row-n a)))
+                               a))
+                           arms)))
+          (loop (+ i 1) arms2 s1 (cons row rows)
+                (+ spent (hash-ref row "actual-ms" 0))))))))
+
+; ── run ───────────────────────────────────────────────────────
+
+(define (portfolio:run pf instance . rest)
+  (let* ((opts (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (alloc (hash-ref opts "alloc" "equal")))
+    (cond
+      ((string=? alloc "successive-halving") (portfolio-run-halving pf instance opts))
+      ((or (string=? alloc "ucb") (string=? alloc "thompson"))
+       (portfolio-run-slots pf instance opts))
+      (else (portfolio-run-equal pf instance opts)))))
+
+; ── performance matrix (multi-seed) ───────────────────────────
+
+(define (portfolio-seeds opts)
+  (let ((s (hash-ref opts "seeds" (list 1))))
+    (cond ((number? s) (list s))
+          ((pair? s) s)
+          (else (list 1)))))
+
+(define (portfolio-cell m inst seed)
+  (let ((ctx (hash "budget-ms" 0 "member" (hash-ref m "name")
+                   "instance" inst "seed" seed)))
+    (portfolio-score (try ((hash-ref m "factory") inst ctx) (catch (e) #f)))))
+
+(define (portfolio:matrix pf instances . rest)
+  (let* ((opts (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (ms (portfolio:members pf))
+         (seeds (portfolio-seeds opts))
+         (names (map portfolio-arm-name ms))
+         (per-inst (map (lambda (inst)
+                          (map (lambda (m)
+                                 (let ((vals (map (lambda (seed)
+                                                    (portfolio-cell m inst seed))
+                                                  seeds)))
+                                   (list (mean-of vals) (var-of vals))))
+                               ms))
+                        instances))
+         (means (map (lambda (row) (map car row)) per-inst))
+         (vars (map (lambda (row) (map (lambda (c) (car (cdr c))) row)) per-inst)))
+    (hash "members" names
+          "instances" instances
+          "seeds" seeds
+          "means" means
+          "vars" vars
+          "scores" means)))
+
+(define (mean-of xs)
+  (let ((nums (filter number? xs)))
+    (if (null? nums) 0.0 (/ (portfolio-sum nums) (length nums)))))
+
+(define (var-of xs)
+  (let ((nums (filter number? xs)))
+    (if (< (length nums) 2) 0.0
+      (let* ((m (mean-of nums))
+             (ss (portfolio-sum (map (lambda (x) (let ((d (- x m))) (* d d))) nums))))
+        (/ ss (- (length nums) 1))))))
+
+; ── VBS / SBS ─────────────────────────────────────────────────
+
+(define (portfolio-matrix-cells m)
+  (let ((means (hash-ref m "means" (hash-ref m "scores" (quote ())))))
+    means))
+
+(define (portfolio:best-per-instance pf m)
+  (let ((sense (portfolio-sense pf)))
+    (map (lambda (row)
+           (foldl (lambda (acc v)
+                    (if (or (not acc)
+                            (if (string=? sense "min") (< v acc) (> v acc)))
+                      v acc))
+                  #f row))
+         (portfolio-matrix-cells m))))
+
+(define (portfolio:sbs pf m)
+  (let* ((rows (portfolio-matrix-cells m))
+         (names (hash-ref m "members" (quote ())))
+         (sense (portfolio-sense pf)))
+    (if (or (null? rows) (null? names)) #f
+      (let* ((per-member (map (lambda (j)
+                               (mean-of (map (lambda (row) (list-ref row j)) rows)))
+                             (iota (length names))))
+             (best (foldl (lambda (acc v)
+                            (if (or (not acc)
+                                    (if (string=? sense "min") (< v acc) (> v acc)))
+                              v acc))
+                          #f per-member)))
+        best))))
+
+(define (portfolio:vbs pf m)
+  (let ((best (portfolio:best-per-instance pf m)))
+    (if (null? best) #f (mean-of best))))
+
+(define (portfolio:help)
+  (string-append
+   "std/portfolio (#4945)\n"
+   "  (portfolio:make (hash \"sense\" \"max\"))\n"
+   "  (portfolio:add! pf \"nsga2\" factory)  ; factory: (lambda (inst ctx) score)\n"
+   "  (portfolio:add! pf \"wall\" (portfolio:external \"build/pack\" \"space=0\"))\n"
+   "  (portfolio:run pf inst (hash \"budget-ms\" 8000 \"alloc\" \"equal\"))\n"
+   "      alloc: equal | successive-halving | ucb | thompson\n"
+   "  (portfolio:matrix pf instances (hash \"seeds\" (list 1 2 3)))\n"
+   "  (portfolio:vbs pf m) (portfolio:sbs pf m)\n"))
