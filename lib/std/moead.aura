@@ -10,7 +10,7 @@
 ;   (moead:make (hash "n-obj" 3 "H" 12 "T" 10
 ;                     "scalar" "tchebycheff"|"pbi"|"ws"
 ;                     "theta" 5.0 "nr" 2 "delta" 0.9
-;                     "operator" "de"|"sbx"|<proposer>
+;                     "operator" "de"|"de-explore"|"sbx"|"rand" | (hash "choose" f)
 ;                     "dd" #f "dim" 30 "bounds" (list (list 0.0 1.0))))
 ;   (moead:ask s k) (moead:tell! s cands objs) (moead:front s)
 ;   (moead:weights s) (moead:run! s eval-fn evals) (moead:report s)
@@ -39,7 +39,7 @@
 (define moead-schema-version 1)
 
 (define (moead:help)
-  "std/moead (#4940): (moead:make (hash \"n-obj\" 2 \"H\" 39 \"T\" 10 \"scalar\" \"tchebycheff\" \"operator\" \"de\" \"dim\" 30)) -> s; (moead:ask s 40) -> candidates; (moead:tell! s cands objs) -> #t; (moead:run! s eval 20000) -> s; (moead:front s) (moead:weights s). Scalars: tchebycheff | pbi | ws. dd #t turns on the MOEA/DD dominance+decomposition archive. \"operator\" also accepts a proposal callable (s gen slot r) -> genome|hash (#4942: prop:moead-operator), and \"init-genome\" seeds a code-genome population from source text.")
+  "std/moead (#4940): (moead:make (hash \"n-obj\" 2 \"H\" 39 \"T\" 10 \"scalar\" \"tchebycheff\" \"operator\" \"de\" \"dim\" 30)) -> s; (moead:ask s 40) -> candidates; (moead:tell! s cands objs) -> #t; (moead:run! s eval 20000) -> s; (moead:front s) (moead:weights s). Scalars: tchebycheff | pbi | ws. dd #t turns on the MOEA/DD dominance+decomposition archive. Operator: de | de-explore | sbx | rand, a proposal callable (s gen slot r) -> genome|hash (#4942: prop:moead-operator), or (hash \"choose\" (lambda (s sub) name)) for MOEA/D-FRRMAB (#4945). \"init-genome\" seeds a code-genome population from source text.")
 
 (define (moead:schema) moead-schema-version)
 
@@ -431,7 +431,13 @@
 ; stream from it, so two candidates in one batch must not share a slot or
 ; they mutate to the same genome.
 (define (moead-propose s sub slot r)
-  (let* ((op (md-opt s "operator" "de"))
+  (let* ((op0 (md-opt s "operator" "de"))
+         ;; Issue #4945: a chooser is a HASH so it stays distinguishable from
+         ;; a code-proposal procedure (#4942), whose call shape differs.
+         ;; std/hyper-heuristic owns the credit and names the operator per
+         ;; subproblem, wiring MOEA/D-FRRMAB without mutable search state.
+         (choose (if (hash? op0) (md-opt op0 "choose" #f) #f))
+         (op (if (procedure? choose) (choose s sub) op0))
          (dim (md-opt s "dim" 10))
          (bounds (md-opt s "bounds" (list (list 0.0 1.0))))
          (all (md-iota (length (moead:weights s))))
@@ -470,6 +476,11 @@
               (kids (md-sbx bg (md-genome-of p2) 15.0 0.9 r))
               (g (car kids)))
          (md-poly-mut g bounds 20.0 (/ 1.0 dim) r)))
+      ((and (string? op) (string=? op "rand"))
+       ;; exploration-only operator: a fresh point in the box. It is the
+       ;; deliberate "bad" arm in the FRRMAB test (and a legitimate
+       ;; restart move in a search that has stalled).
+       (md-genome dim bounds r))
       (else
        (let* ((k (length nbrs))
               (i1 (md-rand-int! r k))
@@ -478,8 +489,8 @@
               (g1 (md-genome-of (md-pop-at s (list-ref nbrs i1))))
               (g2 (md-genome-of (md-pop-at s (list-ref nbrs i2))))
               (g3 (md-genome-of (md-pop-at s (list-ref nbrs i3))))
-              (F 0.5)
-              (CR 0.9)
+              (F (if (and (string? op) (string=? op "de-explore")) 0.9 0.5))
+              (CR (if (and (string? op) (string=? op "de-explore")) 0.2 0.9))
               (jrand (md-rand-int! r dim)))
          (let loop ((xs g1) (ys g2) (zs g3) (bs bounds) (i 0) (acc (list)))
            (if (or (null? xs) (null? ys) (null? zs))

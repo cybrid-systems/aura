@@ -4,6 +4,9 @@
 (require "std/portfolio" all:)
 (require "std/algo-select" all:)
 (require "std/hyper-heuristic" all:)
+(require "std/moead" all:)
+(require "std/pareto" all:)
+(require "std/list" all:)
 
 (define *fails* 0)
 (define (assert! pred msg)
@@ -303,6 +306,163 @@
 (assert! (not (= -1 (string-index (select:help) "4945" 0))) "select help mentions 4945")
 (assert! (not (= -1 (string-index (tune:help) "4945" 0))) "tune help mentions 4945")
 
+
+; ═══════════════════════════════════════════════════════════════════
+; AC9 — non-stationary stream: the windowed bandit beats a fixed SBS
+; ═══════════════════════════════════════════════════════════════════
+(display "AC9 non-stationary regret\n")
+; Two reward regimes on the SAME context bucket (a season, not a new
+; instance family): member a pays 1.0 then 0.0, member b the reverse.
+; The fixed SBS is member a (its pre-drift mean is higher), so it pays
+; the full second regime as regret.
+(define ns-insts (list (hash "kind" 0) (hash "kind" 0) (hash "kind" 0) (hash "kind" 0)))
+(define ns-matrix (hash "members" (list "a" "b") "instances" ns-insts
+                        "means" (list (list 1.0 0.6) (list 0.9 0.5)
+                                      (list 1.0 0.7) (list 0.95 0.6))))
+(define ns0 (select:offline (select:make (hash "model" "knn" "k" 1
+                                          "decay" 0.9 "warm-start" #t))
+                            ns-matrix (hash)))
+(define (ns-reward phase m)
+  (if (= phase 0) (if (string=? m "a") 1.0 0.0)
+      (if (string=? m "b") 1.0 0.0)))
+(define (ns-step s i)
+  (let* ((phase (if (< i 100) 0 1))
+         (chosen (car (select:choose s (hash "kind" 0) 1)))
+         (r (ns-reward phase chosen)))
+    (list (select:feedback! s (hash "kind" 0) chosen r) r chosen)))
+(define (ns-loop i s regret picks drift-max)
+  (if (>= i 200) (list s regret (reverse picks) drift-max)
+      (let* ((st (ns-step s i))
+             (s2 (car st)) (r (car (cdr st))) (m (car (cdr (cdr st))))
+             (ds (select:drift-score s2)))
+        (ns-loop (+ i 1) s2 (+ regret (- 1.0 r)) (cons (cons i m) picks)
+                 (max drift-max ds)))))
+(define ns-out (ns-loop 0 ns0 0.0 (quote ()) 0.0))
+(define ns-picks (car (cdr (cdr ns-out))))
+(define ns-regret (car (cdr ns-out)))
+(define ns-fixed-regret 100.0)   ; member a in the second regime
+(define ns-post (filter (lambda (p) (>= (car p) 100)) ns-picks))
+(define ns-first-b
+  (let loop ((xs ns-post) (i 0))
+    (cond ((null? xs) 999) ((string=? (cdr (car xs)) "b") i)
+          (else (loop (cdr xs) (+ i 1))))))
+(define ns-b25 (length (filter (lambda (p) (string=? (cdr p) "b"))
+                               (take ns-post 25))))
+(assert! (< ns-regret (* 0.7 ns-fixed-regret))
+         "bandit cumulative regret is >= 30 % below the fixed SBS")
+(assert! (<= ns-first-b 10) "the bandit recovers within 10 steps of the drift")
+(assert! (>= ns-b25 18) "the new best member is played in >= 18 of the next 25 steps")
+(assert! (> (car (cdr (cdr (cdr ns-out)))) 0.35)
+         "the reward shift is reported as drift")
+(display "  regret: bandit ") (display ns-regret)
+(display " vs fixed-sbs ") (display ns-fixed-regret)
+(display ", first-b after drift ") (display ns-first-b) (newline)
+
+; ═══════════════════════════════════════════════════════════════════
+; AC10 — successive halving under a real budget: the audit time matches
+; ═══════════════════════════════════════════════════════════════════
+(display "AC10 halving compute alignment\n")
+(define (spin-forever inst ctx)
+  (let loop ((n 0)) (fiber:yield) (loop (+ n 1))))
+(define (spin-some inst ctx)
+  (let loop ((n 0))
+    (if (>= n 20) 3.0 (begin (fiber:yield) (loop (+ n 1))))))
+(define pfh (portfolio:add! (portfolio:add! (portfolio:add!
+                              (portfolio:make (hash)) "quick" quick)
+                            "some" spin-some)
+                          "spin" spin-forever))
+(define rhb (portfolio:run pfh 'i (hash "budget-ms" 600 "alloc" "successive-halving")))
+(define hrows (hash-ref rhb "rows"))
+(define spin-rows (filter (lambda (row) (equal? (hash-ref row "member") "spin")) hrows))
+(assert! (>= (length spin-rows) 1) "the spinner ran in a halving round")
+(assert! (every (lambda (row) (equal? (hash-ref row "status") "cancelled")) spin-rows)
+         "every round cancels the over-budget spinner")
+(assert! (every (lambda (row)
+                  (and (<= (hash-ref row "actual-ms")
+                           (+ (hash-ref row "budget-ms") 100))
+                       (< (abs (- (hash-ref row "actual-ms") (hash-ref row "budget-ms")))
+                          (* 0.1 (hash-ref row "budget-ms")))))
+                spin-rows)
+         "a halving slot cancels within 100 ms and audits within 10 %")
+(assert! (<= (hash-ref rhb "spent-ms") (* 1.1 (hash-ref rhb "budget-ms")))
+         "halving spends no more than 110 % of the budget")
+(assert! (string=? (hash-ref rhb "winner") "quick")
+         "a cancelled member cannot win a halving round")
+(display "  halving spent ") (display (hash-ref rhb "spent-ms"))
+(display " of ") (display (hash-ref rhb "budget-ms")) (display " ms") (newline)
+
+; ═══════════════════════════════════════════════════════════════════
+; AC11 — FRRMAB inside MOEA/D (MOEA/D-FRRMAB): the bandit picks the
+; variation operator per subproblem, and the front keeps its quality
+; ═══════════════════════════════════════════════════════════════════
+(display "AC11 MOEA/D-FRRMAB hypervolume\n")
+(define (frr-sum xs) (foldl (lambda (a x) (+ a x)) 0.0 xs))
+; ZDT1 (Zhang & Li 2007 benchmark), dim 6, both objectives minimized
+(define (zdt1 g)
+  (let* ((f1 (car g)) (tail (cdr g))
+         (gg (+ 1.0 (* 9.0 (/ (frr-sum tail) (max 1 (length tail)))))))
+    (list f1 (* gg (- 1.0 (sqrt (/ f1 gg)))))))
+(define frr-ref (list 1.2 1.2))
+; one step: ask a candidate, credit its operator with the scalar
+; improvement over the parent subproblem, tell, repeat. Credit is
+; per candidate (a batch-level rank reward is a constant 0.5 for every
+; operator, which makes the bandit blind).
+(define (frr-step box mode s i)
+  (let* ((c (car (moead:ask s 1)))
+         (sub (hash-ref (evo:candidate-meta c) "sub" 0))
+         (ws (moead:weights s))
+         (w (list-ref ws (modulo sub (length ws))))
+         (pop (hash-ref s "pop" (list)))
+         (pobj (if (< sub (length pop)) (hash-ref (list-ref pop sub) "objs" (list)) (list)))
+         (psc (if (null? pobj) #f (moead:scalar s pobj w)))
+         (objs (zdt1 (evo:candidate-genome c)))
+         (csc (moead:scalar s objs w)))
+    (if (and (string=? mode "auto") (number? psc))
+        (let ((rew (max 0.0 (min 1.0 (/ (max 0.0 (- psc csc))
+                                      (max 1e-9 (abs psc)))))))
+          (vector-set! box 0 (hh:credit! (vector-ref box 0) (vector-ref box 1) rew))))
+    (moead:tell! s (list c) (list objs))))
+(define (frr-search mode evals)
+  (let* ((box (vector (hh:make (hash "low-level" (list "de" "de-explore" "rand")
+                                        "credit" "frr" "window" 20 "c" 0.5
+                                        "decay" 0.5))
+                      #f))
+         (chooser (lambda (s sub)
+                    (if (string=? mode "auto")
+                        (let ((step (hh:next (vector-ref box 0))))
+                          (vector-set! box 0 (cdr step))
+                          (vector-set! box 1 (car step))
+                          (car step))
+                        mode)))
+         (s (moead:make (hash "n-obj" 2 "H" 12 "T" 5 "dim" 6 "seed" 7
+                              "dirs" (list "min" "min") "ref" frr-ref
+                              "operator" (hash "choose" chooser)))))
+    (let loop ((i 0))
+      (if (>= i evals)
+          (list (hash-ref (moead:report s) "hypervolume")
+                (hh:usage (vector-ref box 0))
+                (hash-ref (hh:report (vector-ref box 0)) "pulls")
+                (hash-ref (moead:report s) "nfe"))
+          (begin (frr-step box mode s i) (loop (+ i 1)))))))
+(define frr-auto (frr-search "auto" 1560))
+(define frr-de (frr-search "de" 1560))
+(define frr-dex (frr-search "de-explore" 1560))
+(define frr-rand (frr-search "rand" 1560))
+(define frr-best (max (car frr-de) (car frr-dex)))
+(define frr-usage (car (cdr frr-auto)))
+(define frr-pulls (car (cdr (cdr frr-auto))))
+(define frr-bad (hash-ref frr-usage "rand" 0))
+(assert! (and (>= frr-pulls 1500) (<= frr-pulls 1560))
+         "the bandit credits every pull with a parent scalar")
+(assert! (= 1560 (car (cdr (cdr (cdr frr-auto))))) "all 1560 evaluations ran")
+(assert! (<= frr-bad (* 0.10 frr-pulls)) "the bad operator is used at most 10 % of the time")
+(assert! (>= (car frr-auto) (* 0.95 frr-best))
+         "FRRMAB keeps >= 95 % of the best single operator's hypervolume")
+(assert! (< (car frr-rand) (* 0.5 frr-best)) "the random operator is genuinely weak")
+(display "  hv auto=") (display (car frr-auto))
+(display " best-single=") (display frr-best)
+(display " bad-pulls=") (display frr-bad) (display "/") (display frr-pulls)
+(newline)
 (if (= *fails* 0)
     (begin (display "OK-4945 portfolio/select/hh\n"))
     (begin
