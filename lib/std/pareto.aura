@@ -17,6 +17,7 @@
 ;   (pareto:nd-sort items [opts])    -> list of fronts (items, input order)
 ;   (pareto:crowding front [opts])   -> distances aligned with front
 ;   (pareto:hypervolume front ref [opts]) ; exact 2/3, fixed-seed MC > 3
+;   (pareto:ref-point front dirs margin)  ; a ref worse than every point
 ;   (pareto:igd front ref-front [opts])
 ;   (pareto:improves? a objs [opts]) (pareto:accept? a cand ev)
 ;   (pareto:representative a [weights]) ; knee by default
@@ -44,8 +45,8 @@
 (export pareto:archive pareto:archive? pareto:insert! pareto:entries pareto:front
         pareto:size pareto:dominates? pareto:cd-dominates? pareto:nd-sort
         pareto:crowding pareto:hypervolume pareto:igd pareto:improves?
-        pareto:accept? pareto:representative pareto:report-svg pareto:help
-        pareto:schema
+        pareto:accept? pareto:representative pareto:report-svg pareto:ref-point
+        pareto:help pareto:schema
         nsga2:make nsga2:ask nsga2:tell! nsga2:run! nsga2:front nsga2:report)
 
 (require "std/evo-core" all:)
@@ -637,6 +638,29 @@
         0.0
         (/ (pa-sum (map (lambda (q) (pa-min-dist q ps)) qs)) (length qs)))))
 
+; A reference point that is worse than every point of a front, in PROBLEM
+; space and respecting "dirs": hypervolume is only meaningful against such
+; a point, and a hard-coded (1.1 1.1) silently returns 0 for any problem
+; whose objectives are not in [0,1] (#4940 MOEA/DD report). "margin" is a
+; fraction of the front's own span (at least 1.0 so a degenerate front
+; still has volume).
+(define (pareto:ref-point front dirs margin)
+  (let* ((objs (map (lambda (x) (pa-objs-of x (list))) front))
+         (m (if (null? objs) 0 (length (car objs))))
+         (mg (if (and (number? margin) (> margin 0.0)) margin 0.1)))
+    (let loop ((d 0) (acc (list)))
+      (if (>= d m)
+          (reverse acc)
+          (let* ((col (map (lambda (o) (pa-num (list-ref o d))) objs))
+                 (lo (pa-fold min (car col) col))
+                 (hi (pa-fold max (car col) col))
+                 (span (if (> (- hi lo) 0.0) (- hi lo) 1.0))
+                 (d* (pa-dir-at dirs d))
+                 (v (if (string=? d* "min")
+                        (+ hi (* mg span))
+                        (- lo (* mg span)))))
+            (loop (+ d 1) (cons v acc)))))))
+
 ; ═══════════════════════════════════════════════════════════════════
 ; Gate + representative
 ; ═══════════════════════════════════════════════════════════════════
@@ -914,23 +938,30 @@
                       acc))))))
 
 ; Simulated binary crossover (Deb & Agrawal). Returns both children.
-(define (pa-sbx p1 p2 eta pc r)
-  (let loop ((xs p1) (ys p2) (c1 (list)) (c2 (list)))
+; Bounds matter: the raw child formula leaves [lo,hi] whenever the parents
+; sit near a bound, and a ZDT1 run then evaluates x1 > 1 — an out-of-domain
+; point that wins the f1 race and drags the front with it. Children are
+; clamped into the box, which is what the bounded operator does.
+(define (pa-sbx p1 p2 bounds eta pc r)
+  (let loop ((xs p1) (ys p2) (bs bounds) (i 0) (c1 (list)) (c2 (list)))
     (if (or (null? xs) (null? ys))
         (list (reverse c1) (reverse c2))
-        (let* ((x1 (pa-num (car xs)))
+        (let* ((b (pa-bounds-at bounds i))
+               (x1 (pa-num (car xs)))
                (x2 (pa-num (car ys)))
                (u (pa-rand! r)))
           (if (or (> u pc) (< (abs (- x1 x2)) 1e-12))
-              (loop (cdr xs) (cdr ys) (cons x1 c1) (cons x2 c2))
+              (loop (cdr xs) (cdr ys) (if (null? bs) bs (cdr bs)) (+ i 1)
+                    (cons (pa-clamp x1 b) c1) (cons (pa-clamp x2 b) c2))
               (let* ((u2 (pa-rand! r))
+                     (e (/ 1.0 (+ eta 1.0)))
                      (beta (if (<= u2 0.5)
-                               (expt (* 2.0 u2) (/ 1.0 (+ eta 1.0)))
-                               (expt (/ 1.0 (* 2.0 (- 1.0 u2)))
-                                     (/ 1.0 (+ eta 1.0)))))
+                               (expt (* 2.0 u2) e)
+                               (expt (/ 0.5 (- 1.0 u2)) e)))
                      (y1 (* 0.5 (+ (* (+ 1.0 beta) x1) (* (- 1.0 beta) x2))))
                      (y2 (* 0.5 (+ (* (- 1.0 beta) x1) (* (+ 1.0 beta) x2)))))
-                (loop (cdr xs) (cdr ys) (cons y1 c1) (cons y2 c2))))))))
+                (loop (cdr xs) (cdr ys) (if (null? bs) bs (cdr bs)) (+ i 1)
+                      (cons (pa-clamp y1 b) c1) (cons (pa-clamp y2 b) c2))))))))
 
 ; Polynomial mutation (Deb & Goyal), bounded by the genome's bounds.
 (define (pa-poly-mut g bounds eta pm r)
@@ -962,14 +993,19 @@
                 (loop (cdr xs) (+ i 1)
                       (cons (pa-clamp (+ x (* dq (- hi lo))) b) acc))))))))
 
-(define (pa-tournament entries r)
+; Binary tournament on constrained dominance. The direction table is the
+; state's own: passing (hash) here silently compares a MINIMIZE problem in
+; MAXIMIZE space, so the tournament prefers the worse parent two times out
+; of three and the run drifts instead of converging (#4940).
+(define (pa-tournament entries r dirs)
   (if (null? entries)
       #f
       (let* ((n (length entries))
              (a (list-ref entries (pa-rand-int! r n)))
-             (b (list-ref entries (pa-rand-int! r n))))
-        (cond ((pareto:cd-dominates? a b (hash)) a)
-              ((pareto:cd-dominates? b a (hash)) b)
+             (b (list-ref entries (pa-rand-int! r n)))
+             (opts (hash "dirs" dirs)))
+        (cond ((pareto:cd-dominates? a b opts) a)
+              ((pareto:cd-dominates? b a opts) b)
               ((< (pa-rand! r) 0.5) a)
               (else b)))))
 
@@ -1000,6 +1036,7 @@
           "pm" (pa-num (pa-opt o "pm" (/ 1.0 dim)))
           "objectives" (pa-opt o "objectives" #f)
           "dirs" (pa-opt o "dirs" (list))
+          "ref" (let ((rf (pa-opt o "ref" #f))) (if (list? rf) rf #f))
           "pending" pending "popu" (list) "offspring" (list)
           "measured" (hash) "gen" 0 "slot" pop "nfe" 0)))
 
@@ -1016,17 +1053,18 @@
          (eta-m (pa-opt s "eta-m" 20))
          (pc (pa-opt s "pc" 0.9))
          (pm (pa-opt s "pm" (/ 1.0 dim)))
+         (dirs (pa-opt s "dirs" (list)))
          (seed (pa-opt s "seed" 42)))
     (let loop ((i 0) (acc (list)))
       (if (>= i k)
           (reverse acc)
           (let* ((r (pa-rng seed gen (+ slot0 i)))
-                 (p1 (pa-tournament popu r))
-                 (p2 (pa-tournament popu r))
+                 (p1 (pa-tournament popu r dirs))
+                 (p2 (pa-tournament popu r dirs))
                  (kids (if (and p1 p2)
                            (pa-sbx (evo:candidate-genome (pa-opt p1 "cand" #f))
                                    (evo:candidate-genome (pa-opt p2 "cand" #f))
-                                   eta-c pc r)
+                                   bounds eta-c pc r)
                            (list (pa-genome dim bounds r)
                                  (pa-genome dim bounds r))))
                  (g (pa-poly-mut (if (< (pa-rand-int! r 2) 1)
@@ -1130,9 +1168,12 @@
 (define (nsga2:report s)
   (let* ((front (nsga2:front s))
          (popu (pa-opt s "popu" (list)))
+         (dirs (pa-opt s "dirs" (list)))
+         (ref (pa-opt s "ref" #f))
          (hv (if (null? popu)
                  0.0
-                 (pareto:hypervolume front (list 1.1 1.1) (hash "dirs" (list))))))
+                 (pareto:hypervolume front (if (list? ref) ref (pareto:ref-point front dirs 0.1))
+                                     (hash "dirs" dirs)))))
     (hash "kind" "nsga2" "gen" (pa-opt s "gen" 0) "nfe" (pa-opt s "nfe" 0)
           "pop" (length popu) "front-size" (length front)
           "hypervolume" hv)))

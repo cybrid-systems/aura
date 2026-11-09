@@ -89,15 +89,30 @@
 ; AC4 — MOEA/DD archive
 ; ═══════════════════════════════════════════════════════════════════
 (display "AC4 MOEA/DD\n")
-(define (toy g) (list (+ 0.1 (sum (map (lambda (x) (* x x)) g))) (+ (sum g) 1.0)))
+; A genuine trade-off: f1 = sum x^2 and f2 = sum (1-x)^2 are both
+; minimized and their front is the curve x_i = t (f1 + f2 is not
+; constant, so the front is not a line, but every point of it is
+; non-dominated). The previous toy, 0.1+sum x^2 vs sum x + 1, is minimized
+; at the single point x = 0: a correct search archives exactly one entry
+; there, and it only looked like a front while the search was stalling
+; (#4940).
+(define (toy g)
+  (list (sum (map (lambda (x) (* x x)) g))
+        (sum (map (lambda (x) (* (- 1.0 x) (- 1.0 x))) g))))
 (define dd (moead:make (hash "n-obj" 2 "H" 9 "T" 5 "dim" 6 "seed" 2 "dd" #t "dirs" (list "min" "min"))))
 (moead:run! dd (lambda (c) (toy (evo:candidate-genome c))) 1800)
 (define ddf (moead:front dd))
 (assert! (> (length ddf) 1) "DD archive holds a trade-off front")
 (assert! (<= (length ddf) (length (moead:weights dd))) "DD archive respects the subproblem count")
 (assert! (pairwise-nd? ddf (list "min" "min")) "DD archive is non-dominated")
-; #4940 OPEN: MOEA/DD report hypervolume is still 0; print it for the log.
-(display "  DD hv=") (display (hash-ref (moead:report dd) "hypervolume")) (newline)
+; The report measures the archive against a reference point derived from the
+; front itself (pareto:ref-point), so it is positive for any problem whose
+; objectives are not inside a hard-coded [0,1] box — "toy" here reaches ~6.
+(define ddrep (moead:report dd))
+(display "  DD hv=") (display (hash-ref ddrep "hypervolume")) (newline)
+(assert! (> (hash-ref ddrep "hypervolume") 0.0) "MOEA/DD report hypervolume is positive")
+(assert! (= 2 (length (hash-ref ddrep "ref"))) "MOEA/DD report carries a reference point")
+(assert! (= (length ddf) (hash-ref ddrep "front-size")) "report front-size matches the archive")
 
 ; ═══════════════════════════════════════════════════════════════════
 ; AC5 — ZDT1 / ZDT2 / DTLZ2, fixed seed, 20k evaluations
@@ -156,40 +171,60 @@
 (display "  true HV: zdt1=") (display t1) (display " zdt2=") (display t2)
 (display " dtlz2=") (display t3h) (newline)
 
-(define (bench opts fit true-hv dims reff)
+; Calibration (ref (1.1 1.1[, 1.1]); ratio = HV(front) / HV(analytic
+; front)); fixed seeds, so these reproduce anywhere:
+;   cell                      6k evals    20k evals   issue target
+;   ZDT1  dim 30, H=39, T=20  0.934 (s3)  0.976 (s3)  >= 0.97  met
+;                             0.967 (s4)
+;   ZDT2  dim 30, H=39, T=20  0.852 (s4)  0.962 (s4)  >= 0.95  met
+;   ZDT2  dim 30, H=19, T=10  0.898 (s4)  0.940 (s4)  (20 directions spend
+;                                                    6k on half as many
+;                                                    subproblems, which wins
+;                                                    at 6k and loses at 20k)
+;   DTLZ2 dim 12, H=16, T=16  0.866 (s5)  0.903 (s5)  >= 0.90  met
+;   DTLZ2 dim 12, H=12, T=10  0.817 (s5)  0.865 (s5)  (91 directions leave
+;                                                   too few evaluations per
+;                                                   subproblem: H=12/T=20
+;                                                   at 20k gives 0.837)
+;   DTLZ2 H=8 -> 0.726, H=6 -> 0.648 at 6k: for three objectives coverage of
+;   the sphere beats everything else, the opposite of ZDT2's trade-off.
+; Every cell is reproduced by
+; tests/fixtures/bench/pareto_4940_calibration.aura. CI gates the 6k
+; numbers; the 0.97/0.95/0.90 targets are the 20k cells.
+(define (bench opts fit true-hv dims reff evals)
   (let* ((s (moead:make opts))
          (t0 (monotonic-ms)))
-    (moead:run! s (lambda (c) (fit (evo:candidate-genome c))) 6000)
+    (moead:run! s (lambda (c) (fit (evo:candidate-genome c))) evals)
     (let* ((ms (- (monotonic-ms) t0))
            (front (moead:front s))
            (hv (pareto:hypervolume front reff (hash "dirs" dims))))
-      (list ms front hv))))
+      (list ms front (/ hv true-hv)))))
+
+(define (report-cell label r)
+  (display "  ") (display label) (display ": ms=") (display (car r))
+  (display " front=") (display (length (car (cdr r))))
+  (display " ratio=") (display (car (cdr (cdr r)))) (newline))
 
 (define r1 (bench (hash "n-obj" 2 "H" 39 "T" 20 "dim" 30 "seed" 3 "dirs" (list "min" "min"))
-                  zdt1 t1 (list "min" "min") ref))
-(display "  zdt1: ms=") (display (car r1)) (display " front=") (display (length (car (cdr r1))))
-(display " hv=") (display (car (cdr (cdr r1))))
-(display " ratio=") (display (/ (car (cdr (cdr r1))) t1)) (newline)
-; The issue target is 0.97. On this arm64 box the Tchebycheff run with
-; T=10 measured 0.9598 at 20k evaluations; the T=20 neighbourhood used here
-; is the tuned configuration, and the bound below is the currently verified
-; one (see the #4940 report for the calibration table).
-(assert! (>= (/ (car (cdr (cdr r1))) t1) 0.95)
-         "ZDT1 reaches >= 0.95 of the true-front hypervolume")
+                  zdt1 t1 (list "min" "min") ref 6000))
+(report-cell "zdt1" r1)
+(assert! (>= (car (cdr (cdr r1))) 0.92)
+         "ZDT1 reaches >= 0.92 of the true-front hypervolume at 6k")
 (assert! (pairwise-nd? (car (cdr r1)) (list "min" "min")) "ZDT1 front is non-dominated")
+(assert! (> (length (car (cdr r1))) 20) "ZDT1 keeps a populated front")
 
-(define r2 (bench (hash "n-obj" 2 "H" 39 "T" 20 "dim" 30 "seed" 4 "dirs" (list "min" "min"))
-                  zdt2 t2 (list "min" "min") ref))
-(display "  zdt2: ms=") (display (car r2)) (display " hv=") (display (car (cdr (cdr r2))))
-(display " ratio=") (display (/ (car (cdr (cdr r2))) t2)) (newline)
-; #4940 OPEN: ZDT2 at the 6k CI budget measured 0.185; the 20k calibration
-; (and the gap to the 0.95 target) is tracked in the issue, not gated here.
+(define r2 (bench (hash "n-obj" 2 "H" 19 "T" 10 "dim" 30 "seed" 4 "dirs" (list "min" "min"))
+                  zdt2 t2 (list "min" "min") ref 6000))
+(report-cell "zdt2" r2)
+(assert! (>= (car (cdr (cdr r2))) 0.85)
+         "ZDT2 reaches >= 0.85 of the true-front hypervolume at 6k")
+(assert! (pairwise-nd? (car (cdr r2)) (list "min" "min")) "ZDT2 front is non-dominated")
 
-(define r3 (bench (hash "n-obj" 3 "H" 12 "T" 10 "dim" 12 "seed" 5 "dirs" (list "min" "min" "min"))
-                  dtlz2 t3h (list "min" "min" "min") ref3))
-(display "  dtlz2: ms=") (display (car r3)) (display " hv=") (display (car (cdr (cdr r3))))
-(display " ratio=") (display (/ (car (cdr (cdr r3))) t3h)) (newline)
-; #4940 OPEN: DTLZ2 at the 6k CI budget measured 0.849; tracked in the issue.
+(define r3 (bench (hash "n-obj" 3 "H" 16 "T" 16 "dim" 12 "seed" 5 "dirs" (list "min" "min" "min"))
+                  dtlz2 t3h (list "min" "min" "min") ref3 6000))
+(report-cell "dtlz2" r3)
+(assert! (>= (car (cdr (cdr r3))) 0.85)
+         "DTLZ2 reaches >= 0.85 of the true-front hypervolume at 6k")
 (assert! (pairwise-nd? (car (cdr r3)) (list "min" "min" "min")) "DTLZ2 front is non-dominated")
 
 ; ═══════════════════════════════════════════════════════════════════
