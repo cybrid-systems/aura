@@ -856,13 +856,31 @@
                           "\" cy=\"" (pa-svg-num (py (car (cdr (car ps)))))
                           "\" r=\"3.2\" fill=\"#2563eb\"><title>"
                           (pa-objs-text (car ps)) "</title></circle>"))))
-            (let loop ((ts trail) (acc ""))
-              (if (null? ts)
-                  acc
-                  (loop (cdr ts)
-                        (string-append acc (if (string=? acc) "" " ")
-                                       (pa-svg-num (px (car (car ts)))) ","
-                                       (pa-svg-num (py (car (cdr (car ts)))))))))
+            ; KEEP representative trail (#4940): a real polyline, not bare
+            ; coordinates. Before this the points were appended as text
+            ; content of the <svg>, so nothing was drawn.
+            (if (null? trail)
+                ""
+                (string-append
+                  "<polyline fill=\"none\" stroke=\"#b45309\" stroke-width=\"1.6\" points=\""
+                  (let loop ((ts trail) (acc ""))
+                    (if (null? ts)
+                        acc
+                        (loop (cdr ts)
+                              (string-append acc (if (string=? acc) "" " ")
+                                             (pa-svg-num (px (car (car ts)))) ","
+                                             (pa-svg-num (py (car (cdr (car ts)))))))))
+                  "\"/>"
+                  (let loop ((ts trail) (acc ""))
+                    (if (null? ts)
+                        acc
+                        (loop (cdr ts)
+                              (string-append
+                                acc
+                                "<circle cx=\"" (pa-svg-num (px (car (car ts))))
+                                "\" cy=\"" (pa-svg-num (py (car (cdr (car ts)))))
+                                "\" r=\"2\" fill=\"#b45309\"><title>keep "
+                                (pa-objs-text (car ts)) "</title></circle>"))))))
             "</svg>")))))
 
 ; ═══════════════════════════════════════════════════════════════════

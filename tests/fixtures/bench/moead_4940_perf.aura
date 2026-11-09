@@ -1,0 +1,65 @@
+; Issue #4940 — performance gate for std/moead: ZDT1 (30 dim) at 20 000
+; evaluations must finish in <= 30 s on the reference dev:v1.1.1 x86_64
+; walker. The cell is the AC5 configuration (H=39, T=20, seed 3), so the
+; hypervolume ratio printed here is the same number as the calibration
+; fixture's 20k ZDT1 line.
+;
+;   ./build/aura tests/fixtures/bench/moead_4940_perf.aura
+;   AURA_PERF_GATE=1 ./build/aura tests/fixtures/bench/moead_4940_perf.aura
+;
+; Without AURA_PERF_GATE the timing is measured and printed but never
+; turns the run red: a slow dev container (arm64, shared CI walker) is not
+; a regression on the x86 reference machine. With the variable set the
+; 30 s target is enforced and the process exits non-zero on a miss.
+;
+; Timings are not reproducible; ratios and nfe are (fixed seed).
+;
+; Measured 2026-11-09 on arm64 (orbstack, Linux 7.2.12-orbstack): 111 643 ms,
+; ratio 0.9762, nfe 20000 — the HV target is met, the 30 s perf target is
+; not met on that box, and the x86_64 reference walker was not available here.
+
+(require "std/moead" all:)
+(require "std/pareto" all:)
+
+(define (sum xs) (let loop ((ys xs) (a 0.0)) (if (null? ys) a (loop (cdr ys) (+ a (car ys))))))
+(define (zdt1 g)
+  (let* ((x1 (car g)) (rest (cdr g)) (nn (length rest))
+         (gg (+ 1.0 (* 9.0 (/ (sum rest) nn)))) (f1 x1))
+    (list f1 (* gg (- 1.0 (sqrt (/ f1 gg)))))))
+(define (front1 n)
+  (let loop ((i 0) (acc (list)))
+    (if (>= i n) (reverse acc)
+        (let ((x (/ (* 1.0 i) (- n 1.0))))
+          (loop (+ i 1) (cons (list x (- 1.0 (sqrt x))) acc))))))
+(define ref (list 1.1 1.1))
+(define dmin (hash "dirs" (list "min" "min")))
+(define true-hv (pareto:hypervolume (front1 1001) ref dmin))
+
+(define s (moead:make (hash "n-obj" 2 "H" 39 "T" 20 "dim" 30 "seed" 3
+                            "dirs" (list "min" "min"))))
+(define t0 (monotonic-ms))
+(moead:run! s (lambda (c) (zdt1 (evo:candidate-genome c))) 20000)
+(define ms (- (monotonic-ms) t0))
+(define rep (moead:report s))
+(define hv (pareto:hypervolume (map (lambda (e) (hash-ref e "objs")) (moead:front s))
+                              ref dmin))
+(define machine (let ((m (getenv "AURA_BENCH_MACHINE"))) (if (string? m) m "unset")))
+(display "moead zdt1 20000 machine=") (display machine)
+(display " ms=") (display ms)
+(display " nfe=") (display (hash-ref rep "nfe"))
+(display " ratio=") (display (/ hv true-hv)) (newline)
+(define target-ms 30000)
+(define gate-on
+  (let ((v (getenv "AURA_PERF_GATE")))
+    (and (string? v) (not (string=? v ""))
+         (not (string=? (string-downcase v) "0")))))
+(if gate-on
+    (if (<= ms target-ms)
+        (begin (display "PERF ok: ") (display ms) (display " ms <= ")
+               (display target-ms) (display " ms (x86_64 target)") (newline))
+        (begin (display "PERF FAIL: ") (display ms) (display " ms > ")
+               (display target-ms) (display " ms (x86_64 target)") (newline)
+               (error "4940 perf target missed")))
+    (begin (display "PERF note: measured ") (display ms)
+           (display " ms; set AURA_PERF_GATE=1 to enforce the 30 s x86 target")
+           (newline)))

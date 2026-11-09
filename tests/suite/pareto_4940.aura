@@ -168,6 +168,13 @@
 (assert! (not (= -1 (string-index svg "<svg" 0))) "report svg opens an svg element")
 (assert! (not (= -1 (string-index svg "<circle" 0))) "report svg draws the front")
 (assert! (not (= -1 (string-index svg "0.5" 0))) "report svg carries coordinates")
+; #4940: the KEEP representative trail must be drawn (a <polyline> plus its
+; markers), not emitted as bare text inside the <svg>. The old loop appended
+; "x,y x,y" with no element around it, so the trail was invisible.
+(assert! (not (= -1 (string-index svg "<polyline" 0))) "report svg draws the KEEP trail")
+(assert! (not (= -1 (string-index svg "<title>keep" 0))) "report svg marks the KEEP points")
+(define svg-plain (pareto:report-svg (pareto:front g) (hash)))
+(assert! (= -1 (string-index svg-plain "<polyline" 0)) "no trail, no polyline")
 
 ; ═══════════════════════════════════════════════════════════════════
 ; AC5 — NSGA-II on ZDT1
