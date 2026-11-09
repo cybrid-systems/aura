@@ -1,0 +1,124 @@
+; lib/std/diagnose.aura — error-string → fix plan (#5006)
+; 
+; The engine registers `diagnose` as a deprecated alias for one release
+; cycle; this module is the replacement. The input is an error string as the
+; Agent sees it, the output is either #f (nothing to say) or a five-element
+; list:
+; 
+;   (cause target fix-type fix-data explanation)
+; 
+; Pure: no engine state, no host effect — a table lookup plus substring
+; matching over the message. std/agent:recover-plan consumes the plan and the
+; kernel `agent:recover-from-error` applies it under a Guard.
+; 
+; Import: (require "std/diagnose" all:)   → (diagnose msg)
+;         (require std/diagnose)          → (std/diagnose:diagnose msg)
+
+(export diagnose)
+
+(require "std/string" all:)
+
+; ── helpers ────────────────────────────────────────────────────
+
+; string-index with the C++ find() contract: an over-long needle is -1.
+(define (diagnose-find haystack needle)
+  (if (> (string-length needle) (string-length haystack))
+    -1
+    (string-find haystack needle)))
+
+(define (diagnose-has? haystack needle)
+  (>= (diagnose-find haystack needle) 0))
+
+; Trailing punctuation is not part of an unbound name.
+(define (diagnose-target s)
+  (let loop ((n (string-length s)))
+    (if (= n 0)
+      ""
+      (let ((c (string-ref s (- n 1))))
+        (if (or (= c 46) (= c 33) (= c 63) (= c 58)) ; . ! ? :
+          (loop (- n 1))
+          (substring s 0 n))))))
+
+(define (diagnose-plan cause target fix data explanation)
+  (list cause target fix data explanation))
+
+; Known unbound variable → the module that defines it.
+; (name module explanation)
+(define *diagnose-unbound-fixes*
+  (list
+    (list "for-each" "std/list" "Add (require \"std/list\" all:) to use for-each")
+    (list "map" "std/list" "Add (require \"std/list\" all:) to use map")
+    (list "filter" "std/list" "Add (require \"std/list\" all:) to use filter")
+    (list "foldl" "std/list" "Add (require \"std/list\" all:) to use foldl")
+    (list "make-hash" "std/hash" "Add (require \"std/hash\" all:) to use make-hash")
+    (list "hash-ref" "std/hash" "Add (require \"std/hash\" all:) to use hash-ref")
+    (list "rule:define" "std/rule" "Add (require \"std/rule\" all:) to use rule:define")
+    (list "define-type" "std/data" "Add (require \"std/data\" all:) to use define-type")
+    (list "c-func" "std/ffi" "Add (require \"std/ffi\" all:) to use c-func")))
+
+(define (diagnose-unbound-fix target)
+  (let loop ((rows *diagnose-unbound-fixes*))
+    (cond ((null? rows) #f)
+          ((equal? (car (car rows)) target)
+           (diagnose-plan "missing-require" target "add-require"
+                          (car (cdr (car rows)))
+                          (car (cdr (cdr (car rows))))))
+          (else (loop (cdr rows))))))
+
+; ── classify ───────────────────────────────────────────────────
+
+; Unbound variable: known symbol → module; unknown → define-or-require.
+(define (diagnose-unbound msg)
+  (define tag "unbound variable: ")
+  (define at (diagnose-find msg tag))
+  (if (< at 0)
+    #f
+    (let ((target (diagnose-target
+                    (substring msg (+ at (string-length tag)) (string-length msg)))))
+      (let ((known (diagnose-unbound-fix target)))
+        (if known
+          known
+          (diagnose-plan "unbound-variable" target "define-or-require" ""
+                         (string-append "Define '" target
+                                        "' with (define ...) or add the right (require ...)")))))))
+
+; ── public ─────────────────────────────────────────────────────
+
+(define (diagnose msg)
+  (if (not (string? msg))
+    #f
+    (let ((unbound (diagnose-unbound msg)))
+      (cond
+        (unbound unbound)
+        ((diagnose-has? msg "type error: cannot call: ")
+         (let* ((tag "type error: cannot call: ")
+                (at (diagnose-find msg tag))
+                (target (diagnose-target
+                          (substring msg (+ at (string-length tag)) (string-length msg)))))
+           (diagnose-plan "type-error-unbound" target "define-function" ""
+                          (string-append "Define the function '" target
+                                         "' before calling it"))))
+        ((or (diagnose-has? msg "parse error") (diagnose-has? msg "expected expression"))
+         (diagnose-plan "parse-error" "" "fix-syntax"
+                        (substring msg 0 (if (> (string-length msg) 60) 60 (string-length msg)))
+                        "Check syntax: unbalanced parens, missing quotes, or wrong form"))
+        ((or (diagnose-has? msg "procedure") (diagnose-has? msg "uncalled function"))
+         (diagnose-plan "closure-no-display" "" "add-display" ""
+                        "Add (display (your-function args)) at the end of your code"))
+        ; #2917 / #2916: soft heap / resource quota — raise the limit.
+        ((diagnose-has? msg "prim-heap-quota:")
+         (let ((dim (cond ((diagnose-has? msg "strings") "strings")
+                          ((diagnose-has? msg "vectors") "vectors")
+                          (else "pairs"))))
+           (diagnose-plan "prim-heap-quota" dim "raise-quota" dim
+                          (string-append "Raise (resource:quota-set \"" dim
+                                         "\" N) or free heap pressure before retrying"))))
+        ((or (diagnose-has? msg "quota exceeded") (diagnose-has? msg "resource quota"))
+         (diagnose-plan "resource-quota" "" "raise-quota" "memory"
+                        "Raise resource:quota-set limit or reduce concurrent work"))
+        ((and (diagnose-has? msg "type")
+              (or (diagnose-has? msg "mismatch") (diagnose-has? msg "error")
+                  (diagnose-has? msg "deny")))
+         (diagnose-plan "type-mismatch" "" "clear-hold-or-rewrite" ""
+                        "Clear strict hold via recover or rewrite the offending mutate"))
+        (else #f)))))

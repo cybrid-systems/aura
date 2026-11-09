@@ -17,6 +17,8 @@
 (require "std/ant" all:)
 (require "std/extract" all:)
 (require "std/adaptive" all:)
+; #5006: check-success is a std function; the kernel name is a deprecated alias.
+(require "std/test")
 
 (export print-report run-one run-parallel)
 
@@ -64,7 +66,7 @@
                code))
            (actual (begin (set-code full-code) (eval-current-output)))
            (actual-str actual))
-      (if (check-success actual-str expects)
+      (if (test:check-success actual-str expects)
         "#t"
         (string-append "expected: " expected-str " got: " actual-str))))
 

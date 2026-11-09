@@ -1,0 +1,113 @@
+; Issue #5006 — the bare-name walk half: the names that leave are reachable
+; through a verb or a std library function, and the deprecated registration
+; still answers the same way for one release cycle.
+;
+; Pinned here:
+;   reads   (query :api-reference) (query :arena-offset) (query :auto-rollback-on-panic)
+;   writes  (mutate :auto-rollback-on-panic …) (mutate :define-strategy …)
+;           (mutate :define-struct …)
+;   std     (diagnose …) via std/diagnose, (check-success …) via std/test
+;   keep    agent:recover-from-error stays the kernel recovery primitive and
+;           std/agent:recover! wraps it.
+
+(define fails5006 0)
+(define (ok5006 cond name)
+  (if cond
+      #t
+      (begin (set! fails5006 (+ fails5006 1))
+             (display "FAIL-5006 ") (display name) (newline))))
+
+; ── 1. reads are query ops ─────────────────────────────────────
+(ok5006 (integer? (query :arena-offset)) "query :arena-offset is an int")
+(ok5006 (= (query :arena-offset) (arena-offset))
+        "query :arena-offset agrees with the deprecated alias")
+(ok5006 (string? (query :api-reference)) "query :api-reference is a string")
+(ok5006 (>= (string-find (query :api-reference) "Available Aura primitives") 0)
+        "query :api-reference prints the table")
+(ok5006 (boolean? (query :auto-rollback-on-panic))
+        "query :auto-rollback-on-panic is a bool")
+(ok5006 (eq? (query :auto-rollback-on-panic) (panic-auto-rollback?))
+        "query :auto-rollback-on-panic agrees with panic-auto-rollback?")
+
+; ── 2. writes are mutate ops ──────────────────────────────────
+(define prev5006 (mutate :auto-rollback-on-panic #t))
+(ok5006 (boolean? prev5006) "mutate :auto-rollback-on-panic returns the old flag")
+(ok5006 (eq? (query :auto-rollback-on-panic) #t)
+        "mutate :auto-rollback-on-panic sets the flag")
+(mutate :auto-rollback-on-panic prev5006)
+(ok5006 (eq? (query :auto-rollback-on-panic) prev5006)
+        "mutate :auto-rollback-on-panic restores the flag")
+(ok5006 (eq? #t (mutate :define-strategy "std-bare-strategy" "(phase generate 1)"))
+        "mutate :define-strategy records a strategy")
+(ok5006 (eq? #t (mutate :define-struct "StdBare" "doc" "f:int"))
+        "mutate :define-struct accepts name/doc/schema")
+(ok5006 (eq? #f (mutate :define-struct "only-name"))
+        "mutate :define-struct refuses a short arg list")
+
+; ── 3. the deprecated registrations still answer ──────────────
+(ok5006 (eq? (define-strategy "std-bare-strategy-2" "(phase check 1)") #t)
+        "deprecated define-strategy alias still answers")
+(ok5006 (eq? (edsl:define-struct "AliasStruct" "doc" "f:int") #t)
+        "deprecated edsl:define-struct alias still answers")
+
+; ── 4. the deprecated names are listed as deprecated ──────────
+(define ref5006 (query :api-reference))
+(ok5006 (>= (string-find ref5006 "*deprecated*") 0)
+        "api-reference carries a deprecated section")
+(ok5006 (>= (string-find ref5006 "[use (engine:metrics \"edsl:define-struct\")]") 0)
+        "the deprecated section flags edsl:define-struct")
+(ok5006 (>= (string-find ref5006 "[use (engine:metrics \"define-strategy\")]") 0)
+        "the deprecated section flags define-strategy")
+(ok5006 (>= (string-find ref5006 "[use (engine:metrics \"diagnose\")]") 0)
+        "the deprecated section flags diagnose")
+
+; The public orch: surface is exactly the five verbs: the rest of the prefix
+; is listed only under *deprecated*.
+(define public5006 (substring ref5006 0 (string-find ref5006 "*deprecated*")))
+(ok5006 (>= (string-find public5006 "  orch:spawn\n") 0)
+        "public surface keeps orch:spawn")
+(ok5006 (= -1 (string-find public5006 "orch:compose-workflow"))
+        "public surface drops orch:compose-workflow")
+(ok5006 (= -1 (string-find public5006 "orch:supervise-batch"))
+        "public surface drops orch:supervise-batch")
+
+; ── 5. std replacements ───────────────────────────────────────
+(require "std/diagnose" all:)
+(ok5006 (equal? (car (diagnose "unbound variable: map")) "missing-require")
+        "std/diagnose classifies a known unbound symbol")
+(ok5006 (equal? (diagnose "unbound variable: no-such-name")
+                (list "unbound-variable" "no-such-name" "define-or-require" ""
+                      "Define 'no-such-name' with (define ...) or add the right (require ...)"))
+        "std/diagnose is a proper five-element plan")
+(ok5006 (equal? (diagnose "random message") #f) "std/diagnose says #f when it has nothing")
+(ok5006 (equal? (diagnose "type error: cannot call: ffi-sqrt")
+                (list "type-error-unbound" "ffi-sqrt" "define-function" ""
+                      "Define the function 'ffi-sqrt' before calling it"))
+        "std/diagnose classifies an unbound call")
+(ok5006 (equal? (car (diagnose "parse error: expected expression")) "parse-error")
+        "std/diagnose classifies a parse error")
+(ok5006 (equal? (diagnose 42) #f) "std/diagnose refuses a non-string")
+
+(require "std/test" all:)
+(ok5006 (eq? (check-success "42" (list "42")) #t) "std/test check-success hit")
+(ok5006 (eq? (check-success "hello" (list "42")) #f) "std/test check-success miss")
+(ok5006 (eq? (check-success "parse error: expected expression" (list "error")) #f)
+        "std/test check-success refuses a generic word in error output")
+(ok5006 (eq? (check-success "expected Define, got Int" (list "Define")) #t)
+        "std/test check-success accepts a long keyword")
+(ok5006 (eq? (check-success (void) (list "42")) #f)
+        "std/test check-success refuses a non-string output")
+(ok5006 (eq? (check-success "whatever" (list)) #f)
+        "std/test check-success refuses an empty expected list")
+(ok5006 (eq? (check-success "\"42\"" (list "42")) #t)
+        "std/test check-success ignores surrounding quotes")
+
+; ── 6. agent:recover-from-error stays kernel ──────────────────
+(define rec5006 (agent:recover-from-error "unbound variable: map"
+                                          "(map (lambda (x) x) (list 1 2 3))"))
+(ok5006 (pair? rec5006) "agent:recover-from-error still returns a result list")
+(ok5006 (boolean? (car rec5006)) "agent:recover-from-error reports ok as a bool")
+
+(if (= fails5006 0)
+    (display "OK-5006 bare names\n")
+    (exit 1))

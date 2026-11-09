@@ -10,6 +10,78 @@
 ;
 ;   (run-tests)  → evaluate and print summary
 
+; Issue #5006: `check-success` is a std function, not a kernel primitive.
+; The engine registration stays for one release cycle as a deprecated alias;
+; requiring this module installs the implementation that wins at call time.
+(export check-success test-suite)
+
+; (check-success output expected) → #t | #f
+;
+; True when `output` contains at least one of the `expected` keywords, with
+; two guards so a failure message cannot read as a success:
+;   - inside error-like output a short keyword must sit on a word boundary,
+;     and the five generic words (error / kind / parse / syntax / type) never
+;     match;
+;   - `output` must be a string and `expected` a non-empty list of strings.
+; One pair of surrounding quotes on the output is ignored, so "42" and 42
+; formed captures compare the same way.
+
+(define test-generic-error-word?
+  (lambda (kw)
+    (or (string=? kw "error") (string=? kw "kind") (string=? kw "parse")
+        (string=? kw "syntax") (string=? kw "type"))))
+
+; [A-Za-z0-9_] — the C++ std::isalnum + underscore boundary set.
+(define (test-word-char? c)
+  (or (char-alphabetic? c) (char-numeric? c) (= c 95)))
+
+(define (test-trim-quotes s)
+  (let* ((n (string-length s))
+         (s1 (if (and (> n 0) (or (= (string-ref s 0) 34) (= (string-ref s 0) 39)))
+               (substring s 1 n)
+               s))
+         (n1 (string-length s1)))
+    (if (and (> n1 0) (or (= (string-ref s1 (- n1 1)) 34) (= (string-ref s1 (- n1 1)) 39)))
+      (substring s1 0 (- n1 1))
+      s1)))
+
+(define (test-error-like? lower)
+  (or (>= (string-find lower "error:") 0)
+      (>= (string-find lower "parse error") 0)
+      (>= (string-find lower "unbound variable") 0)
+      (>= (string-find lower "type error") 0)
+      (>= (string-find lower "syntax error") 0)
+      (>= (string-find lower "invalid syntax") 0)
+      (>= (string-find lower "expected expression") 0)
+      (and (> (string-length lower) 1)
+           (= (string-ref lower 0) 40)   ; (
+           (= (string-ref lower 1) 34)))) ; "
+
+; A short keyword inside error output must be a whole word.
+(define (test-word-boundary? text kw)
+  (let* ((pos (string-find text kw))
+         (len (string-length kw))
+         (n (string-length text)))
+    (and (if (> pos 0) (not (test-word-char? (string-ref text (- pos 1)))) #t)
+         (if (< (+ pos len) n) (not (test-word-char? (string-ref text (+ pos len)))) #t))))
+
+(define (check-success output expected)
+  (if (or (not (string? output)) (not (pair? expected)))
+    #f
+    (let* ((norm (test-trim-quotes output))
+           (lower (string-downcase norm))
+           (err (test-error-like? lower)))
+      (let loop ((xs expected))
+        (cond ((null? xs) #f)
+              ((not (string? (car xs))) (loop (cdr xs)))
+              ((< (string-find norm (car xs)) 0) (loop (cdr xs)))
+              ((and err (<= (string-length (car xs)) 5))
+               (if (or (test-generic-error-word? (car xs))
+                       (not (test-word-boundary? norm (car xs))))
+                 (loop (cdr xs))
+                 #t))
+              (else #t))))))
+
 ; test-suite macro: stores check forms as quoted data for run-tests.
 ; (run-tests) evaluates each stored form one by one.
 ; Format: ("name" form1 form2 ...) as flat pair chain.

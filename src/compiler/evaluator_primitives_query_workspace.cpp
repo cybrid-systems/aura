@@ -5019,6 +5019,18 @@ void register_workspace_query_dispatch_parts(WorkspaceQueryPrims& P, PrimRegistr
         if (op == "fiber-backend" || op == "spawn-backend")
             return call_named("fiber:spawn-backend", rest);
 
+        // Issue #5006: bare names that read engine state are ops of this verb.
+        // The bare registration stays for one release cycle as a deprecated
+        // alias (#5008 channel); (api-reference) prints the registered table,
+        // (arena-offset) the thread-local arena bump offset, and
+        // (auto-rollback-on-panic) the panic rollback flag.
+        if (op == "api-reference")
+            return call_named("api-reference", std::span<const EvalValue>());
+        if (op == "arena-offset")
+            return call_named("arena-offset", std::span<const EvalValue>());
+        if (op == "auto-rollback-on-panic" || op == "panic-auto-rollback")
+            return call_named("panic-auto-rollback?", std::span<const EvalValue>());
+
         // Issue #5009: the long tail of reads shares this one verb. An op that
         // carried a prefix is the primitive name itself ("ast:stable-ref");
         // a bare op is resolved against the retired read prefixes in a fixed

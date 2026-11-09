@@ -118,6 +118,31 @@ namespace {
         "runtime:", "ir-cache-v2:", "jit:",      "hygiene:",     "arena:",     "orchestration:",
     };
 
+    // Issue #5006: bare names that are not kernel. Each one keeps its
+    // registration for one release cycle (the #5008 alias window) and carries
+    // the replacement in its doc hint, so the walk to the new spelling is
+    // mechanical. A name is listed here only once the replacement exists:
+    //   - a std library function (std/diagnose, std/test), or
+    //   - a query / mutate op over engine state.
+    // docs/stdlib/primitive-authoring-contract.md carries the keep/leave table
+    // and docs/stdlib/primitive-tiers.json the same flag, so docs, runtime and
+    // the tier gate agree.
+    struct RetiredBare5006 {
+        std::string_view name;
+        std::string_view replaces;
+    };
+
+    constexpr RetiredBare5006 kRetiredBare5006[] = {
+        {"diagnose", "(require \"std/diagnose\" all:) then (diagnose error-string)"},
+        {"check-success", "(require \"std/test\" all:) then (check-success output expected)"},
+        {"api-reference", "(query :api-reference)"},
+        {"arena-offset", "(query :arena-offset)"},
+        {"auto-rollback-on-panic",
+         "(mutate :auto-rollback-on-panic #t|#f) / (query :auto-rollback-on-panic)"},
+        {"define-strategy", "(mutate :define-strategy name body …)"},
+        {"edsl:define-struct", "(mutate :define-struct name doc schema)"},
+    };
+
     // Issue #5006: the five public orchestration verbs. Everything else in orch:
     // moves to std/orch.
     bool is_orch_verb_5006(std::string_view name) noexcept {
@@ -159,6 +184,17 @@ namespace {
                     "orch:spawn/send/recv/join/cancel.");
                 continue;
             }
+            for (const auto& bare : kRetiredBare5006) {
+                if (view != bare.name)
+                    continue;
+                retire_name(prims, slot,
+                            "DEPRECATED (#5006): use " + std::string(bare.replaces) +
+                                " — this name retires after the v0.2.0 alias window.");
+                retired = true;
+                break;
+            }
+            if (retired)
+                continue;
             for (const auto single : kRetiredSingles5006) {
                 if (!view.starts_with(single))
                     continue;
@@ -289,6 +325,13 @@ void Evaluator::register_all_primitives() {
 
     // Issue #5009: after every group has registered, retire the duplicate
     // read/write prefixes from the public surface (deprecated, not deleted).
+    mark_retired_surfaces(primitives_);
+}
+
+void Evaluator::retire_public_surface_names() {
+    // Issue #5006: the ctor registers the agent / EDSL groups after
+    // register_all_primitives(), so the sweep runs again once every name
+    // exists. Idempotent: retire_name only writes the meta it already set.
     mark_retired_surfaces(primitives_);
 }
 
