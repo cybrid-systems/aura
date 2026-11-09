@@ -65,6 +65,7 @@
         prop:audit prop:audit-add prop:audit-entries prop:audit-count
         prop:prompt
         prop:set-select prop:set-select-report prop:coverage
+        prop:moead-operator
         prop:uct prop:c-effective prop:widening-limit
         prop:tree-report prop:tree-backprop! prop:tree-node prop:tree-nodes
         prop:guard-report)
@@ -1452,10 +1453,68 @@
                              (if (hash? m) m (hash))))))))))
 
 ; ═══════════════════════════════════════════════════════════════════
+; Adapter to the std/moead operator slot (#4942)
+; ═══════════════════════════════════════════════════════════════════
+; (moead:make (hash "operator" (prop:moead-operator p (hash "defines" (list "score")))
+;                   "init-genome" "(define (score x) ...)"))
+; moead calls an operator as (op s gen slot r). The adapter builds the
+; proposer ctx from that state: the kit genome is the base the grammar
+; mutates, the subproblem's current candidate is the parent, and seed /
+; gen / slot / rng come from the search, so the same seed reproduces the
+; same proposals. An empty string means "no proposal": the caller's
+; evaluator marks it infeasible and it never enters the front.
+(define (prop-moead-pop s)
+  (let ((p (prop-opt s "pop" (list)))) (if (list? p) p (list))))
+
+(define (prop-moead-base s)
+  (let ((ig (prop-opt s "init-genome" #f)))
+    (if (string? ig)
+        ig
+        (let ((pop (prop-moead-pop s)))
+          (if (and (pair? pop) (hash? (car pop)))
+              (let ((c (prop-opt (car pop) "cand" #f)))
+                (if (hash? c) (prop-opt c "genome" #f) #f))
+              #f)))))
+
+(define (prop-moead-parents s slot)
+  (let ((pop (prop-moead-pop s)))
+    (if (and (pair? pop) (hash? (car pop)))
+        (let* ((n (length pop))
+               (i (if (< slot n) slot 0))
+               (e (list-ref pop i))
+               (c (prop-opt e "cand" #f)))
+          (if (hash? c)
+              (list (hash "id" (prop-opt c "id" "")
+                          "genome" (prop-opt c "genome" #f)))
+              (list)))
+        (list))))
+
+(define (prop:moead-operator p . rest)
+  (let* ((o (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
+         (explicit (prop-opt o "defines" (list)))
+         (goal (prop-opt o "goal" (hash))))
+    (lambda (s gen slot rng)
+      (let* ((base (prop-moead-base s))
+             (derived (if (string? base) (prop:genome-defines base) (list)))
+             (defs (cond ((and (list? explicit) (not (null? explicit))) explicit)
+                         ((list? derived) derived)
+                         (else (list))))
+             (ctx (prop:ctx (hash "defines" defs
+                                   "base" (if (string? base) base #f)
+                                   "parents" (prop-moead-parents s slot)
+                                   "goal" (if (hash? goal) goal (hash))
+                                   "gen" gen "slot" slot
+                                   "seed" (prop-opt s "seed" 42)
+                                   "rng" rng
+                                   "audit" (prop-opt o "audit" #f))))
+             (ps (prop:propose p ctx)))
+        (if (null? ps) "" (prop-opt (car ps) "genome" ""))))))
+
+; ═══════════════════════════════════════════════════════════════════
 ; Help
 ; ═══════════════════════════════════════════════════════════════════
 
 (define (prop:schema) prop-schema-version)
 
 (define (prop:help)
-  "std/proposer (#4942): EoH/ReEvo/MCTS-AHD/EoH-S proposers as callables (p ctx) -> proposals; mock/grammar are LLM-free and reproducible from (seed, gen, slot); the scope guard refuses writes outside ctx defines. (define p (prop:grammar (hash \"seed\" 7))) (p (prop:ctx (hash \"defines\" (list \"score\"))))")
+  "std/proposer (#4942): EoH/ReEvo/MCTS-AHD/EoH-S proposers as callables (p ctx) -> proposals; mock/grammar are LLM-free and reproducible from (seed, gen, slot); the scope guard refuses writes outside ctx defines. (define p (prop:grammar (hash \"seed\" 7))) (p (prop:ctx (hash \"defines\" (list \"score\")))). (prop:moead-operator p opts) adapts a proposer to the std/moead \"operator\" slot.")

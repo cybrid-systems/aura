@@ -39,7 +39,7 @@
 (define moead-schema-version 1)
 
 (define (moead:help)
-  "std/moead (#4940): (moead:make (hash \"n-obj\" 2 \"H\" 39 \"T\" 10 \"scalar\" \"tchebycheff\" \"operator\" \"de\" \"dim\" 30)) -> s; (moead:ask s 40) -> candidates; (moead:tell! s cands objs) -> #t; (moead:run! s eval 20000) -> s; (moead:front s) (moead:weights s). Scalars: tchebycheff | pbi | ws. dd #t turns on the MOEA/DD dominance+decomposition archive.")
+  "std/moead (#4940): (moead:make (hash \"n-obj\" 2 \"H\" 39 \"T\" 10 \"scalar\" \"tchebycheff\" \"operator\" \"de\" \"dim\" 30)) -> s; (moead:ask s 40) -> candidates; (moead:tell! s cands objs) -> #t; (moead:run! s eval 20000) -> s; (moead:front s) (moead:weights s). Scalars: tchebycheff | pbi | ws. dd #t turns on the MOEA/DD dominance+decomposition archive. \"operator\" also accepts a proposal callable (s gen slot r) -> genome|hash (#4942: prop:moead-operator), and \"init-genome\" seeds a code-genome population from source text.")
 
 (define (moead:schema) moead-schema-version)
 
@@ -64,16 +64,40 @@
   (let loop ((ys xs) (i 0) (h (hash)))
     (if (null? ys) h (begin (hash-set! h i (car ys)) (loop (cdr ys) (+ i 1) h)))))
 
+(define (md-fp-mix a b v)
+  (list (modulo (+ (* (modulo a 1000003) 31) (modulo v 1000003)) 2147483647)
+        (modulo (+ (* (modulo b 1000033) 131) (modulo v 1000033)) 2147483629)))
+
+(define (md-fp-text s)
+  ; Code genomes (#4942) are source text, not numeric vectors: hashing only
+  ; the numbers would give every string the same "empty" fingerprint.
+  (let loop ((i 0) (a 2166136261) (b 5381))
+    (if (>= i (string-length s))
+        (list a b)
+        (let ((ab (md-fp-mix a b (char->integer (string-ref s i)))))
+          (loop (+ i 1) (car ab) (car (cdr ab)))))))
+
 (define (md-fingerprint g)
-  (let loop ((xs g) (a 2166136261) (b 5381))
-    (if (null? xs)
-        (string-append "n" (number->string a) "_" (number->string b))
-        (let* ((v (if (number? (car xs))
-                      (inexact->exact (floor (* 1000000.0 (md-num (car xs)))))
-                      0))
-               (a2 (modulo (+ (* (modulo a 1000003) 31) (modulo v 1000003)) 2147483647))
-               (b2 (modulo (+ (* (modulo b 1000033) 131) (modulo v 1000033)) 2147483629)))
-          (loop (cdr xs) a2 b2)))))
+  (cond
+    ((string? g)
+     (let ((ab (md-fp-text g)))
+       (string-append "s" (number->string (car ab)) "_" (number->string (car (cdr ab))))))
+    ((not (list? g)) "n0_0")
+    (else
+     (let loop ((xs g) (a 2166136261) (b 5381))
+       (if (null? xs)
+           (string-append "n" (number->string a) "_" (number->string b))
+           (let* ((x (car xs))
+                  ; A nested form (a corpus list, a kit record) is folded
+                  ; through its printed parts instead of collapsing to 0.
+                  (v (cond ((number? x)
+                            (inexact->exact (floor (* 1000000.0 (md-num x)))))
+                           ((string? x) (car (md-fp-text x)))
+                           ((symbol? x) (car (md-fp-text (symbol->string x))))
+                           ((list? x) (string-length (number->string (length x))))
+                           (else 0)))
+                  (ab (md-fp-mix a b v)))
+             (loop (cdr xs) (car ab) (car (cdr ab)))))))))
 
 (define (md-candidate g opts)
   (hash-set! opts "id" (md-fingerprint g))
@@ -349,11 +373,17 @@
          (dirs (let ((d (md-opt o "dirs" (list))))
                  (if (list? d) d (list))))
          (r (md-rng seed 0 0))
+         ; A code operator (#4942: prop:grammar) needs a source-text
+         ; population, not a numeric vector. "init-genome" seeds every
+         ; subproblem from the caller's kit genome; without it the numeric
+         ; DE/SBX init below is unchanged.
+         (init (let ((g (md-opt o "init-genome" #f)))
+                 (if (string? g) g #f)))
          (pop (let loop ((i 0) (acc (list)))
                 (if (>= i n)
                     (reverse acc)
                     (loop (+ i 1)
-                          (cons (hash "cand" (md-candidate (md-genome dim bounds r)
+                          (cons (hash "cand" (md-candidate (if init init (md-genome dim bounds r))
                                                           (hash "gen" 0 "slot" i))
                                       "objs" (list)
                                       "sub" i)
@@ -368,6 +398,7 @@
           "nr" (md-opt o "nr" 2) "delta" (md-num (md-opt o "delta" 0.9))
           "operator" (md-opt o "operator" "de")
           "proposer" (md-opt o "proposer" #f)
+          "init-genome" init
           "dd" (eq? (md-opt o "dd" #f) #t)
           "ref" (let ((rf (md-opt o "ref" #f))) (if (list? rf) rf #f))
           "dirs" dirs "objectives" (md-opt o "objectives" #f)
@@ -395,8 +426,11 @@
     (if (hash? c) (md-opt c "genome" (list)) (list))))
 
 
-; one proposal for subproblem sub
-(define (moead-propose s sub r)
+; One proposal for subproblem sub. slot is the candidate's slot inside the
+; current batch: a code operator (#4942) draws its (seed, gen, slot)
+; stream from it, so two candidates in one batch must not share a slot or
+; they mutate to the same genome.
+(define (moead-propose s sub slot r)
   (let* ((op (md-opt s "operator" "de"))
          (dim (md-opt s "dim" 10))
          (bounds (md-opt s "bounds" (list (list 0.0 1.0))))
@@ -416,8 +450,19 @@
          (bg (md-genome-of base))
          (pf (md-opt s "proposer" #f)))
     (cond
+      ; "operator" may itself be a proposal callable (#4942): the call
+      ; shape is (op s gen slot r) -> genome | (hash "genome" ...), the
+      ; same one the "proposer" field accepts. A string operator keeps
+      ; the numeric DE/SBX paths below; one code operator and one numeric
+      ; operator can therefore live in the same search.
+      ((procedure? op)
+       (let ((raw (op s (md-opt s "gen" 0) slot r)))
+         (cond ((hash? raw) (md-opt raw "genome" ""))
+               ((string? raw) raw)
+               ((list? raw) raw)
+               (else ""))))
       ((procedure? pf)
-       (let ((raw (pf s (md-opt s "gen" 0) (md-opt s "slot" 0) r)))
+       (let ((raw (pf s (md-opt s "gen" 0) slot r)))
          (if (hash? raw) (md-opt raw "genome" (list)) raw)))
       ((and (string? op) (string=? op "sbx"))
        (let* ((i2 (md-rand-int! r (length nbrs)))
@@ -511,7 +556,7 @@
               (reverse acc)
               (let* ((sub (modulo (+ (* gen 3) slot0 i) n))
                      (r (md-rng (md-opt s "seed" 42) gen (+ slot0 i)))
-                     (g (moead-propose s sub r))
+                     (g (moead-propose s sub (+ slot0 i) r))
                      (base (md-pop-at s sub))
                      (c (md-candidate g (hash "gen" gen "slot" (+ slot0 i)
                                               "meta" (hash "sub" sub)

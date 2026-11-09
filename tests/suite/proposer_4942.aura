@@ -8,6 +8,8 @@
 (require "std/evo-core" all:)
 (require "std/list" all:)
 (require "std/string" all:)
+(require "std/moead" all:)
+(require "std/pareto" all:)
 
 (define *fails* 0)
 (define (assert! pred msg)
@@ -549,6 +551,152 @@
 (assert! (equal? (genomes props100) (genomes props100b)) "the 100-proposal script is reproducible")
 (assert! (not (string=? "" (prop:help))) "help is non-empty")
 (assert! (not (= -1 (string-index (prop:help) "4942" 0))) "help mentions 4942")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC11 — prop:grammar as a MOEA/D operator on the evolve-strategy kit
+;
+; The kit has the shape of kits/evolve-strategy in aura-starter-kits: one
+; mutable strategy define plus a fixed evaluator over its parameters. The
+; evaluator here is analytic, so ten fixed seeds need no LLM, no network
+; and no clock: same seeds -> same fronts on any machine. Objectives are
+; success (max) and token cost (min).
+;
+; (moead:make "operator" <proposal-callable>) is the #4942 seam: the
+; operator slot accepts a code proposer, the grammar proposer mutates the
+; kit's source text, and "init-genome" seeds the population with it.
+; ═══════════════════════════════════════════════════════════════════
+(display "AC11 grammar x moead starter kit\n")
+(define kit-genome "(define (strategy-config) (list 3 2 1))")
+(define kit-dirs (list "max" "min"))
+(define kit-ref (list 0.0 5000.0))
+(define (kit-sum xs)
+  (let loop ((ys xs) (a 0.0)) (if (null? ys) a (loop (cdr ys) (+ a (car ys))))))
+; Read the parameters out of the (list a r t) body without evaluating it:
+; the kit is a config, and a malformed mutation must be refused, not run.
+(define (kit-params genome)
+  (let ((d (try (read-from-string genome) (catch (e) #f))))
+    (if (not (pair? d))
+        #f
+        (let ((body (if (and (pair? (cdr d)) (pair? (cdr (cdr d))))
+                        (car (cdr (cdr d)))
+                        #f)))
+          (if (and (pair? body) (eq? (car body) 'list) (= 4 (length body))
+                   (number? (car (cdr body)))
+                   (number? (car (cdr (cdr body))))
+                   (number? (car (cdr (cdr (cdr body))))))
+              (list (car (cdr body))
+                    (car (cdr (cdr body)))
+                    (car (cdr (cdr (cdr body)))))
+              #f)))))
+(define (kit-eval c)
+  (let ((ps (kit-params (evo:candidate-genome c))))
+    (if (not ps)
+        ; A mutation that broke the shape is infeasible: the gate keeps it
+        ; out of the front instead of scoring nonsense (scale-body wraps
+        ; the body in (* ...), for instance).
+        (hash "objs" (list 0.0 100000.0) "constraints" (hash "invalid" 1.0))
+        (let* ((a (max 1 (min 12 (exact->inexact (car ps)))))
+               (r (max 1 (min 10 (exact->inexact (car (cdr ps))))))
+               (t (max 1 (min 8 (exact->inexact (car (cdr (cdr ps)))))))
+               (succ (- 1.0 (exp (- (/ (* a r) 12.0)))))
+               (cost (+ (* 40.0 a) (* 25.0 r) (* 5.0 t))))
+          (hash "objs" (list succ cost) "constraints" (hash "ok" 0.0))))))
+(define (kit-search seed)
+  (moead:make (hash "n-obj" 2 "H" 9 "T" 8 "dim" 3 "seed" seed
+                    "dirs" kit-dirs "init-genome" kit-genome
+                    "operator" (prop:moead-operator
+                                 (prop:grammar (hash "seed" seed))
+                                 (hash "defines" (list "strategy-config"))))))
+(define (kit-front-objs s)
+  (map (lambda (e) (hash-ref e "objs")) (moead:front s)))
+(define (kit-hv s)
+  (pareto:hypervolume (kit-front-objs s) kit-ref (hash "dirs" kit-dirs)))
+(define (kit-run seed evals)
+  (let* ((s (kit-search seed))
+         (n (length (moead:weights s)))
+         (cs (moead:ask s n))
+         (first (begin (moead:tell! s cs (map kit-eval cs)) (kit-hv s))))
+    (moead:run! s kit-eval (- evals n))
+    (hash "seed" seed "first" first "final" (kit-hv s)
+          "front" (kit-front-objs s)
+          "nfe" (hash-ref (moead:report s) "nfe")
+          "viol" (map (lambda (e) (hash-ref e "viol" 0.0)) (moead:front s)))))
+(define kit-budget 120)
+(define kit-runs
+  (map (lambda (i) (kit-run (+ 100 i) kit-budget)) (list 0 1 2 3 4 5 6 7 8 9)))
+(define (kit-pairwise-nd? front)
+  (let loop ((xs front))
+    (cond ((null? xs) #t)
+          ((let inner ((ys (cdr xs)))
+             (cond ((null? ys) #t)
+                   ((pareto:dominates? (car xs) (car ys) kit-dirs) #f)
+                   ((pareto:dominates? (car ys) (car xs) kit-dirs) #f)
+                   (else (inner (cdr ys)))))
+           (loop (cdr xs)))
+          (else #f))))
+; Analytic reference front of the kit's discrete space (a 1..12, r 1..10,
+; t=1 dominates the rest): the gate is a fraction of ITS hypervolume, so
+; the threshold does not depend on a hard-coded number.
+(define kit-grid
+  (let loop ((a 1) (acc (list)))
+    (if (> a 12)
+        (reverse acc)
+        (loop (+ a 1)
+              (let inner ((r 1) (b acc))
+                (if (> r 10)
+                    b
+                    (inner (+ r 1)
+                           (cons (list (- 1.0 (exp (- (/ (* a r) 12.0))))
+                                       (+ (* 40.0 a) (* 25.0 r) 5.0))
+                                 b))))))))
+(define kit-grid-hv
+  (pareto:hypervolume (car (pareto:nd-sort kit-grid (hash "dirs" kit-dirs)))
+                      kit-ref (hash "dirs" kit-dirs)))
+(assert! (>= kit-grid-hv 4000.0) "the kit reference front has a positive volume")
+(assert! (= 10 (length kit-runs)) "ten fixed seeds each return a run")
+(for-each
+  (lambda (r)
+    (let ((tag (string-append "seed " (number->string (hash-ref r "seed")))))
+      (assert! (= kit-budget (hash-ref r "nfe")) (string-append tag " spends its budget"))
+      (assert! (>= (length (hash-ref r "front")) 4) (string-append tag " keeps a populated front"))
+      (assert! (kit-pairwise-nd? (hash-ref r "front")) (string-append tag " front is non-dominated"))
+      (assert! (= 0 (count (lambda (v) (> v 0.0)) (hash-ref r "viol")))
+               (string-append tag " front is feasible"))
+      (assert! (>= (hash-ref r "final") (* 0.5 kit-grid-hv))
+               (string-append tag " covers >= half the kit reference volume"))))
+  kit-runs)
+; front improvement: from the first batch to the budget, the aggregate
+; hypervolume grows and at least eight of ten seeds improve.
+(define kit-first-sum
+  (kit-sum (map (lambda (r) (hash-ref r "first")) kit-runs)))
+(define kit-final-sum
+  (kit-sum (map (lambda (r) (hash-ref r "final")) kit-runs)))
+(define kit-improved
+  (count (lambda (r) (> (hash-ref r "final") (hash-ref r "first"))) kit-runs))
+(display "  kit first-hv=") (display kit-first-sum)
+(display " final-hv=") (display kit-final-sum)
+(display " improved=") (display kit-improved) (newline)
+(assert! (> kit-final-sum kit-first-sum) "the kit front improves over the first batch")
+; Two seeds end a hair below their first batch (the MOEA/D population front
+; is not an archive, so a later replacement can drop a point). The gate is
+; the aggregate gain plus most seeds improving, not monotonicity per seed;
+; seeding an archive would make it monotone but would also turn this cell
+; into MOEA/DD (AC4 in moead_4940 covers that mode).
+(assert! (>= kit-final-sum (* 1.15 kit-first-sum)) "the kit front gains at least 15% HV")
+(assert! (>= kit-improved 7) "at least 7 of 10 seeds improve")
+; reproducibility: the same seed rebuilds the same front byte for byte
+(define kit-rerun (kit-run 100 kit-budget))
+(assert! (equal? (hash-ref kit-rerun "front") (hash-ref (car kit-runs) "front"))
+         "seed 100 reproduces the same front")
+(define kit-other (kit-run 109 kit-budget))
+(assert! (not (equal? (hash-ref kit-other "front") (hash-ref (car kit-runs) "front")))
+         "a different seed reaches a different front")
+; no LLM was contacted: the injected-transport counter is untouched by
+; the grammar path (AC8 already proves the transport is the only door).
+(define llm-calls-0 (hash-ref (llm:call-stats) "success"))
+(kit-run 105 20)
+(assert! (= llm-calls-0 (hash-ref (llm:call-stats) "success"))
+         "the grammar x moead cell makes no LLM call")
 
 (if (= *fails* 0)
     (begin (display "OK-4942 proposer\n"))

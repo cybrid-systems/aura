@@ -79,7 +79,7 @@
 | `std/primitives` | `primitives:help` `primitives:list` `primitives:categories` `primitives:entry-points` `primitives:registry-file` `primitives:discover` `primitives:reference` | lib/std/primitives.aura — Engine primitives discoverability (#1552) |
 | `std/process` | `sh` `sh-ok?` `which` `command-line` `get-environment-variable` `get-environment-variables` | lib/std/process.aura — Process management |
 | `std/prompt` | `build-sys-prompt` `get-api-ref-for-modules` | lib/std/prompt.aura — Unified prompt builder for LLM code generation |
-| `std/proposer` | `prop:help` `prop:schema` `prop:ctx` `prop:propose` `prop:adapt` `prop:mock` `prop:grammar` `prop:llm` … (+32) | lib/std/proposer.aura — Issue #4942 (v0.2 P3): the proposal layer for |
+| `std/proposer` | `prop:help` `prop:schema` `prop:ctx` `prop:propose` `prop:adapt` `prop:mock` `prop:grammar` `prop:llm` … (+33) | lib/std/proposer.aura — Issue #4942 (v0.2 P3): the proposal layer for |
 | `std/pso` | `pso:init` `pso:init-hash` `pso:step!` `pso:best` `pso:population` `pso:report` `pso:export` `pso:help` … (+12) | lib/std/pso.aura — Issue #2877 Particle Swarm Optimization surface |
 | `std/qd` | `qd:map-elites` `qd:insert!` `qd:elites` `qd:coverage` `qd:qd-score` `qd:best` `qd:novelty` `qd:select-parent` … (+11) | lib/std/qd.aura — Issue #4941 (v0.2 P2): quality diversity and open-ended |
 | `std/query-workspace` | `query:macro-introduced-calls` `query:macro-introduced-defines` | — |
