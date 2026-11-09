@@ -1,0 +1,848 @@
+; lib/std/qd.aura — Issue #4941 (v0.2 P2): quality diversity and open-ended
+; search — MAP-Elites over a descriptor grid or a CVT, novelty, the island
+; model, DGM-style parent selection, and structural de-duplication.
+;
+; QD keeps "different good" solutions alive next to the single best one, so
+; a self-evolving search does not collapse onto one basin. Everything is a
+; VALUE here: the map, the island set and their RNG streams are hashes; no
+; module variable holds state.
+;
+;   (qd:map-elites (hash "descriptors" (list (list "tokens" 0 20000 10)
+;                                            (list "latency" 0 5000 10))
+;                         "quality" "success"          ; maximize
+;                         "cvt" 64))                    ; or a CVT with k cells
+;   (qd:insert! m cand quality behavior)
+;   (qd:elites m) (qd:coverage m) (qd:qd-score m) (qd:best m)
+;   (qd:novelty m behavior k)
+;   (qd:select-parent m (hash "policy" "uniform"|"score-child"|"novelty"))
+;   (qd:novel-enough? m cand (hash "min-dist" 0.05))
+;   (qd:islands (hash "n" 4 "migrate-every" 20 "reset-worst" #t))
+;   (qd:islands-run! s eval-fn gens) (qd:islands-best s)
+;   (qd:heatmap-svg m) (qd:lineage-svg elites)
+;
+; Behaviour descriptors come from the evaluator (the "behavior" field of an
+; evo:trial result) — numeric vectors, or AST features from ast:summary.
+; Code identity is the structure hash of the normalized AST, so a rename or
+; a reformat does not buy a second evaluation.
+;
+; Form order (#2769): export before anything else.
+
+(export qd:map-elites qd:insert! qd:elites qd:coverage qd:qd-score qd:best
+        qd:novelty qd:select-parent qd:novel-enough? qd:struct-hash
+        qd:islands qd:island-ask qd:island-tell! qd:islands-run! qd:islands-best
+        qd:heatmap-svg qd:lineage-svg qd:help qd:schema)
+
+(require "std/evo-core" all:)
+
+(define qd-schema-version 1)
+
+(define (qd:help)
+  "std/qd (#4941): (qd:map-elites (hash \"descriptors\" (list (list \"tokens\" 0 20000 10)) \"quality\" \"success\")) -> m; (qd:insert! m cand quality behavior) -> #t|#f; (qd:elites m) (qd:coverage m) (qd:qd-score m); (qd:novelty m behavior k); (qd:islands (hash \"n\" 4 \"migrate-every\" 20)) with (qd:islands-run! s eval gens); (qd:select-parent m (hash \"policy\" \"score-child\")); (qd:novel-enough? m cand (hash \"min-dist\" 0.05)); (qd:struct-hash genome).")
+
+(define (qd:schema) qd-schema-version)
+
+; helpers
+(define (qd-opt h k d)
+  (if (hash? h)
+      (let ((v (hash-ref h k ())))
+        (if (null? v) d v))
+      d))
+
+(define (qd-num v) (cond ((number? v) (if (inexact? v) v (exact->inexact v))) (else 0.0)))
+
+(define (qd-mapf f xs)
+  (let loop ((ys xs) (acc (list)))
+    (if (null? ys) (reverse acc) (loop (cdr ys) (cons (f (car ys)) acc)))))
+
+(define (qd-filter p xs)
+  (let loop ((ys xs) (acc (list)))
+    (if (null? ys) (reverse acc)
+        (if (p (car ys)) (loop (cdr ys) (cons (car ys) acc)) (loop (cdr ys) acc)))))
+
+(define (qd-join xs sep)
+  (if (null? xs) ""
+      (let loop ((ys (cdr xs)) (acc (car xs)))
+        (if (null? ys) acc (loop (cdr ys) (string-append acc sep (car ys)))))))
+
+(define (qd-iota n)
+  (let loop ((i 0) (acc (list)))
+    (if (>= i n) (reverse acc) (loop (+ i 1) (cons i acc)))))
+
+(define (qd-take xs n)
+  (let loop ((ys xs) (k 0) (acc (list)))
+    (if (or (null? ys) (>= k n)) (reverse acc) (loop (cdr ys) (+ k 1) (cons (car ys) acc)))))
+
+(define (qd-sort-by f xs)
+  (sort xs (lambda (a b) (< (f a) (f b)))))
+
+(define (qd-rng seed gen slot)
+  (hash 0 (hash-ref (evo:rng seed gen slot) "state" 1)))
+
+(define (qd-rand! r)
+  (let ((n (modulo (+ (* (hash-ref r 0 1) 1103515245) 12345) 2147483647)))
+    (hash-set! r 0 n)
+    (/ n 2147483647.0)))
+
+(define (qd-rand-int! r n)
+  (if (<= n 1) 0 (inexact->exact (floor (* (qd-rand! r) n)))))
+
+
+; ── behaviour vectors ────────────────────────────────────────────────
+(define (qd-behavior m b)
+  (let ((ds (qd-opt m "descriptors" (list))))
+    (cond ((and (hash? b) (not (evo:candidate? b)))
+           (qd-mapf (lambda (d) (qd-num (hash-ref b (car d) (qd-num (car (cdr d)))))) ds))
+          ((list? b) b)
+          ((evo:candidate? b) (qd-behavior m (qd-opt b "behavior" (hash))))
+          (else (list)))))
+
+(define (qd-bins-of d)
+  (let ((b (list-ref d 3))) (if (and (integer? b) (>= b 1)) b 1)))
+
+(define (qd-grid-total ds)
+  (let loop ((xs ds) (n 1))
+    (if (null? xs) n (loop (cdr xs) (* n (qd-bins-of (car xs)))))))
+
+(define (qd-descriptor-at ds i)
+  (if (< i (length ds)) (list-ref ds i) (list "" 0.0 1.0 1)))
+
+(define (qd-cell-index d v)
+  (let* ((lo (qd-num (list-ref d 1)))
+         (hi (qd-num (list-ref d 2)))
+         (bins (let ((b (list-ref d 3))) (if (and (integer? b) (>= b 1)) b 1)))
+         (span (- hi lo)))
+    (if (<= span 0.0)
+        0
+        (let ((i (inexact->exact (floor (* (/ (- (qd-num v) lo) span) bins)))))
+          (cond ((< i 0) 0)
+                ((>= i bins) (- bins 1))
+                (else i))))))
+
+(define (qd-grid-key m behavior)
+  (let ((ds (qd-opt m "descriptors" (list))))
+    (let loop ((i 0) (bs behavior) (acc (list)))
+      (if (null? bs)
+          (qd-join (reverse acc) "-")
+          (let* ((d (qd-descriptor-at ds i))
+                 (k (number->string (qd-cell-index d (car bs)))))
+            (loop (+ i 1) (cdr bs) (cons k acc)))))))
+
+; ── CVT (fixed seed) ─────────────────────────────────────────────────
+(define (qd-dist a b)
+  (let loop ((xs a) (ys b) (s 0.0))
+    (if (or (null? xs) (null? ys))
+        (sqrt s)
+        (let ((d (- (qd-num (car xs)) (qd-num (car ys)))))
+          (loop (cdr xs) (cdr ys) (+ s (* d d)))))))
+
+(define (qd-bounds-box ds)
+  (qd-mapf (lambda (d) (list (qd-num (list-ref d 1)) (qd-num (list-ref d 2)))) ds))
+
+(define (qd-random-point box r)
+  (qd-mapf (lambda (b) (+ (car b) (* (qd-rand! r) (- (car (cdr b)) (car b))))) box))
+
+(define (qd-nearest-centroid cs p)
+  (let loop ((i 0) (bi 0) (bd 1e308))
+    (if (>= i (length cs))
+        bi
+        (let ((d (qd-dist p (list-ref cs i))))
+          (if (< d bd) (loop (+ i 1) i d) (loop (+ i 1) bi bd))))))
+
+(define (qd-vec-add a b)
+  (let loop ((xs a) (ys b) (acc (list)))
+    (if (or (null? xs) (null? ys))
+        (reverse acc)
+        (loop (cdr xs) (cdr ys) (cons (+ (qd-num (car xs)) (qd-num (car ys))) acc)))))
+
+(define (qd-avg-points ps k)
+  (let loop ((ms ps) (acc (qd-zero-vec k)))
+    (if (null? ms)
+        (qd-mapf (lambda (x) (/ x (* 1.0 (length ps)))) acc)
+        (loop (cdr ms) (qd-vec-add acc (car ms))))))
+
+(define (qd-zero-vec k)
+  (let loop ((j 0) (acc (list)))
+    (if (>= j k) acc (loop (+ j 1) (cons 0.0 acc)))))
+
+; Lloyd iterations over a fixed random sample; deterministic from the seed.
+(define (qd-cvt ds k seed)
+  (let* ((box (qd-bounds-box ds))
+         (r (qd-rng seed 0 1))
+         (samples (let loop ((i 0) (acc (list)))
+                    (if (>= i 200) (reverse acc)
+                        (loop (+ i 1) (cons (qd-random-point box r) acc)))))
+         (cs0 (let loop ((i 0) (acc (list)))
+                (if (>= i k) (reverse acc)
+                    (loop (+ i 1) (cons (qd-random-point box r) acc))))))
+    (let loop ((it 0) (cs cs0))
+      (if (>= it 8)
+          cs
+          (let* ((assign (qd-mapf (lambda (p) (qd-nearest-centroid cs p)) samples))
+                 (new (let build ((i 0) (acc (list)))
+                        (if (>= i k)
+                            (reverse acc)
+                            (let* ((members (qd-filter
+                                              (lambda (p) (= (qd-nearest-centroid cs p) i))
+                                              samples)))
+                              (build (+ i 1)
+                                     (cons (if (null? members)
+                                               (list-ref cs i)
+                                               (qd-avg-points members (length (car members))))
+                                           acc)))))))
+            (loop (+ it 1) new))))))
+
+; ── MAP-Elites ───────────────────────────────────────────────────────
+(define (qd:map-elites opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (ds (let ((d (qd-opt o "descriptors" (list))))
+               (if (list? d) d (list))))
+         (mode (let ((c (qd-opt o "cvt" #f)))
+                 (if (and (number? c) (>= c 1)) "cvt" "grid")))
+         (k (let ((c (qd-opt o "cvt" 0))) (if (and (number? c) (>= c 1)) (inexact->exact c) 0)))
+         (seed (qd-opt o "seed" 42))
+         (centroids (if (string=? mode "cvt") (qd-cvt ds k seed) (list)))
+         (total (if (string=? mode "cvt") k (qd-grid-total ds))))
+    (hash "kind" "qd-map" "schema" qd-schema-version
+          "descriptors" ds "mode" mode "k" k "centroids" centroids "cells-total" total
+          "quality" (qd-opt o "quality" "quality")
+          "cells" (hash) "seen" (hash) "children" (hash)
+          "rng" (qd-rng seed qd-schema-version 0) "seq" 0 "best" #f)))
+
+(define (qd-map? m)
+  (and (hash? m) (string=? (qd-opt m "kind" "") "qd-map")))
+
+(define (qd-cell-of m behavior)
+  (let ((mode (qd-opt m "mode" "grid")))
+    (if (string=? mode "cvt")
+        (number->string (qd-nearest-centroid (qd-opt m "centroids" (list)) behavior))
+        (qd-grid-key m behavior))))
+
+; (qd:insert! m cand quality behavior) -> #t when the cell was empty or the
+; newcomer is better. Quality is maximized (higher is better).
+(define (qd:insert! m cand quality behavior)
+  (if (not (qd-map? m))
+      #f
+      (let* ((beh (qd-behavior m behavior))
+             (cell (qd-cell-of m beh))
+             (cells (qd-opt m "cells" (hash)))
+             (old (hash-ref cells cell #f))
+             (q (qd-num quality))
+             (seq (qd-opt m "seq" 0))
+             (id (if (evo:candidate? cand) (evo:candidate-id cand) (number->string seq))))
+        (if (and old (>= (qd-num (qd-opt old "quality" 0)) q))
+            #f
+            (let ((entry (hash "cand" cand "quality" q "behavior" beh
+                               "cell" cell "seq" seq "id" id)))
+              (hash-set! cells cell entry)
+              (hash-set! m "cells" cells)
+              (hash-set! m "seq" (+ seq 1))
+              (let ((seen (qd-opt m "seen" (hash))))
+                (hash-set! seen id #t)
+                (hash-set! m "seen" seen))
+              (let ((sh (if (and (hash? cand) (string? (qd-opt cand "genome" #f)))
+                            (qd:struct-hash (qd-opt cand "genome" ""))
+                            #f)))
+                (if sh
+                    (let ((ss (qd-opt m "seen-struct" (hash))))
+                      (hash-set! ss sh #t)
+                      (hash-set! m "seen-struct" ss))
+                    #t))
+              (let ((best (qd-opt m "best" #f)))
+                (if (or (not best) (> q (qd-num (qd-opt best "quality" 0))))
+                    (hash-set! m "best" entry)
+                    #t))
+              #t)))))
+
+(define (qd:elites m)
+  (let ((cells (qd-opt m "cells" (hash))))
+    (qd-sort-by (lambda (e) (qd-opt e "seq" 0))
+                (qd-mapf (lambda (k) (hash-ref cells k))
+                         (sort (hash-keys cells) string<?)))))
+
+(define (qd:coverage m)
+  (let ((total (qd-opt m "cells-total" 0)))
+    (if (<= total 0)
+        0.0
+        (/ (* 1.0 (length (hash-keys (qd-opt m "cells" (hash))))) total))))
+
+(define (qd:qd-score m)
+  (let loop ((es (qd:elites m)) (s 0.0))
+    (if (null? es) s (loop (cdr es) (+ s (qd-num (qd-opt (car es) "quality" 0)))))))
+
+(define (qd:best m) (qd-opt m "best" #f))
+
+; Mean distance from behaviour to its k nearest elites (0 when empty).
+(define (qd:novelty m behavior k)
+  (let* ((beh (qd-behavior m behavior))
+         (es (qd:elites m)))
+    (if (null? es)
+        0.0
+        (let* ((dist (qd-sort-by (lambda (d) d)
+                                 (qd-mapf (lambda (e) (qd-dist beh (qd-opt e "behavior" (list)))) es)))
+               (take (qd-take dist k)))
+          (/ (let loop ((xs take) (s 0.0)) (if (null? xs) s (loop (cdr xs) (+ s (car xs)))))
+             (* 1.0 (length take)))))))
+
+; ── parent selection ─────────────────────────────────────────────────
+; "uniform": any elite; "score-child": DGM's rule — quality weighted by
+; the inverse of how many children the elite already has; "novelty": the
+; most novel of three samples.
+(define (qd-weighted-pick weights r)
+  (let ((total (let loop ((xs weights) (s 0.0)) (if (null? xs) s (loop (cdr xs) (+ s (car xs)))))))
+    (if (<= total 0.0)
+        0
+        (let* ((u (* (qd-rand! r) total)))
+          (let loop ((xs weights) (k 0) (acc 0.0))
+            (if (null? xs) 0
+                (if (<= (+ acc (car xs)) u) (loop (cdr xs) (+ k 1) (+ acc (car xs))) k)))))))
+
+(define (qd-qmin es)
+  (if (null? es) 0.0
+      (let loop ((xs (cdr es)) (m (qd-num (qd-opt (car es) "quality" 0))))
+        (if (null? xs) m (loop (cdr xs) (min m (qd-num (qd-opt (car xs) "quality" 0))))))))
+
+(define (qd:select-parent m opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (policy (let ((p (qd-opt o "policy" "uniform"))) (if (string? p) p "uniform")))
+         (es (qd:elites m))
+         (r (qd-opt m "rng" (qd-rng 1 0 0))))
+    (cond ((null? es) #f)
+          ((string=? policy "uniform") (list-ref es (qd-rand-int! r (length es))))
+          ((string=? policy "novelty")
+           (let* ((a (list-ref es (qd-rand-int! r (length es))))
+                  (b (list-ref es (qd-rand-int! r (length es))))
+                  (c (list-ref es (qd-rand-int! r (length es))))
+                  (na (qd:novelty m (qd-opt a "behavior" (list)) 3))
+                  (nb (qd:novelty m (qd-opt b "behavior" (list)) 3))
+                  (nc (qd:novelty m (qd-opt c "behavior" (list)) 3)))
+             (if (and (>= na nb) (>= na nc)) a (if (>= nb nc) b c))))
+          (else
+           (let* ((children (qd-opt m "children" (hash)))
+                  (qmin (qd-qmin es))
+                  (weights (qd-mapf (lambda (e)
+                                      (let ((id (qd-opt e "id" ""))
+                                            (q (qd-num (qd-opt e "quality" 0))))
+                                        (/ (+ 0.000001 (- q qmin))
+                                           (+ 1.0 (qd-num (hash-ref children id 0))))))
+                                    es))
+                  (e (list-ref es (qd-weighted-pick weights r)))
+                  (id (qd-opt e "id" "")))
+             (hash-set! children id (+ 1 (qd-num (hash-ref children id 0))))
+             (hash-set! m "children" children)
+             e)))))
+
+; ── structural identity ──────────────────────────────────────────────
+; A tiny reader + alpha-renaming: whitespace, comments and bound-variable
+; names do not change the hash, so a renamed copy is recognised as the
+; same program and never reaches the evaluator twice.
+(define (qd-char-ws? c)
+  (or (char=? c #\space) (char=? c #\newline) (char=? c #\tab) (char=? c #\return)))
+
+(define (qd-tokens str)
+  (let ((n (string-length str)))
+    (let loop ((i 0) (acc (list)))
+      (if (>= i n)
+          (reverse acc)
+          (let ((c (string-ref str i)))
+            (cond ((char=? c #\() (loop (+ i 1) (cons "(" acc)))
+                  ((char=? c #\)) (loop (+ i 1) (cons ")" acc)))
+                  ((char=? c #\;) (loop (qd-skip-comment str i n) acc))
+                  ((qd-char-ws? c) (loop (+ i 1) acc))
+                  ((char=? c #\") (loop (qd-scan-string str i n) (cons (qd-string-at str i n) acc)))
+                  (else (loop (qd-scan-atom str i n) (cons (substring str i (qd-scan-atom str i n)) acc)))))))))
+
+(define (qd-skip-comment str i n)
+  (if (>= i n) i
+      (if (char=? (string-ref str i) #\newline) (+ i 1) (qd-skip-comment str (+ i 1) n))))
+
+(define (qd-scan-string str i n)
+  (if (>= i n) n
+      (if (and (> i 0) (char=? (string-ref str i) #\")) (+ i 1) (qd-scan-string str (+ i 1) n))))
+
+(define (qd-string-at str i n)
+  (let j ((k (+ i 1)))
+    (if (>= k n) (substring str i n)
+        (if (char=? (string-ref str k) #\") (substring str i (+ k 1))
+            (j (+ k 1))))))
+
+(define (qd-scan-atom str i n)
+  (if (>= i n) i
+      (let ((c (string-ref str i)))
+        (if (or (qd-char-ws? c) (char=? c #\() (char=? c #\)) (char=? c #\;))
+            i
+            (qd-scan-atom str (+ i 1) n)))))
+
+(define (qd-parse toks)
+  (cond ((null? toks) (list #f (list)))
+        ((string=? (car toks) "(")
+         (let loop ((ts (cdr toks)) (acc (list)))
+           (cond ((null? ts) (list (reverse acc) ts))
+                 ((string=? (car ts) ")") (list (reverse acc) (cdr ts)))
+                 (else (let* ((r (qd-parse ts))
+                              (f (car r))
+                              (rest (car (cdr r))))
+                         (loop rest (cons f acc)))))))
+        ((string=? (car toks) ")") (list #f (cdr toks)))
+        (else (list (car toks) (cdr toks)))))
+
+(define (qd-forms str)
+  (let loop ((ts (qd-tokens str)) (acc (list)))
+    (if (null? ts)
+        (reverse acc)
+        (let* ((r (qd-parse ts))
+               (f (car r))
+               (rest (car (cdr r))))
+          (if (or (not f) (null? rest))
+              (let ((acc2 (if f (cons f acc) acc)))
+                (reverse acc2))
+              (loop rest (cons f acc)))))))
+
+(define (qd-fresh! c)
+  (let ((n (hash-ref c 0 0)))
+    (hash-set! c 0 (+ n 1))
+    (string-append "v" (number->string n))))
+
+(define (qd-lookup scope name)
+  (let ((hit (assoc name scope)))
+    (if hit (cdr hit) #f)))
+
+(define (qd-canon f scope c)
+  (cond ((string? f)
+         (let ((hit (assoc f scope)))
+           (if hit (cdr hit) f)))
+        ((not (list? f)) "")
+        ((null? f) "()")
+        (else
+         (let ((head (if (string? (car f)) (car f) "")))
+           (cond
+             ((string=? head "lambda")
+              (let* ((params (let ((p (car (cdr f)))) (if (list? p) p (list))))
+                     (nscope (append (qd-mapf (lambda (p) (cons p (qd-fresh! c))) params) scope))
+                     (body (cdr (cdr f))))
+                (string-append "(lambda ("
+                               (qd-join (qd-mapf (lambda (p) (qd-lookup nscope p)) params) " ")
+                               ") "
+                               (qd-join (qd-mapf (lambda (b) (qd-canon b nscope c)) body) " ")
+                               ")")))
+             ((or (string=? head "let") (string=? head "let*") (string=? head "letrec"))
+              (let* ((binds (let ((b (car (cdr f)))) (if (list? b) b (list))))
+                     (body (cdr (cdr f)))
+                     (walk (let loop ((bs binds) (scope2 scope) (texts (list)))
+                             (if (null? bs)
+                                 (list scope2 (reverse texts))
+                                 (let* ((b (car bs))
+                                        (name (if (and (list? b) (string? (car b))) (car b) ""))
+                                        (init (if (and (list? b) (not (null? (cdr b)))) (car (cdr b)) ""))
+                                        (itext (qd-canon init scope2 c))
+                                        (fresh (qd-fresh! c)))
+                                   (loop (cdr bs)
+                                         (cons (cons name fresh) scope2)
+                                         (cons (string-append "(" fresh " " itext ")") texts))))))
+                     (nscope (car walk))
+                     (btexts (car (cdr walk))))
+                (string-append "(let (" (qd-join btexts " ") ") "
+                               (qd-join (qd-mapf (lambda (b) (qd-canon b nscope c)) body) " ")
+                               ")")))
+             ((string=? head "define")
+              (let ((target (car (cdr f)))
+                    (body (cdr (cdr f))))
+                (if (and (list? target) (string? (car target)))
+                    (let* ((name (car target))
+                           (params (cdr target))
+                           (nscope (append (qd-mapf (lambda (p) (cons p (qd-fresh! c))) params) scope)))
+                      (string-append "(define (" name " "
+                                     (qd-join (qd-mapf (lambda (p) (qd-lookup nscope p)) params) " ")
+                                     ") "
+                                     (qd-join (qd-mapf (lambda (b) (qd-canon b nscope c)) body) " ")
+                                     ")"))
+                    (string-append "(define " (qd-canon target scope c) " "
+                                   (qd-join (qd-mapf (lambda (b) (qd-canon b scope c)) body) " ")
+                                   ")"))))
+             (else
+              (string-append "(" (qd-join (qd-mapf (lambda (x) (qd-canon x scope c)) f) " ") ")")))))))
+
+(define (qd-fnv str)
+  (let loop ((i 0) (h 2166136261))
+    (if (>= i (string-length str))
+        h
+        (loop (+ i 1)
+              (modulo (* (+ h (char->integer (string-ref str i))) 16777619) 4294967296)))))
+
+(define (qd-hex n)
+  (let ((digits (list "0" "1" "2" "3" "4" "5" "6" "7"
+                      "8" "9" "a" "b" "c" "d" "e" "f")))
+    (let loop ((v n) (acc ""))
+      (if (= v 0)
+          (if (string=? acc "") "0" acc)
+          (loop (quotient v 16) (string-append (list-ref digits (modulo v 16)) acc))))))
+
+; (qd:struct-hash source) -> stable id of the normalized AST. Non-source
+; genomes fall back to a numeric fingerprint.
+(define (qd:struct-hash genome)
+  (if (string? genome)
+      (let* ((forms (qd-forms genome))
+             (c (hash 0 0))
+             (text (qd-join (qd-mapf (lambda (f) (qd-canon f (list) c)) forms) " ")))
+        (string-append "s" (qd-hex (qd-fnv text))))
+      (string-append "n" (qd-hex (qd-fnv (qd-join (qd-mapf (lambda (x) (number->string (qd-num x))) genome) ","))))))
+
+; (qd:novel-enough? m cand opts) — the cheap pre-filter before an expensive
+; evaluation: a structurally identical program is never re-evaluated, and a
+; behaviour closer than "min-dist" to an elite is rejected too.
+(define (qd:novel-enough? m cand opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (min-dist (qd-num (qd-opt o "min-dist" 0.0)))
+         (beh (qd-behavior m (qd-opt o "behavior" (if (hash? cand) (qd-opt cand "behavior" (hash)) (hash)))))
+         (id (if (evo:candidate? cand) (evo:candidate-id cand) #f))
+         (sh (if (and (hash? cand) (string? (qd-opt cand "genome" #f)))
+                 (qd:struct-hash (qd-opt cand "genome" ""))
+                 #f))
+         (seen (qd-opt m "seen" (hash))))
+    (cond ((and id (hash-ref seen id #f)) #f)
+          ((and sh (hash-ref (qd-opt m "seen-struct" (hash)) sh #f)) #f)
+          ((and (> min-dist 0.0)
+                (not (null? (qd:elites m)))
+                (< (qd:novelty m beh 1) min-dist)) #f)
+          (else #t))))
+
+; ── island model (FunSearch style) ───────────────────────────────────
+(define (qd-genome dim bounds r)
+  (let loop ((i 0) (acc (list)))
+    (if (>= i dim)
+        (reverse acc)
+        (let ((b (if (< i (length bounds)) (list-ref bounds i) (list 0.0 1.0))))
+          (loop (+ i 1)
+                (cons (+ (qd-num (car b))
+                         (* (qd-rand! r) (- (qd-num (car (cdr b))) (qd-num (car b)))))
+                      acc))))))
+
+(define (qd-clamp x b)
+  (let ((lo (qd-num (car b))) (hi (qd-num (car (cdr b)))))
+    (if (< x lo) lo (if (> x hi) hi x))))
+
+(define (qd-mutate g bounds dim r)
+  (let loop ((xs g) (bs bounds) (i 0) (acc (list)))
+    (if (null? xs)
+        (reverse acc)
+        (let* ((b (if (null? bs) (list 0.0 1.0) (car bs)))
+               (x (qd-num (car xs)))
+               (y (if (< (qd-rand! r) (/ 1.0 (* 1.0 (if (< dim 1) 1 dim))))
+                      (+ (qd-num (car b))
+                         (* (qd-rand! r) (- (qd-num (car (cdr b))) (qd-num (car b)))))
+                      x)))
+          (loop (cdr xs) (if (null? bs) bs (cdr bs)) (+ i 1)
+                (cons (qd-clamp y b) acc))))))
+
+(define (qd:islands opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (n0 (qd-opt o "n" 4))
+         (n (if (and (integer? n0) (>= n0 1)) n0 4))
+         (every (let ((e (qd-opt o "migrate-every" 20))) (if (and (integer? e) (>= e 1)) e 20)))
+         (pop (let ((p (qd-opt o "pop" 16))) (if (and (integer? p) (>= p 1)) p 16)))
+         (dim (let ((d (qd-opt o "dim" 20))) (if (and (integer? d) (>= d 1)) d 20)))
+         (bounds (let ((b (qd-opt o "bounds" (list (list 0.0 1.0)))))
+                   (if (list? b) b (list (list 0.0 1.0)))))
+         (seed (qd-opt o "seed" 7)))
+    (hash "kind" "qd-islands" "schema" qd-schema-version
+          "n" n "migrate-every" every
+          "reset-worst" (eq? (qd-opt o "reset-worst" #t) #t)
+          "pop" pop "dim" dim "bounds" bounds "seed" seed "gen" 0
+          "islands" (let loop ((i 0) (acc (list)))
+                      (if (>= i n)
+                          (reverse acc)
+                          (loop (+ i 1)
+                                (cons (hash "i" i "members" (list) "best" #f "stale" 0)
+                                      acc)))))))
+
+(define (qd-islands? s)
+  (and (hash? s) (string=? (qd-opt s "kind" "") "qd-islands")))
+
+(define (qd-island-at s i)
+  (let ((is (qd-opt s "islands" (list))))
+    (if (< i (length is)) (list-ref is i) #f)))
+
+(define (qd-island-put! s i isl)
+  (let ((is (qd-opt s "islands" (list))))
+    (hash-set! s "islands"
+               (let loop ((xs is) (k 0) (acc (list)))
+                 (cond ((null? xs) (reverse acc))
+                       ((= k i) (loop (cdr xs) (+ k 1) (cons isl acc)))
+                       (else (loop (cdr xs) (+ k 1) (cons (car xs) acc))))))))
+
+(define (qd-member-genome m)
+  (let ((c (qd-opt m "cand" #f)))
+    (if (hash? c) (qd-opt c "genome" (list)) (list))))
+
+; (qd:island-ask s i k) -> k candidates bred inside island i.
+(define (qd-parent-ids parent)
+  (if parent
+      (list (qd-opt (qd-opt parent "cand" #f) "id" ""))
+      (list)))
+
+(define (qd:island-ask s i k)
+  (if (not (qd-islands? s))
+      (list)
+      (let* ((isl (qd-island-at s i))
+             (members (if isl (qd-opt isl "members" (list)) (list)))
+             (seed (qd-opt s "seed" 7))
+             (gen (qd-opt s "gen" 0))
+             (dim (qd-opt s "dim" 20))
+             (bounds (qd-opt s "bounds" (list (list 0.0 1.0)))))
+        (let loop ((j 0) (acc (list)))
+          (if (>= j k)
+              (reverse acc)
+              (let* ((r (qd-rng seed (+ (* gen 101) j) i))
+                     (parent (if (null? members)
+                                 #f
+                                 (list-ref members (qd-rand-int! r (length members)))))
+                     (g (if (or (not parent) (< (qd-rand! r) 0.1))
+                            (qd-genome dim bounds r)
+                            (qd-mutate (qd-member-genome parent) bounds dim r)))
+                     (c (evo:candidate g (hash "gen" gen
+                                               "slot" (+ (* i 1000) j)
+                                               "parents" (qd-parent-ids parent)
+                                               "meta" (hash "island" i)))))
+                (loop (+ j 1) (cons c acc))))))))
+
+(define (qd:island-tell! s i cands quals)
+  (if (not (qd-islands? s))
+      #f
+      (let* ((isl (qd-island-at s i))
+             (old (qd-opt isl "members" (list)))
+             (pop (qd-opt s "pop" 16))
+             (new (let loop ((cs cands) (qs quals) (acc (list)))
+                    (if (or (null? cs) (null? qs))
+                        (reverse acc)
+                        (loop (cdr cs) (cdr qs)
+                              (cons (hash "cand" (car cs)
+                                          "q" (qd-num (if (list? (car qs))
+                                                          (car (car qs))
+                                                          (car qs))))
+                                    acc)))))
+             (all (append new old))
+             (sorted (sort all (lambda (a b)
+                                 (let ((qa (qd-num (qd-opt a "q" 0)))
+                                       (qb (qd-num (qd-opt b "q" 0))))
+                                   (if (= qa qb) (< (qd-opt a "seq" 0) (qd-opt b "seq" 0))
+                                       (> qa qb))))))
+             (kept (qd-take sorted pop))
+             (best (qd-opt isl "best" #f))
+             (nb (if (null? kept) best (car kept)))
+             (improved (or (not best)
+                           (> (qd-num (qd-opt nb "q" 0)) (qd-num (qd-opt best "q" 0))))))
+        (qd-island-put! s i (hash "i" i
+                                  "members" kept
+                                  "best" nb
+                                  "stale" (if improved 0 (+ 1 (qd-opt isl "stale" 0)))))
+        #t)))
+
+; Ring migration: island i receives the best member of island (i+1) % n,
+; replacing its worst member.
+(define (qd:migrate! s)
+  (let* ((n (qd-opt s "n" 4))
+         (is (qd-opt s "islands" (list))))
+    (let loop ((i 0) (acc is))
+      (if (>= i n)
+          (begin (hash-set! s "islands" acc) #t)
+          (let* ((donor (qd-island-at s (modulo (+ i 1) n)))
+                 (dbest (if donor (qd-opt donor "best" #f) #f))
+                 (me (list-ref acc i))
+                 (members (qd-opt me "members" (list)))
+                 (pop (qd-opt s "pop" 16)))
+            (if (and dbest (not (null? members)))
+                (let* ((worst (let loop ((xs (cdr members)) (w (car members)))
+                                (if (null? xs) w
+                                    (loop (cdr xs)
+                                          (if (< (qd-num (qd-opt (car xs) "q" 0))
+                                                 (qd-num (qd-opt w "q" 0)))
+                                              (car xs) w)))))
+                       (merged (cons dbest (qd-filter (lambda (m) (not (eq? m worst))) members)))
+                       (kept (qd-take merged pop)))
+                  (loop (+ i 1) (md-replace acc i (hash "i" i "members" kept
+                                                        "best" (qd-opt me "best" #f)
+                                                        "stale" (qd-opt me "stale" 0)))))
+                (loop (+ i 1) acc)))))))
+
+(define (md-replace lst i v)
+  (cond ((null? lst) (list))
+        ((= i 0) (cons v (cdr lst)))
+        (else (cons (car lst) (md-replace (cdr lst) (- i 1) v)))))
+
+; Reset the island that has been stale the longest (FunSearch's antidote to
+; premature convergence): its population is discarded and re-seeded.
+(define (qd:reset-worst! s)
+  (let* ((n (qd-opt s "n" 4))
+         (every (qd-opt s "migrate-every" 20))
+         (is (qd-opt s "islands" (list)))
+         (worst (let loop ((i 0) (bi 0) (bv -1))
+                  (if (>= i n) bi
+                      (let ((v (qd-opt (qd-island-at s i) "stale" 0)))
+                        (if (> v bv) (loop (+ i 1) i v) (loop (+ i 1) bi bv))))))
+         (isl (qd-island-at s worst)))
+    (if (and isl (>= (qd-opt isl "stale" 0) (* 2 every)))
+        (begin
+          (qd-island-put! s worst (hash "i" worst "members" (list)
+                                        "best" (qd-opt isl "best" #f) "stale" 0))
+          #t)
+        #f)))
+
+(define (qd:islands-run! s eval-fn gens)
+  (if (not (qd-islands? s))
+      #f
+      (let ((n (qd-opt s "n" 4))
+            (pop (qd-opt s "pop" 16))
+            (every (qd-opt s "migrate-every" 20)))
+        (let loop ((g 0))
+          (if (>= g gens)
+              s
+              (begin
+                (let iloop ((i 0))
+                  (if (>= i n)
+                      #t
+                      (let* ((cs (qd:island-ask s i pop))
+                             (qs (qd-mapf (lambda (c) (eval-fn c)) cs)))
+                        (qd:island-tell! s i cs qs)
+                        (iloop (+ i 1)))))
+                (let ((gen (+ 1 (qd-opt s "gen" 0))))
+                  (if (= 0 (modulo gen every)) (qd:migrate! s) #t)
+                  (if (qd-opt s "reset-worst" #f) (qd:reset-worst! s) #t)
+                  (hash-set! s "gen" gen))
+                (loop (+ g 1))))))))
+
+(define (qd:islands-best s)
+  (let loop ((is (qd-opt s "islands" (list))) (best #f))
+    (if (null? is)
+        best
+        (let ((b (qd-opt (car is) "best" #f)))
+          (loop (cdr is)
+                (if (and b (or (not best) (> (qd-num (qd-opt b "q" 0))
+                                             (qd-num (qd-opt best "q" 0)))))
+                    b best))))))
+
+; ── report rendering (pure; aura evo report embeds these) ────────────
+(define (qd-num-s x)
+  (let ((s (number->string (* 1.0 (qd-num x)))))
+    (if (or (string=? s "inf") (string=? s "-inf") (string=? s "nan")) "0" s)))
+
+(define (qd-qmax es)
+  (let loop ((xs es) (m 0.0))
+    (if (null? xs) m
+        (loop (cdr xs) (max m (qd-num (qd-opt (car xs) "quality" 0)))))))
+
+; (qd:heatmap-svg m) — a grid heat map (one rect per cell) or, for a CVT,
+; one circle per centroid.
+(define (qd-svg-cvt m w h pad)
+  (let ((cs (qd-opt m "centroids" (list))))
+    (let loop ((i 0) (xs cs) (acc ""))
+      (if (null? xs)
+          acc
+          (loop (+ i 1) (cdr xs)
+                (string-append
+                  acc
+                  "<circle cx=\"" (qd-num-s (+ pad (* 30.0 (qd-num (car (car xs))))))
+                  "\" cy=\"" (qd-num-s (+ pad (* 30.0 (qd-num (car (cdr (car xs)))))))
+                  "\" r=\"7\" fill=\"#2563eb\" opacity=\"0.85\"/>"))))))
+
+(define (qd-svg-grid es ds w h pad qmax)
+  (let* ((b0 (qd-bins-of (car ds)))
+         (b1 (qd-bins-of (car (cdr ds))))
+         (cw (/ (- w (* 2.0 pad)) (* 1.0 b0)))
+         (ch (/ (- h (* 2.0 pad)) (* 1.0 b1))))
+    (let loop ((xs es) (acc ""))
+      (if (null? xs)
+          acc
+          (let* ((e (car xs))
+                 (beh (qd-opt e "behavior" (list)))
+                 (i (qd-cell-index (car ds) (car beh)))
+                 (j (qd-cell-index (car (cdr ds)) (car (cdr beh))))
+                 (q (qd-num (qd-opt e "quality" 0)))
+                 (t (if (> qmax 0.0) (/ q qmax) 0.0))
+                 (g (inexact->exact (floor (* 200.0 (- 1.0 t))))))
+            (loop (cdr xs)
+                  (string-append
+                    acc
+                    "<rect x=\"" (qd-num-s (+ pad (* i cw))) "\" y=\""
+                    (qd-num-s (+ pad (* j ch))) "\" width=\"" (qd-num-s cw)
+                    "\" height=\"" (qd-num-s ch)
+                    "\" fill=\"rgb(" (number->string g) ","
+                    (number->string (+ 55 g)) ",255)\" opacity=\"0.85\"/>")))))))
+
+(define (qd-svg-strip es w h pad qmax)
+  (let loop ((xs es) (i 0) (acc ""))
+    (if (null? xs)
+        acc
+        (let ((q (qd-num (qd-opt (car xs) "quality" 0))))
+          (loop (cdr xs) (+ i 1)
+                (string-append acc
+                               "<circle cx=\"" (qd-num-s (+ pad (* 6 i)))
+                               "\" cy=\""
+                               (qd-num-s (- h pad (* (/ q (if (> qmax 0.0) qmax 1.0))
+                                                     (- h (* 2.0 pad)))))
+                               "\" r=\"2\" fill=\"#2563eb\"/>"))))))
+
+(define (qd:heatmap-svg m opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (w (qd-opt o "width" 320))
+         (h (qd-opt o "height" 240))
+         (pad 10)
+         (es (qd:elites m))
+         (qmax (qd-qmax es))
+         (ds (qd-opt m "descriptors" (list)))
+         (mode (qd-opt m "mode" "grid")))
+    (string-append
+      "<svg viewBox=\"0 0 " (qd-num-s w) " " (qd-num-s h)
+      "\" width=\"" (qd-num-s w) "\" height=\"" (qd-num-s h)
+      "\" role=\"img\" aria-label=\"qd heatmap\">"
+      (cond ((string=? mode "cvt") (qd-svg-cvt m w h pad))
+            ((>= (length ds) 2) (qd-svg-grid es ds w h pad qmax))
+            (else (qd-svg-strip es w h pad qmax)))
+      "</svg>"))
+; (qd:lineage-svg elites) — parent chain: one node per elite, an edge to
+; every parent id that is also in the set.
+(define (qd:lineage-svg es opts)
+  (let* ((o (if (hash? opts) opts (hash)))
+         (w (qd-opt o "width" 480))
+         (h (qd-opt o "height" 260))
+         (n (length es))
+         (step (if (> n 1) (/ (- w 40.0) (- n 1.0)) 0.0))
+         (col (lambda (i) (+ 20 (* step i))))
+         (ids (qd-mapf (lambda (e) (qd-opt e "id" "")) es))
+         (gen-of (lambda (e) (let ((c (qd-opt e "cand" #f)))
+                               (if (hash? c) (qd-opt c "gen" 0) 0)))))
+    (string-append
+      "<svg viewBox=\"0 0 " (qd-num-s w) " " (qd-num-s h) "\" width=\"" (qd-num-s w)
+      "\" height=\"" (qd-num-s h) "\" role=\"img\" aria-label=\"lineage\">"
+      "<rect x=\"0\" y=\"0\" width=\"" (qd-num-s w) "\" height=\"" (qd-num-s h)
+      "\" fill=\"#fff\"/>"
+      (let loop ((xs es) (i 0) (acc ""))
+        (if (null? xs)
+            acc
+            (let* ((e (car xs))
+                   (c (qd-opt e "cand" #f))
+                   (ps (if (hash? c) (qd-opt c "parents" (list)) (list)))
+                   (y (+ 20 (* 30 (gen-of e)))))
+              (loop (cdr xs) (+ i 1)
+                    (string-append
+                      acc
+                      (let ploop ((pp ps) (pacc ""))
+                        (if (null? pp)
+                            pacc
+                            (let ((k (qd-index-of (car pp) ids)))
+                              (ploop (cdr pp)
+                                     (if (and (>= k 0) (< k n))
+                                         (string-append pacc
+                                                        "<line x1=\"" (qd-num-s (col k)) "\" y1=\"" (qd-num-s y)
+                                                        "\" x2=\"" (qd-num-s (col i)) "\" y2=\"" (qd-num-s y)
+                                                        "\" stroke=\"#bbb\"/>")
+                                         pacc)))))
+                      "<circle cx=\"" (qd-num-s (col i)) "\" cy=\"" (qd-num-s y)
+                      "\" r=\"3\" fill=\"#2563eb\"><title>"
+                      (qd-num-s (qd-opt e "quality" 0)) "</title></circle>")))))
+      "</svg>"))
+
+(define (qd-index-of v xs)
+  (let loop ((ys xs) (i 0))
+    (cond ((null? ys) -1)
+          ((string=? v (car ys)) i)
+          (else (loop (cdr ys) (+ i 1))))))
+))

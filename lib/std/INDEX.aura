@@ -64,6 +64,10 @@
     (list "moead"
       (list "MOEA/D decomposition search (Tchebycheff/PBI/weighted sum), Das-Dennis weights, MOEA/DD archive"
             "(require \"std/moead\" all:)(moead:ask (moead:make (hash \"n-obj\" 2 \"H\" 12)) 4)"))
+    ; Issue #4941: quality diversity next to the objective-space archive
+    (list "qd"
+      (list "MAP-Elites (grid/CVT), novelty, island model, DGM parent selection, structural de-duplication"
+            "(require \"std/qd\" all:)(qd:coverage (qd:map-elites (hash \"descriptors\" (list (list \"tokens\" 0 20000 10)))))"))
     ; ── Aura layer (#5004): agent / orch / evo are written in Aura over the
     ;    primitives; the Scheme layer below is engine + host prims. ──
     (list "agent"
