@@ -198,3 +198,41 @@ already out of the catalog" completion branch of #5008.
 - Engine-verb families (`query:`, `orch:`, `workspace:`) are
   kernel because they read or mutate engine internals. Their reduction comes
   from deleting redundant verbs (#5009/#5006), not from re-labelling them.
+
+## One read verb, one write verb (Issue #5009)
+
+The algebra the v0.2.0 surface converges on:
+
+| Verb | Shape | What it covers |
+|------|-------|----------------|
+| read | `(query :op …)` | nodes, children/parent, find/filter, def-use, provenance, dirty, reachability, type feedback, stable refs, mutation log |
+| write | `(mutate :op …)` | snapshot/restore/validate, atomic batches, overlays, workspace sync, syntax markers |
+
+Two op spellings are accepted:
+
+- a **keyword** carries the canonical short name — `(query :node-type id)`,
+  `(mutate :snapshot "tag")`;
+- a **string** carries the retired primitive name verbatim —
+  `(query "ast:stable-ref" id)`. This is the escape hatch for the long tail
+  and the only way to disambiguate when two prefixes own the same word
+  (`query:stable-ref` vs `ast:stable-ref` return different shapes).
+
+An unknown `:op` still fails loudly (with a `did you mean` hint), and an
+unknown string op is `no-prim`.
+
+**Retired prefixes.** `ast:` `workspace:` `dirty:` `mutation-log:` `syntax:`
+`ws:` and `fiber:overlay-*` leave the public surface. They stay registered for
+one release cycle as deprecated aliases (the #5008 channel): the tier list
+carries `"deprecated": true` plus the replacement, `docs/generated/primitives.md`
+renders them under `**deprecated**`, and `(api-reference)` lists them in its
+`*deprecated*` section with the hint. `lib/std` must call the verbs, not the
+aliases — the tier gate fails on a deprecated name that `lib/std` still calls.
+
+**fiber:** keeps `spawn` `yield` `join` `cancel`. The COW overlay verbs
+(`overlay-begin` … `overlay-commit`) are `(mutate :overlay-…)`; the backend
+read is `(query :fiber-backend)`.
+
+**Wrappers.** `std/query`, `std/ast`, `std/workspace` and `std/compat` are thin
+wrappers over the two algebras: they compose, format and default, and every
+engine call they make is a verb. Do not add a second synonym for an op that
+already exists.

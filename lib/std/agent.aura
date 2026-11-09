@@ -199,7 +199,7 @@
 (define (agent:decision-metrics)
   (agent-bump! "metrics-calls")
   (try
-    (let* ((ml (try (mutation-log:summary)
+    (let* ((ml (try (query "mutation-log:summary")
                     (catch (e) (hash "total" 0 "committed" 0 "rolled-back" 0))))
            ; #1449: atomic-batch:stats is facade-only — prefer stats:get
            (ab (try (stats:get "atomic-batch:stats")
@@ -424,7 +424,7 @@
       (else
        (let* ((proposal (agent:propose mutations rebind-name rebind-body summary))
               ; 3) apply
-              (snap (try (ast:snapshot (hash-ref proposal "summary" "closed-loop"))
+              (snap (try (mutate :snapshot (hash-ref proposal "summary" "closed-loop"))
                          (catch (e) -1)))
               (applied (agent:apply proposal snap))
               (mut-ok (hash-ref applied "applied" #f))
@@ -441,18 +441,18 @@
                                 "rollbacks"))
            ((not eval-res)
             (if (and (number? snap2) (>= snap2 0))
-              (try (ast:restore snap2) (catch (e) (agent-restore-source! pre-src)))
+              (try (mutate :restore snap2) (catch (e) (agent-restore-source! pre-src)))
               (agent-restore-source! pre-src))
             (agent-round-result #f 'rollback #f post-metrics summary "rollbacks"))
            ((equal? post-rec "escalate")
             (if (and (number? snap2) (>= snap2 0))
-              (try (ast:restore snap2) (catch (e) (agent-restore-source! pre-src)))
+              (try (mutate :restore snap2) (catch (e) (agent-restore-source! pre-src)))
               (agent-restore-source! pre-src))
             (agent-round-result #f 'escalate #t post-metrics summary
                                 "escalations"))
            ((equal? post-rec "back-off")
             (if (and (number? snap2) (>= snap2 0))
-              (try (ast:restore snap2) (catch (e) (agent-restore-source! pre-src)))
+              (try (mutate :restore snap2) (catch (e) (agent-restore-source! pre-src)))
               (agent-restore-source! pre-src))
             (agent-round-result #f 'back-off #t post-metrics summary "back-offs"))
            (else

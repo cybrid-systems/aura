@@ -9782,12 +9782,18 @@ template <typename Ctx> void RegSplitParts::register_mutate_dispatch_primitive(C
             return (*fn)(args);
         };
 
-        if (a.empty() || !is_keyword(a[0]))
+        if (a.empty())
             return mev("bad-arg",
                        "usage: (mutate :op …)  ops: :rebind :replace :move :extract :validate "
                        ":atomic :render-optimize :closed-loop-tick");
 
-        const std::string op = kw_name(a[0]);
+        // Issue #5009: a string op spells the retired primitive name verbatim
+        // ("fiber:overlay-commit"), the escape hatch for the long tail.
+        const std::string op = as_text(a[0]);
+        if (op.empty())
+            return mev("bad-arg",
+                       "usage: (mutate :op …)  ops: :rebind :replace :move :extract :validate "
+                       ":atomic :render-optimize :closed-loop-tick");
         auto rest = a.subspan(1);
 
         // (mutate :rebind name code [summary] …)
@@ -9867,6 +9873,32 @@ template <typename Ctx> void RegSplitParts::register_mutate_dispatch_primitive(C
         // (mutate :atomic mutations-list …)
         if (op == "atomic" || op == "atomic-batch")
             return call_named("mutate:atomic-batch", rest);
+
+        // Issue #5009: one write verb. A prefixed op is the primitive name
+        // itself; a bare op resolves against the retired write prefixes, so
+        // (mutate :snapshot) / (mutate :restore id) / (mutate :memory-used-set)
+        // reach ast:/workspace:/ws:/syntax:/fiber:overlay-* without a second
+        // public name.
+        {
+            auto try_named = [&](const std::string& prim) -> std::optional<EvalValue> {
+                if (auto sfn = ObservabilityPrims::lookup_stats_impl(prim))
+                    return (*sfn)(rest);
+                if (auto fn = ev.primitives_.lookup(prim))
+                    return (*fn)(rest);
+                return std::nullopt;
+            };
+            if (op.find(':') != std::string::npos) {
+                if (auto hit = try_named(op))
+                    return *hit;
+                return mev("no-prim", "mutate dispatch: missing " + op);
+            }
+            static constexpr const char* kWritePrefixes[] = {
+                "mutate:", "ast:", "workspace:", "ws:", "syntax:", "fiber:"};
+            for (const char* prefix : kWritePrefixes) {
+                if (auto hit = try_named(std::string(prefix) + op))
+                    return *hit;
+            }
+        }
 
         return mev("bad-arg", "unknown mutate op ':" + op +
                                   "' — use :rebind :replace :move :extract :validate :atomic "

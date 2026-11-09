@@ -418,9 +418,9 @@
         (begin
           ;; #4715 overlay: the candidate's defines stay private to this
           ;; body and are rolled back before it returns (#4741 AC2).
-          (fiber:overlay-begin)
+          (mutate :overlay-begin)
           (let ((res (guarded)))
-            (fiber:overlay-rollback)
+            (mutate :overlay-rollback)
             res))
         (guarded))))
 

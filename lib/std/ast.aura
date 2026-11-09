@@ -51,10 +51,10 @@
         "AST summary: <unavailable>"))))
 
 ; ── (ast:diff-formatted a b) ──
-; Compute (ast:diff a b) and format the result for display.
+; Compute (query :diff a b) and format the result for display.
 ; Returns "no diff" if both args equal; "diff:" + summary otherwise.
 (define (ast:diff-formatted a b)
-  (let ((result (ast:diff a b)))
+  (let ((result (query :diff a b)))
     (cond
       ((null? result)  "diff: <none>")
       ((string? result) (string-append "diff: " result))
@@ -65,13 +65,13 @@
             " entries"))))))
 
 ; ── (ast:validate-summary) ──
-; Run (ast:validate-nodes) + (ast:validate-ownership) +
-; (ast:validate-post-restore) and aggregate results into a
+; Run (query :validate-nodes) + (query :validate-ownership) +
+; (query :validate-post-restore) and aggregate results into a
 ; summary (alists of (check-name . status)).
 (define (ast:validate-summary)
-  (let ((v-nodes (ast:validate-nodes))
-        (v-owner (ast:validate-ownership))
-        (v-post  (ast:validate-post-restore)))
+  (let ((v-nodes (query :validate-nodes))
+        (v-owner (query :validate-ownership))
+        (v-post  (query :validate-post-restore)))
     (list
       (list "validate-nodes" v-nodes)
       (list "validate-ownership" v-owner)
@@ -82,15 +82,15 @@
 (define (ast:version-summary)
   (list
     (list "version"      (ast:version))
-    (list "generation"   (ast:generation))
+    (list "generation"   (query :generation))
     (list "gen-stats"    (stats:get "ast:generation-stats"))))
 
 ; ── (ast:ref-stats) ──
 ; Combine ref-related surfaces into a single alist.
 (define (ast:ref-stats)
   (list
-    (list "snapshot"    (ast:snapshot 0))
-    (list "stable-ref"   (ast:stable-ref 0))
+    (list "snapshot"    (mutate :snapshot 0))
+    (list "stable-ref"   (query "ast:stable-ref" 0))
     (list "defs"         (ast:defs))
     (list "nodes"        (ast:nodes))))
 

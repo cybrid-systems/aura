@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**523** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**523** registrations scanned from `src/**/*.cpp` (53 marked **deprecated** — Issue #1438).
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
@@ -65,59 +65,59 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## Ast: (17)
 
-- `ast:compact-nodes` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:diff` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:generation` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:recycle-nodes` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-deserialize` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-get` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-mutation-id` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-serialize` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-valid?` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-workspace-id` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:restore` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:snapshot` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:snapshot-fail-reason` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:stable-ref` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:validate-nodes` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:validate-ownership` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:validate-post-restore` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:compact-nodes` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:diff` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:generation` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:recycle-nodes` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-deserialize` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-get` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-mutation-id` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-serialize` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-valid?` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-workspace-id` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:restore` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:snapshot` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:snapshot-fail-reason` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:stable-ref` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-nodes` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-ownership` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-post-restore` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
 
 ## Workspace: (16)
 
-- `workspace:can-write?` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:concurrent-mutation-policy` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:conflicts-with` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:delete` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:discard` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:find-define` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:memory-limit` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:memory-used` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:merge-3way` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:resolve-stable-ref` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:rollback-latest` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:rollback-to` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:set-concurrent-mutation-policy` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:set-memory-limit` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:snapshot` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:sync-from` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:can-write?` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:concurrent-mutation-policy` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:conflicts-with` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:delete` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:discard` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:find-define` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:memory-limit` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:memory-used` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:merge-3way` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:resolve-stable-ref` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:rollback-latest` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:rollback-to` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:set-concurrent-mutation-policy` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:set-memory-limit` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:snapshot` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:sync-from` *[mutation-safety]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
 ## Fiber: (15)
 
 - `fiber:cancel` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:join` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `fiber:overlay-begin` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-commit` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-conflict` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-define` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-get` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-has` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-pending` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-report` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-rollback` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-set!` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-begin` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-commit` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-conflict` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-define` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-get` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-has` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-pending` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-report` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-rollback` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-set!` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `fiber:spawn` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `fiber:spawn-backend` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:spawn-backend` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 
 ## Agent: (3)
@@ -504,8 +504,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## Dirty: (2)
 
-- `dirty:ppa-reasons` *[core]* `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `dirty:reasons` *[core]* `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:ppa-reasons` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:reasons` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 
 ## Edsl: (1)
 
@@ -556,8 +556,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## Mutation-Log: (2)
 
-- `mutation-log:diff` *[core]* `kernel` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `mutation-log:summary` *[core]* `kernel` — `src/compiler/evaluator_primitives_mutation.cpp`
+- `mutation-log:diff` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_mutation.cpp`
+- `mutation-log:summary` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_mutation.cpp`
 
 ## Offload: (5)
 
@@ -654,10 +654,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## Syntax: (4)
 
-- `syntax:get-provenance` *[core]* `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:propagate-marker` *[core]* `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:set-marker` *[core]* `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:set-provenance` *[core]* `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:get-provenance` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:propagate-marker` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:set-marker` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:set-provenance` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_compile.cpp`
 
 ## Type: (2)
 
@@ -676,30 +676,30 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## Ws: (1)
 
-- `ws:try-mutation` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `ws:try-mutation` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
 ## By category (Issue #559)
 
 ### Mutation safety (must remain primitive) (56)
 
 - `api-reference` `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
-- `ast:compact-nodes` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:diff` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:generation` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:recycle-nodes` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-deserialize` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-get` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-mutation-id` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-serialize` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-valid?` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-workspace-id` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:restore` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:snapshot` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:snapshot-fail-reason` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:stable-ref` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:validate-nodes` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:validate-ownership` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:validate-post-restore` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:compact-nodes` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:diff` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:generation` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:recycle-nodes` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-deserialize` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-get` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-mutation-id` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-serialize` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-valid?` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-workspace-id` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:restore` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:snapshot` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:snapshot-fail-reason` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:stable-ref` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-nodes` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-ownership` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-post-restore` `kernel` **deprecated** — `src/compiler/evaluator_primitives_ast.cpp`
 - `c-alloc` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-free` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-func` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
@@ -722,22 +722,22 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace-persist-format-version` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-persist-info` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-state` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `workspace:can-write?` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:concurrent-mutation-policy` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:conflicts-with` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:delete` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:discard` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:find-define` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:memory-limit` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:memory-used` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:merge-3way` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:resolve-stable-ref` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:rollback-latest` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:rollback-to` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:set-concurrent-mutation-policy` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:set-memory-limit` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:snapshot` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:sync-from` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:can-write?` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:concurrent-mutation-policy` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:conflicts-with` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:delete` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:discard` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:find-define` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:memory-limit` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:memory-used` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:merge-3way` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:resolve-stable-ref` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:rollback-latest` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:rollback-to` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:set-concurrent-mutation-policy` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:set-memory-limit` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:snapshot` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:sync-from` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
 ### Core builtins (must remain primitive) (432)
 
@@ -846,8 +846,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `define-strategy` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `deserialize-workspace` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `diagnose` `kernel` — `src/compiler/evaluator_primitives_diagnostic.cpp`
-- `dirty:ppa-reasons` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `dirty:reasons` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:ppa-reasons` `kernel` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:reasons` `kernel` **deprecated** — `src/compiler/evaluator_primitives_memory.cpp`
 - `display` `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `drop` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
 - `edsl:define-struct` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
@@ -884,18 +884,18 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `ffi:unpin-buffer` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `fiber:cancel` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:join` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `fiber:overlay-begin` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-commit` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-conflict` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-define` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-get` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-has` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-pending` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-report` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-rollback` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-set!` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-begin` `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-commit` `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-conflict` `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-define` `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-get` `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-has` `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-pending` `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-report` `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-rollback` `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-set!` `kernel` **deprecated** — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `fiber:spawn` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `fiber:spawn-backend` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:spawn-backend` `kernel` **deprecated** — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `filter` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
 - `float?` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
@@ -990,8 +990,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `mutation-lightweight-commit` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
 - `mutation-lightweight-rollback` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
 - `mutation-log-compact` `kernel` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `mutation-log:diff` `kernel` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `mutation-log:summary` `kernel` — `src/compiler/evaluator_primitives_mutation.cpp`
+- `mutation-log:diff` `kernel` **deprecated** — `src/compiler/evaluator_primitives_mutation.cpp`
+- `mutation-log:summary` `kernel` **deprecated** — `src/compiler/evaluator_primitives_mutation.cpp`
 - `my-id` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `newline` `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `not` `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
@@ -1126,10 +1126,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `symbol-append` `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `symbol?` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `syntax-marker` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:get-provenance` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:propagate-marker` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:set-marker` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:set-provenance` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:get-provenance` `kernel` **deprecated** — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:propagate-marker` `kernel` **deprecated** — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:set-marker` `kernel` **deprecated** — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:set-provenance` `kernel` **deprecated** — `src/compiler/evaluator_primitives_compile.cpp`
 - `synthesize:define` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:fill` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:optimize` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
@@ -1172,7 +1172,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `write` `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `write-file` `kernel` — `src/compiler/evaluator_primitives_file.cpp`
-- `ws:try-mutation` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `ws:try-mutation` `kernel` **deprecated** — `src/compiler/evaluator_primitives_workspace.cpp`
 
 ### Internal observable (stats/counters) (34)
 
@@ -1255,23 +1255,23 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `arena:set-auto-compact-threshold` *[K-GOV]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `arithmetic-shift` *[K-NUM]* — `src/compiler/evaluator_primitives_core.cpp`
 - `asin` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
-- `ast:compact-nodes` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:diff` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:generation` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:recycle-nodes` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-deserialize` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-get` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-mutation-id` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-serialize` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-valid?` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:ref-workspace-id` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:restore` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:snapshot` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:snapshot-fail-reason` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:stable-ref` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:validate-nodes` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:validate-ownership` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `ast:validate-post-restore` *[K-ENGINE]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:compact-nodes` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:diff` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:generation` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:recycle-nodes` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-deserialize` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-get` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-mutation-id` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-serialize` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-valid?` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-workspace-id` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:restore` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:snapshot` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:snapshot-fail-reason` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:stable-ref` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-nodes` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-ownership` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-post-restore` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `atan` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
 - `atomic:add!` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `atomic:counter` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
@@ -1328,8 +1328,8 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `define-strategy` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `deserialize-workspace` *[K-CTRL]* — `src/compiler/evaluator_primitives_persist.cpp`
 - `diagnose` *[K-AGENT]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
-- `dirty:ppa-reasons` *[K-GOV]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `dirty:reasons` *[K-GOV]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:ppa-reasons` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:reasons` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `display` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `edsl:define-struct` *[K-ENGINE]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `engine:metrics` *[K-OBS]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
@@ -1342,7 +1342,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `eval` *[K-CTRL]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `eval-expr` *[K-CTRL]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `eval:async` *[K-CTRL]* — `src/compiler/evaluator_primitives_eval.cpp`
-- `evaluator:compact-env-frames` *[K-ENGINE]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `evaluator:compact-env-frames` *[K-GOV]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `evo:log-path` *[K-IO]* — `src/compiler/evaluator_primitives_json.cpp`
 - `evo:record!` *[K-IO]* — `src/compiler/evaluator_primitives_json.cpp`
 - `evolve-strategy` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
@@ -1358,18 +1358,18 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `ffi:unpin-buffer` *[K-FFI]* — `src/compiler/ffi_primitives_impl.cpp`
 - `fiber:cancel` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:join` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
-- `fiber:overlay-begin` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-commit` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-conflict` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-define` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-get` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-has` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-pending` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-report` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-rollback` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `fiber:overlay-set!` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-begin` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-commit` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-conflict` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-define` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-get` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-has` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-pending` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-report` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-rollback` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-set!` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `fiber:spawn` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
-- `fiber:spawn-backend` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `fiber:spawn-backend` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `float?` *[K-VAL]* — `src/compiler/evaluator_primitives_core.cpp`
 - `floor` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -1390,10 +1390,10 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `hash-remove!` *[K-VAL]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-set!` *[K-VAL]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash?` *[K-VAL]* — `src/compiler/evaluator_primitives_vector.cpp`
-- `hot-swap:fn` *[K-ENGINE]* — `src/compiler/evaluator_primitives_types.cpp`
-- `hygiene:allow-macro-mutate?` *[K-ENGINE]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `hygiene:protected?` *[K-ENGINE]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `hygiene:set-allow-macro-mutate!` *[K-ENGINE]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `hot-swap:fn` *[K-GOV]* — `src/compiler/evaluator_primitives_types.cpp`
+- `hygiene:allow-macro-mutate?` *[K-GOV]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `hygiene:protected?` *[K-GOV]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `hygiene:set-allow-macro-mutate!` *[K-GOV]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `ihash-ref` *[K-VAL]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `ihash-remove` *[K-VAL]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `ihash-set` *[K-VAL]* — `src/compiler/evaluator_primitives_vector.cpp`
@@ -1408,10 +1408,10 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `intend` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `intend-analytics` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `intend-history` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `ir-cache-v2:dependents` *[K-ENGINE]* — `src/compiler/evaluator_primitives_eval.cpp`
-- `ir-cache-v2:dirty?` *[K-ENGINE]* — `src/compiler/evaluator_primitives_eval.cpp`
-- `jit:deopt-fn?` *[K-ENGINE]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `jit:exception-fibers-clear` *[K-ENGINE]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `ir-cache-v2:dependents` *[K-GOV]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `ir-cache-v2:dirty?` *[K-GOV]* — `src/compiler/evaluator_primitives_eval.cpp`
+- `jit:deopt-fn?` *[K-GOV]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `jit:exception-fibers-clear` *[K-GOV]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `keyword->string` *[K-VAL]* — `src/compiler/evaluator_primitives_reflect.cpp`
 - `keyword?` *[K-VAL]* — `src/compiler/evaluator_primitives_reflect.cpp`
 - `load` *[K-ENGINE]* — `src/compiler/evaluator_primitives_eval.cpp`
@@ -1438,8 +1438,8 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `mutation-lightweight-commit` *[K-WS]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `mutation-lightweight-rollback` *[K-WS]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `mutation-log-compact` *[K-WS]* — `src/compiler/evaluator_primitives_mutation.cpp`
-- `mutation-log:diff` *[K-WS]* — `src/compiler/evaluator_primitives_mutation.cpp`
-- `mutation-log:summary` *[K-WS]* — `src/compiler/evaluator_primitives_mutation.cpp`
+- `mutation-log:diff` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_mutation.cpp`
+- `mutation-log:summary` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_mutation.cpp`
 - `my-id` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `newline` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `not` *[K-HOT]* — `src/compiler/evaluator_primitives_builtins.cpp`
@@ -1553,8 +1553,8 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `rollback-since` *[K-WS]* — `src/compiler/evaluator_primitives_mutation.cpp`
 - `round` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
 - `run-tests` *[K-IO]* — `src/compiler/evaluator_primitives_test.cpp`
-- `runtime:self-heal-on-drift` *[K-ENGINE]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `scheduler:pin` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `runtime:self-heal-on-drift` *[K-GOV]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `scheduler:pin` *[K-GOV]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `security:check-effect` *[K-GOV]* — `src/compiler/evaluator_primitives_security.cpp`
 - `security:check-tenant-isolation` *[K-GOV]* — `src/compiler/evaluator_primitives_security.cpp`
 - `security:grant-capability!` *[K-GOV]* — `src/compiler/evaluator_primitives_security.cpp`
@@ -1567,7 +1567,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `send` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `serialize-workspace` *[K-CTRL]* — `src/compiler/evaluator_primitives_persist.cpp`
 - `session-active?` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
-- `session:create` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `session:create` *[K-GOV]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `set-car!` *[K-VAL]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-cdr!` *[K-VAL]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-memory-policy` *[K-GOV]* — `src/compiler/evaluator_primitives_policy.cpp`
@@ -1594,10 +1594,10 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `suggest-annotation-at` *[K-ENGINE]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `symbol?` *[K-VAL]* — `src/compiler/evaluator_primitives_core.cpp`
 - `syntax-marker` *[K-ENGINE]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:get-provenance` *[K-ENGINE]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:propagate-marker` *[K-ENGINE]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:set-marker` *[K-ENGINE]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `syntax:set-provenance` *[K-ENGINE]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:get-provenance` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:propagate-marker` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:set-marker` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:set-provenance` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `synthesize:define` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:fill` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:optimize` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
@@ -1632,25 +1632,25 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `workspace-persist-format-version` *[K-WS]* — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-persist-info` *[K-WS]* — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-state` *[K-WS]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `workspace:can-write?` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:concurrent-mutation-policy` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:conflicts-with` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:delete` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:discard` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:find-define` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:memory-limit` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:memory-used` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:merge-3way` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:resolve-stable-ref` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:rollback-latest` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:rollback-to` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:set-concurrent-mutation-policy` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:set-memory-limit` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:snapshot` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace:sync-from` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:can-write?` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:concurrent-mutation-policy` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:conflicts-with` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:delete` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:discard` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:find-define` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:memory-limit` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:memory-used` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:merge-3way` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:resolve-stable-ref` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:rollback-latest` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:rollback-to` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:set-concurrent-mutation-policy` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:set-memory-limit` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:snapshot` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:sync-from` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `write` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `write-file` *[K-IO]* — `src/compiler/evaluator_primitives_file.cpp`
-- `ws:try-mutation` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
+- `ws:try-mutation` *[D-PREFIX-5009]* — `src/compiler/evaluator_primitives_workspace.cpp`
 
 ### stdlib-candidate (87)
 
@@ -1747,6 +1747,64 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `ceiling` *[D-ALIAS]* — `src/compiler/evaluator_primitives_math.cpp`
 - `exact` *[D-ALIAS]* — `src/compiler/evaluator_primitives_math.cpp`
 - `inexact` *[D-ALIAS]* — `src/compiler/evaluator_primitives_math.cpp`
-- `orch:parallel-intend` *[D-ALIAS]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:parallel-intend` *[K-ORCH]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `primitives:contract-probe` *[D-ALIAS]* — `src/compiler/evaluator_primitives_test.cpp`
 - `truncate` *[D-ALIAS]* — `src/compiler/evaluator_primitives_math.cpp`
+
+## Deprecated (Issue #1438)
+
+Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **53** names:
+
+- `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:diff` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:generation` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:recycle-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-deserialize` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-get` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-mutation-id` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-serialize` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-valid?` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:ref-workspace-id` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:restore` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:snapshot` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:snapshot-fail-reason` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:stable-ref` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-ownership` — `src/compiler/evaluator_primitives_ast.cpp`
+- `ast:validate-post-restore` — `src/compiler/evaluator_primitives_ast.cpp`
+- `dirty:ppa-reasons` — `src/compiler/evaluator_primitives_memory.cpp`
+- `dirty:reasons` — `src/compiler/evaluator_primitives_memory.cpp`
+- `fiber:overlay-begin` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-commit` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-conflict` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-define` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-get` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-has` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-pending` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-report` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-rollback` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:overlay-set!` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
+- `fiber:spawn-backend` — `src/compiler/evaluator_primitives_messaging.cpp`
+- `mutation-log:diff` — `src/compiler/evaluator_primitives_mutation.cpp`
+- `mutation-log:summary` — `src/compiler/evaluator_primitives_mutation.cpp`
+- `syntax:get-provenance` — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:propagate-marker` — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:set-marker` — `src/compiler/evaluator_primitives_compile.cpp`
+- `syntax:set-provenance` — `src/compiler/evaluator_primitives_compile.cpp`
+- `workspace:can-write?` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:concurrent-mutation-policy` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:conflicts-with` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:delete` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:discard` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:find-define` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:memory-limit` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:memory-used` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:merge-3way` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:resolve-stable-ref` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:rollback-latest` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:rollback-to` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:set-concurrent-mutation-policy` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:set-memory-limit` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
+- `ws:try-mutation` — `src/compiler/evaluator_primitives_workspace.cpp`

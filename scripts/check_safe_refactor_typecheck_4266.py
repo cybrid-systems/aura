@@ -158,8 +158,11 @@ def main() -> int:
     )
     must("((equal? apply-result #t)" in replace_body, "AC2: applied ONLY on the structured ok status (#t)")
     else_arm = _slice(replace_body, "(else", "")
+    # Issue #5009: the write surface is (mutate :restore …); ast:restore is the
+    # deprecated alias it forwards to, so accept either spelling.
     must(
-        "(ast:restore snap-id)" in else_arm and "(list 'rejected" in else_arm,
+        ("(mutate :restore snap-id)" in else_arm or "(ast:restore snap-id)" in else_arm)
+        and "(list 'rejected" in else_arm,
         "AC2: not-ok branch restores the snapshot and reports rejected",
     )
     must("(typecheck-current)" not in stdlib_live, "AC2: no live stdlib code gates on the raw typecheck-current report")
@@ -170,7 +173,10 @@ def main() -> int:
     )
     must('(list \'error "post-verify-error-raised")' in apply_body, "AC2: throw face reported as structured error")
     pv_arm = _slice(apply_body, "(try (post-verify)", "(not pv)")
-    must("(ast:restore snap-id)" in pv_arm, "AC2: throw branch restores the snapshot (was: escaped, no restore)")
+    must(
+        "(mutate :restore snap-id)" in pv_arm or "(ast:restore snap-id)" in pv_arm,
+        "AC2: throw branch restores the snapshot (was: escaped, no restore)",
+    )
     must(
         '(list \'rolled-back "post-verify-failed")' in apply_body,
         "AC2: #f face still rolls back (prior behavior pinned)",
