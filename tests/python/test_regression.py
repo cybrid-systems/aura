@@ -4958,37 +4958,20 @@ def test_fiber_gc_root_registry_4713():
         finally:
             os.unlink(path)
 
-    def file_run(nfib, attempts=3):
+    def file_run(nfib):
         prog = (
             defs()
             + f"(define fs (spawn-n {nfib}))\n"
             + '(display (map (lambda (h) (hash-ref h "id" -1)) (map fiber:join fs))) (newline)\n'
             + '(display (list (stats:get "query:tw-root-reclaims") '
-            + '(stats:get "query:tw-root-cross-marks"))) (newline)'
+            + '(stats:get "query:tw-root-cross-marks"))) (newline)\n'
         )
         fd, path = tempfile.mkstemp(suffix=".aura", prefix="aura-4713-")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(prog)
-            # Known pre-existing flake (NOT #4713 / #5057): a multi-fiber CLI
-            # run can intermittently lose a named-let binding ("cannot call:
-            # loop"), about 1% at 8-32 fibers, and it still reproduces with
-            # AURA_GC_RECLAIM_OFF=1, so it is not the reclaim path. The
-            # single-fiber row is stable. Retry so a rare scheduler
-            # interleaving does not fail the p0 gate; a systematic binding
-            # loss fails every attempt and still surfaces.
-            last = None
-            for attempt in range(attempts):
-                r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=180, env=env, cwd=str(REPO))
-                last = (r.returncode, r.stdout or "", r.stderr or "", peak_kb())
-                if r.returncode == 0:
-                    return last
-                if attempt + 1 < attempts:
-                    print(
-                        f"  #4713 {nfib}-fiber churn failed (rc={r.returncode}); "
-                        f"known multi-fiber binding-loss flake, retrying"
-                    )
-            return last
+            r = subprocess.run([AURA, path], capture_output=True, text=True, timeout=180, env=env, cwd=str(REPO))
+            return r.returncode, r.stdout or "", r.stderr or "", peak_kb()
         finally:
             os.unlink(path)
 

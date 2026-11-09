@@ -6975,6 +6975,14 @@ public:
     // Store v into cell ci (bounds-checked by the caller) and record a '()
     // store (Issue #4789).
     void store_cell_value(std::size_t ci, const types::EvalValue& v) {
+        // Issue #5058: cells_ is a pmr vector that another body grows
+        // (alloc_cell -> push_back) while this body stores a let/letrec init.
+        // A grow reallocates by copying the buffer; without the storage lock
+        // a store landing during that copy is written to the OLD buffer and
+        // lost, so the cell keeps its void placeholder and a later read of a
+        // named-let binding reports "cannot call: loop". Serialize the store
+        // with the grow (recursive: alloc_cell may already hold it).
+        std::scoped_lock lock(alloc_storage_lock_);
         cells_[ci] = v;
         if (types::is_void(v))
             note_cell_nil_assigned(ci);
