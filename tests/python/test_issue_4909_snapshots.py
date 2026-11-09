@@ -100,9 +100,18 @@ class Snapshots(unittest.TestCase):
                 if absent:
                     self.assertNotIn(absent, r.stdout, out)
 
-    def test_query_op_did_you_mean(self) -> None:
+    def test_query_ops_dispatch_and_reject_unknown(self) -> None:
+        # Issue #5009 replaced query:<name> with (query :op): :code is a valid
+        # op that dispatches to the query:code primitive; unknown ops return
+        # the bad-arg list instead of a did-you-mean hint.
         r = run_prog("(display (query :code))\n")
-        self.assertIn("did you mean (query:code", r.stdout + r.stderr)
+        out = r.stdout + r.stderr
+        self.assertIn("no-workspace", out)
+        self.assertNotIn("unknown query op", out)
+
+        r = run_prog("(display (query :zzz))\n")
+        out = r.stdout + r.stderr
+        self.assertIn("unknown query op", out)
 
 
 if __name__ == "__main__":
