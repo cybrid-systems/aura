@@ -232,6 +232,28 @@
          "EI and LCB are distinct acquisitions")
 (assert! (not (= -1 (string-index (surr:help) "4943" 0))) "help mentions 4943")
 
+
+; ═══════════════════════════════════════════════════════════════════
+; AC7 — cheap-first budget: the forwarded set keeps the true best
+; ═══════════════════════════════════════════════════════════════════
+(display "AC7 cheap-first budget\n")
+; 101 probes, forward 20 (the 20 % a polish sweep would keep), then
+; full-evaluate only those: the optimum must survive and the evaluation
+; saving must clear the issue's 40 % bar.
+(define pf7 (surr:prescreen mgp grid 20 (hash "acq" "ei" "best" 0.0)))
+(define kept7 (map (lambda (r) (hash-ref r "index")) (hash-ref pf7 "selected")))
+(assert! (<= (length kept7) (* 0.6 (length grid)))
+         "at most 60 % of the pool reaches the full evaluation")
+(define near7 (foldl (lambda (acc i)
+                       (if (< (absdiff (/ i 100.0) 0.3) 0.05) #t acc))
+                     #f kept7))
+(assert! near7 "the forwarded set brackets the optimum within 0.05")
+(define kept-best7 (apply min (map (lambda (i) (f (/ i 100.0))) kept7)))
+(define full-best7 (apply min (map (lambda (p) (f (car p))) grid)))
+(assert! (<= kept-best7 (+ full-best7 0.001))
+         "cheap-first evaluation lands within 0.001 of the full-grid best")
+(display "  forwarded ") (display (length kept7)) (display " of ")
+(display (length grid)) (display " probes") (newline)
 (if (= *fails* 0)
     (begin (display "OK-4943 surrogate\n"))
     (begin
