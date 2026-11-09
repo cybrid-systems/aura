@@ -191,8 +191,10 @@ aura new agent       # orchestrated workflow
 `evolve-moo` runs 240 mock proposals in seconds, prints the Pareto front size
 and QD coverage, writes `out/pareto.svg` and `out/qd.svg`, and logs every
 candidate so `aura evo report --html out/report` shows the scatter, the HV
-curve, the heat map and the lineage. Total time from install to a report is
-well under 10 minutes on x86_64 and arm64.
+curve, the heat map and the lineage. Measured install → report times and the platform
+matrix are in [install.md](install.md#from-the-install-line-to-a-report) (23–55 s on
+arm64/Ubuntu 26.10; the Ubuntu 24.04 x86_64 and arm64 cells are gated at
+≤600 s in CI).
 
 ## Migration: std/evolve is deprecated
 

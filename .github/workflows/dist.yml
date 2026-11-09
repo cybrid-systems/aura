@@ -57,7 +57,7 @@ jobs:
         run: |
           pip install --break-system-packages -r requirements-dev.txt
           AURA_TEST_JOBS=4 python3 build.py test bash
-          for t in 4912 4913 4914 4909_first_error 4908_cross_mode 4934_version; do
+          for t in 4912 4913 4914 4909_first_error 4908_cross_mode 4934_version 4948_help; do
             python3 tests/python/test_issue_$t.py
           done
       - name: Bundle
@@ -97,6 +97,18 @@ jobs:
           test ! -e out/report.html
           aura test
           echo "install → worldline: $(( $(date +%s) - start )) s"
+          # #4948: the v0.2 DX acceptance — one install line to a Pareto/QD
+          # report within 10 minutes, measured on both Ubuntu 24.04 arches.
+          cd "$RUNNER_TEMP" && aura new evolve-moo moo && cd moo
+          aura run | tee moo.out
+          grep -q '^evaluated 240' moo.out
+          aura evo report --html out/report
+          for f in index.html pareto.svg hv-curve.svg qd-heatmap.svg lineage.svg; do
+            test -s "out/report/$f"
+          done
+          total=$(( $(date +%s) - start ))
+          echo "install → evolve-moo report: $total s (budget 600 s)"
+          test "$total" -le 600
       - name: Clean containers (Ubuntu 24.04, Ubuntu 26.10, Debian 12, Rocky 9, openEuler 24.03 LTS SP4)
         # #4934: v0.1 supported distros. Stock images, nothing installed: install.sh
         # needs only sh, tar+gzip, sha256sum (all in the base images), and the

@@ -1,0 +1,24 @@
+aura <version> — an AI-native Lisp
+
+usage: aura <command> [args]     project commands
+       aura demo                  watch a definition evolve in the terminal
+       aura [options] file.aura   run one file (or stdin, or -e EXPR)
+
+Commands:
+  new    create a project (aura.toml, tests, CI, README)
+  demo   watch a definition evolve in the terminal
+  run    run the project entry with its aura.toml preset
+  test   run tests/*.aura against tests/*.golden
+  repl   interactive REPL with hot reload
+  evo    inspect a project's evolution worldline
+  lsp    language server on stdio (see docs/editor.md)
+  soft   run a file with Restricted Mutate on its workspace
+  help   show help for a command
+
+Common options:
+  -e, --eval EXPR    evaluate EXPR
+  --preset dev|ci|prod, --grant CAPS, --deny CAPS   capabilities
+  --fmt, --typecheck, --query Q, --inspect           tools
+  -V, --version      print version
+
+'aura help <command>' for details; 'aura help --all' for every option.

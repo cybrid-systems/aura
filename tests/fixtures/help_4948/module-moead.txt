@@ -1,0 +1,1 @@
+std/moead (#4940): (moead:make (hash "n-obj" 2 "H" 39 "T" 10 "scalar" "tchebycheff" "operator" "de" "dim" 30)) -> s; (moead:ask s 40) -> candidates; (moead:tell! s cands objs) -> #t; (moead:run! s eval 20000) -> s; (moead:front s) (moead:weights s). Scalars: tchebycheff | pbi | ws. dd #t turns on the MOEA/DD dominance+decomposition archive.

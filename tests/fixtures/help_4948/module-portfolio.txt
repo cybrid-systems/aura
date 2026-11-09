@@ -1,0 +1,8 @@
+std/portfolio (#4945)
+  (portfolio:make (hash "sense" "max"))
+  (portfolio:add! pf "nsga2" factory)  ; factory: (lambda (inst ctx) score)
+  (portfolio:add! pf "wall" (portfolio:external "build/pack" "space=0"))
+  (portfolio:run pf inst (hash "budget-ms" 8000 "alloc" "equal"))
+      alloc: equal | successive-halving | ucb | thompson
+  (portfolio:matrix pf instances (hash "seeds" (list 1 2 3)))
+  (portfolio:vbs pf m) (portfolio:sbs pf m)

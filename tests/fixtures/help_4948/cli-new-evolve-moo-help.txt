@@ -1,0 +1,7 @@
+usage: aura new [app|evolve|evolve-moo|agent] <dir>
+
+Scaffold a project in <dir> (must not exist or be empty).
+  app         modules + tests (default)
+  evolve      live AST: each KEEP / ROLLBACK printed in the terminal
+  evolve-moo  multi-objective + QD search (mock proposer, no LLM)
+  agent       orchestrated workflow
