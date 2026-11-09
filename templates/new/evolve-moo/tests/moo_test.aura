@@ -1,0 +1,8 @@
+(require "lib/moo")
+(require "std/evo-core" all:)
+
+(display (list (moo:unit 1234) (moo:unit 500)))
+(newline)
+(define e (moo:evaluate (evo:candidate (list 250 750))))
+(display (list (evo:objective e "loss") (evo:objective e "cost")))
+(newline)

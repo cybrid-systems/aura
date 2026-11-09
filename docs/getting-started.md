@@ -16,7 +16,8 @@ or rolled back, and the live source after each decision.
 `aura demo agent` prints the two-role dialogue. The same evolve program is a
 project you can edit:
 
-    aura new evolve demo      # or: app (modules + tests), agent (two roles)
+    aura new evolve demo      # or: app (modules + tests), evolve-moo
+                              # (multi-objective + QD), agent (two roles)
     cd demo
     aura run
 

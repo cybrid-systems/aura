@@ -1,0 +1,15 @@
+surr:gp: Any ... -> Any
+surr:knn: Any ... -> Any
+surr:auto: Any ... -> Any
+surr:model?: Any ... -> Any
+surr:fit!: Any ... -> Any
+surr:predict: Any ... -> Any
+surr:ei: Any ... -> Any
+surr:lcb: Any ... -> Any
+surr:ts: Any ... -> Any
+surr:prescreen: Any ... -> Any
+surr:false-kill-rate: Any ... -> Any
+surr:kernel: Any ... -> Any
+surr:help: Any ... -> Any
+evo:staged-eval: Any ... -> Any
+evo:race: Any ... -> Any

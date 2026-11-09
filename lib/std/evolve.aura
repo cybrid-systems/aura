@@ -7,6 +7,12 @@
 
 (export evolve-strategy)
 
+; Issue #4948 / #4938: deprecated in v0.2, removed in v0.3. The replacement is
+; a std/evo-core search (with std/pareto for objectives, std/qd for diversity);
+; the migration table is in docs/evo.md.
+(display "warning: std/evolve is deprecated in v0.2 and will be removed in v0.3;\n")
+(display "         use std/evo-core (+ std/pareto / std/qd) - see docs/evo.md\n")
+
 (define (evolve-strategy name)
   (let* ((analytics-str (intend-analytics))
          (old-body (strategy-field name "body"))

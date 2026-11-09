@@ -1,0 +1,51 @@
+;; evolve-moo — multi-objective search plus quality diversity, with the mock
+;; proposer (no LLM, no network). Each candidate is evaluated against two
+;; conflicting objectives; every evaluated candidate is appended to the evo
+;; log (objectives + behaviour), so the report can draw the Pareto scatter,
+;; the HV curve, the QD heat map and the lineage.
+;;
+;;   aura run
+;;   aura evo report --html out/report
+;;
+;; The search is a plain value (evo:search); see gate.aura for the objectives.
+(require "lib/moo")
+(require "std/evo-core" all:)
+(require "std/pareto" all:)
+(require "std/qd" all:)
+(require "std/fs" all:)
+
+;; Ask/tell loop, mock proposals, 240 evaluations, archive every measurement so
+;; the QD map sees the whole run.
+(define s (evo:search (hash "algo" "moo-mock" "seed" 7 "budget" 240 "pop" 8
+                            "archive" 512
+                            "objectives" (list (cons "loss" "min")
+                                               (cons "cost" "min")))))
+(evo:run! s moo:evaluate)
+(define rep (evo:report s))
+(define arch (hash-ref rep "archive"))
+
+;; Objective-space archive: the non-dominated front over the two objectives.
+(define a (pareto:archive (hash "dirs" (list "min" "min") "cap" 64)))
+(for-each (lambda (m)
+            (pareto:insert! a m (list (evo:objective m "loss")
+                                      (evo:objective m "cost"))))
+          arch)
+(define front (pareto:front a))
+
+;; Behaviour-space archive: MAP-Elites over (x, y), quality = 1/(1+loss).
+(define grid (qd:map-elites (hash "descriptors" (list (list "x" 0.0 1.0 8)
+                                                      (list "y" 0.0 1.0 8))
+                                 "quality" "loss")))
+(for-each (lambda (m)
+            (let ((b (evo:candidate-behavior m)))
+              (qd:insert! grid m (/ 1.0 (+ 1.0 (evo:objective m "loss"))) b)))
+          arch)
+
+(display (format "evaluated ~a  front ~a  qd coverage ~a  qd-score ~a\n"
+                 (hash-ref rep "evaluated") (length front)
+                 (qd:coverage grid) (qd:qd-score grid)))
+(make-directory "out")
+(file-write "out/pareto.svg" (pareto:report-svg front (hash "dirs" (list "min" "min"))))
+(file-write "out/qd.svg" (qd:heatmap-svg grid (hash)))
+(display "wrote out/pareto.svg and out/qd.svg\n")
+(display "next: aura evo report --html out/report\n")

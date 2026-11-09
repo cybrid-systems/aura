@@ -1,0 +1,19 @@
+;; lib/moo.aura — the evaluator this example evolves against. Two objectives
+;; that pull in opposite directions, plus a 2-D behaviour descriptor for QD.
+(require "std/evo-core" all:)
+
+(export moo:unit moo:evaluate)
+
+;; Map the mock proposer's integer genome into [0, 1).
+(define (moo:unit x) (/ (modulo x 1000) 1000.0))
+
+(define (moo:evaluate c)
+  (let* ((g (evo:candidate-genome c))
+         (x (moo:unit (car g)))
+         (y (moo:unit (car (cdr g))))
+         (dx (- x 0.8))
+         (dy (- y 0.2)))
+    (hash "objectives" (hash "loss" (+ (* dx dx) (* dy dy))
+                             "cost" (+ x (* 0.5 y)))
+          "constraints" (hash "inside" 0.0)
+          "behavior" (hash "x" x "y" y))))

@@ -148,6 +148,137 @@ jobs:
 )AURA"},
     {"evolve", "tests/gate_test.golden", R"AURA((0 #t #f #t)
 )AURA"},
+    {"evolve-moo", ".gitignore", R"AURA(out/
+)AURA"},
+    {"evolve-moo", "README.md", R"AURA(# {{name}}
+
+A multi-objective + quality-diversity search, ready to run with no LLM and no
+network (the proposer is deterministic from the seed).
+
+    aura run                       # 240 mock proposals, Pareto front + QD map
+    aura evo report --html out/report
+    aura test
+
+`aura run` prints the evaluated count, the Pareto front size and the QD
+coverage, and writes `out/pareto.svg` and `out/qd.svg`. The evo log records
+every candidate's objectives and behaviour, so `aura evo report` adds the
+Pareto scatter, the hypervolume curve, the QD heat map and the lineage tree.
+Replace `lib/moo.aura`'s evaluator or the proposer in `main.aura` to make it
+your own problem.
+)AURA"},
+    {"evolve-moo", "aura.toml", R"AURA(name = "{{name}}"
+entry = "main.aura"
+preset = "dev"
+out = "out"
+
+# The aura release this project was made with; .github/workflows/ci.yml runs
+# the ghcr.io/cybrid-systems/aura image with the same tag. require paths
+# resolve from the project root, std/* ships with aura.
+[dependencies]
+aura = "{{channel}}"
+)AURA"},
+    {"evolve-moo", ".github/workflows/ci.yml", R"AURA(name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/cybrid-systems/aura:{{channel}}
+    steps:
+      - uses: actions/checkout@v4
+      - run: aura test
+      - run: aura run
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: out
+          path: out/
+          if-no-files-found: ignore
+)AURA"},
+    {"evolve-moo", "lib/moo.aura", R"AURA(;; lib/moo.aura — the evaluator this example evolves against. Two objectives
+;; that pull in opposite directions, plus a 2-D behaviour descriptor for QD.
+(require "std/evo-core" all:)
+
+(export moo:unit moo:evaluate)
+
+;; Map the mock proposer's integer genome into [0, 1).
+(define (moo:unit x) (/ (modulo x 1000) 1000.0))
+
+(define (moo:evaluate c)
+  (let* ((g (evo:candidate-genome c))
+         (x (moo:unit (car g)))
+         (y (moo:unit (car (cdr g))))
+         (dx (- x 0.8))
+         (dy (- y 0.2)))
+    (hash "objectives" (hash "loss" (+ (* dx dx) (* dy dy))
+                             "cost" (+ x (* 0.5 y)))
+          "constraints" (hash "inside" 0.0)
+          "behavior" (hash "x" x "y" y))))
+)AURA"},
+    {"evolve-moo", "main.aura", R"AURA(;; evolve-moo — multi-objective search plus quality diversity, with the mock
+;; proposer (no LLM, no network). Each candidate is evaluated against two
+;; conflicting objectives; every evaluated candidate is appended to the evo
+;; log (objectives + behaviour), so the report can draw the Pareto scatter,
+;; the HV curve, the QD heat map and the lineage.
+;;
+;;   aura run
+;;   aura evo report --html out/report
+;;
+;; The search is a plain value (evo:search); see gate.aura for the objectives.
+(require "lib/moo")
+(require "std/evo-core" all:)
+(require "std/pareto" all:)
+(require "std/qd" all:)
+(require "std/fs" all:)
+
+;; Ask/tell loop, mock proposals, 240 evaluations, archive every measurement so
+;; the QD map sees the whole run.
+(define s (evo:search (hash "algo" "moo-mock" "seed" 7 "budget" 240 "pop" 8
+                            "archive" 512
+                            "objectives" (list (cons "loss" "min")
+                                               (cons "cost" "min")))))
+(evo:run! s moo:evaluate)
+(define rep (evo:report s))
+(define arch (hash-ref rep "archive"))
+
+;; Objective-space archive: the non-dominated front over the two objectives.
+(define a (pareto:archive (hash "dirs" (list "min" "min") "cap" 64)))
+(for-each (lambda (m)
+            (pareto:insert! a m (list (evo:objective m "loss")
+                                      (evo:objective m "cost"))))
+          arch)
+(define front (pareto:front a))
+
+;; Behaviour-space archive: MAP-Elites over (x, y), quality = 1/(1+loss).
+(define grid (qd:map-elites (hash "descriptors" (list (list "x" 0.0 1.0 8)
+                                                      (list "y" 0.0 1.0 8))
+                                 "quality" "loss")))
+(for-each (lambda (m)
+            (let ((b (evo:candidate-behavior m)))
+              (qd:insert! grid m (/ 1.0 (+ 1.0 (evo:objective m "loss"))) b)))
+          arch)
+
+(display (format "evaluated ~a  front ~a  qd coverage ~a  qd-score ~a\n"
+                 (hash-ref rep "evaluated") (length front)
+                 (qd:coverage grid) (qd:qd-score grid)))
+(make-directory "out")
+(file-write "out/pareto.svg" (pareto:report-svg front (hash "dirs" (list "min" "min"))))
+(file-write "out/qd.svg" (qd:heatmap-svg grid (hash)))
+(display "wrote out/pareto.svg and out/qd.svg\n")
+(display "next: aura evo report --html out/report\n")
+)AURA"},
+    {"evolve-moo", "tests/moo_test.aura", R"AURA((require "lib/moo")
+(require "std/evo-core" all:)
+
+(display (list (moo:unit 1234) (moo:unit 500)))
+(newline)
+(define e (moo:evaluate (evo:candidate (list 250 750))))
+(display (list (evo:objective e "loss") (evo:objective e "cost")))
+(newline)
+)AURA"},
+    {"evolve-moo", "tests/moo_test.golden", R"AURA((0.234 0.5)
+(0.6050000000000001 0.625)
+)AURA"},
     {"agent", ".gitignore", R"AURA(out/
 )AURA"},
     {"agent", "README.md", R"AURA(# {{name}}
