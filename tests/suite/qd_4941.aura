@@ -1,0 +1,140 @@
+; Issue #4941 — std/qd: MAP-Elites (grid and CVT), novelty, islands,
+; DGM-style parent selection, structural de-duplication.
+(require "std/qd" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+(define (sum xs) (let loop ((ys xs) (a 0.0)) (if (null? ys) a (loop (cdr ys) (+ a (car ys))))))
+(define (rastrigin x y)
+  (let ((pi 3.141592653589793))
+    (+ (* 20.0 (+ 2.0 (- (* x x) (* 10.0 (cos (* 2.0 pi x)))
+                         (* y y) (* 10.0 (cos (* 2.0 pi y))))) 
+       0.0))))
+
+; ═══════════════════════════════════════════════════════════════════
+; AC1 — MAP-Elites on Rastrigin: 5000 evaluations, coverage >= 80%,
+; QD-score never decreases
+; ═══════════════════════════════════════════════════════════════════
+(display "AC1 map-elites rastrigin\n")
+(define ds (list (list "x" -5.12 5.12 10) (list "y" -5.12 5.12 10)))
+(define m (qd:map-elites (hash "descriptors" ds "quality" "fitness")))
+(define r (qd-rng 17 0 0))
+(define (rand-coord) (- (* 10.24 (qd-rand! r)) 5.12))
+(define (mutate-from beh)
+  (list (+ (car beh) (* 0.6 (- (qd-rand! r) 0.5)))
+        (+ (car (cdr beh)) (* 0.6 (- (qd-rand! r) 0.5)))))
+(define last-score 0.0)
+(define mono #t)
+(let loop ((i 0) (prev 0.0))
+  (if (>= i 5000)
+      #t
+      (begin
+        (let* ((e (qd:select-parent m (hash "policy" "uniform")))
+               (beh (if (and e (< (qd-rand! r) 0.7))
+                        (mutate-from (qd-opt e "behavior" (list 0.0 0.0)))
+                        (list (rand-coord) (rand-coord))))
+               (x (max -5.12 (min 5.12 (car beh))))
+               (y (max -5.12 (min 5.12 (car (cdr beh)))))
+               (b (list x y))
+               (fit (/ 1.0 (+ 1.0 (rastrigin x y)))))
+          (qd:insert! m (evo:candidate b) fit b))
+        (if (= 0 (modulo (+ i 1) 100))
+            (let ((sc (qd:qd-score m)))
+              (if (< sc prev) (set! mono #f) #t)
+              (set! last-score sc)
+              (loop (+ i 1) sc))
+            (loop (+ i 1) prev)))))
+(display "  coverage=") (display (qd:coverage m))
+(display " qd-score=") (display (qd:qd-score m)) (newline)
+(assert! (>= (qd:coverage m) 0.80) "MAP-Elites covers >= 80% of a 10x10 grid")
+(assert! mono "QD-score never decreases")
+(assert! (> (qd:qd-score m) 0.0) "QD-score is positive")
+(assert! (hash? (qd:best m)) "best elite recorded")
+(assert! (> (qd:novelty m (list 0.0 0.0) 3) 0.0) "novelty of an unvisited region is positive")
+
+; CVT variant: k cells, fixed seed
+(define cvt (qd:map-elites (hash "descriptors" ds "quality" "fitness" "cvt" 25 "seed" 4)))
+(assert! (= 25 (length (hash-ref cvt "centroids"))) "CVT allocates k centroids")
+(qd:insert! cvt (evo:candidate (list 0.0 0.0)) 1.0 (list 0.0 0.0))
+(qd:insert! cvt (evo:candidate (list 2.0 2.0)) 0.5 (list 2.0 2.0))
+(assert! (>= (qd:coverage cvt) 0.04) "CVT coverage counts filled cells")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC2 — islands on a deceptive trap (4 islands + migration vs one
+; population), 10 seeds, same evaluation budget
+; ═══════════════════════════════════════════════════════════════════
+(display "AC2 islands trap\n")
+(define (block5 b)
+  (let ((ones (let c ((ys b) (n 0)) (if (null? ys) n (c (cdr ys) (if (> (car ys) 0.5) (+ n 1) n))))))
+    (if (= ones 5) 5.0 (- 4.0 ones))))
+(define (trap g)
+  (let loop ((xs g) (s 0.0))
+    (if (null? xs)
+        s
+        (loop (cdr (cdr (cdr (cdr (cdr xs)))))
+              (+ s (block5 (list (car xs) (car (cdr xs)) (car (cdr (cdr xs)))
+                                 (car (cdr (cdr (cdr xs)))) (car (cdr (cdr (cdr (cdr xs))))))))))))
+(define (hits n-islands seed)
+  (let* ((s (qd:islands (hash "n" n-islands "pop" 12 "dim" 20 "seed" seed
+                              "migrate-every" 10 "reset-worst" #t)))
+         (best (begin (qd:islands-run! s (lambda (c) (trap (evo:candidate-genome c))) 60)
+                      (qd:islands-best s))))
+    (if (and best (>= (qd-opt best "q" 0) 20.0)) 1 0)))
+(define seeds (list 1 2 3 4 5 6 7 8 9 10))
+(define island-hits (map (lambda (sd) (hits 4 sd)) seeds))
+(define single-hits (map (lambda (sd) (hits 1 sd)) seeds))
+(display "  islands=") (display island-hits)
+(display " single=") (display single-hits) (newline)
+(assert! (>= (sum island-hits) (sum single-hits))
+         "4 islands + migration hit the global optimum on at least as many seeds as one population")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC3 — structural de-duplication
+; ═══════════════════════════════════════════════════════════════════
+(display "AC3 structural dedup\n")
+(define h1 (qd:struct-hash "(lambda (x) (+ x 1))"))
+(define h2 (qd:struct-hash "(lambda (y) (+ y 1))"))
+(define h3 (qd:struct-hash "(lambda (y)   ( +  y   1 ))"))
+(define h4 (qd:struct-hash "(lambda (y) (+ y 2))"))
+(define h5 (qd:struct-hash "(lambda (x) (let ((z 1)) (+ x z)))"))
+(define h6 (qd:struct-hash "(lambda (x) (let ((w 1)) (+ x w)))"))
+(assert! (string=? h1 h2) "renamed parameter hashes the same")
+(assert! (string=? h1 h3) "whitespace does not change the hash")
+(assert! (not (string=? h1 h4)) "a different body hashes differently")
+(assert! (string=? h5 h6) "renamed let binding hashes the same")
+(define dup-cand (evo:candidate "(lambda (y) (+ y 1))" (hash "genome" "(lambda (y) (+ y 1))")))
+(define m2 (qd:map-elites (hash "descriptors" (list (list "a" 0.0 1.0 4)) "quality" "q")))
+(qd:insert! m2 dup-cand 1.0 (hash "a" 0.5))
+(assert! (not (qd:novel-enough? m2 (evo:candidate "(lambda (z) (+ z 1))"
+                                                   (hash "genome" "(lambda (z) (+ z 1))"))
+                               (hash "min-dist" 0.0)))
+         "a structurally identical program is refused before evaluation")
+
+; ═══════════════════════════════════════════════════════════════════
+; AC4 — parent selection policies + reports
+; ═══════════════════════════════════════════════════════════════════
+(display "AC4 selection/report\n")
+(assert! (hash? (qd:select-parent m (hash "policy" "uniform"))) "uniform select")
+(assert! (hash? (qd:select-parent m (hash "policy" "score-child"))) "DGM score-child select")
+(assert! (hash? (qd:select-parent m (hash "policy" "novelty"))) "novelty select")
+(define heat (qd:heatmap-svg m (hash)))
+(assert! (not (= -1 (string-index heat "<svg" 0))) "heatmap is an svg")
+(assert! (not (= -1 (string-index heat "<rect" 0))) "2-D heatmap draws cells")
+(define lin (qd:lineage-svg (qd:elites m) (hash)))
+(assert! (not (= -1 (string-index lin "<circle" 0))) "lineage draws nodes")
+(assert! (not (= -1 (string-index (qd:help) "4941" 0))) "help mentions 4941")
+
+(if (= *fails* 0)
+    (begin (display "OK-4941 qd\n"))
+    (begin
+      (display "FAIL-4941 qd fails=")
+      (display *fails*)
+      (newline)
+      (error "4941 qd suite failed")))
