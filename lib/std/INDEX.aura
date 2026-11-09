@@ -72,6 +72,10 @@
     (list "proposer"
       (list "EoH/ReEvo/MCTS-AHD/EoH-S proposers as callables; mock/grammar proposals reproducible from (seed,gen,slot); scope guard on the mutable defines (#4942)"
             "(require \"std/proposer\" all:)(prop:propose (prop:grammar (hash \"seed\" 7)) (prop:ctx (hash \"defines\" (list \"score\"))))"))
+    ; Issue #4943: cheap prescreening before the expensive evaluation
+    (list "surrogate"
+      (list "GP (rbf/matern52) + kNN surrogate, EI/LCB/TS prescreen with audit, staged eval, statistical race"
+            "(require \"std/surrogate\" all:)(surr:prescreen (surr:fit! (surr:gp (hash)) X y) cands 5 (hash \"acq\" \"ei\"))"))
     ; ── Aura layer (#5004): agent / orch / evo are written in Aura over the
     ;    primitives; the Scheme layer below is engine + host prims. ──
     (list "agent"
