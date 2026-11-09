@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.0
+
+Minor release on the 0.2 channel. The language and CLI surface changed where an alias replaces a retired name; the API is still not stable.
+
+- `aura evo` is the search stack. `aura evo log` prints one line per candidate and adds `--front` (non-dominated only) and `--lineage ID` (the parent chain); `aura evo report --html DIR` writes a self-contained page plus `pareto.svg`, `hv-curve.svg`, `qd-heatmap.svg` and `lineage.svg` from one append-only log. Schema v2 adds `algo/gen/slot/search/parents/behavior/objectives/constraints`, so identical runs stay byte-identical except timestamps and durations.
+- `aura new evolve-moo` scaffolds the multi-objective demo: 240 mock proposals with no LLM and no network, then the Pareto/QD report. On Ubuntu 26.10 arm64 the public install line to a written report measured 54.7 s cold and 23.4 s warm; the CI gate is 10 minutes on both arches.
+- New `std` modules, each answering `(xxx:help)`: `std/evo-core` (candidate/lineage values, ask/tell, worldline trials, deterministic RNG), `std/pareto` and `std/moead` (NSGA-II, MOEA/D), `std/qd` (MAP-Elites/CVT, islands, novelty), `std/proposer` (EoH/ReEvo/MCTS-AHD, with reproducible mock and grammar proposers), `std/surrogate` (GP/kNN prescreen, staged evaluation, racing), `std/evo-meta` (depth-1 recursive self-improvement), and `std/portfolio`, `std/algo-select` and `std/hyper-heuristic` (offline and online selection, FRRMAB).
+- `aura::eval` is an in-process evaluation ABI (`eval/aura_eval.h`: `aura_eval_session_create`, `aura_eval_source`, `aura_eval_file`, `aura_eval_session_destroy`), backed by one `CompilerService` per session. It is build-tree only for now.
+- Primitives: reading is `(query :op ...)` and writing is `(mutate :op ...)`. The duplicate `ast:`, `workspace:`, `dirty:`, `mutation-log:`, `ws:`, `syntax:` and `fiber:overlay-*` prefixes stay registered for one release cycle as deprecated aliases, with the replacement in their doc hint. Orchestration keeps five kernel verbs (`spawn`/`send`/`recv`/`join`/`cancel`); the other 24 `orch:` names are deprecated aliases for `std/orch`. The agent surface collapses into `std/agent`, `std/orch` and `std/evo`, and seven bare names move to `(query ...)`, `(mutate ...)` or `std/diagnose`/`std/test`.
+- Stdlib: the R7RS-small gaps (ports, bytevectors, exceptions, parameters, lazy, `case-lambda`, char, time) and SRFI-shaped list/vector/hash/set/sort/bitwise/record modules.
+- Fixes: NSGA-II and MOEA/D converge on the ZDT/DTLZ cells; a reclaimed frame's live-safe-top marker is reset (#5059); `std/algo-select` splits tree totals by shared row index (#5060); `std/moead` declares the `std/list` and `std/math` imports it uses.
+- Install and smoke coverage is unchanged: Ubuntu 24.04, Ubuntu 26.10, Debian 12, Rocky Linux 9, and openEuler 24.03 LTS SP4, on x86_64 and arm64.
+- `AURA_VERSION=v0.2.0` selects the GitHub Release asset `aura-0.2.0-linux-<arch>.tar.gz`; the default install remains nightly. Images: `ghcr.io/cybrid-systems/aura:0.2.0`, `:0.2`, and `:latest`. `:nightly` stays the rolling build from `main`.
+- A binary whose version is `X.Y.Z` makes `aura new` pin that channel. `0.2.0` writes `ghcr.io/cybrid-systems/aura:0.2.0`. `dev` and `nightly` write `:nightly`. `:latest` is never written into a new project.
+- A tag release runs the chaos SOAK (300s, 8 workers, 256 fibers) and the production concurrency gate before assets are uploaded.
+
+Not in this version:
+
+- macOS, Windows, and other Linux distributions.
+- `aura::eval` ships in the build tree only; the installed bundle does not carry the C++ header or library yet.
+- The evolve-strategy kit is not pinned to this tag yet.
+
 ## 0.1.2
 
 Patch release on the 0.1 channel. The API is still not stable; this version installs and runs the shipped examples.
