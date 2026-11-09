@@ -101,7 +101,64 @@ final ranking, per-round audit and the evaluation count.
 - The false-kill accounting is checked on a synthetic row set and end-to-end
   against the oracle.
 
-Full-fidelity claims from the issue's acceptance list (HV parity on ZDT1 with a
-100 ms delay, >= 40 % fewer full evaluations on aura-harness over 5 seeds) need
-the P6 benchmark harness and are reported there; this module ships the
-mechanism plus the unit-level contract above.
+- Cheap-first budget: a 20 % forwarded set keeps the optimum within 0.05 and
+  lands within 0.001 of the full-grid best value, i.e. the cheaper screen is
+  not buying its saving on the answer.
+
+## aura-harness evidence (5 seeds)
+
+The held-out evaluation reduction is measured on the downstream harness
+(`downstream/aura-harness`, branch v0.2-evo), not in this suite. Two cheap
+stages sit in front of the full evaluation:
+
+1. free-form proposals (MOEA/D offspring and grammar mutations) are ranked by
+   `surr:prescreen` (GP/kNN, EI) and only the top 40 % are evaluated;
+2. the memetic polish sweep is cheap-first: every coordinate probe is scored on
+   one held-out stream, the best probe per gene by distance to the acceptance
+   point is kept, and only `--polish-full` (16 of 84) probes pay the full
+   5-stream evaluation.
+
+```sh
+# no surrogate
+python3 -m aura_harness.evo --seeds 0 1 2 3 4 --gens 10 --ask 10 --propose 4 \
+  --H 6 --T 5 --n 400 --polish-rounds 2 --polish-cap 84 --jobs 5 \
+  --out results/evo/moead-nosurr --tag nosurr
+# surrogate
+python3 -m aura_harness.evo --seeds 0 1 2 3 4 --gens 10 --ask 10 --propose 4 \
+  --H 6 --T 5 --n 400 --polish-rounds 2 --polish-cap 84 --surrogate \
+  --max-gens 10 --polish-full 16 --jobs 5 \
+  --out results/evo/moead-surrogate --tag surrogate
+```
+
+Full evaluations until the front first dominates the gated baseline and meets
+the 10 % token cut (the issue's "same held-out success" point), per seed:
+
+| arm | 0 | 1 | 2 | 3 | 4 | total | reduction |
+|---|---|---|---|---|---|---|---|
+| no surrogate | 291 | 287 | 130 | 132 | 303 | 1143 | — |
+| prescreen only | 252 | 22 | 103 | 104 | 180 | 661 | 42.2 % |
+| prescreen + cheap-first polish | 71 | 22 | 41 | 45 | 58 | 237 | **79.3 %** |
+
+All three arms reach the target on all five seeds. The first cut alone
+already clears the 40 % bar on this tree; the second cut (`--polish-full
+16`, versus `0` for prescreen-only) takes it to 79.3 %, and all full
+evaluations fall from 1,706 to 429. Counting a cheap evaluation (1 seed x
+200 tasks) as half a full one (5 seeds x 400 tasks), simulated compute
+falls from 2,807 to 1,347 full-equivalents, so the saving is not bought by
+moving work into the cheap stage. An earlier 27.7 % measurement came from
+a harness revision whose `run.json` records a `polish_values` field that
+does not exist in HEAD; that exact wiring is not reproducible, so the
+three arms above are the record.
+
+Front quality, measured against `[0.40, 9800, 250]` as a ratio to the
+no-surrogate front: prescreen-only 0.967 mean (1.063 / 0.761 / 0.981 /
+0.984 / 1.047), cheap-first 0.846 mean (0.973 / 0.727 / 0.829 / 0.845 /
+0.856). Goal-directed polish converges on the acceptance knee, so the
+token/latency wings lose hypervolume even though success and the token cut
+are met on every seed; prescreen-only is the choice when front spread
+matters more than the evaluation budget. The HV-parity item is the
+separate ZDT1 benchmark.
+
+The numbers live in `results/evo/moead-surrogate/results.md`,
+`summary.json`, `prescreen-only.json` and `baseline-nosurr.json` in that
+repository.
