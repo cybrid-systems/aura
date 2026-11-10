@@ -14,6 +14,7 @@
 ; The engine registration stays for one release cycle as a deprecated alias;
 ; requiring this module installs the implementation that wins at call time.
 (export check-success test-suite)
+(require "std/char" all:)
 
 ; (check-success output expected) → #t | #f
 ;

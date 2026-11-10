@@ -90,7 +90,7 @@
   ],
   "counts": {
     "kernel": 465,
-    "stdlib-candidate": 86,
+    "stdlib-candidate": 81,
     "delete": 1
   },
   "primitives": {
@@ -434,29 +434,9 @@
       "tier": "kernel",
       "rule": "K-VAL"
     },
-    "char-alphabetic?": {
-      "tier": "stdlib-candidate",
-      "rule": "S-CHAR"
-    },
-    "char-downcase": {
-      "tier": "stdlib-candidate",
-      "rule": "S-CHAR"
-    },
-    "char-numeric?": {
-      "tier": "stdlib-candidate",
-      "rule": "S-CHAR"
-    },
     "char-ready?": {
       "tier": "kernel",
       "rule": "K-IO"
-    },
-    "char-upcase": {
-      "tier": "stdlib-candidate",
-      "rule": "S-CHAR"
-    },
-    "char-whitespace?": {
-      "tier": "stdlib-candidate",
-      "rule": "S-CHAR"
     },
     "char<?": {
       "tier": "stdlib-candidate",

@@ -1,4 +1,5 @@
 (require "std/test" all:)
+(require "std/char" all:)
 ; Core Aura language tests
 ; Tests: arithmetic, booleans, pairs, lists, strings, vectors, hashes, control flow
 
