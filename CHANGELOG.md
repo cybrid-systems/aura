@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased (0.2.2)
+
+Patch release on the 0.2 channel. This version hardens what 0.2.0 shipped; it adds no new surface. The API is still not stable.
+
+- Stdlib surface (#5132): a drift check now fails the gate when an INDEX entry has no module, when an exported name does not resolve once its module is required (1381 names today), or when INDEX states a fixed primitive/stats count. INDEX's stats line pointed at "56 *-stats primitives" where `stats:list` reports 425 keys.
+- R7RS numeric names (#5133): `ceiling`, `truncate`, `exact` and `inexact` were tiered for deletion as aliases. All four are R7RS-small required procedures and all four answer correctly, so they stay in the kernel under a new `K-R7RS` rule instead of being removed to tidy a name.
+- Failure contracts (#5134): `(stats:get "no-such-name")` answers one shape. The kernel registration answered void while the Aura mirror in `std/stats` answered the engine's typed `{ok:#f, status:not-found}` record, so the same public name failed two ways depending on whether the module had been required. Both arms answer the record now.
+- Sandbox presets (#5136): a stdlib module that needs an effect is refused on the default production face with a catchable error rather than an abort, and the same require succeeds with `AURA_SANDBOX=off`. Pinned by a regression that spawns both faces.
+- Orchestration surface (#5131): `orch:metrics` moved to `std/orch` (the kernel body was already a forward to the stats surface) and the `orch:parallel-intend` alias is gone; callers use `parallel-intend`. The remaining 22 `orch:*` names stay kernel-resident: each body reads scheduler or fiber session state (`find_agent_scope`, `agent_poll`'s forced yield, `wait_reclaimed_body`, the handoff token pairs), which Aura code cannot own atomically. They are the live orchestration surface, not forwarders, and `std/orch` builds on the same five primitives.
+- Build: the tag SOAK gate gets a wall that fits the release runner (3x the soak plus a fixed margin). The v0.2.1 tag build died on the old 900 s cap while every residual gate had already printed PASS.
+- Install and smoke coverage is unchanged: Ubuntu 24.04, Ubuntu 26.10, Debian 12, Rocky Linux 9, and openEuler 24.03 LTS SP4, on x86_64 and arm64.
+
+Not in this version:
+
+- macOS, Windows, and other Linux distributions.
+- The 86 `stdlib-candidate` primitives stay in the kernel: a module export does not shadow a kernel primitive, so each batch has to move implementation, deregistration and every bare caller in one commit. Tracked in #5137.
+- `aura::eval` ships in the build tree only.
+
 ## 0.2.1
 
 Patch release on the 0.2 channel. The v0.2.0 alias window is closed: the `ast:` / `workspace:` / `syntax:` / `fiber:` prefixes and the seven bare spellings are unbound, so a caller uses `(query :op)` / `(mutate :op)`. The API is still not stable.
