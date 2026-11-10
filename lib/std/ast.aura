@@ -7,7 +7,7 @@
 ; Two registration families in the engine:
 ;
 ;   A. Direct callables (add()):
-;        ast:snapshot, ast:restore,
+;        (mutate :snapshot), (mutate :restore),
 ;        ast:validate-nodes, ast:validate-ownership, ast:validate-post-restore,
 ;        ast:diff, ast:stable-ref, ast:print, …
 ;

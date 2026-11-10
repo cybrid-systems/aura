@@ -208,7 +208,7 @@ def run_session(n_cycles):
 
         elif phase == 4:
             # List snapshots
-            resp = send(proc, "(display (ast:list-snapshots))")
+            resp = send(proc, "(display (stats:get \"ast:list-snapshots\"))")
             if resp is None:
                 stats["crash"] += 1
                 break

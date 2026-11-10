@@ -74,8 +74,7 @@ static void ac1_source() {
           "nested Guard skip");
     CHECK(env.find("defuse_version_") != std::string::npos, "defuse bump in truncate");
     CHECK(env.find("bridge_epoch_bump_on_truncate_total") != std::string::npos, "truncate metric");
-    CHECK(!prim.empty() && prim.find("mw:compact-env-frames") != std::string::npos,
-          "compact prim");
+    CHECK(!prim.empty() && prim.find("mw:compact-env-frames") != std::string::npos, "compact prim");
     // Prefer add("...") site (comment also mentions the name earlier).
     auto pos = prim.find("add(\"evaluator:compact-env-frames\"");
     if (pos == std::string::npos)

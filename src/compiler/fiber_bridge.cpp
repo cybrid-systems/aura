@@ -347,7 +347,8 @@ aura_fiber_release_pending_closure(void* evaluator, std::uint64_t closure_id) no
     (void)closure_id;
 }
 __attribute__((weak, used)) void
-aura_collect_pending_body_closures(const void* evaluator, std::vector<std::uint64_t>& out) noexcept {
+aura_collect_pending_body_closures(const void* evaluator,
+                                   std::vector<std::uint64_t>& out) noexcept {
     (void)evaluator;
     (void)out;
 }

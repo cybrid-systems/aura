@@ -5279,7 +5279,8 @@ int run_test_dispatch_required_effects() {
         ev.set_effect_sandbox_mode(1);
         set_mode(SandboxMode::Restricted);
         ev.set_capability_tenant_id(4058);
-        auto e1 = cs.eval("(with-capability \"exception-control\" (mutate :exception-fibers-clear))");
+        auto e1 =
+            cs.eval("(with-capability \"exception-control\" (mutate :exception-fibers-clear))");
         CHECK(e1 && is_error(*e1), "4058 AC2: stack-disguised exception-fibers-clear denied");
         bool reason4058 = false;
         for (const auto& s : ev.string_heap())
@@ -5292,7 +5293,8 @@ int run_test_dispatch_required_effects() {
         // capability gate, not syntax.
         reset_all();
         CompilerService cs2;
-        auto e2 = cs2.eval("(with-capability \"exception-control\" (mutate :exception-fibers-clear))");
+        auto e2 =
+            cs2.eval("(with-capability \"exception-control\" (mutate :exception-fibers-clear))");
         CHECK(e2 && !is_error(*e2), "4058 AC2: Off face keeps the prim working");
     }
 

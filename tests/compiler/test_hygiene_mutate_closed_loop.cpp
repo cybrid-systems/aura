@@ -7748,8 +7748,9 @@ static void ac4406_displaced_child_default_reject() {
     CHECK(!ws->is_macro_introduced(def) && !ws->is_macro_introduced(lam) &&
               !ws->is_macro_introduced(body),
           "4406: define, lambda, and call start User");
-    CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", static_cast<unsigned>(body))).has_value(),
-          "4406: forge MacroIntroduced on the call");
+    CHECK(
+        cs.eval(std::format("(mutate :set-marker {} 1)", static_cast<unsigned>(body))).has_value(),
+        "4406: forge MacroIntroduced on the call");
     CHECK(ws->is_macro_introduced(body) && !ws->is_macro_introduced(def) &&
               !ws->is_macro_introduced(lam),
           "4406: only the displaced call is MacroIntroduced");
@@ -7873,8 +7874,9 @@ static void ac4434_unlink_macro_child_default_reject() {
     CHECK(ws != nullptr, "4434: workspace");
     const auto lam = ws->get(def).child(0);
     const auto body = ws->get(lam).child(0);
-    CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", static_cast<unsigned>(body))).has_value(),
-          "4434: forge MacroIntroduced on the call");
+    CHECK(
+        cs.eval(std::format("(mutate :set-marker {} 1)", static_cast<unsigned>(body))).has_value(),
+        "4434: forge MacroIntroduced on the call");
     CHECK(body_still_4406(ev, def, lam, body), "4434: only the call is marked");
     const auto glam = ws->get(gdef).child(0);
     const auto gbody = ws->get(glam).child(0);
