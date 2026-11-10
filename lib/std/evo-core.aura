@@ -58,7 +58,10 @@
 ; tell! stores a MEASURED copy of each candidate (the candidate value the
 ; caller holds is never mutated) and appends one evo:record! per candidate.
 ; commit! refuses an infeasible or unmeasured candidate and records
-; ROLLBACK + reason; only a KEEP advances the search tip.
+; ROLLBACK + reason; only a KEEP advances the search tip (a candidate id).
+; Every audited record's log parent is the previous record id ("tip-record"),
+; so `aura evo log --lineage` can walk the chain. tip-record is part of
+; evo:export, so the next record after a restart still names a real record.
 ;
 ; ── Worldline isolation ─────────────────────────────────────────────
 ; (evo:trial cand (hash "apply" apply-fn "evaluate" eval-fn
@@ -390,9 +393,18 @@
         "constraints" (evo-opt extra "constraints" (hash))))
 
 (define (evo-audit s target decision reason evidence dur extra)
-  (evo:record! target decision reason evidence "" dur
-               (evo-opt s "tip" "")
-               (evo-v2 s extra)))
+  ; #5069: the log's parent is a record id. "tip" is the committed candidate
+  ; id and must not be written here (it used to make a KEEP its own parent).
+  ; "tip-record" is the id evo:record! returned for the previous write; an
+  ; empty one leaves the parent empty on the first record. The id this write
+  ; returns is the next record's parent, including across evo:import.
+  (let ((rid (evo:record! target decision reason evidence "" dur
+                          (evo-opt s "tip-record" "")
+                          (evo-v2 s extra))))
+    (if (and (string? rid) (> (string-length rid) 0))
+        (hash-set! s "tip-record" rid)
+        #f)
+    rid))
 
 ; ═══════════════════════════════════════════════════════════════════
 ; Search handle
@@ -448,7 +460,8 @@
           "tried" (list)
           "evals" (hash)
           "archive" (list)
-          "tip" "")))
+          "tip" ""
+          "tip-record" "")))
 
 (define (evo:search? v)
   (and (hash? v) (string=? (evo-opt v "kind" "") "evo-search")))
@@ -678,8 +691,11 @@
                              (hash) 0 extra)
                   #f)
                  ((eq? r #t)
-                  (hash-set! s "tip" id)
+                  ; Audit first, then advance the candidate tip. Setting
+                  ; "tip" before the write made the KEEP's parent its own
+                  ; candidate id (#5069).
                   (evo-audit s id "KEEP" "committed" (hash "violations" 0.0) 0 extra)
+                  (hash-set! s "tip" id)
                   #t)
                  (else
                   (evo-audit s id "ROLLBACK"
@@ -713,6 +729,7 @@
           "feasible" (evo-count-fn arch evo:feasible?)
           "archive" arch
           "tip" (evo-opt s "tip" "")
+          "tip-record" (evo-opt s "tip-record" "")
           "objectives" (evo-opt s "objectives" (list))
           "constraints" (evo-opt s "constraints" (list)))))
 
@@ -738,7 +755,8 @@
         "tried" (evo-opt s "tried" (list))
         "evals" (hash->list (evo-opt s "evals" (hash)))
         "archive" (evo-opt s "archive" (list))
-        "tip" (evo-opt s "tip" "")))
+        "tip" (evo-opt s "tip" "")
+        "tip-record" (evo-opt s "tip-record" "")))
 
 (define (evo:import blob . rest)
   (let* ((o (if (and (pair? rest) (hash? (car rest))) (car rest) (hash)))
@@ -761,6 +779,7 @@
     (hash-set! s "tried" (evo-opt blob "tried" (list)))
     (hash-set! s "archive" (evo-opt blob "archive" (list)))
     (hash-set! s "tip" (evo-opt blob "tip" ""))
+    (hash-set! s "tip-record" (evo-opt blob "tip-record" ""))
     (let ((evs (evo-opt blob "evals" (list))))
       (hash-set! s "evals"
                  (let loop ((xs (if (list? evs) evs (list))) (acc (hash)))

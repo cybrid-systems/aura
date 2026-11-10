@@ -39,14 +39,31 @@ child workspace and refuses to fall back to mutating the live worldline.
 ```
 aura evo log [--json] [--all] [--run ID|last] [--log FILE]
 aura evo log --front        # only non-dominated candidates (needs objectives)
-aura evo log --lineage ID   # the parent chain of one candidate, root → ID
+aura evo log --lineage ID   # the ancestor chain of one record, root → ID
 aura evo report --html DIR [--all] [--run ID|last] [--log FILE]
 ```
 
 `evo log` prints decision, reason, evidence, diff size, duration and parent.
+The run header counts every decision, so the numbers add up to the record
+count (`270 records: 30 PROPOSE, 238 SCORED, 2 KEEP, 0 ROLLBACK`).
 `--front` keeps the candidates that are non-dominated on their objective
-vector (2+ numeric objectives); `--lineage ID` keeps the records on the
-ancestor chain, which is how a surprising KEEP is traced back.
+vector (2+ numeric objectives) and prints that same header for the rows it
+kept. `--lineage ID` keeps the records on the ancestor chain, which is how a
+surprising KEEP is traced back.
+
+`ID` is a record id (`<run>#<seq>`, the form in the log's `id` field), the
+`#<seq>` suffix printed in the id column, or a candidate name (the v2
+`candidate` member, or the `target` column). A record id wins over a
+candidate that happens to use the same text. When the log has records and
+none of those forms match, the command prints `no record with id '…'` and
+exits non-zero. An empty log still prints `(no evolution records)` and
+exits 0.
+
+`std/evo-core` writes each record's `parent` as the previous record's id
+(empty on the first record of a search). The v2 `parents` array is still
+the candidate ids the proposer named. The report resolves either form, draws
+one edge per distinct resolvable link (including a second recombination
+parent), and counts links that match nothing instead of dropping them.
 
 `evo report` writes a self-contained page (no network) plus standalone SVGs:
 
@@ -56,7 +73,7 @@ ancestor chain, which is how a surprising KEEP is traced back.
 | `pareto.svg` | objective-space scatter with the non-dominated front highlighted; the first two objectives are x/y and a third is the point size |
 | `hv-curve.svg` | cumulative hypervolume of the front after each evaluated candidate |
 | `qd-heatmap.svg` | behaviour-space heat map from the `behavior` member |
-| `lineage.svg` | parent tree, multi-parent edges included |
+| `lineage.svg` | parent tree, multi-parent edges included; unresolved parent links are counted in the page |
 
 The report folds candidates by generation (outer `<details>`) and each
 candidate's evidence/diff (inner `<details>`), so a 240-candidate run is still
