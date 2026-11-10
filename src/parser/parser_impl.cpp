@@ -2771,8 +2771,48 @@ NodeId parse_do(ParserState& s) {
 }
 
 // (let-values (((a b ...) expr) ...) body ...)
-//   → (let ((tmp expr)) (let ((a (list-ref tmp 0)) ...) body ...))
-// `values` (std/list) returns its one argument as is, else a list.
+//   → (let ((tmp expr)) …bindings… body)
+// `values` (std/list) returns its one argument as is. Zero or several
+// values are a vector whose slot 0 is the symbol `values` (#5096). A
+// bare list is one value: receiving it as two formals is an arity error.
+namespace {
+NodeId lv_lit(ParserState& s, std::int64_t n) {
+    return s.flat.add_literal(n);
+}
+NodeId lv_var(ParserState& s, SymId name) {
+    return s.flat.add_variable(name);
+}
+NodeId lv_call(ParserState& s, const char* name, std::vector<NodeId> args) {
+    return s.flat.add_call(s.flat.add_variable(s.pool.intern(name)), std::move(args));
+}
+NodeId lv_bool(ParserState& s, bool t) {
+    auto id = s.flat.add_literal(t ? 1 : 0);
+    s.flat.set_marker(id, aura::ast::SyntaxMarker::BoolLiteral);
+    return id;
+}
+NodeId lv_error(ParserState& s) {
+    return lv_call(s, "error",
+                   {s.flat.add_literalstring(s.pool.intern("let-values: arity mismatch"))});
+}
+// #t when tmp is a #(values …) object. Each branch is a fresh node so the
+// tree has one parent per child.
+NodeId lv_is_values(ParserState& s, SymId tmp) {
+    auto tag = s.flat.add_quote(lv_var(s, s.pool.intern("values")));
+    return s.flat.add_if(
+        lv_call(s, "vector?", {lv_var(s, tmp)}),
+        s.flat.add_if(lv_call(s, ">", {lv_call(s, "vector-length", {lv_var(s, tmp)}), lv_lit(s, 0)}),
+                      s.flat.add_if(lv_call(s, "eq?",
+                                            {lv_call(s, "vector-ref", {lv_var(s, tmp), lv_lit(s, 0)}),
+                                             tag}),
+                                    lv_bool(s, true), lv_bool(s, false)),
+                      lv_bool(s, false)),
+        lv_bool(s, false));
+}
+NodeId lv_len_is(ParserState& s, SymId tmp, std::int64_t n) {
+    return lv_call(s, "=", {lv_call(s, "vector-length", {lv_var(s, tmp)}), lv_lit(s, n)});
+}
+} // namespace
+
 NodeId parse_let_values(ParserState& s, bool sequential) {
     s.lex.consume(); // 'let-values' or 'let*-values'
     if (s.lex.consume().kind != TokenKind::LParen)
@@ -2810,16 +2850,36 @@ NodeId parse_let_values(ParserState& s, bool sequential) {
     NodeId inner = body;
     for (std::size_t gi = groups.size(); gi-- > 0;) {
         const auto& g = groups[gi];
-        if (g.formals.size() == 1) {
-            inner = s.flat.add_let(g.formals[0], s.flat.add_variable(tmps[gi]), inner);
+        const auto n = g.formals.size();
+        const auto tmp = tmps[gi];
+        if (n == 1) {
+            // One formal accepts a bare value. A values-object must carry
+            // exactly one payload; the wrong count raises instead of binding
+            // the vector. The continuation is a single let, so the body node
+            // has one parent.
+            auto payload = s.flat.add_if(
+                lv_is_values(s, tmp),
+                s.flat.add_if(lv_len_is(s, tmp, 2),
+                              lv_call(s, "vector-ref", {lv_var(s, tmp), lv_lit(s, 1)}),
+                              lv_error(s)),
+                lv_var(s, tmp));
+            inner = s.flat.add_let(g.formals[0], payload, inner);
+        } else if (n == 0) {
+            inner = s.flat.add_if(
+                lv_is_values(s, tmp),
+                s.flat.add_if(lv_len_is(s, tmp, 1), inner, lv_error(s)), lv_error(s));
         } else {
-            for (std::size_t k = g.formals.size(); k-- > 0;) {
-                auto ref = s.flat.add_call(
-                    s.flat.add_variable(s.pool.intern("list-ref")),
-                    std::vector<NodeId>{s.flat.add_variable(tmps[gi]),
-                                        s.flat.add_literal(static_cast<std::int64_t>(k))});
-                inner = s.flat.add_let(g.formals[k], ref, inner);
+            NodeId unpacked = inner;
+            for (std::size_t k = n; k-- > 0;) {
+                auto ref = lv_call(s, "vector-ref",
+                                   {lv_var(s, tmp), lv_lit(s, static_cast<std::int64_t>(k + 1))});
+                unpacked = s.flat.add_let(g.formals[k], ref, unpacked);
             }
+            inner = s.flat.add_if(
+                lv_is_values(s, tmp),
+                s.flat.add_if(lv_len_is(s, tmp, static_cast<std::int64_t>(n + 1)), unpacked,
+                              lv_error(s)),
+                lv_error(s));
         }
         if (sequential)
             inner = s.flat.add_let(tmps[gi], g.expr, inner);
@@ -2832,15 +2892,19 @@ NodeId parse_let_values(ParserState& s, bool sequential) {
 }
 
 
-// (parameterize ((p v) ...) body ...)   [Issue #5005]
-//   -> nested lets with parser-fresh symbols:
-//      (let ((old p))
-//        (p v)
-//        (let ((res (try body
-//                        (catch (ex) (begin (p 'parameter-raw-set old)
-//                                           (raise ex))))))
-//          (p 'parameter-raw-set old)
-//          res))
+// (parameterize ((p v) ...) body ...)   [Issue #5005 / #5096]
+//   -> nested lets with parser-fresh symbols. The parameter expression
+//      is evaluated once into `pbind`; save, set and restore all call
+//      that binding. Reusing the expression node re-ran it (a call such
+//      as (fresh) built three different parameters).
+//      (let ((pbind <param>))
+//        (let ((old (pbind)))
+//          (pbind v)
+//          (let ((res (try body
+//                          (catch (ex) (begin (pbind 'parameter-raw-set old)
+//                                             (raise ex))))))
+//            (pbind 'parameter-raw-set old)
+//            res)))
 // A parameter procedure accepts (p 'parameter-raw-set v): set without
 // running the converter (restore semantics).  Nested / sequential forms
 // get distinct fresh names, so Aura's single-frame let cannot shadow an
@@ -2878,25 +2942,28 @@ NodeId parse_parameterize(ParserState& s) {
 
     NodeId inner = body;
     for (std::size_t i = binds.size(); i-- > 0;) {
-        auto param = binds[i].first;
+        auto param_expr = binds[i].first;
         auto value = binds[i].second;
+        auto pbind = fresh_desugar_sym(s, "pbind");
+        auto pvar = [&]() { return s.flat.add_variable(pbind); };
         auto old = fresh_desugar_sym(s, "pold");
         auto res = fresh_desugar_sym(s, "pres");
         auto ex = fresh_desugar_sym(s, "pe");
-        auto old_init = s.flat.add_call(param, std::vector<NodeId>{});
-        auto set_call = s.flat.add_call(param, std::vector<NodeId>{value});
+        auto old_init = s.flat.add_call(pvar(), std::vector<NodeId>{});
+        auto set_call = s.flat.add_call(pvar(), std::vector<NodeId>{value});
         auto raise_call =
             s.flat.add_call(sym("raise"), std::vector<NodeId>{s.flat.add_variable(ex)});
-        auto handler = s.flat.add_begin(std::vector<NodeId>{restore_call(param, old), raise_call});
+        auto handler = s.flat.add_begin(std::vector<NodeId>{restore_call(pvar(), old), raise_call});
         auto catch_call = s.flat.add_call(
             sym("catch"),
             std::vector<NodeId>{s.flat.add_call(s.flat.add_variable(ex), {}), handler});
         auto try_form = s.flat.add_call(sym("try"), std::vector<NodeId>{inner, catch_call});
         auto res_body = s.flat.add_begin(
-            std::vector<NodeId>{restore_call(param, old), s.flat.add_variable(res)});
+            std::vector<NodeId>{restore_call(pvar(), old), s.flat.add_variable(res)});
         auto res_let = s.flat.add_let(res, try_form, res_body);
-        inner =
-            s.flat.add_let(old, old_init, s.flat.add_begin(std::vector<NodeId>{set_call, res_let}));
+        inner = s.flat.add_let(
+            pbind, param_expr,
+            s.flat.add_let(old, old_init, s.flat.add_begin(std::vector<NodeId>{set_call, res_let})));
     }
     return inner;
 }

@@ -49,8 +49,10 @@
 ; surface audit 2026-07-17 (eval_flat path failed with "unbound variable: k"
 ; because the body referenced the just-defined binding instead of the primitive).
 
+; Missing key → #f. A stored #f is indistinguishable from absent; use
+; hash-ref / hash-table-ref when the value itself may be #f (#5096).
 (define (hash-get h k)
-  (hash-ref h k))
+  (hash-ref h k #f))
 
 ; (hash-remove h k) -- COPY-ON-WRITE: returns a NEW hash without k and
 ; leaves h UNCHANGED (Issue #4614 -- the old wrapper mutated h in place
@@ -106,10 +108,7 @@
 (define (frequencies lst)
   (let ((h (hash)))
     (for-each (lambda (x)
-      (let ((v (hash-ref h x)))
-        (if v
-          (hash-set! h x (+ v 1))
-          (hash-set! h x 1)))) lst)
+      (hash-set! h x (+ (hash-ref h x 0) 1))) lst)
     h))
 
 ; ═══════════════════════════════════════════════════════════════════
@@ -163,7 +162,8 @@
 (define (alist->hash-table alist . comparator)
   (alist->hash alist))
 
-(define (hash-table-walk proc h)
+; SRFI-125: (hash-table-walk hash-table proc). proc is called as (proc key value).
+(define (hash-table-walk h proc)
   (for-each (lambda (k) (proc k (hash-ref h k))) (hash-keys h))
   (void))
 
