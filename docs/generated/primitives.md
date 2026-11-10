@@ -2,11 +2,11 @@
 
 # Primitives (generated)
 
-**552** registrations scanned from `src/**/*.cpp` (22 marked **deprecated** — Issue #1438).
+**547** registrations scanned from `src/**/*.cpp` (22 marked **deprecated** — Issue #1438).
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 465 · **stdlib-candidate** 86 · **delete** 1
+**kernel** 465 · **stdlib-candidate** 81 · **delete** 1
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
@@ -14,7 +14,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 51 primitives (9%)
-- **core**: 465 primitives (84%)
+- **core**: 460 primitives (84%)
 - **internal-observable**: 35 primitives (6%)
 - **convenience**: 1 primitives (0%)
 
@@ -130,7 +130,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (301)
+## Core builtins (296)
 
 - `%base64-decode` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -186,12 +186,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `ceil` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `ceiling` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `char->integer` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `char-alphabetic?` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
-- `char-downcase` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
-- `char-numeric?` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
 - `char-ready?` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `char-upcase` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
-- `char-whitespace?` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
 - `char<?` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
 - `char=?` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
 - `char?` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -712,7 +707,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace-persist-info` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-state` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 
-### Core builtins (must remain primitive) (465)
+### Core builtins (must remain primitive) (460)
 
 - `%base64-decode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -786,12 +781,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `channel:send` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `channel:try-recv` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `char->integer` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `char-alphabetic?` `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
-- `char-downcase` `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
-- `char-numeric?` `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
 - `char-ready?` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `char-upcase` `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
-- `char-whitespace?` `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
 - `char<?` `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
 - `char=?` `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
 - `char?` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -1694,7 +1684,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `write` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `write-file` *[K-IO]* — `src/compiler/evaluator_primitives_file.cpp`
 
-### stdlib-candidate (86)
+### stdlib-candidate (81)
 
 - `abs` *[S-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
 - `append` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
@@ -1712,11 +1702,6 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `cddar` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `cdddr` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `cddr` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
-- `char-alphabetic?` *[S-CHAR]* — `src/compiler/evaluator_primitives_core.cpp`
-- `char-downcase` *[S-CHAR]* — `src/compiler/evaluator_primitives_core.cpp`
-- `char-numeric?` *[S-CHAR]* — `src/compiler/evaluator_primitives_core.cpp`
-- `char-upcase` *[S-CHAR]* — `src/compiler/evaluator_primitives_core.cpp`
-- `char-whitespace?` *[S-CHAR]* — `src/compiler/evaluator_primitives_core.cpp`
 - `char<?` *[S-CHAR]* — `src/compiler/evaluator_primitives_core.cpp`
 - `char=?` *[S-CHAR]* — `src/compiler/evaluator_primitives_core.cpp`
 - `check` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`

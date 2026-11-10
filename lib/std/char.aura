@@ -25,6 +25,24 @@
 (define (char>=? a b) (not (char<? a b)))
 
 ; ASCII-only simple case fold.
+; ── R7RS (scheme char) predicates and case mapping (Issue #5137, S-CHAR) ──
+; Aura characters are code points stored as integers, so these are integer
+; tests. The kernel used to register all five; they are Aura now, and the
+; ASCII-only behaviour (plus #f for a non-integer argument) is unchanged.
+(define (char-alphabetic? c)
+  (if (not (integer? c))
+      #f
+      (let ((n c))
+        (or (and (>= n 65) (<= n 90)) (and (>= n 97) (<= n 122))))))
+(define (char-numeric? c)
+  (if (not (integer? c)) #f (let ((n c)) (and (>= n 48) (<= n 57)))))
+(define (char-whitespace? c)
+  (if (not (integer? c)) #f (let ((n c)) (or (= n 32) (and (>= n 9) (<= n 13))))))
+(define (char-upcase c)
+  (if (not (integer? c)) #f (let ((n c)) (if (and (>= n 97) (<= n 122)) (- n 32) n))))
+(define (char-downcase c)
+  (if (not (integer? c)) #f (let ((n c)) (if (and (>= n 65) (<= n 90)) (+ n 32) n))))
+
 (define (char-foldcase c)
   (char-downcase (char-upcase c)))
 

@@ -112,39 +112,11 @@ void register_type_and_char_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // ── Character predicates ──────────────────────────────────────
-    add("char-alphabetic?", [](const auto& a) {
-        if (a.empty() || !types::is_int(a[0]))
-            return types::make_bool(false);
-        auto c = types::as_int(a[0]);
-        return types::make_bool((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
-    });
-    add("char-numeric?", [](const auto& a) {
-        if (a.empty() || !types::is_int(a[0]))
-            return types::make_bool(false);
-        return types::make_bool(types::as_int(a[0]) >= '0' && types::as_int(a[0]) <= '9');
-    });
-    add("char-whitespace?", [](const auto& a) {
-        if (a.empty() || !types::is_int(a[0]))
-            return types::make_bool(false);
-        auto c = types::as_int(a[0]);
-        return types::make_bool(c == ' ' || (c >= '\t' && c <= '\r'));
-    });
-    add("char-upcase", [](const auto& a) {
-        if (a.empty() || !types::is_int(a[0]))
-            return types::make_bool(false);
-        auto c = types::as_int(a[0]);
-        if (c >= 'a' && c <= 'z')
-            return types::make_int(c - 32);
-        return types::make_int(c);
-    });
-    add("char-downcase", [](const auto& a) {
-        if (a.empty() || !types::is_int(a[0]))
-            return types::make_bool(false);
-        auto c = types::as_int(a[0]);
-        if (c >= 'A' && c <= 'Z')
-            return types::make_int(c + 32);
-        return types::make_int(c);
-    });
+    // Issue #5137 (S-CHAR): char-alphabetic?, char-numeric?, char-whitespace?,
+    // char-upcase and char-downcase are Aura definitions in lib/std/char now.
+    // They stayed kernel only because nothing shadowed a primitive; the
+    // definitions reproduce the same ASCII-only logic and the same #f for a
+    // non-integer argument.
 
     // ── SRFI-151 bitwise primitives (Issue #5003) ──────────────────
     // Aura has no exact bignums (fixnum range [-2^62, 2^62-1]), so these
