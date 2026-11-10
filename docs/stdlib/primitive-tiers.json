@@ -75,7 +75,6 @@
     "orch:compose-workflow",
     "orch:join",
     "orch:join-via-token",
-    "orch:metrics",
     "orch:parallel-intend",
     "orch:recv",
     "orch:run-workflow",
@@ -91,7 +90,7 @@
     "orch:supervise-batch"
   ],
   "counts": {
-    "kernel": 467,
+    "kernel": 466,
     "stdlib-candidate": 86,
     "delete": 1
   },
@@ -1514,11 +1513,6 @@
       "rule": "K-ORCH-VERB-5006"
     },
     "orch:join-via-token": {
-      "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
-    },
-    "orch:metrics": {
       "tier": "kernel",
       "rule": "K-EXC-5118",
       "deprecated": true

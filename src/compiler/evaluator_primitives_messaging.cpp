@@ -2711,13 +2711,6 @@ void RegSplitParts::register_messaging_scheduler_primitives(PrimRegistrar add, E
         auto idx = ev.string_heap_.mint(json);
         return types::make_string(idx);
     });
-    // Issue #5118: the bare name is the scheduler read. stats:get stays the
-    // same body; std/orch has no metrics function to point at.
-    add("orch:metrics", [](const auto& a) -> EvalValue {
-        if (auto fn = ObservabilityPrims::lookup_stats_impl("orch:metrics"))
-            return (*fn)(a);
-        return types::make_void();
-    });
 
     // ── scheduler:pin — pin current fiber to a specific worker (P2) ─
     // (mutate :scheduler-pin worker-id) → Pins the current fiber to the given

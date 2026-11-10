@@ -69,7 +69,7 @@
 | `std/mutate` | `mutate:summary` `mutate:by-operator` `mutate:last-info` `mutate:operator-count` `mutate:rolled-back?` `mutate:rollback-rate` `mutate:boundary-depth` `mutate:boundary-safe?` … (+4) | — |
 | `std/mutation-atomic` | `typed-mutate-atomic-all` | lib/std/mutation-atomic.aura — Issue #1442 convenience over (typed-mutate-atomic) |
 | `std/net` | `http-get-json` `http-post-json` `url-encode` `url-decode` `url-join` `fetch-try` | lib/std/net.aura — Network client library |
-| `std/orch` | `orch:spawn` `orch:handle` `orch:list` `orch:status` `orch:stop` `orch:restart` `orch:local?` `orch:registry-epoch` … (+18) | lib/std/orch.aura — multi-agent orchestration on the five primitives (#5004) |
+| `std/orch` | `orch:spawn` `orch:handle` `orch:list` `orch:status` `orch:stop` `orch:restart` `orch:local?` `orch:registry-epoch` … (+37) | lib/std/orch.aura — multi-agent orchestration on the five primitives (#5004) |
 | `std/orchestrator` | `orch:define-role` `orch:step` `orch:pipeline` `orch:conduct` `orch:parallel` `orch:parallel-with-yield` `orch:supervise` `orch:run` … (+11) | lib/std/orchestrator.aura — one release of forwarding to std/orch (#5004) |
 | `std/parameter` | `make-parameter` `parameterize` `parameter?` `parameter-set!` | lib/std/parameter.aura — R7RS parameters (Issue #5005) |
 | `std/pareto` | `pareto:archive` `pareto:archive?` `pareto:insert!` `pareto:entries` `pareto:front` `pareto:size` `pareto:dominates?` `pareto:cd-dominates?` … (+17) | lib/std/pareto.aura — Issue #4940 (v0.2 P1): algorithm-independent Pareto |
@@ -120,7 +120,7 @@ Low-level capabilities are **not** stdlib modules; they are C++ `PrimRegistrar` 
 
 - `(require "std/primitives" all:)` → `primitives:help` / `primitives:list` / `primitives:discover`
 - `(require "std/INDEX" all:)` → `(stdlib:help "primitives")`
-- Full name catalog: [primitives.md](primitives.md) (554 scanned registrations)
+- Full name catalog: [primitives.md](primitives.md) (553 scanned registrations)
 - Registry map: [primitives-registry.md](primitives-registry.md)
 - Authoring scaffold (#2915): [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md)
 

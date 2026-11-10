@@ -38,7 +38,10 @@
         orch:define-role orch:role orch:step orch:step* orch:if orch:retry
         orch:pipeline orch:conduct
         orch:parallel orch:parallel-with-yield orch:supervise
-        orch:default-timeout)
+        orch:default-timeout
+        ; Issue #5131 (K-EXC-5118): the scheduler metrics read lives here now;
+        ; the kernel registration of the same name is gone.
+        orch:metrics)
 
 (require "std/list" all:)
 (require "std/string" all:)
@@ -57,6 +60,12 @@
 (define orch:default-timeout 30)
 
 (define (orch:registry-epoch) *orch-epoch*)
+
+; ── orch:metrics — scheduler metrics (Issue #32, migrated by #5131) ──
+; The counters belong to the scheduler, so the values still come from the
+; stats surface; this is the Aura home for the name. Outside serve-async
+; the scheduler reports nothing and the read answers void, as before.
+(define (orch:metrics) (stats:get "orch:metrics"))
 
 ; A channel is an opaque value, not a hash — only false means absent.
 (define (orch-channel? c) (if c #t #f))
