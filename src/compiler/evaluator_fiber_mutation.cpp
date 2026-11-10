@@ -3318,6 +3318,9 @@ namespace {
         std::unordered_map<std::uint64_t, ClosureId> id_roots;
         // Roots not keyed by a fiber id (the serve scheduler backend, #4698).
         std::uint32_t unkeyed_pending = 0;
+        // Issue #5099: the exact body closure ids, parallel to unkeyed_pending.
+        // The sweep pins these ids, not every closure below the watermark.
+        std::vector<std::uint64_t> unkeyed_cids;
         ClosureId saved_watermark = 0;  // the watermark to restore
         ClosureId raised_watermark = 0; // the watermark this hook raised to
         bool have_saved = false;
@@ -3328,9 +3331,11 @@ namespace {
         void reset() noexcept {
             id_roots.clear();
             unkeyed_pending = 0;
+            unkeyed_cids.clear();
             have_saved = false;
         }
     };
+    thread_local std::uint64_t tls_spawn_body_cid = 0;
     std::mutex g_pending_fiber_roots_mtx;
     std::unordered_map<const Evaluator*, std::unique_ptr<PendingFiberRootState>>
         g_pending_fiber_roots;
@@ -3459,6 +3464,13 @@ extern "C" void aura_fiber_root_pending_body_latest(void* evaluator) noexcept {
             st.have_saved = true;
         }
         ++st.unkeyed_pending;
+        std::uint64_t cid = tls_spawn_body_cid;
+        tls_spawn_body_cid = 0;
+        if (cid == 0) {
+            const auto wm = ev->closure_id_watermark();
+            cid = wm == 0 ? 0 : wm - 1;
+        }
+        st.unkeyed_cids.push_back(cid);
         raise_pending_watermark(ev, st, static_cast<ClosureId>(ev->closure_id_watermark()));
     } catch (...) {
         // [SILENCE-PRIM-#4698] noexcept C ABI: a failed root must not
@@ -3483,6 +3495,8 @@ extern "C" void aura_fiber_release_pending_body_latest(void* evaluator) noexcept
         if (st.unkeyed_pending == 0)
             return;
         --st.unkeyed_pending;
+        if (!st.unkeyed_cids.empty())
+            st.unkeyed_cids.pop_back();
         if (st.pending() != 0)
             return;
         restore_pending_watermark(ev, st);
@@ -3491,6 +3505,103 @@ extern "C" void aura_fiber_release_pending_body_latest(void* evaluator) noexcept
         // [SILENCE-PRIM-#4698] noexcept C ABI: a failed release must not
         // terminate the process; the watermark then stays raised, which
         // only pins closures (it never frees a live one).
+    }
+}
+
+extern "C" void aura_fiber_note_spawn_body(std::uint64_t closure_id) noexcept {
+    tls_spawn_body_cid = closure_id;
+}
+
+extern "C" std::uint64_t aura_fiber_take_spawn_body() noexcept {
+    const auto cid = tls_spawn_body_cid;
+    tls_spawn_body_cid = 0;
+    return cid;
+}
+
+// Issue #5099: pin one body closure. The numeric watermark still rises so a
+// (gc-freeze) that races the pin cannot be lowered by the release, but the
+// sweep reads the exact id from unkeyed_cids / id_roots instead of every id
+// below that watermark.
+extern "C" std::uint64_t aura_fiber_root_pending_closure(void* evaluator,
+                                                        std::uint64_t closure_id) noexcept {
+    if (!evaluator)
+        return closure_id;
+    auto* ev = static_cast<Evaluator*>(evaluator);
+    std::uint64_t pinned = closure_id;
+    try {
+        std::scoped_lock<std::mutex> lock(g_pending_fiber_roots_mtx);
+        auto& slot = g_pending_fiber_roots[ev];
+        if (!slot)
+            slot = std::make_unique<PendingFiberRootState>();
+        auto& st = *slot;
+        if (st.pending() > 0 && ev->gc_pending_pin_watermark() < st.raised_watermark)
+            st.reset();
+        if (pinned == 0) {
+            const auto wm = ev->closure_id_watermark();
+            pinned = wm == 0 ? 0 : wm - 1;
+        }
+        if (st.pending() == 0) {
+            st.saved_watermark = ev->gc_pending_pin_watermark();
+            st.have_saved = true;
+        }
+        ++st.unkeyed_pending;
+        st.unkeyed_cids.push_back(pinned);
+        const auto wm = ev->closure_id_watermark();
+        const auto ceiling = pinned + 1 > wm ? pinned + 1 : wm;
+        raise_pending_watermark(ev, st, static_cast<ClosureId>(ceiling));
+    } catch (...) {
+        // [SILENCE-PRIM-#5099] noexcept C ABI: a failed root must not abort
+        // the spawn. The body then runs unprotected.
+    }
+    return pinned;
+}
+
+extern "C" void aura_fiber_release_pending_closure(void* evaluator,
+                                                  std::uint64_t closure_id) noexcept {
+    if (!evaluator)
+        return;
+    auto* ev = static_cast<Evaluator*>(evaluator);
+    try {
+        std::scoped_lock<std::mutex> lock(g_pending_fiber_roots_mtx);
+        auto it = g_pending_fiber_roots.find(ev);
+        if (it == g_pending_fiber_roots.end())
+            return;
+        auto& st = *it->second;
+        const auto found = std::find(st.unkeyed_cids.begin(), st.unkeyed_cids.end(), closure_id);
+        if (found == st.unkeyed_cids.end())
+            return;
+        st.unkeyed_cids.erase(found);
+        if (st.unkeyed_pending > 0)
+            --st.unkeyed_pending;
+        if (st.pending() != 0)
+            return;
+        restore_pending_watermark(ev, st);
+        g_pending_fiber_roots.erase(it);
+    } catch (...) {
+        // [SILENCE-PRIM-#5099] noexcept C ABI.
+    }
+}
+
+extern "C" void aura_collect_pending_body_closures(const void* evaluator,
+                                                  std::vector<std::uint64_t>& out) noexcept {
+    out.clear();
+    if (!evaluator)
+        return;
+    auto* ev = static_cast<const Evaluator*>(evaluator);
+    try {
+        std::scoped_lock<std::mutex> lock(g_pending_fiber_roots_mtx);
+        auto it = g_pending_fiber_roots.find(ev);
+        if (it == g_pending_fiber_roots.end())
+            return;
+        const auto& st = *it->second;
+        out.reserve(st.id_roots.size() + st.unkeyed_cids.size());
+        for (const auto& entry : st.id_roots) {
+            if (entry.second > 0)
+                out.push_back(entry.second - 1);
+        }
+        out.insert(out.end(), st.unkeyed_cids.begin(), st.unkeyed_cids.end());
+    } catch (...) {
+        out.clear();
     }
 }
 

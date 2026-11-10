@@ -1569,7 +1569,7 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
         // 4G envs reached (unreachable: the store caps at kMaxSlots
         // first). Issue #4790: an exhausted arena fails loudly at the
         // allocation site; it never hands a capture caller NULL_ENV_ID.
-        env_frame_arena::fail(env_frames_.size(), EnvFrameStore::kMaxSlots);
+        env_frame_arena::fail(env_frames_.size(), env_frames_.size(), EnvFrameStore::kMaxSlots);
     }
     // Issue #4459: reuse a frame the tree-walker sweep cleared.
     // In-place restamp keeps the binding vectors' capacity so the
@@ -1655,7 +1655,10 @@ aura::compiler::EnvId Evaluator::alloc_env_frame(EnvId parent_id, const Primitiv
         // a closure with NO capture; its free variables then read unbound
         // hundreds of calls later (#4787: "8:32: unbound variable: cap").
         // Fail at the allocation site instead.
-        env_frame_arena::fail(env_frames_.size(), EnvFrameStore::kMaxSlots);
+        const std::size_t slots = env_frames_.size();
+        const std::size_t free_n = env_frame_reuse_.size();
+        const std::size_t live = slots > free_n ? slots - free_n : 0;
+        env_frame_arena::fail(slots, live, EnvFrameStore::kMaxSlots);
     }
     // Issue #5057 AC4: a fresh publish is a freelist miss; the high water
     // is the append-only slot ceiling the host reads before exhaustion.

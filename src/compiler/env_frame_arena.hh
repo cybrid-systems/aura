@@ -37,14 +37,20 @@ namespace aura::compiler::env_frame_arena {
 // arena is full and the #4459 freelist is empty. Carries the numbers so the
 // test can assert the exact cap was reached instead of matching text.
 struct Exhausted : std::runtime_error {
+    std::size_t allocated_frames = 0;
+    // Slots not currently on the reuse freelist (the same number
+    // engine:metrics reports as env_frames_live_total). Equal to
+    // allocated_frames when the freelist is empty.
     std::size_t live_frames = 0;
     std::size_t max_slots = 0;
 
-    Exhausted(std::size_t live, std::size_t max_slots_in)
-        : std::runtime_error("EnvFrame arena exhausted (" + std::to_string(live) +
-                             " live capture frames, kMaxSlots=" + std::to_string(max_slots_in) +
+    Exhausted(std::size_t allocated, std::size_t live, std::size_t max_slots_in)
+        : std::runtime_error("EnvFrame arena exhausted (" + std::to_string(allocated) +
+                             " allocated capture frames, " + std::to_string(live) +
+                             " live, kMaxSlots=" + std::to_string(max_slots_in) +
                              "); no capture slot can be reclaimed - a program that keeps" +
                              " this many live closures must release some or use a larger arena")
+        , allocated_frames(allocated)
         , live_frames(live)
         , max_slots(max_slots_in) {}
 };
@@ -59,7 +65,8 @@ inline std::atomic<std::uint64_t> g_exhausted_total{0};
 // Issue #4790: the single exhaustion exit for the EnvFrame arena. Called
 // from Evaluator::alloc_env_frame after the #4459 reuse freelist came back
 // empty and the store refused the append. Never returns.
-[[noreturn]] inline void fail(std::size_t live_frames, std::size_t max_slots) {
+[[noreturn]] inline void fail(std::size_t allocated_frames, std::size_t live_frames,
+                                 std::size_t max_slots) {
     g_exhausted_total.fetch_add(1, std::memory_order_relaxed);
     // Issue #5057: the exhaustion exit is CATCHABLE in production, not an
     // abort(). #4790 made the silent captureless closure loud by killing the
@@ -74,7 +81,7 @@ inline std::atomic<std::uint64_t> g_exhausted_total{0};
     //
     // g_throw_on_exhaustion is kept for the #4790 regression test;
     // production now takes the same throw path.
-    throw Exhausted(live_frames, max_slots);
+    throw Exhausted(allocated_frames, live_frames, max_slots);
 }
 
 } // namespace aura::compiler::env_frame_arena

@@ -5889,11 +5889,13 @@ public:
     //   * gc_freeze_closure_id_ - the (gc-freeze) FLOOR. It is MONOTONE:
     //     a (gc-freeze) raises it and NOTHING ever lowers it.
     //
-    // The EFFECTIVE watermark (max(pin, floor)) is what the reclaim
-    // compares a closure id against. The split is what makes a
-    // pending-body release unable to CLOBBER a (gc-freeze) raise: the
-    // release lowers the pin only, and the floor still holds the
-    // (gc-freeze) generation pinned. Both fields are std::atomic because
+    // gc_safe_closure_id() is max(pin, floor). The reclaim keeps a closure
+    // when its id is below the freeze floor, or when that id is one of the
+    // exact pending body closures (#5099) — not merely because it is below
+    // the pin. The split is what makes a pending-body release unable to
+    // CLOBBER a (gc-freeze) raise: the release lowers the pin only, and the
+    // floor still holds the (gc-freeze) generation pinned. Both fields are
+    // std::atomic because
     // the serve-async backend releases the pin on the WORKER thread while
     // the parent's reclaim READS the watermark on the spawning thread.
     //
@@ -5902,6 +5904,13 @@ public:
         const auto pin = gc_safe_closure_id_.load(std::memory_order_acquire);
         const auto floor = gc_freeze_closure_id_.load(std::memory_order_acquire);
         return pin > floor ? pin : floor;
+    }
+    // Issue #5099: the (gc-freeze) floor alone. The pending-body pin is a
+    // watermark over the newest pending body; the sweep must not treat every
+    // lower closure id as a root, or finished fibers' capture frames stay
+    // allocated until the last join.
+    [[nodiscard]] ClosureId gc_freeze_floor() const noexcept {
+        return gc_freeze_closure_id_.load(std::memory_order_acquire);
     }
     // The raw PENDING-BODY PIN watermark: the value a pending-body root
     // raises and a pending-body release restores.
