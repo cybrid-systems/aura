@@ -45,8 +45,8 @@
       "path": "src/serve/scheduler.cpp",
       "contains": [
         "spawn_with_pinned_body",
-        "aura_fiber_root_pending_body_latest",
-        "aura_fiber_release_pending_body_latest",
+        "aura_fiber_root_pending_closure",
+        "aura_fiber_release_pending_closure",
         "Issue #4698"
       ]
     },

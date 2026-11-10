@@ -7,7 +7,7 @@
       "path": "src/compiler/env_frame_arena.hh",
       "contains": [
         "Issue #5057: the exhaustion exit is CATCHABLE in production",
-        "throw Exhausted(live_frames, max_slots);"
+        "throw Exhausted(allocated_frames, live_frames, max_slots);"
       ]
     },
     {

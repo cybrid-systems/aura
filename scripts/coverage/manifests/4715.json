@@ -36,7 +36,7 @@
         "fiber:overlay-begin",
         "fiber:overlay-define",
         "fiber:overlay-commit",
-        "fiber:overlay-rollback",
+        "mw:overlay-rollback",
         "fiber:cow-conflict: ",
         "ev.top_env().bind(name, make_cell(ci))",
         "kCapFiber"
@@ -57,7 +57,7 @@
       "ac": "AC2",
       "path": "src/compiler/evaluator_primitives_fiber_cow.cpp",
       "contains": [
-        "fiber:overlay-get",
+        "mw:overlay-get",
         "if (auto committed = ev.top_env().lookup(name))",
         "copies one EvalValue",
         "kThreadKeyDomain",
