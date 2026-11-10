@@ -21,10 +21,12 @@
 ; member), "tree" (one decision stump over the numeric features), and
 ; "pairwise" (pairwise wins among the k nearest neighbours).
 ;
-; Everything is a value: the selector is a hash, offline training returns a
-; new selector, feedback returns a new selector. Features must be numeric
-; (hash values); that is what the AST summaries and instance descriptors
-; are reduced to before they reach this module.
+; The selector is a hash. select:features-fn!, select:offline and
+; select:feedback! update that hash in place (hash-set!) and also return
+; it, so both (select:offline s matrix) and (define s2 (select:offline s
+; matrix)) see the fit. Features must be numeric (hash values); that is
+; what the AST summaries and instance descriptors are reduced to before
+; they reach this module.
 
 (export select:make select:features-fn! select:offline select:choose
         select:feedback! select:report select:drift? select:drift-score
@@ -64,7 +66,10 @@
           "drift-explore" (hash-ref o "drift-explore" 2.0)
           "drift-threshold" (hash-ref o "drift-threshold" 0.35))))
 
-(define (select:features-fn! s f) (hash-set s "features-fn" f))
+(define (select:features-fn! s f)
+  ; #5071: hash-set returns a fresh hash and used to drop the update.
+  (hash-set! s "features-fn" f)
+  s)
 
 (define (select:features s inst)
   (let ((f (hash-ref s "features-fn" #f)))
@@ -285,14 +290,19 @@
          (keys (select-keys feats))
          (scales (select-scale-keys feats keys))
          (X (select-vectors feats keys scales))
-         (s1 (hash-set (hash-set (hash-set (hash-set s "matrix" matrix) "names" names)
-                                 "keys" keys)
-                       "scales" scales))
-         (s2 (hash-set (hash-set (hash-set s1 "X" X) "S" rows)
-                       "medians" (map (lambda (k) (select-median
-                                                   (map (lambda (f) (hash-ref f k 0.0)) feats)))
-                                      keys))))
-    (let* ((buckets (map (lambda (f) (select-bucket s2 f)) feats))
+         (medians (map (lambda (k) (select-median
+                                    (map (lambda (f) (hash-ref f k 0.0)) feats)))
+                       keys)))
+    ; #5071: write the fit onto the caller's handle. hash-set would return
+    ; a fresh hash and leave s unchanged, so select:choose read an empty X.
+    (hash-set! s "matrix" matrix)
+    (hash-set! s "names" names)
+    (hash-set! s "keys" keys)
+    (hash-set! s "scales" scales)
+    (hash-set! s "X" X)
+    (hash-set! s "S" rows)
+    (hash-set! s "medians" medians)
+    (let* ((buckets (map (lambda (f) (select-bucket s f)) feats))
            (n (max 1 (length buckets)))
            (base (foldl (lambda (acc b)
                           (let ((c (hash-ref acc b 0)))
@@ -300,10 +310,12 @@
                         (hash) buckets))
            (base-freq (foldl (lambda (acc b)
                                (hash-set acc b (/ (* 1.0 (hash-ref base b 0)) n)))
-                             (hash) (hash-keys base)))
-           (s3 (hash-set s2 "baseline" base-freq))
-           (s4 (hash-set s3 "tree" (select-tree-model X rows))))
-      (hash-set s4 "report" (select:report s4)))))
+                             (hash) (hash-keys base))))
+      (hash-set! s "baseline" base-freq)
+      (hash-set! s "tree" (select-tree-model X rows))
+      (hash-set! s "fitted" #t)
+      (hash-set! s "report" (select:report s))
+      s)))
 
 (define (select-predict s v)
   (let* ((model (hash-ref s "model" "knn"))
@@ -334,16 +346,25 @@
                     (> (cdr a) (cdr b)))))))
 
 (define (select:choose s inst k . rest)
-  (let* ((v (select-vector (select:features s inst) (hash-ref s "keys" (quote ()))
-                           (hash-ref s "scales" (quote ()))))
-         (offline (map car (select-ranked s v)))
-         (bucket (select-bucket s (select:features s inst)))
-         (online (select-online-ranked s bucket))
-         (names (if (null? online) offline (append online offline)))
-         (uniq (foldl (lambda (acc n)
-                        (if (member? n acc) acc (cons n acc)))
-                      (quote ()) names)))
-    (take (reverse uniq) (min k (length uniq)))))
+  ; An unfitted handle used to return () with no signal (#5071). An empty
+  ; matrix is the only fitted selector that selects nothing.
+  (if (not (hash-ref s "fitted" #f))
+      (error "select:choose: selector is not fitted; call select:offline first")
+      (let* ((v (select-vector (select:features s inst) (hash-ref s "keys" (quote ()))
+                               (hash-ref s "scales" (quote ()))))
+             (offline (map car (select-ranked s v)))
+             (bucket (select-bucket s (select:features s inst)))
+             (online (select-online-ranked s bucket))
+             (names (if (null? online) offline (append online offline)))
+             (uniq (foldl (lambda (acc n)
+                            (if (member? n acc) acc (cons n acc)))
+                          (quote ()) names))
+             (out (take (reverse uniq) (min k (length uniq)))))
+        (if (and (> k 0)
+                 (not (null? (hash-ref s "names" (quote ()))))
+                 (null? out))
+            (error "select:choose: fitted non-empty matrix produced an empty selection")
+            out))))
 
 ; ── online context bandit ─────────────────────────────────────
 
@@ -430,11 +451,12 @@
          (rewards (hash-ref s "rewards" (quote ())))
          (rkept (if (> (length rewards) 19) (take rewards 19) rewards)))
     ;; the drift flag is set last, from the pre-update snapshot, and is
-    ;; consumed by the next select:choose
-    (hash-set (hash-set (hash-set (hash-set s "online" (hash-set online bucket next))
-                                  "recent" (cons bucket kept))
-                        "rewards" (cons score rkept))
-              "drifted" drifted)))
+    ;; consumed by the next select:choose. #5071: mutate the caller's handle.
+    (hash-set! s "online" (hash-set online bucket next))
+    (hash-set! s "recent" (cons bucket kept))
+    (hash-set! s "rewards" (cons score rkept))
+    (hash-set! s "drifted" drifted)
+    s))
 
 ; ── drift ─────────────────────────────────────────────────────
 
@@ -549,4 +571,7 @@
    "  (select:offline s matrix)     ; matrix from portfolio:matrix\n"
    "  (select:choose s inst k)      ; -> k member names\n"
    "  (select:feedback! s inst member result)\n"
-   "  (select:report s)             ; SBS/VBS, gap closure, regret\n"))
+   "  (select:report s)             ; SBS/VBS, gap closure, regret\n"
+   "  features-fn!, offline and feedback! update the handle in place and\n"
+   "  also return it. choose on an unfitted selector is an error; an empty\n"
+   "  matrix is the only fitted selector that selects nothing.\n"))
