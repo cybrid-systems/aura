@@ -29,11 +29,18 @@
 
 (export make-parameter parameterize parameter? parameter-set!)
 
+; A parameter answers the query (p 'parameter?) with this unique object.
+; parameter? is therefore not procedure?: an ordinary procedure cannot
+; return the mark (#5096).
+(define *parameter-mark* (vector 'parameter-mark))
+
 (define (make-parameter init . conv)
   (let ((cell (vector (if (null? conv) init ((car conv) init))
                       (if (null? conv) (lambda (x) x) (car conv)))))
     (lambda args
       (cond ((null? args) (vector-ref cell 0))
+            ((and (= (length args) 1) (eq? (car args) 'parameter?))
+             *parameter-mark*)
             ((and (= (length args) 2) (eq? (car args) 'parameter-raw-set))
              (vector-set! cell 0 (car (cdr args)))
              (vector-ref cell 0))
@@ -42,7 +49,9 @@
              (vector-ref cell 0))
             (else (error "parameter: expected 0, 1, or (parameter-raw-set v)"))))))
 
-(define (parameter? p) (procedure? p))
+(define (parameter? p)
+  (and (procedure? p)
+       (try (eq? (p 'parameter?) *parameter-mark*) (catch e #f))))
 
 ; Explicit setter (the (p v) call form is the documented one).
 (define (parameter-set! p v) (p v))

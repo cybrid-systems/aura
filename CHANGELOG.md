@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased (0.2.1)
+
+- Stdlib (#5096): SRFI-1 `any`/`every` stop at the shortest list; `force` forces a nested promise; `parameter?` rejects ordinary procedures and `parameterize` evaluates the parameter expression once; `values` is not a bare list, so `let-values` and `call-with-values` treat `(list 1 2)` as one value; SRFI-151 `bitwise-bit-set?` is `(index n)` and `bitwise-fold` walks bits in `[0, integer-length)`; `frequencies` and `hash-get` accept a missing key, and SRFI-125 `hash-table-walk` is `(hash-table proc)`; the eof object is unique, so a successful `write-char` is not eof.
+
 ## 0.2.0
 
 Minor release on the 0.2 channel. The language and CLI surface changed where an alias replaces a retired name; the API is still not stable.

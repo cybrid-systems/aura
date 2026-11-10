@@ -238,8 +238,8 @@ void RegSplitParts::register_char_core_primitives(PrimRegistrar add, Evaluator& 
     });
 
     // Issue #4325: a blank line is "". EOF (or a failed stream) is void,
-    // which eof-object? already treats as the eof value. A partial line
-    // with no trailing newline is still that line; the next read is eof.
+    // distinct from the R7RS eof-object (#5096). A partial line with no
+    // trailing newline is still that line; the next read is void.
     // Issue #4356: the blocking read runs without the CLI body mutex so a
     // thread fiber can allocate. The string_heap_ push happens only after
     // the lock is back, on this thread's private line buffer.
@@ -488,12 +488,16 @@ void RegSplitParts::register_char_encoding_primitives(PrimRegistrar add, Evaluat
         return make_string(sid);
     });
 
-    add("eof-object?", [](const auto& a) {
-        if (a.empty())
+    // Issue #5096: R7RS eof-object is one unique value, not void and not
+    // the unspecified return of write-char. The symbol name is not an
+    // identifier, so quote cannot forge it. read-byte / read-line stay
+    // on void (#4325); port readers in std/io return (eof-object).
+    auto eof_symbol = [&ev]() { return ev.intern_symbol("#<eof-object>"); };
+    add("eof-object", [eof_symbol](const auto&) { return eof_symbol(); });
+    add("eof-object?", [eof_symbol](const auto& a) {
+        if (a.empty() || !is_symbol(a[0]))
             return make_bool(false);
-        // EOF is void. A blank line is "" (Issue #4325), so eof-object?
-        // is false for that string.
-        return make_bool(is_void(a[0]));
+        return make_bool(a[0].val == eof_symbol().val);
     });
 }
 
