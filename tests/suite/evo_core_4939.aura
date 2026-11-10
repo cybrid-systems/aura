@@ -235,6 +235,36 @@
 (assert! (= 10 (score 5)) "live define kept the old body")
 (assert! (= live0 (evo:source-fingerprint)) "live fingerprint identical")
 (assert! (string=? (hash-ref ok-trial "preset") "ci") "preset recorded")
+; Issue #5085: trial calls apply as (s c), the same shape as commit! /
+; evo:default-apply. A one-argument apply (above) still runs.
+(define seen-target "")
+(define two-trial
+  (evo:trial trial-cand
+             (hash "apply" (lambda (s c)
+                             (set! seen-target (hash-ref s "target" ""))
+                             (eq? (mutate:rebind "score" (evo:candidate-genome c) "two") #t))
+                   "evaluate" (lambda (c)
+                                (hash "objectives" (hash "y" (score 5))
+                                      "constraints" (hash "ok" 0.0)
+                                      "behavior" (hash))))))
+(assert! (evo:trial-ok? two-trial) "two-arg apply trial ok")
+(assert! (string=? seen-target "score") "two-arg apply receives the trial context")
+(assert! (= 45 (evo:objective two-trial "y")) "two-arg apply ran in the child")
+(assert! (= 10 (score 5)) "live define after two-arg trial")
+(define def-trial
+  (evo:trial trial-cand
+             (hash "apply" evo:default-apply
+                   "evaluate" (lambda (c)
+                                (hash "objectives" (hash "y" (score 5))
+                                      "constraints" (hash "ok" 0.0)
+                                      "behavior" (hash))))))
+(assert! (evo:trial-ok? def-trial) "default-apply is a valid trial apply")
+(assert! (string=? "ok" (hash-ref def-trial "status")) "default-apply trial status")
+(assert! (= 45 (evo:objective def-trial "y")) "default-apply trial evaluated the child")
+(assert! (eq? (hash-ref def-trial "trial-applied") #t) "default-apply really rebound the child")
+(assert! (eq? (hash-ref def-trial "live-unchanged") #t) "default-apply trial leaves live unchanged")
+(assert! (= live0 (evo:source-fingerprint)) "live fingerprint after default-apply trial")
+(assert! (= 10 (score 5)) "live define after default-apply trial")
 ; a candidate that throws
 (define err-trial
   (evo:trial trial-cand
