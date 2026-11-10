@@ -2776,41 +2776,42 @@ NodeId parse_do(ParserState& s) {
 // values are a vector whose slot 0 is the symbol `values` (#5096). A
 // bare list is one value: receiving it as two formals is an arity error.
 namespace {
-NodeId lv_lit(ParserState& s, std::int64_t n) {
-    return s.flat.add_literal(n);
-}
-NodeId lv_var(ParserState& s, SymId name) {
-    return s.flat.add_variable(name);
-}
-NodeId lv_call(ParserState& s, const char* name, std::vector<NodeId> args) {
-    return s.flat.add_call(s.flat.add_variable(s.pool.intern(name)), std::move(args));
-}
-NodeId lv_bool(ParserState& s, bool t) {
-    auto id = s.flat.add_literal(t ? 1 : 0);
-    s.flat.set_marker(id, aura::ast::SyntaxMarker::BoolLiteral);
-    return id;
-}
-NodeId lv_error(ParserState& s) {
-    return lv_call(s, "error",
-                   {s.flat.add_literalstring(s.pool.intern("let-values: arity mismatch"))});
-}
-// #t when tmp is a #(values …) object. Each branch is a fresh node so the
-// tree has one parent per child.
-NodeId lv_is_values(ParserState& s, SymId tmp) {
-    auto tag = s.flat.add_quote(lv_var(s, s.pool.intern("values")));
-    return s.flat.add_if(
-        lv_call(s, "vector?", {lv_var(s, tmp)}),
-        s.flat.add_if(lv_call(s, ">", {lv_call(s, "vector-length", {lv_var(s, tmp)}), lv_lit(s, 0)}),
-                      s.flat.add_if(lv_call(s, "eq?",
-                                            {lv_call(s, "vector-ref", {lv_var(s, tmp), lv_lit(s, 0)}),
-                                             tag}),
-                                    lv_bool(s, true), lv_bool(s, false)),
-                      lv_bool(s, false)),
-        lv_bool(s, false));
-}
-NodeId lv_len_is(ParserState& s, SymId tmp, std::int64_t n) {
-    return lv_call(s, "=", {lv_call(s, "vector-length", {lv_var(s, tmp)}), lv_lit(s, n)});
-}
+    NodeId lv_lit(ParserState& s, std::int64_t n) {
+        return s.flat.add_literal(n);
+    }
+    NodeId lv_var(ParserState& s, SymId name) {
+        return s.flat.add_variable(name);
+    }
+    NodeId lv_call(ParserState& s, const char* name, std::vector<NodeId> args) {
+        return s.flat.add_call(s.flat.add_variable(s.pool.intern(name)), std::move(args));
+    }
+    NodeId lv_bool(ParserState& s, bool t) {
+        auto id = s.flat.add_literal(t ? 1 : 0);
+        s.flat.set_marker(id, aura::ast::SyntaxMarker::BoolLiteral);
+        return id;
+    }
+    NodeId lv_error(ParserState& s) {
+        return lv_call(s, "error",
+                       {s.flat.add_literalstring(s.pool.intern("let-values: arity mismatch"))});
+    }
+    // #t when tmp is a #(values …) object. Each branch is a fresh node so the
+    // tree has one parent per child.
+    NodeId lv_is_values(ParserState& s, SymId tmp) {
+        auto tag = s.flat.add_quote(lv_var(s, s.pool.intern("values")));
+        return s.flat.add_if(
+            lv_call(s, "vector?", {lv_var(s, tmp)}),
+            s.flat.add_if(
+                lv_call(s, ">", {lv_call(s, "vector-length", {lv_var(s, tmp)}), lv_lit(s, 0)}),
+                s.flat.add_if(
+                    lv_call(s, "eq?",
+                            {lv_call(s, "vector-ref", {lv_var(s, tmp), lv_lit(s, 0)}), tag}),
+                    lv_bool(s, true), lv_bool(s, false)),
+                lv_bool(s, false)),
+            lv_bool(s, false));
+    }
+    NodeId lv_len_is(ParserState& s, SymId tmp, std::int64_t n) {
+        return lv_call(s, "=", {lv_call(s, "vector-length", {lv_var(s, tmp)}), lv_lit(s, n)});
+    }
 } // namespace
 
 NodeId parse_let_values(ParserState& s, bool sequential) {
@@ -2865,9 +2866,9 @@ NodeId parse_let_values(ParserState& s, bool sequential) {
                 lv_var(s, tmp));
             inner = s.flat.add_let(g.formals[0], payload, inner);
         } else if (n == 0) {
-            inner = s.flat.add_if(
-                lv_is_values(s, tmp),
-                s.flat.add_if(lv_len_is(s, tmp, 1), inner, lv_error(s)), lv_error(s));
+            inner =
+                s.flat.add_if(lv_is_values(s, tmp),
+                              s.flat.add_if(lv_len_is(s, tmp, 1), inner, lv_error(s)), lv_error(s));
         } else {
             NodeId unpacked = inner;
             for (std::size_t k = n; k-- > 0;) {
@@ -2875,11 +2876,10 @@ NodeId parse_let_values(ParserState& s, bool sequential) {
                                    {lv_var(s, tmp), lv_lit(s, static_cast<std::int64_t>(k + 1))});
                 unpacked = s.flat.add_let(g.formals[k], ref, unpacked);
             }
-            inner = s.flat.add_if(
-                lv_is_values(s, tmp),
-                s.flat.add_if(lv_len_is(s, tmp, static_cast<std::int64_t>(n + 1)), unpacked,
-                              lv_error(s)),
-                lv_error(s));
+            inner = s.flat.add_if(lv_is_values(s, tmp),
+                                  s.flat.add_if(lv_len_is(s, tmp, static_cast<std::int64_t>(n + 1)),
+                                                unpacked, lv_error(s)),
+                                  lv_error(s));
         }
         if (sequential)
             inner = s.flat.add_let(tmps[gi], g.expr, inner);
@@ -2963,7 +2963,8 @@ NodeId parse_parameterize(ParserState& s) {
         auto res_let = s.flat.add_let(res, try_form, res_body);
         inner = s.flat.add_let(
             pbind, param_expr,
-            s.flat.add_let(old, old_init, s.flat.add_begin(std::vector<NodeId>{set_call, res_let})));
+            s.flat.add_let(old, old_init,
+                           s.flat.add_begin(std::vector<NodeId>{set_call, res_let})));
     }
     return inner;
 }

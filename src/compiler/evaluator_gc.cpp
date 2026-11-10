@@ -1636,25 +1636,25 @@ static void file_reclaim_mark_value(
 }
 
 namespace {
-// Issue #5099: pending body closures are exact ids. The pin watermark also
-// covers every closure allocated before the newest pending body, which kept
-// finished fibers' capture frames allocated until the last join.
-struct PendingClosurePins {
-    std::unordered_set<std::uint64_t> ids;
-    std::uint64_t freeze = 0;
-    explicit PendingClosurePins(const Evaluator& ev) {
-        // Issue #4704: acquire the effective watermark on the sweep thread
-        // so a worker's pending-body release happens-before this mark.
-        (void)ev.gc_safe_closure_id();
-        freeze = ev.gc_freeze_floor();
-        std::vector<std::uint64_t> raw;
-        aura_collect_pending_body_closures(&ev, raw);
-        ids.insert(raw.begin(), raw.end());
-    }
-    [[nodiscard]] bool operator()(std::uint64_t id) const {
-        return id < freeze || ids.contains(id);
-    }
-};
+    // Issue #5099: pending body closures are exact ids. The pin watermark also
+    // covers every closure allocated before the newest pending body, which kept
+    // finished fibers' capture frames allocated until the last join.
+    struct PendingClosurePins {
+        std::unordered_set<std::uint64_t> ids;
+        std::uint64_t freeze = 0;
+        explicit PendingClosurePins(const Evaluator& ev) {
+            // Issue #4704: acquire the effective watermark on the sweep thread
+            // so a worker's pending-body release happens-before this mark.
+            (void)ev.gc_safe_closure_id();
+            freeze = ev.gc_freeze_floor();
+            std::vector<std::uint64_t> raw;
+            aura_collect_pending_body_closures(&ev, raw);
+            ids.insert(raw.begin(), raw.end());
+        }
+        [[nodiscard]] bool operator()(std::uint64_t id) const {
+            return id < freeze || ids.contains(id);
+        }
+    };
 } // namespace
 
 bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
@@ -1942,8 +1942,8 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
                 for (const auto& cl_sh : closures_shards_) {
                     for (const auto& kv : cl_sh.map) {
                         const auto id = kv.first;
-                        const bool keep = pending_pins(id) || live_tw.contains(id) ||
-                                          seen_ir.contains(id);
+                        const bool keep =
+                            pending_pins(id) || live_tw.contains(id) || seen_ir.contains(id);
                         if (!keep || !expanded.insert(id).second)
                             continue;
                         if (kv.second.env_id != NULL_ENV_ID)

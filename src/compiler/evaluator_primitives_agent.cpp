@@ -4617,109 +4617,111 @@ void RegSplitParts::register_agent_join_primitive(Evaluator& ev, AddFn& add) {
     };
     // (orch:agent-join name [:timeout-ms n] [:drain-ms n])
     // Issue #2153: :drain-ms secondary cancel-drain window (default 2000).
-    if (false) add("orch:agent-join",
-        [&ev, build_orch_hash, orch_keyword_key, add_identity_plane, add_deny_class,
-         add_reclaimed_pending_lifecycle](std::span<const EvalValue> a) -> EvalValue {
-            if (a.empty()) {
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "orch:agent-join: need name",
-                                            ev.primitive_error_counter_ptr());
-            }
-            aura::orch::JoinPolicy policy{};
-            policy.drain_ms = aura::orch::kDefaultJoinDrainMs;
-            bool debug_report = false; // Issue #4832: :debug / :verbose
-            // agent-join has a leading name argument: keyword pairs start
-            // at index 1 (scope-join-all has no name and starts at 0).
-            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1]))
-                    policy.primary_ms = static_cast<std::uint64_t>(
-                        std::max<std::int64_t>(0, types::as_int(a[i + 1])));
-                else if ((k == "drain-ms" || k == "drain_ms") && types::is_int(a[i + 1]))
-                    policy.drain_ms = static_cast<std::uint64_t>(
-                        std::max<std::int64_t>(0, types::as_int(a[i + 1])));
-                else if ((k == "wait-reclaimed-ms" || k == "wait_reclaimed_ms") &&
-                         types::is_int(a[i + 1]))
-                    policy.wait_reclaimed_ms = static_cast<std::uint64_t>(
-                        std::max<std::int64_t>(0, types::as_int(a[i + 1])));
-                else if ((k == "debug" || k == "verbose") && types::is_bool(a[i + 1]))
-                    debug_report = types::as_bool(a[i + 1]);
-            }
-            // Issue #4867: reject unknown/invalid keyword arguments and
-            // negative timeouts instead of silently using the default.
-            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                auto& val = a[i + 1];
-                if (k == "timeout-ms" || k == "timeout_ms") {
-                    if (!types::is_int(val))
-                        return make_primitive_error(
-                            ev.string_heap_, ev.error_values_,
-                            "orch:agent-join: :timeout-ms expects an integer",
-                            ev.primitive_error_counter_ptr());
-                    if (types::as_int(val) < 0)
-                        return make_primitive_error(
-                            ev.string_heap_, ev.error_values_,
-                            "orch:agent-join: :timeout-ms must not be negative",
-                            ev.primitive_error_counter_ptr());
-                } else if (k == "drain-ms" || k == "drain_ms") {
-                    if (!types::is_int(val))
-                        return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                                    "orch:agent-join: :drain-ms expects an integer",
-                                                    ev.primitive_error_counter_ptr());
-                } else if (k == "wait-reclaimed-ms" || k == "wait_reclaimed_ms") {
-                    if (!types::is_int(val))
-                        return make_primitive_error(
-                            ev.string_heap_, ev.error_values_,
-                            "orch:agent-join: :wait-reclaimed-ms expects an integer",
-                            ev.primitive_error_counter_ptr());
-                } else if (k == "debug" || k == "verbose") {
-                    if (!types::is_bool(val))
-                        return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                                    "orch:agent-join: :debug expects a boolean",
-                                                    ev.primitive_error_counter_ptr());
-                } else {
+    if (false)
+        add("orch:agent-join",
+            [&ev, build_orch_hash, orch_keyword_key, add_identity_plane, add_deny_class,
+             add_reclaimed_pending_lifecycle](std::span<const EvalValue> a) -> EvalValue {
+                if (a.empty()) {
                     return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                                std::string("orch:agent-join: unknown keyword :") +
-                                                    std::string(k),
+                                                "orch:agent-join: need name",
                                                 ev.primitive_error_counter_ptr());
                 }
-            }
+                aura::orch::JoinPolicy policy{};
+                policy.drain_ms = aura::orch::kDefaultJoinDrainMs;
+                bool debug_report = false; // Issue #4832: :debug / :verbose
+                // agent-join has a leading name argument: keyword pairs start
+                // at index 1 (scope-join-all has no name and starts at 0).
+                for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1]))
+                        policy.primary_ms = static_cast<std::uint64_t>(
+                            std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+                    else if ((k == "drain-ms" || k == "drain_ms") && types::is_int(a[i + 1]))
+                        policy.drain_ms = static_cast<std::uint64_t>(
+                            std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+                    else if ((k == "wait-reclaimed-ms" || k == "wait_reclaimed_ms") &&
+                             types::is_int(a[i + 1]))
+                        policy.wait_reclaimed_ms = static_cast<std::uint64_t>(
+                            std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+                    else if ((k == "debug" || k == "verbose") && types::is_bool(a[i + 1]))
+                        debug_report = types::as_bool(a[i + 1]);
+                }
+                // Issue #4867: reject unknown/invalid keyword arguments and
+                // negative timeouts instead of silently using the default.
+                for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    auto& val = a[i + 1];
+                    if (k == "timeout-ms" || k == "timeout_ms") {
+                        if (!types::is_int(val))
+                            return make_primitive_error(
+                                ev.string_heap_, ev.error_values_,
+                                "orch:agent-join: :timeout-ms expects an integer",
+                                ev.primitive_error_counter_ptr());
+                        if (types::as_int(val) < 0)
+                            return make_primitive_error(
+                                ev.string_heap_, ev.error_values_,
+                                "orch:agent-join: :timeout-ms must not be negative",
+                                ev.primitive_error_counter_ptr());
+                    } else if (k == "drain-ms" || k == "drain_ms") {
+                        if (!types::is_int(val))
+                            return make_primitive_error(
+                                ev.string_heap_, ev.error_values_,
+                                "orch:agent-join: :drain-ms expects an integer",
+                                ev.primitive_error_counter_ptr());
+                    } else if (k == "wait-reclaimed-ms" || k == "wait_reclaimed_ms") {
+                        if (!types::is_int(val))
+                            return make_primitive_error(
+                                ev.string_heap_, ev.error_values_,
+                                "orch:agent-join: :wait-reclaimed-ms expects an integer",
+                                ev.primitive_error_counter_ptr());
+                    } else if (k == "debug" || k == "verbose") {
+                        if (!types::is_bool(val))
+                            return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                        "orch:agent-join: :debug expects a boolean",
+                                                        ev.primitive_error_counter_ptr());
+                    } else {
+                        return make_primitive_error(
+                            ev.string_heap_, ev.error_values_,
+                            std::string("orch:agent-join: unknown keyword :") + std::string(k),
+                            ev.primitive_error_counter_ptr());
+                    }
+                }
 
-            aura::orch::AgentHandle* hp = nullptr;
-            // Issue #4138: non-null only when resolve_aura_agent hit the
-            // Scope plane — name-table joins need no compact (#3598
-            // erases clean slots on find).
-            aura::orch::AgentScope* join_scope = nullptr;
-            if (types::is_string(a[0])) {
-                auto name = heap_str_from(ev.string_heap_, a[0]);
-                // Issue #3442: name-table first, then session-local scope find.
-                // Issue #4138: plane-detecting overload (see resolve comment).
-                hp = resolve_aura_agent(ev, name, &join_scope);
-            }
-            // Join-by-id is intentionally not supported (name-keyed).
-            if (!hp) {
-                std::vector<std::pair<std::string, EvalValue>> kv = {
-                    {"ok", make_bool(false)},
-                    {"status",
-                     [&] {
-                         auto s = ev.push_string_heap("invalid");
-                         return make_string(s);
-                     }()},
-                    {"wait-us", make_int(0)},
-                    {"schema", make_int(1588)},
-                    {"schema-2011", make_int(2011)},
-                    {"schema-2153", make_int(aura::orch::kJoinDrainTimeoutIssue)},
-                    {"drain-ms", make_int(static_cast<std::int64_t>(policy.drain_ms))},
-                };
-                // Issue #3216: name-table miss (production-only intern).
-                add_identity_plane(kv, "name-table");
-                strip_internal_join_markers(kv, debug_report); // Issue #4832
-                return build_orch_hash(kv);
-            }
-            return RegSplitParts::agent_join_result(
-                ev, a, hp, join_scope, policy, debug_report, build_orch_hash, add_deny_class,
-                add_identity_plane, add_reclaimed_pending_lifecycle);
-        });
+                aura::orch::AgentHandle* hp = nullptr;
+                // Issue #4138: non-null only when resolve_aura_agent hit the
+                // Scope plane — name-table joins need no compact (#3598
+                // erases clean slots on find).
+                aura::orch::AgentScope* join_scope = nullptr;
+                if (types::is_string(a[0])) {
+                    auto name = heap_str_from(ev.string_heap_, a[0]);
+                    // Issue #3442: name-table first, then session-local scope find.
+                    // Issue #4138: plane-detecting overload (see resolve comment).
+                    hp = resolve_aura_agent(ev, name, &join_scope);
+                }
+                // Join-by-id is intentionally not supported (name-keyed).
+                if (!hp) {
+                    std::vector<std::pair<std::string, EvalValue>> kv = {
+                        {"ok", make_bool(false)},
+                        {"status",
+                         [&] {
+                             auto s = ev.push_string_heap("invalid");
+                             return make_string(s);
+                         }()},
+                        {"wait-us", make_int(0)},
+                        {"schema", make_int(1588)},
+                        {"schema-2011", make_int(2011)},
+                        {"schema-2153", make_int(aura::orch::kJoinDrainTimeoutIssue)},
+                        {"drain-ms", make_int(static_cast<std::int64_t>(policy.drain_ms))},
+                    };
+                    // Issue #3216: name-table miss (production-only intern).
+                    add_identity_plane(kv, "name-table");
+                    strip_internal_join_markers(kv, debug_report); // Issue #4832
+                    return build_orch_hash(kv);
+                }
+                return RegSplitParts::agent_join_result(
+                    ev, a, hp, join_scope, policy, debug_report, build_orch_hash, add_deny_class,
+                    add_identity_plane, add_reclaimed_pending_lifecycle);
+            });
 }
 
 // Issue #5033: orch:agent-join result projection (phase).
@@ -4923,110 +4925,112 @@ void RegSplitParts::register_agent_wait_reclaimed_primitive(Evaluator& ev, AddFn
     // Issue #2924: (orch:agent-wait-reclaimed name [:timeout-ms n])
     // Wait for still-running body after status=reclaimed; never frees
     // reservation on Timeout (#2661). Returns Invalid when not reclaimed.
-    if (false) add("orch:agent-wait-reclaimed",
-        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
-            if (a.empty()) {
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "orch:agent-wait-reclaimed: need name",
-                                            ev.primitive_error_counter_ptr());
-            }
-            std::optional<std::uint64_t> timeout_ms;
-            bool do_abandon = false;
-            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1]))
-                    timeout_ms = static_cast<std::uint64_t>(
-                        std::max<std::int64_t>(0, types::as_int(a[i + 1])));
-                if ((k == "abandon") && types::is_bool(a[i + 1]) && types::as_bool(a[i + 1]))
-                    do_abandon = true;
-            }
-            aura::orch::AgentHandle* hp = nullptr;
-            if (types::is_string(a[0])) {
-                auto name = heap_str_from(ev.string_heap_, a[0]);
-                // Issue #3463: route the second-wait through
-                // resolve_aura_agent (already exists from #3442) so a
-                // scope-spawn agent (plane B) is reachable by name after
-                // join → Reclaimed / cleanup-pending. Name-table still
-                // wins on same-name (per #3442 AC5); Soft/Off is a
-                // pointer walk (zero new atomic on miss). No new query
-                // key — reuse wait_reclaimed_* / reclaimed_abandon_total
-                // / cleanup-pending. C++ hosts holding AgentScope::
-                // handles_mut() still call ensure_reclaimed_cleanup /
-                // wait_reclaimed_body directly.
-                hp = resolve_aura_agent(ev, name);
-            }
-            if (!hp) {
-                auto sidx = ev.push_string_heap("invalid");
+    if (false)
+        add("orch:agent-wait-reclaimed",
+            [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+                if (a.empty()) {
+                    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                "orch:agent-wait-reclaimed: need name",
+                                                ev.primitive_error_counter_ptr());
+                }
+                std::optional<std::uint64_t> timeout_ms;
+                bool do_abandon = false;
+                for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1]))
+                        timeout_ms = static_cast<std::uint64_t>(
+                            std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+                    if ((k == "abandon") && types::is_bool(a[i + 1]) && types::as_bool(a[i + 1]))
+                        do_abandon = true;
+                }
+                aura::orch::AgentHandle* hp = nullptr;
+                if (types::is_string(a[0])) {
+                    auto name = heap_str_from(ev.string_heap_, a[0]);
+                    // Issue #3463: route the second-wait through
+                    // resolve_aura_agent (already exists from #3442) so a
+                    // scope-spawn agent (plane B) is reachable by name after
+                    // join → Reclaimed / cleanup-pending. Name-table still
+                    // wins on same-name (per #3442 AC5); Soft/Off is a
+                    // pointer walk (zero new atomic on miss). No new query
+                    // key — reuse wait_reclaimed_* / reclaimed_abandon_total
+                    // / cleanup-pending. C++ hosts holding AgentScope::
+                    // handles_mut() still call ensure_reclaimed_cleanup /
+                    // wait_reclaimed_body directly.
+                    hp = resolve_aura_agent(ev, name);
+                }
+                if (!hp) {
+                    auto sidx = ev.push_string_heap("invalid");
+                    std::vector<std::pair<std::string, EvalValue>> kv = {
+                        {"ok", make_bool(false)},
+                        {"status", make_string(sidx)},
+                        {"wait-us", make_int(0)},
+                        {"still-running", make_bool(false)},
+                        {"cleanup-completed", make_bool(false)},
+                        {"schema", make_int(2924)},
+                        {"schema-2924", make_int(2924)},
+                        {"issue-2924", make_int(2924)},
+                    };
+                    return build_orch_hash(kv);
+                }
+                aura::serve::JoinStatus st_enum = aura::serve::JoinStatus::Invalid;
+                std::uint64_t wait_us = 0;
+                bool still_running = false;
+                bool cleanup_completed = false;
+                bool abandoned = false;
+                if (do_abandon) {
+                    aura::orch::AbandonReclaimedOpts aopts;
+                    aopts.max_second_wait_ms = timeout_ms;
+                    auto ar = aura::orch::abandon_reclaimed(*hp, aopts);
+                    st_enum = ar.wait_status;
+                    wait_us = ar.wait_us;
+                    still_running = ar.still_running;
+                    cleanup_completed =
+                        (ar.outcome == aura::orch::AbandonReclaimedOutcome::Cleaned);
+                    abandoned = (ar.outcome == aura::orch::AbandonReclaimedOutcome::Abandoned);
+                    if (ar.outcome == aura::orch::AbandonReclaimedOutcome::Invalid)
+                        st_enum = aura::serve::JoinStatus::Invalid;
+                } else {
+                    auto wr = aura::orch::wait_reclaimed_body(*hp, timeout_ms);
+                    st_enum = wr.status;
+                    wait_us = wr.wait_us;
+                    still_running = wr.still_running;
+                    cleanup_completed = wr.cleanup_completed;
+                }
+                // Map status without embedding "JoinStatus::Ok)" substrings that
+                // #2885 AC2 greps for in orch:agent-join Ok/Timeout hash growth.
+                const char* st = "invalid";
+                bool wait_ok = false;
+                if (st_enum == aura::serve::JoinStatus::Ok) {
+                    st = "ok";
+                    wait_ok = true;
+                } else if (st_enum == aura::serve::JoinStatus::Timeout) {
+                    st = "timeout";
+                } else if (st_enum == aura::serve::JoinStatus::Cancelled) {
+                    st = "cancelled";
+                } else if (st_enum == aura::serve::JoinStatus::Reclaimed) {
+                    st = "reclaimed";
+                }
+                if (abandoned)
+                    st = "abandoned";
+                auto sidx = ev.push_string_heap(st);
                 std::vector<std::pair<std::string, EvalValue>> kv = {
-                    {"ok", make_bool(false)},
+                    {"ok", make_bool(wait_ok)},
                     {"status", make_string(sidx)},
-                    {"wait-us", make_int(0)},
-                    {"still-running", make_bool(false)},
-                    {"cleanup-completed", make_bool(false)},
+                    {"wait-us", make_int(static_cast<std::int64_t>(wait_us))},
+                    {"still-running", make_bool(still_running)},
+                    {"cleanup-completed", make_bool(cleanup_completed)},
                     {"schema", make_int(2924)},
                     {"schema-2924", make_int(2924)},
                     {"issue-2924", make_int(2924)},
+                    {"agent-wait-reclaimed-wired", make_int(1)},
                 };
+                if (do_abandon) {
+                    kv.emplace_back("abandoned", make_bool(abandoned));
+                    kv.emplace_back("schema-3334", make_int(aura::orch::kReclaimedAbandonIssue));
+                    kv.emplace_back("issue-3334", make_int(aura::orch::kReclaimedAbandonIssue));
+                }
                 return build_orch_hash(kv);
-            }
-            aura::serve::JoinStatus st_enum = aura::serve::JoinStatus::Invalid;
-            std::uint64_t wait_us = 0;
-            bool still_running = false;
-            bool cleanup_completed = false;
-            bool abandoned = false;
-            if (do_abandon) {
-                aura::orch::AbandonReclaimedOpts aopts;
-                aopts.max_second_wait_ms = timeout_ms;
-                auto ar = aura::orch::abandon_reclaimed(*hp, aopts);
-                st_enum = ar.wait_status;
-                wait_us = ar.wait_us;
-                still_running = ar.still_running;
-                cleanup_completed = (ar.outcome == aura::orch::AbandonReclaimedOutcome::Cleaned);
-                abandoned = (ar.outcome == aura::orch::AbandonReclaimedOutcome::Abandoned);
-                if (ar.outcome == aura::orch::AbandonReclaimedOutcome::Invalid)
-                    st_enum = aura::serve::JoinStatus::Invalid;
-            } else {
-                auto wr = aura::orch::wait_reclaimed_body(*hp, timeout_ms);
-                st_enum = wr.status;
-                wait_us = wr.wait_us;
-                still_running = wr.still_running;
-                cleanup_completed = wr.cleanup_completed;
-            }
-            // Map status without embedding "JoinStatus::Ok)" substrings that
-            // #2885 AC2 greps for in orch:agent-join Ok/Timeout hash growth.
-            const char* st = "invalid";
-            bool wait_ok = false;
-            if (st_enum == aura::serve::JoinStatus::Ok) {
-                st = "ok";
-                wait_ok = true;
-            } else if (st_enum == aura::serve::JoinStatus::Timeout) {
-                st = "timeout";
-            } else if (st_enum == aura::serve::JoinStatus::Cancelled) {
-                st = "cancelled";
-            } else if (st_enum == aura::serve::JoinStatus::Reclaimed) {
-                st = "reclaimed";
-            }
-            if (abandoned)
-                st = "abandoned";
-            auto sidx = ev.push_string_heap(st);
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(wait_ok)},
-                {"status", make_string(sidx)},
-                {"wait-us", make_int(static_cast<std::int64_t>(wait_us))},
-                {"still-running", make_bool(still_running)},
-                {"cleanup-completed", make_bool(cleanup_completed)},
-                {"schema", make_int(2924)},
-                {"schema-2924", make_int(2924)},
-                {"issue-2924", make_int(2924)},
-                {"agent-wait-reclaimed-wired", make_int(1)},
-            };
-            if (do_abandon) {
-                kv.emplace_back("abandoned", make_bool(abandoned));
-                kv.emplace_back("schema-3334", make_int(aura::orch::kReclaimedAbandonIssue));
-                kv.emplace_back("issue-3334", make_int(aura::orch::kReclaimedAbandonIssue));
-            }
-            return build_orch_hash(kv);
-        });
+            });
 }
 
 // Issue #5033: (orch:scope-spawn name body ...) AgentScope supervision.
@@ -5078,117 +5082,122 @@ void RegSplitParts::register_scope_spawn_primitive(Evaluator& ev, AddFn& add) {
     //   [:max-no-yield-ms n] ... → hash {ok, id, name, schema=2588, status}.
     // Body thunk is optional for MVP (empty body = supervised no-op);
     // closure-ID parsing mirrors orch:spawn-agent pattern.
-    if (false) add("orch:scope-spawn",
-        [&ev, build_orch_hash, orch_keyword_key, add_deny_class, add_reclaimed_pending_lifecycle,
-         parse_scope_addr_kw, resolve_scope_addr,
-         make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
-            if (a.empty() || !types::is_string(a[0])) {
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
-                    "orch:scope-spawn: usage (orch:scope-spawn name [body] [:kw val]…)",
-                    ev.primitive_error_counter_ptr());
-            }
-            (void)orch_scheduler();
-            auto& root =
-                aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), orch_scheduler());
-
-            auto name = heap_str_from(ev.string_heap_, a[0]);
-            std::optional<std::uint64_t> cid;
-            std::size_t i = 1;
-            if (i < a.size() && types::is_closure(a[i])) {
-                cid = types::as_closure_id(a[i]);
-                ++i;
-            }
-            // Issue #2588: scope-spawn kw args (parallel to orch:spawn-agent).
-            // Issue #3730: mailbox BP / producer / credit / attach parity —
-            // omitted kwargs keep today's defaults (attach_mailbox=true,
-            // high_water=256, no producer budget, no admit override).
-            std::uint32_t keepalive_interval_ms = 0;
-            std::uint32_t max_no_yield_ms = 0; // #2540
-            bool attach_mailbox = true;
-            std::size_t high_water = 256;
-            std::optional<std::uint64_t> bp_admit_threshold{};
-            std::string bp_scope_id{};
-            std::uint32_t producer_bp_budget = 0;
-            std::uint32_t mailbox_credit = 0;
-            // Issue #3434: explicit tenant for this spawn. 0 = inherit
-            // Evaluator capability tenant (fallback below).
-            std::uint64_t tenant_id = 0;
-            // Issue #3444: optional :path / :child-index. Omit → root.
-            std::string addr_path;
-            std::optional<std::int64_t> addr_child;
-            std::uint64_t region_key = 0; // Issue #3728
-            for (; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                auto& val = a[i + 1];
-                if (parse_scope_addr_kw(k, val, addr_path, addr_child)) {
-                    continue;
-                } else if ((k == "keepalive-interval-ms" || k == "keepalive_interval_ms") &&
-                           types::is_int(val)) {
-                    keepalive_interval_ms =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
-                } else if ((k == "max-no-yield-ms" || k == "max_no_yield_ms") &&
-                           types::is_int(val)) {
-                    max_no_yield_ms =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
-                } else if ((k == "attach-mailbox" || k == "attach_mailbox") &&
-                           types::is_bool(val)) {
-                    attach_mailbox = types::as_bool(val);
-                } else if ((k == "high-water" || k == "high_water" || k == "mailbox-high-water") &&
-                           types::is_int(val)) {
-                    high_water =
-                        static_cast<std::size_t>(std::max<std::int64_t>(1, types::as_int(val)));
-                } else if ((k == "bp-admit-threshold" || k == "bp_admit_threshold") &&
-                           types::is_int(val)) {
-                    const auto raw = types::as_int(val);
-                    if (raw >= 0)
-                        bp_admit_threshold = static_cast<std::uint64_t>(raw);
-                } else if ((k == "bp-scope-id" || k == "bp_scope_id") && types::is_string(val)) {
-                    const auto sid = types::as_string_idx(val);
-                    if (sid < ev.string_heap_.size())
-                        bp_scope_id = ev.string_at(sid);
-                } else if ((k == "producer-bp-budget" || k == "producer_bp_budget") &&
-                           types::is_int(val)) {
-                    producer_bp_budget =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
-                } else if ((k == "mailbox-credit" || k == "mailbox_credit") && types::is_int(val)) {
-                    mailbox_credit =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
-                } else if ((k == "tenant-id" || k == "tenant_id") && types::is_int(val)) {
-                    // Issue #3434: explicit tenant for this spawn. 0 →
-                    // Evaluator capability tenant fallback below.
-                    tenant_id =
-                        static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
-                } else if ((k == "region-key" || k == "region_key") && types::is_int(val)) {
-                    region_key =
-                        static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
+    if (false)
+        add("orch:scope-spawn",
+            [&ev, build_orch_hash, orch_keyword_key, add_deny_class,
+             add_reclaimed_pending_lifecycle, parse_scope_addr_kw, resolve_scope_addr,
+             make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
+                if (a.empty() || !types::is_string(a[0])) {
+                    return make_primitive_error(
+                        ev.string_heap_, ev.error_values_,
+                        "orch:scope-spawn: usage (orch:scope-spawn name [body] [:kw val]…)",
+                        ev.primitive_error_counter_ptr());
                 }
-            }
-            ScopeSpawnArgs st;
-            st.name = std::move(name);
-            st.cid = cid;
-            st.keepalive_interval_ms = keepalive_interval_ms;
-            st.max_no_yield_ms = max_no_yield_ms;
-            st.attach_mailbox = attach_mailbox;
-            st.high_water = high_water;
-            st.bp_admit_threshold = bp_admit_threshold;
-            st.bp_scope_id = std::move(bp_scope_id);
-            st.producer_bp_budget = producer_bp_budget;
-            st.mailbox_credit = mailbox_credit;
-            st.tenant_id = tenant_id;
-            st.addr_path = addr_path;
-            st.addr_child = addr_child;
-            st.region_key = region_key;
-            if (auto err = RegSplitParts::scope_spawn_target(
-                    ev, a, root, st, build_orch_hash, orch_keyword_key, parse_scope_addr_kw,
-                    resolve_scope_addr, make_scope_addr_fail, add_deny_class,
-                    add_reclaimed_pending_lifecycle)) {
-                return *err;
-            }
-            auto& scope = *static_cast<aura::orch::AgentScope*>(st.scope_ptr);
-            return RegSplitParts::scope_spawn_finish(
-                ev, a, scope, st, build_orch_hash, add_deny_class, add_reclaimed_pending_lifecycle);
-        });
+                (void)orch_scheduler();
+                auto& root = aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev),
+                                                                   orch_scheduler());
+
+                auto name = heap_str_from(ev.string_heap_, a[0]);
+                std::optional<std::uint64_t> cid;
+                std::size_t i = 1;
+                if (i < a.size() && types::is_closure(a[i])) {
+                    cid = types::as_closure_id(a[i]);
+                    ++i;
+                }
+                // Issue #2588: scope-spawn kw args (parallel to orch:spawn-agent).
+                // Issue #3730: mailbox BP / producer / credit / attach parity —
+                // omitted kwargs keep today's defaults (attach_mailbox=true,
+                // high_water=256, no producer budget, no admit override).
+                std::uint32_t keepalive_interval_ms = 0;
+                std::uint32_t max_no_yield_ms = 0; // #2540
+                bool attach_mailbox = true;
+                std::size_t high_water = 256;
+                std::optional<std::uint64_t> bp_admit_threshold{};
+                std::string bp_scope_id{};
+                std::uint32_t producer_bp_budget = 0;
+                std::uint32_t mailbox_credit = 0;
+                // Issue #3434: explicit tenant for this spawn. 0 = inherit
+                // Evaluator capability tenant (fallback below).
+                std::uint64_t tenant_id = 0;
+                // Issue #3444: optional :path / :child-index. Omit → root.
+                std::string addr_path;
+                std::optional<std::int64_t> addr_child;
+                std::uint64_t region_key = 0; // Issue #3728
+                for (; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    auto& val = a[i + 1];
+                    if (parse_scope_addr_kw(k, val, addr_path, addr_child)) {
+                        continue;
+                    } else if ((k == "keepalive-interval-ms" || k == "keepalive_interval_ms") &&
+                               types::is_int(val)) {
+                        keepalive_interval_ms = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(val)));
+                    } else if ((k == "max-no-yield-ms" || k == "max_no_yield_ms") &&
+                               types::is_int(val)) {
+                        max_no_yield_ms = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(val)));
+                    } else if ((k == "attach-mailbox" || k == "attach_mailbox") &&
+                               types::is_bool(val)) {
+                        attach_mailbox = types::as_bool(val);
+                    } else if ((k == "high-water" || k == "high_water" ||
+                                k == "mailbox-high-water") &&
+                               types::is_int(val)) {
+                        high_water =
+                            static_cast<std::size_t>(std::max<std::int64_t>(1, types::as_int(val)));
+                    } else if ((k == "bp-admit-threshold" || k == "bp_admit_threshold") &&
+                               types::is_int(val)) {
+                        const auto raw = types::as_int(val);
+                        if (raw >= 0)
+                            bp_admit_threshold = static_cast<std::uint64_t>(raw);
+                    } else if ((k == "bp-scope-id" || k == "bp_scope_id") &&
+                               types::is_string(val)) {
+                        const auto sid = types::as_string_idx(val);
+                        if (sid < ev.string_heap_.size())
+                            bp_scope_id = ev.string_at(sid);
+                    } else if ((k == "producer-bp-budget" || k == "producer_bp_budget") &&
+                               types::is_int(val)) {
+                        producer_bp_budget = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(val)));
+                    } else if ((k == "mailbox-credit" || k == "mailbox_credit") &&
+                               types::is_int(val)) {
+                        mailbox_credit = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(val)));
+                    } else if ((k == "tenant-id" || k == "tenant_id") && types::is_int(val)) {
+                        // Issue #3434: explicit tenant for this spawn. 0 →
+                        // Evaluator capability tenant fallback below.
+                        tenant_id = static_cast<std::uint64_t>(
+                            std::max<std::int64_t>(0, types::as_int(val)));
+                    } else if ((k == "region-key" || k == "region_key") && types::is_int(val)) {
+                        region_key = static_cast<std::uint64_t>(
+                            std::max<std::int64_t>(0, types::as_int(val)));
+                    }
+                }
+                ScopeSpawnArgs st;
+                st.name = std::move(name);
+                st.cid = cid;
+                st.keepalive_interval_ms = keepalive_interval_ms;
+                st.max_no_yield_ms = max_no_yield_ms;
+                st.attach_mailbox = attach_mailbox;
+                st.high_water = high_water;
+                st.bp_admit_threshold = bp_admit_threshold;
+                st.bp_scope_id = std::move(bp_scope_id);
+                st.producer_bp_budget = producer_bp_budget;
+                st.mailbox_credit = mailbox_credit;
+                st.tenant_id = tenant_id;
+                st.addr_path = addr_path;
+                st.addr_child = addr_child;
+                st.region_key = region_key;
+                if (auto err = RegSplitParts::scope_spawn_target(
+                        ev, a, root, st, build_orch_hash, orch_keyword_key, parse_scope_addr_kw,
+                        resolve_scope_addr, make_scope_addr_fail, add_deny_class,
+                        add_reclaimed_pending_lifecycle)) {
+                    return *err;
+                }
+                auto& scope = *static_cast<aura::orch::AgentScope*>(st.scope_ptr);
+                return RegSplitParts::scope_spawn_finish(ev, a, scope, st, build_orch_hash,
+                                                         add_deny_class,
+                                                         add_reclaimed_pending_lifecycle);
+            });
 }
 
 // Issue #5033: orch:scope-spawn target resolution / name-occupancy deny phase.
@@ -5563,91 +5572,94 @@ void RegSplitParts::register_scope_child_primitives(Evaluator& ev, AddFn& add) {
     // so later orch:scope-spawn / watch / join-all / scope-resolve can
     // target the child. HardDeny stub and dangling scheduler → ok=#f.
     // Returns hash {ok, name, child-index, scope-path, schema=2631, …}.
-    if (false) add("orch:scope-child",
-        [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
-         make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
-            if (a.empty() || !types::is_string(a[0])) {
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
-                    "orch:scope-child: usage (orch:scope-child name [:path p] [:child-index n])",
-                    ev.primitive_error_counter_ptr());
-            }
-            (void)orch_scheduler();
-            auto& root =
-                aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), orch_scheduler());
-            auto name = heap_str_from(ev.string_heap_, a[0]);
-            std::string addr_path;
-            std::optional<std::int64_t> addr_child;
-            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                (void)parse_scope_addr_kw(k, a[i + 1], addr_path, addr_child);
-            }
-            auto* parent_ptr = resolve_scope_addr(root, addr_path, addr_child);
-            if (!parent_ptr) {
-                return make_scope_addr_fail(2631, "invalid-path",
-                                            "orch:scope-child: unknown :path / :child-index");
-            }
-            auto& parent = *parent_ptr;
-            // Issue #3444: dead scheduler → structured fail (do not
-            // report ok=#t, and do not create a dangling child).
-            if (!parent.scheduler_alive()) {
-                return make_scope_addr_fail(2631, "scheduler-dangling",
-                                            "orch:scope-child: Scheduler destroyed (#2782/#3444)");
-            }
-            try {
-                const auto before = parent.child_count();
-                auto& child = parent.spawn_child();
-                // Issue #3444: HardDeny returns *this (parent stub).
-                if (&child == &parent) {
-                    return make_scope_addr_fail(
-                        2631, "hard-deny", "orch:scope-child: concurrent hard deny (#2946/#3444)");
+    if (false)
+        add("orch:scope-child",
+            [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
+             make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
+                if (a.empty() || !types::is_string(a[0])) {
+                    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                "orch:scope-child: usage (orch:scope-child name "
+                                                "[:path p] [:child-index n])",
+                                                ev.primitive_error_counter_ptr());
                 }
-                const auto idx = parent.child_count() > before ? before : parent.child_count();
-                const std::string parent_path =
-                    !addr_path.empty() ? addr_path
-                                       : (addr_child.has_value() ? std::to_string(*addr_child)
-                                                                 : std::string("root"));
-                const auto spath = aura::orch::format_child_scope_path(parent_path, idx);
-                const auto cidx = ev.push_string_heap(name);
-                const auto pidx = ev.push_string_heap(spath);
-                aura::orch::g_orch_module_stats.scope_child_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                std::vector<std::pair<std::string, EvalValue>> kv = {
-                    {"ok", make_bool(true)},
-                    {"name", make_string(cidx)},
-                    {"child-index", make_int(static_cast<std::int64_t>(idx))},
-                    {"scope-path", make_string(pidx)},
-                    {"schema", make_int(2631)},
-                    {"schema-2588", make_int(2588)},
-                    {"schema-2537", make_int(2537)},
-                    {"schema-3444", make_int(aura::orch::kScopeChildAddressIssue)},
-                    {"issue-3444", make_int(aura::orch::kScopeChildAddressIssue)},
-                    {"status",
-                     [&] {
-                         auto s = ev.push_string_heap("ok");
-                         return make_string(s);
-                     }()},
-                };
-                return build_orch_hash(kv);
-            } catch (...) {
-                // [SILENCE-PRIM-#2631]: scope-child failures surface as ok=false hash
-                // (Agent-visible status); do not rethrow through prim dispatch.
-                // (Mergebot already shipped this annotation in origin/main;
-                // #2632 ship keeps the same wording rather than overwriting.)
-                aura::orch::g_orch_module_stats.scope_child_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                std::vector<std::pair<std::string, EvalValue>> kv = {
-                    {"ok", make_bool(false)},
-                    {"schema", make_int(2631)},
-                    {"status",
-                     [&] {
-                         auto s = ev.push_string_heap("scope-child-failed");
-                         return make_string(s);
-                     }()},
-                };
-                return build_orch_hash(kv);
-            }
-        });
+                (void)orch_scheduler();
+                auto& root = aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev),
+                                                                   orch_scheduler());
+                auto name = heap_str_from(ev.string_heap_, a[0]);
+                std::string addr_path;
+                std::optional<std::int64_t> addr_child;
+                for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    (void)parse_scope_addr_kw(k, a[i + 1], addr_path, addr_child);
+                }
+                auto* parent_ptr = resolve_scope_addr(root, addr_path, addr_child);
+                if (!parent_ptr) {
+                    return make_scope_addr_fail(2631, "invalid-path",
+                                                "orch:scope-child: unknown :path / :child-index");
+                }
+                auto& parent = *parent_ptr;
+                // Issue #3444: dead scheduler → structured fail (do not
+                // report ok=#t, and do not create a dangling child).
+                if (!parent.scheduler_alive()) {
+                    return make_scope_addr_fail(
+                        2631, "scheduler-dangling",
+                        "orch:scope-child: Scheduler destroyed (#2782/#3444)");
+                }
+                try {
+                    const auto before = parent.child_count();
+                    auto& child = parent.spawn_child();
+                    // Issue #3444: HardDeny returns *this (parent stub).
+                    if (&child == &parent) {
+                        return make_scope_addr_fail(
+                            2631, "hard-deny",
+                            "orch:scope-child: concurrent hard deny (#2946/#3444)");
+                    }
+                    const auto idx = parent.child_count() > before ? before : parent.child_count();
+                    const std::string parent_path =
+                        !addr_path.empty() ? addr_path
+                                           : (addr_child.has_value() ? std::to_string(*addr_child)
+                                                                     : std::string("root"));
+                    const auto spath = aura::orch::format_child_scope_path(parent_path, idx);
+                    const auto cidx = ev.push_string_heap(name);
+                    const auto pidx = ev.push_string_heap(spath);
+                    aura::orch::g_orch_module_stats.scope_child_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    std::vector<std::pair<std::string, EvalValue>> kv = {
+                        {"ok", make_bool(true)},
+                        {"name", make_string(cidx)},
+                        {"child-index", make_int(static_cast<std::int64_t>(idx))},
+                        {"scope-path", make_string(pidx)},
+                        {"schema", make_int(2631)},
+                        {"schema-2588", make_int(2588)},
+                        {"schema-2537", make_int(2537)},
+                        {"schema-3444", make_int(aura::orch::kScopeChildAddressIssue)},
+                        {"issue-3444", make_int(aura::orch::kScopeChildAddressIssue)},
+                        {"status",
+                         [&] {
+                             auto s = ev.push_string_heap("ok");
+                             return make_string(s);
+                         }()},
+                    };
+                    return build_orch_hash(kv);
+                } catch (...) {
+                    // [SILENCE-PRIM-#2631]: scope-child failures surface as ok=false hash
+                    // (Agent-visible status); do not rethrow through prim dispatch.
+                    // (Mergebot already shipped this annotation in origin/main;
+                    // #2632 ship keeps the same wording rather than overwriting.)
+                    aura::orch::g_orch_module_stats.scope_child_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    std::vector<std::pair<std::string, EvalValue>> kv = {
+                        {"ok", make_bool(false)},
+                        {"schema", make_int(2631)},
+                        {"status",
+                         [&] {
+                             auto s = ev.push_string_heap("scope-child-failed");
+                             return make_string(s);
+                         }()},
+                    };
+                    return build_orch_hash(kv);
+                }
+            });
 }
 
 // Issue #5033: (orch:scope-watch ...) liveness + RestartN.
@@ -5679,189 +5691,193 @@ void RegSplitParts::register_scope_watch_primitive(Evaluator& ev, AddFn& add) {
     // Returns hash {ok, alive, stalled, cancelled, done, closed,
     //                restart-count, bp-degraded, bp-cancelled, bp-throttled,
     //                schema=2588, schema-2887}.
-    if (false) add("orch:scope-watch",
-        [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
-         make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
-            (void)orch_scheduler();
-            auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
-            if (!root) {
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
-                    "orch:scope-watch: no scope (call orch:scope-spawn first)",
-                    ev.primitive_error_counter_ptr());
-            }
-            aura::orch::AgentFailurePolicy policy{};
-            std::uint32_t stall_ms = 0;
-            std::string addr_path;
-            std::optional<std::int64_t> addr_child;
-            auto parse_action =
-                [](std::string_view pol) -> std::optional<aura::orch::AgentFailureAction> {
-                if (pol == "cancel")
-                    return aura::orch::AgentFailureAction::Cancel;
-                if (pol == "report-only" || pol == "report_only")
-                    return aura::orch::AgentFailureAction::ReportOnly;
-                if (pol == "restart-n" || pol == "restart_n")
-                    return aura::orch::AgentFailureAction::RestartN;
-                if (pol == "throttle")
-                    return aura::orch::AgentFailureAction::Throttle;
-                return std::nullopt;
-            };
-            for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                auto& val = a[i + 1];
-                if (parse_scope_addr_kw(k, val, addr_path, addr_child)) {
-                    continue;
-                } else if ((k == "stall-ms" || k == "stall_ms") && types::is_int(val)) {
-                    stall_ms =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
-                } else if ((k == "policy" || k == "on-stall" || k == "on_stall") &&
-                           types::is_string(val)) {
-                    auto pol = heap_str_from(ev.string_heap_, val);
-                    if (auto a2 = parse_action(pol))
-                        policy.on_stall = *a2;
-                } else if ((k == "on-backpressure" || k == "on_backpressure") &&
-                           types::is_string(val)) {
-                    // Issue #2887: BP-storm producer degrade action.
-                    auto pol = heap_str_from(ev.string_heap_, val);
-                    if (auto a2 = parse_action(pol))
-                        policy.on_backpressure = *a2;
-                } else if ((k == "bp-threshold" || k == "bp_threshold") && types::is_int(val)) {
-                    policy.bp_threshold =
-                        static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
-                } else if ((k == "max-restarts" || k == "max_restarts") && types::is_int(val)) {
-                    policy.max_restarts =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
-                } else if ((k == "consecutive-stall-limit" || k == "consecutive_stall_limit") &&
-                           types::is_int(val)) {
-                    policy.consecutive_stall_limit =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
-                } else if ((k == "restart-backoff-ms" || k == "restart_backoff_ms") &&
-                           types::is_int(val)) {
-                    policy.restart_backoff_ms =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
-                } else if ((k == "workflow" || k == "workflow-policy" || k == "workflow_policy") &&
-                           types::is_hash(val)) {
-                    // Issue #2843: apply orch:compose-workflow hash onto
-                    // AgentFailurePolicy (scope-watch projection).
-                    auto hidx = types::as_hash_idx(val);
-                    if (hidx < g_hash_tables.size() && g_hash_tables[hidx]) {
-                        auto* ht = g_hash_tables[hidx];
-                        auto meta = ht->metadata();
-                        auto keys = ht->keys();
-                        auto vals = ht->values();
-                        auto hcap = ht->capacity;
-                        for (std::size_t si = 0; si < hcap; ++si) {
-                            // Issue #4612: a deleted slot (tombstone) is not a live key.
-                            if (!::aura::compiler::hash::hash_slot_is_live(meta[si]))
-                                continue;
-                            EvalValue ke{};
-                            ke.val = keys[si];
-                            EvalValue ve{};
-                            ve.val = vals[si];
-                            if (!types::is_string(ke))
-                                continue;
-                            auto ks = heap_str_from(ev.string_heap_, ke);
-                            if ((ks == "policy" || ks == "on-stall") && types::is_string(ve)) {
-                                auto pol = heap_str_from(ev.string_heap_, ve);
-                                if (auto a2 = parse_action(pol))
-                                    policy.on_stall = *a2;
-                            } else if ((ks == "on-backpressure" || ks == "on_backpressure") &&
-                                       types::is_string(ve)) {
-                                auto pol = heap_str_from(ev.string_heap_, ve);
-                                if (auto a2 = parse_action(pol))
-                                    policy.on_backpressure = *a2;
-                            } else if ((ks == "bp-threshold" || ks == "bp_threshold") &&
-                                       types::is_int(ve)) {
-                                policy.bp_threshold = static_cast<std::uint64_t>(
-                                    std::max<std::int64_t>(0, types::as_int(ve)));
-                            } else if (ks == "max-restarts" && types::is_int(ve)) {
-                                policy.max_restarts = static_cast<std::uint32_t>(
-                                    std::max<std::int64_t>(0, types::as_int(ve)));
-                            } else if (ks == "consecutive-stall-limit" && types::is_int(ve)) {
-                                policy.consecutive_stall_limit = static_cast<std::uint32_t>(
-                                    std::max<std::int64_t>(0, types::as_int(ve)));
-                            } else if (ks == "restart-backoff-ms" && types::is_int(ve)) {
-                                policy.restart_backoff_ms = static_cast<std::uint32_t>(
-                                    std::max<std::int64_t>(0, types::as_int(ve)));
+    if (false)
+        add("orch:scope-watch",
+            [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
+             make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
+                (void)orch_scheduler();
+                auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+                if (!root) {
+                    return make_primitive_error(
+                        ev.string_heap_, ev.error_values_,
+                        "orch:scope-watch: no scope (call orch:scope-spawn first)",
+                        ev.primitive_error_counter_ptr());
+                }
+                aura::orch::AgentFailurePolicy policy{};
+                std::uint32_t stall_ms = 0;
+                std::string addr_path;
+                std::optional<std::int64_t> addr_child;
+                auto parse_action =
+                    [](std::string_view pol) -> std::optional<aura::orch::AgentFailureAction> {
+                    if (pol == "cancel")
+                        return aura::orch::AgentFailureAction::Cancel;
+                    if (pol == "report-only" || pol == "report_only")
+                        return aura::orch::AgentFailureAction::ReportOnly;
+                    if (pol == "restart-n" || pol == "restart_n")
+                        return aura::orch::AgentFailureAction::RestartN;
+                    if (pol == "throttle")
+                        return aura::orch::AgentFailureAction::Throttle;
+                    return std::nullopt;
+                };
+                for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    auto& val = a[i + 1];
+                    if (parse_scope_addr_kw(k, val, addr_path, addr_child)) {
+                        continue;
+                    } else if ((k == "stall-ms" || k == "stall_ms") && types::is_int(val)) {
+                        stall_ms = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(val)));
+                    } else if ((k == "policy" || k == "on-stall" || k == "on_stall") &&
+                               types::is_string(val)) {
+                        auto pol = heap_str_from(ev.string_heap_, val);
+                        if (auto a2 = parse_action(pol))
+                            policy.on_stall = *a2;
+                    } else if ((k == "on-backpressure" || k == "on_backpressure") &&
+                               types::is_string(val)) {
+                        // Issue #2887: BP-storm producer degrade action.
+                        auto pol = heap_str_from(ev.string_heap_, val);
+                        if (auto a2 = parse_action(pol))
+                            policy.on_backpressure = *a2;
+                    } else if ((k == "bp-threshold" || k == "bp_threshold") && types::is_int(val)) {
+                        policy.bp_threshold = static_cast<std::uint64_t>(
+                            std::max<std::int64_t>(0, types::as_int(val)));
+                    } else if ((k == "max-restarts" || k == "max_restarts") && types::is_int(val)) {
+                        policy.max_restarts = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(val)));
+                    } else if ((k == "consecutive-stall-limit" || k == "consecutive_stall_limit") &&
+                               types::is_int(val)) {
+                        policy.consecutive_stall_limit = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(val)));
+                    } else if ((k == "restart-backoff-ms" || k == "restart_backoff_ms") &&
+                               types::is_int(val)) {
+                        policy.restart_backoff_ms = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(val)));
+                    } else if ((k == "workflow" || k == "workflow-policy" ||
+                                k == "workflow_policy") &&
+                               types::is_hash(val)) {
+                        // Issue #2843: apply orch:compose-workflow hash onto
+                        // AgentFailurePolicy (scope-watch projection).
+                        auto hidx = types::as_hash_idx(val);
+                        if (hidx < g_hash_tables.size() && g_hash_tables[hidx]) {
+                            auto* ht = g_hash_tables[hidx];
+                            auto meta = ht->metadata();
+                            auto keys = ht->keys();
+                            auto vals = ht->values();
+                            auto hcap = ht->capacity;
+                            for (std::size_t si = 0; si < hcap; ++si) {
+                                // Issue #4612: a deleted slot (tombstone) is not a live key.
+                                if (!::aura::compiler::hash::hash_slot_is_live(meta[si]))
+                                    continue;
+                                EvalValue ke{};
+                                ke.val = keys[si];
+                                EvalValue ve{};
+                                ve.val = vals[si];
+                                if (!types::is_string(ke))
+                                    continue;
+                                auto ks = heap_str_from(ev.string_heap_, ke);
+                                if ((ks == "policy" || ks == "on-stall") && types::is_string(ve)) {
+                                    auto pol = heap_str_from(ev.string_heap_, ve);
+                                    if (auto a2 = parse_action(pol))
+                                        policy.on_stall = *a2;
+                                } else if ((ks == "on-backpressure" || ks == "on_backpressure") &&
+                                           types::is_string(ve)) {
+                                    auto pol = heap_str_from(ev.string_heap_, ve);
+                                    if (auto a2 = parse_action(pol))
+                                        policy.on_backpressure = *a2;
+                                } else if ((ks == "bp-threshold" || ks == "bp_threshold") &&
+                                           types::is_int(ve)) {
+                                    policy.bp_threshold = static_cast<std::uint64_t>(
+                                        std::max<std::int64_t>(0, types::as_int(ve)));
+                                } else if (ks == "max-restarts" && types::is_int(ve)) {
+                                    policy.max_restarts = static_cast<std::uint32_t>(
+                                        std::max<std::int64_t>(0, types::as_int(ve)));
+                                } else if (ks == "consecutive-stall-limit" && types::is_int(ve)) {
+                                    policy.consecutive_stall_limit = static_cast<std::uint32_t>(
+                                        std::max<std::int64_t>(0, types::as_int(ve)));
+                                } else if (ks == "restart-backoff-ms" && types::is_int(ve)) {
+                                    policy.restart_backoff_ms = static_cast<std::uint32_t>(
+                                        std::max<std::int64_t>(0, types::as_int(ve)));
+                                }
                             }
                         }
                     }
                 }
-            }
-            auto* scope = resolve_scope_addr(*root, addr_path, addr_child);
-            if (!scope) {
-                return make_scope_addr_fail(2588, "invalid-path",
-                                            "orch:scope-watch: unknown :path / :child-index");
-            }
-            const auto before_restart =
-                aura::orch::g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
-            const auto wr = scope->watch_all(stall_ms, policy);
-            const auto after_restart =
-                aura::orch::g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
-            const auto restart_count =
-                after_restart > before_restart
-                    ? static_cast<std::uint64_t>(after_restart - before_restart)
-                    : std::uint64_t{0};
-            aura::orch::g_orch_module_stats.scope_watch_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-            aura::orch::g_orch_module_stats.scope_watch_restart_count.fetch_add(
-                restart_count, std::memory_order_relaxed);
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(true)},
-                {"alive", make_int(static_cast<std::int64_t>(wr.alive))},
-                {"stalled", make_int(static_cast<std::int64_t>(wr.stalled))},
-                {"cancelled", make_int(static_cast<std::int64_t>(wr.cancelled))},
-                {"done", make_int(static_cast<std::int64_t>(wr.done))},
-                {"closed", make_int(static_cast<std::int64_t>(wr.closed))},
-                {"restart-count", make_int(static_cast<std::int64_t>(restart_count))},
-                // Issue #2887: BP degrade snapshot from this watch pass.
-                {"bp-degraded", make_int(static_cast<std::int64_t>(wr.bp_degraded))},
-                {"bp-cancelled", make_int(static_cast<std::int64_t>(wr.bp_cancelled))},
-                {"bp-throttled", make_int(static_cast<std::int64_t>(wr.bp_throttled))},
-                {"on-backpressure",
-                 [&] {
-                     auto s = ev.push_string_heap(
-                         aura::orch::agent_failure_action_name(policy.on_backpressure));
-                     return make_string(s);
-                 }()},
-                {"policy",
-                 [&] {
-                     auto s = ev.push_string_heap(
-                         aura::orch::agent_failure_action_name(policy.on_stall));
-                     return make_string(s);
-                 }()},
-                {"schema", make_int(2588)},
-                {"schema-2161", make_int(2161)},
-                {"schema-2229", make_int(2229)},
-                {"schema-2887", make_int(2887)},
-                {"issue-2887", make_int(2887)},
-                // Issue #3250: RestartN fuel vs skip (additive; append).
-                {"restart-attempted", make_int(static_cast<std::int64_t>(wr.restart_attempted))},
-                {"restart-skipped-no-spec",
-                 make_int(static_cast<std::int64_t>(wr.restart_skipped_no_spec))},
-                {"restart-ok", make_int(static_cast<std::int64_t>(wr.restart_ok))},
-                {"schema-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
-                {"issue-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
-                {"restart-deferred-body-live",
-                 make_int(static_cast<std::int64_t>(wr.restart_deferred_body_live))},
-                {"restart-mailbox-dropped",
-                 make_int(static_cast<std::int64_t>(wr.restart_mailbox_dropped))},
-                {"schema-4003", make_int(aura::orch::kRestartNDrainBeforeReplaceIssue)},
-                {"issue-4003", make_int(aura::orch::kRestartNDrainBeforeReplaceIssue)},
-                // Issue #4022: RestartN spawn-admit deny (additive; append).
-                {"restart-denied", make_int(static_cast<std::int64_t>(wr.restart_denied))},
-                {"restart-deny-class",
-                 [&] {
-                     const char* nm =
-                         aura::orch::agent_deny_class_name(scope->last_restart_deny_class());
-                     auto s = ev.push_string_heap(nm ? nm : "");
-                     return make_string(s);
-                 }()},
-                {"schema-4022", make_int(aura::orch::kRestartNSpawnAdmitDenyIssue)},
-                {"issue-4022", make_int(aura::orch::kRestartNSpawnAdmitDenyIssue)},
-            };
-            return build_orch_hash(kv);
-        });
+                auto* scope = resolve_scope_addr(*root, addr_path, addr_child);
+                if (!scope) {
+                    return make_scope_addr_fail(2588, "invalid-path",
+                                                "orch:scope-watch: unknown :path / :child-index");
+                }
+                const auto before_restart =
+                    aura::orch::g_orch_module_stats.agent_restart_total.load(
+                        std::memory_order_relaxed);
+                const auto wr = scope->watch_all(stall_ms, policy);
+                const auto after_restart = aura::orch::g_orch_module_stats.agent_restart_total.load(
+                    std::memory_order_relaxed);
+                const auto restart_count =
+                    after_restart > before_restart
+                        ? static_cast<std::uint64_t>(after_restart - before_restart)
+                        : std::uint64_t{0};
+                aura::orch::g_orch_module_stats.scope_watch_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                aura::orch::g_orch_module_stats.scope_watch_restart_count.fetch_add(
+                    restart_count, std::memory_order_relaxed);
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(true)},
+                    {"alive", make_int(static_cast<std::int64_t>(wr.alive))},
+                    {"stalled", make_int(static_cast<std::int64_t>(wr.stalled))},
+                    {"cancelled", make_int(static_cast<std::int64_t>(wr.cancelled))},
+                    {"done", make_int(static_cast<std::int64_t>(wr.done))},
+                    {"closed", make_int(static_cast<std::int64_t>(wr.closed))},
+                    {"restart-count", make_int(static_cast<std::int64_t>(restart_count))},
+                    // Issue #2887: BP degrade snapshot from this watch pass.
+                    {"bp-degraded", make_int(static_cast<std::int64_t>(wr.bp_degraded))},
+                    {"bp-cancelled", make_int(static_cast<std::int64_t>(wr.bp_cancelled))},
+                    {"bp-throttled", make_int(static_cast<std::int64_t>(wr.bp_throttled))},
+                    {"on-backpressure",
+                     [&] {
+                         auto s = ev.push_string_heap(
+                             aura::orch::agent_failure_action_name(policy.on_backpressure));
+                         return make_string(s);
+                     }()},
+                    {"policy",
+                     [&] {
+                         auto s = ev.push_string_heap(
+                             aura::orch::agent_failure_action_name(policy.on_stall));
+                         return make_string(s);
+                     }()},
+                    {"schema", make_int(2588)},
+                    {"schema-2161", make_int(2161)},
+                    {"schema-2229", make_int(2229)},
+                    {"schema-2887", make_int(2887)},
+                    {"issue-2887", make_int(2887)},
+                    // Issue #3250: RestartN fuel vs skip (additive; append).
+                    {"restart-attempted",
+                     make_int(static_cast<std::int64_t>(wr.restart_attempted))},
+                    {"restart-skipped-no-spec",
+                     make_int(static_cast<std::int64_t>(wr.restart_skipped_no_spec))},
+                    {"restart-ok", make_int(static_cast<std::int64_t>(wr.restart_ok))},
+                    {"schema-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
+                    {"issue-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
+                    {"restart-deferred-body-live",
+                     make_int(static_cast<std::int64_t>(wr.restart_deferred_body_live))},
+                    {"restart-mailbox-dropped",
+                     make_int(static_cast<std::int64_t>(wr.restart_mailbox_dropped))},
+                    {"schema-4003", make_int(aura::orch::kRestartNDrainBeforeReplaceIssue)},
+                    {"issue-4003", make_int(aura::orch::kRestartNDrainBeforeReplaceIssue)},
+                    // Issue #4022: RestartN spawn-admit deny (additive; append).
+                    {"restart-denied", make_int(static_cast<std::int64_t>(wr.restart_denied))},
+                    {"restart-deny-class",
+                     [&] {
+                         const char* nm =
+                             aura::orch::agent_deny_class_name(scope->last_restart_deny_class());
+                         auto s = ev.push_string_heap(nm ? nm : "");
+                         return make_string(s);
+                     }()},
+                    {"schema-4022", make_int(aura::orch::kRestartNSpawnAdmitDenyIssue)},
+                    {"issue-4022", make_int(aura::orch::kRestartNSpawnAdmitDenyIssue)},
+                };
+                return build_orch_hash(kv);
+            });
 }
 
 // Issue #5033: (orch:scope-join-all ...) cancel + drain + release.
@@ -5896,165 +5912,168 @@ void RegSplitParts::register_scope_join_all_primitives(Evaluator& ev, AddFn& add
            std::optional<aura::orch::AgentFailurePolicy>& out) -> std::optional<std::string> {
         return RegSplitParts::resolve_join_fail_policy(name, max_restarts, out);
     };
-    if (false) add("orch:scope-join-all",
-        [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
-         make_scope_addr_fail, add_deny_class,
-         resolve_join_fail_policy](std::span<const EvalValue> a) -> EvalValue {
-            (void)orch_scheduler();
-            auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
-            if (!root) {
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
-                    "orch:scope-join-all: no scope (call orch:scope-spawn first)",
-                    ev.primitive_error_counter_ptr());
-            }
-            aura::orch::JoinPolicy policy{};
-            policy.drain_ms = aura::orch::kDefaultJoinDrainMs;
-            std::optional<aura::orch::AgentFailurePolicy> fail_pol;
-            std::string join_fail_name;
-            std::optional<std::uint32_t> join_fail_max_restarts;
-            std::string addr_path;
-            std::optional<std::int64_t> addr_child;
-            bool tree_join = false;
-            bool caller_drain = false; // Issue #4724: explicit :drain-ms wins
-            bool debug_report = false; // Issue #4832: :debug / :verbose
-            for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                auto& val = a[i + 1];
-                if (parse_scope_addr_kw(k, val, addr_path, addr_child)) {
-                    continue;
-                } else if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(val)) {
-                    // Issue #4861: a negative :timeout-ms used to be clamped
-                    // to 0, so a typo silently changed the deadline instead
-                    // of reporting the bad argument.
-                    if (types::as_int(val) < 0)
-                        return make_primitive_error(
-                            ev.string_heap_, ev.error_values_,
-                            "orch:scope-join-all: :timeout-ms must not be negative",
-                            ev.primitive_error_counter_ptr());
-                    policy.primary_ms = static_cast<std::uint64_t>(types::as_int(val));
-                } else if ((k == "drain-ms" || k == "drain_ms") && types::is_int(val)) {
-                    policy.drain_ms =
-                        static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
-                    caller_drain = true;
-                } else if ((k == "wait-reclaimed-ms" || k == "wait_reclaimed_ms") &&
-                           types::is_int(val)) {
-                    policy.wait_reclaimed_ms =
-                        static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
-                } else if (k == "on-join-fail" || k == "on_join_fail") {
-                    // Issue #3208: explicit keyword → honor even ReportOnly.
-                    // Issue #4861: the policy name may be a string OR a
-                    // quoted symbol ('cancel). A value of any other type used
-                    // to be IGNORED, so the policy silently degraded to
-                    // report-only and the caller never learned the cancel
-                    // strategy was not armed.
-                    if (types::is_string(val) || types::is_symbol(val) || types::is_keyword(val)) {
-                        join_fail_name = orch_keyword_key(val);
-                        // A name that does not resolve must not fall through
-                        // to the empty-name path (which is report-only).
-                        if (join_fail_name.empty()) {
+    if (false)
+        add("orch:scope-join-all",
+            [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
+             make_scope_addr_fail, add_deny_class,
+             resolve_join_fail_policy](std::span<const EvalValue> a) -> EvalValue {
+                (void)orch_scheduler();
+                auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+                if (!root) {
+                    return make_primitive_error(
+                        ev.string_heap_, ev.error_values_,
+                        "orch:scope-join-all: no scope (call orch:scope-spawn first)",
+                        ev.primitive_error_counter_ptr());
+                }
+                aura::orch::JoinPolicy policy{};
+                policy.drain_ms = aura::orch::kDefaultJoinDrainMs;
+                std::optional<aura::orch::AgentFailurePolicy> fail_pol;
+                std::string join_fail_name;
+                std::optional<std::uint32_t> join_fail_max_restarts;
+                std::string addr_path;
+                std::optional<std::int64_t> addr_child;
+                bool tree_join = false;
+                bool caller_drain = false; // Issue #4724: explicit :drain-ms wins
+                bool debug_report = false; // Issue #4832: :debug / :verbose
+                for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    auto& val = a[i + 1];
+                    if (parse_scope_addr_kw(k, val, addr_path, addr_child)) {
+                        continue;
+                    } else if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(val)) {
+                        // Issue #4861: a negative :timeout-ms used to be clamped
+                        // to 0, so a typo silently changed the deadline instead
+                        // of reporting the bad argument.
+                        if (types::as_int(val) < 0)
                             return make_primitive_error(
                                 ev.string_heap_, ev.error_values_,
-                                "orch:scope-join-all: :on-join-fail symbol is not resolvable",
+                                "orch:scope-join-all: :timeout-ms must not be negative",
+                                ev.primitive_error_counter_ptr());
+                        policy.primary_ms = static_cast<std::uint64_t>(types::as_int(val));
+                    } else if ((k == "drain-ms" || k == "drain_ms") && types::is_int(val)) {
+                        policy.drain_ms = static_cast<std::uint64_t>(
+                            std::max<std::int64_t>(0, types::as_int(val)));
+                        caller_drain = true;
+                    } else if ((k == "wait-reclaimed-ms" || k == "wait_reclaimed_ms") &&
+                               types::is_int(val)) {
+                        policy.wait_reclaimed_ms = static_cast<std::uint64_t>(
+                            std::max<std::int64_t>(0, types::as_int(val)));
+                    } else if (k == "on-join-fail" || k == "on_join_fail") {
+                        // Issue #3208: explicit keyword → honor even ReportOnly.
+                        // Issue #4861: the policy name may be a string OR a
+                        // quoted symbol ('cancel). A value of any other type used
+                        // to be IGNORED, so the policy silently degraded to
+                        // report-only and the caller never learned the cancel
+                        // strategy was not armed.
+                        if (types::is_string(val) || types::is_symbol(val) ||
+                            types::is_keyword(val)) {
+                            join_fail_name = orch_keyword_key(val);
+                            // A name that does not resolve must not fall through
+                            // to the empty-name path (which is report-only).
+                            if (join_fail_name.empty()) {
+                                return make_primitive_error(
+                                    ev.string_heap_, ev.error_values_,
+                                    "orch:scope-join-all: :on-join-fail symbol is not resolvable",
+                                    ev.primitive_error_counter_ptr());
+                            }
+                        } else {
+                            return make_primitive_error(
+                                ev.string_heap_, ev.error_values_,
+                                "orch:scope-join-all: :on-join-fail expects a policy name "
+                                "(string or symbol: cancel / restart-n / throttle / report-only)",
                                 ev.primitive_error_counter_ptr());
                         }
+                    } else if ((k == "max-restarts" || k == "max_restarts") && types::is_int(val)) {
+                        // Issue #4858: join-all restart fuel (scope-watch parity).
+                        // Issue #4861: a negative fuel count used to be clamped
+                        // to 0 (a silent no-op restart) instead of reporting the
+                        // bad argument.
+                        if (types::as_int(val) < 0)
+                            return make_primitive_error(
+                                ev.string_heap_, ev.error_values_,
+                                "orch:scope-join-all: :max-restarts must not be negative",
+                                ev.primitive_error_counter_ptr());
+                        join_fail_max_restarts = static_cast<std::uint32_t>(types::as_int(val));
+                    } else if ((k == "tree") && types::is_bool(val)) {
+                        // Issue #3643: optional tree join — default local
+                        // (#3496 AC1); true joins the whole subtree (AC2).
+                        tree_join = types::as_bool(val);
+                    } else if ((k == "debug" || k == "verbose") && types::is_bool(val)) {
+                        // Issue #4832: diagnostic view opt-in.
+                        debug_report = types::as_bool(val);
+                    }
+                }
+                // Issue #4867: the parse loop above ignores a keyword whose
+                // value has the wrong type and any unknown key. Validate the
+                // pair list once so :timeout-ms "abc" / :timeot-ms are errors,
+                // not silent defaults.
+                for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    auto& val = a[i + 1];
+                    auto bad_type = [&](const char* name, const char* want) -> EvalValue {
+                        return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                    std::string("orch:scope-join-all: :") + name +
+                                                        " expects " + want,
+                                                    ev.primitive_error_counter_ptr());
+                    };
+                    if (k == "timeout-ms" || k == "timeout_ms") {
+                        if (!types::is_int(val))
+                            return bad_type("timeout-ms", "an integer");
+                    } else if (k == "drain-ms" || k == "drain_ms") {
+                        if (!types::is_int(val))
+                            return bad_type("drain-ms", "an integer");
+                    } else if (k == "wait-reclaimed-ms" || k == "wait_reclaimed_ms") {
+                        if (!types::is_int(val))
+                            return bad_type("wait-reclaimed-ms", "an integer");
+                    } else if (k == "max-restarts" || k == "max_restarts") {
+                        if (!types::is_int(val))
+                            return bad_type("max-restarts", "an integer");
+                    } else if (k == "on-join-fail" || k == "on_join_fail") {
+                        if (!(types::is_string(val) || types::is_symbol(val) ||
+                              types::is_keyword(val)))
+                            return bad_type("on-join-fail", "a policy name");
+                    } else if (k == "tree" || k == "debug" || k == "verbose") {
+                        if (!types::is_bool(val))
+                            return bad_type("tree/debug", "a boolean");
+                    } else if (k == "path" || k == "scope-path" || k == "scope_path") {
+                        if (!types::is_string(val))
+                            return bad_type("path", "a string");
+                    } else if (k == "child-index" || k == "child_index") {
+                        if (!types::is_int(val))
+                            return bad_type("child-index", "an integer");
                     } else {
                         return make_primitive_error(
                             ev.string_heap_, ev.error_values_,
-                            "orch:scope-join-all: :on-join-fail expects a policy name "
-                            "(string or symbol: cancel / restart-n / throttle / report-only)",
+                            std::string("orch:scope-join-all: unknown keyword :") + std::string(k),
                             ev.primitive_error_counter_ptr());
                     }
-                } else if ((k == "max-restarts" || k == "max_restarts") && types::is_int(val)) {
-                    // Issue #4858: join-all restart fuel (scope-watch parity).
-                    // Issue #4861: a negative fuel count used to be clamped
-                    // to 0 (a silent no-op restart) instead of reporting the
-                    // bad argument.
-                    if (types::as_int(val) < 0)
-                        return make_primitive_error(
-                            ev.string_heap_, ev.error_values_,
-                            "orch:scope-join-all: :max-restarts must not be negative",
-                            ev.primitive_error_counter_ptr());
-                    join_fail_max_restarts = static_cast<std::uint32_t>(types::as_int(val));
-                } else if ((k == "tree") && types::is_bool(val)) {
-                    // Issue #3643: optional tree join — default local
-                    // (#3496 AC1); true joins the whole subtree (AC2).
-                    tree_join = types::as_bool(val);
-                } else if ((k == "debug" || k == "verbose") && types::is_bool(val)) {
-                    // Issue #4832: diagnostic view opt-in.
-                    debug_report = types::as_bool(val);
                 }
-            }
-            // Issue #4867: the parse loop above ignores a keyword whose
-            // value has the wrong type and any unknown key. Validate the
-            // pair list once so :timeout-ms "abc" / :timeot-ms are errors,
-            // not silent defaults.
-            for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                auto& val = a[i + 1];
-                auto bad_type = [&](const char* name, const char* want) -> EvalValue {
-                    return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                                std::string("orch:scope-join-all: :") + name +
-                                                    " expects " + want,
+                if (auto msg =
+                        resolve_join_fail_policy(join_fail_name, join_fail_max_restarts, fail_pol))
+                    return make_primitive_error(ev.string_heap_, ev.error_values_, *msg,
                                                 ev.primitive_error_counter_ptr());
-                };
-                if (k == "timeout-ms" || k == "timeout_ms") {
-                    if (!types::is_int(val))
-                        return bad_type("timeout-ms", "an integer");
-                } else if (k == "drain-ms" || k == "drain_ms") {
-                    if (!types::is_int(val))
-                        return bad_type("drain-ms", "an integer");
-                } else if (k == "wait-reclaimed-ms" || k == "wait_reclaimed_ms") {
-                    if (!types::is_int(val))
-                        return bad_type("wait-reclaimed-ms", "an integer");
-                } else if (k == "max-restarts" || k == "max_restarts") {
-                    if (!types::is_int(val))
-                        return bad_type("max-restarts", "an integer");
-                } else if (k == "on-join-fail" || k == "on_join_fail") {
-                    if (!(types::is_string(val) || types::is_symbol(val) || types::is_keyword(val)))
-                        return bad_type("on-join-fail", "a policy name");
-                } else if (k == "tree" || k == "debug" || k == "verbose") {
-                    if (!types::is_bool(val))
-                        return bad_type("tree/debug", "a boolean");
-                } else if (k == "path" || k == "scope-path" || k == "scope_path") {
-                    if (!types::is_string(val))
-                        return bad_type("path", "a string");
-                } else if (k == "child-index" || k == "child_index") {
-                    if (!types::is_int(val))
-                        return bad_type("child-index", "an integer");
-                } else {
-                    return make_primitive_error(
-                        ev.string_heap_, ev.error_values_,
-                        std::string("orch:scope-join-all: unknown keyword :") + std::string(k),
-                        ev.primitive_error_counter_ptr());
-                }
-            }
-            if (auto msg =
-                    resolve_join_fail_policy(join_fail_name, join_fail_max_restarts, fail_pol))
-                return make_primitive_error(ev.string_heap_, ev.error_values_, *msg,
-                                            ev.primitive_error_counter_ptr());
-            // Issue #4724: :timeout-ms bounds the WHOLE call. Fold the
-            // cancel/drain window into the caller deadline instead of
-            // stacking the 2 s default after it (3000 ms -> 5002 ms). An
-            // explicit :drain-ms keeps its own window (host opt-in).
-            if (policy.primary_ms.has_value() && !caller_drain)
-                policy.total_budget_ms = policy.primary_ms;
-            ScopeJoinAllState st;
-            st.root_ptr = static_cast<void*>(root);
-            st.addr_path = addr_path;
-            st.addr_child = addr_child;
-            st.policy = policy;
-            st.fail_pol = fail_pol;
-            st.tree_join = tree_join;
-            st.caller_drain = caller_drain;
-            st.debug_report = debug_report;
-            if (auto err = RegSplitParts::scope_join_all_exec(
-                    ev, st, root, build_orch_hash, orch_keyword_key, parse_scope_addr_kw,
-                    resolve_scope_addr, make_scope_addr_fail, add_deny_class,
-                    resolve_join_fail_policy))
-                return *err;
-            return RegSplitParts::scope_join_all_result(ev, st);
-        });
+                // Issue #4724: :timeout-ms bounds the WHOLE call. Fold the
+                // cancel/drain window into the caller deadline instead of
+                // stacking the 2 s default after it (3000 ms -> 5002 ms). An
+                // explicit :drain-ms keeps its own window (host opt-in).
+                if (policy.primary_ms.has_value() && !caller_drain)
+                    policy.total_budget_ms = policy.primary_ms;
+                ScopeJoinAllState st;
+                st.root_ptr = static_cast<void*>(root);
+                st.addr_path = addr_path;
+                st.addr_child = addr_child;
+                st.policy = policy;
+                st.fail_pol = fail_pol;
+                st.tree_join = tree_join;
+                st.caller_drain = caller_drain;
+                st.debug_report = debug_report;
+                if (auto err = RegSplitParts::scope_join_all_exec(
+                        ev, st, root, build_orch_hash, orch_keyword_key, parse_scope_addr_kw,
+                        resolve_scope_addr, make_scope_addr_fail, add_deny_class,
+                        resolve_join_fail_policy))
+                    return *err;
+                return RegSplitParts::scope_join_all_result(ev, st);
+            });
 }
 
 // Issue #5033: orch:scope-join-all join + body tally phase.
@@ -6475,73 +6494,76 @@ void RegSplitParts::register_scope_lifecycle_primitives(Evaluator& ev, AddFn& ad
     // Issue #3924: Aura vector sweep of Scope-owned Reclaimed-pending
     // (C++ AgentScope::sweep_reclaimed_pending). No new query:* key.
     // Soft/Off: sweep is production-gated no-op. Still-running stays #2661.
-    if (false) add("orch:scope-sweep-reclaimed-pending",
-        [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
-         make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
-            std::string addr_path;
-            std::optional<std::int64_t> addr_child;
-            for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                (void)parse_scope_addr_kw(k, a[i + 1], addr_path, addr_child);
-            }
-            auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
-            if (!root) {
+    if (false)
+        add("orch:scope-sweep-reclaimed-pending",
+            [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
+             make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
+                std::string addr_path;
+                std::optional<std::int64_t> addr_child;
+                for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    (void)parse_scope_addr_kw(k, a[i + 1], addr_path, addr_child);
+                }
+                auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+                if (!root) {
+                    std::vector<std::pair<std::string, EvalValue>> kv = {
+                        {"ok", make_bool(true)},        {"cleaned", make_int(0)},
+                        {"still-pending", make_int(0)}, {"skipped", make_int(0)},
+                        {"wait-us", make_int(0)},       {"schema", make_int(3924)},
+                    };
+                    return build_orch_hash(kv);
+                }
+                auto* scope = resolve_scope_addr(*root, addr_path, addr_child);
+                if (!scope) {
+                    return make_scope_addr_fail(
+                        3924, "invalid-path", "orch:scope-sweep-reclaimed-pending: unknown :path");
+                }
+                const auto sw = scope->sweep_reclaimed_pending();
+                // Issue #4444: sweep compacted this scope. A marked batch
+                // child that is now idle is dropped by its parent. parent()
+                // releases the child guard before the erase. Root has no
+                // parent; its sweep already retired idle ephemeral children.
+                // Do not use `scope` after the retire.
+                if (auto* parent = scope->parent())
+                    parent->retire_idle_ephemeral_child(scope);
                 std::vector<std::pair<std::string, EvalValue>> kv = {
-                    {"ok", make_bool(true)},        {"cleaned", make_int(0)},
-                    {"still-pending", make_int(0)}, {"skipped", make_int(0)},
-                    {"wait-us", make_int(0)},       {"schema", make_int(3924)},
+                    {"ok", make_bool(true)},
+                    {"cleaned", make_int(static_cast<std::int64_t>(sw.cleaned))},
+                    {"still-pending", make_int(static_cast<std::int64_t>(sw.still_pending))},
+                    {"skipped", make_int(static_cast<std::int64_t>(sw.skipped))},
+                    {"wait-us", make_int(static_cast<std::int64_t>(sw.wait_us))},
+                    {"schema", make_int(3924)},
                 };
                 return build_orch_hash(kv);
-            }
-            auto* scope = resolve_scope_addr(*root, addr_path, addr_child);
-            if (!scope) {
-                return make_scope_addr_fail(3924, "invalid-path",
-                                            "orch:scope-sweep-reclaimed-pending: unknown :path");
-            }
-            const auto sw = scope->sweep_reclaimed_pending();
-            // Issue #4444: sweep compacted this scope. A marked batch
-            // child that is now idle is dropped by its parent. parent()
-            // releases the child guard before the erase. Root has no
-            // parent; its sweep already retired idle ephemeral children.
-            // Do not use `scope` after the retire.
-            if (auto* parent = scope->parent())
-                parent->retire_idle_ephemeral_child(scope);
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(true)},
-                {"cleaned", make_int(static_cast<std::int64_t>(sw.cleaned))},
-                {"still-pending", make_int(static_cast<std::int64_t>(sw.still_pending))},
-                {"skipped", make_int(static_cast<std::int64_t>(sw.skipped))},
-                {"wait-us", make_int(static_cast<std::int64_t>(sw.wait_us))},
-                {"schema", make_int(3924)},
-            };
-            return build_orch_hash(kv);
-        });
+            });
 
     // Issue #2588 AC1 + AC4: orch:scope-cancel-all — best-effort cancel
     // propagation across the scope's handles. Idempotent (request_cancel
     // is idempotent). Returns hash {ok, cancelled-count, schema=2588}.
-    if (false) add("orch:scope-cancel-all", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
-        (void)orch_scheduler();
-        auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev));
-        if (!scope) {
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
-                "orch:scope-cancel-all: no scope (call orch:scope-spawn first)",
-                ev.primitive_error_counter_ptr());
-        }
-        const auto before = scope->size();
-        scope->cancel_all();
-        aura::orch::g_orch_module_stats.scope_cancel_all_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"ok", make_bool(true)},
-            {"cancelled-count", make_int(static_cast<std::int64_t>(before))},
-            {"schema", make_int(2588)},
-            {"schema-2083", make_int(2083)},
-            {"schema-2161", make_int(2161)},
-        };
-        return build_orch_hash(kv);
-    });
+    if (false)
+        add("orch:scope-cancel-all",
+            [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
+                (void)orch_scheduler();
+                auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+                if (!scope) {
+                    return make_primitive_error(
+                        ev.string_heap_, ev.error_values_,
+                        "orch:scope-cancel-all: no scope (call orch:scope-spawn first)",
+                        ev.primitive_error_counter_ptr());
+                }
+                const auto before = scope->size();
+                scope->cancel_all();
+                aura::orch::g_orch_module_stats.scope_cancel_all_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(true)},
+                    {"cancelled-count", make_int(static_cast<std::int64_t>(before))},
+                    {"schema", make_int(2588)},
+                    {"schema-2083", make_int(2083)},
+                    {"schema-2161", make_int(2161)},
+                };
+                return build_orch_hash(kv);
+            });
 
     // Issue #2926: orch:scope-resolve name [:include-descendants bool]
     // Session-local live find on the per-Evaluator AgentScope (no global
@@ -6551,49 +6573,91 @@ void RegSplitParts::register_scope_lifecycle_primitives(Evaluator& ev, AddFn& ad
     // retires it → not-found (the ghost no longer answers); a
     // done-but-not-yet-joined handle still resolves (the arena reservation
     // pins it). After scope slot dropped (empty session) → not-found.
-    if (false) add("orch:scope-resolve",
-        [&ev, build_orch_hash, orch_keyword_key, add_identity_plane,
-         add_reclaimed_pending_lifecycle, add_body_not_run_lifecycle, parse_scope_addr_kw,
-         resolve_scope_addr, make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
-            if (a.empty() || !types::is_string(a[0])) {
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "orch:scope-resolve: usage (orch:scope-resolve name "
-                                            "[:include-descendants bool] [:path p])",
-                                            ev.primitive_error_counter_ptr());
-            }
-            const auto name = heap_str_from(ev.string_heap_, a[0]);
-            bool include_descendants = true;
-            std::string addr_path;
-            std::optional<std::int64_t> addr_child;
-            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                auto& val = a[i + 1];
-                if (parse_scope_addr_kw(k, val, addr_path, addr_child)) {
-                    continue;
-                } else if ((k == "include-descendants" || k == "include_descendants") &&
-                           types::is_bool(val)) {
-                    include_descendants = types::as_bool(val);
+    if (false)
+        add("orch:scope-resolve",
+            [&ev, build_orch_hash, orch_keyword_key, add_identity_plane,
+             add_reclaimed_pending_lifecycle, add_body_not_run_lifecycle, parse_scope_addr_kw,
+             resolve_scope_addr, make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
+                if (a.empty() || !types::is_string(a[0])) {
+                    return make_primitive_error(
+                        ev.string_heap_, ev.error_values_,
+                        "orch:scope-resolve: usage (orch:scope-resolve name "
+                        "[:include-descendants bool] [:path p])",
+                        ev.primitive_error_counter_ptr());
                 }
-            }
-            aura::orch::g_orch_module_stats.scope_resolve_total.fetch_add(
-                1, std::memory_order_relaxed);
-            auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
-            aura::orch::AgentScope* scope = root;
-            if (root && (!addr_path.empty() || addr_child.has_value())) {
-                scope = resolve_scope_addr(*root, addr_path, addr_child);
-                if (!scope) {
-                    return make_scope_addr_fail(2926, "invalid-path",
-                                                "orch:scope-resolve: unknown :path / :child-index");
+                const auto name = heap_str_from(ev.string_heap_, a[0]);
+                bool include_descendants = true;
+                std::string addr_path;
+                std::optional<std::int64_t> addr_child;
+                for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    auto& val = a[i + 1];
+                    if (parse_scope_addr_kw(k, val, addr_path, addr_child)) {
+                        continue;
+                    } else if ((k == "include-descendants" || k == "include_descendants") &&
+                               types::is_bool(val)) {
+                        include_descendants = types::as_bool(val);
+                    }
                 }
-            }
-            aura::orch::AgentHandle* hp = scope ? scope->find(name, include_descendants) : nullptr;
-            if (!hp) {
-                aura::orch::g_orch_module_stats.scope_resolve_miss_total.fetch_add(
+                aura::orch::g_orch_module_stats.scope_resolve_total.fetch_add(
                     1, std::memory_order_relaxed);
-                const auto sidx = ev.push_string_heap("not-found");
-                const auto nidx = ev.push_string_heap(std::string(name));
+                auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+                aura::orch::AgentScope* scope = root;
+                if (root && (!addr_path.empty() || addr_child.has_value())) {
+                    scope = resolve_scope_addr(*root, addr_path, addr_child);
+                    if (!scope) {
+                        return make_scope_addr_fail(
+                            2926, "invalid-path",
+                            "orch:scope-resolve: unknown :path / :child-index");
+                    }
+                }
+                aura::orch::AgentHandle* hp =
+                    scope ? scope->find(name, include_descendants) : nullptr;
+                if (!hp) {
+                    aura::orch::g_orch_module_stats.scope_resolve_miss_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    const auto sidx = ev.push_string_heap("not-found");
+                    const auto nidx = ev.push_string_heap(std::string(name));
+                    std::vector<std::pair<std::string, EvalValue>> kv = {
+                        {"ok", make_bool(false)},
+                        {"name", make_string(nidx)},
+                        {"status", make_string(sidx)},
+                        {"schema", make_int(2926)},
+                        {"schema-2926", make_int(2926)},
+                        {"schema-2751", make_int(aura::orch::kAgentDirectoryIssue)},
+                        {"schema-2588", make_int(2588)},
+                        {"issue-2926", make_int(2926)},
+                        {"scope-resolve-wired", make_int(1)},
+                    };
+                    // Issue #3216: scope-handle miss (production-only intern).
+                    add_identity_plane(kv, "scope-handle");
+                    return build_orch_hash(kv);
+                }
+                // Live status (same labels as directory_snapshot #2751).
+                // Issue #3050: Reclaimed-but-not-done is "reclaimed" (not
+                // "alive") so supervisors see per-handle status after
+                // orch:scope-join-all (batch hash `status` is aggregate).
+                const char* st = "unknown";
+                if (!hp->ok) {
+                    st = "spawn-failed";
+                } else if (!hp->fiber) {
+                    st = "unknown";
+                } else if (hp->reclaimed_deferred_cleanup ||
+                           (hp->fiber->is_reclaimed() && !hp->fiber->is_done())) {
+                    st = "reclaimed";
+                } else if (hp->fiber->is_done()) {
+                    st = "done";
+                } else if (hp->fiber->is_cancel_requested()) {
+                    st = "cancelled";
+                } else {
+                    st = "alive";
+                }
+                const auto sidx = ev.push_string_heap(st);
+                const auto nidx =
+                    ev.push_string_heap(hp->name.empty() ? std::string(name) : hp->name);
                 std::vector<std::pair<std::string, EvalValue>> kv = {
-                    {"ok", make_bool(false)},
+                    {"ok", make_bool(hp->ok)},
+                    {"id", make_int(static_cast<std::int64_t>(hp->id))},
                     {"name", make_string(nidx)},
                     {"status", make_string(sidx)},
                     {"schema", make_int(2926)},
@@ -6602,65 +6666,28 @@ void RegSplitParts::register_scope_lifecycle_primitives(Evaluator& ev, AddFn& ad
                     {"schema-2588", make_int(2588)},
                     {"issue-2926", make_int(2926)},
                     {"scope-resolve-wired", make_int(1)},
+                    // Issue #3050: per-handle flags after mixed batch join
+                    // (authoritative vs orch:scope-join-all aggregate status).
+                    {"must-wait-reclaimed", make_bool(hp->must_wait_reclaimed)},
+                    {"reservation-held", make_bool(hp->reserved_memory_bytes != 0)},
+                    {"deferred-cleanup", make_bool(hp->reclaimed_deferred_cleanup)},
+                    // Issue #3527: same bool name as directory rows so the
+                    // three planes join on one key (no new query:*).
+                    {"reclaimed-deferred", make_bool(hp->reclaimed_deferred_cleanup)},
+                    {"schema-3050", make_int(3050)},
+                    {"issue-3050", make_int(3050)},
                 };
-                // Issue #3216: scope-handle miss (production-only intern).
+                // Issue #3220: additive lifecycle while reservation still held.
+                // Issue #4300: else share the directory/join body-not-run string
+                // when the body try_acquire belt rejected (status stays as-is).
+                if (hp->must_wait_reclaimed || hp->reclaimed_deferred_cleanup)
+                    add_reclaimed_pending_lifecycle(kv, true);
+                else
+                    add_body_not_run_lifecycle(kv, hp->body_acquire_rejected());
+                // Issue #3216: scope-handle plane (production-only intern).
                 add_identity_plane(kv, "scope-handle");
                 return build_orch_hash(kv);
-            }
-            // Live status (same labels as directory_snapshot #2751).
-            // Issue #3050: Reclaimed-but-not-done is "reclaimed" (not
-            // "alive") so supervisors see per-handle status after
-            // orch:scope-join-all (batch hash `status` is aggregate).
-            const char* st = "unknown";
-            if (!hp->ok) {
-                st = "spawn-failed";
-            } else if (!hp->fiber) {
-                st = "unknown";
-            } else if (hp->reclaimed_deferred_cleanup ||
-                       (hp->fiber->is_reclaimed() && !hp->fiber->is_done())) {
-                st = "reclaimed";
-            } else if (hp->fiber->is_done()) {
-                st = "done";
-            } else if (hp->fiber->is_cancel_requested()) {
-                st = "cancelled";
-            } else {
-                st = "alive";
-            }
-            const auto sidx = ev.push_string_heap(st);
-            const auto nidx = ev.push_string_heap(hp->name.empty() ? std::string(name) : hp->name);
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(hp->ok)},
-                {"id", make_int(static_cast<std::int64_t>(hp->id))},
-                {"name", make_string(nidx)},
-                {"status", make_string(sidx)},
-                {"schema", make_int(2926)},
-                {"schema-2926", make_int(2926)},
-                {"schema-2751", make_int(aura::orch::kAgentDirectoryIssue)},
-                {"schema-2588", make_int(2588)},
-                {"issue-2926", make_int(2926)},
-                {"scope-resolve-wired", make_int(1)},
-                // Issue #3050: per-handle flags after mixed batch join
-                // (authoritative vs orch:scope-join-all aggregate status).
-                {"must-wait-reclaimed", make_bool(hp->must_wait_reclaimed)},
-                {"reservation-held", make_bool(hp->reserved_memory_bytes != 0)},
-                {"deferred-cleanup", make_bool(hp->reclaimed_deferred_cleanup)},
-                // Issue #3527: same bool name as directory rows so the
-                // three planes join on one key (no new query:*).
-                {"reclaimed-deferred", make_bool(hp->reclaimed_deferred_cleanup)},
-                {"schema-3050", make_int(3050)},
-                {"issue-3050", make_int(3050)},
-            };
-            // Issue #3220: additive lifecycle while reservation still held.
-            // Issue #4300: else share the directory/join body-not-run string
-            // when the body try_acquire belt rejected (status stays as-is).
-            if (hp->must_wait_reclaimed || hp->reclaimed_deferred_cleanup)
-                add_reclaimed_pending_lifecycle(kv, true);
-            else
-                add_body_not_run_lifecycle(kv, hp->body_acquire_rejected());
-            // Issue #3216: scope-handle plane (production-only intern).
-            add_identity_plane(kv, "scope-handle");
-            return build_orch_hash(kv);
-        });
+            });
 }
 
 // Issue #5033: (orch:agent-directory) + (orch:agent-ask ...).
@@ -6695,83 +6722,85 @@ void RegSplitParts::register_agent_directory_primitives(Evaluator& ev, AddFn& ad
     // Empty session (no scope-spawn yet) → ok=#t, agents=#(), count=0.
     // Soft / sandbox never denies. Snapshot is best-effort (AC2).
     // Returns hash {ok, agents, count, scopes-visited, schema=2751, …}.
-    if (false) add("orch:agent-directory",
-        [&ev, build_orch_hash, orch_keyword_key, add_identity_plane,
-         add_reclaimed_pending_lifecycle](std::span<const EvalValue> a) -> EvalValue {
-            aura::orch::AgentDirectoryFilter filter{};
-            for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                auto& val = a[i + 1];
-                if ((k == "alive-only" || k == "alive_only") && types::is_bool(val)) {
-                    filter.alive_only = types::as_bool(val);
-                } else if ((k == "include-descendants" || k == "include_descendants") &&
-                           types::is_bool(val)) {
-                    filter.include_descendants = types::as_bool(val);
-                } else if ((k == "name-prefix" || k == "name_prefix") && types::is_string(val)) {
-                    filter.name_prefix = heap_str_from(ev.string_heap_, val);
+    if (false)
+        add("orch:agent-directory",
+            [&ev, build_orch_hash, orch_keyword_key, add_identity_plane,
+             add_reclaimed_pending_lifecycle](std::span<const EvalValue> a) -> EvalValue {
+                aura::orch::AgentDirectoryFilter filter{};
+                for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    auto& val = a[i + 1];
+                    if ((k == "alive-only" || k == "alive_only") && types::is_bool(val)) {
+                        filter.alive_only = types::as_bool(val);
+                    } else if ((k == "include-descendants" || k == "include_descendants") &&
+                               types::is_bool(val)) {
+                        filter.include_descendants = types::as_bool(val);
+                    } else if ((k == "name-prefix" || k == "name_prefix") &&
+                               types::is_string(val)) {
+                        filter.name_prefix = heap_str_from(ev.string_heap_, val);
+                    }
                 }
-            }
-            aura::orch::AgentDirectorySnapshot snap;
-            snap.schema = aura::orch::kAgentDirectoryIssue;
-            auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev));
-            if (scope) {
-                snap = scope->directory_snapshot(filter);
-            }
-            // Build agents vector of per-entry hashes.
-            std::vector<EvalValue> agent_elems;
-            agent_elems.reserve(snap.entries.size());
-            for (const auto& e : snap.entries) {
-                const auto nidx = ev.push_string_heap(e.name);
-                const auto sidx = ev.push_string_heap(e.status);
-                const auto pidx = ev.push_string_heap(e.scope_path);
-                std::vector<std::pair<std::string, EvalValue>> ekv = {
-                    {"name", make_string(nidx)},
-                    {"id", make_int(static_cast<std::int64_t>(e.id))},
-                    {"status", make_string(sidx)},
-                    {"scope-path", make_string(pidx)},
-                    {"ok", make_bool(e.ok)},
+                aura::orch::AgentDirectorySnapshot snap;
+                snap.schema = aura::orch::kAgentDirectoryIssue;
+                auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+                if (scope) {
+                    snap = scope->directory_snapshot(filter);
+                }
+                // Build agents vector of per-entry hashes.
+                std::vector<EvalValue> agent_elems;
+                agent_elems.reserve(snap.entries.size());
+                for (const auto& e : snap.entries) {
+                    const auto nidx = ev.push_string_heap(e.name);
+                    const auto sidx = ev.push_string_heap(e.status);
+                    const auto pidx = ev.push_string_heap(e.scope_path);
+                    std::vector<std::pair<std::string, EvalValue>> ekv = {
+                        {"name", make_string(nidx)},
+                        {"id", make_int(static_cast<std::int64_t>(e.id))},
+                        {"status", make_string(sidx)},
+                        {"scope-path", make_string(pidx)},
+                        {"ok", make_bool(e.ok)},
+                        {"schema", make_int(aura::orch::kAgentDirectoryIssue)},
+                        // Issue #3527: same keys as orch:scope-resolve so
+                        // directory / scope-handle / name-table join. Bools
+                        // intern nothing (Soft/Off zero extra string).
+                        {"must-wait-reclaimed", make_bool(e.must_wait_reclaimed)},
+                        {"reclaimed-deferred", make_bool(e.reclaimed_deferred)},
+                    };
+                    // Issue #3220 / #3251: additive lifecycle on directory rows.
+                    add_reclaimed_pending_lifecycle(ekv, e.lifecycle == "reclaimed-pending");
+                    if (e.lifecycle == "body-not-run" &&
+                        aura::compiler::typed_audit::production_defaults_active()) {
+                        auto lidx = ev.push_string_heap("body-not-run");
+                        ekv.emplace_back("lifecycle", make_string(lidx));
+                        ekv.emplace_back("schema-3251", make_int(aura::orch::kAgentDenyClassIssue));
+                    }
+                    agent_elems.push_back(build_orch_hash(ekv));
+                }
+                const auto vidx = ev.vector_heap_.size();
+                ev.vector_heap_.push_back(std::move(agent_elems));
+                aura::orch::g_orch_module_stats.agent_directory_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                aura::orch::g_orch_module_stats.agent_directory_entries_total.fetch_add(
+                    static_cast<std::uint64_t>(snap.entries.size()), std::memory_order_relaxed);
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(true)},
+                    {"agents", make_vector(vidx)},
+                    {"count", make_int(static_cast<std::int64_t>(snap.entries.size()))},
+                    {"scopes-visited", make_int(static_cast<std::int64_t>(snap.scopes_visited))},
                     {"schema", make_int(aura::orch::kAgentDirectoryIssue)},
-                    // Issue #3527: same keys as orch:scope-resolve so
-                    // directory / scope-handle / name-table join. Bools
-                    // intern nothing (Soft/Off zero extra string).
-                    {"must-wait-reclaimed", make_bool(e.must_wait_reclaimed)},
-                    {"reclaimed-deferred", make_bool(e.reclaimed_deferred)},
+                    {"schema-2751", make_int(aura::orch::kAgentDirectoryIssue)},
+                    {"schema-2588", make_int(2588)},
+                    {"schema-2537", make_int(aura::orch::kAgentScopeHierarchyIssue)},
+                    {"schema-2083", make_int(2083)},
+                    {"issue-2751", make_int(aura::orch::kAgentDirectoryIssue)},
+                    // Issue #3925: additive name-table occupancy (no new query:*).
+                    {"name-table-count", make_int(static_cast<std::int64_t>(
+                                             ev.agent_names_ ? ev.agent_names_->size() : 0))},
                 };
-                // Issue #3220 / #3251: additive lifecycle on directory rows.
-                add_reclaimed_pending_lifecycle(ekv, e.lifecycle == "reclaimed-pending");
-                if (e.lifecycle == "body-not-run" &&
-                    aura::compiler::typed_audit::production_defaults_active()) {
-                    auto lidx = ev.push_string_heap("body-not-run");
-                    ekv.emplace_back("lifecycle", make_string(lidx));
-                    ekv.emplace_back("schema-3251", make_int(aura::orch::kAgentDenyClassIssue));
-                }
-                agent_elems.push_back(build_orch_hash(ekv));
-            }
-            const auto vidx = ev.vector_heap_.size();
-            ev.vector_heap_.push_back(std::move(agent_elems));
-            aura::orch::g_orch_module_stats.agent_directory_total.fetch_add(
-                1, std::memory_order_relaxed);
-            aura::orch::g_orch_module_stats.agent_directory_entries_total.fetch_add(
-                static_cast<std::uint64_t>(snap.entries.size()), std::memory_order_relaxed);
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(true)},
-                {"agents", make_vector(vidx)},
-                {"count", make_int(static_cast<std::int64_t>(snap.entries.size()))},
-                {"scopes-visited", make_int(static_cast<std::int64_t>(snap.scopes_visited))},
-                {"schema", make_int(aura::orch::kAgentDirectoryIssue)},
-                {"schema-2751", make_int(aura::orch::kAgentDirectoryIssue)},
-                {"schema-2588", make_int(2588)},
-                {"schema-2537", make_int(aura::orch::kAgentScopeHierarchyIssue)},
-                {"schema-2083", make_int(2083)},
-                {"issue-2751", make_int(aura::orch::kAgentDirectoryIssue)},
-                // Issue #3925: additive name-table occupancy (no new query:*).
-                {"name-table-count", make_int(static_cast<std::int64_t>(
-                                         ev.agent_names_ ? ev.agent_names_->size() : 0))},
-            };
-            // Issue #3216: directory plane (production-only intern).
-            add_identity_plane(kv, "directory");
-            return build_orch_hash(kv);
-        });
+                // Issue #3216: directory plane (production-only intern).
+                add_identity_plane(kv, "directory");
+                return build_orch_hash(kv);
+            });
 
     // Issue #2231 / #2538: orch:agent-ask name payload [:timeout-ms n] → hash
     // {ok, status, payload, correlation-id, schema-2231, schema-2538}.
@@ -6779,78 +6808,79 @@ void RegSplitParts::register_agent_directory_primitives(Evaluator& ev, AddFn& ad
     // (#1966): C++ helper agent_ask builds a per-ask reply mailbox,
     // stamps MailKind::Ask + correlation_id (#2538 typed path) and
     // dual-writes the legacy "ask:<id>:<body>" prefix (#2231).
-    if (false) add("orch:agent-ask",
-        [&ev, build_orch_hash, add_deny_class,
-         orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
-            if (a.size() < 2 || !types::is_string(a[0])) {
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
-                    "orch:agent-ask: usage (orch:agent-ask name payload [:timeout-ms n])",
-                    ev.primitive_error_counter_ptr());
-            }
-            auto name = heap_str_from(ev.string_heap_, a[0]);
-            auto* hp = resolve_aura_agent(ev, name);
-            if (!hp || !hp->ok) {
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "orch:agent-ask: unknown agent",
-                                            ev.primitive_error_counter_ptr());
-            }
-            // Coerce payload to a string (mirror orch:agent-send).
-            std::string payload;
-            if (types::is_string(a[1]))
-                payload = heap_str_from(ev.string_heap_, a[1]);
-            else if (types::is_int(a[1]))
-                payload = std::to_string(types::as_int(a[1]));
-            else if (types::is_bool(a[1]))
-                payload = types::as_bool(a[1]) ? "#t" : "#f";
-            else
-                payload = "payload";
-            // Default timeout 5000ms. Issue #4732: the documented shape is
-            // the :timeout-ms / :timeout_ms keyword; it used to be ignored
-            // (every ask stalled for the 5000ms default) because only the
-            // positional 3rd arg (int ms) was read. Both forms are honored,
-            // and the keyword wins when both are present — same kw scan as
-            // orch:agent-join / agent-recv / scope-join-all.
-            std::uint64_t timeout_ms = 5000;
-            if (a.size() >= 3 && types::is_int(a[2])) {
-                const auto t = types::as_int(a[2]);
-                if (t > 0)
-                    timeout_ms = static_cast<std::uint64_t>(t);
-            }
-            for (std::size_t i = 2; i + 1 < a.size(); ++i) {
-                if (!types::is_keyword(a[i]) && !types::is_symbol(a[i]))
-                    continue;
-                const auto k = orch_keyword_key(a[i]);
-                if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1])) {
-                    const auto t = types::as_int(a[i + 1]);
+    if (false)
+        add("orch:agent-ask",
+            [&ev, build_orch_hash, add_deny_class,
+             orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+                if (a.size() < 2 || !types::is_string(a[0])) {
+                    return make_primitive_error(
+                        ev.string_heap_, ev.error_values_,
+                        "orch:agent-ask: usage (orch:agent-ask name payload [:timeout-ms n])",
+                        ev.primitive_error_counter_ptr());
+                }
+                auto name = heap_str_from(ev.string_heap_, a[0]);
+                auto* hp = resolve_aura_agent(ev, name);
+                if (!hp || !hp->ok) {
+                    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                "orch:agent-ask: unknown agent",
+                                                ev.primitive_error_counter_ptr());
+                }
+                // Coerce payload to a string (mirror orch:agent-send).
+                std::string payload;
+                if (types::is_string(a[1]))
+                    payload = heap_str_from(ev.string_heap_, a[1]);
+                else if (types::is_int(a[1]))
+                    payload = std::to_string(types::as_int(a[1]));
+                else if (types::is_bool(a[1]))
+                    payload = types::as_bool(a[1]) ? "#t" : "#f";
+                else
+                    payload = "payload";
+                // Default timeout 5000ms. Issue #4732: the documented shape is
+                // the :timeout-ms / :timeout_ms keyword; it used to be ignored
+                // (every ask stalled for the 5000ms default) because only the
+                // positional 3rd arg (int ms) was read. Both forms are honored,
+                // and the keyword wins when both are present — same kw scan as
+                // orch:agent-join / agent-recv / scope-join-all.
+                std::uint64_t timeout_ms = 5000;
+                if (a.size() >= 3 && types::is_int(a[2])) {
+                    const auto t = types::as_int(a[2]);
                     if (t > 0)
                         timeout_ms = static_cast<std::uint64_t>(t);
                 }
-            }
-            // Delegate to the C++ helper (typed + dual-write legacy protocol).
-            const auto r = aura::orch::agent_ask(*hp, payload, timeout_ms);
-            // Encode the structured hash: ok / status / payload /
-            // correlation-id / schema-2231 / schema-2538.
-            auto st_s =
-                r.status; // ok | timeout | backpressure | handoff-required | no-mailbox | malformed
-            auto st_idx = ev.push_string_heap(st_s);
-            auto payload_idx = ev.push_string_heap(r.payload);
-            auto corr_idx = ev.push_string_heap(std::to_string(r.correlation_id));
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(r.ok)},
-                {"status", make_string(st_idx)},
-                {"payload", make_string(payload_idx)},
-                {"correlation-id", make_string(corr_idx)},
-                {"schema", make_int(aura::orch::kAgentAskIssue)},
-                {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
-                {"schema-2538", make_int(aura::orch::kAgentAskTypedCorrIssue)},
-            };
-            // Issue #3940: Guard-live ask typed deny reuses recv-under-boundary.
-            if (r.status == "recv-under-boundary")
-                add_deny_class(kv, aura::orch::AgentDenyClass::Other, "recv-under-boundary", 0,
-                               /*emit_retry=*/false);
-            return build_orch_hash(kv);
-        });
+                for (std::size_t i = 2; i + 1 < a.size(); ++i) {
+                    if (!types::is_keyword(a[i]) && !types::is_symbol(a[i]))
+                        continue;
+                    const auto k = orch_keyword_key(a[i]);
+                    if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1])) {
+                        const auto t = types::as_int(a[i + 1]);
+                        if (t > 0)
+                            timeout_ms = static_cast<std::uint64_t>(t);
+                    }
+                }
+                // Delegate to the C++ helper (typed + dual-write legacy protocol).
+                const auto r = aura::orch::agent_ask(*hp, payload, timeout_ms);
+                // Encode the structured hash: ok / status / payload /
+                // correlation-id / schema-2231 / schema-2538.
+                auto st_s = r.status; // ok | timeout | backpressure | handoff-required | no-mailbox
+                                      // | malformed
+                auto st_idx = ev.push_string_heap(st_s);
+                auto payload_idx = ev.push_string_heap(r.payload);
+                auto corr_idx = ev.push_string_heap(std::to_string(r.correlation_id));
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(r.ok)},
+                    {"status", make_string(st_idx)},
+                    {"payload", make_string(payload_idx)},
+                    {"correlation-id", make_string(corr_idx)},
+                    {"schema", make_int(aura::orch::kAgentAskIssue)},
+                    {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
+                    {"schema-2538", make_int(aura::orch::kAgentAskTypedCorrIssue)},
+                };
+                // Issue #3940: Guard-live ask typed deny reuses recv-under-boundary.
+                if (r.status == "recv-under-boundary")
+                    add_deny_class(kv, aura::orch::AgentDenyClass::Other, "recv-under-boundary", 0,
+                                   /*emit_retry=*/false);
+                return build_orch_hash(kv);
+            });
 }
 
 // Issue #5033: (orch:agent-reply ...).
@@ -6872,167 +6902,170 @@ void RegSplitParts::register_agent_reply_primitive(Evaluator& ev, AddFn& add) {
     // dual-writes reply:<id>: prefix. Looks up the pending-ask reply
     // mailbox (no AgentRegistry). Unknown corr / closed → structured
     // fail, no hang.
-    if (false) add("orch:agent-reply",
-        [&ev, build_orch_hash, add_deny_class](std::span<const EvalValue> a) -> EvalValue {
-            if (a.size() < 2) {
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
-                    "orch:agent-reply: usage (orch:agent-reply corr payload)",
-                    ev.primitive_error_counter_ptr());
-            }
-            std::uint64_t corr_id = 0;
-            if (types::is_int(a[0])) {
-                const auto v = types::as_int(a[0]);
-                if (v < 0) {
+    if (false)
+        add("orch:agent-reply",
+            [&ev, build_orch_hash, add_deny_class](std::span<const EvalValue> a) -> EvalValue {
+                if (a.size() < 2) {
+                    return make_primitive_error(
+                        ev.string_heap_, ev.error_values_,
+                        "orch:agent-reply: usage (orch:agent-reply corr payload)",
+                        ev.primitive_error_counter_ptr());
+                }
+                std::uint64_t corr_id = 0;
+                if (types::is_int(a[0])) {
+                    const auto v = types::as_int(a[0]);
+                    if (v < 0) {
+                        return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                    "orch:agent-reply: corr must be non-negative",
+                                                    ev.primitive_error_counter_ptr());
+                    }
+                    corr_id = static_cast<std::uint64_t>(v);
+                } else if (types::is_string(a[0])) {
+                    const auto s = heap_str_from(ev.string_heap_, a[0]);
+                    try {
+                        corr_id = static_cast<std::uint64_t>(std::stoull(s));
+                    } catch (...) {
+                        // [SILENCE-PRIM-#615] corr parse failure is a typed primitive error.
+                        return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                    "orch:agent-reply: corr string not a number",
+                                                    ev.primitive_error_counter_ptr());
+                    }
+                } else {
                     return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                                "orch:agent-reply: corr must be non-negative",
+                                                "orch:agent-reply: corr must be int or string",
                                                 ev.primitive_error_counter_ptr());
                 }
-                corr_id = static_cast<std::uint64_t>(v);
-            } else if (types::is_string(a[0])) {
-                const auto s = heap_str_from(ev.string_heap_, a[0]);
-                try {
-                    corr_id = static_cast<std::uint64_t>(std::stoull(s));
-                } catch (...) {
-                    // [SILENCE-PRIM-#615] corr parse failure is a typed primitive error.
-                    return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                                "orch:agent-reply: corr string not a number",
-                                                ev.primitive_error_counter_ptr());
+                // Issue #4049: string / int / bool stay zero-cost (same short-circuit
+                // as orch:agent-send). Packed (id . gen) with an in-bounds id
+                // auto-runs stamp_stable_ref + handoff_ref, and the asker receives
+                // the post-handoff stable-ref:id:gen body. Handoff failure returns
+                // the existing structured status (handoff-required / export-stale)
+                // and does NOT push.
+                // Issue #4060: hash / vector / closure / a pair that is not that
+                // packed shape are not a payload. Refuse on Soft and production
+                // (message integrity, not a sandbox gate) — ok=#f,
+                // status=unsupported-payload, no push. The string branch stays
+                // first and does not grow a production check.
+                std::string payload;
+                std::optional<std::uint64_t> held_token;
+                auto refuse_unsupported = [&]() -> EvalValue {
+                    aura::orch::g_orch_module_stats.agent_reply_fail_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    auto sidx = ev.push_string_heap("unsupported-payload");
+                    std::vector<std::pair<std::string, EvalValue>> fkv = {
+                        {"ok", make_bool(false)},
+                        {"status", make_string(sidx)},
+                        {"schema", make_int(aura::orch::kAgentReplyIssue)},
+                        {"schema-2401", make_int(aura::orch::kAgentReplyIssue)},
+                        {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
+                        {"schema-2538", make_int(aura::orch::kAgentAskTypedCorrIssue)},
+                        {"agent-reply-auto-handoff-wired", make_int(1)},
+                    };
+                    return build_orch_hash(fkv);
+                };
+                if (types::is_string(a[1])) {
+                    payload = heap_str_from(ev.string_heap_, a[1]);
+                } else if (types::is_int(a[1])) {
+                    payload = std::to_string(types::as_int(a[1]));
+                } else if (types::is_bool(a[1])) {
+                    payload = types::as_bool(a[1]) ? "#t" : "#f";
+                } else if (types::is_pair(a[1]) && ev.workspace_flat_) {
+                    // Issue #2848 AC1 shape: packed StableNodeRef (id . gen).
+                    // Require in-bounds id so ordinary cons lists of ints do not
+                    // spuriously enter the handoff path.
+                    const auto outer = types::as_pair_idx(a[1]);
+                    bool is_stable_shape = false;
+                    aura::ast::FlatAST::StableNodeRef held{};
+                    if (outer < ev.pairs_.size() && types::is_int(ev.pairs_[outer].car)) {
+                        held.id =
+                            static_cast<aura::ast::NodeId>(types::as_int(ev.pairs_[outer].car));
+                        const auto cdr = ev.pairs_[outer].cdr;
+                        if (types::is_pair(cdr)) {
+                            const auto inner = types::as_pair_idx(cdr);
+                            if (inner < ev.pairs_.size() && types::is_int(ev.pairs_[inner].car)) {
+                                held.gen =
+                                    static_cast<std::uint16_t>(types::as_int(ev.pairs_[inner].car));
+                                is_stable_shape = true;
+                            }
+                        } else if (types::is_int(cdr)) {
+                            held.gen = static_cast<std::uint16_t>(types::as_int(cdr));
+                            is_stable_shape = true;
+                        }
+                    }
+                    auto* ws = ev.workspace_flat_;
+                    if (is_stable_shape && held.id != aura::ast::NULL_NODE &&
+                        held.id < ws->size()) {
+                        // Soft / production: prefer export path for consistency (AC6).
+                        ev.stamp_stable_ref(held);
+                        auto out = ev.handoff_ref(std::move(held));
+                        if (!out) {
+                            // Structured typed failure — not a silent "payload" body.
+                            aura::orch::g_orch_module_stats.agent_send_handoff_fail_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            const char* fail_st = "handoff-required";
+                            if (!ev.last_mutate_error().empty() &&
+                                ev.last_mutate_error().find("stale") != std::string::npos)
+                                fail_st = "export-stale";
+                            auto sidx = ev.push_string_heap(fail_st);
+                            std::vector<std::pair<std::string, EvalValue>> fkv = {
+                                {"ok", make_bool(false)},
+                                {"status", make_string(sidx)},
+                                {"schema", make_int(aura::orch::kAgentReplyIssue)},
+                                {"schema-2401", make_int(aura::orch::kAgentReplyIssue)},
+                                {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
+                                {"schema-2538", make_int(aura::orch::kAgentAskTypedCorrIssue)},
+                                {"agent-reply-auto-handoff-wired", make_int(1)},
+                            };
+                            add_deny_class(fkv, aura::orch::AgentDenyClass::Handoff, fail_st, 0,
+                                           /*emit_retry=*/false);
+                            return build_orch_hash(fkv);
+                        }
+                        held_token = static_cast<std::uint64_t>(out->id);
+                        // Encode post-handoff id:gen so the asker can rehydrate.
+                        payload = "stable-ref:" + std::to_string(out->id) + ":" +
+                                  std::to_string(out->gen);
+                    } else {
+                        // Issue #4060: ordinary list / non-stable pair. Do not
+                        // coerce to the literal "payload" and do not push.
+                        return refuse_unsupported();
+                    }
+                } else {
+                    // Issue #4060: hash, vector, closure, and any other non-scalar.
+                    return refuse_unsupported();
                 }
-            } else {
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "orch:agent-reply: corr must be int or string",
-                                            ev.primitive_error_counter_ptr());
-            }
-            // Issue #4049: string / int / bool stay zero-cost (same short-circuit
-            // as orch:agent-send). Packed (id . gen) with an in-bounds id
-            // auto-runs stamp_stable_ref + handoff_ref, and the asker receives
-            // the post-handoff stable-ref:id:gen body. Handoff failure returns
-            // the existing structured status (handoff-required / export-stale)
-            // and does NOT push.
-            // Issue #4060: hash / vector / closure / a pair that is not that
-            // packed shape are not a payload. Refuse on Soft and production
-            // (message integrity, not a sandbox gate) — ok=#f,
-            // status=unsupported-payload, no push. The string branch stays
-            // first and does not grow a production check.
-            std::string payload;
-            std::optional<std::uint64_t> held_token;
-            auto refuse_unsupported = [&]() -> EvalValue {
-                aura::orch::g_orch_module_stats.agent_reply_fail_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                auto sidx = ev.push_string_heap("unsupported-payload");
-                std::vector<std::pair<std::string, EvalValue>> fkv = {
-                    {"ok", make_bool(false)},
-                    {"status", make_string(sidx)},
+                // Issue #4049: resolve the replying agent's handle (the current
+                // fiber's name-table / scope handle when one is bound) so BP notes
+                // that handle's bp_scope_id and the producer-throttle arm can run —
+                // reply is a second send, not a process-bucket event. Unbound host
+                // fiber: reply_from stays null and agent_reply routes empty-scope
+                // production events to the overflow gauge.
+                aura::orch::AgentHandle* reply_from = nullptr;
+                if (auto* f = aura::serve::g_current_fiber) {
+                    if (ev.agent_names_) {
+                        if (auto* h = ev.agent_names_->find_by_fiber(f->id()))
+                            reply_from = h;
+                    }
+                    if (!reply_from) {
+                        if (auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev))) {
+                            if (auto* h = scope->find_by_fiber(f->id()))
+                                reply_from = h;
+                        }
+                    }
+                }
+                const auto r = aura::orch::agent_reply(corr_id, payload, /*reply_dest=*/nullptr,
+                                                       reply_from, held_token);
+                auto st_idx = ev.push_string_heap(r.status);
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(r.ok)},
+                    {"status", make_string(st_idx)},
                     {"schema", make_int(aura::orch::kAgentReplyIssue)},
                     {"schema-2401", make_int(aura::orch::kAgentReplyIssue)},
                     {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
                     {"schema-2538", make_int(aura::orch::kAgentAskTypedCorrIssue)},
                     {"agent-reply-auto-handoff-wired", make_int(1)},
                 };
-                return build_orch_hash(fkv);
-            };
-            if (types::is_string(a[1])) {
-                payload = heap_str_from(ev.string_heap_, a[1]);
-            } else if (types::is_int(a[1])) {
-                payload = std::to_string(types::as_int(a[1]));
-            } else if (types::is_bool(a[1])) {
-                payload = types::as_bool(a[1]) ? "#t" : "#f";
-            } else if (types::is_pair(a[1]) && ev.workspace_flat_) {
-                // Issue #2848 AC1 shape: packed StableNodeRef (id . gen).
-                // Require in-bounds id so ordinary cons lists of ints do not
-                // spuriously enter the handoff path.
-                const auto outer = types::as_pair_idx(a[1]);
-                bool is_stable_shape = false;
-                aura::ast::FlatAST::StableNodeRef held{};
-                if (outer < ev.pairs_.size() && types::is_int(ev.pairs_[outer].car)) {
-                    held.id = static_cast<aura::ast::NodeId>(types::as_int(ev.pairs_[outer].car));
-                    const auto cdr = ev.pairs_[outer].cdr;
-                    if (types::is_pair(cdr)) {
-                        const auto inner = types::as_pair_idx(cdr);
-                        if (inner < ev.pairs_.size() && types::is_int(ev.pairs_[inner].car)) {
-                            held.gen =
-                                static_cast<std::uint16_t>(types::as_int(ev.pairs_[inner].car));
-                            is_stable_shape = true;
-                        }
-                    } else if (types::is_int(cdr)) {
-                        held.gen = static_cast<std::uint16_t>(types::as_int(cdr));
-                        is_stable_shape = true;
-                    }
-                }
-                auto* ws = ev.workspace_flat_;
-                if (is_stable_shape && held.id != aura::ast::NULL_NODE && held.id < ws->size()) {
-                    // Soft / production: prefer export path for consistency (AC6).
-                    ev.stamp_stable_ref(held);
-                    auto out = ev.handoff_ref(std::move(held));
-                    if (!out) {
-                        // Structured typed failure — not a silent "payload" body.
-                        aura::orch::g_orch_module_stats.agent_send_handoff_fail_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        const char* fail_st = "handoff-required";
-                        if (!ev.last_mutate_error().empty() &&
-                            ev.last_mutate_error().find("stale") != std::string::npos)
-                            fail_st = "export-stale";
-                        auto sidx = ev.push_string_heap(fail_st);
-                        std::vector<std::pair<std::string, EvalValue>> fkv = {
-                            {"ok", make_bool(false)},
-                            {"status", make_string(sidx)},
-                            {"schema", make_int(aura::orch::kAgentReplyIssue)},
-                            {"schema-2401", make_int(aura::orch::kAgentReplyIssue)},
-                            {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
-                            {"schema-2538", make_int(aura::orch::kAgentAskTypedCorrIssue)},
-                            {"agent-reply-auto-handoff-wired", make_int(1)},
-                        };
-                        add_deny_class(fkv, aura::orch::AgentDenyClass::Handoff, fail_st, 0,
-                                       /*emit_retry=*/false);
-                        return build_orch_hash(fkv);
-                    }
-                    held_token = static_cast<std::uint64_t>(out->id);
-                    // Encode post-handoff id:gen so the asker can rehydrate.
-                    payload =
-                        "stable-ref:" + std::to_string(out->id) + ":" + std::to_string(out->gen);
-                } else {
-                    // Issue #4060: ordinary list / non-stable pair. Do not
-                    // coerce to the literal "payload" and do not push.
-                    return refuse_unsupported();
-                }
-            } else {
-                // Issue #4060: hash, vector, closure, and any other non-scalar.
-                return refuse_unsupported();
-            }
-            // Issue #4049: resolve the replying agent's handle (the current
-            // fiber's name-table / scope handle when one is bound) so BP notes
-            // that handle's bp_scope_id and the producer-throttle arm can run —
-            // reply is a second send, not a process-bucket event. Unbound host
-            // fiber: reply_from stays null and agent_reply routes empty-scope
-            // production events to the overflow gauge.
-            aura::orch::AgentHandle* reply_from = nullptr;
-            if (auto* f = aura::serve::g_current_fiber) {
-                if (ev.agent_names_) {
-                    if (auto* h = ev.agent_names_->find_by_fiber(f->id()))
-                        reply_from = h;
-                }
-                if (!reply_from) {
-                    if (auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev))) {
-                        if (auto* h = scope->find_by_fiber(f->id()))
-                            reply_from = h;
-                    }
-                }
-            }
-            const auto r = aura::orch::agent_reply(corr_id, payload, /*reply_dest=*/nullptr,
-                                                   reply_from, held_token);
-            auto st_idx = ev.push_string_heap(r.status);
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(r.ok)},
-                {"status", make_string(st_idx)},
-                {"schema", make_int(aura::orch::kAgentReplyIssue)},
-                {"schema-2401", make_int(aura::orch::kAgentReplyIssue)},
-                {"schema-2231", make_int(aura::orch::kAgentAskIssue)},
-                {"schema-2538", make_int(aura::orch::kAgentAskTypedCorrIssue)},
-                {"agent-reply-auto-handoff-wired", make_int(1)},
-            };
-            return build_orch_hash(kv);
-        });
+                return build_orch_hash(kv);
+            });
 }
 
 // Issue #5033: (orch:agent-send ...).
@@ -7058,146 +7091,150 @@ void RegSplitParts::register_agent_send_primitive(Evaluator& ev, AddFn& add) {
     // ambiguous Closed conflation with mailbox-closed. Soft / sandbox=off
     // still prefer the export path for consistency (AC6). #2663 gate stays
     // hard for raw C++ MultiFiberMailbox::push callers (defense in depth).
-    if (false) add("orch:agent-send",
-        [&ev, build_orch_hash, add_deny_class](std::span<const EvalValue> a) -> EvalValue {
-            if (a.size() < 2 || !types::is_string(a[0])) {
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "orch:agent-send: usage (orch:agent-send name payload)",
-                                            ev.primitive_error_counter_ptr());
-            }
-            auto name = heap_str_from(ev.string_heap_, a[0]);
-            auto* hp = resolve_aura_agent(ev, name);
-            if (!hp || !hp->ok) {
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "orch:agent-send: unknown agent",
-                                            ev.primitive_error_counter_ptr());
-            }
+    if (false)
+        add("orch:agent-send",
+            [&ev, build_orch_hash, add_deny_class](std::span<const EvalValue> a) -> EvalValue {
+                if (a.size() < 2 || !types::is_string(a[0])) {
+                    return make_primitive_error(
+                        ev.string_heap_, ev.error_values_,
+                        "orch:agent-send: usage (orch:agent-send name payload)",
+                        ev.primitive_error_counter_ptr());
+                }
+                auto name = heap_str_from(ev.string_heap_, a[0]);
+                auto* hp = resolve_aura_agent(ev, name);
+                if (!hp || !hp->ok) {
+                    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                "orch:agent-send: unknown agent",
+                                                ev.primitive_error_counter_ptr());
+                }
 
-            aura::serve::mf_mailbox::MailMessage msg;
-            msg.priority = aura::serve::mf_mailbox::MailPriority::Normal;
-            bool auto_handoff_ok = false;
+                aura::serve::mf_mailbox::MailMessage msg;
+                msg.priority = aura::serve::mf_mailbox::MailPriority::Normal;
+                bool auto_handoff_ok = false;
 
-            // AC2: string/int/bool — existing short-circuit; no held_ref_token,
-            // no handoff work, single optional load on the #2663 gate.
-            // Issue #4060: anything else that is not a packed in-bounds
-            // StableNodeRef returns ok=#f status=unsupported-payload and
-            // does not push. Soft and production share this refuse (integrity,
-            // not a sandbox gate). Reuses send_closed_total — the existing
-            // non-Ok counter — because agent_send is not called.
-            auto refuse_unsupported = [&]() -> EvalValue {
-                aura::orch::g_orch_module_stats.send_closed_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                auto sidx = ev.push_string_heap("unsupported-payload");
-                std::vector<std::pair<std::string, EvalValue>> fkv = {
-                    {"ok", make_bool(false)},
+                // AC2: string/int/bool — existing short-circuit; no held_ref_token,
+                // no handoff work, single optional load on the #2663 gate.
+                // Issue #4060: anything else that is not a packed in-bounds
+                // StableNodeRef returns ok=#f status=unsupported-payload and
+                // does not push. Soft and production share this refuse (integrity,
+                // not a sandbox gate). Reuses send_closed_total — the existing
+                // non-Ok counter — because agent_send is not called.
+                auto refuse_unsupported = [&]() -> EvalValue {
+                    aura::orch::g_orch_module_stats.send_closed_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    auto sidx = ev.push_string_heap("unsupported-payload");
+                    std::vector<std::pair<std::string, EvalValue>> fkv = {
+                        {"ok", make_bool(false)},
+                        {"status", make_string(sidx)},
+                        {"schema", make_int(1588)},
+                        {"schema-2011", make_int(2011)},
+                        {"schema-2848", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
+                        {"agent-send-auto-handoff-wired", make_int(1)},
+                    };
+                    return build_orch_hash(fkv);
+                };
+                if (types::is_string(a[1])) {
+                    msg.payload = heap_str_from(ev.string_heap_, a[1]);
+                } else if (types::is_int(a[1])) {
+                    msg.payload = std::to_string(types::as_int(a[1]));
+                } else if (types::is_bool(a[1])) {
+                    msg.payload = types::as_bool(a[1]) ? "#t" : "#f";
+                } else if (types::is_pair(a[1]) && ev.workspace_flat_) {
+                    // Issue #2848 AC1: packed StableNodeRef (id . gen) shape.
+                    // Require in-bounds id so ordinary cons lists of ints do not
+                    // spuriously enter the handoff path.
+                    const auto outer = types::as_pair_idx(a[1]);
+                    bool is_stable_shape = false;
+                    aura::ast::FlatAST::StableNodeRef held{};
+                    if (outer < ev.pairs_.size() && types::is_int(ev.pairs_[outer].car)) {
+                        held.id =
+                            static_cast<aura::ast::NodeId>(types::as_int(ev.pairs_[outer].car));
+                        const auto cdr = ev.pairs_[outer].cdr;
+                        if (types::is_pair(cdr)) {
+                            const auto inner = types::as_pair_idx(cdr);
+                            if (inner < ev.pairs_.size() && types::is_int(ev.pairs_[inner].car)) {
+                                held.gen =
+                                    static_cast<std::uint16_t>(types::as_int(ev.pairs_[inner].car));
+                                is_stable_shape = true;
+                            }
+                        } else if (types::is_int(cdr)) {
+                            held.gen = static_cast<std::uint16_t>(types::as_int(cdr));
+                            is_stable_shape = true;
+                        }
+                    }
+                    auto* ws = ev.workspace_flat_;
+                    if (is_stable_shape && held.id != aura::ast::NULL_NODE &&
+                        held.id < ws->size()) {
+                        // Soft / production: prefer export path for consistency (AC6).
+                        ev.stamp_stable_ref(held);
+                        auto out = ev.handoff_ref(std::move(held));
+                        if (!out) {
+                            // Structured typed failure — not silent Closed (#2848 AC1).
+                            aura::orch::g_orch_module_stats.agent_send_handoff_fail_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            // Distinguish export-stale vs generic handoff-required when
+                            // last_mutate_error_ carries a stale-ref reason.
+                            const char* fail_st = "handoff-required";
+                            if (!ev.last_mutate_error().empty() &&
+                                ev.last_mutate_error().find("stale") != std::string::npos)
+                                fail_st = "export-stale";
+                            auto sidx = ev.push_string_heap(fail_st);
+                            std::vector<std::pair<std::string, EvalValue>> fkv = {
+                                {"ok", make_bool(false)},
+                                {"status", make_string(sidx)},
+                                {"schema", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
+                                {"schema-2848", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
+                                {"schema-2011", make_int(2011)},
+                                {"schema-2663", make_int(2663)},
+                                {"agent-send-auto-handoff-wired", make_int(1)},
+                            };
+                            add_deny_class(fkv, aura::orch::AgentDenyClass::Handoff, fail_st, 0,
+                                           /*emit_retry=*/false);
+                            return build_orch_hash(fkv);
+                        }
+                        aura::orch::stamp_mail_message_handoff_completed(
+                            msg, static_cast<std::uint64_t>(out->id));
+                        // Encode post-handoff id:gen so receivers can rehydrate.
+                        msg.payload = "stable-ref:" + std::to_string(out->id) + ":" +
+                                      std::to_string(out->gen);
+                        auto_handoff_ok = true;
+                        aura::orch::g_orch_module_stats.agent_send_auto_handoff_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    } else {
+                        // Issue #4060: ordinary list / non-stable pair.
+                        return refuse_unsupported();
+                    }
+                } else {
+                    // Issue #4060: hash, vector, closure, and any other non-scalar.
+                    return refuse_unsupported();
+                }
+
+                auto st = aura::orch::agent_send(*hp, std::move(msg)); // orch-raw-send-ok
+                const char* st_s = "ok";
+                aura::orch::AgentDenyClass send_deny = aura::orch::AgentDenyClass::None;
+                if (st == aura::serve::mf_mailbox::PushStatus::Backpressure)
+                    st_s = "backpressure";
+                else if (st == aura::serve::mf_mailbox::PushStatus::Closed) {
+                    st_s = "closed";
+                    send_deny = aura::orch::AgentDenyClass::Closed;
+                } else if (st == aura::serve::mf_mailbox::PushStatus::HandoffRequired) {
+                    st_s = "handoff-required";
+                    send_deny = aura::orch::AgentDenyClass::Handoff;
+                }
+                auto sidx = ev.push_string_heap(st_s);
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(st == aura::serve::mf_mailbox::PushStatus::Ok)},
                     {"status", make_string(sidx)},
                     {"schema", make_int(1588)},
                     {"schema-2011", make_int(2011)},
                     {"schema-2848", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
                     {"agent-send-auto-handoff-wired", make_int(1)},
                 };
-                return build_orch_hash(fkv);
-            };
-            if (types::is_string(a[1])) {
-                msg.payload = heap_str_from(ev.string_heap_, a[1]);
-            } else if (types::is_int(a[1])) {
-                msg.payload = std::to_string(types::as_int(a[1]));
-            } else if (types::is_bool(a[1])) {
-                msg.payload = types::as_bool(a[1]) ? "#t" : "#f";
-            } else if (types::is_pair(a[1]) && ev.workspace_flat_) {
-                // Issue #2848 AC1: packed StableNodeRef (id . gen) shape.
-                // Require in-bounds id so ordinary cons lists of ints do not
-                // spuriously enter the handoff path.
-                const auto outer = types::as_pair_idx(a[1]);
-                bool is_stable_shape = false;
-                aura::ast::FlatAST::StableNodeRef held{};
-                if (outer < ev.pairs_.size() && types::is_int(ev.pairs_[outer].car)) {
-                    held.id = static_cast<aura::ast::NodeId>(types::as_int(ev.pairs_[outer].car));
-                    const auto cdr = ev.pairs_[outer].cdr;
-                    if (types::is_pair(cdr)) {
-                        const auto inner = types::as_pair_idx(cdr);
-                        if (inner < ev.pairs_.size() && types::is_int(ev.pairs_[inner].car)) {
-                            held.gen =
-                                static_cast<std::uint16_t>(types::as_int(ev.pairs_[inner].car));
-                            is_stable_shape = true;
-                        }
-                    } else if (types::is_int(cdr)) {
-                        held.gen = static_cast<std::uint16_t>(types::as_int(cdr));
-                        is_stable_shape = true;
-                    }
-                }
-                auto* ws = ev.workspace_flat_;
-                if (is_stable_shape && held.id != aura::ast::NULL_NODE && held.id < ws->size()) {
-                    // Soft / production: prefer export path for consistency (AC6).
-                    ev.stamp_stable_ref(held);
-                    auto out = ev.handoff_ref(std::move(held));
-                    if (!out) {
-                        // Structured typed failure — not silent Closed (#2848 AC1).
-                        aura::orch::g_orch_module_stats.agent_send_handoff_fail_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                        // Distinguish export-stale vs generic handoff-required when
-                        // last_mutate_error_ carries a stale-ref reason.
-                        const char* fail_st = "handoff-required";
-                        if (!ev.last_mutate_error().empty() &&
-                            ev.last_mutate_error().find("stale") != std::string::npos)
-                            fail_st = "export-stale";
-                        auto sidx = ev.push_string_heap(fail_st);
-                        std::vector<std::pair<std::string, EvalValue>> fkv = {
-                            {"ok", make_bool(false)},
-                            {"status", make_string(sidx)},
-                            {"schema", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
-                            {"schema-2848", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
-                            {"schema-2011", make_int(2011)},
-                            {"schema-2663", make_int(2663)},
-                            {"agent-send-auto-handoff-wired", make_int(1)},
-                        };
-                        add_deny_class(fkv, aura::orch::AgentDenyClass::Handoff, fail_st, 0,
-                                       /*emit_retry=*/false);
-                        return build_orch_hash(fkv);
-                    }
-                    aura::orch::stamp_mail_message_handoff_completed(
-                        msg, static_cast<std::uint64_t>(out->id));
-                    // Encode post-handoff id:gen so receivers can rehydrate.
-                    msg.payload =
-                        "stable-ref:" + std::to_string(out->id) + ":" + std::to_string(out->gen);
-                    auto_handoff_ok = true;
-                    aura::orch::g_orch_module_stats.agent_send_auto_handoff_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                } else {
-                    // Issue #4060: ordinary list / non-stable pair.
-                    return refuse_unsupported();
-                }
-            } else {
-                // Issue #4060: hash, vector, closure, and any other non-scalar.
-                return refuse_unsupported();
-            }
-
-            auto st = aura::orch::agent_send(*hp, std::move(msg)); // orch-raw-send-ok
-            const char* st_s = "ok";
-            aura::orch::AgentDenyClass send_deny = aura::orch::AgentDenyClass::None;
-            if (st == aura::serve::mf_mailbox::PushStatus::Backpressure)
-                st_s = "backpressure";
-            else if (st == aura::serve::mf_mailbox::PushStatus::Closed) {
-                st_s = "closed";
-                send_deny = aura::orch::AgentDenyClass::Closed;
-            } else if (st == aura::serve::mf_mailbox::PushStatus::HandoffRequired) {
-                st_s = "handoff-required";
-                send_deny = aura::orch::AgentDenyClass::Handoff;
-            }
-            auto sidx = ev.push_string_heap(st_s);
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(st == aura::serve::mf_mailbox::PushStatus::Ok)},
-                {"status", make_string(sidx)},
-                {"schema", make_int(1588)},
-                {"schema-2011", make_int(2011)},
-                {"schema-2848", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
-                {"agent-send-auto-handoff-wired", make_int(1)},
-            };
-            if (auto_handoff_ok)
-                kv.push_back({"auto-handoff", make_bool(true)});
-            add_deny_class(kv, send_deny, st_s, 0, /*emit_retry=*/false);
-            return build_orch_hash(kv);
-        });
+                if (auto_handoff_ok)
+                    kv.push_back({"auto-handoff", make_bool(true)});
+                add_deny_class(kv, send_deny, st_s, 0, /*emit_retry=*/false);
+                return build_orch_hash(kv);
+            });
 }
 
 // Issue #5033: (orch:agent-recv / agent-touch / agent-poll).
@@ -7215,225 +7252,229 @@ void RegSplitParts::register_agent_recv_primitives(Evaluator& ev, AddFn& add) {
                                 std::uint64_t retry_ms, bool emit_retry) {
         RegSplitParts::add_deny_class(ev, kv, cls, detail, retry_ms, emit_retry);
     };
-    if (false) add("orch:agent-recv",
-        [&ev, build_orch_hash, orch_keyword_key,
-         add_deny_class](std::span<const EvalValue> a) -> EvalValue {
-            if (a.empty() || !types::is_string(a[0])) {
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
-                    "orch:agent-recv: usage (orch:agent-recv name [:wait bool] [:timeout-ms n])",
-                    ev.primitive_error_counter_ptr());
-            }
-            auto name = heap_str_from(ev.string_heap_, a[0]);
-            auto* hp = resolve_aura_agent(ev, name);
-            if (!hp || !hp->ok) {
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "orch:agent-recv: unknown agent",
-                                            ev.primitive_error_counter_ptr());
-            }
-            bool wait = true;
-            int timeout_ms = -1;
-            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                if ((k == "wait") && types::is_bool(a[i + 1])) {
-                    wait = types::as_bool(a[i + 1]);
-                } else if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1])) {
-                    timeout_ms =
-                        static_cast<int>(std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+    if (false)
+        add("orch:agent-recv",
+            [&ev, build_orch_hash, orch_keyword_key,
+             add_deny_class](std::span<const EvalValue> a) -> EvalValue {
+                if (a.empty() || !types::is_string(a[0])) {
+                    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                "orch:agent-recv: usage (orch:agent-recv name "
+                                                "[:wait bool] [:timeout-ms n])",
+                                                ev.primitive_error_counter_ptr());
                 }
-            }
-            if (!wait && timeout_ms < 0)
-                timeout_ms = 0;
-            // Issue #4873: the agent body holds the per-Evaluator apply gate
-            // for its whole lifetime, so a blocking recv inside it used to
-            // keep a sibling agent's body from starting until this wait
-            // expired (agent-ask to that sibling then timed out). Release
-            // the gate across the wait; reacquire (yielding) before the body
-            // touches evaluator state again.
-            const auto gate_identity = aura::orch::orch_current_fiber_id();
-            const bool gate_paused =
-                (wait && timeout_ms != 0) && ev.pause_agent_apply_for_wait(gate_identity);
-            auto rec = aura::orch::agent_recv_result(*hp, wait, timeout_ms);
-            if (gate_paused) {
-                while (!ev.try_resume_agent_apply_after_wait(gate_identity))
-                    agent_apply_gate_retry();
-            }
-            auto msg = rec.message;
-            // Issue #4026: import_proxy recv is typed deny Soft+prod (ownership
-            // dual-consumer). empty=#f so hosts do not busy-loop; distinct
-            // from quiet empty. send/ask/reply on proxy stay allowed.
-            if (std::string_view(rec.status) == "recv-proxy-denied" ||
-                (!msg && hp->last_recv_proxy_denied)) {
-                hp->last_recv_proxy_denied = false; // consumed once
-                auto sidx = ev.push_string_heap("recv-proxy-denied");
-                auto pidx = ev.push_string_heap("");
+                auto name = heap_str_from(ev.string_heap_, a[0]);
+                auto* hp = resolve_aura_agent(ev, name);
+                if (!hp || !hp->ok) {
+                    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                "orch:agent-recv: unknown agent",
+                                                ev.primitive_error_counter_ptr());
+                }
+                bool wait = true;
+                int timeout_ms = -1;
+                for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    if ((k == "wait") && types::is_bool(a[i + 1])) {
+                        wait = types::as_bool(a[i + 1]);
+                    } else if ((k == "timeout-ms" || k == "timeout_ms") &&
+                               types::is_int(a[i + 1])) {
+                        timeout_ms =
+                            static_cast<int>(std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+                    }
+                }
+                if (!wait && timeout_ms < 0)
+                    timeout_ms = 0;
+                // Issue #4873: the agent body holds the per-Evaluator apply gate
+                // for its whole lifetime, so a blocking recv inside it used to
+                // keep a sibling agent's body from starting until this wait
+                // expired (agent-ask to that sibling then timed out). Release
+                // the gate across the wait; reacquire (yielding) before the body
+                // touches evaluator state again.
+                const auto gate_identity = aura::orch::orch_current_fiber_id();
+                const bool gate_paused =
+                    (wait && timeout_ms != 0) && ev.pause_agent_apply_for_wait(gate_identity);
+                auto rec = aura::orch::agent_recv_result(*hp, wait, timeout_ms);
+                if (gate_paused) {
+                    while (!ev.try_resume_agent_apply_after_wait(gate_identity))
+                        agent_apply_gate_retry();
+                }
+                auto msg = rec.message;
+                // Issue #4026: import_proxy recv is typed deny Soft+prod (ownership
+                // dual-consumer). empty=#f so hosts do not busy-loop; distinct
+                // from quiet empty. send/ask/reply on proxy stay allowed.
+                if (std::string_view(rec.status) == "recv-proxy-denied" ||
+                    (!msg && hp->last_recv_proxy_denied)) {
+                    hp->last_recv_proxy_denied = false; // consumed once
+                    auto sidx = ev.push_string_heap("recv-proxy-denied");
+                    auto pidx = ev.push_string_heap("");
+                    std::vector<std::pair<std::string, EvalValue>> kv = {
+                        {"ok", make_bool(false)},
+                        {"empty", make_bool(false)},
+                        {"status", make_string(sidx)},
+                        {"payload", make_string(pidx)},
+                        {"schema", make_int(1588)},
+                        {"schema-2011", make_int(2011)},
+                        {"schema-4026", make_int(aura::orch::kRecvProxyDeniedIssue)},
+                        {"issue-4026", make_int(aura::orch::kRecvProxyDeniedIssue)},
+                    };
+                    add_deny_class(kv, aura::orch::AgentDenyClass::Other, "recv-proxy-denied", 0,
+                                   /*emit_retry=*/false);
+                    return build_orch_hash(kv);
+                }
+                // Issue #3565 + #3642: production unstamped/stale held_ref after
+                // steal is not a successful payload (mailbox cleared the stale
+                // stable-ref string; #3642 consumes stale as nullopt at the
+                // mailbox and rides the handle flag). Typed handoff-required,
+                // reuse send-side deny-class. Soft delivers as today.
+                // Issue #4001: RecvResult.status is the C++ SSOT; flag fallback
+                // stays so a leftover handle peek still matches.
+                const bool stale_handoff_surface =
+                    (std::string_view(rec.status) == "handoff-required") ||
+                    (msg && msg->held_ref_token.has_value() && !msg->handoff_completed &&
+                     aura::compiler::typed_audit::production_defaults_active()) ||
+                    (!msg && hp->last_recv_stale_handoff &&
+                     aura::compiler::typed_audit::production_defaults_active());
+                if (stale_handoff_surface) {
+                    hp->last_recv_stale_handoff = false; // consumed once
+                    auto sidx = ev.push_string_heap("handoff-required");
+                    auto pidx = ev.push_string_heap("");
+                    std::vector<std::pair<std::string, EvalValue>> kv = {
+                        {"ok", make_bool(false)},
+                        {"empty", make_bool(false)},
+                        {"status", make_string(sidx)},
+                        {"payload", make_string(pidx)},
+                        {"schema", make_int(1588)},
+                        {"schema-2011", make_int(2011)},
+                        {"schema-2848", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
+                        {"schema-3565", make_int(aura::orch::kRecvHeldRefAfterStealIssue)},
+                        {"issue-3565", make_int(aura::orch::kRecvHeldRefAfterStealIssue)},
+                    };
+                    add_deny_class(kv, aura::orch::AgentDenyClass::Handoff, "handoff-required", 0,
+                                   /*emit_retry=*/false);
+                    return build_orch_hash(kv);
+                }
+                // Issue #3673: Guard-live Policy A reject is not a quiet empty —
+                // typed deny (deny-class=other / deny-detail=recv-under-boundary,
+                // #3251 intern, emit_retry=#t) so Agents can branch instead of
+                // busy-looping (#2347). Policy A stays (no park); the mailbox
+                // bumped its soft/hard counters per face as before. Soft / Off:
+                // falls through to empty=#t unchanged (zero extra intern).
+                if (std::string_view(rec.status) == "recv-under-boundary" ||
+                    (!msg && hp->last_recv_boundary_reject &&
+                     aura::compiler::typed_audit::production_defaults_active())) {
+                    hp->last_recv_boundary_reject = false; // consumed once
+                    auto sidx = ev.push_string_heap("recv-under-boundary");
+                    auto pidx = ev.push_string_heap("");
+                    std::vector<std::pair<std::string, EvalValue>> kv = {
+                        {"ok", make_bool(false)},        {"empty", make_bool(false)},
+                        {"status", make_string(sidx)},   {"payload", make_string(pidx)},
+                        {"schema", make_int(1588)},      {"schema-2011", make_int(2011)},
+                        {"schema-2188", make_int(2188)}, {"schema-2347", make_int(2347)},
+                    };
+                    add_deny_class(kv, aura::orch::AgentDenyClass::Other, "recv-under-boundary", 0,
+                                   /*emit_retry=*/true);
+                    return build_orch_hash(kv);
+                }
+                if (!msg) {
+                    std::vector<std::pair<std::string, EvalValue>> kv = {
+                        {"ok", make_bool(false)},
+                        {"empty", make_bool(true)},
+                        {"payload",
+                         [&] {
+                             auto s = ev.push_string_heap("");
+                             return make_string(s);
+                         }()},
+                        {"schema", make_int(1588)},
+                        {"schema-2011", make_int(2011)},
+                    };
+                    return build_orch_hash(kv);
+                }
+                auto pidx = ev.push_string_heap(msg->payload);
                 std::vector<std::pair<std::string, EvalValue>> kv = {
-                    {"ok", make_bool(false)},
-                    {"empty", make_bool(false)},
-                    {"status", make_string(sidx)},
-                    {"payload", make_string(pidx)},
-                    {"schema", make_int(1588)},
+                    {"ok", make_bool(true)},         {"empty", make_bool(false)},
+                    {"payload", make_string(pidx)},  {"schema", make_int(1588)},
                     {"schema-2011", make_int(2011)},
-                    {"schema-4026", make_int(aura::orch::kRecvProxyDeniedIssue)},
-                    {"issue-4026", make_int(aura::orch::kRecvProxyDeniedIssue)},
                 };
-                add_deny_class(kv, aura::orch::AgentDenyClass::Other, "recv-proxy-denied", 0,
-                               /*emit_retry=*/false);
+                // Issue #4722: the delivered request carried no usable correlation
+                // handle — a responder had to parse the legacy "ask:<id>:<body>"
+                // payload prefix by hand (the repro's string-ref loop) and the
+                // #2538 typed id that agent_ask already stamped on the MailMessage
+                // was dropped here. Expose it as a real key, plus the mail kind so
+                // a responder can tell an ask from a reply/normal message.
+                // The payload prefix stays dual-written (agent_ask /
+                // agent_reply still format it) for #2231/#2401 compatibility:
+                // existing responders that parse it keep working; new ones should
+                // read correlation-id.
+                if (msg->correlation_id != 0)
+                    kv.push_back({"correlation-id",
+                                  make_int(static_cast<std::int64_t>(msg->correlation_id))});
+                const char* mail_kind_name = "normal";
+                if (msg->kind == aura::serve::mf_mailbox::MailKind::Ask)
+                    mail_kind_name = "ask";
+                else if (msg->kind == aura::serve::mf_mailbox::MailKind::Reply)
+                    mail_kind_name = "reply";
+                kv.push_back({"kind", make_string(ev.push_string_heap(mail_kind_name))});
                 return build_orch_hash(kv);
-            }
-            // Issue #3565 + #3642: production unstamped/stale held_ref after
-            // steal is not a successful payload (mailbox cleared the stale
-            // stable-ref string; #3642 consumes stale as nullopt at the
-            // mailbox and rides the handle flag). Typed handoff-required,
-            // reuse send-side deny-class. Soft delivers as today.
-            // Issue #4001: RecvResult.status is the C++ SSOT; flag fallback
-            // stays so a leftover handle peek still matches.
-            const bool stale_handoff_surface =
-                (std::string_view(rec.status) == "handoff-required") ||
-                (msg && msg->held_ref_token.has_value() && !msg->handoff_completed &&
-                 aura::compiler::typed_audit::production_defaults_active()) ||
-                (!msg && hp->last_recv_stale_handoff &&
-                 aura::compiler::typed_audit::production_defaults_active());
-            if (stale_handoff_surface) {
-                hp->last_recv_stale_handoff = false; // consumed once
-                auto sidx = ev.push_string_heap("handoff-required");
-                auto pidx = ev.push_string_heap("");
-                std::vector<std::pair<std::string, EvalValue>> kv = {
-                    {"ok", make_bool(false)},
-                    {"empty", make_bool(false)},
-                    {"status", make_string(sidx)},
-                    {"payload", make_string(pidx)},
-                    {"schema", make_int(1588)},
-                    {"schema-2011", make_int(2011)},
-                    {"schema-2848", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
-                    {"schema-3565", make_int(aura::orch::kRecvHeldRefAfterStealIssue)},
-                    {"issue-3565", make_int(aura::orch::kRecvHeldRefAfterStealIssue)},
-                };
-                add_deny_class(kv, aura::orch::AgentDenyClass::Handoff, "handoff-required", 0,
-                               /*emit_retry=*/false);
-                return build_orch_hash(kv);
-            }
-            // Issue #3673: Guard-live Policy A reject is not a quiet empty —
-            // typed deny (deny-class=other / deny-detail=recv-under-boundary,
-            // #3251 intern, emit_retry=#t) so Agents can branch instead of
-            // busy-looping (#2347). Policy A stays (no park); the mailbox
-            // bumped its soft/hard counters per face as before. Soft / Off:
-            // falls through to empty=#t unchanged (zero extra intern).
-            if (std::string_view(rec.status) == "recv-under-boundary" ||
-                (!msg && hp->last_recv_boundary_reject &&
-                 aura::compiler::typed_audit::production_defaults_active())) {
-                hp->last_recv_boundary_reject = false; // consumed once
-                auto sidx = ev.push_string_heap("recv-under-boundary");
-                auto pidx = ev.push_string_heap("");
-                std::vector<std::pair<std::string, EvalValue>> kv = {
-                    {"ok", make_bool(false)},        {"empty", make_bool(false)},
-                    {"status", make_string(sidx)},   {"payload", make_string(pidx)},
-                    {"schema", make_int(1588)},      {"schema-2011", make_int(2011)},
-                    {"schema-2188", make_int(2188)}, {"schema-2347", make_int(2347)},
-                };
-                add_deny_class(kv, aura::orch::AgentDenyClass::Other, "recv-under-boundary", 0,
-                               /*emit_retry=*/true);
-                return build_orch_hash(kv);
-            }
-            if (!msg) {
-                std::vector<std::pair<std::string, EvalValue>> kv = {
-                    {"ok", make_bool(false)},
-                    {"empty", make_bool(true)},
-                    {"payload",
-                     [&] {
-                         auto s = ev.push_string_heap("");
-                         return make_string(s);
-                     }()},
-                    {"schema", make_int(1588)},
-                    {"schema-2011", make_int(2011)},
-                };
-                return build_orch_hash(kv);
-            }
-            auto pidx = ev.push_string_heap(msg->payload);
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(true)},         {"empty", make_bool(false)},
-                {"payload", make_string(pidx)},  {"schema", make_int(1588)},
-                {"schema-2011", make_int(2011)},
-            };
-            // Issue #4722: the delivered request carried no usable correlation
-            // handle — a responder had to parse the legacy "ask:<id>:<body>"
-            // payload prefix by hand (the repro's string-ref loop) and the
-            // #2538 typed id that agent_ask already stamped on the MailMessage
-            // was dropped here. Expose it as a real key, plus the mail kind so
-            // a responder can tell an ask from a reply/normal message.
-            // The payload prefix stays dual-written (agent_ask /
-            // agent_reply still format it) for #2231/#2401 compatibility:
-            // existing responders that parse it keep working; new ones should
-            // read correlation-id.
-            if (msg->correlation_id != 0)
-                kv.push_back(
-                    {"correlation-id", make_int(static_cast<std::int64_t>(msg->correlation_id))});
-            const char* mail_kind_name = "normal";
-            if (msg->kind == aura::serve::mf_mailbox::MailKind::Ask)
-                mail_kind_name = "ask";
-            else if (msg->kind == aura::serve::mf_mailbox::MailKind::Reply)
-                mail_kind_name = "reply";
-            kv.push_back({"kind", make_string(ev.push_string_heap(mail_kind_name))});
-            return build_orch_hash(kv);
-        });
+            });
 
     // Issue #2080: explicit progress touch for ProgressClock mode agents
     // (attach_mailbox=#f + keepalive_interval_ms > 0). Updates the shared
     // last_keepalive_us clock so watch_agent_liveness can distinguish Alive
     // vs Stalled. No-op for MailboxKeepalive (host helper owns the clock)
     // or Off (no liveness). Issue #2540: also a recommended coop poll edge.
-    if (false) add("orch:agent-touch", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !types::is_string(a[0])) {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "orch:agent-touch: usage (orch:agent-touch name)",
-                                        ev.primitive_error_counter_ptr());
-        }
-        auto name = heap_str_from(ev.string_heap_, a[0]);
-        // Issue #3727: name-table miss → session-local AgentScope::find
-        // (same resolve as send/recv/ask/join). Soft/Off: pointer walk.
-        auto* hp = resolve_aura_agent(ev, name);
-        if (!hp || !hp->ok) {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "orch:agent-touch: unknown agent",
-                                        ev.primitive_error_counter_ptr());
-        }
-        aura::orch::note_agent_progress(*hp);
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"ok", make_bool(true)},
-            {"schema", make_int(1588)},
-            {"schema-2008", make_int(2008)},
-            {"schema-2080", make_int(2080)},
-            {"schema-2540", make_int(aura::orch::kAgentMaxNoYieldIssue)},
-        };
-        return build_orch_hash(kv);
-    });
+    if (false)
+        add("orch:agent-touch", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !types::is_string(a[0])) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "orch:agent-touch: usage (orch:agent-touch name)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            auto name = heap_str_from(ev.string_heap_, a[0]);
+            // Issue #3727: name-table miss → session-local AgentScope::find
+            // (same resolve as send/recv/ask/join). Soft/Off: pointer walk.
+            auto* hp = resolve_aura_agent(ev, name);
+            if (!hp || !hp->ok) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "orch:agent-touch: unknown agent",
+                                            ev.primitive_error_counter_ptr());
+            }
+            aura::orch::note_agent_progress(*hp);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(true)},
+                {"schema", make_int(1588)},
+                {"schema-2008", make_int(2008)},
+                {"schema-2080", make_int(2080)},
+                {"schema-2540", make_int(aura::orch::kAgentMaxNoYieldIssue)},
+            };
+            return build_orch_hash(kv);
+        });
 
     // Issue #2540: cooperative yield poll for long-running agent bodies.
     // (orch:agent-poll name) → hash {ok, yielded, schema-2540}.
     // Forces Fiber::yield when max_no_yield_ms window elapsed; no-op when 0.
-    if (false) add("orch:agent-poll", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !types::is_string(a[0])) {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "orch:agent-poll: usage (orch:agent-poll name)",
-                                        ev.primitive_error_counter_ptr());
-        }
-        auto name = heap_str_from(ev.string_heap_, a[0]);
-        // Issue #3727: name-table miss → session-local AgentScope::find.
-        auto* hp = resolve_aura_agent(ev, name);
-        if (!hp || !hp->ok) {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "orch:agent-poll: unknown agent",
-                                        ev.primitive_error_counter_ptr());
-        }
-        const bool yielded = aura::orch::agent_poll(*hp);
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"ok", make_bool(true)},
-            {"yielded", make_bool(yielded)},
-            {"schema", make_int(aura::orch::kAgentMaxNoYieldIssue)},
-            {"schema-2540", make_int(aura::orch::kAgentMaxNoYieldIssue)},
-        };
-        return build_orch_hash(kv);
-    });
+    if (false)
+        add("orch:agent-poll", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !types::is_string(a[0])) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "orch:agent-poll: usage (orch:agent-poll name)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            auto name = heap_str_from(ev.string_heap_, a[0]);
+            // Issue #3727: name-table miss → session-local AgentScope::find.
+            auto* hp = resolve_aura_agent(ev, name);
+            if (!hp || !hp->ok) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "orch:agent-poll: unknown agent",
+                                            ev.primitive_error_counter_ptr());
+            }
+            const bool yielded = aura::orch::agent_poll(*hp);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(true)},
+                {"yielded", make_bool(yielded)},
+                {"schema", make_int(aura::orch::kAgentMaxNoYieldIssue)},
+                {"schema-2540", make_int(aura::orch::kAgentMaxNoYieldIssue)},
+            };
+            return build_orch_hash(kv);
+        });
 }
 
 // Issue #5033: (orch:parallel-intend) alias + (orch:compose-workflow).
@@ -7446,15 +7487,16 @@ void RegSplitParts::register_orch_workflow_primitives(Evaluator& ev, AddFn& add)
     auto orch_keyword_key = [&ev](const EvalValue& v) -> std::string {
         return RegSplitParts::orch_keyword_key(ev, v);
     };
-    if (false) add("orch:parallel-intend", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        auto prim = ev.primitives_.lookup("parallel-intend");
-        if (!prim) {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "orch:parallel-intend: parallel-intend not registered",
-                                        ev.primitive_error_counter_ptr());
-        }
-        return (*prim)(a);
-    });
+    if (false)
+        add("orch:parallel-intend", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            auto prim = ev.primitives_.lookup("parallel-intend");
+            if (!prim) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "orch:parallel-intend: parallel-intend not registered",
+                                            ev.primitive_error_counter_ptr());
+            }
+            return (*prim)(a);
+        });
 
     // Issue #2852: supervised-batch / workflow-apply sugar. Maps a composed
     // WorkflowFailurePolicy onto parallel_intend (Phase A) + scope.watch_all
@@ -7482,146 +7524,150 @@ void RegSplitParts::register_orch_workflow_primitives(Evaluator& ev, AddFn& add)
     //      [:max-retries n] [:consecutive-fail-limit n] [:retry-backoff-ms n])
     //   → hash {ok, batch-policy, failure-policy, agent/policy, residual,
     //           max-retries, …, schema-2756, schema-2843}
-    if (false) add("orch:compose-workflow",
-        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
-            if (a.empty()) {
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
-                    "orch:compose-workflow: usage "
-                    "(orch:compose-workflow batch-policy [:residual r] "
-                    "[:max-retries n] [:consecutive-fail-limit n] [:retry-backoff-ms n])",
-                    ev.primitive_error_counter_ptr());
-            }
-            using FP = aura::serve::parallel_orch::FailurePolicy;
-            FP batch = FP::CollectAll;
-            auto parse_batch = [](std::string_view v) -> FP {
-                while (!v.empty() && v[0] == ':')
-                    v = v.substr(1);
-                if (v == "fail-fast" || v == "fail_fast")
-                    return FP::FailFast;
-                if (v == "collect-all" || v == "collect_all")
-                    return FP::CollectAll;
-                if (v == "retry-n" || v == "retry_n" || v == "retry")
-                    return FP::RetryN;
-                if (v == "circuit-breaker" || v == "circuit_breaker" || v == "circuit")
-                    return FP::CircuitBreaker;
-                return FP::CollectAll;
-            };
-            if (types::is_string(a[0]) || types::is_keyword(a[0]) || types::is_symbol(a[0])) {
-                std::string v = orch_keyword_key(a[0]);
-                batch = parse_batch(v);
-            } else if (types::is_int(a[0])) {
-                const auto n = types::as_int(a[0]);
-                if (n == 0)
-                    batch = FP::FailFast;
-                else if (n == 1)
-                    batch = FP::CollectAll;
-                else if (n == 2)
-                    batch = FP::RetryN;
-                else if (n == 3)
-                    batch = FP::CircuitBreaker;
-            }
-            auto residual = aura::orch::ResidualReclaimPreference::Report;
-            std::uint32_t max_retries = 0;
-            std::uint32_t consecutive_fail_limit = 3;
-            std::uint32_t retry_backoff_ms = 0;
-            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                auto& val = a[i + 1];
-                if (k == "residual" &&
-                    (types::is_string(val) || types::is_keyword(val) || types::is_symbol(val))) {
-                    std::string rv = types::is_string(val) ? heap_str_from(ev.string_heap_, val)
-                                                           : orch_keyword_key(val);
-                    while (!rv.empty() && rv[0] == ':')
-                        rv = rv.substr(1);
-                    if (rv == "cancel" || rv == "cancel-on-residual")
-                        residual = aura::orch::ResidualReclaimPreference::Cancel;
-                    else if (rv == "join-drain" || rv == "join_drain" || rv == "drain")
-                        residual = aura::orch::ResidualReclaimPreference::JoinDrain;
-                    else if (rv == "defer")
-                        residual = aura::orch::ResidualReclaimPreference::Defer;
-                    else
-                        residual = aura::orch::ResidualReclaimPreference::Report;
-                } else if ((k == "max-retries" || k == "max_retries") && types::is_int(val)) {
-                    max_retries =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
-                } else if ((k == "consecutive-fail-limit" || k == "consecutive_fail_limit") &&
-                           types::is_int(val)) {
-                    consecutive_fail_limit =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(1, types::as_int(val)));
-                } else if ((k == "retry-backoff-ms" || k == "retry_backoff_ms") &&
-                           types::is_int(val)) {
-                    retry_backoff_ms =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
-                } else if ((k == "batch-policy" || k == "failure-policy" ||
-                            k == "failure_policy") &&
-                           (types::is_string(val) || types::is_keyword(val) ||
-                            types::is_symbol(val))) {
-                    std::string bv = types::is_string(val) ? heap_str_from(ev.string_heap_, val)
-                                                           : orch_keyword_key(val);
-                    batch = parse_batch(bv);
+    if (false)
+        add("orch:compose-workflow",
+            [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+                if (a.empty()) {
+                    return make_primitive_error(
+                        ev.string_heap_, ev.error_values_,
+                        "orch:compose-workflow: usage "
+                        "(orch:compose-workflow batch-policy [:residual r] "
+                        "[:max-retries n] [:consecutive-fail-limit n] [:retry-backoff-ms n])",
+                        ev.primitive_error_counter_ptr());
                 }
-            }
-            // Compose via C++ #2756 helper (bumps workflow_compose_total + class counters).
-            const auto w = aura::orch::compose_workflow_policy(
-                batch, residual, max_retries, consecutive_fail_limit, retry_backoff_ms);
-            aura::orch::note_workflow_compose_aura();
-            const auto ap = aura::orch::to_agent_policy(w);
-            const auto pp = aura::orch::to_parallel_policy(w);
-            auto push_str = [&ev](const char* s) -> EvalValue {
-                auto idx = ev.push_string_heap(s);
-                return make_string(idx);
-            };
-            // Projected fields usable as parallel-intend / scope-watch kwargs
-            // (AC1 / AC4). Residual is advisory under Soft / Report (#2661);
-            // production + explicit cancel/join-drain acts in apply_workflow
-            // (#3206). Reclaim path unchanged.
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(true)},
-                {"batch-policy", push_str(aura::orch::failure_policy_name(w.batch_policy))},
-                // parallel-intend kwargs projection
-                {"failure-policy", push_str(aura::orch::failure_policy_name(pp.failure_policy))},
-                {"max-retries", make_int(static_cast<std::int64_t>(pp.max_retries))},
-                // Issue #4784: a :max-retries the chosen batch policy does not
-                // consume (anything but retry-n) used to vanish silently.
-                // Echo what was asked and flag that it was ignored.
-                {"max-retries-requested", make_int(static_cast<std::int64_t>(max_retries))},
-                {"max-retries-ignored", make_bool(max_retries > 0 && w.batch_policy != FP::RetryN)},
-                {"consecutive-fail-limit",
-                 make_int(static_cast<std::int64_t>(pp.consecutive_fail_limit))},
-                {"retry-backoff-ms", make_int(static_cast<std::int64_t>(pp.retry_backoff_ms))},
-                {"fail-fast", make_bool(pp.fail_fast || w.batch_policy == FP::FailFast)},
-                // scope-watch kwargs projection (agent stall policy)
-                {"policy", push_str(aura::orch::agent_failure_action_name(ap.on_stall))},
-                {"on-stall", push_str(aura::orch::agent_failure_action_name(ap.on_stall))},
-                {"max-restarts", make_int(static_cast<std::int64_t>(ap.max_restarts))},
-                {"consecutive-stall-limit",
-                 make_int(static_cast<std::int64_t>(ap.consecutive_stall_limit))},
-                {"restart-backoff-ms", make_int(static_cast<std::int64_t>(ap.restart_backoff_ms))},
-                // Issue #4237: honest fuel face — a "restart-n" policy with
-                // max_restarts == 0 is restart belief without re-spawn fuel
-                // (join arm exhausts, watch arm skips). No new query key.
-                {"restart-fuel-missing", make_bool(w.restart_fuel_missing)},
-                // residual preference (advisory)
-                {"residual", push_str(aura::orch::residual_preference_name(w.residual))},
-                {"residual-action", push_str(aura::orch::residual_action_name(w.residual))},
-                {"residual-cancel", make_bool(aura::orch::residual_prefers_cancel(w))},
-                {"residual-defer", make_bool(aura::orch::residual_prefers_defer(w))},
-                {"residual-join-drain", make_bool(aura::orch::residual_prefers_join_drain(w))},
-                {"schema-3206", make_int(aura::orch::kWorkflowResidualActionIssue)},
-                {"issue-3206", make_int(aura::orch::kWorkflowResidualActionIssue)},
-                {"parallel-intend-kwargs-ready", make_bool(true)},
-                {"scope-watch-kwargs-ready", make_bool(true)},
-                {"schema", make_int(aura::orch::kWorkflowComposeAuraIssue)},
-                {"schema-2756", make_int(aura::orch::kWorkflowFailurePolicyIssue)},
-                {"issue-2756", make_int(aura::orch::kWorkflowFailurePolicyIssue)},
-                {"schema-2843", make_int(aura::orch::kWorkflowComposeAuraIssue)},
-                {"issue-2843", make_int(aura::orch::kWorkflowComposeAuraIssue)},
-                {"schema-2539", make_int(aura::orch::kFailurePolicyBridgeIssue)},
-                {"wired", make_int(1)},
-            };
-            return build_orch_hash(kv);
-        });
+                using FP = aura::serve::parallel_orch::FailurePolicy;
+                FP batch = FP::CollectAll;
+                auto parse_batch = [](std::string_view v) -> FP {
+                    while (!v.empty() && v[0] == ':')
+                        v = v.substr(1);
+                    if (v == "fail-fast" || v == "fail_fast")
+                        return FP::FailFast;
+                    if (v == "collect-all" || v == "collect_all")
+                        return FP::CollectAll;
+                    if (v == "retry-n" || v == "retry_n" || v == "retry")
+                        return FP::RetryN;
+                    if (v == "circuit-breaker" || v == "circuit_breaker" || v == "circuit")
+                        return FP::CircuitBreaker;
+                    return FP::CollectAll;
+                };
+                if (types::is_string(a[0]) || types::is_keyword(a[0]) || types::is_symbol(a[0])) {
+                    std::string v = orch_keyword_key(a[0]);
+                    batch = parse_batch(v);
+                } else if (types::is_int(a[0])) {
+                    const auto n = types::as_int(a[0]);
+                    if (n == 0)
+                        batch = FP::FailFast;
+                    else if (n == 1)
+                        batch = FP::CollectAll;
+                    else if (n == 2)
+                        batch = FP::RetryN;
+                    else if (n == 3)
+                        batch = FP::CircuitBreaker;
+                }
+                auto residual = aura::orch::ResidualReclaimPreference::Report;
+                std::uint32_t max_retries = 0;
+                std::uint32_t consecutive_fail_limit = 3;
+                std::uint32_t retry_backoff_ms = 0;
+                for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    auto& val = a[i + 1];
+                    if (k == "residual" && (types::is_string(val) || types::is_keyword(val) ||
+                                            types::is_symbol(val))) {
+                        std::string rv = types::is_string(val) ? heap_str_from(ev.string_heap_, val)
+                                                               : orch_keyword_key(val);
+                        while (!rv.empty() && rv[0] == ':')
+                            rv = rv.substr(1);
+                        if (rv == "cancel" || rv == "cancel-on-residual")
+                            residual = aura::orch::ResidualReclaimPreference::Cancel;
+                        else if (rv == "join-drain" || rv == "join_drain" || rv == "drain")
+                            residual = aura::orch::ResidualReclaimPreference::JoinDrain;
+                        else if (rv == "defer")
+                            residual = aura::orch::ResidualReclaimPreference::Defer;
+                        else
+                            residual = aura::orch::ResidualReclaimPreference::Report;
+                    } else if ((k == "max-retries" || k == "max_retries") && types::is_int(val)) {
+                        max_retries = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(val)));
+                    } else if ((k == "consecutive-fail-limit" || k == "consecutive_fail_limit") &&
+                               types::is_int(val)) {
+                        consecutive_fail_limit = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(1, types::as_int(val)));
+                    } else if ((k == "retry-backoff-ms" || k == "retry_backoff_ms") &&
+                               types::is_int(val)) {
+                        retry_backoff_ms = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(val)));
+                    } else if ((k == "batch-policy" || k == "failure-policy" ||
+                                k == "failure_policy") &&
+                               (types::is_string(val) || types::is_keyword(val) ||
+                                types::is_symbol(val))) {
+                        std::string bv = types::is_string(val) ? heap_str_from(ev.string_heap_, val)
+                                                               : orch_keyword_key(val);
+                        batch = parse_batch(bv);
+                    }
+                }
+                // Compose via C++ #2756 helper (bumps workflow_compose_total + class counters).
+                const auto w = aura::orch::compose_workflow_policy(
+                    batch, residual, max_retries, consecutive_fail_limit, retry_backoff_ms);
+                aura::orch::note_workflow_compose_aura();
+                const auto ap = aura::orch::to_agent_policy(w);
+                const auto pp = aura::orch::to_parallel_policy(w);
+                auto push_str = [&ev](const char* s) -> EvalValue {
+                    auto idx = ev.push_string_heap(s);
+                    return make_string(idx);
+                };
+                // Projected fields usable as parallel-intend / scope-watch kwargs
+                // (AC1 / AC4). Residual is advisory under Soft / Report (#2661);
+                // production + explicit cancel/join-drain acts in apply_workflow
+                // (#3206). Reclaim path unchanged.
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(true)},
+                    {"batch-policy", push_str(aura::orch::failure_policy_name(w.batch_policy))},
+                    // parallel-intend kwargs projection
+                    {"failure-policy",
+                     push_str(aura::orch::failure_policy_name(pp.failure_policy))},
+                    {"max-retries", make_int(static_cast<std::int64_t>(pp.max_retries))},
+                    // Issue #4784: a :max-retries the chosen batch policy does not
+                    // consume (anything but retry-n) used to vanish silently.
+                    // Echo what was asked and flag that it was ignored.
+                    {"max-retries-requested", make_int(static_cast<std::int64_t>(max_retries))},
+                    {"max-retries-ignored",
+                     make_bool(max_retries > 0 && w.batch_policy != FP::RetryN)},
+                    {"consecutive-fail-limit",
+                     make_int(static_cast<std::int64_t>(pp.consecutive_fail_limit))},
+                    {"retry-backoff-ms", make_int(static_cast<std::int64_t>(pp.retry_backoff_ms))},
+                    {"fail-fast", make_bool(pp.fail_fast || w.batch_policy == FP::FailFast)},
+                    // scope-watch kwargs projection (agent stall policy)
+                    {"policy", push_str(aura::orch::agent_failure_action_name(ap.on_stall))},
+                    {"on-stall", push_str(aura::orch::agent_failure_action_name(ap.on_stall))},
+                    {"max-restarts", make_int(static_cast<std::int64_t>(ap.max_restarts))},
+                    {"consecutive-stall-limit",
+                     make_int(static_cast<std::int64_t>(ap.consecutive_stall_limit))},
+                    {"restart-backoff-ms",
+                     make_int(static_cast<std::int64_t>(ap.restart_backoff_ms))},
+                    // Issue #4237: honest fuel face — a "restart-n" policy with
+                    // max_restarts == 0 is restart belief without re-spawn fuel
+                    // (join arm exhausts, watch arm skips). No new query key.
+                    {"restart-fuel-missing", make_bool(w.restart_fuel_missing)},
+                    // residual preference (advisory)
+                    {"residual", push_str(aura::orch::residual_preference_name(w.residual))},
+                    {"residual-action", push_str(aura::orch::residual_action_name(w.residual))},
+                    {"residual-cancel", make_bool(aura::orch::residual_prefers_cancel(w))},
+                    {"residual-defer", make_bool(aura::orch::residual_prefers_defer(w))},
+                    {"residual-join-drain", make_bool(aura::orch::residual_prefers_join_drain(w))},
+                    {"schema-3206", make_int(aura::orch::kWorkflowResidualActionIssue)},
+                    {"issue-3206", make_int(aura::orch::kWorkflowResidualActionIssue)},
+                    {"parallel-intend-kwargs-ready", make_bool(true)},
+                    {"scope-watch-kwargs-ready", make_bool(true)},
+                    {"schema", make_int(aura::orch::kWorkflowComposeAuraIssue)},
+                    {"schema-2756", make_int(aura::orch::kWorkflowFailurePolicyIssue)},
+                    {"issue-2756", make_int(aura::orch::kWorkflowFailurePolicyIssue)},
+                    {"schema-2843", make_int(aura::orch::kWorkflowComposeAuraIssue)},
+                    {"issue-2843", make_int(aura::orch::kWorkflowComposeAuraIssue)},
+                    {"schema-2539", make_int(aura::orch::kFailurePolicyBridgeIssue)},
+                    {"wired", make_int(1)},
+                };
+                return build_orch_hash(kv);
+            });
 }
 
 // Issue #5033: (orch:supervise-batch ...).
@@ -7634,190 +7680,193 @@ void RegSplitParts::register_supervise_batch_primitive(Evaluator& ev, AddFn& add
     auto orch_keyword_key = [&ev](const EvalValue& v) -> std::string {
         return RegSplitParts::orch_keyword_key(ev, v);
     };
-    if (false) add("orch:supervise-batch",
-        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
-            if (a.size() < 2 ||
-                !(types::is_pair(a[0]) || types::is_vector(a[0]) || types::is_void(a[0])) ||
-                !types::is_hash(a[1])) {
-                return make_primitive_error(
-                    ev.string_heap_, ev.error_values_,
-                    "orch:supervise-batch: usage "
-                    "(orch:supervise-batch tasks policy [:stall-timeout-ms n] "
-                    "[:watch-scope bool] [:region-keys vec])",
-                    ev.primitive_error_counter_ptr());
-            }
-            // Issue #3495: parse kwargs with orch_keyword_key (keywords, not
-            // string-only) so :watch-scope #f actually skips Phase B.
-            std::uint32_t stall_timeout_ms = 0;
-            bool watch_scope = true;
-            std::vector<std::uint64_t> region_keys;
-            for (std::size_t i = 2; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                if (k == "stall-timeout-ms" && types::is_int(a[i + 1]))
-                    stall_timeout_ms = static_cast<std::uint32_t>(
-                        std::max<std::int64_t>(0, types::as_int(a[i + 1])));
-                else if (k == "watch-scope" && types::is_bool(a[i + 1]))
-                    watch_scope = types::as_bool(a[i + 1]);
-                else if ((k == "region-keys" || k == "region_keys") && types::is_vector(a[i + 1])) {
-                    // Issue #3926 / #4000: forward :region-keys onto child
-                    // specs / no-watch intend. Host-supplied only — never
-                    // invent keys when the kwarg is absent.
-                    auto rvidx = types::as_vector_idx(a[i + 1]);
-                    if (rvidx < ev.vector_heap_.size()) {
-                        region_keys.clear();
-                        for (auto& e : ev.vector_heap_[rvidx]) {
-                            if (types::is_int(e))
-                                region_keys.push_back(static_cast<std::uint64_t>(
-                                    std::max<std::int64_t>(0, types::as_int(e))));
-                            else
-                                region_keys.push_back(0);
+    if (false)
+        add("orch:supervise-batch",
+            [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+                if (a.size() < 2 ||
+                    !(types::is_pair(a[0]) || types::is_vector(a[0]) || types::is_void(a[0])) ||
+                    !types::is_hash(a[1])) {
+                    return make_primitive_error(
+                        ev.string_heap_, ev.error_values_,
+                        "orch:supervise-batch: usage "
+                        "(orch:supervise-batch tasks policy [:stall-timeout-ms n] "
+                        "[:watch-scope bool] [:region-keys vec])",
+                        ev.primitive_error_counter_ptr());
+                }
+                // Issue #3495: parse kwargs with orch_keyword_key (keywords, not
+                // string-only) so :watch-scope #f actually skips Phase B.
+                std::uint32_t stall_timeout_ms = 0;
+                bool watch_scope = true;
+                std::vector<std::uint64_t> region_keys;
+                for (std::size_t i = 2; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    if (k == "stall-timeout-ms" && types::is_int(a[i + 1]))
+                        stall_timeout_ms = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+                    else if (k == "watch-scope" && types::is_bool(a[i + 1]))
+                        watch_scope = types::as_bool(a[i + 1]);
+                    else if ((k == "region-keys" || k == "region_keys") &&
+                             types::is_vector(a[i + 1])) {
+                        // Issue #3926 / #4000: forward :region-keys onto child
+                        // specs / no-watch intend. Host-supplied only — never
+                        // invent keys when the kwarg is absent.
+                        auto rvidx = types::as_vector_idx(a[i + 1]);
+                        if (rvidx < ev.vector_heap_.size()) {
+                            region_keys.clear();
+                            for (auto& e : ev.vector_heap_[rvidx]) {
+                                if (types::is_int(e))
+                                    region_keys.push_back(static_cast<std::uint64_t>(
+                                        std::max<std::int64_t>(0, types::as_int(e))));
+                                else
+                                    region_keys.push_back(0);
+                            }
                         }
                     }
                 }
-            }
 
-            auto hash_lookup = [&ev](const EvalValue& h, std::string_view key) -> EvalValue {
-                if (!types::is_hash(h))
+                auto hash_lookup = [&ev](const EvalValue& h, std::string_view key) -> EvalValue {
+                    if (!types::is_hash(h))
+                        return {};
+                    auto hidx = types::as_hash_idx(h);
+                    if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
+                        return {};
+                    auto* ht = g_hash_tables[hidx];
+                    auto meta = ht->metadata();
+                    auto keys = ht->keys();
+                    auto vals = ht->values();
+                    auto hcap = ht->capacity;
+                    for (std::size_t si = 0; si < hcap; ++si) {
+                        // Issue #4612: a deleted slot (tombstone) is not a live key.
+                        if (!::aura::compiler::hash::hash_slot_is_live(meta[si]))
+                            continue;
+                        EvalValue ke{};
+                        ke.val = keys[si];
+                        if (!types::is_string(ke))
+                            continue;
+                        if (heap_str_from(ev.string_heap_, ke) != key)
+                            continue;
+                        EvalValue ve{};
+                        ve.val = vals[si];
+                        return ve;
+                    }
                     return {};
-                auto hidx = types::as_hash_idx(h);
-                if (hidx >= g_hash_tables.size() || !g_hash_tables[hidx])
-                    return {};
-                auto* ht = g_hash_tables[hidx];
-                auto meta = ht->metadata();
-                auto keys = ht->keys();
-                auto vals = ht->values();
-                auto hcap = ht->capacity;
-                for (std::size_t si = 0; si < hcap; ++si) {
-                    // Issue #4612: a deleted slot (tombstone) is not a live key.
-                    if (!::aura::compiler::hash::hash_slot_is_live(meta[si]))
-                        continue;
-                    EvalValue ke{};
-                    ke.val = keys[si];
-                    if (!types::is_string(ke))
-                        continue;
-                    if (heap_str_from(ev.string_heap_, ke) != key)
-                        continue;
-                    EvalValue ve{};
-                    ve.val = vals[si];
-                    return ve;
-                }
-                return {};
-            };
+                };
 
-            using FP = aura::serve::parallel_orch::FailurePolicy;
-            auto parse_batch = [](std::string_view v) -> FP {
-                while (!v.empty() && v[0] == ':')
-                    v = v.substr(1);
-                if (v == "fail-fast" || v == "fail_fast")
-                    return FP::FailFast;
-                if (v == "collect-all" || v == "collect_all")
+                using FP = aura::serve::parallel_orch::FailurePolicy;
+                auto parse_batch = [](std::string_view v) -> FP {
+                    while (!v.empty() && v[0] == ':')
+                        v = v.substr(1);
+                    if (v == "fail-fast" || v == "fail_fast")
+                        return FP::FailFast;
+                    if (v == "collect-all" || v == "collect_all")
+                        return FP::CollectAll;
+                    if (v == "retry-n" || v == "retry_n" || v == "retry")
+                        return FP::RetryN;
+                    if (v == "circuit-breaker" || v == "circuit_breaker" || v == "circuit")
+                        return FP::CircuitBreaker;
                     return FP::CollectAll;
-                if (v == "retry-n" || v == "retry_n" || v == "retry")
-                    return FP::RetryN;
-                if (v == "circuit-breaker" || v == "circuit_breaker" || v == "circuit")
-                    return FP::CircuitBreaker;
-                return FP::CollectAll;
-            };
-            auto parse_residual = [](std::string_view rv) -> aura::orch::ResidualReclaimPreference {
-                while (!rv.empty() && rv[0] == ':')
-                    rv = rv.substr(1);
-                if (rv == "cancel" || rv == "cancel-on-residual")
-                    return aura::orch::ResidualReclaimPreference::Cancel;
-                if (rv == "join-drain" || rv == "join_drain" || rv == "drain")
-                    return aura::orch::ResidualReclaimPreference::JoinDrain;
-                if (rv == "defer")
-                    return aura::orch::ResidualReclaimPreference::Defer;
-                return aura::orch::ResidualReclaimPreference::Report;
-            };
+                };
+                auto parse_residual =
+                    [](std::string_view rv) -> aura::orch::ResidualReclaimPreference {
+                    while (!rv.empty() && rv[0] == ':')
+                        rv = rv.substr(1);
+                    if (rv == "cancel" || rv == "cancel-on-residual")
+                        return aura::orch::ResidualReclaimPreference::Cancel;
+                    if (rv == "join-drain" || rv == "join_drain" || rv == "drain")
+                        return aura::orch::ResidualReclaimPreference::JoinDrain;
+                    if (rv == "defer")
+                        return aura::orch::ResidualReclaimPreference::Defer;
+                    return aura::orch::ResidualReclaimPreference::Report;
+                };
 
-            FP batch = FP::CollectAll;
-            auto residual = aura::orch::ResidualReclaimPreference::Report;
-            std::uint32_t max_retries = 0;
-            std::uint32_t consecutive_fail_limit = 3;
-            std::uint32_t retry_backoff_ms = 0;
-            {
-                auto try_fp = hash_lookup(a[1], "failure-policy");
-                if (!types::is_string(try_fp) && !types::is_keyword(try_fp) &&
-                    !types::is_symbol(try_fp))
-                    try_fp = hash_lookup(a[1], "batch-policy");
-                if (types::is_string(try_fp) || types::is_keyword(try_fp) ||
-                    types::is_symbol(try_fp)) {
-                    std::string bv = types::is_string(try_fp)
-                                         ? heap_str_from(ev.string_heap_, try_fp)
-                                         : orch_keyword_key(try_fp);
-                    batch = parse_batch(bv);
+                FP batch = FP::CollectAll;
+                auto residual = aura::orch::ResidualReclaimPreference::Report;
+                std::uint32_t max_retries = 0;
+                std::uint32_t consecutive_fail_limit = 3;
+                std::uint32_t retry_backoff_ms = 0;
+                {
+                    auto try_fp = hash_lookup(a[1], "failure-policy");
+                    if (!types::is_string(try_fp) && !types::is_keyword(try_fp) &&
+                        !types::is_symbol(try_fp))
+                        try_fp = hash_lookup(a[1], "batch-policy");
+                    if (types::is_string(try_fp) || types::is_keyword(try_fp) ||
+                        types::is_symbol(try_fp)) {
+                        std::string bv = types::is_string(try_fp)
+                                             ? heap_str_from(ev.string_heap_, try_fp)
+                                             : orch_keyword_key(try_fp);
+                        batch = parse_batch(bv);
+                    }
+                    auto rv = hash_lookup(a[1], "residual");
+                    if (types::is_string(rv) || types::is_keyword(rv) || types::is_symbol(rv)) {
+                        std::string rs = types::is_string(rv) ? heap_str_from(ev.string_heap_, rv)
+                                                              : orch_keyword_key(rv);
+                        residual = parse_residual(rs);
+                    }
+                    auto iv = hash_lookup(a[1], "max-retries");
+                    if (types::is_int(iv))
+                        max_retries = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(iv)));
+                    iv = hash_lookup(a[1], "consecutive-fail-limit");
+                    if (types::is_int(iv))
+                        consecutive_fail_limit = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(1, types::as_int(iv)));
+                    iv = hash_lookup(a[1], "retry-backoff-ms");
+                    if (types::is_int(iv))
+                        retry_backoff_ms = static_cast<std::uint32_t>(
+                            std::max<std::int64_t>(0, types::as_int(iv)));
                 }
-                auto rv = hash_lookup(a[1], "residual");
-                if (types::is_string(rv) || types::is_keyword(rv) || types::is_symbol(rv)) {
-                    std::string rs = types::is_string(rv) ? heap_str_from(ev.string_heap_, rv)
-                                                          : orch_keyword_key(rv);
-                    residual = parse_residual(rs);
-                }
-                auto iv = hash_lookup(a[1], "max-retries");
-                if (types::is_int(iv))
-                    max_retries =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(iv)));
-                iv = hash_lookup(a[1], "consecutive-fail-limit");
-                if (types::is_int(iv))
-                    consecutive_fail_limit =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(1, types::as_int(iv)));
-                iv = hash_lookup(a[1], "retry-backoff-ms");
-                if (types::is_int(iv))
-                    retry_backoff_ms =
-                        static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(iv)));
-            }
-            // Policy hash is not dropped: compose → to_parallel_policy /
-            // to_agent_policy inside apply_workflow.
-            const auto w = aura::orch::compose_workflow_policy(
-                batch, residual, max_retries, consecutive_fail_limit, retry_backoff_ms);
+                // Policy hash is not dropped: compose → to_parallel_policy /
+                // to_agent_policy inside apply_workflow.
+                const auto w = aura::orch::compose_workflow_policy(
+                    batch, residual, max_retries, consecutive_fail_limit, retry_backoff_ms);
 
-            std::vector<std::uint64_t> cids;
-            if (types::is_vector(a[0])) {
-                auto vidx = types::as_vector_idx(a[0]);
-                if (vidx < ev.vector_heap_.size()) {
-                    for (auto& e : ev.vector_heap_[vidx]) {
+                std::vector<std::uint64_t> cids;
+                if (types::is_vector(a[0])) {
+                    auto vidx = types::as_vector_idx(a[0]);
+                    if (vidx < ev.vector_heap_.size()) {
+                        for (auto& e : ev.vector_heap_[vidx]) {
+                            if (types::is_closure(e))
+                                cids.push_back(types::as_closure_id(e));
+                        }
+                    }
+                } else if (types::is_pair(a[0])) {
+                    EvalValue cur = a[0];
+                    while (types::is_pair(cur)) {
+                        auto pidx = types::as_pair_idx(cur);
+                        if (pidx >= ev.pairs_.size())
+                            break;
+                        auto& e = ev.pairs_[pidx].car;
                         if (types::is_closure(e))
                             cids.push_back(types::as_closure_id(e));
+                        cur = ev.pairs_[pidx].cdr;
                     }
                 }
-            } else if (types::is_pair(a[0])) {
-                EvalValue cur = a[0];
-                while (types::is_pair(cur)) {
-                    auto pidx = types::as_pair_idx(cur);
-                    if (pidx >= ev.pairs_.size())
-                        break;
-                    auto& e = ev.pairs_[pidx].car;
-                    if (types::is_closure(e))
-                        cids.push_back(types::as_closure_id(e));
-                    cur = ev.pairs_[pidx].cdr;
-                }
-            }
 
-            (void)orch_scheduler();
-            auto& root =
-                aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), orch_scheduler());
-            // Issue #3726: one population per apply_workflow call. Closures
-            // were never AgentScope::spawn'd into the session root that
-            // Phase B watch_all / Phase C cancel_all walked, so RestartN /
-            // Cancel hit unrelated orch:scope-spawn agents (S). Dedicated
-            // child: watch/join/cancel/RestartN stay on this batch; root S
-            // is untouched. Issue #3803: AgentSpec.region_key exists for
-            // join/workflow observe; Phase A TaskSpec still defaults 0
-            // (Serialized) unless the host supplies :region-keys.
-            auto& child = root.spawn_child();
-            SuperviseBatchState st;
-            st.stall_timeout_ms = stall_timeout_ms;
-            st.watch_scope = watch_scope;
-            st.region_keys = std::move(region_keys);
-            st.batch = batch;
-            st.residual = residual;
-            st.max_retries = max_retries;
-            st.retry_backoff_ms = retry_backoff_ms;
-            st.w = w;
-            st.cids = std::move(cids);
-            RegSplitParts::supervise_batch_arm(ev, a, root, child, st);
-            return RegSplitParts::supervise_batch_apply(ev, root, child, st, build_orch_hash);
-        });
+                (void)orch_scheduler();
+                auto& root = aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev),
+                                                                   orch_scheduler());
+                // Issue #3726: one population per apply_workflow call. Closures
+                // were never AgentScope::spawn'd into the session root that
+                // Phase B watch_all / Phase C cancel_all walked, so RestartN /
+                // Cancel hit unrelated orch:scope-spawn agents (S). Dedicated
+                // child: watch/join/cancel/RestartN stay on this batch; root S
+                // is untouched. Issue #3803: AgentSpec.region_key exists for
+                // join/workflow observe; Phase A TaskSpec still defaults 0
+                // (Serialized) unless the host supplies :region-keys.
+                auto& child = root.spawn_child();
+                SuperviseBatchState st;
+                st.stall_timeout_ms = stall_timeout_ms;
+                st.watch_scope = watch_scope;
+                st.region_keys = std::move(region_keys);
+                st.batch = batch;
+                st.residual = residual;
+                st.max_retries = max_retries;
+                st.retry_backoff_ms = retry_backoff_ms;
+                st.w = w;
+                st.cids = std::move(cids);
+                RegSplitParts::supervise_batch_arm(ev, a, root, child, st);
+                return RegSplitParts::supervise_batch_apply(ev, root, child, st, build_orch_hash);
+            });
 }
 
 // Issue #5033: orch:supervise-batch Phase A / watch arm phase.
@@ -8238,55 +8287,56 @@ void RegSplitParts::register_run_workflow_primitive(Evaluator& ev, AddFn& add) {
     // :watch-scope and production residual cancel|join-drain act on this
     // run's child AgentScope, not the session root (#3726 model).
     // Soft / Report / Defer stay observe-only (#2661 / #3206).
-    if (false) add("orch:run-workflow",
-        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
-            if (a.empty() ||
-                (!types::is_vector(a[0]) && !types::is_pair(a[0]) && !types::is_void(a[0]))) {
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            "orch:run-workflow: usage "
-                                            "(orch:run-workflow stages [:residual r])",
-                                            ev.primitive_error_counter_ptr());
-            }
-            auto residual = aura::orch::ResidualReclaimPreference::Report;
-            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                auto& val = a[i + 1];
-                if (k == "residual" &&
-                    (types::is_string(val) || types::is_keyword(val) || types::is_symbol(val))) {
-                    std::string rv = types::is_string(val) ? heap_str_from(ev.string_heap_, val)
-                                                           : orch_keyword_key(val);
-                    while (!rv.empty() && rv[0] == ':')
-                        rv = rv.substr(1);
-                    if (rv == "cancel" || rv == "cancel-on-residual")
-                        residual = aura::orch::ResidualReclaimPreference::Cancel;
-                    else if (rv == "join-drain" || rv == "join_drain" || rv == "drain")
-                        residual = aura::orch::ResidualReclaimPreference::JoinDrain;
-                    else if (rv == "defer")
-                        residual = aura::orch::ResidualReclaimPreference::Defer;
-                    else
-                        residual = aura::orch::ResidualReclaimPreference::Report;
+    if (false)
+        add("orch:run-workflow",
+            [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+                if (a.empty() ||
+                    (!types::is_vector(a[0]) && !types::is_pair(a[0]) && !types::is_void(a[0]))) {
+                    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                "orch:run-workflow: usage "
+                                                "(orch:run-workflow stages [:residual r])",
+                                                ev.primitive_error_counter_ptr());
                 }
-            }
-            std::vector<EvalValue> stage_hashes;
-            if (types::is_vector(a[0])) {
-                auto vidx = types::as_vector_idx(a[0]);
-                if (vidx < ev.vector_heap_.size()) {
-                    for (auto& e : ev.vector_heap_[vidx])
-                        stage_hashes.push_back(e);
+                auto residual = aura::orch::ResidualReclaimPreference::Report;
+                for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    auto& val = a[i + 1];
+                    if (k == "residual" && (types::is_string(val) || types::is_keyword(val) ||
+                                            types::is_symbol(val))) {
+                        std::string rv = types::is_string(val) ? heap_str_from(ev.string_heap_, val)
+                                                               : orch_keyword_key(val);
+                        while (!rv.empty() && rv[0] == ':')
+                            rv = rv.substr(1);
+                        if (rv == "cancel" || rv == "cancel-on-residual")
+                            residual = aura::orch::ResidualReclaimPreference::Cancel;
+                        else if (rv == "join-drain" || rv == "join_drain" || rv == "drain")
+                            residual = aura::orch::ResidualReclaimPreference::JoinDrain;
+                        else if (rv == "defer")
+                            residual = aura::orch::ResidualReclaimPreference::Defer;
+                        else
+                            residual = aura::orch::ResidualReclaimPreference::Report;
+                    }
                 }
-            } else if (types::is_pair(a[0])) {
-                EvalValue cur = a[0];
-                while (types::is_pair(cur)) {
-                    auto pidx = types::as_pair_idx(cur);
-                    if (pidx >= ev.pairs_.size())
-                        break;
-                    stage_hashes.push_back(ev.pairs_[pidx].car);
-                    cur = ev.pairs_[pidx].cdr;
+                std::vector<EvalValue> stage_hashes;
+                if (types::is_vector(a[0])) {
+                    auto vidx = types::as_vector_idx(a[0]);
+                    if (vidx < ev.vector_heap_.size()) {
+                        for (auto& e : ev.vector_heap_[vidx])
+                            stage_hashes.push_back(e);
+                    }
+                } else if (types::is_pair(a[0])) {
+                    EvalValue cur = a[0];
+                    while (types::is_pair(cur)) {
+                        auto pidx = types::as_pair_idx(cur);
+                        if (pidx >= ev.pairs_.size())
+                            break;
+                        stage_hashes.push_back(ev.pairs_[pidx].car);
+                        cur = ev.pairs_[pidx].cdr;
+                    }
                 }
-            }
-            return RegSplitParts::run_workflow_stages(ev, stage_hashes, residual, build_orch_hash,
-                                                      orch_keyword_key);
-        });
+                return RegSplitParts::run_workflow_stages(ev, stage_hashes, residual,
+                                                          build_orch_hash, orch_keyword_key);
+            });
 }
 
 // Issue #5033: orch:run-workflow stage loop (phase).
@@ -9547,27 +9597,28 @@ void RegSplitParts::register_agent_token_primitives(Evaluator& ev, AddFn& add) {
     // AgentRegistry (stash is named `g_handoff_token_stash`, not
     // AgentRegistry; check_orch_mvp_scope.py forbids AgentRegistry but
     // accepts the handoff-token stash as a transient token stage).
-    if (false) add("orch:agent-export-via-token", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !types::is_string(a[0]))
-            return types::make_string(0);
-        const auto name_idx = types::as_string_idx(a[0]);
-        if (name_idx >= ev.string_heap_.size())
-            return types::make_string(0);
-        const auto& name = ev.string_at(name_idx);
-        // Issue #3727 / #3729: export a scope-spawned name via
-        // resolve_aura_agent. Token stages on Evaluator::handoff_tokens_
-        // (bounded). Process g_handoff_token_stash is hash→Evaluator*
-        // routing only — not AgentRegistry.
-        auto* hp = resolve_aura_agent(ev, name);
-        if (!hp)
-            return types::make_string(0);
-        auto tok = aura::orch::agent_export_handoff(*hp);
-        const auto hash = handoff_stash_put(ev, std::move(tok));
-        if (hash.empty())
-            return types::make_string(0);
-        const auto idx = ev.push_string_heap(hash);
-        return types::make_string(idx);
-    });
+    if (false)
+        add("orch:agent-export-via-token", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !types::is_string(a[0]))
+                return types::make_string(0);
+            const auto name_idx = types::as_string_idx(a[0]);
+            if (name_idx >= ev.string_heap_.size())
+                return types::make_string(0);
+            const auto& name = ev.string_at(name_idx);
+            // Issue #3727 / #3729: export a scope-spawned name via
+            // resolve_aura_agent. Token stages on Evaluator::handoff_tokens_
+            // (bounded). Process g_handoff_token_stash is hash→Evaluator*
+            // routing only — not AgentRegistry.
+            auto* hp = resolve_aura_agent(ev, name);
+            if (!hp)
+                return types::make_string(0);
+            auto tok = aura::orch::agent_export_handoff(*hp);
+            const auto hash = handoff_stash_put(ev, std::move(tok));
+            if (hash.empty())
+                return types::make_string(0);
+            const auto idx = ev.push_string_heap(hash);
+            return types::make_string(idx);
+        });
 
     // (orch:agent-import-via-token hash) → local name
     // Looks up the staged token, creates a proxy handle on the current
@@ -9579,35 +9630,36 @@ void RegSplitParts::register_agent_token_primitives(Evaluator& ev, AddFn& add) {
     // source's Scope remains the owner of the body fiber. Issue #3930:
     // join_agent / orch:agent-join on the proxy is Invalid (import_proxy)
     // — it must not cancel/drain/detach the shared fiber/mailbox.
-    if (false) add("orch:agent-import-via-token", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !types::is_string(a[0]))
-            return types::make_string(0);
-        const auto hash_idx = types::as_string_idx(a[0]);
-        if (hash_idx >= ev.string_heap_.size())
-            return types::make_string(0);
-        const auto& hash = ev.string_at(hash_idx);
-        aura::orch::HandoffToken tok;
-        bool took = ev.handoff_tokens_ && ev.handoff_tokens_->take(hash, tok);
-        if (!took) {
-            auto* src = handoff_stash_src(hash);
-            if (src && src != &ev && src->handoff_tokens_)
-                took = src->handoff_tokens_->take(hash, tok);
-        }
-        if (!took)
-            return types::make_string(0);
-        aura::compiler::g_handoff_token_stash.unroute(hash);
-        (void)orch_scheduler();
-        auto h = aura::orch::agent_import_handoff(std::move(tok), static_cast<void*>(&ev),
-                                                  orch_scheduler());
-        const auto new_name = std::string("proxy-") + std::to_string(h.id);
-        h.name = new_name;
-        if (!ev.agent_names_)
-            return types::make_string(0);
-        if (ev.agent_names_->put(std::move(h)) == nullptr)
-            return types::make_string(0);
-        const auto idx = ev.push_string_heap(new_name);
-        return types::make_string(idx);
-    });
+    if (false)
+        add("orch:agent-import-via-token", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !types::is_string(a[0]))
+                return types::make_string(0);
+            const auto hash_idx = types::as_string_idx(a[0]);
+            if (hash_idx >= ev.string_heap_.size())
+                return types::make_string(0);
+            const auto& hash = ev.string_at(hash_idx);
+            aura::orch::HandoffToken tok;
+            bool took = ev.handoff_tokens_ && ev.handoff_tokens_->take(hash, tok);
+            if (!took) {
+                auto* src = handoff_stash_src(hash);
+                if (src && src != &ev && src->handoff_tokens_)
+                    took = src->handoff_tokens_->take(hash, tok);
+            }
+            if (!took)
+                return types::make_string(0);
+            aura::compiler::g_handoff_token_stash.unroute(hash);
+            (void)orch_scheduler();
+            auto h = aura::orch::agent_import_handoff(std::move(tok), static_cast<void*>(&ev),
+                                                      orch_scheduler());
+            const auto new_name = std::string("proxy-") + std::to_string(h.id);
+            h.name = new_name;
+            if (!ev.agent_names_)
+                return types::make_string(0);
+            if (ev.agent_names_->put(std::move(h)) == nullptr)
+                return types::make_string(0);
+            const auto idx = ev.push_string_heap(new_name);
+            return types::make_string(idx);
+        });
 }
 
 // Issue #5033: (orch:join-via-token ...).
@@ -9672,98 +9724,100 @@ void RegSplitParts::register_join_via_token_primitive(Evaluator& ev, AddFn& add)
     // handoff-join-via-token-source-pending-total (bumped by the C++
     // helper when the observe result carries a pending source snapshot;
     // no key rename, no mid-struct insert).
-    if (false) add("orch:join-via-token",
-        [&ev, build_orch_hash, orch_keyword_key, add_handoff_token_present,
-         add_handoff_observation_only](std::span<const EvalValue> a) -> EvalValue {
-            auto make_invalid_hash = [&]() {
+    if (false)
+        add("orch:join-via-token",
+            [&ev, build_orch_hash, orch_keyword_key, add_handoff_token_present,
+             add_handoff_observation_only](std::span<const EvalValue> a) -> EvalValue {
+                auto make_invalid_hash = [&]() {
+                    std::vector<std::pair<std::string, EvalValue>> kv = {
+                        {"ok", make_bool(false)},
+                        {"status",
+                         [&] {
+                             auto s = ev.push_string_heap("invalid");
+                             return make_string(s);
+                         }()},
+                        {"wait-us", make_int(0)},
+                        {"still-running", make_bool(false)},
+                        {"source-reclaimed-deferred", make_bool(false)},
+                        {"source-must-wait-reclaimed", make_bool(false)},
+                        {"schema", make_int(1588)},
+                        {"issue-3148", make_int(3148)},
+                    };
+                    // Issue #3216: token not staged (production-only intern).
+                    add_handoff_token_present(kv, false);
+                    // Issue #3273: observation-only contract on every result.
+                    add_handoff_observation_only(kv);
+                    return build_orch_hash(kv);
+                };
+                if (a.empty() || !types::is_string(a[0]))
+                    return make_invalid_hash();
+                const auto hash_idx = types::as_string_idx(a[0]);
+                if (hash_idx >= ev.string_heap_.size())
+                    return make_invalid_hash();
+                const auto& hash = ev.string_at(hash_idx);
+                aura::orch::HandoffToken tok_snapshot;
+                auto* src = handoff_stash_src(hash);
+                if (!src || !src->handoff_tokens_ ||
+                    !src->handoff_tokens_->peek(hash, tok_snapshot)) {
+                    aura::compiler::g_handoff_token_stash.unroute(hash);
+                    return make_invalid_hash();
+                }
+                // Snapshot (token stays in stash — importer may re-observe
+                // until join TTL / cap eviction, #3729).
+                aura::orch::JoinViaTokenPolicy jp;
+                for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                    auto k = orch_keyword_key(a[i]);
+                    if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1])) {
+                        jp.timeout_ms = static_cast<std::uint64_t>(
+                            std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+                    }
+                }
+                auto res = aura::orch::join_via_handoff(tok_snapshot, jp);
+                const char* st = "ok";
+                switch (res.status) {
+                    case aura::serve::JoinStatus::Ok:
+                        st = "ok";
+                        break;
+                    case aura::serve::JoinStatus::Timeout:
+                        st = "timeout";
+                        break;
+                    case aura::serve::JoinStatus::Cancelled:
+                        st = "cancelled";
+                        break;
+                    case aura::serve::JoinStatus::Invalid:
+                        st = res.source_gone ? "source-gone" : "invalid";
+                        break;
+                    case aura::serve::JoinStatus::Reclaimed:
+                        st = "reclaimed";
+                        break;
+                }
                 std::vector<std::pair<std::string, EvalValue>> kv = {
-                    {"ok", make_bool(false)},
+                    {"ok", make_bool(res.status == aura::serve::JoinStatus::Ok ||
+                                     res.status == aura::serve::JoinStatus::Reclaimed)},
                     {"status",
                      [&] {
-                         auto s = ev.push_string_heap("invalid");
+                         auto s = ev.push_string_heap(st);
                          return make_string(s);
                      }()},
-                    {"wait-us", make_int(0)},
-                    {"still-running", make_bool(false)},
-                    {"source-reclaimed-deferred", make_bool(false)},
-                    {"source-must-wait-reclaimed", make_bool(false)},
+                    {"wait-us", make_int(static_cast<std::int64_t>(res.wait_us))},
+                    {"still-running", make_bool(res.still_running)},
+                    {"source-reclaimed-deferred", make_bool(res.source_reclaimed_deferred)},
+                    {"source-must-wait-reclaimed", make_bool(res.source_must_wait_reclaimed)},
                     {"schema", make_int(1588)},
                     {"issue-3148", make_int(3148)},
+                    {"handoff-join-via-token-wired", make_int(1)},
+                    {"source-gone", make_bool(res.source_gone)},
+                    {"schema-4004", make_int(aura::orch::kHandoffSourceLiveIssue)},
+                    {"issue-4004", make_int(aura::orch::kHandoffSourceLiveIssue)},
                 };
-                // Issue #3216: token not staged (production-only intern).
-                add_handoff_token_present(kv, false);
-                // Issue #3273: observation-only contract on every result.
+                // Issue #3216: token was staged (not a fourth identity plane).
+                add_handoff_token_present(kv, true);
+                // Issue #3273: observation-only contract on the valid result —
+                // ownership=source / observation-only=#t /
+                // reservation-held-by-source=#t (production intern).
                 add_handoff_observation_only(kv);
                 return build_orch_hash(kv);
-            };
-            if (a.empty() || !types::is_string(a[0]))
-                return make_invalid_hash();
-            const auto hash_idx = types::as_string_idx(a[0]);
-            if (hash_idx >= ev.string_heap_.size())
-                return make_invalid_hash();
-            const auto& hash = ev.string_at(hash_idx);
-            aura::orch::HandoffToken tok_snapshot;
-            auto* src = handoff_stash_src(hash);
-            if (!src || !src->handoff_tokens_ || !src->handoff_tokens_->peek(hash, tok_snapshot)) {
-                aura::compiler::g_handoff_token_stash.unroute(hash);
-                return make_invalid_hash();
-            }
-            // Snapshot (token stays in stash — importer may re-observe
-            // until join TTL / cap eviction, #3729).
-            aura::orch::JoinViaTokenPolicy jp;
-            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
-                auto k = orch_keyword_key(a[i]);
-                if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1])) {
-                    jp.timeout_ms = static_cast<std::uint64_t>(
-                        std::max<std::int64_t>(0, types::as_int(a[i + 1])));
-                }
-            }
-            auto res = aura::orch::join_via_handoff(tok_snapshot, jp);
-            const char* st = "ok";
-            switch (res.status) {
-                case aura::serve::JoinStatus::Ok:
-                    st = "ok";
-                    break;
-                case aura::serve::JoinStatus::Timeout:
-                    st = "timeout";
-                    break;
-                case aura::serve::JoinStatus::Cancelled:
-                    st = "cancelled";
-                    break;
-                case aura::serve::JoinStatus::Invalid:
-                    st = res.source_gone ? "source-gone" : "invalid";
-                    break;
-                case aura::serve::JoinStatus::Reclaimed:
-                    st = "reclaimed";
-                    break;
-            }
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(res.status == aura::serve::JoinStatus::Ok ||
-                                 res.status == aura::serve::JoinStatus::Reclaimed)},
-                {"status",
-                 [&] {
-                     auto s = ev.push_string_heap(st);
-                     return make_string(s);
-                 }()},
-                {"wait-us", make_int(static_cast<std::int64_t>(res.wait_us))},
-                {"still-running", make_bool(res.still_running)},
-                {"source-reclaimed-deferred", make_bool(res.source_reclaimed_deferred)},
-                {"source-must-wait-reclaimed", make_bool(res.source_must_wait_reclaimed)},
-                {"schema", make_int(1588)},
-                {"issue-3148", make_int(3148)},
-                {"handoff-join-via-token-wired", make_int(1)},
-                {"source-gone", make_bool(res.source_gone)},
-                {"schema-4004", make_int(aura::orch::kHandoffSourceLiveIssue)},
-                {"issue-4004", make_int(aura::orch::kHandoffSourceLiveIssue)},
-            };
-            // Issue #3216: token was staged (not a fourth identity plane).
-            add_handoff_token_present(kv, true);
-            // Issue #3273: observation-only contract on the valid result —
-            // ownership=source / observation-only=#t /
-            // reservation-held-by-source=#t (production intern).
-            add_handoff_observation_only(kv);
-            return build_orch_hash(kv);
-        });
+            });
 }
 
 // Issue #5033: strategy / orch registration helpers (shared by the peeled parts).

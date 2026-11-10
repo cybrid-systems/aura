@@ -3523,7 +3523,7 @@ extern "C" std::uint64_t aura_fiber_take_spawn_body() noexcept {
 // sweep reads the exact id from unkeyed_cids / id_roots instead of every id
 // below that watermark.
 extern "C" std::uint64_t aura_fiber_root_pending_closure(void* evaluator,
-                                                        std::uint64_t closure_id) noexcept {
+                                                         std::uint64_t closure_id) noexcept {
     if (!evaluator)
         return closure_id;
     auto* ev = static_cast<Evaluator*>(evaluator);
@@ -3557,7 +3557,7 @@ extern "C" std::uint64_t aura_fiber_root_pending_closure(void* evaluator,
 }
 
 extern "C" void aura_fiber_release_pending_closure(void* evaluator,
-                                                  std::uint64_t closure_id) noexcept {
+                                                   std::uint64_t closure_id) noexcept {
     if (!evaluator)
         return;
     auto* ev = static_cast<Evaluator*>(evaluator);
@@ -3583,7 +3583,7 @@ extern "C" void aura_fiber_release_pending_closure(void* evaluator,
 }
 
 extern "C" void aura_collect_pending_body_closures(const void* evaluator,
-                                                  std::vector<std::uint64_t>& out) noexcept {
+                                                   std::vector<std::uint64_t>& out) noexcept {
     out.clear();
     if (!evaluator)
         return;
@@ -3601,6 +3601,7 @@ extern "C" void aura_collect_pending_body_closures(const void* evaluator,
         }
         out.insert(out.end(), st.unkeyed_cids.begin(), st.unkeyed_cids.end());
     } catch (...) {
+        // [SILENCE-PRIM-#5099] noexcept C ABI: report no roots rather than throw.
         out.clear();
     }
 }

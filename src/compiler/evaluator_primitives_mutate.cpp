@@ -9933,18 +9933,18 @@ template <typename Ctx> void RegSplitParts::register_mutate_dispatch_primitive(C
     // Issue #5095: mutate:rebind / replace-* / move-node / extract-function /
     // atomic-batch are the write surface the dispatcher calls, not a second
     // deprecated spelling. (mutate :rebind) and (mutate:rebind) are one verb.
-        {
-            const auto slot = ev.primitives_.slot_for_name("mutate");
-            if (slot < ev.primitives_.slot_count()) {
-                PrimMeta meta = ev.primitives_.meta_for_slot(slot);
-                meta.doc = "Canonical mutate dispatcher (#1436): (mutate :rebind|:replace|:move|"
-                           ":extract|:validate|:atomic …). :replace takes kind "
-                           "pattern|subtree|value|type.";
-                meta.category = "general";
-                meta.arity = 255;
-                ev.primitives_.set_meta_for_name("mutate", std::move(meta));
-            }
+    {
+        const auto slot = ev.primitives_.slot_for_name("mutate");
+        if (slot < ev.primitives_.slot_count()) {
+            PrimMeta meta = ev.primitives_.meta_for_slot(slot);
+            meta.doc = "Canonical mutate dispatcher (#1436): (mutate :rebind|:replace|:move|"
+                       ":extract|:validate|:atomic …). :replace takes kind "
+                       "pattern|subtree|value|type.";
+            meta.category = "general";
+            meta.arity = 255;
+            ev.primitives_.set_meta_for_name("mutate", std::move(meta));
         }
+    }
 }
 
 template <typename Kv>

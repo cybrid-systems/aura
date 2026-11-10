@@ -1222,84 +1222,87 @@ void RegSplitParts::register_error_primitives(PrimRegistrar add, Evaluator& ev) 
         return make_bool(false);
     });
 
-    if (false) add("check-success", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !is_string(a[0]) || !is_pair(a[1]))
-            return make_bool(false);
-        // Get normalized output (strip quotes)
-        auto out_idx = as_string_idx(a[0]);
-        if (out_idx >= ev.string_heap_.size())
-            return make_bool(false);
-        auto norm_out = ev.string_at(out_idx);
-        // Strip surrounding quotes
-        if (!norm_out.empty() && (norm_out[0] == '"' || norm_out[0] == '\''))
-            norm_out = norm_out.substr(1);
-        if (!norm_out.empty() && (norm_out.back() == '"' || norm_out.back() == '\''))
-            norm_out.pop_back();
-        // Detect if output looks like an error message
-        auto lower = norm_out;
-        for (auto& c : lower)
-            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        bool is_error_like = lower.find("error:") != std::string::npos ||
-                             lower.find("parse error") != std::string::npos ||
-                             lower.find("unbound variable") != std::string::npos ||
-                             lower.find("type error") != std::string::npos ||
-                             lower.find("syntax error") != std::string::npos ||
-                             lower.find("invalid syntax") != std::string::npos ||
-                             lower.find("expected expression") != std::string::npos ||
-                             (norm_out.size() > 1 && norm_out[0] == '(' && norm_out[1] == '"');
-        // Iterate expected list
-        auto pair_idx = as_pair_idx(a[1]);
-        while (pair_idx < ev.pairs_.size()) {
-            auto& p = ev.pairs_[pair_idx];
-            if (is_string(p.car)) {
-                auto kw_idx = as_string_idx(p.car);
-                if (kw_idx < ev.string_heap_.size()) {
-                    auto& kw = ev.mutable_string_at(kw_idx);
-                    if (!kw.empty() && norm_out.find(kw) != std::string::npos) {
-                        // Guard: for error-like output with short keywords
-                        if (is_error_like && kw.size() <= 5) {
-                            // Generic error words that should never match in error output.
-                            if (is_generic_error_word(kw)) {
-                                // Skip — too generic, likely part of error message
-                                if (is_pair(p.cdr)) {
-                                    pair_idx = as_pair_idx(p.cdr);
-                                    continue;
+    if (false)
+        add("check-success", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 2 || !is_string(a[0]) || !is_pair(a[1]))
+                return make_bool(false);
+            // Get normalized output (strip quotes)
+            auto out_idx = as_string_idx(a[0]);
+            if (out_idx >= ev.string_heap_.size())
+                return make_bool(false);
+            auto norm_out = ev.string_at(out_idx);
+            // Strip surrounding quotes
+            if (!norm_out.empty() && (norm_out[0] == '"' || norm_out[0] == '\''))
+                norm_out = norm_out.substr(1);
+            if (!norm_out.empty() && (norm_out.back() == '"' || norm_out.back() == '\''))
+                norm_out.pop_back();
+            // Detect if output looks like an error message
+            auto lower = norm_out;
+            for (auto& c : lower)
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            bool is_error_like = lower.find("error:") != std::string::npos ||
+                                 lower.find("parse error") != std::string::npos ||
+                                 lower.find("unbound variable") != std::string::npos ||
+                                 lower.find("type error") != std::string::npos ||
+                                 lower.find("syntax error") != std::string::npos ||
+                                 lower.find("invalid syntax") != std::string::npos ||
+                                 lower.find("expected expression") != std::string::npos ||
+                                 (norm_out.size() > 1 && norm_out[0] == '(' && norm_out[1] == '"');
+            // Iterate expected list
+            auto pair_idx = as_pair_idx(a[1]);
+            while (pair_idx < ev.pairs_.size()) {
+                auto& p = ev.pairs_[pair_idx];
+                if (is_string(p.car)) {
+                    auto kw_idx = as_string_idx(p.car);
+                    if (kw_idx < ev.string_heap_.size()) {
+                        auto& kw = ev.mutable_string_at(kw_idx);
+                        if (!kw.empty() && norm_out.find(kw) != std::string::npos) {
+                            // Guard: for error-like output with short keywords
+                            if (is_error_like && kw.size() <= 5) {
+                                // Generic error words that should never match in error output.
+                                if (is_generic_error_word(kw)) {
+                                    // Skip — too generic, likely part of error message
+                                    if (is_pair(p.cdr)) {
+                                        pair_idx = as_pair_idx(p.cdr);
+                                        continue;
+                                    }
+                                    break;
                                 }
-                                break;
-                            }
-                            // Word boundary check for other short keywords
-                            auto pos = norm_out.find(kw);
-                            bool word_boundary = true;
-                            if (pos > 0) {
-                                char prev = norm_out[pos - 1];
-                                if (std::isalnum(static_cast<unsigned char>(prev)) || prev == '_')
-                                    word_boundary = false;
-                            }
-                            if (pos + kw.size() < norm_out.size()) {
-                                char next = norm_out[pos + kw.size()];
-                                if (std::isalnum(static_cast<unsigned char>(next)) || next == '_')
-                                    word_boundary = false;
-                            }
-                            if (!word_boundary) {
-                                // Move to next keyword
-                                if (is_pair(p.cdr)) {
-                                    pair_idx = as_pair_idx(p.cdr);
-                                    continue;
+                                // Word boundary check for other short keywords
+                                auto pos = norm_out.find(kw);
+                                bool word_boundary = true;
+                                if (pos > 0) {
+                                    char prev = norm_out[pos - 1];
+                                    if (std::isalnum(static_cast<unsigned char>(prev)) ||
+                                        prev == '_')
+                                        word_boundary = false;
                                 }
-                                break;
+                                if (pos + kw.size() < norm_out.size()) {
+                                    char next = norm_out[pos + kw.size()];
+                                    if (std::isalnum(static_cast<unsigned char>(next)) ||
+                                        next == '_')
+                                        word_boundary = false;
+                                }
+                                if (!word_boundary) {
+                                    // Move to next keyword
+                                    if (is_pair(p.cdr)) {
+                                        pair_idx = as_pair_idx(p.cdr);
+                                        continue;
+                                    }
+                                    break;
+                                }
                             }
+                            return make_bool(true);
                         }
-                        return make_bool(true);
                     }
                 }
+                if (is_pair(p.cdr))
+                    pair_idx = as_pair_idx(p.cdr);
+                else
+                    break;
             }
-            if (is_pair(p.cdr))
-                pair_idx = as_pair_idx(p.cdr);
-            else
-                break;
-        }
-        return make_bool(false);
-    });
+            return make_bool(false);
+        });
 }
 
 // Issue #5033: JIT hooks sharing the display / hash-ref error shapes.
