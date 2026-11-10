@@ -6,7 +6,7 @@
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 488 · **stdlib-candidate** 58 · **delete** 1
+**kernel** 507 · **stdlib-candidate** 39 · **delete** 1
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
@@ -149,13 +149,13 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `abs` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `acos` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `and` *[core]* `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
-- `append` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `append` *[core]* `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `apply` *[core]* `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `apply-fix` *[core]* `kernel` — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `arithmetic-shift` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `asin` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `assv` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `assv` *[core]* `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `atan` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `aura-executable-path` *[core]* `kernel` — `src/compiler/evaluator_primitives_io.cpp`
 - `bit-count` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
@@ -205,7 +205,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `define-lookup` *[core]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `deserialize-workspace` *[core]* `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `display` *[core]* `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `drop` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `drop` *[core]* `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `eof-object` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `eof-object?` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `eq?` *[core]* `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
@@ -230,11 +230,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `f64vector-set!` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-sub!` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-sum` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `filter` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `filter` *[core]* `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `float?` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `floor` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
-- `foldl` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
-- `for-each` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `foldl` *[core]* `kernel` — `src/compiler/evaluator_primitives_list.cpp`
+- `for-each` *[core]* `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `format` *[convenience]* `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `gc` *[core]* `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-freeze` *[core]* `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -283,12 +283,12 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `keyword->string` *[core]* `kernel` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `keyword?` *[core]* `kernel` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `lcm` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
-- `length` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
-- `list` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `length` *[core]* `kernel` — `src/compiler/evaluator_primitives_list.cpp`
+- `list` *[core]* `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `list->string` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_char.cpp`
-- `list->vector` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_vector.cpp`
-- `list-ref` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
-- `list-sort` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `list->vector` *[core]* `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
+- `list-ref` *[core]* `kernel` — `src/compiler/evaluator_primitives_list.cpp`
+- `list-sort` *[core]* `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `list?` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
 - `load` *[core]* `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
 - `load-module` *[core]* `kernel` — `src/compiler/evaluator_primitives_module.cpp`
@@ -300,11 +300,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `make-directory` *[core]* `kernel` — `src/compiler/evaluator_primitives_file.cpp`
 - `make-f64vector` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `make-vector` *[core]* `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
-- `map` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `map` *[core]* `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `max` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
-- `member` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `member` *[core]* `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `memory-pressure` *[core]* `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `memv` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `memv` *[core]* `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `min` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `mod` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `module-get` *[core]* `kernel` — `src/compiler/evaluator_primitives_module.cpp`
@@ -359,7 +359,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `register-strategy!` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `remainder` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `reply` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `reverse` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `reverse` *[core]* `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `rollback` *[core]* `kernel` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `rollback-since` *[core]* `kernel` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `round` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
@@ -396,7 +396,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `symbol-append` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `symbol?` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `syntax-marker` *[core]* `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `take` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `take` *[core]* `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `tan` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `trunc` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `truncate` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
@@ -410,9 +410,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `unpin-stable-refs` *[core]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `use` *[core]* `kernel` — `src/compiler/evaluator_primitives_module.cpp`
 - `vector` *[core]* `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
-- `vector->list` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_vector.cpp`
-- `vector-copy` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_vector.cpp`
-- `vector-fill!` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector->list` *[core]* `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector-copy` *[core]* `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector-fill!` *[core]* `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-length` *[core]* `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-ref` *[core]* `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-set!` *[core]* `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
@@ -734,13 +734,13 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `aot:reload` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `aot:set-module-version` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `aot:set-region-mask` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `append` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `append` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `apply` `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `apply-fix` `kernel` — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `arithmetic-shift` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `asin` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `assv` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `assv` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `atan` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `atomic:add!` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `atomic:counter` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
@@ -800,7 +800,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `define-lookup` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `deserialize-workspace` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `display` `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
-- `drop` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `drop` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `engine:metrics` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `engine:surface` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `eof-object` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -836,11 +836,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `fiber:join` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:spawn` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `filter` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `filter` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `float?` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `floor` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
-- `foldl` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
-- `for-each` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `foldl` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
+- `for-each` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `gc` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-freeze` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-heap` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -888,12 +888,12 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `keyword->string` `kernel` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `keyword?` `kernel` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `lcm` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
-- `length` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
-- `list` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `length` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
+- `list` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `list->string` `stdlib-candidate` — `src/compiler/evaluator_primitives_char.cpp`
-- `list->vector` `stdlib-candidate` — `src/compiler/evaluator_primitives_vector.cpp`
-- `list-ref` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
-- `list-sort` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `list->vector` `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
+- `list-ref` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
+- `list-sort` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `list?` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
 - `load` `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
 - `load-module` `kernel` — `src/compiler/evaluator_primitives_module.cpp`
@@ -905,11 +905,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `make-directory` `kernel` — `src/compiler/evaluator_primitives_file.cpp`
 - `make-f64vector` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `make-vector` `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
-- `map` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `map` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `max` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
-- `member` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `member` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `memory-pressure` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `memv` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `memv` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `min` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `mod` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `module-get` `kernel` — `src/compiler/evaluator_primitives_module.cpp`
@@ -1073,7 +1073,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `reply` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `resource:quota-check` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `resource:quota-set` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
-- `reverse` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `reverse` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `rollback` `kernel` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `rollback-since` `kernel` — `src/compiler/evaluator_primitives_mutation.cpp`
 - `round` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
@@ -1131,7 +1131,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `synthesize:fill` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:optimize` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `take` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `take` `kernel` — `src/compiler/evaluator_primitives_list.cpp`
 - `tan` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `trunc` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `truncate` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
@@ -1147,9 +1147,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `unpin-stable-refs` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `use` `kernel` — `src/compiler/evaluator_primitives_module.cpp`
 - `vector` `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
-- `vector->list` `stdlib-candidate` — `src/compiler/evaluator_primitives_vector.cpp`
-- `vector-copy` `stdlib-candidate` — `src/compiler/evaluator_primitives_vector.cpp`
-- `vector-fill!` `stdlib-candidate` — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector->list` `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector-copy` `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector-fill!` `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-length` `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-ref` `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-set!` `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
@@ -1216,7 +1216,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (488)
+### kernel (507)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1243,10 +1243,12 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `aot:reload` *[K-ENGINE]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `aot:set-module-version` *[K-ENGINE]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `aot:set-region-mask` *[K-ENGINE]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `append` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`
 - `apply` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `apply-fix` *[K-AGENT]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `arithmetic-shift` *[K-NUM]* — `src/compiler/evaluator_primitives_core.cpp`
 - `asin` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
+- `assv` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`
 - `atan` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
 - `atomic:add!` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
 - `atomic:counter` *[K-FIBER]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
@@ -1315,6 +1317,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `define-lookup` *[K-CTRL]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `deserialize-workspace` *[K-CTRL]* — `src/compiler/evaluator_primitives_persist.cpp`
 - `display` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
+- `drop` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`
 - `engine:metrics` *[K-OBS]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `engine:surface` *[K-OBS]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `eof-object` *[K-EXC-5096]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1349,8 +1352,11 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `fiber:join` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:spawn` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `fiber:yield` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
+- `filter` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`
 - `float?` *[K-VAL]* — `src/compiler/evaluator_primitives_core.cpp`
 - `floor` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
+- `foldl` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`
+- `for-each` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`
 - `gc` *[K-GOV]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-freeze` *[K-GOV]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `gc-heap` *[K-GOV]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -1386,6 +1392,11 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `keyword->string` *[K-VAL]* — `src/compiler/evaluator_primitives_reflect.cpp`
 - `keyword?` *[K-VAL]* — `src/compiler/evaluator_primitives_reflect.cpp`
 - `lcm` *[K-NUM-HOT]* — `src/compiler/evaluator_primitives_math.cpp`
+- `length` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`
+- `list` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`
+- `list->vector` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `list-ref` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`
+- `list-sort` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`
 - `load` *[K-ENGINE]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `load-module` *[K-ENGINE]* — `src/compiler/evaluator_primitives_module.cpp`
 - `log` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -1396,8 +1407,11 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `make-directory` *[K-IO]* — `src/compiler/evaluator_primitives_file.cpp`
 - `make-f64vector` *[K-VAL]* — `src/compiler/evaluator_primitives_char.cpp`
 - `make-vector` *[K-VAL]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `map` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`
 - `max` *[K-NUM-HOT]* — `src/compiler/evaluator_primitives_math.cpp`
+- `member` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`
 - `memory-pressure` *[K-GOV]* — `src/compiler/evaluator_primitives_memory.cpp`
+- `memv` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`
 - `min` *[K-NUM-HOT]* — `src/compiler/evaluator_primitives_math.cpp`
 - `mod` *[K-NUMDIV]* — `src/compiler/evaluator_primitives_math.cpp`
 - `module-get` *[K-ENGINE]* — `src/compiler/evaluator_primitives_module.cpp`
@@ -1628,6 +1642,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `reply` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `resource:quota-check` *[K-GOV]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `resource:quota-set` *[K-GOV]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
+- `reverse` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`
 - `rollback` *[K-WS]* — `src/compiler/evaluator_primitives_mutation.cpp`
 - `rollback-since` *[K-WS]* — `src/compiler/evaluator_primitives_mutation.cpp`
 - `round` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -1673,6 +1688,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `synthesize:fill` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:optimize` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `take` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_list.cpp`
 - `tan` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
 - `trunc` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
 - `truncate` *[K-R7RS]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -1688,6 +1704,9 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `unpin-stable-refs` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `use` *[K-ENGINE]* — `src/compiler/evaluator_primitives_module.cpp`
 - `vector` *[K-VAL]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector->list` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector-copy` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_vector.cpp`
+- `vector-fill!` *[K-PAIR-TABLE]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-length` *[K-VAL]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-ref` *[K-VAL]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `vector-set!` *[K-VAL]* — `src/compiler/evaluator_primitives_vector.cpp`
@@ -1707,19 +1726,13 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `write` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `write-file` *[K-IO]* — `src/compiler/evaluator_primitives_file.cpp`
 
-### stdlib-candidate (58)
+### stdlib-candidate (39)
 
-- `append` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
 - `assert` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`
-- `assv` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
 - `check` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check=` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `datum->string` *[S-PURE]* — `src/compiler/evaluator_primitives_eval.cpp`
-- `drop` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
 - `equal?` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`
-- `filter` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
-- `foldl` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
-- `for-each` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
 - `format` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `hash->alist` *[S-PURE]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-copy` *[S-PURE]* — `src/compiler/evaluator_primitives_vector.cpp`
@@ -1733,20 +1746,11 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `json-encode` *[S-PURE]* — `src/compiler/evaluator_primitives_json.cpp`
 - `json-get-string` *[S-PURE]* — `src/compiler/evaluator_primitives_json.cpp`
 - `json-parse` *[S-PURE]* — `src/compiler/evaluator_primitives_json.cpp`
-- `length` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
-- `list` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
 - `list->string` *[S-STR]* — `src/compiler/evaluator_primitives_char.cpp`
-- `list->vector` *[S-LIST]* — `src/compiler/evaluator_primitives_vector.cpp`
-- `list-ref` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
-- `list-sort` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
 - `list?` *[S-PURE]* — `src/compiler/evaluator_primitives_list.cpp`
-- `map` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
-- `member` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
-- `memv` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
 - `number->string` *[S-STR]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `read-all-from-string` *[S-PURE]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `read-from-string` *[S-PURE]* — `src/compiler/evaluator_primitives_eval.cpp`
-- `reverse` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
 - `string->list` *[S-STR]* — `src/compiler/evaluator_primitives_char.cpp`
 - `string->number` *[S-STR]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string-copy` *[S-STR]* — `src/compiler/evaluator_primitives_pair.cpp`
@@ -1759,10 +1763,6 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `string>=?` *[S-STR]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `string>?` *[S-STR]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `symbol-append` *[S-STR]* — `src/compiler/evaluator_primitives_runtime.cpp`
-- `take` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
-- `vector->list` *[S-LIST]* — `src/compiler/evaluator_primitives_vector.cpp`
-- `vector-copy` *[S-LIST]* — `src/compiler/evaluator_primitives_vector.cpp`
-- `vector-fill!` *[S-LIST]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `verify:parse-assert-failure` *[S-PURE]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `verify:parse-coverage-feedback` *[S-PURE]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `verify:parse-formal-cex` *[S-PURE]* — `src/compiler/evaluator_primitives_compile.cpp`
