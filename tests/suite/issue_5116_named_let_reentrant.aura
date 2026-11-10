@@ -1,0 +1,46 @@
+; #5116: a named-let called twice on the same thread must see each call's
+; captured frame. The #5066 integer fast path used to freeze the first
+; call's free var (n) for the rest of the thread.
+
+(define (sum n)
+  (let loop ((i 0) (acc 0))
+    (if (>= i n) acc (loop (+ i 1) (+ acc i)))))
+
+(define (cnt n)
+  (let loop ((i 0) (c 0))
+    (if (>= i n) c (loop (+ i 1) (+ c 1)))))
+
+(define (join n)
+  (let loop ((i 0) (s ""))
+    (if (>= i n) s
+        (loop (+ i 1) (string-append s (number->string i))))))
+
+(define (weighted n)
+  (let loop ((i 0) (a 0))
+    (if (>= i 4) a (loop (+ i 1) (+ a n)))))
+
+(define (tag n)
+  (let loop ((i 0) (s ""))
+    (if (>= i 1) (string-append s (number->string n))
+        (loop (+ i 1) s))))
+
+(define (rec n)
+  (if (= n 0) 0 (+ 1 (rec (- n 1)))))
+
+(define (check)
+  (and (= (sum 3) 3) (= (sum 7) 21) (= (sum 2) 1)
+       (= (cnt 3) 3) (= (cnt 7) 7)
+       (equal? (join 3) "012") (equal? (join 7) "0123456")
+       (= (weighted 3) 12) (= (weighted 5) 20)
+       (equal? (tag 3) "3") (equal? (tag 7) "7")
+       (= (rec 3) 3) (= (rec 7) 7)))
+
+(define host (if (check) 1 0))
+(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+
+(if (and (= host 1) (= guest 1))
+    (begin (display "OK-5116") (newline))
+    (begin
+      (display "FAIL-5116 host=") (display host)
+      (display " guest=") (display guest) (newline)
+      (exit 1)))
