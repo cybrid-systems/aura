@@ -56,6 +56,8 @@ extern "C" int aura_ir_active_drains_total() noexcept;
 extern "C" void aura_gc_reclaim_off_note_tw_skip() noexcept;
 // Issue #4915: 0 outside a fiber body (src/serve/fiber.cpp).
 extern "C" std::uint64_t aura_fiber_current_id();
+// #5064: CLI thread-backend bodies do not set g_current_fiber.
+extern "C" int aura_fiber_body_active() noexcept;
 // Issue #4768: publish the closure-id cursor at the stand-down check (see
 // aura_gc_sweep_publish_closure_hi).
 extern "C" void aura_gc_sweep_publish_closure_hi(std::uint64_t v) noexcept;
@@ -6200,8 +6202,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
     // uncaught error keeps its Error value (symbol/hash cause) and can be
     // bound by the caller's try/catch instead of being stringified into a
     // located TypeError diagnostic.
-    const bool arm_file_diag =
-        allow_file_diag_arm && require_failure_is_diagnostic_ && file_diag_root_flat() == nullptr;
+    // #5064: a fiber body has no file-mode root of its own. Arming one on
+    // the first nested eval stringifies a primitive error into
+    // "file:line:col: type error: ..." before the body's try/catch can
+    // bind the cause. The host file's outermost eval still arms.
+    const bool arm_file_diag = allow_file_diag_arm && require_failure_is_diagnostic_ &&
+                               file_diag_root_flat() == nullptr && aura_fiber_body_active() == 0;
     if (arm_file_diag) {
         set_file_diag_root_flat(&flat);
         set_file_diag_root_id(id);
