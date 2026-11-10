@@ -1,19 +1,94 @@
 name: Link libgit2 Kerberos libraries
 description: >-
   aura-ci:v0.1.0's libgit2 CMake target lists unversioned
-  libgssapi_krb5.so paths. libkrb5-dev provides those names.
-  The runtime image ghcr.io/cybrid-systems/aura is not involved.
+  libgssapi_krb5.so paths. libkrb5-dev provides those names, and
+  the current image already ships them. apt runs only when one is
+  missing. The runtime image ghcr.io/cybrid-systems/aura is not involved.
 
 runs:
   using: composite
   steps:
-    - name: Install libkrb5-dev
+    - name: Ensure Kerberos linker names
       shell: bash
       run: |
         set -euo pipefail
         export DEBIAN_FRONTEND=noninteractive
-        sudo mkdir -p /var/lib/apt/lists/partial
-        sudo apt-get update -qq
-        sudo apt-get install -y --no-install-recommends libkrb5-dev
+
+        # Unversioned linker names (not the SONAMEs). libgit2's CMake
+        # target points at these. aura-ci:v0.1.0 already has them via
+        # libkrb5-dev; apt-get update is only the fallback.
+        patterns=(
+          '/usr/lib/*/libgssapi_krb5.so'
+          '/usr/lib/*/libkrb5.so'
+          '/usr/lib/*/libk5crypto.so'
+          '/usr/lib/*/libcom_err.so'
+        )
+
+        krb_libs_present() {
+          local pattern
+          for pattern in "${patterns[@]}"; do
+            compgen -G "$pattern" >/dev/null || return 1
+          done
+        }
+
+        if krb_libs_present; then
+          echo "unversioned Kerberos libraries already present; skipping apt"
+          sudo ls /usr/lib/*/libgssapi_krb5.so /usr/lib/*/libkrb5.so \
+            /usr/lib/*/libk5crypto.so /usr/lib/*/libcom_err.so
+          exit 0
+        fi
+
+        echo "unversioned Kerberos libraries missing; installing libkrb5-dev"
+
+        # archive.ubuntu.com exits 100 while a mirror is mid-sync
+        # ("File has unexpected size", "Mirror sync in progress").
+        # One attempt killed asan-build before the compiler ran.
+        # Bounded retries; a persistent failure still fails the job.
+        max_attempts=5
+
+        apt_is_transient() {
+          local rc="$1" log="$2"
+          if [ "$rc" -eq 100 ]; then
+            return 0
+          fi
+          grep -Eq 'Mirror sync in progress|File has unexpected size|Hash Sum mismatch|Some index files failed to download' "$log"
+        }
+
+        attempt=1
+        while [ "$attempt" -le "$max_attempts" ]; do
+          echo "apt attempt ${attempt}/${max_attempts}"
+          sudo mkdir -p /var/lib/apt/lists/partial
+          log=$(mktemp)
+          set +e
+          sudo apt-get -o Acquire::Retries=3 update -qq >"$log" 2>&1
+          rc=$?
+          set -e
+          cat "$log"
+          phase="apt-get update"
+          if [ "$rc" -eq 0 ]; then
+            set +e
+            sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends libkrb5-dev >"$log" 2>&1
+            rc=$?
+            set -e
+            cat "$log"
+            if [ "$rc" -eq 0 ]; then
+              rm -f "$log"
+              break
+            fi
+            phase="apt-get install libkrb5-dev"
+          fi
+          if ! apt_is_transient "$rc" "$log" || [ "$attempt" -eq "$max_attempts" ]; then
+            echo "::error::${phase} failed after ${attempt} attempt(s) (apt exit ${rc})"
+            rm -f "$log"
+            exit "$rc"
+          fi
+          sleep_s=$((attempt * 10))
+          echo "transient apt failure during ${phase} (exit ${rc}); retrying in ${sleep_s}s"
+          rm -f "$log"
+          sudo rm -rf /var/lib/apt/lists/partial
+          sleep "$sleep_s"
+          attempt=$((attempt + 1))
+        done
+
         sudo ls /usr/lib/*/libgssapi_krb5.so /usr/lib/*/libkrb5.so \
           /usr/lib/*/libk5crypto.so /usr/lib/*/libcom_err.so
