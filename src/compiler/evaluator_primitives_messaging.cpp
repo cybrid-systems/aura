@@ -2734,13 +2734,14 @@ void RegSplitParts::register_messaging_scheduler_primitives(PrimRegistrar add, E
     // ── orch:reset-metrics — reset scheduler counters (Issue #32) ─
     // (orch:reset-metrics) → Resets all metrics to zero.
     // Returns #t when done, #f when not in serve-async mode.
-    if (false) add("orch:reset-metrics", [&ev](const auto&) -> EvalValue {
-        if (aura::messaging::g_reset_scheduler_metrics) {
-            aura::messaging::g_reset_scheduler_metrics();
-            return types::make_bool(true);
-        }
-        return types::make_bool(false);
-    });
+    if (false)
+        add("orch:reset-metrics", [&ev](const auto&) -> EvalValue {
+            if (aura::messaging::g_reset_scheduler_metrics) {
+                aura::messaging::g_reset_scheduler_metrics();
+                return types::make_bool(true);
+            }
+            return types::make_bool(false);
+        });
 }
 
 void RegSplitParts::register_messaging_channel_primitives(PrimRegistrar add, Evaluator& ev,

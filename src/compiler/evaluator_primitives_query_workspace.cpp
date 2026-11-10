@@ -5059,10 +5059,11 @@ void register_workspace_query_dispatch_parts(WorkspaceQueryPrims& P, PrimRegistr
                     if (auto hit = try_named(op))
                         return *hit;
                 }
-                return mev("no-prim",
-                           "query dispatch: '" + op +
-                               "' is not a query op — use (query :op). Retired prefixes "
-                               "(ast: workspace: dirty: mutation-log: syntax: fiber:) are unbound.");
+                return mev(
+                    "no-prim",
+                    "query dispatch: '" + op +
+                        "' is not a query op — use (query :op). Retired prefixes "
+                        "(ast: workspace: dirty: mutation-log: syntax: fiber:) are unbound.");
             }
             if (auto hit = try_named(std::string("query:") + op))
                 return *hit;

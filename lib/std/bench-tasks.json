@@ -1570,15 +1570,15 @@
     "",
     [
       "(set-code \"(define x 1)\")",
-      "(ast:snapshot 'v1)",
+      "(mutate :snapshot \"v1\")",
       "(set-code \"(define x 2)\")",
-      "(ast:snapshot 'v2)",
-      "(ast:list-snapshots)"
+      "(mutate :snapshot \"v2\")",
+      "(stats:get \"ast:list-snapshots\")"
     ]
   ],
   [
     "edsl-snapshot",
-    "Use ast:snapshot then mutate then ast:restore to revert changes",
+    "Use mutate :snapshot then mutate then mutate :restore to revert changes",
     [
       "g"
     ],
@@ -1586,9 +1586,9 @@
     [
       "--- EDSL snapshot/restore ---",
       "(set-code \"(define (g x) (* x 2))\")",
-      "(define sid (ast:snapshot \"before\"))",
+      "(define sid (mutate :snapshot \"before\"))",
       "(mutate:rebind \"g\" \"(lambda (x) (+ x 1))\" \"test\")",
-      "(ast:restore sid)",
+      "(mutate :restore sid)",
       "(display (car (query :def-use \"g\")))"
     ]
   ],

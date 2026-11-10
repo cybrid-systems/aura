@@ -11249,10 +11249,11 @@ std::optional<EvalResult> Evaluator::eval_flat_prepare_visit(EvalFlatCursor& cur
                 // the restored flat. That is a documented, recoverable
                 // workspace face — not an internal error. Tell the caller
                 // how to re-bind.
-                return std::unexpected(Diagnostic{
-                    ErrorKind::StaleWorkspace, "stale node id (gen mismatch): the workspace "
-                                               "changed under compiled definitions (mutate :restore) "
-                                               "— run (eval-current) to re-bind, then retry"});
+                return std::unexpected(
+                    Diagnostic{ErrorKind::StaleWorkspace,
+                               "stale node id (gen mismatch): the workspace "
+                               "changed under compiled definitions (mutate :restore) "
+                               "— run (eval-current) to re-bind, then retry"});
             }
         }
         // Re-validate the snapshot against whatever the slow path

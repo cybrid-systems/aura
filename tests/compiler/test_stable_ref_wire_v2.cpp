@@ -257,8 +257,8 @@ static void ac5_tenant_and_pin() {
     auto r = cs.eval("(query :ref-serialize 1 1 99 0 3 2056 1 10 1)");
     CHECK(r.has_value(), "ast:ref-serialize with provenance args");
     // Round-trip via deserialize still returns 4-tuple (compat shape).
-    auto d =
-        cs.eval("(let ((s (query :ref-serialize 1 1 99 0 3 2056 1 10 1))) (query :ref-deserialize s))");
+    auto d = cs.eval(
+        "(let ((s (query :ref-serialize 1 1 99 0 3 2056 1 10 1))) (query :ref-deserialize s))");
     CHECK(d.has_value(), "ast:ref-deserialize after v2 serialize");
 }
 

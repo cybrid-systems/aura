@@ -1749,7 +1749,8 @@ static void run_430_arena_compaction_policy_observability() {
     {
         std::println("\n--- #430 AC7: nonexistent arena returns 0 ---");
         CompilerService cs;
-        auto r = cs.eval("(mutate :arena-compact-with-policy \"definitely-not-an-arena-xyz\" \"force\")");
+        auto r = cs.eval(
+            "(mutate :arena-compact-with-policy \"definitely-not-an-arena-xyz\" \"force\")");
         CHECK(r.has_value() && is_int(*r) && as_int(*r) == 0,
               "nonexistent arena returns 0 (safe no-op)");
     }

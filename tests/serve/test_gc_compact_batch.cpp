@@ -1106,7 +1106,8 @@ static void run_623_arena_auto_compact_threshold_setter() {
         (void)cs.evaluator().test_arena().defrag();
         CHECK(true, "C++ defrag reachable (#300 / #3173)");
         auto s_pol = cs.eval("(mutate :arena-compact-with-policy)");
-        CHECK(s_pol.has_value(), "(mutate :arena-compact-with-policy) reachable (#430 back-compat)");
+        CHECK(s_pol.has_value(),
+              "(mutate :arena-compact-with-policy) reachable (#430 back-compat)");
         (void)cs.evaluator().arena_group().should_auto_compact("main");
         CHECK(true, "should_auto_compact C++ reachable (#335 / #3173)");
         auto s_auto = cs.eval("(engine:metrics \"query:arena-auto-stats\")");

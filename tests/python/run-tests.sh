@@ -812,8 +812,8 @@ run_test "bridge:nested-lambda" "$(printf '(define (twice f) (lambda (x) (f (f x
 
 # ── Arena memory tracking tests ────────────────────────────
 # arena-offset returns an integer >= 0 when arena is active
-run_test "arena:offset-nonneg" "$(printf '(>= (arena-offset) 0)')" "#t"
-run_test "arena:offset-usable" "$(printf '(let ((a (arena-offset))) (cons (* 2 3) (* 4 5)) (>= (arena-offset) a))')" "#t"
+run_test "arena:offset-nonneg" "$(printf '(>= (query :arena-offset) 0)')" "#t"
+run_test "arena:offset-usable" "$(printf '(let ((a (query :arena-offset))) (cons (* 2 3) (* 4 5)) (>= (query :arena-offset) a))')" "#t"
 run_test "git:branch-current" "$(printf '(begin (require "std/git" all:) (string? (git-branch-current)))')" "#t"
 run_test "git:rev-parse" "$(printf '(begin (require "std/git" all:) (string? (git-rev-parse)))')" "#t"
 run_test "git:status" "$(printf '(begin (require "std/git" all:) (string? (git-status)))')" "#t"
@@ -848,13 +848,13 @@ run_test "edsl-ir-cache:multi-define"         \
 # dirty until eval-current / first lower). After eval-current both f and g
 # are clean; cascade-after-mutate still forces g dirty on f rebind.
 run_test "edsl-ir-cache:cascade-after-setcode"  \
-    "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (f x)))\") (eval-current) (ir-cache-v2:dirty? \"g\")')" \
+    "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (f x)))\") (eval-current) (query :ir-dirty? \"g\")')" \
     '#f'
 run_test "edsl-ir-cache:cascade-after-mutate"   \
-    "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (f x)))\") (eval-current) (mutate:rebind \"f\" \"(lambda (x) (* x 3))\") (ir-cache-v2:dirty? \"g\")')" \
+    "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (f x)))\") (eval-current) (mutate:rebind \"f\" \"(lambda (x) (* x 3))\") (query :ir-dirty? \"g\")')" \
     '#t'
 run_test "edsl-ir-cache:cascade-not-on-strangers" \
-    "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (* x 2)))\") (mutate:rebind \"f\" \"(lambda (x) (* x 3))\") (ir-cache-v2:dependents \"f\")')" \
+    "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (* x 2)))\") (mutate:rebind \"f\" \"(lambda (x) (* x 3))\") (query :ir-dependents \"f\")')" \
     ''  # no f→g edge; empty dependents is void (dirty? also flipped by arena compact)
 
 # Phase 4: (eval-current :jit) hooks into the IR pipeline.
@@ -885,10 +885,10 @@ run_test "edsl-ir-cache:jit-matches-regular"  \
     '49'
 
 # Follow-up 3: IR v2 is populated on first lower (eval-current), not bare
-# set-code. After eval-current, (ir-cache-v2:dirty? "f") is #f and the
+# set-code. After eval-current, (query :ir-dirty? "f") is #f and the
 # cached IR is reused on subsequent eval-current with identical source.
 run_test "edsl-ir-cache:v2-populated-by-default" \
-    "$(printf '(set-code \"(define (f x) (* x x))\") (eval-current) (ir-cache-v2:dirty? \"f\")')" \
+    "$(printf '(set-code \"(define (f x) (* x x))\") (eval-current) (query :ir-dirty? \"f\")')" \
     '#f'
 # Second set-code with same source is a cache hit (no re-lower).
 run_test "edsl-ir-cache:v2-cache-hit" \
@@ -916,14 +916,17 @@ _read_stdin_case() {
         _record_fail "$name" "       expected: $expected" "       got:      $actual"
     fi
 }
+# #5096/#5104: the R7RS eof-object is a unique value. read-line and
+# read-byte still return void at EOF (#4325), so the blank line stays a
+# string and the following read is void, not that object.
 _read_stdin_case "4325-blank-then-eof" $'\n' \
-    '(begin (define a (read-line)) (define b (read-line)) (display (string-length a)) (display (eof-object? a)) (display (eof-object? b)) (display (eq? a b)))' \
+    '(begin (define a (read-line)) (define b (read-line)) (display (string-length a)) (display (eof-object? a)) (display (void? b)) (display (eq? a b)))' \
     '0#f#t#f'
 _read_stdin_case "4325-read-byte-no-newline" 'Q' \
     '(display (read-byte))' \
     '81'
 _read_stdin_case "4325-read-byte-eof" '' \
-    '(display (eof-object? (read-byte)))' \
+    '(display (void? (read-byte)))' \
     '#t'
 
 # Issue #4354: a loaded file of defines is one letrec begin. An alias
@@ -1276,7 +1279,7 @@ _file_4361() {
 (newline)
 (display (g 1))
 (newline)
-(display (ws:try-mutation "(begin (mutate:rebind \"f\" \"(lambda (x) 0)\" \"t\") (car 5))"))
+(display (mutate :try-mutation "(begin (mutate:rebind \"f\" \"(lambda (x) 0)\" \"t\") (car 5))"))
 (newline)
 (display (f 1))
 (newline)
@@ -1554,10 +1557,10 @@ _file_4365() {
 (define (main)
   (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))\n(hello 3)")
   (eval-current)
-  (define s0 (ast:snapshot "t0"))
+  (define s0 (mutate :snapshot "t0"))
   (show "FP" (mutate:set-agent-fingerprint 42))
   (show "K1" (typed-mutate-atomic (list "(mutate:rebind \\"hello\\" \\"(lambda (x) (* x 2))\\" \\"closer\\")")))
-  (define s1 (ast:snapshot "t1"))
+  (define s1 (mutate :snapshot "t1"))
   (show "FP2" (mutate:set-agent-fingerprint 3))
   (show "K2" (typed-mutate-atomic (list "(mutate:rebind \\"bye\\" \\"(lambda (y) (- (hello y)))\\" \\"flip\\")")))
   (mutate:set-agent-fingerprint 1)
@@ -1568,7 +1571,7 @@ _file_4365() {
   (show "DES" (deserialize-workspace "$book"))
   (show "CODE_BACK" (query:code))
   (show "LOG_BACK" (query:mutations-since 0))
-  (show "RESTORE1" (ast:restore s1))
+  (show "RESTORE1" (mutate :restore s1))
   (eval-current)
   (show "LOG_S1" (query:mutations-since 0)))
 (main)
@@ -1591,7 +1594,7 @@ EOF
             && printf '%s\n' "$1" | grep -qx 'K1 #t' \
             && printf '%s\n' "$1" | grep -qx 'K2 #t' \
             && printf '%s\n' "$1" | grep -qx 'RESTORE1 #t' \
-            && printf '%s\n' "$1" | grep -q 'op=ast:restore sum=restore snapshot-1 rolled-back=2' \
+            && printf '%s\n' "$1" | grep -q 'op=mw:restore sum=restore snapshot-1 rolled-back=2' \
             && ! printf '%s\n' "$1" | tr '"' '\n' | grep 'op=rebind\|op=structural-set-child' | grep -q 'author=0' \
             && ! printf '%s\n' "$1" | tr '"' '\n' | grep 'op=rebind\|op=structural-set-child' | grep -q 'composite=0'
     }
@@ -1732,8 +1735,8 @@ _file_4368() {
     (workspace :switch 0)
     (eval-current)
     (show "ROOT_AFTER_CHILD_EVAL" (hello 3))
-    (let ((s (ast:snapshot "r")))
-      (ast:restore s) (eval-current)
+    (let ((s (mutate :snapshot "r")))
+      (mutate :restore s) (eval-current)
       (show "ROOT_RESTORE" (hello 3)))))
 (main)
 EOF
@@ -1769,11 +1772,11 @@ _file_4369() {
     (typed-mutate-atomic (list "(mutate:rebind \"hello\" \"(lambda (x) (* x 10))\" \"try\")"))
     (eval-current)
     (workspace :switch 0)
-    (let ((s (ast:snapshot "r")))
-      (ast:restore s)
+    (let ((s (mutate :snapshot "r")))
+      (mutate :restore s)
       (eval-current))
     (show "HELLO" (hello 1))
-    (workspace:delete c)
+    (workspace :delete c)
     (show "AFTER" (hello 1))))
 (define (main)
   (set-code "(define (hello x) (+ x 1))\n#t")
@@ -1794,7 +1797,7 @@ EOF
     (show "MUT" (mutate:rebind "hello" "(lambda (x) (* x 10))" "try"))
     (show "SW0" (workspace :switch 0))
     (show "ROOT_HELLO" (hello 1))
-    (show "DEL" (workspace:delete c))
+    (show "DEL" (workspace :delete c))
     (show "AFTER_HELLO" (hello 1))))
 (main)
 EOF
@@ -1809,7 +1812,7 @@ EOF
     (show "MUT" (mutate:rebind "hello" "(lambda (x) (* x 10))" "try"))
     (show "SW0" (workspace :switch 0))
     (show "ROOT_HELLO" (hello 1))
-    (show "DISCARD" (workspace:discard c))
+    (show "DISCARD" (workspace :discard c))
     (show "AFTER_HELLO" (hello 1))))
 (main)
 EOF
