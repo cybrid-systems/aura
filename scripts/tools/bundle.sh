@@ -53,9 +53,12 @@ export AURA_SELF AURA_BIN AURA_PATH AURA_RUNTIME_DIR
 exec "$d/rt/ld.so" --library-path "$d/rt" "$d/libexec/aura" "$@"
 EOF
 chmod 755 "$STAGE/bin/aura"
+# #5067: see scripts/tools/resolve_git_sha.sh. A release must not ship
+# "commit unknown" when git is silent (dubious ownership, no .git).
+COMMIT=$(AURA_ROOT="$ROOT" "$ROOT/scripts/tools/resolve_git_sha.sh" "$ROOT")
 {
   echo "aura $VERSION linux-$ARCH"
-  echo "commit $(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+  echo "commit $COMMIT"
   echo "bundled glibc $(ldd --version | head -1 | awk '{print $NF}') (host glibc does not matter)"
   echo "host requirement: Linux kernel >= 3.2, $ARCH"
 } > "$STAGE/BUILD-INFO"

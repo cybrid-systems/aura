@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT / "tests" / "python"))
 from _aura_harness import AURA_BIN  # noqa: E402
 
 EVO = '(set-code "(define p 1)")\n(eval-current)\n(display (mutate:rebind "p" "2" "x"))\n(newline)\n'
-_VERSION_LINE = re.compile(r"^aura (\S+) \(([0-9a-f]{9}|unknown)\)$")
+_VERSION_LINE = re.compile(r"^aura (\S+) \(([0-9a-f]{9}|[0-9a-f]{40}|unknown)\)$")
 
 
 def published_channel(build_version: str) -> str:
