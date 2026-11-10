@@ -1598,6 +1598,19 @@ def cmd_lint():
             "Issue #2769 stdlib require/export audit linter failed — run python3 scripts/coverage/checks/check_stdlib_require_export_audit_2769.py"
         )
         return r
+    # Issue #5132: stdlib surface drift gate. INDEX entries must exist as
+    # modules, every exported name must resolve at runtime, and the INDEX
+    # may not state a fixed primitive/stats count that rots.
+    ssd_script = COVERAGE_CHECKS / "check_stdlib_surface_drift_5132.py"
+    if not ssd_script.exists():
+        fail(f"missing {ssd_script}")
+        return 1
+    r = run([sys.executable, str(ssd_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #5132 stdlib surface drift check failed — run python3 scripts/coverage/checks/check_stdlib_surface_drift_5132.py"
+        )
+        return r
     # Issue #2770: std/string string-split O(1)-stack iterative rewrite
     # (Hermes Phase 5 mailbox / multi-line denseness). while + substring
     # ranges; string-split-words / string-repeat siblings; suite +

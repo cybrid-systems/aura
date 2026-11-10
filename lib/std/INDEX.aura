@@ -31,7 +31,7 @@
   (list
     ; ── High-level Agent modules (Issue #559-#564 demotions) ──
     (list "stats"
-      (list "Query + observability stats unified layer (56 *-stats primitives)"
+      (list "Query + observability stats unified layer (stats:list for the live key set)"
             "(stats:get \"query:envframe-dualpath-stats\")"))
     (list "synthesize"
       (list "Synthesize namespace stdlib wrappers (LLM template registration)"
