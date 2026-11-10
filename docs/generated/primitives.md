@@ -2,11 +2,11 @@
 
 # Primitives (generated)
 
-**529** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**530** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 438 · **stdlib-candidate** 86 · **delete** 5
+**kernel** 439 · **stdlib-candidate** 86 · **delete** 5
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
@@ -14,7 +14,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 51 primitives (10%)
-- **core**: 442 primitives (84%)
+- **core**: 443 primitives (84%)
 - **internal-observable**: 35 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -130,7 +130,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (300)
+## Core builtins (301)
 
 - `%base64-decode` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -211,6 +211,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `deserialize-workspace` *[core]* `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `display` *[core]* `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `drop` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
+- `eof-object` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `eof-object?` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `eq?` *[core]* `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
 - `equal?` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
@@ -689,7 +690,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace-persist-info` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-state` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 
-### Core builtins (must remain primitive) (442)
+### Core builtins (must remain primitive) (443)
 
 - `%base64-decode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -790,6 +791,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `drop` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
 - `engine:metrics` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `engine:surface` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `eof-object` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `eof-object?` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `eq?` `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
 - `equal?` `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
@@ -1180,7 +1182,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (438)
+### kernel (439)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1265,6 +1267,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `display` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `engine:metrics` *[K-OBS]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `engine:surface` *[K-OBS]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `eof-object` *[K-EXC-5096]* — `src/compiler/evaluator_primitives_char.cpp`
 - `eof-object?` *[K-VAL]* — `src/compiler/evaluator_primitives_char.cpp`
 - `eq?` *[K-HOT]* — `src/compiler/evaluator_primitives_builtins.cpp`
 - `eqv?` *[K-VAL]* — `src/compiler/evaluator_primitives_list.cpp`

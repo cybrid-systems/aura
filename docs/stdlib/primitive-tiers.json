@@ -40,7 +40,8 @@
   "D-ORCH-5006": "retired orch: prefix (#5006): workflow, supervision, tokens, directory and metrics live in std/orch; keep registered + deprecated for the v0.2.0 alias window",
   "D-BARE-5006": "retired bare name (#5006): the name stays registered one release cycle as a deprecated alias; its replacement is a std library function or a query / mutate op",
   "K-FFI-5006": "kernel by the FFI host-effect rule (#5006): the c-* family is dlopen/dlsym/native memory, installed only by (require \"std/ffi\") under effect:ffi; Aura has no expression for a host pointer, so the names stay kernel with std/ffi as their library face (the #3176 deferred-surface contract pins the registration)",
-  "K-EXC-5095": "add_mutate names are the public write surface (#5095). They were registered before this gate could see them. v0.2.1 counts them; a new add_mutate name still needs a removal or a kernel_exceptions entry."
+  "K-EXC-5095": "add_mutate names are the public write surface (#5095). They were registered before this gate could see them. v0.2.1 counts them; a new add_mutate name still needs a removal or a kernel_exceptions entry.",
+  "K-EXC-5096": "eof-object is the unique R7RS eof sentinel (#5096). eof-object? already rejects every other value, including void, so a successful write-char is not eof. The constructor has to be the same host value the predicate recognizes; a per-module vector would not be eq? to the primitive. No registration was removable in the stdlib fix."
  },
  "kernel_exceptions": [
   "arithmetic-shift",
@@ -60,10 +61,11 @@
   "c-func",
   "c-load",
   "c-opaque",
-  "c-struct-size"
+  "c-struct-size",
+  "eof-object"
  ],
  "counts": {
-  "kernel": 438,
+  "kernel": 439,
   "stdlib-candidate": 86,
   "delete": 5
  },
@@ -525,6 +527,10 @@
   "engine:surface": {
    "tier": "kernel",
    "rule": "K-OBS"
+  },
+  "eof-object": {
+   "tier": "kernel",
+   "rule": "K-EXC-5096"
   },
   "eof-object?": {
    "tier": "kernel",

@@ -198,10 +198,17 @@ void Evaluator::destroy_workspace_tree(void* wt) {
 // cloned, or read-only workspaces (those return false).
 bool Evaluator::trigger_lazy_cow(void* wt) {
     // Issue #1566: COW clone is a mutate-side effect — enforce isolation.
+    // Issue #5086: that check denies tenant 0 + Mutate under Restricted
+    // (#2385) before the root short-circuit below, so a child layer came
+    // back as cow-refused even when workspace 0 mutate:rebind was allowed
+    // (#4322, including --preset dev). The kernel's own single-tenant tree
+    // takes the same exemption require_effect already uses. Strict,
+    // multi-tenant, and a foreign principal stay on the isolation check.
     {
         using aura::compiler::security::kEffectMutate;
-        if (!check_workspace_isolation(capability_tenant_id(), capability_tenant_id(),
-                                       kEffectMutate, "workspace:cow")) {
+        const bool own = kernel_self_workspace_mutate("mutate:rebind", /*ref_tenant=*/0);
+        if (!own && !check_workspace_isolation(capability_tenant_id(), capability_tenant_id(),
+                                               kEffectMutate, "workspace:cow")) {
             return false;
         }
     }

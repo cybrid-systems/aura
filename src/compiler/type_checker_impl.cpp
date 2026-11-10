@@ -6398,6 +6398,11 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                     return synthesize_flat_try_form(flat, pool, v);
                 if (cname == "while")
                     return synthesize_flat_while_form(flat, pool, v);
+                // Issue #5090: require/import are load forms, same as eval.
+                // Typing the callee reports "unbound variable: require" and
+                // rejects every later mutate of that workspace.
+                if (cname == "require" || cname == "import")
+                    return synthesize_flat_require_form(flat, pool, v);
             }
         }
     }
@@ -6729,6 +6734,28 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
         // (#4316 AC2; type_checker.ixx: "var ~ Dynamic still binds Any").
         if (reg_.is_var(func_type) && call_is_letrec_forward_ref(flat, pool, v.id, func_id))
             return cs_.fresh_var();
+    }
+    return reg_.dynamic_type();
+}
+
+TypeId InferenceEngine::synthesize_flat_require_form(FlatAST& flat, StringPool& pool, NodeView v) {
+    // Issue #5090: do not synthesize the require/import callee, string
+    // paths, or the all: keyword. Those are not variable references.
+    // Export names the load introduces are seeded by the post-mutate
+    // checker (host-visible set); a real free name stays unbound.
+    for (std::size_t i = 1; i < v.children.size(); ++i) {
+        const auto arg_id = v.child(i);
+        if (arg_id == NULL_NODE || arg_id >= flat.size())
+            continue;
+        const auto arg = flat.get(arg_id);
+        if (arg.tag == NodeTag::LiteralString)
+            continue;
+        if (arg.tag == NodeTag::Variable && arg.sym_id != INVALID_SYM) {
+            const auto n = pool.resolve(arg.sym_id);
+            if (n == "all:" || (!n.empty() && n.back() == ':'))
+                continue;
+        }
+        synthesize_flat(flat, pool, arg_id, arg);
     }
     return reg_.dynamic_type();
 }

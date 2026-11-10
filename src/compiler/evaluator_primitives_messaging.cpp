@@ -30,6 +30,7 @@ import aura.compiler.value;
 // Issue #4768: body-liveness for the file-heap sweep gate (runtime_ssot.cpp).
 extern "C" void aura_fiber_body_enter() noexcept;
 extern "C" void aura_fiber_body_exit() noexcept;
+extern "C" int aura_fiber_bodies_running_other() noexcept;
 
 namespace aura::compiler::primitives_detail {
 
@@ -142,6 +143,15 @@ std::int64_t fiber_body_id_4778() noexcept {
 // stays 0 there; this reads the same id the cancel safepoint uses.
 extern "C" int aura_fiber_body_active() noexcept {
     return fiber_body_id_4778() != 0 ? 1 : 0;
+}
+
+// #5066: 0 keeps the historical unlimited thread-per-fiber default.
+// Called from aura_main once --worker-threads has been parsed. Module
+// scope so the CLI entry point and the anonymous-namespace permit share it.
+std::atomic<int> s_cli_body_limit{0};
+
+extern "C" void aura_set_cli_fiber_body_limit(int n) noexcept {
+    s_cli_body_limit.store(n > 0 ? n : 0, std::memory_order_release);
 }
 
 namespace {
@@ -324,6 +334,40 @@ namespace {
     // may not have started yet, and a yield that does not see it would hand
     // the turn over to nobody and run the body to completion.
     std::atomic<std::size_t> s_cli_body_pending{0};
+
+    // #5066: --worker-threads N caps how many CLI fiber bodies run at once.
+    // 0 means unlimited (one OS thread per fiber, the historical --load
+    // default). The permit is taken for the whole body so a pure CPU loop
+    // actually occupies one of the N workers.
+    std::mutex s_cli_body_limit_mu;
+    std::condition_variable s_cli_body_limit_cv;
+    int s_cli_body_inflight = 0;
+
+    struct CliFiberBodyPermit {
+        bool held = false;
+        CliFiberBodyPermit() {
+            const int limit = s_cli_body_limit.load(std::memory_order_acquire);
+            if (limit <= 0)
+                return;
+            std::unique_lock<std::mutex> lock(s_cli_body_limit_mu);
+            s_cli_body_limit_cv.wait(lock, [&] {
+                return s_cli_body_inflight < s_cli_body_limit.load(std::memory_order_relaxed);
+            });
+            ++s_cli_body_inflight;
+            held = true;
+        }
+        ~CliFiberBodyPermit() {
+            if (!held)
+                return;
+            {
+                std::lock_guard<std::mutex> lock(s_cli_body_limit_mu);
+                --s_cli_body_inflight;
+            }
+            s_cli_body_limit_cv.notify_one();
+        }
+        CliFiberBodyPermit(const CliFiberBodyPermit&) = delete;
+        CliFiberBodyPermit& operator=(const CliFiberBodyPermit&) = delete;
+    };
 
     // Monotonic counter of SPAWNED bodies. The parent spawns its children
     // ONE AT A TIME, so a body that yields early can see "no sibling yet"
@@ -1902,6 +1946,7 @@ void RegSplitParts::register_messaging_fiber_spawn_primitive(PrimRegistrar add, 
             // waiting for its turn (a cooperative yield) does not stall on
             // a takeover that will never come.
             cli_body_lock_publish_takeover();
+            bool result_published = false;
             // Issue #1291: wait until spawn path publishes the real fid
             // AND registers s_fiber_results[fid] (g_fiber_spawn may run
             // the body before returning / before register).
@@ -1933,13 +1978,22 @@ void RegSplitParts::register_messaging_fiber_spawn_primitive(PrimRegistrar add, 
                     if (it != s_fiber_results.end()) {
                         it->second.ready = true;
                         s_fiber_results_cv.notify_all();
-                        return;
+                        result_published = true;
+                        break;
                     }
                 }
                 std::this_thread::yield();
             }
             // Best-effort notify even if registration raced past timeout.
-            s_fiber_results_cv.notify_all();
+            if (!result_published)
+                s_fiber_results_cv.notify_all();
+            // Issue #5099 / #5100: this body has returned, so its capture
+            // frames are dead except the still-pinned body closure. When no
+            // other body is inside the walker, reclaim now — a batch's frames
+            // otherwise stay allocated until a later full-heap pass, and each
+            // pass recounted the whole dead set.
+            if (result_published && aura_fiber_bodies_running_other() == 0)
+                (void)ev.reclaim_tw_unreachable_now();
         };
         // Issue #4842: a fiber:spawn body started from inside an orch agent
         // body inherits the agent-apply waiver. The parent body holds the
@@ -1987,6 +2041,9 @@ void RegSplitParts::register_messaging_fiber_spawn_primitive(PrimRegistrar add, 
             // the fallback so the caller sees an honest failure.
             bool spawn_failed = false;
             try {
+                // Issue #5099: the scheduler pin must name THIS closure, not
+                // every closure allocated before the spawn.
+                aura_fiber_note_spawn_body(static_cast<std::uint64_t>(cid));
                 fid = aura::messaging::g_fiber_spawn(run_body);
             } catch (const std::exception&) {
                 fid = 0;
@@ -2035,9 +2092,11 @@ void RegSplitParts::register_messaging_fiber_spawn_primitive(PrimRegistrar add, 
                 // the sweep gate and waits (see aura_fiber_body_enter).
                 s_thread_fiber_threads.emplace(
                     fid, std::make_pair(static_cast<const void*>(&ev), std::thread([run_body]() {
+                                            CliFiberBodyPermit permit;
                                             aura_fiber_body_enter();
                                             run_body();
                                             aura_fiber_body_exit();
+                                            (void)permit;
                                         })));
             }
             return make_int(fid);
@@ -2501,6 +2560,11 @@ void RegSplitParts::register_messaging_fiber_join_primitive(PrimRegistrar add, E
 }
 
 EvalValue RegSplitParts::fiber_join_publish_result(Evaluator& ev, std::int64_t fid) {
+    // Issue #5099: the pending-body pin is released when this join returns
+    // (PendingBodyRootRelease). Arm a sweep so the next opcode reclaims that
+    // body closure's capture frame without an explicit (gc). The counter
+    // only grows by frames that were not already on the freelist (#5100).
+    ev.arm_file_heap_reclaim_trigger();
     // Result is ready (or timed out). Fetch and return.
     std::shared_ptr<std::optional<EvalValue>> result_ptr;
     {

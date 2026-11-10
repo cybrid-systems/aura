@@ -60,14 +60,38 @@ inline constexpr const char* kEnvStdlibDir = "AURA_STDLIB_DIR";
 // Issue #2772: absolute path of the running aura (or host) binary for
 // denseness multi-process re-exec. Prefer /proc/self/exe (Linux), then
 // realpath(argv0), then argv0 / AURA_BIN as last resorts.
+// Issue #5087: the release launcher execs rt/ld.so, so /proc/self/exe is
+// the bundled loader and re-execing it does not run an Aura program. The
+// launcher exports itself as AURA_SELF (and AURA_BIN). Prefer that
+// executable. A direct exec of libexec/aura, or a dev build, still
+// returns /proc/self/exe.
+[[nodiscard]] inline bool executable_file(const char* path) noexcept {
+    return path != nullptr && path[0] != '\0' && ::access(path, X_OK) == 0;
+}
+
 [[nodiscard]] inline std::string resolve_self_executable(const char* argv0 = nullptr) {
+    if (const char* self = std::getenv("AURA_SELF"); executable_file(self))
+        return std::string(self);
 #if defined(__linux__)
     {
         std::array<char, 4096> buf{};
         const ssize_t n = ::readlink("/proc/self/exe", buf.data(), buf.size() - 1);
         if (n > 0) {
             buf[static_cast<std::size_t>(n)] = '\0';
-            return std::string(buf.data());
+            std::string path(buf.data());
+            const auto slash = path.find_last_of('/');
+            const std::string base = slash == std::string::npos ? path : path.substr(slash + 1);
+            if (base != "ld.so")
+                return path;
+            if (const char* bin = std::getenv("AURA_BIN"); executable_file(bin))
+                return std::string(bin);
+            if (argv0 && argv0[0] != '\0') {
+                std::error_code ec;
+                if (const auto rp = std::filesystem::canonical(argv0, ec); !ec)
+                    return rp.string();
+                return std::string(argv0);
+            }
+            return path;
         }
     }
 #endif

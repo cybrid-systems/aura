@@ -1251,6 +1251,81 @@ struct TwCallMeta {
     }
 };
 
+// #5066: the tree-walker self-call used to shared_lock the closure shard
+// and fetch_add two process-wide counters on every named-let iteration.
+// All fibers then bounced those lines and the curve flattened near 2×.
+// The meta copy is thread-local and dropped when closures_apply_epoch_
+// moves (erase / unique-write). The counters accumulate on this thread
+// and publish in batches, and again when the outermost eval returns.
+namespace {
+
+    struct TwMeter5066 {
+        CompilerMetrics* m = nullptr;
+        std::uint32_t calls = 0;
+        std::uint32_t tw = 0;
+    };
+    thread_local TwMeter5066 tls_tw_meter_5066;
+
+    void flush_tw_meter_5066() noexcept {
+        auto& t = tls_tw_meter_5066;
+        if (t.m != nullptr) {
+            if (t.calls != 0)
+                t.m->closure_calls_total.fetch_add(t.calls, std::memory_order_relaxed);
+            if (t.tw != 0)
+                t.m->closure_tw_calls.fetch_add(t.tw, std::memory_order_relaxed);
+        }
+        t.calls = 0;
+        t.tw = 0;
+    }
+
+    void note_tw_closure_call_5066(CompilerMetrics* m) noexcept {
+        if (m == nullptr)
+            return;
+        auto& t = tls_tw_meter_5066;
+        t.m = m;
+        ++t.calls;
+        ++t.tw;
+        if (t.calls >= 128)
+            flush_tw_meter_5066();
+    }
+
+    struct TwMetaCache5066 {
+        std::uint64_t cid = 0;
+        std::uint64_t epoch = 0;
+        bool ok = false;
+        TwCallMeta cl;
+    };
+    thread_local TwMetaCache5066 tls_tw_meta_5066;
+
+    // The cache owns its param span. A nested call on this thread assigns
+    // into the same slot, so the caller must take a stack copy (span
+    // re-seated) before evaluating arguments.
+    void copy_tw_meta_5066(TwCallMeta& dst, const TwCallMeta& src) {
+        dst.name = src.name;
+        dst.flat = src.flat;
+        dst.pool = src.pool;
+        dst.body_id = src.body_id;
+        dst.dotted = src.dotted;
+        dst.bridge_epoch = src.bridge_epoch;
+        dst.lifetime_version = src.lifetime_version;
+        dst.env_id = src.env_id;
+        dst.linear_state = src.linear_state;
+        dst.must_deopt_before_next_call = src.must_deopt_before_next_call;
+        if (src.params.size() <= dst.inline_params.size()) {
+            for (std::size_t i = 0; i < src.params.size(); ++i)
+                dst.inline_params[i] = src.params[i];
+            dst.params =
+                std::span<const aura::ast::SymId>(dst.inline_params.data(), src.params.size());
+            dst.heap_params.clear();
+        } else {
+            dst.heap_params.assign(src.params.begin(), src.params.end());
+            dst.params =
+                std::span<const aura::ast::SymId>(dst.heap_params.data(), dst.heap_params.size());
+        }
+    }
+
+} // namespace
+
 // Issue #4480: public root for primitive-local EvalValue vectors (map's
 // accumulator). Erases the matching entry so an unbalanced pop cannot
 // drop a foreign pin when nesting ever goes out of LIFO order.
@@ -5878,9 +5953,297 @@ void Evaluator::remember_resolved_var(aura::ast::NodeId id, aura::ast::SymId sym
     }
 }
 
+// #5066: integer primitive calls inside a CLI fiber body. The per-node
+// PrimCall memo refuses call frames (parent() != nullptr) and every hit
+// still goes through invoke_prim_with_telemetry_at, which fetch_adds a
+// process-wide counter. A tight (+)/(modulo)/(>=) loop then both burns
+// interpreter frames and bounces that cache line across cores.
+//
+// This table is thread-local and only records calls whose callee is not
+// shadowed in the private call env. Scheduler fibers (g_current_fiber)
+// keep the old lookup. top_bind_gen_ invalidates the entries when a
+// top-level binding changes. Overflow, non-ints, and a local shadow
+// fall through to the exact primitive.
+namespace {
+
+    enum class FastIOp : std::uint8_t { Add, Sub, Mul, Mod, Ge, Gt, Le, Lt };
+
+    struct FastISite {
+        const aura::ast::FlatAST* flat = nullptr;
+        aura::ast::NodeId node = aura::ast::NULL_NODE;
+        aura::ast::SymId sym = aura::ast::INVALID_SYM;
+        std::uint64_t top_gen = 0;
+        FastIOp op = FastIOp::Add;
+        aura::ast::NodeId arg0 = aura::ast::NULL_NODE;
+        aura::ast::NodeId arg1 = aura::ast::NULL_NODE;
+        // Non-local integer operands (a top-level `WORK`), copied once.
+        // cgen is the top_bind_gen_ observed around the lookup; a mismatch
+        // drops the copy so a later define is re-read under the env lock.
+        std::uint64_t cgen = 0;
+        std::uint64_t dgen = 0; // defuse_version_ at the copy (set! bumps it)
+        std::int64_t c0 = 0;
+        std::int64_t c1 = 0;
+        std::uint8_t arg_const = 0; // raw int, stable until top_bind_gen_
+        std::uint8_t arg_cell = 0;  // cell id in c0/c1; re-read every hit (set!)
+        std::uint8_t arg_miss = 0;  // not a fast int; don't lock again this gen
+    };
+
+    // Bumped by set! (eval_flat_on_set). Not defuse_version_: that epoch
+    // also gates self-TCO frame reuse.
+    std::atomic<std::uint64_t> g_cell_store_gen_5066{1};
+
+    thread_local FastISite tls_fast_i_5066[16];
+    thread_local int tls_fast_i_n_5066 = 0;
+    thread_local const aura::ast::FlatAST* tls_fast_flat_5066 = nullptr;
+
+    void tls_fast_i_clear_5066() noexcept {
+        tls_fast_i_n_5066 = 0;
+    }
+
+    std::optional<FastIOp> fast_iop_5066(std::string_view name) {
+        if (name == "+")
+            return FastIOp::Add;
+        if (name == "-")
+            return FastIOp::Sub;
+        if (name == "*")
+            return FastIOp::Mul;
+        if (name == "modulo")
+            return FastIOp::Mod;
+        if (name == ">=")
+            return FastIOp::Ge;
+        if (name == ">")
+            return FastIOp::Gt;
+        if (name == "<=")
+            return FastIOp::Le;
+        if (name == "<")
+            return FastIOp::Lt;
+        return std::nullopt;
+    }
+
+    bool load_fast_operand_5066(const std::atomic<std::uint64_t>& top_gen, std::uint64_t defuse,
+                                const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                                const Env& env, FastISite& site, int which, std::int64_t& out,
+                                int depth);
+    std::optional<EvalValue> eval_fast_iop_5066(FastIOp op, std::int64_t x, std::int64_t y);
+
+    std::optional<EvalValue> eval_fast_site_5066(const std::atomic<std::uint64_t>& top_gen,
+                                                 std::uint64_t defuse,
+                                                 const aura::ast::FlatAST& flat,
+                                                 const aura::ast::StringPool& pool, const Env& env,
+                                                 FastISite& site, int depth) {
+        if (depth > 4)
+            return std::nullopt;
+        if (site.top_gen != top_gen.load(std::memory_order_acquire))
+            return std::nullopt;
+        // A local binding of the operator wins over the cached primitive.
+        if (env.local_symid_last(site.sym))
+            return std::nullopt;
+        std::int64_t x = 0, y = 0;
+        if (!load_fast_operand_5066(top_gen, defuse, flat, pool, env, site, 0, x, depth) ||
+            !load_fast_operand_5066(top_gen, defuse, flat, pool, env, site, 1, y, depth))
+            return std::nullopt;
+        return eval_fast_iop_5066(site.op, x, y);
+    }
+
+    bool load_fast_operand_5066(const std::atomic<std::uint64_t>& top_gen, std::uint64_t defuse,
+                                const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
+                                const Env& env, FastISite& site, int which, std::int64_t& out,
+                                int depth) {
+        const auto node = which == 0 ? site.arg0 : site.arg1;
+        if (node >= flat.size())
+            return false;
+        const auto tag = flat.tag(node);
+        if (tag == aura::ast::NodeTag::LiteralInt) {
+            const auto mark = flat.marker(node);
+            if (mark == aura::ast::SyntaxMarker::BoolLiteral ||
+                mark == aura::ast::SyntaxMarker::EmptyList)
+                return false;
+            out = flat.int_val(node);
+            return types::fits_fixnum(out);
+        }
+        // (+ a (modulo i 7)): the operand is itself a cached integer call.
+        if (tag == aura::ast::NodeTag::Call) {
+            for (int i = 0; i < tls_fast_i_n_5066; ++i) {
+                FastISite& inner = tls_fast_i_5066[i];
+                if (inner.flat != &flat || inner.node != node)
+                    continue;
+                auto v = eval_fast_site_5066(top_gen, defuse, flat, pool, env, inner, depth + 1);
+                if (!v || !types::is_int(*v))
+                    return false;
+                out = types::as_int(*v);
+                return true;
+            }
+            return false;
+        }
+        if (tag != aura::ast::NodeTag::Variable || env.pool() != &pool)
+            return false;
+        const auto sym = flat.sym_id(node);
+        // Private call env: the shared-top lock inside local_symid_last is a
+        // no-op. A local cell is re-read (set! does not bump top_bind_gen_).
+        const auto loc = env.local_symid_last(sym);
+        if (loc) {
+            // Cells live in the shared Evaluator vector. Another fiber can
+            // reallocate it. A raw int is a private copy; a cell stays on
+            // the slow path, which already publishes that read.
+            if (types::is_int(*loc)) {
+                out = types::as_int(*loc);
+                return true;
+            }
+            return false;
+        }
+        const auto bit = static_cast<std::uint8_t>(1u << which);
+        const auto gen1 = top_gen.load(std::memory_order_acquire);
+        if (site.cgen != gen1) {
+            site.arg_const = 0;
+            site.arg_cell = 0;
+            site.arg_miss = 0;
+        }
+        if ((site.arg_const & bit) != 0 && site.dgen == defuse) {
+            out = which == 0 ? site.c0 : site.c1;
+            return true;
+        }
+        if ((site.arg_miss & bit) != 0 && site.dgen == defuse)
+            return false;
+        // One lookup, then the copy is reused until top_bind_gen_ changes.
+        // lookup_by_symid returns the raw binding (cell sentinel intact).
+        // A free var whose SymId is pool-local to another env misses that
+        // probe (`WORK` on a named-let frame). The string lookup is what
+        // the slow Variable path uses; a cell id is re-read so set! stays
+        // visible. The generation is sampled on both sides so a define
+        // that lands in between is not cached against the new gen.
+        std::optional<EvalValue> bound = env.lookup_by_symid(sym);
+        if (!bound) {
+            const auto name = pool.resolve(sym);
+            if (!name.empty()) {
+                if (auto ci = env.lookup_cell_index(name))
+                    bound = make_cell(*ci);
+                else
+                    bound = env.lookup(name);
+            }
+        }
+        const auto gen2 = top_gen.load(std::memory_order_acquire);
+        const bool stable = gen1 == gen2;
+        auto store_slot = [&](std::int64_t slot) {
+            if (which == 0)
+                site.c0 = slot;
+            else
+                site.c1 = slot;
+            site.cgen = gen2;
+            site.dgen = defuse;
+        };
+        if (bound && types::is_cell(*bound)) {
+            // Copy the current integer out through Env::lookup (the same
+            // deref the slow path uses). The copy is private; a later set!
+            // bumps defuse_version_ and the next hit re-copies. Never hold
+            // a pointer into cells_ — alloc_cell reallocates it.
+            const auto name = pool.resolve(sym);
+            if (!name.empty())
+                bound = env.lookup(name);
+            else
+                bound.reset();
+        }
+        if (!bound || types::is_cell(*bound)) {
+            if (stable) {
+                site.arg_miss = static_cast<std::uint8_t>(site.arg_miss | bit);
+                site.cgen = gen2;
+                site.dgen = defuse;
+            }
+            return false;
+        }
+        if (!types::is_int(*bound)) {
+            if (stable) {
+                site.arg_miss = static_cast<std::uint8_t>(site.arg_miss | bit);
+                site.cgen = gen2;
+            }
+            return false;
+        }
+        out = types::as_int(*bound);
+        if (stable) {
+            store_slot(out);
+            site.arg_const = static_cast<std::uint8_t>(site.arg_const | bit);
+        }
+        return true;
+    }
+
+    std::optional<EvalValue> eval_fast_iop_5066(FastIOp op, std::int64_t x, std::int64_t y) {
+        std::int64_t next = 0;
+        switch (op) {
+            case FastIOp::Add:
+                if (__builtin_add_overflow(x, y, &next) || !types::fits_fixnum(next))
+                    return std::nullopt;
+                return make_int(next);
+            case FastIOp::Sub:
+                if (__builtin_sub_overflow(x, y, &next) || !types::fits_fixnum(next))
+                    return std::nullopt;
+                return make_int(next);
+            case FastIOp::Mul:
+                if (__builtin_mul_overflow(x, y, &next) || !types::fits_fixnum(next))
+                    return std::nullopt;
+                return make_int(next);
+            case FastIOp::Mod:
+                if (y == 0 || (x == std::numeric_limits<std::int64_t>::min() && y == -1))
+                    return std::nullopt;
+                next = x % y;
+                // Floor modulo, same sign as the divisor (#4486).
+                if (next != 0 && ((next < 0) != (y < 0)))
+                    next += y;
+                if (!types::fits_fixnum(next))
+                    return std::nullopt;
+                return make_int(next);
+            case FastIOp::Ge:
+                return make_bool(x >= y);
+            case FastIOp::Gt:
+                return make_bool(x > y);
+            case FastIOp::Le:
+                return make_bool(x <= y);
+            case FastIOp::Lt:
+                return make_bool(x < y);
+        }
+        return std::nullopt;
+    }
+
+} // namespace
+
 void Evaluator::remember_prim_call(aura::ast::NodeId call_id, aura::ast::NodeId callee_id,
                                    aura::ast::SymId sym, std::uint32_t slot, const Env& env,
                                    std::span<const aura::ast::NodeId> children) {
+    // #5066: record integer calls on private envs (fiber bodies) even when
+    // parent() != nullptr, which is what keeps the shared PrimCall memo off.
+    if (aura::serve::g_current_fiber == nullptr && tls_fast_flat_5066 != nullptr &&
+        !env.is_shared_top_env() && children.size() == 3 && slot < primitives_.slot_count() &&
+        !env.local_symid_last(sym)) {
+        if (auto op = fast_iop_5066(primitives_.name_for_slot(slot))) {
+            int slot_i = -1;
+            for (int i = 0; i < tls_fast_i_n_5066; ++i) {
+                if (tls_fast_i_5066[i].flat == tls_fast_flat_5066 &&
+                    tls_fast_i_5066[i].node == call_id) {
+                    slot_i = i;
+                    break;
+                }
+            }
+            if (slot_i < 0 && tls_fast_i_n_5066 < 16)
+                slot_i = tls_fast_i_n_5066++;
+            if (slot_i >= 0) {
+                FastISite& site = tls_fast_i_5066[slot_i];
+                const bool same = site.flat == tls_fast_flat_5066 && site.node == call_id &&
+                                  site.op == *op && site.arg0 == children[1] &&
+                                  site.arg1 == children[2];
+                site.flat = tls_fast_flat_5066;
+                site.node = call_id;
+                site.sym = sym;
+                site.top_gen = top_bind_gen_.load(std::memory_order_relaxed);
+                site.op = *op;
+                site.arg0 = children[1];
+                site.arg1 = children[2];
+                if (!same) {
+                    site.arg_const = 0;
+                    site.arg_cell = 0;
+                    site.arg_miss = 0;
+                    site.cgen = 0;
+                }
+            }
+        }
+    }
     if (aura::serve::g_current_fiber != nullptr || env.parent() != nullptr)
         return;
     if (!env.binding_mirrors_aligned() || env.local_symid_last(sym))
@@ -6080,6 +6443,20 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
     // A clean node that already has a result must not re-run (display).
     if (!(flat.is_dirty(id) || flat.get_cached_value(id) == aura::ast::FlatAST::kNotCached))
         return std::nullopt;
+    // #5066: CLI integer calls, including ones inside a fiber body. Scheduler
+    // fibers stay on the lookup below (g_current_fiber != nullptr).
+    if (aura::serve::g_current_fiber == nullptr && !env.is_shared_top_env()) {
+        for (int i = 0; i < tls_fast_i_n_5066; ++i) {
+            FastISite& site = tls_fast_i_5066[i];
+            if (site.flat != &flat || site.node != id)
+                continue;
+            if (auto v = eval_fast_site_5066(top_bind_gen_,
+                                             g_cell_store_gen_5066.load(std::memory_order_acquire),
+                                             flat, pool, env, site, 0))
+                return EvalResult(*v);
+            break;
+        }
+    }
     if (aura::serve::g_current_fiber != nullptr || env.parent() != nullptr)
         return std::nullopt;
     if (!env.binding_mirrors_aligned())
@@ -6174,6 +6551,18 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 aura::ast::NodeId id, const Env& env, bool allow_file_diag_arm) {
     static constexpr std::size_t MAX_C_STACK_DEPTH = 512;
     std::size_t& c_stack_depth = aura::serve::aura_eval_c_stack_depth_slot();
+    struct FastFlatScope5066 {
+        const aura::ast::FlatAST* prev;
+        explicit FastFlatScope5066(const aura::ast::FlatAST* f)
+            : prev(tls_fast_flat_5066) {
+            tls_fast_flat_5066 = f;
+        }
+        ~FastFlatScope5066() { tls_fast_flat_5066 = prev; }
+        FastFlatScope5066(const FastFlatScope5066&) = delete;
+        FastFlatScope5066& operator=(const FastFlatScope5066&) = delete;
+    } fast_flat_scope_5066{&flat};
+    if (c_stack_depth == 0)
+        tls_fast_i_clear_5066();
     // Issue #4745 follow-up: the #4599 per-node memo is keyed by NodeId and
     // scoped to one flat. A workspace/rebuilt flat can keep the same address
     // (and even the same pool) while its slots are recycled for different
@@ -6192,7 +6581,13 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
     ++c_stack_depth;
     struct DepthGuard : ::aura::core::NoCopy {
         std::size_t& d;
-        ~DepthGuard() { --d; }
+        ~DepthGuard() {
+            // #5066: publish batched closure-call counters before the
+            // outermost eval returns, so a join sees the full totals.
+            if (d == 1)
+                flush_tw_meter_5066();
+            --d;
+        }
     } guard{{}, c_stack_depth};
     // Issue #4465: arm only the outermost eval. Nested module eval keeps
     // its error value so load_module_file still fail-closes (#2570).
@@ -6442,6 +6837,12 @@ Evaluator::FlatStep Evaluator::eval_flat_on_set(EvalFlatCursor& cur, const aura:
     auto val = eval_flat(*f, *p, val_id, eval_env);
     if (!val)
         return FlatStep::ret(val);
+    // #5066: integer fast-path copies key off this counter, not
+    // defuse_version_. Bumping defuse makes a named-let that set!s drop
+    // its loop binding ("unbound variable: loop").
+    struct CellStoreBump5066 {
+        ~CellStoreBump5066() { g_cell_store_gen_5066.fetch_add(1, std::memory_order_release); }
+    } cell_store_bump_5066;
     // Issue #4715 AC2: an open overlay owns the write. A set!
     // of a top-level binding is captured as a private cell (the
     // shared cell is never overwritten in place); a local
@@ -8194,13 +8595,16 @@ Evaluator::FlatStep Evaluator::eval_flat_on_closure(EvalFlatCursor& cur,
         // consistent with apply_closure's other
         // entry points.
         if (compiler_metrics_) {
-            auto* m = static_cast<struct CompilerMetrics*>(compiler_metrics_);
-            m->closure_calls_total.fetch_add(1, std::memory_order_relaxed);
-            m->closure_tw_calls.fetch_add(1, std::memory_order_relaxed);
+            note_tw_closure_call_5066(static_cast<CompilerMetrics*>(compiler_metrics_));
         }
         TwCallMeta cl;
         bool tw_closure = false;
-        {
+        const auto closure_epoch = closures_apply_epoch();
+        if (tls_tw_meta_5066.ok && tls_tw_meta_5066.cid == cid &&
+            tls_tw_meta_5066.epoch == closure_epoch) {
+            copy_tw_meta_5066(cl, tls_tw_meta_5066.cl);
+            tw_closure = true;
+        } else {
             std::shared_lock<std::shared_mutex> rlock(
                 closures_shards_[closures_shard_index(cid)].mu);
             auto it = closures_shards_[closures_shard_index(cid)].map.find(cid);
@@ -8210,11 +8614,18 @@ Evaluator::FlatStep Evaluator::eval_flat_on_closure(EvalFlatCursor& cur,
                 // semantics). Stale-but-live still
                 // inlines; force-drop uses apply_closure.
                 if (!closure_apply_use_site_ok(it->second)) {
+                    tls_tw_meta_5066.ok = false;
                     return FlatStep::ret(std::unexpected(Diagnostic{
                         ErrorKind::InvalidClosure, "eval_flat: freed/tombstoned closure"}));
                 }
-                cl.assign(it->second);
+                tls_tw_meta_5066.cl.assign(it->second);
+                tls_tw_meta_5066.cid = cid;
+                tls_tw_meta_5066.epoch = closure_epoch;
+                tls_tw_meta_5066.ok = true;
+                copy_tw_meta_5066(cl, tls_tw_meta_5066.cl);
                 tw_closure = true;
+            } else {
+                tls_tw_meta_5066.ok = false;
             }
         }
         if (!tw_closure) {
@@ -10646,6 +11057,25 @@ std::optional<EvalResult> Evaluator::eval_flat_prepare_visit(EvalFlatCursor& cur
     auto& p = cur.p;
     auto& current_env = cur.current_env;
     auto& current_id = cur.current_id;
+    // Park, and reclaim if this thread owes a sweep, before any fast return.
+    // Integer calls then skip the intern-pool generation and current-flat
+    // publish loads. The if / self-call still run the full prologue.
+    tw_stw_safepoint();
+    if (tw_reclaim_due())
+        maybe_reclaim_tw_unreachable();
+    if (aura::serve::g_current_fiber == nullptr && f != nullptr && p != nullptr &&
+        !eval_env.is_shared_top_env()) {
+        for (int i = 0; i < tls_fast_i_n_5066; ++i) {
+            FastISite& site = tls_fast_i_5066[i];
+            if (site.flat != f || site.node != current_id)
+                continue;
+            if (auto v = eval_fast_site_5066(top_bind_gen_,
+                                             g_cell_store_gen_5066.load(std::memory_order_acquire),
+                                             *f, *p, eval_env, site, 0))
+                return EvalResult(*v);
+            break;
+        }
+    }
     // Issue #4459: between opcodes, after the poll. Nested bodies
     // see outer envs via g_tw_frames, so the go loop under display
     // reclaims the previous iteration's closure.

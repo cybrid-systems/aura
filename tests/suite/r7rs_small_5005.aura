@@ -94,6 +94,17 @@
        (list (p) inner))))
 (t= "parameter setter" 9 (begin (p 9) (p)))
 (p 'parameter-raw-set 1)
+(t-true "parameter? on a parameter" (parameter? p))
+(t-false "parameter? rejects a lambda" (parameter? (lambda () 1)))
+(t-false "parameter? rejects a primitive" (parameter? car))
+(define *param-calls* 0)
+(define (fresh-parameter)
+  (set! *param-calls* (+ *param-calls* 1))
+  (make-parameter 0))
+(t= "parameterize evaluates the parameter expression once" 1
+   (begin
+     (parameterize (((fresh-parameter) 9)) #t)
+     *param-calls*))
 
 ; ── lazy ──────────────────────────────────────────────────────────
 (t-true "promise?" (promise? (delay 1)))
@@ -102,6 +113,8 @@
 (t= "force value" 5 (force pr))
 (t= "force memoises" 1 (begin (force pr) (vector-ref counter 0)))
 (t= "force is idempotent" 5 (force pr))
+(t= "force nested promise" 5 (force (delay (delay 5))))
+(t-false "force nested is not a promise" (promise? (force (delay (delay 5)))))
 (t= "force non-promise" 7 (force 7))
 (t-true "make-promise is a promise" (promise? (make-promise 3)))
 (t= "make-promise force" 3 (force (make-promise 3)))
@@ -113,6 +126,10 @@
    (let*-values (((a) (values 1)) ((b) (values (+ a 1)))) b))
 (t= "values one is identity" 7 (values 7))
 (t= "call-with-values" 3 (call-with-values (lambda () (values 1 2)) +))
+(t= "call-with-values does not splice a list" (list (list 1 2))
+   (call-with-values (lambda () (list 1 2)) (lambda xs xs)))
+(t= "let-values rejects a list as two values" 'arity
+   (try (let-values (((a b) (list 10 20))) 'bound) (catch e 'arity)))
 
 ; ── case-lambda ───────────────────────────────────────────────────
 (define f
@@ -165,6 +182,9 @@
 (t= "read-char after peek" 98 (read-char ip))
 (t-true "read-char eof" (eof-object? (read-char ip)))
 (t-true "peek-char eof" (eof-object? (peek-char ip)))
+(t-true "eof-object is unique" (eq? (eof-object) (read-char ip)))
+(t-false "void is not eof" (eof-object? (void)))
+(t-false "write-char is not eof" (eof-object? (write-char 65 (open-output-string))))
 
 (define op (open-output-string))
 (write-char 104 op)
