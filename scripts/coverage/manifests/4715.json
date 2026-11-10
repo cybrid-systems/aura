@@ -33,9 +33,9 @@
       "path": "src/compiler/evaluator_primitives_fiber_cow.cpp",
       "contains": [
         "Issue #4715",
-        "fiber:overlay-begin",
-        "fiber:overlay-define",
-        "fiber:overlay-commit",
+        "mw:overlay-begin",
+        "mw:overlay-define",
+        "mw:overlay-commit",
         "mw:overlay-rollback",
         "fiber:cow-conflict: ",
         "ev.top_env().bind(name, make_cell(ci))",
