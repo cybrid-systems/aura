@@ -692,45 +692,64 @@ static std::string find_record_id(const std::vector<J>& recs, const std::string&
     return by_name;
 }
 
-// `parent` is a record id on new logs. Older std/evo-core logs (and the v2
-// `parents` list) store a candidate id; map that onto the earliest record
-// that carries the name. Empty when nothing in the log matches.
-static std::string resolve_parent_record(const std::vector<J>& recs, const std::string& parent) {
-    if (parent.empty())
-        return {};
-    for (const auto& r : recs)
-        if (r.str("id") == parent)
-            return parent;
-    for (const auto& r : recs) {
-        const std::string id = r.str("id");
-        if (!id.empty() && (r.str("candidate") == parent || r.str("target") == parent))
-            return id;
+// One pass over the log: record id → first index, and candidate/target name
+// → the earliest record that carries it. `aura evo log --lineage` used to
+// rescan the whole vector at every parent step (O(n²) on a KEEP chain).
+struct RecIndex {
+    std::unordered_map<std::string, std::size_t> by_id;
+    std::unordered_map<std::string, std::size_t> first_name;
+    explicit RecIndex(const std::vector<J>& recs) {
+        by_id.reserve(recs.size());
+        first_name.reserve(recs.size());
+        for (std::size_t i = 0; i < recs.size(); ++i) {
+            const std::string id = recs[i].str("id");
+            if (!id.empty())
+                by_id.emplace(id, i);
+            // Either name can be the parent link. The earliest record wins,
+            // matching the old left-to-right scan.
+            const std::string cand = recs[i].str("candidate");
+            const std::string target_name = recs[i].str("target");
+            if (!cand.empty())
+                first_name.emplace(cand, i);
+            if (!target_name.empty())
+                first_name.emplace(target_name, i);
+        }
     }
-    return {};
-}
+    // Exact record id, else the earliest record that carries the name.
+    // Empty when nothing matches. Same answer as the old linear scans.
+    [[nodiscard]] std::string resolve_parent(const std::vector<J>& recs,
+                                             const std::string& parent) const {
+        if (parent.empty())
+            return {};
+        if (by_id.contains(parent))
+            return parent;
+        if (const auto it = first_name.find(parent); it != first_name.end())
+            return recs[it->second].str("id");
+        return {};
+    }
+};
 
 // The ancestor chain of one record: walk "parent" to the root, then keep
 // the records whose id is on the chain (oldest first).
 static std::vector<J> lineage_filter(const std::vector<J>& recs, const std::string& target) {
+    const RecIndex idx(recs);
     std::string cur = find_record_id(recs, target);
-    std::vector<std::string> chain;
+    std::unordered_set<std::string> chain;
     std::size_t guard = 0;
     while (!cur.empty() && guard++ <= recs.size() + 1) {
-        chain.push_back(cur);
-        std::string raw;
-        for (const auto& r : recs)
-            if (r.str("id") == cur) {
-                raw = r.str("parent");
-                break;
-            }
-        const std::string next = resolve_parent_record(recs, raw);
+        if (!chain.insert(cur).second)
+            break;
+        const auto at = idx.by_id.find(cur);
+        const std::string raw =
+            at == idx.by_id.end() ? std::string{} : recs[at->second].str("parent");
+        const std::string next = idx.resolve_parent(recs, raw);
         if (next.empty() || next == cur)
             break;
         cur = next;
     }
     std::vector<J> out;
     for (const auto& r : recs)
-        if (std::find(chain.begin(), chain.end(), r.str("id")) != chain.end())
+        if (chain.contains(r.str("id")))
             out.push_back(r);
     return out;
 }
@@ -951,65 +970,115 @@ struct LineageArt {
     std::size_t unresolved = 0;
 };
 
-// Depth of each node from its parent chain (roots at 0). Records are written
-// in append order, so a parent normally precedes its child; the loop is
-// bounded anyway and stops on a cycle.
-static std::size_t node_at(const std::vector<std::pair<std::string, std::size_t>>& idx,
-                           const std::string& id) {
-    for (const auto& [key, at] : idx)
-        if (key == id)
-            return at;
-    return static_cast<std::size_t>(-1);
-}
+// Depth of each node from its parent chain (roots at 0). Record id wins
+// over a candidate/target name; the first record that introduces a name
+// wins, so a parent edge lands on that candidate. A chained KEEP log is
+// one long parent list — walking it per node was cubic (#5098). The parent
+// link is a function, so depths are one walk of that function.
+static constexpr std::size_t kNoLineageNode = static_cast<std::size_t>(-1);
 
-// Record id first, then the candidate/target name. The first record that
-// introduces a name wins, so a parent edge lands on that candidate.
-static std::size_t
-resolve_lineage_node(const std::vector<std::pair<std::string, std::size_t>>& by_id,
-                     const std::vector<std::pair<std::string, std::size_t>>& by_name,
-                     const std::string& id) {
-    if (id.empty())
-        return static_cast<std::size_t>(-1);
-    const std::size_t at = node_at(by_id, id);
-    if (at != static_cast<std::size_t>(-1))
-        return at;
-    return node_at(by_name, id);
-}
+struct LineageIndex {
+    std::unordered_map<std::string, std::size_t> by_id;
+    std::unordered_map<std::string, std::size_t> by_name;
+    explicit LineageIndex(const std::vector<LNode>& ns) {
+        by_id.reserve(ns.size());
+        by_name.reserve(ns.size());
+        for (std::size_t i = 0; i < ns.size(); ++i) {
+            by_id.emplace(ns[i].id, i);
+            if (!ns[i].name.empty())
+                by_name.emplace(ns[i].name, i);
+        }
+    }
+    [[nodiscard]] std::size_t resolve(const std::string& id) const {
+        if (id.empty())
+            return kNoLineageNode;
+        if (const auto it = by_id.find(id); it != by_id.end())
+            return it->second;
+        if (const auto it = by_name.find(id); it != by_name.end())
+            return it->second;
+        return kNoLineageNode;
+    }
+};
 
-static std::size_t node_depth_resolved(
-    const std::vector<LNode>& ns, const std::vector<std::pair<std::string, std::size_t>>& by_id,
-    const std::vector<std::pair<std::string, std::size_t>>& by_name, std::size_t i) {
+// Same hop count as the old per-node walk: follow the resolved parent until
+// the link is missing, the walk returns to `start`, or the guard trips.
+static std::size_t depth_walk(const std::vector<std::size_t>& parent, std::size_t start) {
     std::size_t d = 0;
-    std::string cur = ns[i].parent;
     std::size_t guard = 0;
-    while (!cur.empty() && guard++ <= ns.size()) {
-        const std::size_t at = resolve_lineage_node(by_id, by_name, cur);
-        if (at == static_cast<std::size_t>(-1) || at == i)
+    std::size_t cur = parent[start];
+    const std::size_t n = parent.size();
+    while (cur != kNoLineageNode && guard++ <= n) {
+        if (cur == start)
             break;
-        cur = ns[at].parent;
+        cur = parent[cur];
         ++d;
     }
     return d;
+}
+
+static std::vector<std::size_t> lineage_depths(const std::vector<std::size_t>& parent) {
+    const std::size_t n = parent.size();
+    std::vector<std::uint8_t> color(n, 0);
+    bool cyclic = false;
+    for (std::size_t start = 0; start < n && !cyclic; ++start) {
+        if (color[start] != 0)
+            continue;
+        std::vector<std::size_t> stack;
+        std::size_t cur = start;
+        while (cur != kNoLineageNode && color[cur] == 0) {
+            color[cur] = 1;
+            stack.push_back(cur);
+            cur = parent[cur];
+        }
+        if (cur != kNoLineageNode && color[cur] == 1)
+            cyclic = true;
+        for (const auto u : stack)
+            color[u] = 2;
+    }
+    if (cyclic) {
+        std::vector<std::size_t> depth(n, 0);
+        for (std::size_t i = 0; i < n; ++i)
+            depth[i] = depth_walk(parent, i);
+        return depth;
+    }
+    // Acyclic: each node's depth is one more than its parent's, roots at 0.
+    // `done` is separate from the depth value so a root (depth 0) is not
+    // revisited as if it were unassigned.
+    std::vector<std::size_t> depth(n, 0);
+    std::vector<char> done(n, 0);
+    std::vector<std::size_t> stack;
+    stack.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (done[i])
+            continue;
+        stack.clear();
+        std::size_t cur = i;
+        while (cur != kNoLineageNode && !done[cur]) {
+            stack.push_back(cur);
+            done[cur] = 1;
+            cur = parent[cur];
+        }
+        for (std::size_t k = stack.size(); k > 0; --k) {
+            const std::size_t u = stack[k - 1];
+            const std::size_t p = parent[u];
+            depth[u] = (p == kNoLineageNode) ? 0 : depth[p] + 1;
+        }
+    }
+    return depth;
 }
 
 static LineageArt lineage_svg(const std::vector<LNode>& ns) {
     LineageArt art;
     if (ns.empty())
         return art;
-    std::vector<std::pair<std::string, std::size_t>> by_id;
-    std::vector<std::pair<std::string, std::size_t>> by_name;
-    by_id.reserve(ns.size());
-    for (std::size_t i = 0; i < ns.size(); ++i) {
-        by_id.emplace_back(ns[i].id, i);
-        if (!ns[i].name.empty() && node_at(by_name, ns[i].name) == static_cast<std::size_t>(-1))
-            by_name.emplace_back(ns[i].name, i);
-    }
-    std::vector<std::size_t> depth(ns.size());
+    const LineageIndex idx(ns);
+    std::vector<std::size_t> parent(ns.size(), kNoLineageNode);
+    for (std::size_t i = 0; i < ns.size(); ++i)
+        parent[i] = idx.resolve(ns[i].parent);
+    const std::vector<std::size_t> depth = lineage_depths(parent);
     std::size_t maxd = 0;
-    for (std::size_t i = 0; i < ns.size(); ++i) {
-        depth[i] = node_depth_resolved(ns, by_id, by_name, i);
-        maxd = std::max(maxd, depth[i]);
-    }
+    for (const auto d : depth)
+        maxd = std::max(maxd, d);
     std::vector<std::size_t> per_layer(maxd + 1, 0);
     for (const auto d : depth)
         ++per_layer[d];
@@ -1035,8 +1104,8 @@ static LineageArt lineage_svg(const std::vector<LNode>& ns) {
         const auto edge = [&](const std::string& pid) {
             if (pid.empty())
                 return;
-            const std::size_t at = resolve_lineage_node(by_id, by_name, pid);
-            if (at == static_cast<std::size_t>(-1) || at == i) {
+            const std::size_t at = idx.resolve(pid);
+            if (at == kNoLineageNode || at == i) {
                 ++art.unresolved;
                 return;
             }
