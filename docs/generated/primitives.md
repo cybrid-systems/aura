@@ -6,7 +6,7 @@
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 467 · **stdlib-candidate** 79 · **delete** 1
+**kernel** 472 · **stdlib-candidate** 74 · **delete** 1
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
@@ -222,14 +222,14 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `exit` *[core]* `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `exp` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `f32-bytes->f64vector` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `f64vector-dot` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_char.cpp`
-- `f64vector-ewma!` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-dot` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-ewma!` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-length` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `f64vector-max-index` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-max-index` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-ref` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-set!` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `f64vector-sub!` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_char.cpp`
-- `f64vector-sum` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-sub!` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-sum` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `filter` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
 - `float?` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `floor` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
@@ -822,14 +822,14 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `exit` `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `exp` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `f32-bytes->f64vector` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `f64vector-dot` `stdlib-candidate` — `src/compiler/evaluator_primitives_char.cpp`
-- `f64vector-ewma!` `stdlib-candidate` — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-dot` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-ewma!` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-length` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `f64vector-max-index` `stdlib-candidate` — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-max-index` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-ref` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-set!` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `f64vector-sub!` `stdlib-candidate` — `src/compiler/evaluator_primitives_char.cpp`
-- `f64vector-sum` `stdlib-candidate` — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-sub!` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-sum` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `ffi:pin-buffer` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `ffi:unpin-buffer` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `fiber:cancel` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1216,7 +1216,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (467)
+### kernel (472)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1322,9 +1322,14 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `exit` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `exp` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
 - `f32-bytes->f64vector` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-dot` *[K-F64]* — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-ewma!` *[K-F64]* — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-length` *[K-VAL]* — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-max-index` *[K-F64]* — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-ref` *[K-VAL]* — `src/compiler/evaluator_primitives_char.cpp`
 - `f64vector-set!` *[K-VAL]* — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-sub!` *[K-F64]* — `src/compiler/evaluator_primitives_char.cpp`
+- `f64vector-sum` *[K-F64]* — `src/compiler/evaluator_primitives_char.cpp`
 - `ffi:pin-buffer` *[K-FFI]* — `src/compiler/ffi_primitives_impl.cpp`
 - `ffi:unpin-buffer` *[K-FFI]* — `src/compiler/ffi_primitives_impl.cpp`
 - `fiber:cancel` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1686,7 +1691,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `write` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `write-file` *[K-IO]* — `src/compiler/evaluator_primitives_file.cpp`
 
-### stdlib-candidate (79)
+### stdlib-candidate (74)
 
 - `abs` *[S-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
 - `append` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
@@ -1709,11 +1714,6 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `datum->string` *[S-PURE]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `drop` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
 - `equal?` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`
-- `f64vector-dot` *[S-F64]* — `src/compiler/evaluator_primitives_char.cpp`
-- `f64vector-ewma!` *[S-F64]* — `src/compiler/evaluator_primitives_char.cpp`
-- `f64vector-max-index` *[S-F64]* — `src/compiler/evaluator_primitives_char.cpp`
-- `f64vector-sub!` *[S-F64]* — `src/compiler/evaluator_primitives_char.cpp`
-- `f64vector-sum` *[S-F64]* — `src/compiler/evaluator_primitives_char.cpp`
 - `filter` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
 - `foldl` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
 - `for-each` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`

@@ -44,7 +44,8 @@
     "K-EXC-5096": "eof-object is the unique R7RS eof sentinel (#5096). eof-object? already rejects every other value, including void, so a successful write-char is not eof. The constructor has to be the same host value the predicate recognizes; a per-module vector would not be eq? to the primitive. No registration was removable in the stdlib fix.",
     "K-EXC-5118": "Restored orch verbs (#5118). #5111 unregistered the scope, workflow, directory and metrics names before std/orch had a body for them. They stay registered and deprecated for one cycle. The doc hint names the function to call (the verb itself, or parallel-intend for orch:parallel-intend). No other registration was removable in the same change.",
     "K-R7RS": "R7RS-small required procedure; a conversion spelling exists, but removing this name would break the declared R7RS surface",
-    "K-CHAR": "character comparison used inside every string and parser loop (char=?/char<?); an Aura body adds a call per comparison, so it stays kernel until #5135 can measure the move in the CI image"
+    "K-CHAR": "character comparison used inside every string and parser loop (char=?/char<?); an Aura body adds a call per comparison, so it stays kernel until #5135 can measure the move in the CI image",
+    "K-F64": "f64vector numeric kernels (dot/sum/max-index/sub!/ewma!) run over the locked native view of the f64 heap; an Aura loop would be an interpreted call per element, so the move needs a #5135 baseline in the CI image before it can be considered"
   },
   "kernel_exceptions": [
     "arithmetic-shift",
@@ -90,8 +91,8 @@
     "orch:supervise-batch"
   ],
   "counts": {
-    "kernel": 467,
-    "stdlib-candidate": 79,
+    "kernel": 472,
+    "stdlib-candidate": 74,
     "delete": 1
   },
   "primitives": {
@@ -609,20 +610,20 @@
       "rule": "K-HOSTLIB"
     },
     "f64vector-dot": {
-      "tier": "stdlib-candidate",
-      "rule": "S-F64"
+      "tier": "kernel",
+      "rule": "K-F64"
     },
     "f64vector-ewma!": {
-      "tier": "stdlib-candidate",
-      "rule": "S-F64"
+      "tier": "kernel",
+      "rule": "K-F64"
     },
     "f64vector-length": {
       "tier": "kernel",
       "rule": "K-VAL"
     },
     "f64vector-max-index": {
-      "tier": "stdlib-candidate",
-      "rule": "S-F64"
+      "tier": "kernel",
+      "rule": "K-F64"
     },
     "f64vector-ref": {
       "tier": "kernel",
@@ -633,12 +634,12 @@
       "rule": "K-VAL"
     },
     "f64vector-sub!": {
-      "tier": "stdlib-candidate",
-      "rule": "S-F64"
+      "tier": "kernel",
+      "rule": "K-F64"
     },
     "f64vector-sum": {
-      "tier": "stdlib-candidate",
-      "rule": "S-F64"
+      "tier": "kernel",
+      "rule": "K-F64"
     },
     "ffi:pin-buffer": {
       "tier": "kernel",
