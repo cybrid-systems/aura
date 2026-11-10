@@ -75,9 +75,9 @@ inline constexpr const char* kEnvStdlibDir = "AURA_STDLIB_DIR";
 #if defined(__linux__)
     {
         std::array<char, 4096> buf{};
-        const ssize_t n = ::readlink("/proc/self/exe", buf.data(), buf.size() - 1);
-        if (n > 0) {
-            buf[static_cast<std::size_t>(n)] = '\0';
+        const ssize_t length = ::readlink("/proc/self/exe", buf.data(), buf.size() - 1);
+        if (length > 0) {
+            buf[static_cast<std::size_t>(length)] = '\0';
             std::string path(buf.data());
             const auto slash = path.find_last_of('/');
             const std::string base = slash == std::string::npos ? path : path.substr(slash + 1);
@@ -86,9 +86,10 @@ inline constexpr const char* kEnvStdlibDir = "AURA_STDLIB_DIR";
             if (const char* bin = std::getenv("AURA_BIN"); executable_file(bin))
                 return std::string(bin);
             if (argv0 && argv0[0] != '\0') {
-                std::error_code ec;
-                if (const auto rp = std::filesystem::canonical(argv0, ec); !ec)
-                    return rp.string();
+                std::error_code error_code;
+                if (const auto resolved_path = std::filesystem::canonical(argv0, error_code);
+                    !error_code)
+                    return resolved_path.string();
                 return std::string(argv0);
             }
             return path;
