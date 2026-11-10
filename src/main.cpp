@@ -500,6 +500,8 @@ static std::string build_lazy_oneshot_std_prelude(const std::string& source) {
 
 // Issue #4497: defined in evaluator_primitives_runtime.cpp.
 extern "C" std::uint64_t aura_displayed_error_count() noexcept;
+// #5066: cap concurrent --load fiber bodies. 0 keeps them unlimited.
+extern "C" void aura_set_cli_fiber_body_limit(int n) noexcept;
 
 // Issue #4622: length of the Scheme-style character literal that starts at
 // 'i' in 'src' (src[i] == '#' and src[i+1] == '\\'), or 0 when those bytes
@@ -5794,6 +5796,9 @@ static int aura_main(int argc, char* argv[]) {
     if (prep.status >= 0)
         return prep.status;
     const int num_workers = prep.num_workers;
+    // #5066: --load fiber bodies are OS threads. A positive --worker-threads
+    // caps how many of those bodies run at once. 0 stays unlimited.
+    aura_set_cli_fiber_body_limit(num_workers);
 
     // ── --serve-async: fiber-based async JSON-line protocol ─
     // Uses ucontext fibers + epoll for non-blocking multi-session support.
