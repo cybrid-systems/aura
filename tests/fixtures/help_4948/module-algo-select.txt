@@ -5,3 +5,6 @@ std/algo-select (#4945)
   (select:choose s inst k)      ; -> k member names
   (select:feedback! s inst member result)
   (select:report s)             ; SBS/VBS, gap closure, regret
+  features-fn!, offline and feedback! update the handle in place and
+  also return it. choose on an unfitted selector is an error; an empty
+  matrix is the only fitted selector that selects nothing.

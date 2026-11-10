@@ -182,7 +182,12 @@
 (define sdd (select:offline sd sm (hash)))
 (define shifted (feed-n sdd 10 (hash "kind" 2)))
 (assert! (select:drift? shifted) "drift is flagged after the context changes")
-(assert! (not (select:drift? sdd)) "no drift without feedback")
+; feedback! updates the handle in place (#5071), so sdd is shifted.
+; A selector that never received feedback is the one that must not drift.
+(define quiet (select:offline (select:make (hash "model" "knn" "k" 1
+                                                 "drift-threshold" 0.25))
+                               sm (hash)))
+(assert! (not (select:drift? quiet)) "no drift without feedback")
 
 ; ═══════════════════════════════════════════════════════════════════
 ; AC6 — FRRMAB stops using the bad operator
