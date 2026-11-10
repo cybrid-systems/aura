@@ -97,7 +97,7 @@ def _spawn_region(text: str) -> str:
     idx = text.find('add("fiber:spawn"')
     if idx < 0:
         return ""
-    end = text.find('add("fiber:spawn-backend"', idx)
+    end = text.find('add("qr:fiber-backend"', idx)
     return text[idx:end] if end > 0 else text[idx : idx + 12000]
 
 

@@ -1,6 +1,7 @@
-; Issue #5006 — the bare-name walk half: the names that leave are reachable
-; through a verb or a std library function, and the deprecated registration
-; still answers the same way for one release cycle.
+; Issue #5006 / #5094 — the bare names that left are the verb or the std
+; function. v0.2.1 unregistered the deprecated spellings. (api-reference)
+; prints PrimMeta.doc for whatever is still deprecated; it does not tell
+; the caller to re-run the old primitive through engine:metrics.
 ;
 ; Pinned here:
 ;   reads   (query :api-reference) (query :arena-offset) (query :auto-rollback-on-panic)
@@ -19,8 +20,9 @@
 
 ; ── 1. reads are query ops ─────────────────────────────────────
 (ok5006 (integer? (query :arena-offset)) "query :arena-offset is an int")
-(ok5006 (= (query :arena-offset) (arena-offset))
-        "query :arena-offset agrees with the deprecated alias")
+(define (raised5006 thunk)
+  (eq? (try (thunk) (catch (caught) 'raised-5006)) 'raised-5006))
+(ok5006 (raised5006 (lambda () (arena-offset))) "bare arena-offset is unbound")
 (ok5006 (string? (query :api-reference)) "query :api-reference is a string")
 (ok5006 (>= (string-find (query :api-reference) "Available Aura primitives") 0)
         "query :api-reference prints the table")
@@ -44,32 +46,34 @@
 (ok5006 (eq? #f (mutate :define-struct "only-name"))
         "mutate :define-struct refuses a short arg list")
 
-; ── 3. the deprecated registrations still answer ──────────────
-(ok5006 (eq? (define-strategy "std-bare-strategy-2" "(phase check 1)") #t)
-        "deprecated define-strategy alias still answers")
-(ok5006 (eq? (edsl:define-struct "AliasStruct" "doc" "f:int") #t)
-        "deprecated edsl:define-struct alias still answers")
+; ── 3. the deprecated spellings are unbound ───────────────────
+(ok5006 (raised5006 (lambda () (define-strategy "n" "(phase check 1)")))
+        "bare define-strategy is unbound")
+(ok5006 (raised5006 (lambda () (edsl:define-struct "AliasStruct" "doc" "f:int")))
+        "bare edsl:define-struct is unbound")
+(ok5006 (raised5006 (lambda () (diagnose "unbound variable: map")))
+        "bare diagnose is unbound before std/diagnose")
+(define metrics-diag (engine:metrics "diagnose"))
+(ok5006 (and (hash? metrics-diag) (eq? (hash-ref metrics-diag "ok" #t) #f))
+        "engine:metrics does not run diagnose")
+(define metrics-snap (engine:metrics "ast:snapshot"))
+(ok5006 (and (hash? metrics-snap) (eq? (hash-ref metrics-snap "ok" #t) #f))
+        "engine:metrics does not run ast:snapshot")
 
-; ── 4. the deprecated names are listed as deprecated ──────────
+; ── 4. hints come from PrimMeta.doc, not the metrics boilerplate ─
 (define ref5006 (query :api-reference))
-(ok5006 (>= (string-find ref5006 "*deprecated*") 0)
-        "api-reference carries a deprecated section")
-(ok5006 (>= (string-find ref5006 "[use (engine:metrics \"edsl:define-struct\")]") 0)
-        "the deprecated section flags edsl:define-struct")
-(ok5006 (>= (string-find ref5006 "[use (engine:metrics \"define-strategy\")]") 0)
-        "the deprecated section flags define-strategy")
-(ok5006 (>= (string-find ref5006 "[use (engine:metrics \"diagnose\")]") 0)
-        "the deprecated section flags diagnose")
-
-; The public orch: surface is exactly the five verbs: the rest of the prefix
-; is listed only under *deprecated*.
-(define public5006 (substring ref5006 0 (string-find ref5006 "*deprecated*")))
-(ok5006 (>= (string-find public5006 "  orch:spawn\n") 0)
+(ok5006 (= -1 (string-find ref5006 "[use (engine:metrics \"diagnose\")]"))
+        "api-reference does not point diagnose at engine:metrics")
+(ok5006 (= -1 (string-find ref5006 "[use (engine:metrics \"ast:snapshot\")]"))
+        "api-reference does not point ast:snapshot at engine:metrics")
+(ok5006 (= -1 (string-find ref5006 "diagnose\n"))
+        "unregistered diagnose is not in the catalog")
+(ok5006 (>= (string-find ref5006 "  orch:spawn\n") 0)
         "public surface keeps orch:spawn")
-(ok5006 (= -1 (string-find public5006 "orch:compose-workflow"))
-        "public surface drops orch:compose-workflow")
-(ok5006 (= -1 (string-find public5006 "orch:supervise-batch"))
-        "public surface drops orch:supervise-batch")
+(ok5006 (= -1 (string-find ref5006 "orch:compose-workflow"))
+        "orch:compose-workflow is not registered")
+(ok5006 (= -1 (string-find ref5006 "orch:supervise-batch"))
+        "orch:supervise-batch is not registered")
 
 ; ── 5. std replacements ───────────────────────────────────────
 (require "std/diagnose" all:)

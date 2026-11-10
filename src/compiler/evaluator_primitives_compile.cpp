@@ -3631,7 +3631,7 @@ void CompilePrims::register_compile_p37(PrimRegistrar add, Evaluator& ev) {
     //   piping through (mutate:query-and-replace ...)).
     //
     // Composes with (verify:coverage-holes) (same source
-    // set) and (ast:snapshot / ast:rollback) for safe
+    // set) and (mutate :snapshot / ast:rollback) for safe
     // experimentation — callers are expected to snapshot
     // before a refine loop and rollback on failure.
     add("verify:suggest-constraint-refine", [&ev](const auto& a) -> EvalValue {
@@ -4166,22 +4166,22 @@ void CompilePrims::register_compile_p42(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->marker(id)));
     });
 
-    // (syntax:set-marker node-id marker) — Issue #366: set the
+    // (mutate :set-marker node-id marker) — Issue #366: set the
     // SyntaxMarker value of a node. Returns true on success.
     // marker is an integer (0=User, 1=MacroIntroduced,
     // 2=BoolLiteral). Used by EDSL transformers and auditability
     // tooling to correct marker drift after a manual mutation
     // sequence. The primitive does NOT propagate the marker to
     // children — use syntax:propagate-marker for that.
-    add("syntax:set-marker", [&ev](const auto& a) -> EvalValue {
+    add("mw:set-marker", [&ev](const auto& a) -> EvalValue {
         // Issue #1002: removed dead `bool ok` (error paths return merr
         // immediately; ok was never read).
         if (a.size() < 2 || !is_int(a[1])) {
-            return ev.make_merr("bad-arg", "usage: (syntax:set-marker node-id marker)");
+            return ev.make_merr("bad-arg", "usage: (mutate :set-marker node-id marker)");
         }
         const auto narg = parse_compile_node_arg(ev, a[0]);
         if (!narg.valid) {
-            return ev.make_merr("bad-arg", "usage: (syntax:set-marker node-id marker)");
+            return ev.make_merr("bad-arg", "usage: (mutate :set-marker node-id marker)");
         }
         auto id = narg.id;
         auto marker_val = static_cast<int>(as_int(a[1]));
@@ -4196,7 +4196,7 @@ void CompilePrims::register_compile_p42(PrimRegistrar add, Evaluator& ev) {
                                 "marker must be 0 (User), 1 (MacroIntroduced), or 2 (BoolLiteral)");
         }
         // Issue #3040: stamp + require_effect_on_ref / for_node_id before column write.
-        if (!gate_compile_node_effect(ev, "syntax:set-marker", narg))
+        if (!gate_compile_node_effect(ev, "mw:set-marker", narg))
             return ev.make_merr("tenant-isolation-denied",
                                 "cross-tenant syntax:set-marker denied (#3040)");
         // Issue #3650: clearing a MacroIntroduced marker (→ User /
@@ -4222,7 +4222,7 @@ void CompilePrims::register_compile_p42(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 compile part 43 (orig 3483-3546)
 void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
 
-    // (syntax:propagate-marker node-id marker) — Issue #366:
+    // (mutate :propagate-marker node-id marker) — Issue #366:
     // set the marker on a node AND recursively on all
     // descendants. Returns the count of nodes updated. Used by
     // EDSL transformers to re-stamp a macro-introduced subtree
@@ -4234,7 +4234,7 @@ void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
     // Issue #1782: FlatAST children can form cycles (DAG / self-
     // mutate). Dense seen[] + kMaxVisit abort (parity #1679 /
     // #1682) prevents unbounded stack growth on cycles.
-    add("syntax:propagate-marker", [&ev](const auto& a) -> EvalValue {
+    add("mw:propagate-marker", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[1])) {
             return make_int(0);
         }
@@ -4250,7 +4250,7 @@ void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
         if (marker_val < 0 || marker_val > 2)
             return make_int(0);
         // Issue #3040: stamp + require_effect_on_ref / for_node_id before walk.
-        if (!gate_compile_node_effect(ev, "syntax:propagate-marker", narg))
+        if (!gate_compile_node_effect(ev, "mw:propagate-marker", narg))
             return make_int(0);
         auto& flat = *ev.workspace_flat_;
         // Iterative DFS with visited set — metadata-only.
@@ -4298,7 +4298,7 @@ void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
         return make_int(count);
     });
 
-    // (syntax:set-provenance node-id prov-id) — Issue #367:
+    // (mutate :set-provenance node-id prov-id) — Issue #367:
     // set the per-node provenance id. The prov-id is a
     // workspace-scoped identifier that AI agents can use to
     // trace "this node came from macro X during expansion Y".
@@ -4306,7 +4306,7 @@ void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
     // mutation_id) lives in a side-table that the host can
     // populate out-of-band; this primitive only stores the
     // index. 0 = no provenance recorded.
-    add("syntax:set-provenance", [&ev](const auto& a) -> EvalValue {
+    add("mw:set-provenance", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[1]))
             return make_bool(false);
         const auto narg = parse_compile_node_arg(ev, a[0]);
@@ -4319,7 +4319,7 @@ void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
         if (id >= ev.workspace_flat_->size())
             return make_bool(false);
         // Issue #3040: stamp + require_effect_on_ref / for_node_id before column write.
-        if (!gate_compile_node_effect(ev, "syntax:set-provenance", narg))
+        if (!gate_compile_node_effect(ev, "mw:set-provenance", narg))
             return make_bool(false);
         // Issue #1783: exclusive metadata_mtx_ for provenance column.
         auto wlock = ev.workspace_flat_->begin_metadata_mutation();
@@ -4331,11 +4331,11 @@ void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 compile part 44 (orig 3547-3630)
 void CompilePrims::register_compile_p44(PrimRegistrar add, Evaluator& ev) {
 
-    // (syntax:get-provenance node-id) — Issue #367: return
+    // (query :get-provenance node-id) — Issue #367: return
     // the per-node provenance id (0 if unset). The host can
     // look up the actual macro_def_id / expansion_id /
     // mutation_id via its own side-table.
-    add("syntax:get-provenance", [&ev](const auto& a) -> EvalValue {
+    add("qr:get-provenance", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_int(0);
         if (!ev.workspace_flat_)
@@ -5569,18 +5569,18 @@ void CompilePrims::register_compile_p57(PrimRegistrar add, Evaluator& ev) {
     // Three primitives that surface the hygiene guard added by
     // #373 piece 2 (mutate guards):
     //
-    //   (hygiene:protected? node-id)
+    //   (query :protected? node-id)
     //     Returns #t if the node has marker == MacroIntroduced
     //     (i.e. was produced by clone_macro_body from a hygienic
     //     macro expansion). #f otherwise (including when the
     //     workspace or node id is invalid). Same marker column
     //     that query:by-marker / query:macro-introduced reads.
     //
-    //   (hygiene:allow-macro-mutate?) — read the global flag
+    //   (query :allow-macro-mutate?) — read the global flag
     //     (default #f). Mirrors the C++ side's allow_macro_mutate_
     //     flag on Evaluator.
     //
-    //   (hygiene:set-allow-macro-mutate! bool) — set the flag.
+    //   (mutate :set-allow-macro-mutate bool) — set the flag.
     //     When #t, mutate:* operations on MacroIntroduced nodes
     //     proceed without the "hygiene-protected" pre-check
     //     rejection. The flag is per-Evaluator (process-local);
@@ -5592,7 +5592,7 @@ void CompilePrims::register_compile_p57(PrimRegistrar add, Evaluator& ev) {
     // protected state or opt-in globally. Per-call opt-out
     // without changing the flag is the :allow-macro? #t kwarg
     // on each mutate:* primitive.
-    add("hygiene:protected?", [&ev](const auto& a) -> EvalValue {
+    add("qr:protected?", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         if (!ev.workspace_flat_)
@@ -5610,12 +5610,12 @@ void CompilePrims::register_compile_p57(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 compile part 58 (orig 4774-4946)
 void CompilePrims::register_compile_p58(PrimRegistrar add, Evaluator& ev) {
 
-    add("hygiene:allow-macro-mutate?",
+    add("qr:allow-macro-mutate?",
         [&ev](const auto&) -> EvalValue { return make_bool(ev.get_allow_macro_mutate()); });
 
-    add("hygiene:set-allow-macro-mutate!", [&ev](const auto& a) -> EvalValue {
+    add("mw:set-allow-macro-mutate", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_bool(a[0])) {
-            return ev.make_merr("bad-arg", "usage: (hygiene:set-allow-macro-mutate! bool)");
+            return ev.make_merr("bad-arg", "usage: (mutate :set-allow-macro-mutate bool)");
         }
         // Issue #3652: arming the global opt-out is itself capability-gated —
         // same MacroSelfEvo contract as deny_macro_opt_out_without_mse
@@ -5625,7 +5625,7 @@ void CompilePrims::register_compile_p58(PrimRegistrar add, Evaluator& ev) {
         if (as_bool(a[0]) && ev.effect_sandbox_mode() != 0 && deny_marker_clear_without_mse(ev, 0))
             return ev.make_merr(
                 "hygiene-protected",
-                "(hygiene:set-allow-macro-mutate! #t) requires MacroSelfEvo capability");
+                "(mutate :set-allow-macro-mutate #t) requires MacroSelfEvo capability");
         ev.set_allow_macro_mutate(as_bool(a[0]));
         return make_void();
     });
@@ -5879,7 +5879,7 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
         auto idx = ev.string_heap_.mint(std::move(json));
         return types::make_string(idx);
     });
-    // Issue #1386: (evaluator:compact-env-frames) primitive.
+    // Issue #1386: (mutate :compact-env-frames) primitive.
     // Triggers env_frames_ arena compaction. Reclaims stale
     // frames (version_ < current defuse_version_) that are
     // not referenced by any live Closure. Rewrites
@@ -5905,7 +5905,7 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
     // internal to panic restore, not a free primitive — still Guard-
     // wrapped when free-standing via #1927).
     // #1897: try_acquire (typed quota reject) via shared helper.
-    add("evaluator:compact-env-frames", [&ev](const auto&) -> EvalValue {
+    add("mw:compact-env-frames", [&ev](const auto&) -> EvalValue {
         return run_under_mutation_guard(
             ev,
             [&]() -> EvalValue {

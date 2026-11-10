@@ -6,10 +6,10 @@
 // workspace_mtx_ for the body of every primitive that touches
 // workspace_flat_ / workspace_pool_. 5 primitives updated:
 //   - (workspace-state)             — shared_lock
-//   - (workspace:rollback-latest)   — unique_lock (reads + writes)
+//   - (mutate :rollback-latest)   — unique_lock (reads + writes)
 //   - (workspace:mutation-count)    — shared_lock  (stats primitive)
 //   - (workspace :create)            — unique_lock (writer)
-//   - (workspace:resolve-stable-ref) — shared_lock
+//   - (query :resolve-stable-ref) — shared_lock
 //
 // AC list:
 //   AC1: (workspace-state) is callable after the fix (smoke)

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Issue #3772 source-cite gate: gated re-entry for layout-only EDSL refs.
 
-The Agent EDSL (ast:stable-ref) packs (id . gen) — the tenant stamp is
-dropped at pack time. Re-entry prims (ast:ref-get / ast:ref-valid? /
+The Agent EDSL (query :stable-ref-pair) packs (id . gen) — the tenant stamp is
+dropped at pack time. Re-entry prims (query :ref-get / ast:ref-valid? /
 ast:stable-refs-valid?) observed FlatAST layout-only with no isolation
 consult, while the C++ authority (#3365) denies layout-only /
 unstamped refs under Restricted+MT — a cross-tenant read/observe dual
@@ -63,21 +63,21 @@ def main() -> int:
         print(f"  {'PASS' if good else 'FAIL'}: {name}: {msg}")
         ok = ok and good
 
-    get_body = _lambda_body(prim, 'add("ast:ref-get",')
-    valid_body = _lambda_body(prim, 'add("ast:ref-valid?",')
+    get_body = _lambda_body(prim, 'add("qr:ref-get",')
+    valid_body = _lambda_body(prim, 'add("qr:ref-valid-id-gen",')
     bulk_pos = prim.find('"ast:stable-refs-valid?"')
 
     good = (
         "#3772" in get_body
-        and 'restamp_read_ref(ref, "ast:ref-get")' in get_body
-        and get_body.find('restamp_read_ref(ref, "ast:ref-get")') < get_body.find("ev.resolve_stamped(")
+        and 'restamp_read_ref(ref, "qr:ref-get")' in get_body
+        and get_body.find('restamp_read_ref(ref, "qr:ref-get")') < get_body.find("ev.resolve_stamped(")
         and "workspace_flat_->get_safe" not in get_body
     )
     report("AC1", good, "ast:ref-get gated before resolve_stamped; no raw observe; cites #3772")
 
     good = (
         "#3772" in valid_body
-        and 'restamp_read_ref(ref, "ast:ref-valid?")' in valid_body
+        and 'restamp_read_ref(ref, "qr:ref-valid-id-gen")' in valid_body
         and "return make_bool(false);" in valid_body
         and "restamp_read_ref(sref," in prim[bulk_pos:]
         and "valid_ev = make_bool(flat.is_valid(sref));" in prim[bulk_pos:]

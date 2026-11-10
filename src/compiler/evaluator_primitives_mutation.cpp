@@ -496,7 +496,7 @@ void RegSplitParts::register_mutation_rollback_primitives(PrimRegistrar add, Eva
 
 // Issue #5033: mutation-log:summary (#278).
 void RegSplitParts::register_mutation_log_summary_primitive(PrimRegistrar add, Evaluator& ev) {
-    // (mutation-log:summary) — Issue #278: aggregate stats over the
+    // (query :mutation-log-summary) — Issue #278: aggregate stats over the
     // workspace mutation log. Returns a hash with:
     //   total                — total mutations recorded
     //   committed            — mutations with status=Committed
@@ -512,7 +512,7 @@ void RegSplitParts::register_mutation_log_summary_primitive(PrimRegistrar add, E
     // (mutate:summary) + (mutate:by-operator)). Future work:
     // time-window filtering, by-status filtering, large-log
     // streaming for >10k records.
-    add("mutation-log:summary", [&ev](const auto&) -> EvalValue {
+    add("qr:mutation-log-summary", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_flat_)
             return make_void();
         const auto& log = ev.workspace_flat_->all_mutations();
@@ -684,7 +684,7 @@ void RegSplitParts::register_mutation_log_summary_primitive(PrimRegistrar add, E
 
 // Issue #5033: mutation-log:diff (#278 follow-up).
 void RegSplitParts::register_mutation_log_diff_primitive(PrimRegistrar add, Evaluator& ev) {
-    // Issue #278 follow-up #1: (mutation-log:diff from-id to-id) —
+    // Issue #278 follow-up #1: (query :mutation-log-diff from-id to-id) —
     // return a list of MutationRecords with mutation_id in the
     // half-open range [from_id, to_id]. Returns () if from_id > to_id
     // or no records match. from_id = 0 means "from the beginning";
@@ -693,7 +693,7 @@ void RegSplitParts::register_mutation_log_diff_primitive(PrimRegistrar add, Eval
     // Use case: AI agent debugging "what happened between
     // mutations N and M?" — gets the diff in one call instead
     // of iterating the log manually.
-    add("mutation-log:diff", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("qr:mutation-log-diff", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (!ev.workspace_flat_)
             return make_void();
         if (a.size() != 2 || !is_int(a[0]) || !is_int(a[1]))

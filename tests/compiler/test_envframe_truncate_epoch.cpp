@@ -189,7 +189,7 @@ void ac5_compact_guard_source() {
     // Prefer add("...") site — a doc comment also names the primitive earlier.
     auto pos = src.find("add(\"evaluator:compact-env-frames\"");
     if (pos == std::string::npos)
-        pos = src.find("evaluator:compact-env-frames");
+        pos = src.find("mw:compact-env-frames");
     CHECK(pos != std::string::npos, "found primitive");
     auto win = src.substr(pos, 800);
     CHECK(win.find("MutationBoundaryGuard") != std::string::npos ||

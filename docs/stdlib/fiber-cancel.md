@@ -58,7 +58,7 @@ documented for #2153; hosts that need hard deadlines should combine
 
 | Backend | Probe | Path |
 |---------|-------|------|
-| **scheduler** (`--serve-async`) | `(fiber:spawn-backend)` → `1` | `Fiber::request_cancel()` + eventfd nudge |
-| **thread** (CLI file/stdin) | `(fiber:spawn-backend)` → `2` | per-fiber cancel registry + `s_fiber_results_cv` notify |
+| **scheduler** (`--serve-async`) | `(query :fiber-backend)` → `1` | `Fiber::request_cancel()` + eventfd nudge |
+| **thread** (CLI file/stdin) | `(query :fiber-backend)` → `2` | per-fiber cancel registry + `s_fiber_results_cv` notify |
 
 Implementation: `src/compiler/evaluator_primitives_messaging.cpp`.

@@ -527,7 +527,7 @@ int run_find_after_parens() {
         std::println("\n--- AC3/AC4: evolve-strategy analytics parse ---");
         CompilerService cs;
 
-        auto def = cs.eval(R"AURA((define-strategy "s1723" "(lambda (x) x)" :max-attempts 3))AURA");
+        auto def = cs.eval(R"AURA((mutate :define-strategy "s1723" "(lambda (x) x)" :max-attempts 3))AURA");
         CHECK(static_cast<bool>(def), "define-strategy s1723");
 
         // Nested list inside top-errors; rates are plain atoms.
@@ -544,7 +544,7 @@ int run_find_after_parens() {
 
         // High success path still parses (lower max-attempts).
         auto def2 =
-            cs.eval(R"AURA((define-strategy "s1723hi" "(lambda (x) x)" :max-attempts 4))AURA");
+            cs.eval(R"AURA((mutate :define-strategy "s1723hi" "(lambda (x) x)" :max-attempts 4))AURA");
         CHECK(static_cast<bool>(def2), "define-strategy s1723hi");
         auto evo2 = cs.eval(
             R"AURA((evolve-strategy "s1723hi" "#(analytics total-runs:10 success-rate:0.95 avg-attempts:1.0 total-llm-calls:1 avg-duration-ms:1 top-errors:() by-task:())"))AURA");

@@ -172,7 +172,7 @@ static void ac3_nested_expand_and_mutate() {
     CHECK(ws != nullptr, "workspace present");
     const auto pre = ws ? ws->macro_expand_mutate_restamp_total() : 0;
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(evaluator:compact-env-frames)");
+    auto r = cs.eval("(mutate :compact-env-frames)");
     CHECK(r.has_value(), "compact after nested expand");
     auto* ws2 = cs.evaluator().workspace_flat();
     const auto post = ws2 ? ws2->macro_expand_mutate_restamp_total() : 0;

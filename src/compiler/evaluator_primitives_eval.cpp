@@ -877,14 +877,14 @@ void RegSplitParts::register_set_code_primitive(PrimRegistrar add, Evaluator& ev
         });
 }
 
-// (ir-cache-v2:dirty? name) / (ir-cache-v2:dependents name).
+// (query :ir-dirty? name) / (query :ir-dependents name).
 void RegSplitParts::register_ir_cache_primitives(PrimRegistrar add, Evaluator& ev,
                                                  MakeErrorVal mev) {
-    // (ir-cache-v2:dirty? name) — #t if the named define's IR cache entry is
+    // (query :ir-dirty? name) — #t if the named define's IR cache entry is
     // marked dirty.
-    add("ir-cache-v2:dirty?", [&ev, mev](const auto& a) -> EvalValue {
+    add("qr:ir-dirty?", [&ev, mev](const auto& a) -> EvalValue {
         if (a.size() < 1 || !is_string(a[0]))
-            return mev("bad-arg", "usage: (ir-cache-v2:dirty? name)");
+            return mev("bad-arg", "usage: (query :ir-dirty? name)");
         if (!ev.is_define_dirty_fn_)
             return make_bool(false);
         auto name_idx = as_string_idx(a[0]);
@@ -894,10 +894,10 @@ void RegSplitParts::register_ir_cache_primitives(PrimRegistrar add, Evaluator& e
         return make_bool(ev.is_define_dirty_fn_(name));
     });
 
-    // (ir-cache-v2:dependents name) — list of defines that reference this one.
-    add("ir-cache-v2:dependents", [&ev, mev](const auto& a) -> EvalValue {
+    // (query :ir-dependents name) — list of defines that reference this one.
+    add("qr:ir-dependents", [&ev, mev](const auto& a) -> EvalValue {
         if (a.size() < 1 || !is_string(a[0]))
-            return mev("bad-arg", "usage: (ir-cache-v2:dependents name)");
+            return mev("bad-arg", "usage: (query :ir-dependents name)");
         if (!ev.get_dependents_fn_)
             return make_void();
         auto name_idx = as_string_idx(a[0]);
@@ -1333,7 +1333,7 @@ void RegSplitParts::register_source_inspection_primitives(PrimRegistrar add, Eva
         // (the AST being evaluated right now), set by CompilerService::eval /
         // eval_ir / exec_jit. Optional :workspace keyword reads the persistent
         // EDSL workspace (set via (set-code ...)).
-        // Issue #2918: agent checkpoints (ast:snapshot / ast:diff) and stdlib
+        // Issue #2918: agent checkpoints (mutate :snapshot / ast:diff) and stdlib
         // refactor helpers MUST pass :workspace for user-script intent.
         // Bare (current-source) is wrong for mutate → snapshot → restore loops.
         //
@@ -1383,13 +1383,14 @@ void RegSplitParts::register_source_inspection_primitives(PrimRegistrar add, Eva
     });
 }
 
-// (api-reference) — registered primitive table for LLM reference (#1434).
+// (query :api-reference) — registered primitive table for LLM reference (#1434).
+// Issue #5094: the *deprecated* section prints PrimMeta.doc (the real
+// replacement). It does not tell the caller to re-run the old name through
+// (engine:metrics "name").
 void RegSplitParts::register_api_reference_primitive(PrimRegistrar add, Evaluator& ev) {
-    // (api-reference) — Return all registered primitives as a string for LLM reference
-    // Issue #1434: list *deprecated* section (prefer engine:metrics) separately.
-    add("api-reference", [&ev](const auto&) -> EvalValue {
+    add("qr:api-reference", [&ev](const auto&) -> EvalValue {
         std::string out = "Available Aura primitives:\n\n";
-        std::vector<std::string> deprecated;
+        std::vector<std::pair<std::string, std::string>> deprecated;
         deprecated.reserve(32);
         for (std::size_t i = 0; i < ev.primitives_.slot_count(); ++i) {
             auto name = ev.primitives_.name_for_slot(i);
@@ -1397,15 +1398,19 @@ void RegSplitParts::register_api_reference_primitive(PrimRegistrar add, Evaluato
                 continue;
             const auto& meta = ev.primitives_.meta_for_slot(i);
             if (meta.deprecated) {
-                deprecated.emplace_back(name);
+                deprecated.emplace_back(std::string(name), meta.doc);
                 continue; // listed under *deprecated* section
             }
             out += "  " + std::string(name) + "\n";
         }
         if (!deprecated.empty()) {
-            out += "\n*deprecated* (prefer (engine:metrics …) / std/engine-metrics):\n";
-            for (const auto& n : deprecated)
-                out += "  " + n + "  [use (engine:metrics \"" + n + "\")]\n";
+            out += "\n*deprecated*:\n";
+            for (const auto& [n, doc] : deprecated) {
+                out += "  " + n;
+                if (!doc.empty())
+                    out += "  " + doc;
+                out += "\n";
+            }
         }
         out += "\nStandard library: (require std/name) loads with prefix (std/name:func-name)\n";
         out += "Or (require std/name all:) for bare names\n";

@@ -1446,8 +1446,8 @@ bool ObservabilityPrims::is_legacy_stats_name(std::string_view name) {
         // demoted — (engine:metrics name args...) forwards rest (#2054).
         "compile:func-block-dirty-count",
         "compile:block-dirty-count",
-        "dirty:reasons",     // (dirty:reasons node-id)
-        "dirty:ppa-reasons", // (dirty:ppa-reasons node-id)
+        "qr:reasons",     // (query :reasons node-id)
+        "qr:ppa-reasons", // (query :ppa-reasons node-id)
     };
     for (auto m : kMultiArgPublic) {
         if (name == m)

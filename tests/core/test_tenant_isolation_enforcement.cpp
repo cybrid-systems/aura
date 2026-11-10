@@ -5847,10 +5847,10 @@ int main() {
         ev.set_capability_tenant_id(7);
         const auto& ring = g_security_event_ring();
         const auto baseline = ring.seq.load(std::memory_order_acquire);
-        const auto rg = cs.eval(std::format("(ast:ref-get {} {})", id, gen99));
+        const auto rg = cs.eval(std::format("(query :ref-get {} {})", id, gen99));
         CHECK(rg.has_value() && aura::compiler::types::is_void(*rg),
               "3772 AC1: foreign ast:ref-get → void");
-        const auto rv = cs.eval(std::format("(ast:ref-valid? {} {})", id, gen99));
+        const auto rv = cs.eval(std::format("(query :ref-valid-id-gen {} {})", id, gen99));
         CHECK(rv.has_value() && is_bool(*rv) && !as_bool(*rv),
               "3772 AC1: foreign ast:ref-valid? → #f");
 
@@ -5889,15 +5889,15 @@ int main() {
         CHECK(ws != nullptr, "3772 AC2 workspace");
         const auto id = first_live(*ws);
         CHECK(id != NULL_NODE, "3772 AC2 live node");
-        const auto sref7 = cs.eval(std::format("(ast:stable-ref {})", id));
+        const auto sref7 = cs.eval(std::format("(query :stable-ref-pair {})", id));
         CHECK(sref7.has_value() && is_pair(*sref7), "3772 AC2: export pair");
         // Host-side gen: the wire pair is layout-only; the re-entry gate
         // re-derives occupancy -- the round-trip needs the current gen.
         const auto gen7 = static_cast<std::uint64_t>(ws->current_generation());
         CHECK(gen7 != 0, "3772 AC2: gen resolved");
-        const auto rg = cs.eval(std::format("(ast:ref-get {} {})", id, gen7));
+        const auto rg = cs.eval(std::format("(query :ref-get {} {})", id, gen7));
         CHECK(rg.has_value() && is_string(*rg), "3772 AC2: own ast:ref-get observes");
-        const auto rv = cs.eval(std::format("(ast:ref-valid? {} {})", id, gen7));
+        const auto rv = cs.eval(std::format("(query :ref-valid-id-gen {} {})", id, gen7));
         CHECK(rv.has_value() && is_bool(*rv) && as_bool(*rv), "3772 AC2: own ref-valid? allows");
 
         aura::core::provenance::set_multi_tenant_env_active(false);
@@ -5916,13 +5916,13 @@ int main() {
         CHECK(ws != nullptr, "3772 AC4 workspace");
         const auto id = first_live(*ws);
         CHECK(id != NULL_NODE, "3772 AC4 live node");
-        const auto sref = cs.eval(std::format("(ast:stable-ref {})", id));
+        const auto sref = cs.eval(std::format("(query :stable-ref-pair {})", id));
         CHECK(sref.has_value() && is_pair(*sref), "3772 AC4: export pair");
         const auto gen = static_cast<std::uint64_t>(ws->current_generation());
         CHECK(gen != 0, "3772 AC4: gen resolved");
-        const auto rg = cs.eval(std::format("(ast:ref-get {} {})", id, gen));
+        const auto rg = cs.eval(std::format("(query :ref-get {} {})", id, gen));
         CHECK(rg.has_value() && is_string(*rg), "3772 AC4: soft ast:ref-get observes");
-        const auto rv = cs.eval(std::format("(ast:ref-valid? {} {})", id, gen));
+        const auto rv = cs.eval(std::format("(query :ref-valid-id-gen {} {})", id, gen));
         CHECK(rv.has_value() && is_bool(*rv) && as_bool(*rv), "3772 AC4: soft ref-valid? → #t");
     }
 
@@ -8432,7 +8432,7 @@ int main() {
         auto marker = cs.eval("(marker)");
         CHECK(!(marker && is_int(*marker) && as_int(*marker) == 7),
               "4400 AC2: marker was not installed");
-        auto find = ev.primitives().lookup("workspace:find-define");
+        auto find = ev.primitives().lookup("qr:find-define");
         CHECK(find.has_value(), "4400 AC2: workspace:find-define registered");
         (void)heap_w.mint("marker");
         if (find) {
@@ -8510,7 +8510,7 @@ int main() {
         auto called = cs.eval("(marker)");
         CHECK(called && is_int(*called) && as_int(*called) == 7,
               "4400 AC3: Off (marker) returns 7");
-        auto find = ev.primitives().lookup("workspace:find-define");
+        auto find = ev.primitives().lookup("qr:find-define");
         (void)heap_w.mint("marker");
         if (find) {
             const auto fr = (*find)({make_string(static_cast<std::uint64_t>(heap_w.size() - 1))});
@@ -8542,7 +8542,7 @@ int main() {
         ev.set_effect_sandbox_mode(0);
         CHECK(cs.eval("(set-code \"(define (marker) 1)\")").has_value(), "4400 AC4: set-code A");
         CHECK(cs.eval("(eval-current)").has_value(), "4400 AC4: eval A");
-        auto snap = cs.eval("(ast:snapshot \"pre-4400\")");
+        auto snap = cs.eval("(mutate :snapshot \"pre-4400\")");
         CHECK(snap && is_int(*snap) && as_int(*snap) >= 0, "4400 AC4: snapshot id");
         CHECK(cs.eval("(set-code \"(define (marker) 9)\")").has_value(), "4400 AC4: set-code B");
         CHECK(cs.eval("(eval-current)").has_value(), "4400 AC4: eval B");
@@ -8554,7 +8554,7 @@ int main() {
         ev.set_effect_sandbox_mode(1);
         ev.set_capability_tenant_id(7);
         using aura::compiler::types::make_int;
-        auto restore = ev.primitives().lookup("ast:restore");
+        auto restore = ev.primitives().lookup("mw:restore");
         CHECK(restore.has_value(), "4400 AC4: ast:restore registered");
         const auto r = (*restore)({make_int(as_int(*snap))});
         CHECK(is_error(r), "4400 AC4: direct restore without Mutate is an error");
@@ -8637,7 +8637,7 @@ int main() {
               "4400 AC5: EXEMPT_2ARG_OPS count guard stays 7");
         CHECK(infer.find("set-code") == std::string::npos &&
                   infer.find("deserialize-workspace") == std::string::npos &&
-                  infer.find("ast:restore") == std::string::npos,
+                  infer.find("mw:restore") == std::string::npos,
               "4400 AC5: infer_required_effects_from_name does not name these ops");
         CHECK(eval_src.find("query:4400") == std::string::npos &&
                   persist.find("query:4400") == std::string::npos &&
@@ -9738,7 +9738,7 @@ int main() {
         // The prim body is what returns false. Program eval still hits the
         // dispatch Mutate choke first (#4036); that path is not this audit.
         auto call_free = [&](std::int64_t id) {
-            auto pfn = ev.primitives().lookup("closure:free!");
+            auto pfn = ev.primitives().lookup("mw:closure-free");
             if (!pfn)
                 return make_int(0);
             const std::vector<EvalValue> args{make_int(id)};

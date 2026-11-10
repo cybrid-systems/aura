@@ -33,7 +33,7 @@
 (assert! (> (hash-ref st "commits" 0) 0) "commit counted once per round")
 
 ; phases are values in / values out
-(define snap0 (ast:snapshot "suite-observe"))
+(define snap0 (mutate :snapshot "suite-observe"))
 (define obs (agent:observe "f"))
 (assert! (hash? obs) "agent:observe returns a hash")
 (assert! (hash? (hash-ref obs "metrics" #f)) "observation carries metrics")
@@ -41,7 +41,7 @@
 (define prop (agent:propose (quote ()) "f" "(lambda (x) (+ x 1))" "suite-prop"))
 (assert! (pair? (hash-ref prop "ops" (quote ()))) "agent:propose builds ops")
 (assert! (equal? (agent:check obs) 'commit) "agent:check on a healthy surface says commit")
-(define app (agent:apply prop (ast:snapshot "suite-apply")))
+(define app (agent:apply prop (mutate :snapshot "suite-apply")))
 (assert! (boolean? (hash-ref app "applied" #f)) "agent:apply reports applied")
 (define ver (agent:verify app "(define (f x) (+ x 1))"))
 (assert! (boolean? (hash-ref ver "eval-ok" #f)) "agent:verify reports eval-ok")

@@ -49,19 +49,9 @@ class Primitive:
 # Issue #2628 purged the #1435 query aliases, workspace aliases, and
 # mutate:validate-against-schema (private dispatch / engine:metrics only).
 # Remaining deprecated mutate:* aliases still prefer (mutate :op).
-_DEPRECATED_CORE_ALIASES: frozenset[str] = frozenset(
-    {
-        # #1436 mutate (still public thin aliases; prefer (mutate :op))
-        "mutate:rebind",
-        "mutate:replace-pattern",
-        "mutate:replace-subtree",
-        "mutate:replace-value",
-        "mutate:replace-type",
-        "mutate:move-node",
-        "mutate:extract-function",
-        "mutate:atomic-batch",
-    }
-)
+# Issue #5095: the add_mutate names are the public write surface, not
+# #1436 aliases waiting to be deleted. (mutate :op) dispatches to them.
+_DEPRECATED_CORE_ALIASES: frozenset[str] = frozenset()
 
 # #1434 top-20 stats (scripts/find_top_stats.py PINNED_TOP20)
 try:
@@ -107,7 +97,7 @@ CATEGORY_PREFIX_MAP: dict[str, str] = {
     "eval-current": "mutation-safety",
     "eval-with-recovery": "mutation-safety",
     "current-source": "mutation-safety",
-    "api-reference": "mutation-safety",
+    "qr:api-reference": "mutation-safety",
     "workspace:": "mutation-safety",
     "ast:": "mutation-safety",
     # core: engine-boot dependencies + arithmetic + type
@@ -202,7 +192,7 @@ def classify_primitive(name: str, overrides: dict[str, str]) -> str:
     if best is not None:
         return best
     # Workspace boot dependencies default to mutation-safety.
-    if name in {"set-code", "current-source", "eval-current", "api-reference"}:
+    if name in {"set-code", "current-source", "eval-current", "qr:api-reference"}:
         return "mutation-safety"
     # Issue #1440: bare hyphenated names are NOT auto-convenience.
     # Only explicit PREFIX_MAP / yaml overrides mark convenience;
@@ -319,7 +309,7 @@ def render_primitives(primitives: list[Primitive]) -> str:
         "`add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot "
         "table in `src/compiler/evaluator_primitives_builtins.cpp` "
         "(`+ - * / = < > <= >= not and or eq?` live only there).",
-        "Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).",
+        "Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).",
         "Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; "
         "criterion + gate in "
         "[primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).",

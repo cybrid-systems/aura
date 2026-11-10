@@ -2514,8 +2514,8 @@ int run_367_syntax_provenance_smoke() {
     CHECK(id && is_int(*id), "query:find y id");
     if (id && is_int(*id)) {
         auto nid = as_int(*id);
-        (void)cs.eval(std::format("(syntax:set-provenance {} 42)", nid));
-        auto g = cs.eval(std::format("(syntax:get-provenance {})", nid));
+        (void)cs.eval(std::format("(mutate :set-provenance {} 42)", nid));
+        auto g = cs.eval(std::format("(query :get-provenance {})", nid));
         CHECK(g.has_value(), "get-provenance reachable");
     }
     return g_failed ? 1 : 0;
@@ -2627,9 +2627,9 @@ int run_372_find_define_by_name_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define foo 42)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto r = cs.eval("(workspace:find-define \"foo\")");
+    auto r = cs.eval("(query :find-define \"foo\")");
     CHECK(r.has_value(), "workspace:find-define foo");
-    auto miss = cs.eval("(workspace:find-define \"no_such_define_zzz\")");
+    auto miss = cs.eval("(query :find-define \"no_such_define_zzz\")");
     CHECK(miss.has_value() || true, "miss path invoked");
     return g_failed ? 1 : 0;
 }
@@ -3475,9 +3475,9 @@ int run_263_validate_post_restore_smoke() {
     std::println("\n=== #263: ast:validate-post-restore smoke ===");
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define x 42)\")").has_value(), "set-code");
-    auto v = cs.eval("(ast:validate-post-restore)");
+    auto v = cs.eval("(query :validate-post-restore)");
     CHECK(v.has_value(), "validate-post-restore");
-    auto s = cs.eval("(ast:snapshot)");
+    auto s = cs.eval("(mutate :snapshot)");
     CHECK(s.has_value() || true, "ast:snapshot surface");
     return g_failed ? 1 : 0;
 }
@@ -3566,7 +3566,7 @@ int run_276_workspace_stable_ref_smoke() {
     (void)cs.eval("(mutate:rebind \"x\" \"9\" \"w48-276\")");
     auto sr = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(sr.has_value(), "stable-ref-stats");
-    auto rs = cs.eval("(workspace:resolve-stable-ref 0 0)");
+    auto rs = cs.eval("(query :resolve-stable-ref 0 0)");
     CHECK(rs.has_value() || true, "resolve-stable-ref surface");
     return g_failed ? 1 : 0;
 }
@@ -3745,7 +3745,7 @@ int run_291_stable_ref_fields_smoke() {
     CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     CHECK(cs.eval("(engine:metrics \"query:stable-ref-stats\")").has_value(), "stable-ref-stats");
-    auto mid = cs.eval("(ast:ref-mutation-id)");
+    auto mid = cs.eval("(query :ref-mutation-id)");
     CHECK(mid.has_value() || true, "ast:ref-mutation-id surface");
     return g_failed ? 1 : 0;
 }

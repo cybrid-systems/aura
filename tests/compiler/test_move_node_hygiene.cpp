@@ -165,7 +165,7 @@ int run_test_move_node_hygiene() {
         auto dest = find_alt_parent(*ws, loc.parent, loc.node);
         CHECK(dest != NULL_NODE, "AC2: alt parent");
 
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", loc.node)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", loc.node)).has_value(),
               "AC2: stamp MacroIntroduced");
         CHECK(ws->is_macro_introduced(loc.node), "AC2: marker set");
 
@@ -197,7 +197,7 @@ int run_test_move_node_hygiene() {
         CHECK(loc.node != NULL_NODE, "AC3: child");
         auto dest = find_alt_parent(*ws, loc.parent, loc.node);
         CHECK(dest != NULL_NODE, "AC3: dest");
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", loc.node)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", loc.node)).has_value(),
               "AC3: MacroIntroduced");
         const auto rej0 = ws->move_node_hygiene_reject_total();
         const auto parent0 = ws->parent_of(loc.node);
@@ -262,7 +262,7 @@ int run_test_move_node_hygiene() {
         auto loc = find_first_child(*ws);
         auto dest = find_alt_parent(*ws, loc.parent, loc.node);
         CHECK(loc.node != NULL_NODE && dest != NULL_NODE, "3061 AC1: loc+dest");
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", loc.node)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", loc.node)).has_value(),
               "3061 AC1: stamp");
         const auto rej0 = ws->move_node_hygiene_reject_total();
         auto denied = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
@@ -293,14 +293,14 @@ int run_test_move_node_hygiene() {
         auto loc = find_first_child(*ws);
         auto dest = find_alt_parent(*ws, loc.parent, loc.node);
         CHECK(loc.node != NULL_NODE && dest != NULL_NODE, "3061 AC2: loc+dest");
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", loc.node)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", loc.node)).has_value(),
               "3061 AC2: stamp");
-        CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #t)").has_value(), "3061 AC2: global on");
+        CHECK(cs.eval("(mutate :set-allow-macro-mutate #t)").has_value(), "3061 AC2: global on");
         auto r = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
         CHECK(r.has_value() && merr_kind(cs, *r) != "hygiene", "3061 AC2: global unlocks");
         if (is_bool(*r) && as_bool(*r))
             CHECK(ws->is_macro_introduced(loc.node), "3061 AC2: marker preserved");
-        CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #f)").has_value(), "3061 AC2: global off");
+        CHECK(cs.eval("(mutate :set-allow-macro-mutate #f)").has_value(), "3061 AC2: global off");
     }
     {
         std::println("\n--- #3061 AC3: atomic-batch under global allow ---");
@@ -314,15 +314,15 @@ int run_test_move_node_hygiene() {
         auto loc = find_first_child(*ws);
         auto dest = find_alt_parent(*ws, loc.parent, loc.node);
         CHECK(loc.node != NULL_NODE && dest != NULL_NODE, "3061 AC3: loc+dest");
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", loc.node)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", loc.node)).has_value(),
               "3061 AC3: stamp");
-        CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #t)").has_value(), "3061 AC3: global on");
+        CHECK(cs.eval("(mutate :set-allow-macro-mutate #t)").has_value(), "3061 AC3: global on");
         auto r = cs.eval(std::format("(mutate:atomic-batch "
                                      "(list (list \"mutate:move-node\" {} {} 0)))",
                                      loc.node, dest));
         CHECK(r.has_value() && merr_kind(cs, *r) != "hygiene",
               "3061 AC3: batch not hygiene-blocked");
-        CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #f)").has_value(), "3061 AC3: global off");
+        CHECK(cs.eval("(mutate :set-allow-macro-mutate #f)").has_value(), "3061 AC3: global off");
     }
     {
         std::println("\n--- #3061 AC5: source + linter + no invent ---");
@@ -355,7 +355,7 @@ int run_test_move_node_hygiene() {
         auto dest = find_alt_parent(*ws, loc.parent, loc.node);
         CHECK(loc.node != NULL_NODE && dest != NULL_NODE, "3815 AC1: loc+dest");
         CHECK(!ws->is_macro_introduced(loc.node), "3815 AC1: moved node is User");
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", dest)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", dest)).has_value(),
               "3815 AC1: stamp dest MacroIntroduced");
         CHECK(ws->is_macro_introduced(dest), "3815 AC1: dest MacroIntroduced");
         const auto parent0 = ws->parent_of(loc.node);
@@ -378,7 +378,7 @@ int run_test_move_node_hygiene() {
         auto loc = find_first_child(*ws);
         auto dest = find_alt_parent(*ws, loc.parent, loc.node);
         CHECK(loc.node != NULL_NODE && dest != NULL_NODE, "3815 AC2: loc+dest");
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", loc.node)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", loc.node)).has_value(),
               "3815 AC2: stamp moved node");
         const auto rej0 = ws->move_node_hygiene_reject_total();
         auto r = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
@@ -420,7 +420,7 @@ int run_test_move_node_hygiene() {
         auto dest = find_alt_parent(*ws, loc.parent, loc.node);
         CHECK(loc.node != NULL_NODE && dest != NULL_NODE, "3815 AC4: loc+dest");
         CHECK(!ws->is_macro_introduced(loc.node), "3815 AC4: User node");
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", dest)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", dest)).has_value(),
               "3815 AC4: stamp dest");
         const auto parent0 = ws->parent_of(loc.node);
         auto r = cs.eval(std::format("(mutate:atomic-batch "

@@ -26,13 +26,13 @@ from _aura_harness import AURA_BIN  # noqa: E402
 PROG = (
     '(set-code "(define (score x) (* x 2))")\n'
     "(eval-current)\n"
-    '(define s (ast:snapshot "base"))\n'
+    '(define s (mutate :snapshot "base"))\n'
     '(display (list "rb" (mutate:rebind "score" "(lambda (x) (* x 3))" "triple"))) (newline)\n'
     "(eval-current)\n"
     '(display (list "id" (evo:record! "score-v2" "keep" "holdout 0.71 >= 0.70"'
     ' (hash "score" 0.71 "threshold" 0.7) "(define (score x) (* x 3))" 12))) (newline)\n'
     '(display (list "bad" (mutate:rebind "score" "(lambda (x)" "broken"))) (newline)\n'
-    '(display (list "restore" (ast:restore s))) (newline)\n'
+    '(display (list "restore" (mutate :restore s))) (newline)\n'
     '(display (list "rej" (evo:record! "score-v3" "rollback" "holdout 0.52 < 0.70"'
     ' (hash "score" 0.52 "threshold" 0.7)))) (newline)\n'
 )
@@ -66,7 +66,7 @@ class EvoLog(unittest.TestCase):
             self.assertIn(("mutate:rebind", "KEEP"), kinds)
             self.assertIn(("record", "KEEP"), kinds)
             self.assertIn(("mutate:rebind", "ROLLBACK"), kinds)
-            self.assertIn(("ast:restore", "ROLLBACK"), kinds)
+            self.assertIn(("mw:restore", "ROLLBACK"), kinds)
             self.assertIn(("record", "ROLLBACK"), kinds)
             keep = next(x for x in recs if x["kind"] == "mutate:rebind" and x["decision"] == "KEEP")
             self.assertEqual(keep["target"], "score")
@@ -95,7 +95,7 @@ class EvoLog(unittest.TestCase):
             full = aura(["evo", "log", "--all", "--log", str(log)], d, env_for(None))
             self.assertEqual(full.returncode, 0, full.stderr)
             self.assertIn("mutate:rebind", full.stdout)
-            self.assertIn("ast:restore", full.stdout)
+            self.assertIn("mw:restore", full.stdout)
 
             js = aura(["evo", "log", "--json", "--run", "last", "--log", str(log)], d, env_for(None))
             self.assertEqual(js.returncode, 0, js.stderr)

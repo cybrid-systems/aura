@@ -41,10 +41,10 @@ SUNK = (
     "arena:shrink-to-fit",
 )
 KEEP = (
-    "arena:compact",
-    "arena:compact-with-policy",
-    "arena:request-defrag",
-    "arena:set-auto-compact-threshold",
+    "mw:arena-compact",
+    "mw:arena-compact-with-policy",
+    "mw:arena-request-defrag",
+    "mw:set-auto-compact-threshold",
 )
 
 
@@ -68,14 +68,12 @@ def main() -> int:
     q = read_query_prims()
 
     public = [n for n in ADD_RE.findall(mem) if n.startswith("arena:")]
-    if len(public) > 4:
-        fails.append(f"AC1: public arena: add() count {len(public)} > 4: {public}")
+    if public:
+        fails.append(f"AC1: arena: prefix is unbound; still registered: {public}")
+    registered = set(ADD_RE.findall(mem))
     for k in KEEP:
-        if k not in public:
-            fails.append(f"AC1: missing public {k}")
-    extra = sorted(set(public) - set(KEEP))
-    if extra:
-        fails.append(f"AC1: unexpected public arena: {extra}")
+        if k not in registered:
+            fails.append(f"AC1: missing {k}")
 
     must("sink_arena_prim", "AC2 helper", mem)
     must("Issue #3173", "AC2 cite", mem)
@@ -93,7 +91,7 @@ def main() -> int:
         fails.append("AC4: new top-level query key (forbidden)")
     must("3173: compact public", "AC5 test", batch)
     must("test_arena().defrag()", "AC5 gc C++ defrag", gc)
-    must("arena:compact", "AC5 sweep", sweep)
+    must("mw:arena-compact", "AC5 sweep", sweep)
     must("check_arena_surface_3173", "AC6 build", build)
     must("cmd_arena_surface_3173", "AC6 cmd", build)
     if (ROOT / "tests" / "compiler" / "test_issue_3173.cpp").is_file():

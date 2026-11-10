@@ -776,12 +776,12 @@ void RegSplitParts::register_memory_type_registry_primitives(
 void RegSplitParts::register_memory_arena_compact_primitives(
     PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
     ArenaCompactIdle with_arena_compact_idle{ev};
-    // (arena:compact) — Issue #187 (P0): conservative arena buffer
+    // (mutate :arena-compact) — Issue #187 (P0): conservative arena buffer
     // compaction. Reclaims the unused tail of the main arena's pmr
     // buffer by rebuilding it at used-size + 25% headroom. Returns
     // the number of bytes reclaimed. Use (arena:compact-all) to
     // compact every per-module arena above the configured threshold.
-    add("arena:compact",
+    add("mw:arena-compact",
         [&ev, destroy_defuse_index, with_arena_compact_idle](const auto&) -> EvalValue {
             if (!ev.arena_)
                 return make_int(0);
@@ -814,7 +814,7 @@ void RegSplitParts::register_memory_arena_compact_primitives(
                             return make_int(saved);
                         });
                     });
-    // (arena:request-defrag) — Issue #300 Phase 3 + #1397 atomic
+    // (mutate :arena-request-defrag) — Issue #300 Phase 3 + #1397 atomic
     // CAS semantics: set the defrag_requested flag on the main
     // arena. The actual defrag runs when something observes the
     // flag and decides to act (typically the main thread or a
@@ -830,7 +830,7 @@ void RegSplitParts::register_memory_arena_compact_primitives(
     // To check safepoint registration status independently
     // (which the old "observed = registered" semantics used to
     // conflate), call `(arena:safepoint-registered?)` separately.
-    add("arena:request-defrag", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+    add("mw:arena-request-defrag", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
         if (!ev.arena_)
             return make_bool(false);
         const bool observed = ev.arena_->request_defrag();
@@ -1227,7 +1227,7 @@ void RegSplitParts::register_memory_arena_policy_primitives(
                 return make_int(static_cast<std::int64_t>(ev.arena_group_->adaptive_compact_all()));
             });
         });
-    // (arena:compact-with-policy name policy) — Issue #430:
+    // (mutate :arena-compact-with-policy name policy) — Issue #430:
     // manual policy override. policy is one of:
     //   "force" — always compact (no threshold check)
     //   "auto"  — consult adaptive threshold (default
@@ -1240,7 +1240,7 @@ void RegSplitParts::register_memory_arena_policy_primitives(
     // memory-pressure watchdog that has decided the
     // adaptive threshold is too lax for the current
     // workload.
-    add("arena:compact-with-policy",
+    add("mw:arena-compact-with-policy",
         [&ev, destroy_defuse_index, with_arena_compact_idle](const auto& a) -> EvalValue {
             if (!ev.arena_group_)
                 return make_int(0);
@@ -1316,7 +1316,7 @@ void RegSplitParts::register_memory_arena_policy_primitives(
             return make_void();
         });
     // (arena:estimate) — Issue #187: bytes that could be reclaimed
-    // by a (arena:compact). Cheap O(1) check, no side effects.
+    // by a (mutate :arena-compact). Cheap O(1) check, no side effects.
     ObservabilityPrims::register_stats_impl(
         "arena:estimate", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
             if (!ev.arena_)
@@ -1424,11 +1424,11 @@ void RegSplitParts::register_memory_defrag_stats_primitives(
 
 void RegSplitParts::register_memory_string_pool_primitives(
     PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
-    // (string-pool:compact) — Issue #187 (P0): rehash the workspace's
+    // (mutate :string-pool-compact) — Issue #187 (P0): rehash the workspace's
     // StringPool to the smallest power-of-2 capacity that still
     // holds all live entries. Reclaims hash_tbl_ memory. Returns
     // bytes reclaimed. SymIds are stable (buf_ is monotonic).
-    add("string-pool:compact", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+    add("mw:string-pool-compact", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
         if (!ev.workspace_pool_ && !ev.canonical_pool())
             return make_int(0);
         auto* pool = ev.workspace_pool_ ? ev.workspace_pool_ : ev.canonical_pool();
@@ -1509,7 +1509,7 @@ void RegSplitParts::register_memory_string_pool_primitives(
 
 void RegSplitParts::register_memory_dirty_primitives(PrimRegistrar add, Evaluator& ev,
                                                      std::function<void()> destroy_defuse_index) {
-    // (dirty:reasons node-id) — Issue #188: return the per-node
+    // (query :reasons node-id) — Issue #188: return the per-node
     // dirty-reason bitmask. Useful for the type checker to decide
     // which targeted re-analysis pass to run, and for diagnostics
     // to surface "why is this node dirty". Bit values:
@@ -1517,7 +1517,7 @@ void RegSplitParts::register_memory_dirty_primitives(PrimRegistrar add, Evaluato
     //   0x08 = ownership, 0x10 = coercion, 0x20 = struct, 0x40 = defuse,
     //   0x80 = ppa-hint. Returns 0 for clean nodes or out-of-range ids.
     // Multi-arg (node-id) — public add(); not zero-arity stats.
-    add("dirty:reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
+    add("qr:reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_int(0);
         if (!ev.workspace_flat_)
@@ -1525,10 +1525,10 @@ void RegSplitParts::register_memory_dirty_primitives(PrimRegistrar add, Evaluato
         auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->dirty_reasons(id)));
     });
-    // (dirty:ppa-reasons node-id) — Issue #277: return the per-node
+    // (query :ppa-reasons node-id) — Issue #277: return the per-node
     // PPA dirty bitmask from the orthogonal ppa_dirty_ column.
     //   0x01 = timing, 0x02 = power, 0x04 = area, 0x08 = backend-hint.
-    add("dirty:ppa-reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
+    add("qr:ppa-reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_int(0);
         if (!ev.workspace_flat_)
@@ -1968,7 +1968,7 @@ void RegSplitParts::register_memory_arena_threshold_primitives(PrimRegistrar add
     // primitive below. Returns -1 if no arena group is loaded,
     // else the threshold * 100 (integer percentage 0..95).
     //
-    // (arena:set-auto-compact-threshold ratio) — write the
+    // (mutate :set-auto-compact-threshold ratio) — write the
     // threshold. ratio is a percentage 0..95; out-of-range args
     // are clamped to the valid range by the C++ side
     // (std::clamp). Returns the previous value (also 0..95).
@@ -1990,7 +1990,7 @@ void RegSplitParts::register_memory_arena_threshold_primitives(PrimRegistrar add
         const double cur = ev.arena_group_->compact_threshold();
         return make_int(static_cast<std::int64_t>(cur * 100.0));
     });
-    add("arena:set-auto-compact-threshold", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("mw:set-auto-compact-threshold", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (!ev.arena_group_)
             return make_int(-1);
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
@@ -2017,7 +2017,7 @@ void RegSplitParts::register_memory_closure_free_primitives(PrimRegistrar add, E
     // - int id → JIT runtime table (aura_free_closure + g_closure_freed)
     // - Closure value → tree-walker Evaluator::closures_ erase (#1665
     //   durable free so scan_live_closures never iterates dead slots)
-    add("closure:free!", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("mw:closure-free", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty())
             return make_bool(false);
         if (is_int(a[0])) {
@@ -2037,7 +2037,7 @@ void RegSplitParts::register_memory_closure_free_primitives(PrimRegistrar add, E
         if (is_closure(a[0])) {
             const auto cid = static_cast<ClosureId>(as_closure_id(a[0]));
             if (!ev.tw_closure_tenant_allows(cid, aura::compiler::security::kEffectMutate,
-                                             "closure:free!"))
+                                             "mw:closure-free"))
                 return make_bool(false);
             (void)ev.erase_active_closure(cid);
             return make_bool(true);

@@ -8,8 +8,8 @@
 (display "")
 (display "=== 1. define-strategy ===")
 
-(display (define-strategy "test-strategy" "(phase generate (llm-generate goal))"))
-(display (define-strategy "second-strategy" "(phase check (typecheck-current))"))
+(display (mutate :define-strategy "test-strategy" "(phase generate (llm-generate goal))"))
+(display (mutate :define-strategy "second-strategy" "(phase check (typecheck-current))"))
 
 ; ── 2. register-strategy! (更新已有) ────────────
 (display "")
@@ -19,9 +19,9 @@
 ; ── 3. define-strategy 缺参数 ───────────────────
 (display "")
 (display "=== 3. define-strategy bad args ===")
-(display (define-strategy "only-name"))
-(display (define-strategy))
-(display (define-strategy 42 "body"))
+(display (mutate :define-strategy "only-name"))
+(display (mutate :define-strategy))
+(display (mutate :define-strategy 42 "body"))
 
 ; ── 4. intend-history（空 → 应有输出）────────────
 (display "")

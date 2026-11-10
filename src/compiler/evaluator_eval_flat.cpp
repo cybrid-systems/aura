@@ -3941,7 +3941,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types
             return std::unexpected(aura::diag::Diagnostic{
                 aura::diag::ErrorKind::InternalError,
                 "batch :tweak-literal: cannot tweak-literal MacroIntroduced without "
-                "global (hygiene:set-allow-macro-mutate! #t)"});
+                "global (mutate :set-allow-macro-mutate #t)"});
         }
         // Issue #3652: the opt-out arm still requires MacroSelfEvo (#3542
         // face) under Restricted/Strict. Soft/Off: one mode load.
@@ -6912,7 +6912,7 @@ Evaluator::FlatStep Evaluator::eval_flat_on_define(EvalFlatCursor& cur,
         // must stay bound in the shared env (capturing it would
         // unbind the name the moment the overlay is dropped).
         // A private NEW binding is the workspace / EDSL face
-        // (fiber:overlay-define + bind_define_value_in_env).
+        // (mutate :overlay-define + bind_define_value_in_env).
         auto ci = alloc_cell(*vv);
         if (types::is_void(*vv))
             note_cell_nil_assigned(ci); // Issue #4789
@@ -10718,7 +10718,7 @@ std::optional<EvalResult> Evaluator::eval_flat_prepare_visit(EvalFlatCursor& cur
                 // how to re-bind.
                 return std::unexpected(Diagnostic{
                     ErrorKind::StaleWorkspace, "stale node id (gen mismatch): the workspace "
-                                               "changed under compiled definitions (ast:restore) "
+                                               "changed under compiled definitions (mutate :restore) "
                                                "— run (eval-current) to re-bind, then retry"});
             }
         }

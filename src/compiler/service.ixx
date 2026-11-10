@@ -1929,7 +1929,7 @@ public:
             return jit_.metrics().intrinsic_count.load(std::memory_order_relaxed);
         });
         // Issue #193: hook to query the per-function
-        // unhandled-opcode count. Used by the (jit:deopt-fn?)
+        // unhandled-opcode count. Used by the (query :deopt-fn?)
         // primitive (Issue #193 follow-up).
         evaluator_.set_get_jit_unhandled_count_fn([this](const char* name) -> std::uint64_t {
             return jit_.unhandled_opcode_count_for_function(name);
@@ -2232,7 +2232,7 @@ public:
                 cache_module(content, path);
             });
 
-        // Issue #97 Action 1: hot-swap callback. Allows (hot-swap:fn "name" "new-src")
+        // Issue #97 Action 1: hot-swap callback. Allows (mutate :hot-swap-fn "name" "new-src")
         // primitive to replace a function's body while keeping its id.
         evaluator_.set_hot_swap_fn([this](const std::string& name, const std::string& new_source) {
             return hot_swap_function_impl(name, new_source);
@@ -2777,8 +2777,8 @@ public:
                 "rollback",
                 "mutation-log",
                 "query-mutation-log",
-                "ir-cache-v2:dirty?",
-                "ir-cache-v2:dependents",
+                "qr:ir-dirty?",
+                "qr:ir-dependents",
                 // Mutation primitives (issue #165/#166): tree-walker so the
                 // returned bool/Int propagates correctly. The IR pipeline
                 // either silently drops unknown primitives or wraps them as
@@ -2791,7 +2791,7 @@ public:
                 "intend",
                 "fiber:spawn",
                 "fiber:join",
-                "define-strategy",
+                "mw:define-strategy",
                 "register-strategy!",
                 "intend-history",
                 "intend-analytics",
@@ -2998,8 +2998,8 @@ public:
                 "rollback",
                 "mutation-log",
                 "query-mutation-log",
-                "ir-cache-v2:dirty?",
-                "ir-cache-v2:dependents",
+                "qr:ir-dirty?",
+                "qr:ir-dependents",
                 "mutate:rebind",
                 "mutate:set-body",
                 "mutate:remove-node",
@@ -3007,7 +3007,7 @@ public:
                 "intend",
                 "fiber:spawn",
                 "fiber:join",
-                "define-strategy",
+                "mw:define-strategy",
                 "register-strategy!",
                 "intend-history",
                 "intend-analytics",

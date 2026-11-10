@@ -123,14 +123,14 @@ int main() {
         CHECK(r && is_int(*r), "find z");
         const auto id = as_int(*r);
 
-        auto set = cs.eval(std::format("(syntax:set-marker {} 1)", id));
+        auto set = cs.eval(std::format("(mutate :set-marker {} 1)", id));
         CHECK(set && is_bool(*set) && as_bool(*set), "set-marker ok");
         auto m = cs.eval(std::format("(syntax-marker {})", id));
         CHECK(m && is_int(*m) && as_int(*m) == 1, "syntax-marker reads 1");
 
-        auto sp = cs.eval(std::format("(syntax:set-provenance {} 42)", id));
+        auto sp = cs.eval(std::format("(mutate :set-provenance {} 42)", id));
         CHECK(sp && is_bool(*sp) && as_bool(*sp), "set-provenance ok");
-        auto gp = cs.eval(std::format("(syntax:get-provenance {})", id));
+        auto gp = cs.eval(std::format("(query :get-provenance {})", id));
         CHECK(gp && is_int(*gp) && as_int(*gp) == 42, "get-provenance 42");
     }
 

@@ -61,7 +61,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC2: ast:recycle-nodes integration ---");
     const auto stats2a = column_compaction_stats(cs);
-    (void)cs.eval("(ast:recycle-nodes)");
+    (void)cs.eval("(mutate :recycle-nodes)");
     const auto stats2b = column_compaction_stats(cs);
     std::println("  column compaction stats: {} -> {}", stats2a, stats2b);
     CHECK(stats2b >= stats2a, "recycle monotonic for column stats");
@@ -72,7 +72,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC4: ast:compact-nodes integration ---");
     const auto stats4a = column_compaction_stats(cs);
-    (void)cs.eval("(ast:compact-nodes)");
+    (void)cs.eval("(mutate :compact-nodes)");
     const auto stats4b = column_compaction_stats(cs);
     std::println("  column compaction stats: {} -> {}", stats4a, stats4b);
     CHECK(stats4b >= stats4a, "compact monotonic for column stats");
@@ -92,13 +92,13 @@ static void run_matrix(CompilerService& cs) {
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(ast:recycle-nodes)");
-        (void)cs.eval("(ast:compact-nodes)");
+        (void)cs.eval("(mutate :recycle-nodes)");
+        (void)cs.eval("(mutate :compact-nodes)");
     }
     const auto cum6b = ws->node_recycle_total() + ws->node_compact_total();
     std::println("  recycle+compact cumulative: {} -> {}", cum6a, cum6b);
     CHECK(cum6b >= cum6a, "cumulative compaction counters monotonic");
-    auto vpr = cs.eval("(ast:validate-post-restore)");
+    auto vpr = cs.eval("(query :validate-post-restore)");
     CHECK(vpr.has_value(), "validate-post-restore after compaction matrix");
 
     std::println("\n--- AC7: query regression ---");

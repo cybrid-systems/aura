@@ -162,7 +162,7 @@ static void run_454_matrix() {
     CHECK(skips1 >= skips0, "marker introspection skips monotonic");
 
     std::println("\n--- AC7 (#454): mutation-log:summary ---");
-    auto mls = cs.eval("(mutation-log:summary)");
+    auto mls = cs.eval("(query :mutation-log-summary)");
     CHECK(mls.has_value(), "mutation-log:summary reachable after mutate");
 
     std::println("\n--- AC8 (#454): query regression ---");
@@ -244,7 +244,7 @@ static void run_1611_allow_flag() {
     std::println("\n--- AC6 (#1611): allow flag + reflect:validate-macro-body ---");
     CompilerService cs;
     CHECK(setup_macro_ws_1611(cs), "macro workspace");
-    auto allow0 = cs.eval("(hygiene:allow-macro-mutate?)");
+    auto allow0 = cs.eval("(query :allow-macro-mutate?)");
     CHECK(allow0 && is_bool(*allow0), "hygiene:allow-macro-mutate? reachable");
     auto macro_list = cs.eval("(query:by-marker \"MacroIntroduced\")");
     if (macro_list && !is_int(*macro_list)) {
@@ -260,10 +260,10 @@ static void run_1611_allow_flag() {
             }
         }
     }
-    CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #t)").has_value(), "set allow #t");
+    CHECK(cs.eval("(mutate :set-allow-macro-mutate #t)").has_value(), "set allow #t");
     CHECK(href(cs, "query:reflect-postmutate-stats", "allow-macro-mutate") == 1,
           "allow-macro-mutate flag reflected in stats");
-    CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #f)").has_value(), "set allow #f");
+    CHECK(cs.eval("(mutate :set-allow-macro-mutate #f)").has_value(), "set allow #f");
 }
 
 static void run_1611_health_struct() {

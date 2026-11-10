@@ -839,7 +839,7 @@ namespace {
                            "target node " + std::to_string(id) +
                                " was produced by a hygienic macro expansion; "
                                "pass :allow-macro? #t or call "
-                               "(hygiene:set-allow-macro-mutate! #t) to opt out");
+                               "(mutate :set-allow-macro-mutate #t) to opt out");
             }
         }
         return std::nullopt;
@@ -992,7 +992,7 @@ namespace {
         return mev("hygiene-protected", "target node " + std::to_string(id) +
                                             " was produced by a hygienic macro expansion; "
                                             "pass :allow-macro? #t or call "
-                                            "(hygiene:set-allow-macro-mutate! #t) to opt out");
+                                            "(mutate :set-allow-macro-mutate #t) to opt out");
     }
 
     static aura::ast::NodeId first_macro_introduced_in_subtree(const aura::ast::FlatAST& flat,
@@ -3491,7 +3491,7 @@ std::optional<EvalValue> RegSplitParts::rebind_find_target(Evaluator& ev, aura::
     // from a hygienic macro expansion), reject by default.
     // The caller can opt out via the :allow-macro? #t
     // kwarg or by setting the global
-    // (hygiene:set-allow-macro-mutate! #t) flag.
+    // (mutate :set-allow-macro-mutate #t) flag.
     if (old_define != aura::ast::NULL_NODE) {
         aura::ast::NodeId probe_arr[1] = {old_define};
         if (auto err = hygiene_protected_error(ev, flat, probe_arr, ev.get_allow_macro_mutate(),
@@ -4562,7 +4562,7 @@ std::optional<EvalValue> RegSplitParts::set_body_rewrite_define(
                                "target node " + std::to_string(id) +
                                    " was produced by a hygienic macro expansion; "
                                    "pass :allow-macro? #t or call "
-                                   "(hygiene:set-allow-macro-mutate! #t) to opt out"); // #3683
+                                   "(mutate :set-allow-macro-mutate #t) to opt out"); // #3683
                 }
             }
         }
@@ -5042,7 +5042,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_node_surface_primiti
                                "target node " + std::to_string(child_hit) +
                                    " was produced by a hygienic macro expansion; "
                                    "pass :allow-macro? #t or call "
-                                   "(hygiene:set-allow-macro-mutate! #t) to opt out"); // #3683
+                                   "(mutate :set-allow-macro-mutate #t) to opt out"); // #3683
                 }
             }
 
@@ -7133,14 +7133,14 @@ EvalValue RegSplitParts::mutate_atomic_batch_pair_cdr(Evaluator& ev, EvalValue v
     return ev.pairs_[as_pair_idx(v)].cdr;
 }
 
-// Issue #737: parse kwargs before the Guard (ast:snapshot also takes
+// Issue #737: parse kwargs before the Guard (mutate :snapshot also takes
 // workspace_mtx_; a nested acquire deadlocks).
 std::optional<EvalValue> RegSplitParts::mutate_atomic_batch_parse_args(Evaluator& ev,
                                                                        const MakeErrorVal& mev,
                                                                        std::span<const EvalValue> a,
                                                                        AtomicBatchArgs& args) {
     // Issue #737: parse args + optional pre-guard snapshot
-    // BEFORE acquiring MutationBoundaryGuard (ast:snapshot
+    // BEFORE acquiring MutationBoundaryGuard (mutate :snapshot
     // also takes workspace_mtx_; nested acquire deadlocks).
     if (a.size() < 1) {
         return mev("bad-arg", "usage: (mutate:atomic-batch (list ...) [\"summary\"] "
@@ -7265,7 +7265,7 @@ std::int64_t RegSplitParts::mutate_atomic_batch_capture_snapshot(Evaluator& ev,
                                                                  bool want_snapshot) {
     std::int64_t batch_snap_id = -1;
     if (want_snapshot) {
-        if (auto snap_fn = ev.primitives_.lookup("ast:snapshot")) {
+        if (auto snap_fn = ev.primitives_.lookup("mw:snapshot")) {
             auto snap_name_idx = ev.string_heap_.mint("atomic-batch-pre");
             auto snap_result = (*snap_fn)({make_string(snap_name_idx)});
             if (is_int(snap_result)) {
@@ -7307,7 +7307,7 @@ std::optional<EvalValue> RegSplitParts::mutate_atomic_batch_pre_audit(
     // Walk each sub-op's primary target node-id arg ONCE, before any
     // sub-op runs, and deny the whole batch (atomic rollback) if a
     // target is MacroIntroduced and no opt-out applies:
-    //   - global (hygiene:set-allow-macro-mutate! #t)
+    //   - global (mutate :set-allow-macro-mutate #t)
     //   - batch form :allow-macro? #t (Issue #3301 new keyword)
     //   - per sub-op :allow-macro? #t (Issue #3213 dual-track)
     // Soft/Off stays zero-cost: the walk is gated to production
@@ -7422,7 +7422,7 @@ std::optional<EvalValue> RegSplitParts::mutate_atomic_batch_pre_audit(
                             ("mutate:atomic-batch: target node " + std::to_string(node) +
                              " was produced by a hygienic macro expansion; pass "
                              ":allow-macro? #t on the batch form or per sub-op, or call "
-                             "(hygiene:set-allow-macro-mutate! #t) to opt out")
+                             "(mutate :set-allow-macro-mutate #t) to opt out")
                                 .c_str()); // #3683
                     }
                 }
@@ -7753,7 +7753,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_atomic_batch_primiti
         [&ev, mev, safe_str, resolve_mutate_node_arg,
          unpack_stable_ref_arg](const auto& a) -> EvalValue {
             // Issue #737: parse args + optional pre-guard snapshot
-            // BEFORE acquiring MutationBoundaryGuard (ast:snapshot
+            // BEFORE acquiring MutationBoundaryGuard (mutate :snapshot
             // also takes workspace_mtx_; nested acquire deadlocks).
             // Issue #5033: the kwarg parse, tenant gate, snapshot capture,
             // batch-entry hygiene audit and identity pre-write walk are
@@ -9788,7 +9788,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_dispatch_primitive(C
                        ":atomic :render-optimize :closed-loop-tick");
 
         // Issue #5009: a string op spells the retired primitive name verbatim
-        // ("fiber:overlay-commit"), the escape hatch for the long tail.
+        // ("mw:overlay-commit"), the escape hatch for the long tail.
         const std::string op = as_text(a[0]);
         if (op.empty())
             return mev("bad-arg",
@@ -9874,22 +9874,18 @@ template <typename Ctx> void RegSplitParts::register_mutate_dispatch_primitive(C
         if (op == "atomic" || op == "atomic-batch")
             return call_named("mutate:atomic-batch", rest);
 
-        // Issue #5006: bare names that write engine state are ops of this verb.
-        // The bare registration stays for one release cycle as a deprecated
-        // alias (#5008 channel): the panic rollback flag, the agent strategy
-        // registry, and the EDSL struct schema record.
+        // Issue #5006: engine-state writes are ops of this verb.
         if (op == "auto-rollback-on-panic")
-            return call_named("auto-rollback-on-panic", rest);
+            return call_named("mw:auto-rollback-on-panic", rest);
         if (op == "define-strategy")
-            return call_named("define-strategy", rest);
+            return call_named("mw:define-strategy", rest);
         if (op == "define-struct" || op == "edsl-define-struct")
-            return call_named("edsl:define-struct", rest);
+            return call_named("mw:define-struct", rest);
 
-        // Issue #5009: one write verb. A prefixed op is the primitive name
-        // itself; a bare op resolves against the retired write prefixes, so
-        // (mutate :snapshot) / (mutate :restore id) / (mutate :memory-used-set)
-        // reach ast:/workspace:/ws:/syntax:/fiber:overlay-* without a second
-        // public name.
+        // Issue #5097: a write op names one mutate: primitive. The verb does
+        // not scan ast: / workspace: / ws: / syntax: / fiber:. Overlay ops
+        // are mutate:overlay-*. fiber:spawn / yield / join / cancel are not
+        // mutate ops. A string op is the mutate: name itself.
         {
             auto try_named = [&](const std::string& prim) -> std::optional<EvalValue> {
                 if (auto sfn = ObservabilityPrims::lookup_stats_impl(prim))
@@ -9899,16 +9895,27 @@ template <typename Ctx> void RegSplitParts::register_mutate_dispatch_primitive(C
                 return std::nullopt;
             };
             if (op.find(':') != std::string::npos) {
-                if (auto hit = try_named(op))
-                    return *hit;
-                return mev("no-prim", "mutate dispatch: missing " + op);
+                if (op.starts_with("mutate:")) {
+                    if (auto hit = try_named(op))
+                        return *hit;
+                    // Moved write bodies are mw: so they are not a second
+                    // add("mutate:") outside add_mutate (#2986 / #3192).
+                    if (auto hit = try_named("mw:" + op.substr(std::string("mutate:").size())))
+                        return *hit;
+                }
+                if (op.starts_with("mw:")) {
+                    if (auto hit = try_named(op))
+                        return *hit;
+                }
+                return mev("no-prim",
+                           "mutate dispatch: '" + op +
+                               "' is not a mutate op — use (mutate :op). Retired prefixes "
+                               "(ast: workspace: ws: syntax: fiber:overlay-) are unbound.");
             }
-            static constexpr const char* kWritePrefixes[] = {
-                "mutate:", "ast:", "workspace:", "ws:", "syntax:", "fiber:"};
-            for (const char* prefix : kWritePrefixes) {
-                if (auto hit = try_named(std::string(prefix) + op))
-                    return *hit;
-            }
+            if (auto hit = try_named(std::string("mutate:") + op))
+                return *hit;
+            if (auto hit = try_named(std::string("mw:") + op))
+                return *hit;
         }
 
         return mev("bad-arg", "unknown mutate op ':" + op +
@@ -9923,51 +9930,9 @@ template <typename Ctx> void RegSplitParts::register_mutate_dispatch_primitive(C
         ev.primitives().set_meta_for_name("mutate", std::move(dx));
     }
 
-    // Issue #1436: deprecate core mutate:* aliases in favor of (mutate :op).
-    {
-        static constexpr const char* kCoreMutateAliases[] = {
-            "mutate:rebind",
-            "mutate:replace-pattern",
-            "mutate:replace-subtree",
-            "mutate:replace-value",
-            "mutate:replace-type",
-            "mutate:move-node",
-            "mutate:extract-function",
-            // #2628: mutate:validate-against-schema removed (stats_impl + :validate)
-            "mutate:atomic-batch",
-        };
-        for (const char* name : kCoreMutateAliases) {
-            const auto slot = ev.primitives_.slot_for_name(name);
-            if (slot >= ev.primitives_.slot_count())
-                continue;
-            PrimMeta meta = ev.primitives_.meta_for_slot(slot);
-            meta.deprecated = true;
-            if (meta.category.empty() || meta.category == "general")
-                meta.category = "deprecated";
-            std::string hint;
-            {
-                // Map to :op hint
-                std::string op = "…";
-                if (std::string_view(name) == "mutate:rebind")
-                    op = "rebind";
-                else if (std::string_view(name).starts_with("mutate:replace-"))
-                    op = "replace";
-                else if (std::string_view(name) == "mutate:move-node")
-                    op = "move";
-                else if (std::string_view(name) == "mutate:extract-function")
-                    op = "extract";
-                else if (std::string_view(name) == "mutate:validate-against-schema")
-                    op = "validate";
-                else if (std::string_view(name) == "mutate:atomic-batch")
-                    op = "atomic";
-                hint = "DEPRECATED (#1436): prefer (mutate :" + op + " …)";
-            }
-            if (meta.doc.empty())
-                meta.doc = hint;
-            else if (meta.doc.find("DEPRECATED") == std::string::npos)
-                meta.doc = hint + ". " + meta.doc;
-            ev.primitives_.set_meta_for_name(name, std::move(meta));
-        }
+    // Issue #5095: mutate:rebind / replace-* / move-node / extract-function /
+    // atomic-batch are the write surface the dispatcher calls, not a second
+    // deprecated spelling. (mutate :rebind) and (mutate:rebind) are one verb.
         {
             const auto slot = ev.primitives_.slot_for_name("mutate");
             if (slot < ev.primitives_.slot_count()) {
@@ -9980,7 +9945,6 @@ template <typename Ctx> void RegSplitParts::register_mutate_dispatch_primitive(C
                 ev.primitives_.set_meta_for_name("mutate", std::move(meta));
             }
         }
-    }
 }
 
 template <typename Kv>

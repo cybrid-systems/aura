@@ -162,12 +162,12 @@ class Repl(unittest.TestCase):
                 '(set-code "(define (params) (list 1 2))\\n(define (rules) (list \'a))\\n")\n'
                 "(eval-current)\n"
                 "(define (step! k)\n"
-                '  (let* ((snap (ast:snapshot "s"))\n'
+                '  (let* ((snap (mutate :snapshot "s"))\n'
                 '         (a (mutate:rebind "params" (format "(lambda () (list ~a 4))" k) "step"))\n'
                 '         (b (mutate:rebind "rules" "(lambda () (list \'a \'b))" "step")))\n'
                 "    (eval-current)\n"
                 "    (let ((s (score (params) (rules))))\n"
-                "      (ast:restore snap)\n"
+                "      (mutate :restore snap)\n"
                 "      (eval-current)\n"
                 "      (list a b s (score (params) (rules))))))\n"
             )

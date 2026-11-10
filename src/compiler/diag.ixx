@@ -46,7 +46,7 @@ export enum class ErrorKind : std::uint8_t {
     // hard error; the program type-checks but the result type
     // is wider than the user expected.
     Warning,
-    // Issue #4349: the workspace changed under compiled state (ast:restore
+    // Issue #4349: the workspace changed under compiled state (mutate :restore
     // over a post-mutate snapshot leaves env closures holding rebind-era
     // node ids that are dead in the restored flat). Not an internal
     // error — a documented, recoverable face: run (eval-current) to

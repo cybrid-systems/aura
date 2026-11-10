@@ -95,18 +95,21 @@ The tier says where a name *belongs*, not what ships today. Turning
 job of the follow-up issues (#5009 / #5006); this contract only fixes the
 labels and the gate.
 
-### One list, two registration channels
+### One list, three registration channels
 
-Two channels register primitives and both are part of the catalog:
+Three channels register primitives and all are part of the catalog:
 
 1. `register_prim(add, ev, "name", ...)` and `add("name", ...)` in
    `src/**/*.cpp`.
-2. The evaluator ctor hot table `table_["name"] = ...` in
+2. `add_mutate("mutate:name", ...)` in `evaluator_primitives_mutate.cpp`.
+   The name is a string literal; the wrapper forwards it to `add`. The
+   #5008 scan reads that literal (#5095). A new `add_mutate` name with no
+   matching removal and no `kernel_exceptions` entry fails the gate.
+3. The evaluator ctor hot table `table_["name"] = ...` in
    `src/compiler/evaluator_primitives_builtins.cpp`. `+ - * / < <= = > >= not and or eq?`
-   are registered *only* here, which is why an `add()`-only inventory reports
-   503 names instead of 516.
+   are registered *only* here.
 
-`scripts/tools/prim_surface.py` is the single scan for both channels.
+`scripts/tools/prim_surface.py` is the single scan for all three channels.
 `scripts/tools/gen_docs.py` (docs) and
 `scripts/coverage/checks/check_primitive_tiers_5008.py` (gate) both import it, and
 both read the same tier list, so `docs/generated/primitives.md` and the CI check
@@ -160,13 +163,19 @@ through `./build.py gate --changed`, which auto-discovers `check_*.py`.
 `--report` prints the tier table plus which names have no `lib/std` caller —
 the evidence the deletion issues work from.
 
-### Retirement channel (one release cycle)
+### Retirement channel
 
-`PrimMeta.deprecated` is the runtime switch:
+v0.2.1 removed the v0.2.0 alias window. `ast:` `workspace:` `dirty:`
+`mutation-log:` `ws:` `syntax:` `fiber:overlay-*` `fiber:spawn-backend`, the
+non-kernel `orch:` names, and the seven bare spellings are not registered.
+Their bodies are `query:` / `mutate:` primitives or a std module. `aot:` stays;
+it was not marked deprecated.
 
-- It is set on the `PrimMeta` of a name that is still registered, and
-  `(api-reference)` lists those names under the `*deprecated*` section (with the
-  replacement hint) instead of the main table.
+`PrimMeta.deprecated` is still the runtime switch for a name that is registered
+and retiring:
+
+- `(query :api-reference)` lists those names under `*deprecated*` and prints
+  `PrimMeta.doc`. It does not emit `[use (engine:metrics "name")]`.
 - The propagation path is `ObservabilityPrims::mark_p1b_top_stats_deprecated` /
   `mark_residual_public_stats_deprecated` in
   `evaluator_primitives_observability.cpp`, plus the tier list flag.
@@ -175,7 +184,7 @@ the evidence the deletion issues work from.
   tier entry goes with it.
 
 The 8 `mutate:*` aliases in `DEPRECATED_PRIMITIVES` (#1436) are already past that
-window: they are not registered any more, so `(api-reference)` on the current
+window: they are not registered any more, so `(query :api-reference)` on the current
 tree has no `*deprecated*` entries while the channel itself is unchanged and
 still exercised by the engine's own mark lists. That is the "retired names are
 already out of the catalog" completion branch of #5008.
@@ -212,21 +221,19 @@ Two op spellings are accepted:
 
 - a **keyword** carries the canonical short name — `(query :node-type id)`,
   `(mutate :snapshot "tag")`;
-- a **string** carries the retired primitive name verbatim —
-  `(query "ast:stable-ref" id)`. This is the escape hatch for the long tail
-  and the only way to disambiguate when two prefixes own the same word
-  (`query:stable-ref` vs `ast:stable-ref` return different shapes).
+- a **string** carries the primitive's own name —
+  `(query "qr:diff" id)`. A retired prefix in that position is an error.
 
 An unknown `:op` still fails loudly (with a `did you mean` hint), and an
 unknown string op is `no-prim`.
 
 **Retired prefixes.** `ast:` `workspace:` `dirty:` `mutation-log:` `syntax:`
-`ws:` and `fiber:overlay-*` leave the public surface. They stay registered for
-one release cycle as deprecated aliases (the #5008 channel): the tier list
-carries `"deprecated": true` plus the replacement, `docs/generated/primitives.md`
-renders them under `**deprecated**`, and `(api-reference)` lists them in its
-`*deprecated*` section with the hint. `lib/std` must call the verbs, not the
-aliases — the tier gate fails on a deprecated name that `lib/std` still calls.
+`ws:` and `fiber:overlay-*` are not registered (#5097). `(query :op)` looks up
+`query:op`, then `qr:op` for a body that moved off a retired prefix (so the
+public `query:` add() list stays under its ceiling). `(mutate :op)` looks up
+`mutate:op`, then `mw:op`. Snapshot and restore are `(mutate :snapshot)` /
+`(mutate :restore)`. `fiber:spawn` `fiber:yield` `fiber:join` `fiber:cancel`
+are not query or mutate ops.
 
 **fiber:** keeps `spawn` `yield` `join` `cancel`. The COW overlay verbs
 (`overlay-begin` … `overlay-commit`) are `(mutate :overlay-…)`; the backend
@@ -246,8 +253,8 @@ exactly one primitive — `spawn` = `fiber:spawn`, `send`/`recv` = the
 `std/orch` composes exactly those five.
 
 Everything else the prefix used to carry (workflow composition, supervision,
-handoff tokens, the agent directory, metrics reset) is `std/orch`; those names
-stay registered one release cycle as deprecated aliases. `_agent:spawn` /
+handoff tokens, the agent directory, metrics reset) is `std/orch`. Those 24
+names are not registered (#5097). `_agent:spawn` /
 `_agent:list` stay as the underscore-plane kernel entry points, and
 `agent:recover-from-error` / `agent:tick` / `agent:running?` stay as
 agent-loop kernel state.
@@ -265,15 +272,13 @@ library function. `aot:` is the deliberate remainder in this cycle because
 |-------|----------|
 | Scheme evaluation kernel (car cdr cons eq?, arithmetic, comparisons, apply, type predicates, the native map/list-sort hot paths) | keep |
 | Host effects Aura cannot express (file descriptors, process, time, FFI allocation) | keep, and the name says which effect |
-| Pure formatting over metadata (diagnose, check-success) | leave -> std, one release of forwarding |
-| Engine-state reads and writes (api-reference, arena-offset, auto-rollback-on-panic, define-strategy, edsl:define-struct) | leave -> a query / mutate op, one release of forwarding |
+| Pure formatting over metadata (diagnose, check-success) | std/diagnose and std/test; the bare primitive is unbound |
+| Engine-state reads and writes (api-reference, arena-offset, auto-rollback-on-panic, define-strategy, edsl:define-struct) | a query or mutate op; the bare primitive is unbound |
 | The C FFI family (c-load c-func c-alloc c-free c-opaque c-struct-size) | keep: dlopen/dlsym/native memory is a host effect; std/ffi is the library face |
 
-The per-name rows the runtime enforces live in `kRetiredBare5006`
-(`src/compiler/evaluator_primitives_registry.cpp`); every name there is
-registered, flagged `PrimMeta.deprecated`, and carries the replacement in its
-doc hint for the alias window. `lib/std` must not call a deprecated name: the
-tier gate fails on it, and the replacement exists in the same commit.
+The bare spellings are unbound. `kRetiredBare5006` only flags a
+re-registration. `lib/std` calls `(query …)`, `(mutate …)`, `std/diagnose`, or
+`std/test`.
 
 #### The bare names this cycle moves (Issue #5006)
 

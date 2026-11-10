@@ -84,7 +84,7 @@ int main() {
 
     // AC7: api-reference — #2628 purged query:* aliases (no public names)
     {
-        auto r = cs.eval("(api-reference)");
+        auto r = cs.eval("(query :api-reference)");
         CHECK(r && is_string(*r), "api-reference string");
         if (r && is_string(*r)) {
             auto idx = as_string_idx(*r);

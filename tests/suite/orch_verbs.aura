@@ -2,9 +2,8 @@
 ;
 ; Each verb is the kernel's name for exactly one primitive (spawn=fiber:spawn,
 ; send/recv=the channel pair, join=fiber:join, cancel=fiber:cancel), and
-; std/orch composes those five. The prefixed orch: names stay callable for one
-; release cycle as deprecated aliases (the #5008 channel), so both spellings
-; must agree. Which names are public is pinned by
+; std/orch composes those five. The other orch: names are not registered
+; (v0.2.1). Which names are public is pinned by
 ; docs/stdlib/primitive-tiers.json; this suite pins the behaviour and exits 1
 ; on a mismatch so the runner gates on it.
 

@@ -52,15 +52,15 @@ int run_test_workspace_sync_from() {
         std::println("\n--- AC3: no hardcoded identity lambda in sync-from ---");
         auto src = read_file("src/compiler/evaluator_primitives_workspace.cpp");
         CHECK(!src.empty(), "AC3: workspace primitives readable");
-        CHECK(src.find("workspace:sync-from") != std::string::npos, "AC3: sync-from present");
+        CHECK(src.find("mw:sync-from") != std::string::npos, "AC3: sync-from present");
         CHECK(src.find("Issue #2784") != std::string::npos, "AC3: cites #2784");
         CHECK(src.find("unparse_node") != std::string::npos, "AC3: unparse_node for body");
         // The identity stub must not appear as the rebind code source.
         // Allow the string only if it is in a comment about the bug.
-        auto pos = src.find("workspace:sync-from");
+        auto pos = src.find("mw:sync-from");
         CHECK(pos != std::string::npos, "AC3: sync-from site");
         // Window covering the sync-from prim body (until discard prim).
-        auto win_end = src.find("workspace:discard", pos);
+        auto win_end = src.find("mw:discard", pos);
         auto win = src.substr(pos, win_end == std::string::npos ? 4000 : win_end - pos);
         CHECK(win.find("std::string(\"(lambda (x) x)\")") == std::string::npos &&
                   win.find("\"(lambda (x) x)\"") == std::string::npos,
@@ -107,7 +107,7 @@ int run_test_workspace_sync_from() {
 
         CHECK(cs.eval(std::format("(workspace :switch {})", child_id)).has_value(),
               "AC1: switch child for sync");
-        auto ok = cs.eval("(workspace:sync-from 0 \"my-fn\")");
+        auto ok = cs.eval("(mutate :sync-from 0 \"my-fn\")");
         CHECK(ok && is_bool(*ok) && as_bool(*ok), "AC2: sync-from returns #t");
         (void)cs.eval("(eval-current)");
         auto r_sync = cs.eval("(my-fn 5)");
@@ -125,9 +125,9 @@ int run_test_workspace_sync_from() {
         CHECK(created && is_int(*created), "AC4: create");
         CHECK(cs.eval(std::format("(workspace :switch {})", as_int(*created))).has_value(),
               "AC4: switch");
-        auto miss = cs.eval("(workspace:sync-from 0 \"no-such-symbol\")");
+        auto miss = cs.eval("(mutate :sync-from 0 \"no-such-symbol\")");
         CHECK(miss && is_bool(*miss) && !as_bool(*miss), "AC4: missing symbol → #f");
-        auto bad = cs.eval("(workspace:sync-from 99 \"a\")");
+        auto bad = cs.eval("(mutate :sync-from 99 \"a\")");
         CHECK(bad && is_bool(*bad) && !as_bool(*bad), "AC4: invalid source id → #f");
     }
 

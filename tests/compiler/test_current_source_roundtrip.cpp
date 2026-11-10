@@ -243,14 +243,14 @@ static void ac_snapshot_workspace() {
     CompilerService cs;
     CHECK(set_code(cs, "(define snap-marker-2921 42)"), "AC3: set-code");
     auto ws_before = workspace_source(cs);
-    auto sid = cs.eval("(ast:snapshot \"2921\")");
+    auto sid = cs.eval("(mutate :snapshot \"2921\")");
     CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "AC3: snapshot id >= 0");
 
     CHECK(set_code(cs, "(define snap-marker-2921 99)"), "AC11: mutate workspace");
     auto mid = workspace_source(cs);
     CHECK(mid != ws_before, "AC11: workspace changed");
 
-    auto ok = cs.eval(std::format("(ast:restore {})", as_int(*sid)));
+    auto ok = cs.eval(std::format("(mutate :restore {})", as_int(*sid)));
     CHECK(ok.has_value(), "AC11: restore");
     auto after = workspace_source(cs);
     CHECK(after == ws_before, "AC11: restore replays pre-mutate workspace source");
@@ -310,7 +310,7 @@ static void ac_null_workspace() {
     auto ws = workspace_source(cs);
     // Stable empty / () — no OOB
     CHECK(ws.empty() || ws == "()" || ws == "", "AC14: empty workspace source");
-    auto snap = cs.eval("(ast:snapshot \"no-ws\")");
+    auto snap = cs.eval("(mutate :snapshot \"no-ws\")");
     CHECK(snap && is_int(*snap) && as_int(*snap) == -1, "AC14: snapshot without workspace → -1");
 }
 
@@ -342,9 +342,9 @@ static void ac2966_1_no_workspace_observable() {
     CompilerService cs;
     // Simulate denseness: no set-code, just snapshot (top-level define alone
     // never populates workspace_flat_ in this host path either).
-    auto snap = cs.eval("(ast:snapshot \"denseness\")");
+    auto snap = cs.eval("(mutate :snapshot \"denseness\")");
     CHECK(snap && is_int(*snap) && as_int(*snap) == -1, "2966 AC1: still returns -1");
-    auto reason = cs.eval("(ast:snapshot-fail-reason)");
+    auto reason = cs.eval("(query :snapshot-fail-reason)");
     CHECK(reason.has_value(), "2966 AC1: fail-reason primitive present");
     // reason is keyword :no-workspace
     CHECK(is_keyword(*reason), "2966 AC1: reason is keyword");
@@ -360,9 +360,9 @@ static void ac2966_2_set_code_path_ok() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define score (lambda (x) (* x 2)))\")").has_value(),
           "2966 AC2: set-code");
-    auto sid = cs.eval("(ast:snapshot \"ok\")");
+    auto sid = cs.eval("(mutate :snapshot \"ok\")");
     CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "2966 AC2: snapshot succeeds");
-    auto reason = cs.eval("(ast:snapshot-fail-reason)");
+    auto reason = cs.eval("(query :snapshot-fail-reason)");
     CHECK(reason && is_keyword(*reason), "2966 AC2: reason keyword");
     CHECK(href_ws_snap(cs, "last-ast-snapshot-fail-reason") == 0,
           "2966 AC2: last reason cleared to none");
@@ -376,7 +376,7 @@ static void ac2966_3_empty_set_code_fails() {
     std::println("\n--- #2966 AC3: empty set-code → empty-source fail ---");
     CompilerService cs;
     CHECK(cs.eval("(set-code \"\")").has_value() || true, "2966 AC3: set-code empty attempt");
-    auto sid = cs.eval("(ast:snapshot \"empty\")");
+    auto sid = cs.eval("(mutate :snapshot \"empty\")");
     // Either no workspace survived empty set-code (code 2) or empty source (code 3).
     CHECK(sid && is_int(*sid) && as_int(*sid) == -1, "2966 AC3: empty → -1");
     auto code = href_ws_snap(cs, "last-ast-snapshot-fail-reason");
@@ -392,7 +392,7 @@ static void ac2966_4_source_cite() {
     const auto lint = read_file("scripts/coverage/checks/check_ast_snapshot_fail_reason_2966.py");
     const auto build = read_file("build.py");
     CHECK(ast.find("2966") != std::string::npos, "2966 AC4: ast cites #2966");
-    CHECK(ast.find("ast:snapshot-fail-reason") != std::string::npos, "2966 AC4: fail-reason prim");
+    CHECK(ast.find("qr:snapshot-fail-reason") != std::string::npos, "2966 AC4: fail-reason prim");
     CHECK(ast.find("no-workspace") != std::string::npos ||
               ast.find("NoWorkspace") != std::string::npos ||
               ast.find("kSnapFailNoWorkspace") != std::string::npos,
@@ -731,7 +731,7 @@ static void ac_wiring() {
 // ── Issue #4349: ast:restore over a post-rebind snapshot leaves env
 // closures holding dead node ids — the stale call must surface the
 // documented recoverable StaleWorkspace error (never InternalError),
-// eval-current re-binds, and the bare (ast:generation) metric is
+// eval-current re-binds, and the bare (query :generation) metric is
 // callable from Soft (was stats-face only). ──
 static void ac4349_restore_over_rebind() {
     std::println("\n--- #4349: restore over rebind + bare ast:generation ---");
@@ -741,15 +741,15 @@ static void ac4349_restore_over_rebind() {
     CHECK(cs.eval("(eval-current)").has_value(), "4349: eval-current binds");
     auto pre = cs.eval("(g4349 4)");
     CHECK(pre && is_int(*pre) && as_int(*pre) == 4, "4349: (g 4) = 4 pre-rebind");
-    auto gen = cs.eval("(ast:generation)");
-    CHECK(gen && is_int(*gen), "4349: bare (ast:generation) is an int");
-    auto sid = cs.eval("(ast:snapshot \"4349\")");
+    auto gen = cs.eval("(query :generation)");
+    CHECK(gen && is_int(*gen), "4349: bare (query :generation) is an int");
+    auto sid = cs.eval("(mutate :snapshot \"4349\")");
     CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "4349: snapshot id");
     CHECK(cs.eval("(mutate:rebind \"f4349\" \"(lambda (x) (* x 2))\" \"dbl\")").has_value(),
           "4349: rebind f -> double");
     auto post = cs.eval("(g4349 4)");
     CHECK(post && is_int(*post) && as_int(*post) == 8, "4349: (g 4) = 8 post-rebind");
-    auto st = cs.eval(std::format("(ast:restore {})", as_int(*sid)));
+    auto st = cs.eval(std::format("(mutate :restore {})", as_int(*sid)));
     CHECK(st && is_bool(*st) && as_bool(*st), "4349: restore to pre-rebind snapshot");
     // The stale compiled call must not silently succeed: on the
     // CompilerService face the StaleWorkspace diagnostic surfaces as a
@@ -778,13 +778,13 @@ static void ac4349_snapshot_keeps_caller() {
     auto before = cs.eval("(indent 2)");
     CHECK(before && is_int(*before) && as_int(*before) == 4,
           "4349: (indent 2) = 4 before snapshot");
-    auto sid = cs.eval("(ast:snapshot \"t\")");
+    auto sid = cs.eval("(mutate :snapshot \"t\")");
     CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "4349: snapshot id");
     auto after = cs.eval("(indent 2)");
     CHECK(after && is_int(*after) && as_int(*after) == 4, "4349: (indent 2) = 4 after snapshot");
     auto leaf = cs.eval("(tab-size)");
     CHECK(leaf && is_int(*leaf) && as_int(*leaf) == 2, "4349: (tab-size) stays 2");
-    auto sid2 = cs.eval("(ast:snapshot \"t2\")");
+    auto sid2 = cs.eval("(mutate :snapshot \"t2\")");
     CHECK(sid2 && is_int(*sid2) && as_int(*sid2) >= 0, "4349: second snapshot");
     auto after2 = cs.eval("(indent 2)");
     CHECK(after2 && is_int(*after2) && as_int(*after2) == 4,
@@ -820,7 +820,7 @@ static void ac4598_transitive_rebind_and_restore() {
     CHECK(pre && is_int(*pre) && as_int(*pre) == 21, "4598: (d4598) = 21 before rebind");
     auto filler = cs.eval("(f4598 1)");
     CHECK(filler && is_int(*filler) && as_int(*filler) == 2, "4598: filler before rebind");
-    auto sid = cs.eval("(ast:snapshot \"4598\")");
+    auto sid = cs.eval("(mutate :snapshot \"4598\")");
     CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "4598: snapshot id");
     auto snap = cs.eval("(d4598)");
     CHECK(snap && is_int(*snap) && as_int(*snap) == 21, "4598: snapshot keeps (d4598)");
@@ -837,7 +837,7 @@ static void ac4598_transitive_rebind_and_restore() {
     CHECK(outer && is_int(*outer) && as_int(*outer) == 421, "4598: transitive caller is 421");
     auto filler2 = cs.eval("(h4598 1)");
     CHECK(filler2 && is_int(*filler2) && as_int(*filler2) == 4, "4598: filler stays 4");
-    auto st = cs.eval(std::format("(ast:restore {})", as_int(*sid)));
+    auto st = cs.eval(std::format("(mutate :restore {})", as_int(*sid)));
     CHECK(st && is_bool(*st) && as_bool(*st), "4598: restore");
     auto stale = cs.eval("(d4598)");
     CHECK(!(stale && is_int(*stale)), "4598: stale transitive call is not an int");
@@ -865,21 +865,21 @@ static void ac4598_phase3_snapshot_share_and_stamp_restore() {
         src += std::format("(define (w4598f{} x) (+ x {}))\n", i, i);
     CHECK(set_code(cs, src), "4598p3: set-code workspace");
     CHECK(cs.eval("(eval-current)").has_value(), "4598p3: eval-current binds");
-    auto sid1 = cs.eval("(ast:snapshot \"4598p3-a\")");
+    auto sid1 = cs.eval("(mutate :snapshot \"4598p3-a\")");
     CHECK(sid1 && is_int(*sid1) && as_int(*sid1) >= 0, "4598p3: snapshot id");
     CHECK(snap_stat(cs, "ast-snapshot-share-misses") >= 1,
           "4598p3: first snapshot takes the deep path");
     CHECK(cs.eval("(mutate:rebind \"b4598\" \"(lambda () 41)\" \"4598p3\")").has_value(),
           "4598p3: rebind");
     CHECK(cs.eval("(eval-current)").has_value(), "4598p3: eval-current after rebind");
-    auto st1 = cs.eval(std::format("(ast:restore {})", as_int(*sid1)));
+    auto st1 = cs.eval(std::format("(mutate :restore {})", as_int(*sid1)));
     CHECK(st1 && is_bool(*st1) && as_bool(*st1), "4598p3: restore");
     std::println("4598p3 diag: gen-after-restore={} hits={}", snap_stat(cs, "gen-age"),
                  snap_stat(cs, "ast-snapshot-share-hits"));
     // Live content is back at the snapshot → the next snapshot SHARES the
     // frozen copy (O(1)) instead of deep-copying ~42 defines again.
     const auto hits_before = snap_stat(cs, "ast-snapshot-share-hits");
-    auto sid2 = cs.eval("(ast:snapshot \"4598p3-b\")");
+    auto sid2 = cs.eval("(mutate :snapshot \"4598p3-b\")");
     CHECK(sid2 && is_int(*sid2) && as_int(*sid2) >= 0, "4598p3: second snapshot id");
     std::println("4598p3 diag: gen-after-snap2={} hits={} misses={}", snap_stat(cs, "gen-age"),
                  snap_stat(cs, "ast-snapshot-share-hits"),
@@ -892,7 +892,7 @@ static void ac4598_phase3_snapshot_share_and_stamp_restore() {
     CHECK(cs.eval("(eval-current)").has_value(), "4598p3: eval-current after second rebind");
     const auto unp_before = snap_stat(cs, "ast-restore-stamp-unparse");
     const auto rep_before = snap_stat(cs, "ast-restore-stamp-republish");
-    CHECK(cs.eval(std::format("(ast:restore {})", as_int(*sid2))).has_value(),
+    CHECK(cs.eval(std::format("(mutate :restore {})", as_int(*sid2))).has_value(),
           "4598p3 AC12: restore");
     const auto unp_after = snap_stat(cs, "ast-restore-stamp-unparse");
     const auto rep_after = snap_stat(cs, "ast-restore-stamp-republish");
@@ -913,11 +913,11 @@ static void ac4598_phase3_snapshot_share_and_stamp_restore() {
           "4598p3: third rebind");
     CHECK(cs.eval("(eval-current)").has_value(), "4598p3: eval-current after third rebind");
     const auto hits_mid = snap_stat(cs, "ast-snapshot-share-hits");
-    auto sid3 = cs.eval("(ast:snapshot \"4598p3-c\")");
+    auto sid3 = cs.eval("(mutate :snapshot \"4598p3-c\")");
     CHECK(sid3 && is_int(*sid3) && as_int(*sid3) >= 0, "4598p3: third snapshot id");
     CHECK(snap_stat(cs, "ast-snapshot-share-hits") == hits_mid,
           "4598p3 AC13: changed-workspace snapshot does not share a stale copy");
-    CHECK(cs.eval(std::format("(ast:restore {})", as_int(*sid3))).has_value(),
+    CHECK(cs.eval(std::format("(mutate :restore {})", as_int(*sid3))).has_value(),
           "4598p3 AC13: restore of fresh capture");
     CHECK(cs.eval("(eval-current)").has_value(), "4598p3: eval-current after AC13 restore");
     auto kept = cs.eval("(b4598)");
@@ -941,13 +941,13 @@ static void ac4598_phase4_snapshot_cap_counts_copies() {
         src += std::format("(define (c4598f{} x) (+ x {}))\n", i, i);
     CHECK(set_code(cs, src), "4598p4: set-code workspace");
     CHECK(cs.eval("(eval-current)").has_value(), "4598p4: eval-current binds");
-    auto first = cs.eval("(ast:snapshot \"4598p4-0\")");
+    auto first = cs.eval("(mutate :snapshot \"4598p4-0\")");
     CHECK(first && is_int(*first) && as_int(*first) >= 0, "4598p4 AC14: first snapshot id");
     const auto hits0 = snap_stat(cs, "ast-snapshot-share-hits");
     const auto drops0 = cs.evaluator().ast_snapshot_deep_flat_drops_total();
     const std::size_t extra = cap + 8;
     for (std::size_t i = 1; i <= extra; ++i) {
-        auto s = cs.eval(std::format("(ast:snapshot \"4598p4-{}\")", i));
+        auto s = cs.eval(std::format("(mutate :snapshot \"4598p4-{}\")", i));
         CHECK(s && is_int(*s) && as_int(*s) >= 0, "4598p4 AC14: share-hit snapshot id");
     }
     CHECK(snap_stat(cs, "ast-snapshot-share-hits") == hits0 + static_cast<std::int64_t>(extra),
@@ -956,7 +956,7 @@ static void ac4598_phase4_snapshot_cap_counts_copies() {
           "4598p4 AC14: distinct-copy count stays 1");
     CHECK(cs.evaluator().ast_snapshot_deep_flat_drops_total() == drops0,
           "4598p4 AC14: shared burst does not evict the live copy");
-    auto st = cs.eval(std::format("(ast:restore {})", as_int(*first)));
+    auto st = cs.eval(std::format("(mutate :restore {})", as_int(*first)));
     CHECK(st && is_bool(*st) && as_bool(*st), "4598p4 AC14: oldest shared id restores");
     CHECK(cs.eval("(eval-current)").has_value(), "4598p4: eval after restore");
     auto b = cs.eval("(b4598)");
@@ -1892,10 +1892,10 @@ static void ac4729_merge_and_restore_keep_provenance() {
 (eval-current)
 (define n-rebind (length (ml)))
 (define mid-rebind (mid))
-(define s (ast:snapshot "s"))
+(define s (mutate :snapshot "s"))
 (mutate:rebind "f" "(lambda (x) (+ x 9))" "rebind-to-roll-back")
 (eval-current)
-(ast:restore s) (eval-current)
+(mutate :restore s) (eval-current)
 (define n-restore (length (ml)))
 (define mid-restore (mid))
 (+ (if (>= n-merge (+ n-pre 1)) 1 0)
@@ -1958,7 +1958,7 @@ static DepGraphRun4793 run_restore_dep_graph_4793() {
                            "(mutate:rebind \"b4793\" \"(lambda () 5)\" \"4793\")"};
     std::vector<std::int64_t> ids;
     for (int k = 0; k < 3; ++k) {
-        auto s = cs.eval(std::format("(ast:snapshot \"4793-{}\")", k));
+        auto s = cs.eval(std::format("(mutate :snapshot \"4793-{}\")", k));
         CHECK(s && is_int(*s) && as_int(*s) >= 0, "4793: snapshot id");
         ids.push_back(s && is_int(*s) ? as_int(*s) : -1);
         CHECK(cs.eval(edits[k]).has_value(), "4793: rebind");
@@ -1969,7 +1969,7 @@ static DepGraphRun4793 run_restore_dep_graph_4793() {
     const auto full0 = snap_stat(cs, "ast-restore-dep-graph-full");
     auto restore = [&](int j) {
         const auto walked_before = cs.public_restore_dep_graph_names_walked();
-        auto r = cs.eval(std::format("(ast:restore {})", ids[j]));
+        auto r = cs.eval(std::format("(mutate :restore {})", ids[j]));
         CHECK(r && is_bool(*r) && as_bool(*r), "4793: restore ok");
         out.fps.push_back(cs.public_dep_graph_fingerprint());
         if (cs.public_restore_dep_graph_names_walked() - walked_before <= 4)
@@ -2048,7 +2048,7 @@ static void ac4792_cross_epoch_restore_keeps_stamps() {
     std::vector<std::int64_t> ids;
     std::vector<std::int64_t> vals;
     for (int k = 1; k <= 3; ++k) {
-        auto s = cs.eval(std::format("(ast:snapshot \"4792-{}\")", k));
+        auto s = cs.eval(std::format("(mutate :snapshot \"4792-{}\")", k));
         CHECK(s && is_int(*s) && as_int(*s) >= 0, "4792: snapshot id");
         ids.push_back(s && is_int(*s) ? as_int(*s) : -1);
         vals.push_back(k);
@@ -2065,7 +2065,7 @@ static void ac4792_cross_epoch_restore_keeps_stamps() {
         const int j = order[step];
         const auto unp_before = snap_stat(cs, "ast-restore-stamp-unparse");
         const auto cross_before = snap_stat(cs, "ast-restore-cross-epoch-stamp");
-        auto r = cs.eval(std::format("(ast:restore {})", ids[j]));
+        auto r = cs.eval(std::format("(mutate :restore {})", ids[j]));
         CHECK(r && is_bool(*r) && as_bool(*r), "4792: restore ok");
         const auto unp = snap_stat(cs, "ast-restore-stamp-unparse") - unp_before;
         const auto cross = snap_stat(cs, "ast-restore-cross-epoch-stamp") - cross_before;
@@ -2091,24 +2091,24 @@ static void ac4792_cross_epoch_restore_keeps_stamps() {
     CHECK(cheap_ok == 9, "4792 AC3: each restore unparses O(changed defines), not O(workspace)");
     // #4782 face across epochs: restore an old snapshot, edit, capture,
     // then hop between the new capture and an older one.
-    CHECK(cs.eval(std::format("(ast:restore {})", ids[0])).has_value(), "4792: restore S0");
+    CHECK(cs.eval(std::format("(mutate :restore {})", ids[0])).has_value(), "4792: restore S0");
     CHECK(cs.eval("(mutate:rebind \"b4792\" \"(lambda () 100)\" \"4792\")").has_value(),
           "4792: rebind after restore");
     CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current");
-    auto s3 = cs.eval("(ast:snapshot \"4792-post\")");
+    auto s3 = cs.eval("(mutate :snapshot \"4792-post\")");
     CHECK(s3 && is_int(*s3), "4792: post-restore snapshot");
-    CHECK(cs.eval(std::format("(ast:restore {})", ids[1])).has_value(), "4792: restore S1");
+    CHECK(cs.eval(std::format("(mutate :restore {})", ids[1])).has_value(), "4792: restore S1");
     CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current");
     auto b1 = cs.eval("(u4792)");
     CHECK(b1 && is_int(*b1) && as_int(*b1) == 3, "4792 AC4: S1 caller sees S1 body");
     CHECK(
-        cs.eval(std::format("(ast:restore {})", s3 && is_int(*s3) ? as_int(*s3) : -1)).has_value(),
+        cs.eval(std::format("(mutate :restore {})", s3 && is_int(*s3) ? as_int(*s3) : -1)).has_value(),
         "4792: restore post-restore snapshot");
     CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current");
     auto b3 = cs.eval("(u4792)");
     CHECK(b3 && is_int(*b3) && as_int(*b3) == 101,
           "4792 AC4: post-restore capture restores its own edit");
-    CHECK(cs.eval(std::format("(ast:restore {})", ids[0])).has_value(), "4792: restore S0 again");
+    CHECK(cs.eval(std::format("(mutate :restore {})", ids[0])).has_value(), "4792: restore S0 again");
     CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current");
     auto b0 = cs.eval("(u4792)");
     CHECK(b0 && is_int(*b0) && as_int(*b0) == 2, "4792 AC4: back to S0");
@@ -2126,11 +2126,11 @@ static void ac4772_snapshot_quiet_guard() {
           "4772: rebind before snapshot (snapshot source differs from set-code)");
     CHECK(cs.eval("(eval-current)").has_value(), "4772: eval-current after rebind");
     const auto dv0 = cs.evaluator().defuse_version();
-    auto sid = cs.eval("(ast:snapshot \"4772\")");
+    auto sid = cs.eval("(mutate :snapshot \"4772\")");
     CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "4772: snapshot id");
     const auto dv1 = cs.evaluator().defuse_version();
     CHECK(dv1 == dv0, "4772: ast:snapshot does not bump defuse_version (read-only guard)");
-    auto sid2 = cs.eval("(ast:snapshot \"4772b\")");
+    auto sid2 = cs.eval("(mutate :snapshot \"4772b\")");
     CHECK(sid2 && is_int(*sid2) && as_int(*sid2) > as_int(*sid), "4772: second snapshot id");
     CHECK(cs.evaluator().defuse_version() == dv0, "4772: repeated snapshots stay quiet");
     auto live = cs.eval("(f4772 1)");
@@ -2144,9 +2144,9 @@ static void ac4772_snapshot_quiet_guard() {
     CHECK(cs.eval("(eval-current)").has_value(), "4772: eval-current after second rebind");
     auto moved = cs.eval("(f4772 1)");
     CHECK(moved && is_int(*moved) && as_int(*moved) == 101, "4772: rebind applied");
-    auto diff = cs.eval(std::format("(ast:diff {})", as_int(*sid)));
+    auto diff = cs.eval(std::format("(query :diff {})", as_int(*sid)));
     CHECK(diff && !is_void(*diff), "4772: ast:diff against the quiet snapshot reports changes");
-    auto st = cs.eval(std::format("(ast:restore {})", as_int(*sid)));
+    auto st = cs.eval(std::format("(mutate :restore {})", as_int(*sid)));
     CHECK(st && is_bool(*st) && as_bool(*st), "4772: restore the quiet snapshot");
     CHECK(cs.eval("(eval-current)").has_value(), "4772: eval-current after restore");
     auto back = cs.eval("(f4772 1)");
@@ -2176,7 +2176,7 @@ static void ac4772_structural_sharing() {
     CHECK(set_code(cs, src), "4772s: set-code W=600");
     CHECK(cs.eval("(eval-current)").has_value(), "4772s: eval-current");
     std::vector<std::int64_t> ids;
-    auto s0 = cs.eval("(ast:snapshot \"4772s-0\")");
+    auto s0 = cs.eval("(mutate :snapshot \"4772s-0\")");
     CHECK(s0 && is_int(*s0) && as_int(*s0) >= 0, "4772s: base snapshot");
     ids.push_back(as_int(*s0));
     const auto fresh0 = snap_stat(cs, "ast-snapshot-chunks-fresh");
@@ -2187,7 +2187,7 @@ static void ac4772_structural_sharing() {
                                   k * 10))
                   .has_value(),
               "4772s: rebind one define");
-        auto s = cs.eval(std::format("(ast:snapshot \"4772s-{}\")", k));
+        auto s = cs.eval(std::format("(mutate :snapshot \"4772s-{}\")", k));
         CHECK(s && is_int(*s) && as_int(*s) >= 0, "4772s: fork snapshot id");
         ids.push_back(as_int(*s));
         CHECK(cs.evaluator().workspace_equals_snapshot_image(static_cast<std::size_t>(as_int(*s))),
@@ -2202,7 +2202,7 @@ static void ac4772_structural_sharing() {
           "4772s AC2: fork snapshots defer the O(workspace) unparse");
     // AC3: lazy source is built on demand and matches the live unparse.
     auto live_src = workspace_source(cs);
-    auto d = cs.eval(std::format("(ast:diff {})", ids.back()));
+    auto d = cs.eval(std::format("(query :diff {})", ids.back()));
     CHECK(d.has_value(), "4772s AC3: ast:diff against a lazy snapshot");
     CHECK(snap_stat(cs, "ast-snapshot-lazy-source-builds") >= 1,
           "4772s AC3: ast:diff materialized the lazy source");
@@ -2210,7 +2210,7 @@ static void ac4772_structural_sharing() {
     // AC4: restore worldlines out of order; bindings + column oracle exact.
     const int order[] = {3, 0, 6, 1, 5, 2, 4, 0};
     for (int k : order) {
-        auto st = cs.eval(std::format("(ast:restore {})", ids[static_cast<std::size_t>(k)]));
+        auto st = cs.eval(std::format("(mutate :restore {})", ids[static_cast<std::size_t>(k)]));
         CHECK(st && is_bool(*st) && as_bool(*st), "4772s AC4: restore fork");
         const auto rid = static_cast<std::size_t>(ids[static_cast<std::size_t>(k)]);
         const bool eq = cs.evaluator().workspace_equals_snapshot_image(rid);
@@ -2227,7 +2227,7 @@ static void ac4772_structural_sharing() {
     // AC5: an edit after a restore does not leak into the image it came from.
     CHECK(cs.eval("(mutate:rebind \"g4772\" \"(lambda (x) (+ x 777))\" \"4772s\")").has_value(),
           "4772s AC5: rebind after restore");
-    auto st = cs.eval(std::format("(ast:restore {})", ids[0]));
+    auto st = cs.eval(std::format("(mutate :restore {})", ids[0]));
     CHECK(st && is_bool(*st) && as_bool(*st), "4772s AC5: restore base again");
     CHECK(cs.eval("(eval-current)").has_value(), "4772s AC5: eval-current");
     auto v0 = cs.eval("(g4772 1)");
@@ -2239,14 +2239,14 @@ static void ac4772_structural_sharing() {
         if (i % 2 == 0)
             (void)cs.eval(std::format(
                 "(mutate:rebind \"g4772\" \"(lambda (x) (+ x {}))\" \"4772s\")", 1000 + i));
-        (void)cs.eval("(ast:snapshot)");
+        (void)cs.eval("(mutate :snapshot)");
     }
     CHECK(cs.evaluator().ast_snapshot_image_count() <= cap_images,
           "4772s AC6: distinct images bounded");
     CHECK(cs.evaluator().ast_snapshot_deep_flat_count() <=
               aura::compiler::Evaluator::kMaxAstSnapshotDeepFlats,
           "4772s AC6: deep-copy equivalents bounded by the #4271 cap");
-    auto old = cs.eval(std::format("(ast:restore {})", ids[2]));
+    auto old = cs.eval(std::format("(mutate :restore {})", ids[2]));
     CHECK(old && is_bool(*old) && as_bool(*old), "4772s AC6: evicted id still restores");
     CHECK(cs.eval("(eval-current)").has_value(), "4772s AC6: eval-current");
     auto v2 = cs.eval("(g4772 1)");

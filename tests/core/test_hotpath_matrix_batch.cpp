@@ -146,7 +146,7 @@ static void run_fiber_orchestration(CompilerService& cs) {
     std::println("\n=== Runtime health under orchestration (#814) ===");
     expect_hash_schema(cs, "query:runtime-production-health", 814);
     CHECK(href(cs, "query:runtime-production-health", "health-score") >= 0, "health-score");
-    auto heal = cs.eval("(runtime:self-heal-on-drift)");
+    auto heal = cs.eval("(mutate :self-heal-on-drift)");
     CHECK(heal.has_value(), "runtime:self-heal-on-drift callable");
 
     std::println("\n=== JIT exception bridge (#811) ===");
@@ -223,8 +223,8 @@ static void run_hygiene_dirty(CompilerService& cs) {
 
     std::println("\n=== edsl:define-struct hygiene path (#816) ===");
     expect_schema(cs, "query:edsl-struct-meta-stats", 816);
-    auto ok = cs.eval("(edsl:define-struct \"HygStruct\" \"doc\" \"f:int\")");
-    CHECK(ok && is_bool(*ok), "edsl:define-struct");
+    auto ok = cs.eval("(mutate :define-struct \"HygStruct\" \"doc\" \"f:int\")");
+    CHECK(ok && is_bool(*ok), "mw:define-struct");
     CHECK(href(cs, "query:edsl-struct-meta-stats", "define-struct-total") >= 1,
           "define-struct-total");
 
@@ -1734,14 +1734,14 @@ static void run_430_arena_compaction_policy_observability() {
     {
         std::println("\n--- #430 AC5: skip policy returns 0 ---");
         CompilerService cs;
-        auto r = cs.eval("(arena:compact-with-policy \"main\" \"skip\")");
+        auto r = cs.eval("(mutate :arena-compact-with-policy \"main\" \"skip\")");
         CHECK(r.has_value() && is_int(*r) && as_int(*r) == 0, "skip policy returns 0");
     }
     // AC6: force policy doesn't crash
     {
         std::println("\n--- #430 AC6: force policy doesn't crash ---");
         CompilerService cs;
-        auto r = cs.eval("(arena:compact-with-policy \"main\" \"force\")");
+        auto r = cs.eval("(mutate :arena-compact-with-policy \"main\" \"force\")");
         CHECK(r.has_value() && is_int(*r) && as_int(*r) >= 0,
               "force policy returns non-negative int");
     }
@@ -1749,7 +1749,7 @@ static void run_430_arena_compaction_policy_observability() {
     {
         std::println("\n--- #430 AC7: nonexistent arena returns 0 ---");
         CompilerService cs;
-        auto r = cs.eval("(arena:compact-with-policy \"definitely-not-an-arena-xyz\" \"force\")");
+        auto r = cs.eval("(mutate :arena-compact-with-policy \"definitely-not-an-arena-xyz\" \"force\")");
         CHECK(r.has_value() && is_int(*r) && as_int(*r) == 0,
               "nonexistent arena returns 0 (safe no-op)");
     }
@@ -1783,7 +1783,7 @@ static void run_430_arena_compaction_policy_observability() {
     {
         std::println("\n--- #430 AC11: bad policy name doesn't crash ---");
         CompilerService cs;
-        auto r = cs.eval("(arena:compact-with-policy \"main\" \"not-a-policy\")");
+        auto r = cs.eval("(mutate :arena-compact-with-policy \"main\" \"not-a-policy\")");
         CHECK(r.has_value(), "bad policy returns a value (no crash)");
     }
     // AC12: force policy bumps trigger counter
@@ -1791,7 +1791,7 @@ static void run_430_arena_compaction_policy_observability() {
         std::println("\n--- #430 AC12: force bumps trigger counter ---");
         CompilerService cs;
         auto before = hash_int(cs, "auto-compact-triggers");
-        cs.eval("(arena:compact-with-policy \"main\" \"force\")");
+        cs.eval("(mutate :arena-compact-with-policy \"main\" \"force\")");
         auto after = hash_int(cs, "auto-compact-triggers");
         CHECK(after >= before, "force policy bumps or maintains trigger counter");
     }

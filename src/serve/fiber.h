@@ -1829,7 +1829,7 @@ extern void (*g_fiber_resume_validate_)();
 extern void (*g_fiber_yield_checkpoint_deleter_)(void*);
 
 // Issue #618: GC safepoint frequency tuning. The
-// (orchestration:tune-gc-frequency ratio) primitive writes
+// (mutate :tune-gc-frequency ratio) primitive writes
 // a 0..100 ratio here; the scheduler can opt-in to consult
 // it when deciding whether to trigger a safepoint on the
 // next allocation. P0 ships write/read/return; the actual

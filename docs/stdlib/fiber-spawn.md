@@ -16,8 +16,8 @@ even though `(fiber:join -1)` worked.
 
 | Backend | When | Probe |
 |---------|------|--------|
-| **scheduler** | `g_fiber_spawn` set (`--serve-async`, `--serve-async-bench`, serve modes) | `(fiber:spawn-backend)` → `1` |
-| **thread** | CLI stdin denseness (`AURA_PIPELINE_STRICT=0` file/stdin runs) | `(fiber:spawn-backend)` → `2` |
+| **scheduler** | `g_fiber_spawn` set (`--serve-async`, `--serve-async-bench`, serve modes) | `(query :fiber-backend)` → `1` |
+| **thread** | CLI stdin denseness (`AURA_PIPELINE_STRICT=0` file/stdin runs) | `(query :fiber-backend)` → `2` |
 
 Thread fallback is a **supported concurrent denseness backend** for
 Hephaestus axis C (multi-worker rebind under load). Real stackful
@@ -211,16 +211,16 @@ A body can run against a private copy-on-write overlay instead of the shared
 env top table:
 
 ```scheme
-(fiber:overlay-begin)                 ; snapshot base epoch + commit sequence
-(fiber:overlay-define "name" value)   ; private define
-(fiber:overlay-set! "name" value)     ; private rebind of a committed binding
-(fiber:overlay-get "name" default)    ; overlay value, else committed, else default
-(fiber:overlay-has "name")
-(fiber:overlay-commit)                ; merge; error on a write-write conflict
-(fiber:overlay-rollback)              ; drop the overlay, apply nothing
-(fiber:overlay-pending)               ; bindings held privately right now
-(fiber:overlay-conflict)              ; condition object of our last rejection, or #f
-(fiber:overlay-report)                ; deterministic stats string
+(mutate :overlay-begin)                 ; snapshot base epoch + commit sequence
+(mutate :overlay-define "name" value)   ; private define
+(mutate :overlay-set! "name" value)     ; private rebind of a committed binding
+(mutate :overlay-get "name" default)    ; overlay value, else committed, else default
+(mutate :overlay-has "name")
+(mutate :overlay-commit)                ; merge; error on a write-write conflict
+(mutate :overlay-rollback)              ; drop the overlay, apply nothing
+(mutate :overlay-pending)               ; bindings held privately right now
+(mutate :overlay-conflict)              ; condition object of our last rejection, or #f
+(mutate :overlay-report)                ; deterministic stats string
 ```
 
 While an overlay is open, **ordinary env reads inside that body see the
@@ -258,7 +258,7 @@ fiber:cow-conflict: <name> binding=<name> winner-fiber=<id>
 ```
 
 The same verdict is a condition object (a hash) from
-`(fiber:overlay-conflict)`: `binding`, `winner-fiber`, `our-epoch`,
+`(mutate :overlay-conflict)`: `binding`, `winner-fiber`, `our-epoch`,
 `committed-epoch`, `our-seq`, `winner-seq`, `kind`, `read-only`,
 `schema`. `winner-fiber` is a decimal **string** — the overlay key is a
 64-bit token (scheduler fiber id, or the CLI thread-key domain) that does not

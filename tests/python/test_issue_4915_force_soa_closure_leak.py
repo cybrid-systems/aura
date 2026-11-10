@@ -38,12 +38,12 @@ EV = """
   (let loop ((s 1) (out (list)))
     (if (> s steps)
         (reverse out)
-        (let* ((snap (ast:snapshot (format "s-~a" s)))
+        (let* ((snap (mutate :snapshot (format "s-~a" s)))
                (r (mutate:rebind "strategy-params"
                                  (format "(lambda () (quote ((fast . ~a))))" s) "t")))
           (eval-current)
           (let ((w (work 2000 (cdr (car (strategy-params))))))
-            (if (even? s) (begin (ast:restore snap) (eval-current)) #f)
+            (if (even? s) (begin (mutate :restore snap) (eval-current)) #f)
             (loop (+ s 1) (cons (list s r w (stats:get "gc-stats")) out)))))))
 """
 

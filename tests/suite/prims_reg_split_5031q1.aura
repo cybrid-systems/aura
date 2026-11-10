@@ -19,7 +19,7 @@
 (check (hash? (stats:get "query:ir-marker-stats")) "ir-marker-stats")
 (check (hash? (stats:get "query:hygiene-checkpoint-stats")) "hygiene-checkpoint-stats")
 (check (integer? (stats:get "query:query-stats")) "query:query-stats")
-(check (integer? (orchestration:tune-gc-frequency)) "orchestration:tune-gc-frequency")
+(check (integer? (mutate :tune-gc-frequency)) "mw:tune-gc-frequency")
 
 ;; ── query.cpp: stable-ref / lifecycle / scheduler phase ─────────────
 (check (hash? (stats:get "query:stable-ref-stats-hash")) "stable-ref-stats-hash")
