@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 918 | Preferred destination suites |
-| **Total scanned** | **918** | |
+| `tests/core/test_*.cpp` | 919 | Preferred destination suites |
+| **Total scanned** | **919** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 61 | 61 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 132 | 132 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 133 | 133 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 67 | 67 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -422,6 +422,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_emit_object_deprecated.cpp`
 - `tests/compiler/test_emit_soa_source_marker_propagation.cpp`
 - `tests/compiler/test_enable_soa_dual_emit_no_reset.cpp`
+- `tests/compiler/test_engine_metrics_after_mutate.cpp`
 - `tests/compiler/test_engine_metrics_facade.cpp`
 - `tests/reflect/test_enum_name_table_c1.cpp`
 - `tests/compiler/test_env_batch.cpp`
@@ -1919,13 +1920,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (132)
+### `observability` — Observability / metrics / query:*-stats (133)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (132)
+#### domain/ (133)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_exhaustiveness_production_hard.cpp` (—) [domain_suite, theme_compiler] — test_adt_exhaustiveness_production_hard.cpp -- source-cite AC for Issue #3559
@@ -1961,6 +1962,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_densify_envframe_ok.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft / no Moving densify → envframe_ok stays true (vacuous)
 - `tests/compiler/test_densify_root_closure_closed_loop.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft / no Moving densify → root_remap_ok + closure_remount_ok true
 - `tests/compiler/test_dual_path_desync_hard_fail.cpp` (—) [domain_suite, theme_compiler] — AC1: inject desync → hard path; metric++; materialize bindings empty
+- `tests/compiler/test_engine_metrics_after_mutate.cpp` (—) [domain_suite, theme_compiler] — Issue #5117 — (engine:metrics) after a workspace mutation aborted under
 - `tests/compiler/test_engine_metrics_facade.cpp` (—) [large, domain_suite, theme_compiler] — AC1: (engine:metrics) returns hash with nested groups + ≥200 metric fields
 - `tests/compiler/test_envframe_resolve_distinction.cpp` (—) [domain_suite, theme_compiler] — Issue #1708/#1709/#1754/#1756/#1890 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_eval_relower_hotpath.cpp` (—) [domain_suite, theme_compiler] — Issue #1506/#1601/#1605/#1623 (#1978 renamed): issue# moved from filename to header.
