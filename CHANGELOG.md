@@ -15,7 +15,7 @@ Patch release on the 0.2 channel. This version hardens what 0.2.0 shipped; it ad
 Not in this version:
 
 - macOS, Windows, and other Linux distributions.
-- The 86 `stdlib-candidate` primitives stay in the kernel: a module export does not shadow a kernel primitive, so each batch has to move implementation, deregistration and every bare caller in one commit. Tracked in #5137.
+- The `stdlib-candidate` bucket is empty (#5137): 86 names when the cycle opened, 5 of them moved to `std/char`, the rest re-tiered into the kernel with a written reason per family. They are not kernel for speed: 27 read or write through a tenanted heap (string heap #4428, hash/ihash tables) where a denied slot is a typed error, the reader surfaces (`json-parse`, `read-from-string`, `verify:parse-*`) drive the FlatAST reader, and `assert`/`check`/`check=` build the engine error value through `push_error_cause`. A module export cannot shadow a kernel primitive either, so a batch has to move implementation, deregistration and every bare caller in one commit.
 - `aura::eval` ships in the build tree only.
 
 ## 0.2.1
