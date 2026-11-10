@@ -26,7 +26,11 @@ jobs:
         run: pip install --break-system-packages -r requirements-dev.txt
 
       - name: Build release tarball
+        env:
+          AURA_GIT_SHA: ${{ github.sha }}
+          AURA_REQUIRE_GIT_SHA: "1"
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           VERSION="${GITHUB_REF_NAME#v}"
           ./scripts/tools/release.sh "$VERSION"  # #4907: was ./scripts/release.sh (missing)
 

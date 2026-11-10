@@ -18,7 +18,9 @@ sys.path.insert(0, str(ROOT / "tests" / "python"))
 
 from _aura_harness import AURA_BIN  # noqa: E402
 
-LINE = re.compile(r"^aura (dev|nightly|\d+\.\d+\.\d+\S*) \(([0-9a-f]{9}|unknown)\)$")
+LINE = re.compile(
+    r"^aura (dev|nightly|\d+\.\d+\.\d+\S*) \(([0-9a-f]{9}|[0-9a-f]{40}|unknown)\)$"
+)
 
 
 class Version(unittest.TestCase):
