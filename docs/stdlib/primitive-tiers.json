@@ -46,7 +46,8 @@
     "K-R7RS": "R7RS-small required procedure; a conversion spelling exists, but removing this name would break the declared R7RS surface",
     "K-CHAR": "character comparison used inside every string and parser loop (char=?/char<?); an Aura body adds a call per comparison, so it stays kernel until #5135 can measure the move in the CI image",
     "K-F64": "f64vector numeric kernels (dot/sum/max-index/sub!/ewma!) run over the locked native view of the f64 heap; an Aura loop would be an interpreted call per element, so the move needs a #5135 baseline in the CI image before it can be considered",
-    "K-NUM-HOT": "abs/max/min sit in numeric loops and lcm is variadic with i64 edge handling (kI64Min/i64 overflow); an Aura body would either add a call per arithmetic step or narrow the contract, so all four stay kernel"
+    "K-NUM-HOT": "abs/max/min sit in numeric loops and lcm is variadic with i64 edge handling (kI64Min/i64 overflow); an Aura body would either add a call per arithmetic step or narrow the contract, so all four stay kernel",
+    "K-ORCH-STATE": "orchestration verbs whose body reads scheduler or fiber session state (agent scopes, the agent name table, agent_poll forced yield, reclaimed-body waits, handoff tokens); Aura code cannot own that state atomically, so they are the live kernel surface and std/orch builds on the same five primitives (#5131)"
   },
   "kernel_exceptions": [
     "arithmetic-shift",
@@ -1428,58 +1429,47 @@
     },
     "orch:agent-ask": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:agent-directory": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:agent-export-via-token": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:agent-import-via-token": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:agent-join": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:agent-poll": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:agent-recv": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:agent-reply": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:agent-send": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:agent-touch": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:agent-wait-reclaimed": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:cancel": {
       "tier": "kernel",
@@ -1487,8 +1477,7 @@
     },
     "orch:compose-workflow": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:join": {
       "tier": "kernel",
@@ -1496,8 +1485,7 @@
     },
     "orch:join-via-token": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:recv": {
       "tier": "kernel",
@@ -1505,43 +1493,35 @@
     },
     "orch:run-workflow": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:scope-cancel-all": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:scope-child": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:scope-join-all": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:scope-resolve": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:scope-spawn": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:scope-sweep-reclaimed-pending": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:scope-watch": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "orch:send": {
       "tier": "kernel",
@@ -1553,8 +1533,7 @@
     },
     "orch:supervise-batch": {
       "tier": "kernel",
-      "rule": "K-EXC-5118",
-      "deprecated": true
+      "rule": "K-ORCH-STATE"
     },
     "pair?": {
       "tier": "kernel",

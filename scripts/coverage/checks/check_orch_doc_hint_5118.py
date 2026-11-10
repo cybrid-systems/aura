@@ -76,10 +76,13 @@ def main() -> int:
         fails.append(f"{name} is neither a live add() nor defined in std/orch")
     if "parallel-intend" not in live_adds(agent):
         fails.append("parallel-intend is not registered, so the alias hint has no target")
-    if "DEPRECATED (#5118)" not in registry:
-        fails.append("registry does not build a #5118 PrimMeta.doc hint")
-    if "std::string(view)" not in registry:
-        fails.append("other orch hints do not name the registered verb")
+    # Issue #5131: the 22 verbs are the live kernel surface now, so the hint is
+    # a kernel-resident note rather than a deprecation. The check keeps
+    # asserting that a caller reading help is told where the function lives.
+    if "kernel-resident (#5131)" not in registry:
+        fails.append("registry does not build the #5131 kernel-resident hint")
+    if "orch:metrics" in registry:
+        fails.append("registry still special-cases the migrated orch:metrics")
     if fails:
         print("FAIL #5118 orch doc hints:")
         for item in fails:

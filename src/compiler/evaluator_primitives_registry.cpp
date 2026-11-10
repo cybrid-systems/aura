@@ -178,14 +178,21 @@ namespace {
             if (retired)
                 continue;
             if (view.starts_with("orch:") && !is_orch_verb_5006(view)) {
-                // Issue #5118: std/orch never grew these verbs. The registered
-                // name is the function to call. (The one verb whose body was a
-                // different primitive, orch:parallel-intend, is gone: #5131
-                // retired it and its callers now use parallel-intend.)
-                retire_name(prims, slot,
-                            "DEPRECATED (#5118): call (" + std::string(view) +
-                                " ...). This registration is the function; std/orch does not "
-                                "replace it.");
+                // Issue #5131: these verbs read scheduler / fiber session state
+                // (agent scopes, the name table, agent_poll's forced yield,
+                // reclaimed-body waits, handoff tokens). Aura cannot own that
+                // state atomically, so they are the live kernel surface and
+                // std/orch builds on the same five primitives. They are NOT
+                // deprecated: #5118 marked them for one cycle only while a
+                // std/orch replacement was expected; that expectation is gone.
+                PrimMeta meta = prims.meta_for_slot(slot);
+                if (meta.doc.find("#5131") == std::string::npos) {
+                    meta.doc = "kernel-resident (#5131): reads scheduler/fiber session state, " +
+                               std::string(meta.doc.empty() ? "" : meta.doc + ". ") +
+                               "std/orch builds on fiber:spawn/channel:send/channel:recv/"
+                               "fiber:join/fiber:cancel.";
+                    prims.set_meta_for_name(name, std::move(meta));
+                }
                 continue;
             }
             for (const auto& bare : kRetiredBare5006) {

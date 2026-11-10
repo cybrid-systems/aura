@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**547** registrations scanned from `src/**/*.cpp` (22 marked **deprecated** — Issue #1438).
+**547** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
@@ -531,33 +531,33 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## Orch: (27)
 
-- `orch:agent-ask` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-directory` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-export-via-token` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-import-via-token` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-join` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-poll` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-recv` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-reply` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-send` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-touch` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-wait-reclaimed` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-ask` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-directory` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-export-via-token` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-import-via-token` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-join` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-poll` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-recv` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-reply` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-send` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-touch` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-wait-reclaimed` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:cancel` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:compose-workflow` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:compose-workflow` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:join` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:join-via-token` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:join-via-token` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:recv` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:run-workflow` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-cancel-all` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-child` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-join-all` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-resolve` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-spawn` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-sweep-reclaimed-pending` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-watch` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:run-workflow` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-cancel-all` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-child` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-join-all` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-resolve` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-spawn` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-sweep-reclaimed-pending` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-watch` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:send` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:spawn` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:supervise-batch` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:supervise-batch` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 
 ## Primitives: (2)
 
@@ -976,33 +976,33 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `offload:snapshot` `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
 - `offload:submit` `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
 - `or` `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
-- `orch:agent-ask` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-directory` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-export-via-token` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-import-via-token` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-join` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-poll` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-recv` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-reply` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-send` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-touch` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-wait-reclaimed` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-ask` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-directory` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-export-via-token` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-import-via-token` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-join` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-poll` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-recv` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-reply` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-send` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-touch` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-wait-reclaimed` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:cancel` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:compose-workflow` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:compose-workflow` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:join` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:join-via-token` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:join-via-token` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:recv` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:run-workflow` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-cancel-all` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-child` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-join-all` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-resolve` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-spawn` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-sweep-reclaimed-pending` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-watch` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:run-workflow` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-cancel-all` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-child` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-join-all` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-resolve` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-spawn` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-sweep-reclaimed-pending` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-watch` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:send` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:spawn` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:supervise-batch` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:supervise-batch` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `pair?` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `parallel-intend` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `pin-stable-refs` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
@@ -1482,33 +1482,33 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `offload:snapshot` *[K-FIBER]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `offload:submit` *[K-FIBER]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `or` *[K-HOT]* — `src/compiler/evaluator_primitives_builtins.cpp`
-- `orch:agent-ask` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-directory` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-export-via-token` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-import-via-token` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-join` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-poll` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-recv` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-reply` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-send` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-touch` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-wait-reclaimed` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-ask` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-directory` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-export-via-token` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-import-via-token` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-join` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-poll` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-recv` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-reply` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-send` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-touch` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-wait-reclaimed` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:cancel` *[K-ORCH-VERB-5006]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:compose-workflow` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:compose-workflow` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:join` *[K-ORCH-VERB-5006]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:join-via-token` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:join-via-token` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:recv` *[K-ORCH-VERB-5006]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:run-workflow` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-cancel-all` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-child` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-join-all` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-resolve` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-spawn` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-sweep-reclaimed-pending` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-watch` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:run-workflow` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-cancel-all` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-child` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-join-all` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-resolve` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-spawn` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-sweep-reclaimed-pending` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:scope-watch` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:send` *[K-ORCH-VERB-5006]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:spawn` *[K-ORCH-VERB-5006]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:supervise-batch` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:supervise-batch` *[K-ORCH-STATE]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `pair?` *[K-VAL]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `panic-auto-rollback?` *[K-PANIC]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `panic-checkpoint` *[K-PANIC]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
@@ -1771,30 +1771,3 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 ### delete (1)
 
 - `primitives:contract-probe` *[D-ALIAS]* — `src/compiler/evaluator_primitives_test.cpp`
-
-## Deprecated (Issue #1438)
-
-Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **22** names:
-
-- `orch:agent-ask` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-directory` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-export-via-token` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-import-via-token` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-join` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-poll` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-recv` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-reply` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-send` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-touch` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-wait-reclaimed` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:compose-workflow` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:join-via-token` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:run-workflow` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-cancel-all` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-child` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-join-all` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-resolve` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-spawn` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-sweep-reclaimed-pending` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-watch` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:supervise-batch` — `src/compiler/evaluator_primitives_agent.cpp`
