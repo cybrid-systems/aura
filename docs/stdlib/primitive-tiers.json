@@ -33,13 +33,14 @@
   "S-PURE": "pure value->value function; #1440 kept json-*/string-* core for speed, not for semantics",
   "D-ALIAS": "redundant registration: the same behaviour is already reachable through another name",
   "K-EXC-5003": "Kernel exceptions added with the SRFI-151 baseline: bitwise/bit-count/arithmetic-shift cannot be expressed in Aura before any bit primitive exists (#5003).",
-  "D-PREFIX-5009": "retired duplicate prefix (#5009): the same behaviour is the op of one (query …) / (mutate …) verb; kept registered and flagged deprecated for one release cycle",
+  "D-PREFIX-5009": "retired duplicate prefix (#5009): the same behaviour is the op of one (query \u2026) / (mutate \u2026) verb; kept registered and flagged deprecated for one release cycle",
   "K-ORCH-VERB-5006": "orchestration verb: scheduler/mailbox host state; Aura cannot implement it without the fiber scheduler",
   "D-SINGLE-5006": "single-use prefix (#5006): the engine name stays for one release cycle as a deprecated alias; the operation is a query/mutate op or a std library function",
   "K-EXC-5006": "Kernel exceptions added with the five orchestration verbs (#5006): they replace 24 prefixed orch: names, the deprecated aliases retire next cycle, and no removable name was left in the same change.",
   "D-ORCH-5006": "retired orch: prefix (#5006): workflow, supervision, tokens, directory and metrics live in std/orch; keep registered + deprecated for the v0.2.0 alias window",
   "D-BARE-5006": "retired bare name (#5006): the name stays registered one release cycle as a deprecated alias; its replacement is a std library function or a query / mutate op",
   "K-FFI-5006": "kernel by the FFI host-effect rule (#5006): the c-* family is dlopen/dlsym/native memory, installed only by (require \"std/ffi\") under effect:ffi; Aura has no expression for a host pointer, so the names stay kernel with std/ffi as their library face (the #3176 deferred-surface contract pins the registration)",
+  "K-EXC-5095": "add_mutate names are the public write surface (#5095). They were registered before this gate could see them. v0.2.1 counts them; a new add_mutate name still needs a removal or a kernel_exceptions entry.",
   "K-EXC-5096": "eof-object is the unique R7RS eof sentinel (#5096). eof-object? already rejects every other value, including void, so a successful write-char is not eof. The constructor has to be the same host value the predicate recognizes; a per-module vector would not be eq? to the primitive. No registration was removable in the stdlib fix."
  },
  "kernel_exceptions": [
@@ -64,9 +65,9 @@
   "eof-object"
  ],
  "counts": {
-  "kernel": 435,
-  "stdlib-candidate": 88,
-  "delete": 6
+  "kernel": 439,
+  "stdlib-candidate": 86,
+  "delete": 5
  },
  "primitives": {
   "%base64-decode": {
@@ -169,13 +170,6 @@
    "tier": "kernel",
    "rule": "K-ENGINE"
   },
-  "api-reference": {
-   "tier": "kernel",
-   "rule": "D-BARE-5006",
-   "deprecated": true,
-   "replaces": "(query :api-reference)",
-   "note": "prints the registered primitive table: reads engine state, so the read verb names it"
-  },
   "append": {
    "tier": "stdlib-candidate",
    "rule": "S-LIST"
@@ -187,37 +181,6 @@
   "apply-fix": {
    "tier": "kernel",
    "rule": "K-AGENT"
-  },
-  "arena-offset": {
-   "tier": "kernel",
-   "rule": "D-BARE-5006",
-   "deprecated": true,
-   "replaces": "(query :arena-offset)",
-   "note": "thread-local arena bump offset: engine state read"
-  },
-  "arena:compact": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
-  },
-  "arena:compact-with-policy": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
-  },
-  "arena:request-defrag": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
-  },
-  "arena:set-auto-compact-threshold": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
   },
   "arithmetic-shift": {
    "tier": "kernel",
@@ -235,108 +198,6 @@
   "assv": {
    "tier": "stdlib-candidate",
    "rule": "S-LIST"
-  },
-  "ast:compact-nodes": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:diff": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:generation": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:recycle-nodes": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:ref-deserialize": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:ref-get": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:ref-mutation-id": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:ref-serialize": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:ref-valid?": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:ref-workspace-id": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:restore": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:snapshot": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:snapshot-fail-reason": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:stable-ref": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:validate-nodes": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:validate-ownership": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "ast:validate-post-restore": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
   },
   "atan": {
    "tier": "kernel",
@@ -365,13 +226,6 @@
   "aura-executable-path": {
    "tier": "kernel",
    "rule": "K-IO"
-  },
-  "auto-rollback-on-panic": {
-   "tier": "kernel",
-   "rule": "D-BARE-5006",
-   "deprecated": true,
-   "replaces": "(mutate :auto-rollback-on-panic #t|#f) / (query :auto-rollback-on-panic)",
-   "note": "panic checkpoint state write/read"
   },
   "bit-count": {
    "tier": "kernel",
@@ -531,7 +385,7 @@
   "ceiling": {
    "tier": "delete",
    "rule": "D-ALIAS",
-   "note": "PrimSpec doc: 'Alias of ceil.' — same body (std::ceil), second registration"
+   "note": "PrimSpec doc: 'Alias of ceil.' \u2014 same body (std::ceil), second registration"
   },
   "channel:close": {
    "tier": "kernel",
@@ -609,23 +463,10 @@
    "tier": "kernel",
    "rule": "K-AGENT"
   },
-  "check-success": {
-   "tier": "stdlib-candidate",
-   "rule": "D-BARE-5006",
-   "deprecated": true,
-   "replaces": "std/test: (require \"std/test\" all:) (check-success output expected)",
-   "note": "pure match over output strings; std/test installs the implementation on require"
-  },
   "check=": {
    "tier": "stdlib-candidate",
    "rule": "S-PURE",
    "note": "test helper (check + equal?); belongs in std/test, which already documents (check (equal? a b)) as the canonical form. Still used by tests/suite/*.aura, so retire the call sites before deleting the registration."
-  },
-  "closure:free!": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
   },
   "compile:relower-strategy": {
    "tier": "kernel",
@@ -667,35 +508,9 @@
    "tier": "kernel",
    "rule": "K-CTRL"
   },
-  "define-strategy": {
-   "tier": "kernel",
-   "rule": "D-BARE-5006",
-   "deprecated": true,
-   "replaces": "(mutate :define-strategy name body ...)",
-   "note": "writes the agent strategy registry"
-  },
   "deserialize-workspace": {
    "tier": "kernel",
    "rule": "K-CTRL"
-  },
-  "diagnose": {
-   "tier": "stdlib-candidate",
-   "rule": "S-PURE",
-   "deprecated": true,
-   "replaces": "std/diagnose: (require \"std/diagnose\" all:) (diagnose msg)",
-   "note": "pure string -> plan; the kernel body is the one-release alias, lib/std/diagnose is the implementation"
-  },
-  "dirty:ppa-reasons": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "dirty:reasons": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
   },
   "display": {
    "tier": "kernel",
@@ -704,13 +519,6 @@
   "drop": {
    "tier": "stdlib-candidate",
    "rule": "S-LIST"
-  },
-  "edsl:define-struct": {
-   "tier": "kernel",
-   "rule": "D-BARE-5006",
-   "deprecated": true,
-   "replaces": "(mutate :define-struct name doc schema)",
-   "note": "records the EDSL struct schema and its counters"
   },
   "engine:metrics": {
    "tier": "kernel",
@@ -760,12 +568,6 @@
    "tier": "kernel",
    "rule": "K-CTRL"
   },
-  "evaluator:compact-env-frames": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
-  },
   "evo:log-path": {
    "tier": "kernel",
    "rule": "K-IO"
@@ -781,7 +583,7 @@
   "exact": {
    "tier": "delete",
    "rule": "D-ALIAS",
-   "note": "PrimSpec doc: 'Alias of inexact->exact.' — same lambda"
+   "note": "PrimSpec doc: 'Alias of inexact->exact.' \u2014 same lambda"
   },
   "exact->inexact": {
    "tier": "kernel",
@@ -851,75 +653,9 @@
    "tier": "kernel",
    "rule": "K-FIBER"
   },
-  "fiber:overlay-begin": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(mutate …)"
-  },
-  "fiber:overlay-commit": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(mutate …)"
-  },
-  "fiber:overlay-conflict": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(mutate …)"
-  },
-  "fiber:overlay-define": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(mutate …)"
-  },
-  "fiber:overlay-get": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(mutate …)"
-  },
-  "fiber:overlay-has": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(mutate …)"
-  },
-  "fiber:overlay-pending": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(mutate …)"
-  },
-  "fiber:overlay-report": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(mutate …)"
-  },
-  "fiber:overlay-rollback": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(mutate …)"
-  },
-  "fiber:overlay-set!": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(mutate …)"
-  },
   "fiber:spawn": {
    "tier": "kernel",
    "rule": "K-FIBER"
-  },
-  "fiber:spawn-backend": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
   },
   "fiber:yield": {
    "tier": "kernel",
@@ -1041,30 +777,6 @@
    "tier": "kernel",
    "rule": "K-VAL"
   },
-  "hot-swap:fn": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
-  },
-  "hygiene:allow-macro-mutate?": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
-  },
-  "hygiene:protected?": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
-  },
-  "hygiene:set-allow-macro-mutate!": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
-  },
   "ihash-count": {
    "tier": "stdlib-candidate",
    "rule": "S-PURE"
@@ -1104,7 +816,7 @@
   "inexact": {
    "tier": "delete",
    "rule": "D-ALIAS",
-   "note": "PrimSpec doc: 'Alias of exact->inexact.' — same lambda"
+   "note": "PrimSpec doc: 'Alias of exact->inexact.' \u2014 same lambda"
   },
   "inexact->exact": {
    "tier": "kernel",
@@ -1138,30 +850,6 @@
   "intend-history": {
    "tier": "kernel",
    "rule": "K-AGENT"
-  },
-  "ir-cache-v2:dependents": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
-  },
-  "ir-cache-v2:dirty?": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
-  },
-  "jit:deopt-fn?": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
-  },
-  "jit:exception-fibers-clear": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
   },
   "json-encode": {
    "tier": "stdlib-candidate",
@@ -1307,17 +995,372 @@
    "tier": "kernel",
    "rule": "K-WS"
   },
+  "mw:arena-compact": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:arena-compact-with-policy": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:arena-request-defrag": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mutate:atomic-batch": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mw:auto-rollback-on-panic": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
   "mutate:check": {
    "tier": "kernel",
    "rule": "K-WS"
+  },
+  "mutate:check-stable-ref": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mw:closure-free": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:compact-env-frames": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:compact-nodes": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:define-strategy": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:define-struct": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:discard": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:exception-fibers-clear": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mutate:extract-function": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mutate:from-verification-feedback": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mw:hot-swap-fn": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mutate:inline-call": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mutate:insert-child": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mw:merge-3way": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mutate:move-node": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mw:overlay-begin": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:overlay-commit": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:overlay-conflict": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:overlay-define": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:overlay-get": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:overlay-has": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:overlay-pending": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:overlay-report": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:overlay-rollback": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:overlay-set!": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:propagate-marker": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mutate:query-and-replace": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mutate:query-and-replace-batch": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mutate:rebind": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mutate:record-patch": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mw:recycle-nodes": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mutate:refactor/extract": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mutate:remove-node": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mutate:rename-symbol": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mutate:replace-pattern": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mutate:replace-subtree": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mutate:replace-type": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mutate:replace-value": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mutate:request-gc-safepoint": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mw:restore": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mutate:restore-hygiene-checkpoint": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mw:rollback-latest": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mutate:rollback-macro-introduced": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mw:rollback-to": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mutate:save-hygiene-checkpoint": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mw:scheduler-pin": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:self-heal-on-drift": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:session-create": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
   },
   "mutate:set-agent-fingerprint": {
    "tier": "kernel",
    "rule": "K-WS"
   },
+  "mw:set-allow-macro-mutate": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:set-auto-compact-threshold": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mutate:set-body": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mw:set-concurrent-mutation-policy": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:set-marker": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:set-memory-limit": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mutate:set-pattern-index-policy": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mw:set-provenance": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mutate:set-stale-ref-policy": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mw:snapshot": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mutate:splice": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
+  "mw:string-pool-compact": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:sync-from": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:try-mutation": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mw:tune-gc-frequency": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mutate:tweak-literal": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
+  },
   "mutate:validate-reflected": {
    "tier": "kernel",
    "rule": "K-WS"
+  },
+  "mw:workspace-delete": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "mutate:wrap": {
+   "tier": "kernel",
+   "rule": "K-WS",
+   "note": "public write primitive registered by add_mutate (#5095)"
   },
   "mutation-lightweight-commit": {
    "tier": "kernel",
@@ -1330,18 +1373,6 @@
   "mutation-log-compact": {
    "tier": "kernel",
    "rule": "K-WS"
-  },
-  "mutation-log:diff": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "mutation-log:summary": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
   },
   "my-id": {
    "tier": "kernel",
@@ -1391,156 +1422,25 @@
    "tier": "kernel",
    "rule": "K-HOT"
   },
-  "orch:agent-ask": {
+  "orch:cancel": {
    "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
+   "rule": "K-ORCH-VERB-5006"
   },
-  "orch:agent-directory": {
+  "orch:join": {
    "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
+   "rule": "K-ORCH-VERB-5006"
   },
-  "orch:agent-export-via-token": {
+  "orch:recv": {
    "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
+   "rule": "K-ORCH-VERB-5006"
   },
-  "orch:agent-import-via-token": {
+  "orch:send": {
    "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
+   "rule": "K-ORCH-VERB-5006"
   },
-  "orch:agent-join": {
+  "orch:spawn": {
    "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:agent-poll": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:agent-recv": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:agent-reply": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:agent-send": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:agent-touch": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:agent-wait-reclaimed": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:compose-workflow": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:join-via-token": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:parallel-intend": {
-   "tier": "delete",
-   "rule": "D-ORCH-5006",
-   "note": "'(orch:parallel-intend ...) -> alias of (parallel-intend ...)': the body only looks up parallel-intend and forwards",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:reset-metrics": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:run-workflow": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:scope-cancel-all": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:scope-child": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:scope-join-all": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:scope-resolve": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:scope-spawn": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:scope-sweep-reclaimed-pending": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:scope-watch": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orch:supervise-batch": {
-   "tier": "kernel",
-   "rule": "D-ORCH-5006",
-   "deprecated": true,
-   "replaces": "(std/orch)"
-  },
-  "orchestration:tune-gc-frequency": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
+   "rule": "K-ORCH-VERB-5006"
   },
   "pair?": {
    "tier": "kernel",
@@ -1615,6 +1515,21 @@
    "tier": "kernel",
    "rule": "K-ENGINE"
   },
+  "qr:allow-macro-mutate?": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:api-reference": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "query:arena-offset": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
   "query:as-stable-ref": {
    "tier": "kernel",
    "rule": "K-QRY"
@@ -1631,9 +1546,24 @@
    "tier": "kernel",
    "rule": "K-QRY"
   },
+  "qr:can-write?": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
   "query:code": {
    "tier": "kernel",
    "rule": "K-QRY"
+  },
+  "qr:concurrent-mutation-policy": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:conflicts-with": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
   },
   "query:defines": {
    "tier": "kernel",
@@ -1642,6 +1572,16 @@
   "query:defines-by-marker": {
    "tier": "kernel",
    "rule": "K-QRY"
+  },
+  "qr:deopt-fn?": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:diff": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
   },
   "query:dirty-impact": {
    "tier": "kernel",
@@ -1663,13 +1603,53 @@
    "tier": "kernel",
    "rule": "K-QRY"
   },
+  "qr:fiber-backend": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
   "query:filter": {
    "tier": "kernel",
    "rule": "K-QRY"
   },
+  "qr:find-define": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:generation": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:get-provenance": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:ir-dependents": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:ir-dirty?": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
   "query:last-mutation-provenance": {
    "tier": "kernel",
    "rule": "K-QRY"
+  },
+  "qr:memory-limit": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:memory-used": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
   },
   "query:module-exports": {
    "tier": "kernel",
@@ -1678,6 +1658,16 @@
   "query:mutation-impact": {
    "tier": "kernel",
    "rule": "K-QRY"
+  },
+  "qr:mutation-log-diff": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:mutation-log-summary": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
   },
   "query:mutations-since": {
    "tier": "kernel",
@@ -1703,6 +1693,16 @@
    "tier": "kernel",
    "rule": "K-QRY"
   },
+  "qr:ppa-reasons": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:protected?": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
   "query:provenance-of": {
    "tier": "kernel",
    "rule": "K-QRY"
@@ -1716,9 +1716,49 @@
    "tier": "kernel",
    "rule": "K-QRY"
   },
+  "qr:reasons": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:ref-deserialize": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:ref-get": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:ref-mutation-id": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:ref-serialize": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:ref-valid-id-gen": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
   "query:ref-valid?": {
    "tier": "kernel",
    "rule": "K-QRY"
+  },
+  "qr:ref-workspace-id": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:resolve-stable-ref": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
   },
   "query:result-fresh?": {
    "tier": "kernel",
@@ -1736,9 +1776,19 @@
    "tier": "kernel",
    "rule": "K-QRY"
   },
+  "qr:snapshot-fail-reason": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
   "query:stable-ref": {
    "tier": "kernel",
    "rule": "K-QRY"
+  },
+  "qr:stable-ref-pair": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
   },
   "query:stable-ref-provenance": {
    "tier": "kernel",
@@ -1747,6 +1797,21 @@
   "query:type-feedback": {
    "tier": "kernel",
    "rule": "K-QRY"
+  },
+  "qr:validate-nodes": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:validate-ownership": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
+  },
+  "qr:validate-post-restore": {
+   "tier": "kernel",
+   "rule": "K-QRY",
+   "note": "v0.2.1: body moved off the retired prefix (#5097)"
   },
   "query:where": {
    "tier": "kernel",
@@ -1872,18 +1937,6 @@
    "tier": "kernel",
    "rule": "K-IO"
   },
-  "runtime:self-heal-on-drift": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
-  },
-  "scheduler:pin": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
-  },
   "security:check-effect": {
    "tier": "kernel",
    "rule": "K-GOV"
@@ -1931,12 +1984,6 @@
   "session-active?": {
    "tier": "kernel",
    "rule": "K-FIBER"
-  },
-  "session:create": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
   },
   "set-car!": {
    "tier": "kernel",
@@ -2038,12 +2085,6 @@
    "tier": "kernel",
    "rule": "K-VAL"
   },
-  "string-pool:compact": {
-   "tier": "kernel",
-   "rule": "D-SINGLE-5006",
-   "deprecated": true,
-   "replaces": "engine:metrics / mutate / query"
-  },
   "string-ref": {
    "tier": "kernel",
    "rule": "K-VAL"
@@ -2092,30 +2133,6 @@
    "tier": "kernel",
    "rule": "K-ENGINE"
   },
-  "syntax:get-provenance": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "syntax:propagate-marker": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "syntax:set-marker": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "syntax:set-provenance": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
   "synthesize:define": {
    "tier": "kernel",
    "rule": "K-AGENT"
@@ -2147,7 +2164,7 @@
   "truncate": {
    "tier": "delete",
    "rule": "D-ALIAS",
-   "note": "PrimSpec doc: 'Alias of trunc.' — same body (std::trunc), second registration"
+   "note": "PrimSpec doc: 'Alias of trunc.' \u2014 same body (std::trunc), second registration"
   },
   "type-of": {
    "tier": "kernel",
@@ -2289,102 +2306,6 @@
    "tier": "kernel",
    "rule": "K-WS"
   },
-  "workspace:can-write?": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "workspace:concurrent-mutation-policy": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "workspace:conflicts-with": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "workspace:delete": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "workspace:discard": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "workspace:find-define": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "workspace:memory-limit": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "workspace:memory-used": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "workspace:merge-3way": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "workspace:resolve-stable-ref": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "workspace:rollback-latest": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "workspace:rollback-to": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "workspace:set-concurrent-mutation-policy": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "workspace:set-memory-limit": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "workspace:snapshot": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
-  "workspace:sync-from": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(query …)"
-  },
   "write": {
    "tier": "kernel",
    "rule": "K-CTRL"
@@ -2392,32 +2313,6 @@
   "write-file": {
    "tier": "kernel",
    "rule": "K-IO"
-  },
-  "ws:try-mutation": {
-   "tier": "kernel",
-   "rule": "D-PREFIX-5009",
-   "deprecated": true,
-   "replaces": "(mutate …)"
-  },
-  "orch:spawn": {
-   "tier": "kernel",
-   "rule": "K-ORCH-VERB-5006"
-  },
-  "orch:send": {
-   "tier": "kernel",
-   "rule": "K-ORCH-VERB-5006"
-  },
-  "orch:recv": {
-   "tier": "kernel",
-   "rule": "K-ORCH-VERB-5006"
-  },
-  "orch:join": {
-   "tier": "kernel",
-   "rule": "K-ORCH-VERB-5006"
-  },
-  "orch:cancel": {
-   "tier": "kernel",
-   "rule": "K-ORCH-VERB-5006"
   }
  },
  "retired_prefixes_5009": {

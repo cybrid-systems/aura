@@ -42,7 +42,7 @@ static std::string read_file(const char* path) {
 }
 
 static std::string rollback_window(const std::string& src) {
-    auto pos = src.find("workspace:rollback-latest");
+    auto pos = src.find("mw:rollback-latest");
     if (pos == std::string::npos)
         return {};
     auto end = src.find("workspace:mutation-count", pos);
@@ -108,7 +108,7 @@ int run_test_workspace_rollback_latest() {
         const auto t0 = std::chrono::steady_clock::now();
         int rolled = 0;
         for (;;) {
-            auto r = cs.eval("(workspace:rollback-latest)");
+            auto r = cs.eval("(mutate :rollback-latest)");
             if (!r || !is_int(*r) || as_int(*r) == 0)
                 break;
             ++rolled;
@@ -123,7 +123,7 @@ int run_test_workspace_rollback_latest() {
         CHECK(ms < 5000, "AC3: sequential rollback finishes under soft budget");
         std::println("  AC3: rolled {} in {} ms", rolled, ms);
 
-        auto z = cs.eval("(workspace:rollback-latest)");
+        auto z = cs.eval("(mutate :rollback-latest)");
         CHECK(z && is_int(*z) && as_int(*z) == 0, "AC4: empty committed log returns 0");
     }
 
@@ -131,7 +131,7 @@ int run_test_workspace_rollback_latest() {
     {
         std::println("\n--- AC4: fresh service rollback returns 0 ---");
         CompilerService cs;
-        auto z = cs.eval("(workspace:rollback-latest)");
+        auto z = cs.eval("(mutate :rollback-latest)");
         CHECK(z && is_int(*z) && as_int(*z) == 0, "AC4: no-flat returns 0");
     }
 

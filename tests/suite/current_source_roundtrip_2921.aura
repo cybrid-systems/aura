@@ -23,9 +23,9 @@
 
 ; Snapshot / restore
 (set-code "(define snap-2921 1)")
-(define sid (ast:snapshot "s2921"))
+(define sid (mutate :snapshot "s2921"))
 (set-code "(define snap-2921 2)")
-(if (ast:restore sid)
+(if (mutate :restore sid)
     #t
     (begin (display "FAIL-2921 restore\n") (set! ok #f)))
 

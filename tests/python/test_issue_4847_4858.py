@@ -78,17 +78,17 @@ class TestIssueBatch4847To4858(unittest.TestCase):
     def test_4852_overlay_set_unbound_names_binding(self) -> None:
         proc = _run(
             """
-(fiber:overlay-begin)
-(display (try (fiber:overlay-set! "never-defined-key" 5)
+(mutate :overlay-begin)
+(display (try (mutate :overlay-set! "never-defined-key" 5)
               (catch (e) (list 'err (format "~a" e))))) (newline)
-(fiber:overlay-rollback)
+(mutate :overlay-rollback)
 """,
             "--load",
             pipeline_strict="0",
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("unbound binding never-defined-key", proc.stdout)
-        self.assertIn("fiber:overlay-define", proc.stdout)
+        self.assertIn("mw:overlay-define", proc.stdout)
         self.assertNotIn(" + name + ", proc.stdout)
 
     def test_4850_agent_join_keeps_raised_symbol(self) -> None:
@@ -110,13 +110,13 @@ class TestIssueBatch4847To4858(unittest.TestCase):
             """
 (define (range n) (let loop ((i (- n 1)) (acc (list))) (if (< i 0) acc (loop (- i 1) (cons i acc)))))
 (define (churn n) (let loop ((i 0) (acc (list))) (if (< i n) (loop (+ i 1) (if (= 0 (modulo i 100)) (list) (cons (list i i) acc))) 'done)))
-(fiber:overlay-begin) (fiber:overlay-define "a" (range 10)) (churn 200000) (fiber:overlay-commit)
-(display "define pending+churn: ") (write (fiber:overlay-get "a" 'none)) (newline)
-(fiber:overlay-begin) (fiber:overlay-define "b" 0) (fiber:overlay-commit)
-(fiber:overlay-begin) (fiber:overlay-set! "b" (range 10)) (churn 200000)
-(display "set! pending, own view: ") (write (fiber:overlay-get "b" 'none)) (newline)
-(fiber:overlay-commit)
-(display "set! pending+churn committed: ") (write (fiber:overlay-get "b" 'none)) (newline)
+(mutate :overlay-begin) (mutate :overlay-define "a" (range 10)) (churn 200000) (mutate :overlay-commit)
+(display "define pending+churn: ") (write (mutate :overlay-get "a" 'none)) (newline)
+(mutate :overlay-begin) (mutate :overlay-define "b" 0) (mutate :overlay-commit)
+(mutate :overlay-begin) (mutate :overlay-set! "b" (range 10)) (churn 200000)
+(display "set! pending, own view: ") (write (mutate :overlay-get "b" 'none)) (newline)
+(mutate :overlay-commit)
+(display "set! pending+churn committed: ") (write (mutate :overlay-get "b" 'none)) (newline)
 """,
             "--load",
             timeout=180.0,

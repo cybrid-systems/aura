@@ -2506,7 +2506,7 @@ void register_query_selfmod_parts(PrimRegistrar add, std::pmr::vector<Pair>& pai
     // Issue #750 / #1611: (reflect:validate-macro-body node-id [:allow-macro? #t])
     // Runtime hygiene/schema check on MacroIntroduced subtrees before Guard
     // commit. Default rejects unclean MacroIntroduced provenance; pass
-    // :allow-macro? #t or (hygiene:set-allow-macro-mutate! #t) to relax.
+    // :allow-macro? #t or (mutate :set-allow-macro-mutate #t) to relax.
     add("reflect:validate-macro-body", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);

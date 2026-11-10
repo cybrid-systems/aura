@@ -248,7 +248,7 @@ static void ac8_fiber_guard_soft() {
     auto r = cs.eval("(eval-current)");
     // Soft: expansion must not crash; value may depend on list/eval_data path.
     CHECK(r.has_value() || true, "eval under rest macro + mutate soft");
-    auto guard = cs.eval("(evaluator:compact-env-frames)");
+    auto guard = cs.eval("(mutate :compact-env-frames)");
     CHECK(guard.has_value(), "compact under Guard after rest macro");
 }
 

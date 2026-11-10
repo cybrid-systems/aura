@@ -515,11 +515,11 @@ void register_type_primitives(PrimRegistrar add, Evaluator& ev) {
 void register_hot_swap_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // ═══════════════════════════════════════════════════════════════
-    // (hot-swap:fn "name" "new-source") → #t / #f
+    // (mutate :hot-swap-fn "name" "new-source") → #t / #f
     // Replaces the body of an existing function while keeping its id.
     // Closures referencing the function will use the new code on next call.
     // Requires the CompilerService to have set a hot-swap callback.
-    add("hot-swap:fn", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("mw:hot-swap-fn", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() != 2 || !is_string(a[0]) || !is_string(a[1]))
             return make_bool(false);
         auto ni = as_string_idx(a[0]);

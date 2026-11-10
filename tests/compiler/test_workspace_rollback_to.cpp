@@ -46,10 +46,10 @@ static std::string read_file(const char* path) {
 }
 
 static std::string rollback_to_window(const std::string& src) {
-    auto pos = src.find("workspace:rollback-to");
+    auto pos = src.find("mw:rollback-to");
     if (pos == std::string::npos)
         return {};
-    auto end = src.find("workspace:rollback-latest", pos);
+    auto end = src.find("mw:rollback-latest", pos);
     if (end == std::string::npos)
         end = pos + 3500;
     return src.substr(pos, end - pos);
@@ -112,7 +112,7 @@ int run_test_workspace_rollback_to() {
         CHECK(snap.has_value(), "AC3: snapshot");
         (void)cs.eval("(set-code \"(define x 99)\")");
         CHECK(cs.eval("(eval-current)").has_value(), "AC3: re-eval after edit");
-        auto restored = cs.eval("(workspace:rollback-to \"pre-2788\")");
+        auto restored = cs.eval("(mutate :rollback-to \"pre-2788\")");
         CHECK(restored && is_bool(*restored) && as_bool(*restored),
               "AC3: rollback-to by name returns #t");
     }
@@ -124,7 +124,7 @@ int run_test_workspace_rollback_to() {
         CHECK(cs.eval("(set-code \"(define y 2)\")").has_value(), "AC4: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "AC4: eval");
         (void)cs.eval("(workspace:snapshot \"exists-2788\")");
-        auto miss = cs.eval("(workspace:rollback-to \"no-such-snap-2788\")");
+        auto miss = cs.eval("(mutate :rollback-to \"no-such-snap-2788\")");
         CHECK(miss.has_value(), "AC4: returns a value");
         CHECK(!(is_bool(*miss) && !as_bool(*miss)), "AC4: not silent bare #f");
         CHECK(is_pair(*miss), "AC4: merr pair");
@@ -147,7 +147,7 @@ int run_test_workspace_rollback_to() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define z 3)\")").has_value(), "AC5: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "AC5: eval");
-        auto bad = cs.eval("(workspace:rollback-to 999999)");
+        auto bad = cs.eval("(mutate :rollback-to 999999)");
         CHECK(bad.has_value(), "AC5: out-of-range id returns value");
         CHECK(!(is_bool(*bad) && !as_bool(*bad)), "AC5: not silent bare #f");
         CHECK(is_pair(*bad) && merr_kind(cs, *bad) == "not-found",

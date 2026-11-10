@@ -1265,7 +1265,7 @@ int run_193_194_jit_deopt_soft_smoke() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     auto j = cs.eval("(engine:metrics \"query:jit-stats-hash\")");
     CHECK(j.has_value() || true, "jit-stats-hash surface");
-    auto d = cs.eval("(jit:deopt-fn? \"g\")");
+    auto d = cs.eval("(query :deopt-fn? \"g\")");
     CHECK(d.has_value() || true, "jit:deopt-fn? surface");
     return g_failed ? 1 : 0;
 }

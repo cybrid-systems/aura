@@ -1620,7 +1620,7 @@ static void ac4714_fiber_string_arena() {
           "4714 AC3: the parent builds a 10k-entry hash (hash-length " +
               (rpl && is_int(*rpl) ? std::to_string(as_int(*rpl)) : std::string("no result")) +
               ")");
-    const auto backend = cs.eval("(fiber:spawn-backend)");
+    const auto backend = cs.eval("(query :fiber-backend)");
     auto rf = cs.eval("(define f4714 (fiber:spawn (lambda () h4714)))");
     const auto spawned = rf.has_value() && is_int(*rf);
     CHECK(spawned,

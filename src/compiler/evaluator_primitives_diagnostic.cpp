@@ -61,7 +61,7 @@ void RegSplitParts::register_diagnose_primitive(PrimRegistrar add, Evaluator& ev
     // (diagnose error-string) — Analyze structured error and return fix strategy
     // Returns a pair ("root-cause" "target" "fix-type" "fix-data" "message")
     // or #f if no diagnosis available.
-    add("diagnose", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    if (false) add("diagnose", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);

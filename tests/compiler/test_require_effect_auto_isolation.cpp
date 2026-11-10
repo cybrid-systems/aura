@@ -2722,7 +2722,7 @@ static void ac4039_4_principal_zero_gate_denies() {
     // face) — not a RefError value. Assert via the house eval-level kind
     // check, then pin zero write below.
     auto w = cs.eval(
-        std::format("(equal? (car (syntax:set-marker {} 1)) \"tenant-isolation-denied\")", id));
+        std::format("(equal? (car (mutate :set-marker {} 1)) \"tenant-isolation-denied\")", id));
     CHECK(w.has_value() && aura::compiler::types::is_bool(*w) && aura::compiler::types::as_bool(*w),
           "4039 AC4: principal-0 bare-id gate write denies (no early allow)");
     auto m = cs.eval(std::format("(syntax-marker {})", id));
@@ -2747,7 +2747,7 @@ static void ac4039_5_soft_off_gate_unchanged() {
     auto r = cs.eval("(car (query :find \"z4039b\"))");
     CHECK(r.has_value() && aura::compiler::types::is_int(*r), "4039 AC5: find probe node");
     const auto id = aura::compiler::types::as_int(*r);
-    auto w = cs.eval(std::format("(syntax:set-marker {} 1)", id));
+    auto w = cs.eval(std::format("(mutate :set-marker {} 1)", id));
     CHECK(w.has_value() && aura::compiler::types::is_bool(*w) && aura::compiler::types::as_bool(*w),
           "4039 AC5: Soft gate returns true (write proceeds)");
     CHECK(aura::core::provenance::existing_stamp_for_node(static_cast<std::uint32_t>(id)) == 0,

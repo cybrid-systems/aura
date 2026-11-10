@@ -412,7 +412,7 @@ void run_issue_4575() {
             std::println(stderr, "4575 load: {}", ev.soft_error_message(*loaded));
         auto g1 = cs.eval("(g 1)");
         CHECK(g1 && is_int(*g1) && as_int(*g1) == 10, "4575: g(1) is 10");
-        auto rb = cs.eval("(workspace:rollback-latest)");
+        auto rb = cs.eval("(mutate :rollback-latest)");
         CHECK(rb && !is_error(*rb), "4575: rollback-latest");
         for (int i = 0; i < 4; ++i) {
             auto r = cs.eval(std::format("(set-code \"(define (h{}) 1)\")", i));
@@ -509,7 +509,7 @@ void run_issue_4575() {
                 "(display \"BATCH-OK \") (display (f 2)) (newline)\n"
                 "(load \"/tmp/aura-4575-load.aura\")\n"
                 "(display \"LOAD-OK \") (display (g 1)) (newline)\n"
-                "(display \"ROLLBACK-OK \") (display (workspace:rollback-latest)) (newline)\n");
+                "(display \"ROLLBACK-OK \") (display (mutate :rollback-latest)) (newline)\n");
             auto ok = run_aura(bin, face, "soft /tmp/aura-4575-ok.aura");
             CHECK(ok.rc == 0, "4575: aura soft exits 0");
             CHECK(ok.out.find("SET-OK 3") != std::string::npos, "4575: CLI set-code");

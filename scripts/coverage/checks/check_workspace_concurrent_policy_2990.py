@@ -64,7 +64,7 @@ def main() -> int:
 
     # AC2 — ScopedParallel opt-in + redirect
     must("bump_scoped_parallel_redirect", "AC2", mb)
-    must("workspace:set-concurrent-mutation-policy", "AC2", ws)
+    must("mw:set-concurrent-mutation-policy", "AC2", ws)
     must("ac2990_2_scoped_parallel_disjoint", "AC2", t)
 
     # AC3 — overlap fallback (Soft). Production hard-reject is #3039.

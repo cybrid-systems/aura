@@ -57,16 +57,16 @@
 ; ast:ref-serialize writes the 56-byte v2 record into a fixed-size stack
 ; buffer; a short/over-sized buffer here corrupts the caller's frame, and a
 ; narrow field set here silently drops provenance.
-(define blob (ast:ref-serialize 42 9 123456789 3))
-(define back (ast:ref-deserialize blob))
+(define blob (query :ref-serialize 42 9 123456789 3))
+(define back (query :ref-deserialize blob))
 (assert! (= (car (car back)) 42) "AC3: ref id round-trips")
 (assert! (= (cdr (car back)) 9) "AC3: ref gen round-trips")
 (assert! (= (car (cdr back)) 123456789) "AC3: mutation_id round-trips untruncated")
 (assert! (= (cdr (cdr back)) 3) "AC3: workspace_id round-trips")
 
 ; a second, different record must not be contaminated by the first
-(define blob2 (ast:ref-serialize 7 1 987654321 99))
-(define back2 (ast:ref-deserialize blob2))
+(define blob2 (query :ref-serialize 7 1 987654321 99))
+(define back2 (query :ref-deserialize blob2))
 (assert! (= (car (car back2)) 7) "AC3: second record id round-trips")
 (assert! (= (car (cdr back2)) 987654321) "AC3: second record mutation_id round-trips")
 (assert! (= (cdr (car back2)) 1) "AC3: second record gen round-trips")

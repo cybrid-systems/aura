@@ -93,7 +93,7 @@ int main() {
 
     // AC6: api-reference — #2628 purged workspace:* aliases
     {
-        auto r = cs.eval("(api-reference)");
+        auto r = cs.eval("(query :api-reference)");
         CHECK(r && is_string(*r), "api-reference string");
         if (r && is_string(*r)) {
             auto idx = as_string_idx(*r);

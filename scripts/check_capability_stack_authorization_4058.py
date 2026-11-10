@@ -3,7 +3,7 @@
 # Issue #4058: capability_stack_ (with-capability pushes) satisfied
 # Evaluator::has_capability — a zero-grant Agent could read host files
 # (read-file deny_io), clear process-level exception stacks
-# (jit:exception-fibers-clear), and open the kPrimSecSandboxed dispatch gate
+# (mutate :exception-fibers-clear), and open the kPrimSecSandboxed dispatch gate
 # (invoke_prim_with_telemetry) by pushing strings, with no EffectDeny.
 #
 # AC1 — has_capability scans zero capability_stack_ layers: the oracle reads

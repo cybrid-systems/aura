@@ -208,7 +208,7 @@
 
 (set-code "(define (f x) (+ x 1))")
 (define src4742 (current-source :workspace))
-(define gen4742 (ast:generation))
+(define gen4742 (query :generation))
 (define mut4742 (length (query:mutations-since 0)))
 
 (if (equal? (mutate:check "f" "(define (f x) (+ x 2))") #t)
@@ -238,7 +238,7 @@
 (if (string=? (current-source :workspace) src4742)
     (display "  pass: workspace unchanged") (fail4742 "workspace changed"))
 (newline)
-(if (= (ast:generation) gen4742)
+(if (= (query :generation) gen4742)
     (display "  pass: generation unchanged") (fail4742 "generation changed"))
 (newline)
 (if (= (length (query:mutations-since 0)) mut4742)

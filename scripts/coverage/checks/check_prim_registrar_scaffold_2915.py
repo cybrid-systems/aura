@@ -52,7 +52,7 @@ def main() -> int:
             "current-time",
             "current-time-ms",
             "monotonic-ms",
-            "arena-offset",
+            "query:arena-offset",
         ):
             if name not in t:
                 fails.append(f"misc lost prim name {name!r}")

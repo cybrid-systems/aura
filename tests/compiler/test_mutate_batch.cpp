@@ -378,7 +378,7 @@ static void run_1436_dispatch() {
 
     // AC7: api-reference
     {
-        auto r = cs.eval("(api-reference)");
+        auto r = cs.eval("(query :api-reference)");
         CHECK(r && is_string(*r), "api-reference string");
         if (r && is_string(*r)) {
             auto idx = as_string_idx(*r);

@@ -5,12 +5,12 @@
 (define ok #t)
 
 ; No workspace yet → snapshot fails with -1 (not silent empty default path)
-(define no-ws (ast:snapshot "pre-set-code"))
+(define no-ws (mutate :snapshot "pre-set-code"))
 (if (= no-ws -1)
     #t
     (begin (display "FAIL-2918 expected -1 without workspace\n") (set! ok #f)))
 ; Issue #2966: fail reason must be observable (never silent -1 only)
-(define fr (ast:snapshot-fail-reason))
+(define fr (query :snapshot-fail-reason))
 (if (eq? fr :no-workspace)
     #t
     (begin (display "FAIL-2966 expected :no-workspace fail-reason\n") (set! ok #f)))
@@ -26,7 +26,7 @@
            (set! ok #f)))
 
 ; Snapshot after set-code must succeed
-(define sid (ast:snapshot "2918-ws"))
+(define sid (mutate :snapshot "2918-ws"))
 (if (and (integer? sid) (>= sid 0))
     #t
     (begin (display "FAIL-2918 snapshot failed\n") (set! ok #f)))
@@ -34,7 +34,7 @@
 ; Unchanged workspace → diff vs snapshot is empty or all :same (small)
 ; If snapshot wrongly stored suite source while diff uses workspace (or vice
 ; versa), the line list is large. After both are fixed, same content → few lines.
-(define d0 (ast:diff sid))
+(define d0 (query :diff sid))
 ; Empty void is ok (no snapshots/diff path); pair list of same lines also ok.
 (if (or (void? d0) (pair? d0) (null? d0))
     #t
@@ -47,7 +47,7 @@
     #t
     (begin (display "FAIL-2918 set-code did not change workspace\n") (set! ok #f)))
 
-(if (ast:restore sid)
+(if (mutate :restore sid)
     #t
     (begin (display "FAIL-2918 restore failed\n") (set! ok #f)))
 
@@ -60,7 +60,7 @@
 
 ; Diff against post-mutate alternative: change workspace then expect a real diff
 (set-code "(define unique-ws-2918-marker 7)")
-(define d1 (ast:diff sid))
+(define d1 (query :diff sid))
 (if (pair? d1)
     #t
     (begin (display "FAIL-2918 expected non-empty diff after mutate\n") (set! ok #f)))

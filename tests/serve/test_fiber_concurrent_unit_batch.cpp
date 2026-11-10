@@ -258,7 +258,7 @@ int run_intend_closure_live() {
             R"AURA((begin
                  (define gen (lambda (g) "(define (f x) x)"))
                  (define ver (lambda (c) "#t"))
-                 (closure:free! gen)
+                 (mutate :closure-free gen)
                  (intend "goal" gen ver)))AURA");
         CHECK(r.has_value(), "intend after free evaluates (no crash)");
 
@@ -1413,13 +1413,13 @@ int run_4270_restore_then_eval_smoke() {
                   .has_value(),
               "#4270 AC1: set-code pre ok");
         CHECK(cs.eval("(eval-current)").has_value(), "#4270 AC1: eval-current pre ok");
-        auto snap = cs.eval("(ast:snapshot \"pre\")");
+        auto snap = cs.eval("(mutate :snapshot \"pre\")");
         CHECK(snap && is_int(*snap), "#4270 AC1: snapshot ok");
         CHECK(cs.eval("(set-code \"(define (f x) (let ((p 1)) p))\\n(display (f 0))\\n(newline)\")")
                   .has_value(),
               "#4270 AC1: set-code mutate ok");
         CHECK(cs.eval("(eval-current)").has_value(), "#4270 AC1: eval-current mutate ok");
-        auto rest = cs.eval(std::format("(ast:restore {})", as_int(*snap)));
+        auto rest = cs.eval(std::format("(mutate :restore {})", as_int(*snap)));
         CHECK(rest && is_bool(*rest) && as_bool(*rest), "#4270 AC1: ast:restore #t");
         bool threw = false;
         try {
@@ -1439,11 +1439,11 @@ int run_4270_restore_then_eval_smoke() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define (f x) 1)\")").has_value(), "#4270 AC2: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "#4270 AC2: eval");
-        auto snap = cs.eval("(ast:snapshot \"s\")");
+        auto snap = cs.eval("(mutate :snapshot \"s\")");
         CHECK(snap && is_int(*snap), "#4270 AC2: snap");
         CHECK(cs.eval("(set-code \"(define (f x) 2)\")").has_value(), "#4270 AC2: mutate");
         CHECK(cs.eval("(eval-current)").has_value(), "#4270 AC2: eval2");
-        CHECK(cs.eval(std::format("(ast:restore {})", as_int(*snap))).has_value(),
+        CHECK(cs.eval(std::format("(mutate :restore {})", as_int(*snap))).has_value(),
               "#4270 AC2: restore");
         CHECK(cs.eval("(eval-current)").has_value(), "#4270 AC2: eval after restore");
         auto a = cs.eval("(+ 40 2)");
@@ -1472,7 +1472,7 @@ int run_4270_restore_then_eval_smoke() {
 namespace aura_fiber_run_wave60_4271 {
 // @category: unit
 // @reason: Issue #4271 — long --serve RSS growth under repeated
-// set-code/eval. Snapshot history (ast:snapshot deep FlatAST copies) is
+// set-code/eval. Snapshot history (mutate :snapshot deep FlatAST copies) is
 // unbounded; Agent loops that snapshot every round retain every generation.
 // Cap live deep flats; keep source for fallback restore; IDs stay stable.
 //
@@ -1520,7 +1520,7 @@ int run_4271_snapshot_deep_flat_cap_smoke() {
                 .has_value(),
             "#4271 AC1: set-code loop");
         CHECK(cs.eval("(eval-current)").has_value(), "#4271 AC1: eval loop");
-        auto snap = cs.eval(std::format("(ast:snapshot \"s{}\")", i));
+        auto snap = cs.eval(std::format("(mutate :snapshot \"s{}\")", i));
         CHECK(snap && is_int(*snap), "#4271 AC1: snapshot");
         if (i == 0)
             first_id = as_int(*snap);
@@ -1533,7 +1533,7 @@ int run_4271_snapshot_deep_flat_cap_smoke() {
 
     // AC2 — oldest id still restorable (source fallback if deep flat dropped).
     {
-        auto rest = cs.eval(std::format("(ast:restore {})", first_id));
+        auto rest = cs.eval(std::format("(mutate :restore {})", first_id));
         CHECK(rest && is_bool(*rest) && as_bool(*rest), "#4271 AC2: restore early id");
         CHECK(cs.eval("(eval-current)").has_value(), "#4271 AC2: eval after restore");
         auto a = cs.eval("(+ 1 1)");
@@ -2076,10 +2076,10 @@ constexpr const char* kClosureCycleProgram = R"AURA(
 (set-code "(define f0 0) (define f1 1) (define f2 2) (define f3 3) (define f4 4) (define f5 5) (define f6 6) (define f7 7) (define f8 8) (define f9 9) (define f10 10) (define f11 11) (define f12 12) (define f13 13) (define f14 14) (define f15 15) (define f16 16) (define f17 17) (define f18 18) (define f19 19)")
 (eval-current)
 (define (cycle k)
-  (let* ((s (ast:snapshot))
+  (let* ((s (mutate :snapshot))
          (_r (mutate:rebind "f3" "(define (f3 x) (+ x 33))" "probe"))
          (_e (eval-current))
-         (_x (ast:restore s))
+         (_x (mutate :restore s))
          (_y (eval-current)))
     k))
 (define (block-sum k0)

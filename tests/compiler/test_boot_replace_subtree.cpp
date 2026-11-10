@@ -73,13 +73,13 @@ int main() {
     // copy of that registrar calls the wrapper forever and blows the stack in
     // this constructor. Lookup plus a snapshot round-trip is the registration
     // proof: the primitive is present and the wrapped body runs.
-    const auto restore = cs.evaluator().primitives().lookup("ast:restore");
+    const auto restore = cs.evaluator().primitives().lookup("mw:restore");
     expect(restore.has_value(), "boot registered ast:restore");
     auto marked = cs.eval("(set-code \"(define restore-boot 1)\")");
     show_err(marked, "set-code restore-boot");
     expect(marked.has_value(), "set-code installed restore-boot");
-    auto snap = cs.eval("(ast:snapshot \"restore-boot\")");
-    show_err(snap, "ast:snapshot");
+    auto snap = cs.eval("(mutate :snapshot \"restore-boot\")");
+    show_err(snap, "mw:snapshot");
     expect(snap.has_value() && aura::compiler::types::is_int(*snap) &&
                aura::compiler::types::as_int(*snap) >= 0,
            "ast:snapshot returned an id");
@@ -87,8 +87,8 @@ int main() {
         auto replaced = cs.eval("(set-code \"(define restore-boot 2)\")");
         show_err(replaced, "set-code overwrites the snapshot");
         expect(replaced.has_value(), "workspace moved off the snapshot");
-        auto back = cs.eval(std::format("(ast:restore {})", aura::compiler::types::as_int(*snap)));
-        show_err(back, "ast:restore");
+        auto back = cs.eval(std::format("(mutate :restore {})", aura::compiler::types::as_int(*snap)));
+        show_err(back, "mw:restore");
         expect(back.has_value() && aura::compiler::types::is_bool(*back) &&
                    aura::compiler::types::as_bool(*back),
                "ast:restore returned true");

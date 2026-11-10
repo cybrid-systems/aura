@@ -2684,7 +2684,7 @@ public:
             temp_arena_->set_arena_owner(this, &Evaluator::arena_quota_allow);
     }
     // Hot-swap callback (Issue #97 Action 1). Set by CompilerService
-    // to enable the (hot-swap:fn "name" "new-source") primitive.
+    // to enable the (mutate :hot-swap-fn "name" "new-source") primitive.
     // Returns true on success.
     using HotSwapFn = std::function<bool(const std::string& name, const std::string& new_source)>;
     void set_hot_swap_fn(HotSwapFn fn) { hot_swap_fn_ = std::move(fn); }
@@ -3947,7 +3947,7 @@ public:
     void set_drop_ir_define_binding_fn(std::function<void(const std::string&)> fn) {
         drop_ir_define_binding_fn_ = std::move(fn);
     }
-    // Issue #4349 / #4753: a workspace REPLACE (ast:restore) must not keep a
+    // Issue #4349 / #4753: a workspace REPLACE (mutate :restore) must not keep a
     // pre-replace publication dispatchable, even while the define's top_env
     // cell still advertises it. The #4753 deferral in
     // clear_ir_define_env_binding covers only the supersede-by-new-
@@ -4632,7 +4632,7 @@ public:
     void restore_panic_checkpoint_on_arena_compact_if_needed() noexcept;
     // Issue #1637: hot-swap deopt variant — wired via
     // aura_evaluator_hot_swap_panic_restore() C bridge trampoline from
-    // evaluator_primitives_types.cpp after the (hot-swap:fn ...) callback
+    // evaluator_primitives_types.cpp after the (mutate :hot-swap-fn ...) callback
     // returns. Closed-loop restore with post_hot_swap_checkpoint_restore_total
     // counter bumped (so re-deopt + recover sequences are observable).
     void restore_panic_checkpoint_on_hot_swap_if_needed() noexcept;
@@ -7903,7 +7903,7 @@ private:
     // pre-checks the target node's SyntaxMarker and returns a
     // ("hygiene-protected" "...") error pair if the target was
     // produced by clone_macro_body. Setter is exposed via the
-    // (hygiene:set-allow-macro-mutate!) Aura primitive so
+    // (mutate :set-allow-macro-mutate) Aura primitive so
     // self-mod / AI-agent code can opt out globally. Per-mutate
     // opt-out via :allow-macro? #t kwarg bypasses the flag
     // without changing global state. Both opt-outs preserve the
@@ -7952,7 +7952,7 @@ private:
     std::string session_id_; // from CompilerService (for my-id)
 
 
-    // ── Snapshot storage (ast:snapshot / ast:restore) ───────────
+    // ── Snapshot storage (mutate :snapshot / ast:restore) ───────────
     std::vector<std::string>
         snapshot_sources_; // source code per snapshot (for ast:diff + source-fallback restore)
     std::vector<std::string> snapshot_names_; // optional names
@@ -9897,7 +9897,7 @@ public:
     // mutate:* operations on MacroIntroduced nodes (those
     // produced by clone_macro_body from a hygienic macro
     // expansion). Default = false (safe); AI-agent / self-mod
-    // code can opt in via (hygiene:set-allow-macro-mutate!).
+    // code can opt in via (mutate :set-allow-macro-mutate).
     [[nodiscard]] bool get_allow_macro_mutate() const noexcept { return allow_macro_mutate_; }
     void set_allow_macro_mutate(bool v) noexcept { allow_macro_mutate_ = v; }
     // Issue #4035: record MSE-validated allow inside the current MutationBoundary
@@ -10736,7 +10736,7 @@ public:
     resolve_stamped(const ast::FlatAST::StableNodeRef& ref, std::uint16_t required_effects = 0,
                     std::string_view op = "resolve-stamped") noexcept;
     // Issue #3772: read-side re-entry for layout-only EDSL refs — the
-    // (ast:stable-ref) wire pair (id . gen) drops the tenant stamp.
+    // (query :stable-ref-pair) wire pair (id . gen) drops the tenant stamp.
     // Re-derives the node's occupancy tenant via the #3415/#3629 ring
     // (#3641 collision borrow) before any FlatAST observe: foreign
     // occupancy -> IsolationDeny (fiber-joinable SE) + false; unstamped
@@ -18534,7 +18534,7 @@ public:
     // (AbortRestore) after dual-topology restore so pins / node_gen
     // cannot stay at the post-mutate gen against the rolled-back tree.
     void restore_checkpoint_topology_for_persist_reject() noexcept;
-    // Issue #4937: after a wholesale flat replace (ast:restore
+    // Issue #4937: after a wholesale flat replace (mutate :restore
     // assign_from_image) the open boundary's children_ snapshot still
     // names the pre-replace nodes. Rebase it onto the live flat so a
     // later exit-gate abort cannot splice those ids onto the new columns.
@@ -20880,7 +20880,7 @@ inline bool WorkspaceTree::delete_child(std::uint32_t idx) {
     if (idx == 0 || idx >= nodes_.size())
         return false;
     // Issue #2789: recursively tombstone descendants first so hierarchical
-    // (workspace:delete parent) does not leave orphan layers listed/leaked.
+    // (mutate :workspace-delete parent) does not leave orphan layers listed/leaked.
     // Children first (post-order via recursion); parent indices stay stable
     // because we tombstone in place (no vector erase — #1770 contract).
     // Do not skip is_tombstone here — a second pass is a no-op re-null

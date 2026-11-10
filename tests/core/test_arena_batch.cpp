@@ -128,7 +128,7 @@ static void run_1623_query_schema() {
     std::println("\n--- AC3 (#1621): query schema 1621 ---");
     CompilerService cs;
     CHECK(seed_1621(cs), "seed");
-    (void)cs.eval("(arena:request-defrag)");
+    (void)cs.eval("(mutate :arena-request-defrag)");
     signal_shape_churn();
     signal_dirty_cascade();
     for (int i = 0; i < 20; ++i)
@@ -157,8 +157,8 @@ static void run_1621_mutate_path() {
     CHECK(seed_1621(cs), "seed");
     const auto t0 = href(cs, "auto-compact-triggers");
     const auto e0 = href(cs, "smart-policy-evaluations");
-    (void)cs.eval("(arena:request-defrag)");
-    (void)cs.eval("(arena:compact)");
+    (void)cs.eval("(mutate :arena-request-defrag)");
+    (void)cs.eval("(mutate :arena-compact)");
     for (int i = 0; i < 30; ++i)
         (void)cs.eval("(fact 3)");
     (void)cs.eval("(mutate:rebind \"b\" \"20\")");
@@ -176,7 +176,7 @@ static void run_1621_stress() {
     const auto e0 = href(cs, "smart-policy-evaluations");
     for (int i = 0; i < 25; ++i) {
         if ((i % 5) == 0)
-            (void)cs.eval("(arena:request-defrag)");
+            (void)cs.eval("(mutate :arena-request-defrag)");
         signal_dirty_cascade();
         if ((i % 7) == 0)
             signal_shape_churn();
@@ -230,7 +230,7 @@ static void run_405_matrix() {
 
     std::println("\n--- AC3 (#405): arena:compact bumps counters ---");
     const auto stats3a = compaction_stats_405(cs);
-    (void)cs.eval("(arena:compact)");
+    (void)cs.eval("(mutate :arena-compact)");
     const auto stats3b = compaction_stats_405(cs);
     std::println("  compaction stats: {} -> {}", stats3a, stats3b);
     CHECK(stats3b >= stats3a, "arena:compact monotonic for stats");
@@ -245,7 +245,7 @@ static void run_405_matrix() {
 
     std::println("\n--- AC5 (#405): arena:compact-with-policy auto integration ---");
     const auto stats5a = compaction_stats_405(cs);
-    (void)cs.eval("(arena:compact-with-policy \"main\" \"auto\")");
+    (void)cs.eval("(mutate :arena-compact-with-policy \"main\" \"auto\")");
     const auto stats5b = compaction_stats_405(cs);
     std::println("  compaction stats: {} -> {}", stats5a, stats5b);
     CHECK(stats5b >= stats5a, "compact-with-policy auto monotonic");
@@ -255,7 +255,7 @@ static void run_405_matrix() {
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(arena:compact)");
+        (void)cs.eval("(mutate :arena-compact)");
     }
     const auto stats6b = compaction_stats_405(cs);
     std::println("  compaction stats: {} -> {}", stats6a, stats6b);
@@ -977,13 +977,13 @@ static void run_3173_surface() {
           "3173: adaptive-compact not public add()");
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "3173: warm");
-    auto compact = cs.eval("(arena:compact)");
+    auto compact = cs.eval("(mutate :arena-compact)");
     CHECK(compact.has_value(), "3173: compact callable");
-    auto req = cs.eval("(arena:request-defrag)");
+    auto req = cs.eval("(mutate :arena-request-defrag)");
     CHECK(req.has_value(), "3173: request-defrag callable");
-    auto thr = cs.eval("(arena:set-auto-compact-threshold 50)");
+    auto thr = cs.eval("(mutate :set-auto-compact-threshold 50)");
     CHECK(thr.has_value(), "3173: set-auto-compact-threshold callable");
-    auto pol = cs.eval("(arena:compact-with-policy \"main\" \"auto\")");
+    auto pol = cs.eval("(mutate :arena-compact-with-policy \"main\" \"auto\")");
     CHECK(pol.has_value(), "3173: compact-with-policy callable");
     for (const char* expr : {
              "(arena:defrag)",

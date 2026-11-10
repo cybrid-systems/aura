@@ -3,7 +3,7 @@
 
 Contract:
   AC1 Fail paths publish last reason (guard / no-workspace / empty-source)
-  AC2 (ast:snapshot-fail-reason) keyword + query keys; still returns -1
+  AC2 (query :snapshot-fail-reason) keyword + query keys; still returns -1
   AC3 set-code bootstrap → id>=0; define-only denseness path documented
   AC4 schema-2966; preserve #2918 workspace source path
   AC5 Extend test_current_source_roundtrip; source-cite; no docs/design/*
@@ -46,7 +46,7 @@ def main() -> int:
     must("kSnapFailGuard", "AC1", ast)
 
     # AC2
-    must("ast:snapshot-fail-reason", "AC2", ast)
+    must("qr:snapshot-fail-reason", "AC2", ast)
     must(":no-workspace", "AC2", ast)
     must("last-ast-snapshot-fail-reason", "AC2", q)
     must("ast-snapshot-fail-total", "AC2", q)

@@ -1982,7 +1982,7 @@ int run_test_parallel_intend_pure_contract() {
         )");
         CHECK(es.has_value() && as_int(*es) == 1,
               "ac3840_1_prod_keys: SingleWriter stays eval-serialized=#t");
-        CHECK(pcs.eval("(workspace:set-concurrent-mutation-policy 1)").has_value(),
+        CHECK(pcs.eval("(mutate :set-concurrent-mutation-policy 1)").has_value(),
               "3840 AC1: opt-in ScopedParallel");
         auto sp_es = pcs.eval(R"(
             (let ((h (parallel-intend (vector (lambda () 10) (lambda () 20))

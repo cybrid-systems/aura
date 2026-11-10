@@ -89,11 +89,9 @@ using types::make_void;
 
 namespace {
 
-    // Issue #5009: one read verb, one write verb. These prefixes leave the public
-    // surface: names stay registered for one release cycle (the #5008 alias
-    // window), are flagged PrimMeta.deprecated with the replacement hint, and
-    // lib/std calls (query …) / (mutate …) instead. The tier list carries the same
-    // flag (docs/stdlib/primitive-tiers.json), so docs and runtime agree.
+    // Issue #5097: v0.2.1 unregistered these prefixes. The sweep is a backstop:
+    // a reintroduced ast:/workspace:/… name is flagged instead of becoming a
+    // silent second entry point for (query …) / (mutate …).
     struct RetiredPrefix5009 {
         std::string_view prefix;
         std::string_view verb; // the verb whose op now names this primitive
@@ -132,6 +130,8 @@ namespace {
         std::string_view replaces;
     };
 
+    // The bare spellings are unregistered in v0.2.1. Listing them here only
+    // flags a re-registration; it must not match the query:/mutate: bodies.
     constexpr RetiredBare5006 kRetiredBare5006[] = {
         {"diagnose", "(require \"std/diagnose\" all:) then (diagnose error-string)"},
         {"check-success", "(require \"std/test\" all:) then (check-success output expected)"},

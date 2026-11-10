@@ -251,29 +251,29 @@
 
 (test-suite "snapshot:basic"
   (set-code "(define (f x) (+ x 1))")
-  (let ((sid (ast:snapshot "f")))
+  (let ((sid (mutate :snapshot "f")))
     (check (>= sid 0))
     ;; List snapshots should include our snapshot
     (check (pair? (stats:get "ast:list-snapshots")))))
 
 (test-suite "snapshot:restore"
   (set-code "(define (f x) (+ x 1))")
-  (define sid (ast:snapshot "before"))
+  (define sid (mutate :snapshot "before"))
   ;; Mutate
   (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
   ;; Restore
-  (check (ast:restore sid))
+  (check (mutate :restore sid))
   ;; Should be back to original
   (let ((defs (car (query :def-use "f"))))
     (check (= (length defs) 1))))
 
 (test-suite "snapshot:diff-after-mutate"
   (set-code "(define (f x) (+ x 1))")
-  (define sid (ast:snapshot "f"))
+  (define sid (mutate :snapshot "f"))
   ;; Mutate
   (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
   ;; Diff should show changes
-  (let ((changes (ast:diff sid)))
+  (let ((changes (query :diff sid)))
     ;; There should be at least some diff entries
     (check (> (length changes) 0))
     ;; At least one entry should be :removed or :added
@@ -281,62 +281,62 @@
 
 (test-suite "snapshot:empty-id-uses-most-recent"
   (set-code "(define (f x) (+ x 1))")
-  (ast:snapshot "v1")
+  (mutate :snapshot "v1")
   (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
   ;; Without args, ast:diff should use most recent snapshot
-  (check (pair? (ast:diff))))
+  (check (pair? (query :diff))))
 
 (test-suite "snapshot:mutliple-snapshots"
   (set-code "(define (f x) (+ x 1))")
-  (ast:snapshot "v1")
+  (mutate :snapshot "v1")
   (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
-  (ast:snapshot "v2")
+  (mutate :snapshot "v2")
   (check (pair? (stats:get "ast:list-snapshots"))))
 
 (test-suite "snapshot:diff-empty-after-restore"
   (set-code "(define (f x) (+ x 1))")
-  (define sid (ast:snapshot "v1"))
+  (define sid (mutate :snapshot "v1"))
   ;; Mutate then restore
   (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
-  (ast:restore sid)
+  (mutate :restore sid)
   ;; Diff vs snapshot should now be minimal (only formatting changes)
   ;; or empty for same single-expression inputs
-  (check (list? (ast:diff sid))))
+  (check (list? (query :diff sid))))
 
 (test-suite "snapshot:diff-empty-no-changes"
   (set-code "(define (f x) (+ x 1))")
-  (define sid (ast:snapshot "v1"))
+  (define sid (mutate :snapshot "v1"))
   ;; No mutations — diff should be empty (or just formatting diffs)
-  (let ((changes (ast:diff sid)))
+  (let ((changes (query :diff sid)))
     (check (list? changes))))
 
 (test-suite "snapshot:restore-invalid-id"
   (set-code "(define (f x) (+ x 1))")
   ;; Restore with invalid (too large) ID should return #f, not crash
-  (check (not (ast:restore 9999))))
+  (check (not (mutate :restore 9999))))
 
 (test-suite "snapshot:diff-no-snapshots"
   (set-code "(define (f x) (+ x 1))")
   ;; Diff without any snapshots should return empty list, not crash
-  (check (list? (ast:diff))))
+  (check (list? (query :diff))))
 
 (test-suite "snapshot:consecutive-diffs"
   (set-code "(define (f x) (+ x 1))")
-  (define s1 (ast:snapshot "v1"))
+  (define s1 (mutate :snapshot "v1"))
   (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
-  (define s2 (ast:snapshot "v2"))
+  (define s2 (mutate :snapshot "v2"))
   ;; Diff s1 (before mutate) vs s2 (after mutate)
-  (define diff1 (ast:diff s1))
-  (define diff2 (ast:diff s2))
+  (define diff1 (query :diff s1))
+  (define diff2 (query :diff s2))
   ;; Both should be valid lists
   (check (list? diff1))
   (check (list? diff2)))
 
 (test-suite "snapshot:list-after-multiple"
   (set-code "(define (f x) (+ x 1))")
-  (ast:snapshot "a")
+  (mutate :snapshot "a")
   (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
-  (ast:snapshot "b")
+  (mutate :snapshot "b")
   ;; List should contain at least 2 snapshots
   (let ((lst (stats:get "ast:list-snapshots")))
     (check (>= (length lst) 2))))
@@ -473,7 +473,7 @@
     (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
     (workspace :switch 0)
     ;; Delete the child
-    (check (workspace:delete id))
+    (check (mutate :workspace-delete id))
     ;; Root should still be intact
     (let ((result (query :def-use "f")))
       (check (> (length (car result)) 0)))))
@@ -560,7 +560,7 @@
   (workspace :create "b")
   (workspace :create "c")
   ;; Delete non-root and non-active
-  (check (workspace:delete 1))
+  (check (mutate :workspace-delete 1))
   ;; List should have fewer entries
   (let ((lst (workspace :list)))
     (check (>= (length lst) 2))))
@@ -570,14 +570,14 @@
   (define wid (workspace :create "temp"))
   (workspace :switch wid)
   ;; Delete the active workspace
-  (workspace:delete wid)
+  (mutate :workspace-delete wid)
   ;; Should auto-switch to root
   (check (= (workspace :current) 0))))
 
 (test-suite "ws:list-after-delete"
   (set-code "(define (f x) (+ x 1))")
   (workspace :create "delete-me")
-  (workspace:delete 1)
+  (mutate :workspace-delete 1)
   ;; List should only have root
   (let ((lst (workspace :list)))
     (check (= (length lst) 1))))
@@ -637,13 +637,13 @@
   (set-code "(define (f x) (+ x 1))")
   (define w1 (workspace :create "perm-test"))
   ;; Initially writable
-  (check (workspace:can-write? w1))
+  (check (query :can-write? w1))
   ;; Lock → not writable
   (workspace :lock w1 #t)
-  (check (not (workspace:can-write? w1)))
+  (check (not (query :can-write? w1)))
   ;; Unlock → writable again
   (workspace :lock w1 #f)
-  (check (workspace:can-write? w1)))
+  (check (query :can-write? w1)))
 
 (test-suite "ws:cow-multiple-workspaces"
   (set-code "(define x 42)")
@@ -720,18 +720,18 @@
   (workspace :switch cid)
   (mutate:rebind "f" "(lambda (x) (* x 2))" "test")
   ;; Discard should reset to parent
-  (check (workspace:discard cid)))
+  (check (mutate :discard cid)))
 
 (test-suite "ws:discard-no-own-flat"
   (set-code "(define (f x) (+ x 1))")
   (define cid (workspace :create "child"))
   ;; Child has no own flat (COW) — discard should be a no-op
-  (check (workspace:discard cid)))
+  (check (mutate :discard cid)))
 
 (test-suite "ws:discard-invalid-id"
   (set-code "(define x 1)")
   ;; discard on root (id 0) should return #f
-  (check (not (workspace:discard 0))))
+  (check (not (mutate :discard 0))))
 
 
 ;; ═══════════════════════════════════════════════════════════════
@@ -821,13 +821,13 @@
 (test-suite "pipeline:rollback-on-failure"
   (require "std/pipeline" all:)
   (set-code "(define x 42)")
-  (define sid (ast:snapshot "before"))
+  (define sid (mutate :snapshot "before"))
   ;; First success then failure - pipeline should rollback
   (synthesize:pipeline "fail-test"
     (set-code "(define x 1)")
     (mutate:rebind "x" "(lambda () (+ 1 2))" "step2"))  ;; rebind on define variable should fail
   ;; Verify we're back to snapshot
-  (check (pair? (ast:diff sid))))  ;; diff should exist (might show changes)
+  (check (pair? (query :diff sid))))  ;; diff should exist (might show changes)
 
 
 ;; ═══════════════════════════════════════════════════════════════
@@ -1418,15 +1418,15 @@
   (set-code "(define (g x) (* x 2))")
   (eval-current)
   ;; Sync from wsA
-  (check (workspace:sync-from "wsA"))
+  (check (mutate :sync-from "wsA"))
   ;; Check that g still works
   (eval-current)
   ;; Merge wsA changes into current
   (let ((merged (workspace :merge "wsA")))
     (check (or (equal? merged "()") (pair? merged))))
   ;; Cleanup
-  (workspace:delete "wsA")
-  (workspace:delete "wsB"))
+  (mutate :workspace-delete "wsA")
+  (mutate :workspace-delete "wsB"))
 
 ;; ═══════════════════════════════════════════════════════════
 ;; EDSL query:filter / query:where — combined queries

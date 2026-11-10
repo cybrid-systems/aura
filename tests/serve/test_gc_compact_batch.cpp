@@ -143,7 +143,7 @@ static void run_1842_runtime() {
     std::println("\n--- AC2 (#1842): compact-env-frames returns int ---");
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "seed eval");
-    auto r = cs.eval("(evaluator:compact-env-frames)");
+    auto r = cs.eval("(mutate :compact-env-frames)");
     CHECK(r && is_int(*r), "returns int");
     CHECK(as_int(*r) >= 0, "reclaimed >= 0 (or 0 empty)");
 }
@@ -157,7 +157,7 @@ static void run_1842_nested_guard() {
     {
         Evaluator::MutationBoundaryGuard outer(ev, &ok);
         CHECK(outer.is_outermost(), "outer is outermost");
-        auto r = cs.eval("(evaluator:compact-env-frames)");
+        auto r = cs.eval("(mutate :compact-env-frames)");
         CHECK(r && is_int(*r), "compact under outer Guard returns int");
         CHECK(ev.mutation_boundary_depth_slot_value(/*fiber_id=*/0) >= 1, "depth held by outer");
     }
@@ -490,7 +490,7 @@ static void run_261_recycle_primitive() {
     std::println("\n--- #261: ast:recycle-nodes primitive ---");
     aura::compiler::CompilerService cs;
     CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "seed set-code");
-    CHECK(run_261_int(cs, "(ast:recycle-nodes)") >= 0,
+    CHECK(run_261_int(cs, "(mutate :recycle-nodes)") >= 0,
           "ast:recycle-nodes returns non-negative int");
 }
 
@@ -498,7 +498,7 @@ static void run_261_compact_primitive() {
     std::println("\n--- #261: ast:compact-nodes primitive ---");
     aura::compiler::CompilerService cs;
     CHECK(cs.eval("(set-code \"(begin (define x 1) (define y 2))\")").has_value(), "seed set-code");
-    CHECK(run_261_int(cs, "(ast:compact-nodes)") >= 0,
+    CHECK(run_261_int(cs, "(mutate :compact-nodes)") >= 0,
           "ast:compact-nodes returns non-negative int");
 }
 
@@ -506,9 +506,9 @@ static void run_261_snapshot_restore_hook() {
     std::println("\n--- #261: ast:snapshot / ast:restore recycle hooks ---");
     aura::compiler::CompilerService cs;
     CHECK(cs.eval("(set-code \"(define x 42)\")").has_value(), "seed set-code");
-    auto snap_id = run_261_int(cs, "(ast:snapshot \"s261\")");
+    auto snap_id = run_261_int(cs, "(mutate :snapshot \"s261\")");
     CHECK(snap_id >= 0, "snapshot created");
-    std::string restore_src = "(ast:restore " + std::to_string(snap_id) + ")";
+    std::string restore_src = "(mutate :restore " + std::to_string(snap_id) + ")";
     CHECK(run_261_bool(cs, restore_src), "restore succeeds");
 }
 
@@ -526,13 +526,13 @@ static void run_324_workspace_integrity() {
 }
 
 static void run_324_flatast_compact() {
-    std::println("\n--- #324: FlatAST compaction via (ast:compact-nodes) ---");
+    std::println("\n--- #324: FlatAST compaction via (mutate :compact-nodes) ---");
     aura::compiler::CompilerService cs;
     (void)cs.eval(
         "(set-code \"(define a 1) (define b 2) (define c 3) (define d 4) (define e 5)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(ast:compact-nodes)");
-    CHECK(r.has_value(), "(ast:compact-nodes) callable");
+    auto r = cs.eval("(mutate :compact-nodes)");
+    CHECK(r.has_value(), "(mutate :compact-nodes) callable");
     auto q = cs.eval("(query:pattern \"a\")");
     CHECK(q.has_value(), "query:pattern works post-compact");
 }
@@ -714,10 +714,10 @@ static void run_187_arena_compaction_double_arena() {
     }
     // AC6: Aura-level primitives (CompilerService-driven)
     {
-        std::println("\n--- AC6.1-6.7: (arena:compact) + (arena:estimate) + ... ---");
+        std::println("\n--- AC6.1-6.7: (mutate :arena-compact) + (arena:estimate) + ... ---");
         aura::compiler::CompilerService cs;
-        if (auto r = cs.eval("(arena:compact)"); r && is_int(*r)) {
-            CHECK(as_int(*r) >= 0, "(arena:compact) returns non-negative bytes");
+        if (auto r = cs.eval("(mutate :arena-compact)"); r && is_int(*r)) {
+            CHECK(as_int(*r) >= 0, "(mutate :arena-compact) returns non-negative bytes");
         }
         if (auto r = cs.eval("(stats:get \"arena:estimate\")"); r && is_int(*r)) {
             CHECK(as_int(*r) >= 0, "(stats:get \"arena:estimate\") returns non-negative bytes");
@@ -726,17 +726,17 @@ static void run_187_arena_compaction_double_arena() {
             r && aura::compiler::types::is_string(*r)) {
             CHECK(true, "(stats:get \"arena:stats-json\") returns string");
         }
-        if (auto r = cs.eval("(string-pool:compact)"); r && is_int(*r)) {
-            CHECK(as_int(*r) >= 0, "(string-pool:compact) returns non-negative bytes");
+        if (auto r = cs.eval("(mutate :string-pool-compact)"); r && is_int(*r)) {
+            CHECK(as_int(*r) >= 0, "(mutate :string-pool-compact) returns non-negative bytes");
         }
         auto sv = cs.eval("(stats:get \"string-pool:stats\")");
         CHECK(sv.has_value(), "(stats:get \"string-pool:stats\") returns a value (or void)");
-        auto tv = cs.eval("(arena:set-auto-compact-threshold 25)");
-        CHECK(tv.has_value(), "(arena:set-auto-compact-threshold 25) callable");
+        auto tv = cs.eval("(mutate :set-auto-compact-threshold 25)");
+        CHECK(tv.has_value(), "(mutate :set-auto-compact-threshold 25) callable");
         if (auto r = cs.eval("(begin "
                              "(define x1 1) (define x2 2) (define x3 3) (define x4 4) "
-                             "(define x5 5) (string-pool:compact) "
-                             "(define y1 1) (define y2 2) (string-pool:compact) "
+                             "(define x5 5) (mutate :string-pool-compact) "
+                             "(define y1 1) (define y2 2) (mutate :string-pool-compact) "
                              "(+ x1 x2 x3 x4 x5 y1 y2))");
             r && is_int(*r)) {
             CHECK(as_int(*r) == 18, "compound workflow: 1+2+3+4+5+1+2 = 18");
@@ -891,21 +891,21 @@ static void run_300_arena_defrag_stats_observability() {
         CHECK(e5 <= compact_est_before, "compact-estimate did not grow");
         CHECK(e3 >= 0 && e3 <= 10000, "fragmentation-bp in [0, 10000] after defrag");
     }
-    // T5: defrag request flag lifecycle via (arena:request-defrag) returns.
+    // T5: defrag request flag lifecycle via (mutate :arena-request-defrag) returns.
     // (arena:defrag-requested?) is register_stats_impl — may be unbound as a
     // free form under domain-pilot link; request-defrag add() surface is stable.
     {
         std::println("\n--- #300 T5: defrag request flag (safepoint scaffold) ---");
         CompilerService cs;
-        auto r1 = cs.eval("(arena:request-defrag)");
+        auto r1 = cs.eval("(mutate :arena-request-defrag)");
         CHECK(r1 && aura::compiler::types::is_bool(*r1) && aura::compiler::types::as_bool(*r1),
               "request-defrag first: #t (newly_set)");
-        auto r3 = cs.eval("(arena:request-defrag)");
+        auto r3 = cs.eval("(mutate :arena-request-defrag)");
         CHECK(r3 && aura::compiler::types::is_bool(*r3) && !aura::compiler::types::as_bool(*r3),
               "request-defrag duplicate: #f");
         cs.eval("(set-code \"(define x 1)\")");
         (void)cs.evaluator().test_arena().defrag();
-        auto r5 = cs.eval("(arena:request-defrag)");
+        auto r5 = cs.eval("(mutate :arena-request-defrag)");
         CHECK(r5 && aura::compiler::types::is_bool(*r5) && aura::compiler::types::as_bool(*r5),
               "request after defrag: #t (cycle reset)");
         auto q = cs.eval("(arena:defrag-requested?)");
@@ -931,15 +931,15 @@ static void run_322_dual_path_soa_envid() {
         auto r = cs.eval("(eval-current)");
         CHECK(r.has_value(), "eval succeeds with bindings");
     }
-    // S4: FlatAST compaction via (ast:compact-nodes)
+    // S4: FlatAST compaction via (mutate :compact-nodes)
     {
-        std::println("\n--- #322 S4: FlatAST compaction via (ast:compact-nodes) ---");
+        std::println("\n--- #322 S4: FlatAST compaction via (mutate :compact-nodes) ---");
         CompilerService cs;
         (void)cs.eval(
             "(set-code \"(define a 1) (define b 2) (define c 3) (define d 4) (define e 5)\")");
         (void)cs.eval("(eval-current)");
-        auto r = cs.eval("(ast:compact-nodes)");
-        CHECK(r.has_value(), "(ast:compact-nodes) callable");
+        auto r = cs.eval("(mutate :compact-nodes)");
+        CHECK(r.has_value(), "(mutate :compact-nodes) callable");
         auto q = cs.eval("(query:pattern \"a\")");
         CHECK(q.has_value(), "query:pattern works post-compact");
     }
@@ -1059,7 +1059,7 @@ static void run_623_arena_auto_compact_threshold_setter() {
         std::println("\n--- #623 AC2: set + clamping ---");
         CompilerService cs;
         const auto baseline = auto_compact_threshold_pct(cs);
-        auto r_set = cs.eval("(arena:set-auto-compact-threshold 75)");
+        auto r_set = cs.eval("(mutate :set-auto-compact-threshold 75)");
         CHECK(r_set.has_value() && is_int(*r_set), "setter returns int (previous value)");
         const auto prev = as_int(*r_set);
         if (baseline == -1) {
@@ -1071,30 +1071,30 @@ static void run_623_arena_auto_compact_threshold_setter() {
             const auto now = auto_compact_threshold_pct(cs);
             CHECK(now == 75, std::format("readback after set == 75 (got {})", now));
         }
-        cs.eval("(arena:set-auto-compact-threshold -5)");
+        cs.eval("(mutate :set-auto-compact-threshold -5)");
         if (baseline != -1) {
             const auto after_low = auto_compact_threshold_pct(cs);
             CHECK(after_low == 0, std::format("negative arg clamped to 0 (got {})", after_low));
         }
-        cs.eval("(arena:set-auto-compact-threshold 200)");
+        cs.eval("(mutate :set-auto-compact-threshold 200)");
         if (baseline != -1) {
             const auto after_high = auto_compact_threshold_pct(cs);
             CHECK(after_high == 95, std::format("arg > 95 clamped to 95 (got {})", after_high));
         }
-        cs.eval("(arena:set-auto-compact-threshold 50)"); // restore
+        cs.eval("(mutate :set-auto-compact-threshold 50)"); // restore
     }
     // AC3: non-int arg no-op
     {
         std::println("\n--- #623 AC3: bad-arg no-op ---");
         CompilerService cs;
-        cs.eval("(arena:set-auto-compact-threshold 25)");
+        cs.eval("(mutate :set-auto-compact-threshold 25)");
         const auto before = auto_compact_threshold_pct(cs);
-        auto r = cs.eval("(arena:set-auto-compact-threshold \"not-a-number\")");
+        auto r = cs.eval("(mutate :set-auto-compact-threshold \"not-a-number\")");
         CHECK(r.has_value() && is_int(*r), "non-int arg returns int (current value)");
         const auto after = auto_compact_threshold_pct(cs);
         CHECK(after == before,
               std::format("non-int arg left threshold unchanged ({} -> {})", before, after));
-        cs.eval("(arena:set-auto-compact-threshold 50)"); // restore
+        cs.eval("(mutate :set-auto-compact-threshold 50)"); // restore
     }
     // AC4: existing arena primitives back-compat
     // (#187/#300/#430/#335/#464/#685/#604)
@@ -1105,8 +1105,8 @@ static void run_623_arena_auto_compact_threshold_setter() {
         CHECK(s_json.has_value(), "(stats:get \"arena:stats-json\") reachable (#187 back-compat)");
         (void)cs.evaluator().test_arena().defrag();
         CHECK(true, "C++ defrag reachable (#300 / #3173)");
-        auto s_pol = cs.eval("(arena:compact-with-policy)");
-        CHECK(s_pol.has_value(), "(arena:compact-with-policy) reachable (#430 back-compat)");
+        auto s_pol = cs.eval("(mutate :arena-compact-with-policy)");
+        CHECK(s_pol.has_value(), "(mutate :arena-compact-with-policy) reachable (#430 back-compat)");
         (void)cs.evaluator().arena_group().should_auto_compact("main");
         CHECK(true, "should_auto_compact C++ reachable (#335 / #3173)");
         auto s_auto = cs.eval("(engine:metrics \"query:arena-auto-stats\")");
@@ -1124,7 +1124,7 @@ static void run_623_arena_auto_compact_threshold_setter() {
     {
         std::println("\n--- #623 AC5: rapid sequential reads (atomicity proxy) ---");
         CompilerService cs;
-        cs.eval("(arena:set-auto-compact-threshold 60)");
+        cs.eval("(mutate :set-auto-compact-threshold 60)");
         int ok_count = 0;
         constexpr int k_iters = 8;
         for (int i = 0; i < k_iters; ++i) {
@@ -1133,7 +1133,7 @@ static void run_623_arena_auto_compact_threshold_setter() {
         }
         CHECK(ok_count == k_iters,
               std::format("rapid sequential: {} / {} reads returned int", ok_count, k_iters));
-        cs.eval("(arena:set-auto-compact-threshold 50)");
+        cs.eval("(mutate :set-auto-compact-threshold 50)");
     }
 }
 
@@ -1348,7 +1348,7 @@ static void run_604_arena_auto_compact_defrag_fiber_safepoint() {
         auto triggers_before = stat_int(cs, "auto-compact-triggers");
         cs.eval("(set-code \"(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))\")");
         cs.eval("(eval-current)");
-        (void)cs.eval("(arena:request-defrag)");
+        (void)cs.eval("(mutate :arena-request-defrag)");
         for (int i = 0; i < 40; ++i)
             (void)cs.eval("(fib 6)");
         cs.eval("(mutate:rebind \"fib\" "
@@ -1529,7 +1529,7 @@ static void run_685_arena_auto_compact_defrag_shape_synergy() {
         auto defrag_before = stat_int(cs, "defrag-savings");
         cs.eval("(set-code \"(define (fact n) (if (= n 0) 1 (* n (fact (- n 1)))))\" )");
         cs.eval("(eval-current)");
-        (void)cs.eval("(arena:request-defrag)");
+        (void)cs.eval("(mutate :arena-request-defrag)");
         for (int i = 0; i < 30; ++i)
             (void)cs.eval("(fact 3)");
         cs.eval("(mutate:rebind \"fact\" "
@@ -1945,7 +1945,7 @@ static void run_767_arena_auto_compact_defrag_fiber_stats() {
 
 // ── Issue #1397 — ASTArena::request_defrag atomic CAS newly_set semantics ──
 // Folded from tests/issues/test_issue_1397.cpp via #1957. Extended
-// coverage for (arena:defrag)/(arena:request-defrag)/(arena:defrag-requested?)
+// coverage for (arena:defrag)/(mutate :arena-request-defrag)/(arena:defrag-requested?)
 // beyond the 5 sub-steps in test_issue_300.cpp AC5. 50-cycle + 2-service
 // independence tests. Pure CompilerService-driven, fits compact_batch.
 
@@ -1959,10 +1959,10 @@ static void run_1397_arena_request_defrag_atomic_cas() {
         int newly_true = 0, dup_false = 0;
         for (int i = 0; i < 50; ++i) {
             (void)cs.evaluator().test_arena().defrag();
-            auto r1 = cs.eval("(arena:request-defrag)");
+            auto r1 = cs.eval("(mutate :arena-request-defrag)");
             if (r1 && aura::compiler::types::is_bool(*r1) && aura::compiler::types::as_bool(*r1))
                 ++newly_true;
-            auto r2 = cs.eval("(arena:request-defrag)");
+            auto r2 = cs.eval("(mutate :arena-request-defrag)");
             if (r2 && aura::compiler::types::is_bool(*r2) && !aura::compiler::types::as_bool(*r2))
                 ++dup_false;
         }
@@ -1977,17 +1977,17 @@ static void run_1397_arena_request_defrag_atomic_cas() {
         CompilerService cs;
         cs.eval("(set-code \"(define x 1)\")");
         (void)cs.evaluator().test_arena().defrag();
-        auto r1 = cs.eval("(arena:request-defrag)");
+        auto r1 = cs.eval("(mutate :arena-request-defrag)");
         CHECK(r1 && aura::compiler::types::is_bool(*r1) && aura::compiler::types::as_bool(*r1),
               "first request after defrag: #t (newly_set)");
-        auto r2 = cs.eval("(arena:request-defrag)");
+        auto r2 = cs.eval("(mutate :arena-request-defrag)");
         CHECK(r2 && aura::compiler::types::is_bool(*r2) && !aura::compiler::types::as_bool(*r2),
               "duplicate: #f (CAS already-set)");
         (void)cs.evaluator().test_arena().defrag();
-        auto r3 = cs.eval("(arena:request-defrag)");
+        auto r3 = cs.eval("(mutate :arena-request-defrag)");
         CHECK(r3 && aura::compiler::types::is_bool(*r3) && aura::compiler::types::as_bool(*r3),
               "after second defrag: #t (defrag clears -> cycle resets)");
-        auto r4 = cs.eval("(arena:request-defrag)");
+        auto r4 = cs.eval("(mutate :arena-request-defrag)");
         CHECK(r4 && aura::compiler::types::is_bool(*r4) && !aura::compiler::types::as_bool(*r4),
               "second-cycle duplicate: #f");
     }
@@ -1998,23 +1998,23 @@ static void run_1397_arena_request_defrag_atomic_cas() {
         CompilerService cs2;
         cs1.eval("(set-code \"(define x 1)\")");
         cs2.eval("(set-code \"(define x 1)\")");
-        auto a1 = cs1.eval("(arena:request-defrag)");
+        auto a1 = cs1.eval("(mutate :arena-request-defrag)");
         CHECK(a1 && aura::compiler::types::is_bool(*a1) && aura::compiler::types::as_bool(*a1),
               "cs1 first request: #t");
-        auto a2 = cs2.eval("(arena:request-defrag)");
+        auto a2 = cs2.eval("(mutate :arena-request-defrag)");
         CHECK(a2 && aura::compiler::types::is_bool(*a2) && aura::compiler::types::as_bool(*a2),
               "cs2 first request: #t (independent of cs1)");
-        auto a3 = cs1.eval("(arena:request-defrag)");
+        auto a3 = cs1.eval("(mutate :arena-request-defrag)");
         CHECK(a3 && aura::compiler::types::is_bool(*a3) && !aura::compiler::types::as_bool(*a3),
               "cs1 duplicate: #f");
-        auto a4 = cs2.eval("(arena:request-defrag)");
+        auto a4 = cs2.eval("(mutate :arena-request-defrag)");
         CHECK(a4 && aura::compiler::types::is_bool(*a4) && !aura::compiler::types::as_bool(*a4),
               "cs2 duplicate: #f (cs1 dup did not affect cs2)");
         (void)cs1.evaluator().test_arena().defrag();
-        auto a5 = cs1.eval("(arena:request-defrag)");
+        auto a5 = cs1.eval("(mutate :arena-request-defrag)");
         CHECK(a5 && aura::compiler::types::is_bool(*a5) && aura::compiler::types::as_bool(*a5),
               "cs1 after own defrag: #t");
-        auto a6 = cs2.eval("(arena:request-defrag)");
+        auto a6 = cs2.eval("(mutate :arena-request-defrag)");
         CHECK(a6 && aura::compiler::types::is_bool(*a6) && !aura::compiler::types::as_bool(*a6),
               "cs2 still operates independently (no cross-talk)");
     }
@@ -2028,14 +2028,14 @@ static void run_1397_arena_request_defrag_atomic_cas() {
         CompilerService cs;
         cs.eval("(set-code \"(define x 1)\")");
         (void)cs.evaluator().test_arena().defrag();
-        auto r0 = cs.eval("(arena:request-defrag)");
+        auto r0 = cs.eval("(mutate :arena-request-defrag)");
         CHECK(r0 && aura::compiler::types::is_bool(*r0) && aura::compiler::types::as_bool(*r0),
               "request after defrag: newly_set #t");
-        auto r1 = cs.eval("(arena:request-defrag)");
+        auto r1 = cs.eval("(mutate :arena-request-defrag)");
         CHECK(r1 && aura::compiler::types::is_bool(*r1) && !aura::compiler::types::as_bool(*r1),
               "duplicate request: #f");
         (void)cs.evaluator().test_arena().defrag();
-        auto r2 = cs.eval("(arena:request-defrag)");
+        auto r2 = cs.eval("(mutate :arena-request-defrag)");
         CHECK(r2 && aura::compiler::types::is_bool(*r2) && aura::compiler::types::as_bool(*r2),
               "request after second defrag: newly_set #t (cycle reset)");
     }
@@ -3020,7 +3020,7 @@ static void run_1386_compact_env_frames_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define (cf x) x)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto r = cs.eval("(evaluator:compact-env-frames)");
+    auto r = cs.eval("(mutate :compact-env-frames)");
     CHECK(r.has_value(), "compact-env-frames returns");
     (void)cs.evaluator().compact_env_frames();
 }

@@ -147,7 +147,7 @@ def run_session(n_cycles):
         return stats
 
     # Snapshot initial state
-    resp = send(proc, '(display (ast:snapshot "initial"))')
+    resp = send(proc, '(display (mutate :snapshot "initial"))')
     if resp is None:
         stats["crash"] += 1
         with contextlib.suppress(Exception):
@@ -178,7 +178,7 @@ def run_session(n_cycles):
                 stats["error"] += 1
 
             # Diff vs initial snapshot
-            resp = send(proc, f"(display (ast:diff {snapshot_ids[0]}))")
+            resp = send(proc, f"(display (query :diff {snapshot_ids[0]}))")
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -188,7 +188,7 @@ def run_session(n_cycles):
 
         elif phase == 3:
             # Take another snapshot (intermediate state)
-            resp = send(proc, f'(display (ast:snapshot "mid-{cycle}"))')
+            resp = send(proc, f'(display (mutate :snapshot "mid-{cycle}"))')
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -216,7 +216,7 @@ def run_session(n_cycles):
 
         else:
             # Restore to initial snapshot
-            resp = send(proc, f"(display (ast:restore {snapshot_ids[0]}))")
+            resp = send(proc, f"(display (mutate :restore {snapshot_ids[0]}))")
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -232,7 +232,7 @@ def run_session(n_cycles):
                     break
 
                 # Verify diff is now empty (restored to snapshot)
-                resp = send(proc, f"(display (ast:diff {snapshot_ids[0]}))")
+                resp = send(proc, f"(display (query :diff {snapshot_ids[0]}))")
                 if resp is None:
                     stats["crash"] += 1
                     break
@@ -248,7 +248,7 @@ def run_session(n_cycles):
             resp = send(proc, f'set-code "{escaped(program)}"')
             if resp and resp.get("status") == "ok":
                 # Snapshot the new state
-                resp = send(proc, '(display (ast:snapshot "initial"))')
+                resp = send(proc, '(display (mutate :snapshot "initial"))')
                 if resp and resp.get("status") in ("ok", "closure"):
                     try:
                         d = resp.get("_display", "")

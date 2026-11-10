@@ -132,7 +132,7 @@ static void ac3_backend_thread() {
     std::println("\n--- #2656 AC3: CLI backend is thread (2) ---");
     CompilerService cs;
     // No serve-async scheduler → thread fallback.
-    auto b = cs.eval("(fiber:spawn-backend)");
+    auto b = cs.eval("(query :fiber-backend)");
     CHECK(b && is_int(*b) && as_int(*b) == 2, "AC3: spawn-backend = 2 (thread)");
 }
 
@@ -154,7 +154,7 @@ static void ac5_source() {
     CHECK(msg.find("#2656") != std::string::npos, "AC5: messaging cites #2656");
     CHECK(msg.find("0x4000") != std::string::npos || msg.find("positive") != std::string::npos,
           "AC5: positive thread-fallback ids");
-    CHECK(msg.find("fiber:spawn-backend") != std::string::npos, "AC5: spawn-backend prim");
+    CHECK(msg.find("qr:fiber-backend") != std::string::npos, "AC5: spawn-backend prim");
     const auto doc = read_file("docs/stdlib/fiber-spawn.md");
     CHECK(doc.find("#2656") != std::string::npos, "AC5: denseness contract doc");
     CHECK(doc.find("thread") != std::string::npos, "AC5: doc mentions thread backend");
@@ -1076,7 +1076,7 @@ static void ac21_cow_overlay_rebind_eval_current() {
     CHECK(seed && is_bool(*seed) && as_bool(*seed), "AC21: workspace define seeded");
 
     auto r = cs.eval(R"AURA(
-(let* ((open (fiber:overlay-begin))
+(let* ((open (mutate :overlay-begin))
        (m (try (mutate:rebind "cow-target" "(lambda (x) (* x 7))" "cow") (catch (e) #f)))
        (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
        (own (cow-target 7))
@@ -1088,10 +1088,10 @@ static void ac21_cow_overlay_rebind_eval_current() {
                        (loop (+ i 1)
                              (and ok (let ((v (cow-target 7))) (or (= v 14) (= v 49)))))
                        ok)))))
-       (cm (fiber:overlay-commit))
+       (cm (mutate :overlay-commit))
        (after (cow-target 7))
        (seen (fiber:join watch))
-       (report (fiber:overlay-report)))
+       (report (mutate :overlay-report)))
   (and (> open 0) ; #4715: overlay-begin returns the base workspace epoch, which the
        ; seed (set-code + eval-current) already advanced - 0 was never the contract.
        (eq? m #t)
@@ -1116,14 +1116,14 @@ static void ac21_cow_overlay_rebind_eval_current() {
   #t))AURA");
     CHECK(pc && is_bool(*pc) && as_bool(*pc), "AC21: scalar workspace define seeded");
     auto p = cs.eval(R"AURA(
-(let* ((open (fiber:overlay-begin))
+(let* ((open (mutate :overlay-begin))
        (m (try (mutate:rebind "cow-n" "9" "cow") (catch (e) #f)))
        (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
        (own cow-n)
        (sib (fiber:join (fiber:spawn (lambda () cow-n))))
-       (cm (fiber:overlay-commit))
+       (cm (mutate :overlay-commit))
        (after cow-n)
-       (report (fiber:overlay-report)))
+       (report (mutate :overlay-report)))
   (and (> open 0) ; same contract as arm 1: the base epoch, already advanced by the seed.
        (eq? m #t)
        (eq? ec #t)
@@ -1146,22 +1146,22 @@ static void ac21_cow_overlay_rebind_eval_current() {
   (eval-current)
   #t))AURA");
     CHECK(s && is_bool(*s) && as_bool(*s), "AC21: conflict arm seeded");
-    // The sibling writes the env directly (fiber:overlay-set!) so this arm is
+    // The sibling writes the env directly (mutate :overlay-set!) so this arm is
     // deterministic: the workspace AST is not touched a second time.
     auto c = cs.eval(R"AURA(
-(let* ((open (fiber:overlay-begin))
+(let* ((open (mutate :overlay-begin))
        (m (try (mutate:rebind "cow-n" "9" "cow") (catch (e) #f)))
        (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
        (own cow-n)
        (sib (fiber:join
              (fiber:spawn
               (lambda ()
-                (fiber:overlay-begin)
-                (fiber:overlay-set! "cow-n" 11)
-                (if (error? (fiber:overlay-commit)) 0 1)))))
-       (cm (try (fiber:overlay-commit) (catch (e) e)))
+                (mutate :overlay-begin)
+                (mutate :overlay-set! "cow-n" 11)
+                (if (error? (mutate :overlay-commit)) 0 1)))))
+       (cm (try (mutate :overlay-commit) (catch (e) e)))
        (after cow-n)
-       (report (fiber:overlay-report)))
+       (report (mutate :overlay-report)))
   (and (eq? m #t)
        (eq? ec #t)
        (= own 9)

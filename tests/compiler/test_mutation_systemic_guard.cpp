@@ -197,7 +197,7 @@ int main() {
         auto r4 = cs.eval("(compile:subtree-bump 0)");
         CHECK(r4.has_value() && (is_int(*r4) || is_error(*r4)), "subtree-bump int/err");
 
-        auto r5 = cs.eval("(evaluator:compact-env-frames)");
+        auto r5 = cs.eval("(mutate :compact-env-frames)");
         CHECK(r5.has_value() && is_int(*r5), "compact-env-frames int");
 
         auto r6 = cs.eval("(compile:hw-bitvec-register \"bv8\" 8 0)");

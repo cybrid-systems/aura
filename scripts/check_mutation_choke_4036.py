@@ -74,7 +74,7 @@ def main() -> int:
     sse_code = _strip_cpp_comments(sse)
     if "Issue #4036" not in sse:
         fails.append("AC1: security_side_effect.hh lacks the #4036 citation")
-    for nm in ('"set-car!"', '"set-cdr!"', '"string-fill!"', '"closure:free!"'):
+    for nm in ('"set-car!"', '"set-cdr!"', '"string-fill!"', '"mw:closure-free"'):
         if nm not in sse_code:
             fails.append(f"AC1: infer does not name {nm}")
     if "hash-set!" not in sse_code or "hash-remove!" not in sse_code or "vector-set!" not in sse_code:
@@ -87,7 +87,7 @@ def main() -> int:
     # No query key added for these names.
     if 'query:"' in sse_code.replace(" ", "") and False:
         pass  # query: prefix legitimately appears for other families; names must not join it
-    for nm in ("set-car!", "set-cdr!", "string-fill!", "closure:free!"):
+    for nm in ("set-car!", "set-cdr!", "string-fill!", "mw:closure-free"):
         idx = sse_code.find(f'"{nm}"')
         if idx != -1 and sse_code[max(0, idx - 200) : idx].find("query") != -1:
             fails.append(f"AC1: {nm} routed through a query key (banned)")
@@ -108,7 +108,7 @@ def main() -> int:
 
     # ── AC3: closure:free! routes through the checked entry ──
     mem = _strip_cpp_comments(_read("src/compiler/evaluator_primitives_memory.cpp"))
-    cf = mem.find('"closure:free!"')
+    cf = mem.find('"mw:closure-free"')
     if cf == -1:
         fails.append("AC3: closure:free! registration not found")
     else:

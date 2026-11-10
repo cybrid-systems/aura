@@ -66,7 +66,7 @@ int main() {
     // Issue #1439: query:*-stats are no longer public prims — api-reference
     // must NOT list them; still document the metrics facade.
     {
-        auto r = cs.eval("(api-reference)");
+        auto r = cs.eval("(query :api-reference)");
         CHECK(r && aura::compiler::types::is_string(*r), "api-reference returns string");
         if (r && aura::compiler::types::is_string(*r)) {
             auto idx = aura::compiler::types::as_string_idx(*r);

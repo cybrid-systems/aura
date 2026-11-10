@@ -95,7 +95,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC2: mutate + arena defrag path bumps triggers ---");
     const auto triggers0 = policy_hash(cs, "auto-compact-triggers");
-    (void)cs.eval("(arena:request-defrag)");
+    (void)cs.eval("(mutate :arena-request-defrag)");
     for (int i = 0; i < 40; ++i)
         (void)cs.eval("(fact 3)");
     (void)cs.eval("(mutate:rebind \"a\" \"10\")");
@@ -106,7 +106,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC3: adaptive compact bumps shape invalidation ---");
     const auto shape0 = policy_hash(cs, "shape-inval-on-compact");
-    (void)cs.eval("(arena:compact)");
+    (void)cs.eval("(mutate :arena-compact)");
     const auto shape1 = policy_hash(cs, "shape-inval-on-compact");
     std::println("  shape-inval-on-compact: {} -> {}", shape0, shape1);
     CHECK(shape1 >= shape0, "shape-inval-on-compact monotonic after adaptive-compact");
@@ -144,7 +144,7 @@ static void run_matrix(CompilerService& cs) {
                 }
                 {
                     std::scoped_lock<std::mutex> lk(eval_mtx);
-                    (void)cs.eval("(arena:request-defrag)");
+                    (void)cs.eval("(mutate :arena-request-defrag)");
                     (void)cs.eval("(fact 2)");
                 }
                 done.fetch_add(1, std::memory_order_relaxed);
