@@ -2633,6 +2633,10 @@ private:
     // covers the statement shape and the thunk-lambda shape.
     aura::core::TypeId synthesize_flat_try_form(aura::ast::FlatAST& flat,
                                                 aura::ast::StringPool& pool, aura::ast::NodeView v);
+    // Issue #5090: (require)/(import) in workspace source is a load form.
+    aura::core::TypeId synthesize_flat_require_form(aura::ast::FlatAST& flat,
+                                                    aura::ast::StringPool& pool,
+                                                    aura::ast::NodeView v);
     aura::core::TypeId synthesize_flat_while_form(aura::ast::FlatAST& flat,
                                                   aura::ast::StringPool& pool,
                                                   aura::ast::NodeView v);

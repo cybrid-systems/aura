@@ -2,6 +2,7 @@
 
 ## Unreleased (0.2.1)
 
+- Stdlib (#5096): SRFI-1 `any`/`every` stop at the shortest list; `force` forces a nested promise; `parameter?` rejects ordinary procedures and `parameterize` evaluates the parameter expression once; `values` is not a bare list, so `let-values` and `call-with-values` treat `(list 1 2)` as one value; SRFI-151 `bitwise-bit-set?` is `(index n)` and `bitwise-fold` walks bits in `[0, integer-length)`; `frequencies` and `hash-get` accept a missing key, and SRFI-125 `hash-table-walk` is `(hash-table proc)`; the eof object is unique, so a successful `write-char` is not eof.
 - Primitives (#5097, #5094, #5095): `(query :op)` is read-only and `(mutate :op)` is write-only. The verbs no longer scan `ast:`, `workspace:`, `syntax:`, or `fiber:`. Snapshot and restore are mutate ops. `fiber:spawn` / `yield` / `join` / `cancel` stay kernel names. The v0.2.0 alias window is closed: those prefixes, the non-kernel `orch:` names, and the seven bare spellings are unbound. `(query :api-reference)` prints `PrimMeta.doc` for a name that is still deprecated. The registration gate counts `add_mutate` names.
 
 ## 0.2.0

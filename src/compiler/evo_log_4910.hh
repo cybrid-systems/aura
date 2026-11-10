@@ -17,8 +17,13 @@
 // order (never hash iteration order) so identical runs stay byte-identical.
 // Readers must accept v=1 and v=2 in the same file: the JSONL shape is
 // additive and "aura evo log --json" echoes each line verbatim.
-// decision: KEEP | ROLLBACK | user string. The worldline tip advances on KEEP;
-// a candidate's parent is the tip when it was recorded (or the explicit
+// decision: KEEP | ROLLBACK | FORK | user string. The worldline tip advances
+// on KEEP only. FORK (#5088) is a mutate:* that succeeded inside a child
+// workspace: the rewrite is discarded with that workspace (and with a trial
+// subprocess), so it must not be counted as a live KEEP. Those lines are
+// schema v=2 and carry "scope":"fork" after dur_ms. A ROLLBACK in the same
+// child workspace keeps decision ROLLBACK and the same scope field.
+// A candidate's parent is the tip when it was recorded (or the explicit
 // parent evo:record! names), so `aura evo log` can draw the tree.
 //
 // The path is operator configuration (env), never program-chosen: the log is

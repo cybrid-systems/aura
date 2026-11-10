@@ -93,6 +93,101 @@ namespace {
         const auto* prims = static_cast<const Primitives*>(ctx);
         return prims->slot_for_name(name) < prims->slot_count();
     }
+
+    // Issue #5090: names a workspace (require)/(import) would bind. The
+    // load is the same one runtime require uses (cached after the first
+    // hit). Names are for the typecheck host set only — top_ is not
+    // mutated. A nested typecheck during the load does not re-enter.
+    // `modules` is the evaluator's module table (private); the caller
+    // passes it so this helper stays outside the class.
+    template <class Load>
+    void append_workspace_require_names(Load&& load, const std::vector<Env*>& modules,
+                                        aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
+                                        std::vector<std::string>& out) {
+        static thread_local int depth = 0;
+        if (depth > 0)
+            return;
+        struct Depth {
+            int& d;
+            explicit Depth(int& x)
+                : d(x) {
+                ++d;
+            }
+            ~Depth() { --d; }
+            Depth(const Depth&) = delete;
+            Depth& operator=(const Depth&) = delete;
+        } guard{depth};
+
+        auto add_name = [&](const std::string& name, const std::string& prefix) {
+            if (name.empty() || name[0] == '@' || name[0] == '_' || name[0] == ':')
+                return;
+            out.push_back(name);
+            if (!prefix.empty())
+                out.push_back(prefix + name);
+        };
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            if (flat.is_free_slot(id))
+                continue;
+            const auto v = flat.get(id);
+            if (v.tag != aura::ast::NodeTag::Call || v.children.empty())
+                continue;
+            const auto callee_id = v.child(0);
+            if (callee_id == aura::ast::NULL_NODE || callee_id >= flat.size() ||
+                flat.is_free_slot(callee_id))
+                continue;
+            const auto callee = flat.get(callee_id);
+            if (callee.tag != aura::ast::NodeTag::Variable ||
+                callee.sym_id == aura::ast::INVALID_SYM)
+                continue;
+            const auto cname = pool.resolve(callee.sym_id);
+            if (cname != "require" && cname != "import")
+                continue;
+            bool bare = false;
+            std::vector<std::string> paths;
+            for (std::size_t ci = 1; ci < v.children.size(); ++ci) {
+                const auto arg_id = v.child(ci);
+                if (arg_id == aura::ast::NULL_NODE || arg_id >= flat.size() ||
+                    flat.is_free_slot(arg_id))
+                    continue;
+                const auto arg = flat.get(arg_id);
+                if (arg.sym_id == aura::ast::INVALID_SYM)
+                    continue;
+                const auto text = std::string(pool.resolve(arg.sym_id));
+                if (text.empty())
+                    continue;
+                if (arg.tag == aura::ast::NodeTag::Variable &&
+                    (text == "all:" || text.back() == ':')) {
+                    if (text == "all:")
+                        bare = true;
+                    continue;
+                }
+                if (arg.tag == aura::ast::NodeTag::LiteralString ||
+                    arg.tag == aura::ast::NodeTag::Variable)
+                    paths.push_back(text);
+            }
+            for (const auto& path : paths) {
+                const auto mod_val = load(path);
+                if (!types::is_module(mod_val))
+                    continue;
+                const auto idx = types::as_module_idx(mod_val);
+                if (idx >= modules.size() || modules[idx] == nullptr)
+                    continue;
+                std::string prefix;
+                if (!bare) {
+                    const auto slash = path.rfind('/');
+                    auto base = slash == std::string::npos ? path : path.substr(slash + 1);
+                    if (base.size() > 5 && base.ends_with(".aura"))
+                        base.resize(base.size() - 5);
+                    prefix = base + ":";
+                }
+                auto* env = modules[idx];
+                for (const auto& b : env->bindings())
+                    add_name(b.first, prefix);
+                for (const auto& b : env->bindings_with_names())
+                    add_name(b.first, prefix);
+            }
+        }
+    }
 } // namespace
 
 std::string Evaluator::run_typecheck_no_lock() {
@@ -330,6 +425,12 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // rebuild when this checker already holds the same set. A fresh
             // checker has fp 0 and always seeds.
             std::uint64_t host_fp = 0;
+            // Issue #5090: collect before the top_ lock. Loading a module
+            // binds names and must not run under that shared lock.
+            std::vector<std::string> required_names;
+            append_workspace_require_names(
+                [&](const std::string& path) { return load_module_file(path); }, modules_,
+                *workspace_flat_, *workspace_pool_, required_names);
             auto top_bind_guard = top_.lock_bindings_shared(); // #4717 shared top env
             {
                 std::uint64_t h = 1469598103934665603ull;
@@ -344,6 +445,12 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                 mix(syms.size());
                 for (const auto& b : syms)
                     mix(static_cast<std::uint64_t>(b.first));
+                // Exports a require/import in THIS workspace source would
+                // bind. Fold them into the fingerprint so a new require
+                // rebuilds the host set.
+                mix(required_names.size());
+                for (const auto& n : required_names)
+                    mix(std::hash<std::string_view>{}(n));
                 host_fp = h | 1ull; // never 0
             }
             if (tc.host_visible_names_fp() == host_fp) {
@@ -364,6 +471,8 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                     take(binding.first);
                 for (const auto& binding : top_.bindings_with_names())
                     take(binding.first);
+                for (const auto& n : required_names)
+                    take(n);
                 tc.set_host_visible_names(std::move(host_names));
                 tc.set_host_visible_names_fp(host_fp);
             }

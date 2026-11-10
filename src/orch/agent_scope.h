@@ -931,9 +931,28 @@ public:
         // #3437 source-cite window around the join-all primitive stays put.
         retire_settled_fibers_unlocked_();
         if (!have)
-            jr.status = serve::JoinStatus::Invalid; // empty scope, no tree walked
+            jr.status = serve::JoinStatus::Ok; // idle empty scope (#5103)
         jr.wait_us = wait_us_total;
         return jr;
+    }
+
+    // Issue #5103: settled join must not unregister the per-Evaluator
+    // scope. Release finished handles (directory and scope-resolve go
+    // empty; ~AgentHandle drops reservations) and leave the scope
+    // registered so a later join, watch, or spawn still has one.
+    void release_settled_members() noexcept {
+        std::vector<AgentHandle> handles;
+        std::vector<std::unique_ptr<AgentScope>> children;
+        {
+            ScopeEnterGuard g(this, "release_settled_members");
+            if (g.denied_hard() || g.soft_collision)
+                return;
+            handles.swap(handles_);
+            children.swap(children_);
+            specs_.clear();
+            restart_counts_.clear();
+            consecutive_stall_counts_.clear();
+        }
     }
 
     // Issue #3208: last join_all effective on_join_fail + count of

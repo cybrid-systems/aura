@@ -96,14 +96,16 @@
             (set! rest (cdr rest))))
         result))))
 
-; Trim whitespace from both ends (ASCII space 32). Index-based O(1) stack.
+; Trim ASCII whitespace from both ends (character code <= 32: space,
+; tab, CR, LF, and the other C0 controls). Index-based O(1) stack.
+; #5089: a code-32-only trim left the newline from read-file in the string.
 (define (string-trim s)
   (define n (string-length s))
   (let ((lo 0)
         (hi n))
-    (while (lambda () (and (< lo hi) (= (string-ref s lo) 32)))
+    (while (lambda () (and (< lo hi) (<= (string-ref s lo) 32)))
       (lambda () (set! lo (+ lo 1))))
-    (while (lambda () (and (> hi lo) (= (string-ref s (- hi 1)) 32)))
+    (while (lambda () (and (> hi lo) (<= (string-ref s (- hi 1)) 32)))
       (lambda () (set! hi (- hi 1))))
     (substring s lo hi)))
 

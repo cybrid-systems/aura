@@ -162,20 +162,29 @@
 ; Alias for callers that want an explicit iterative name (AC #1549).
 (define intersperse-iterative intersperse)
 
-; any / every: SRFI-1 shapes (Issue #5003) — any number of lists,
-; stopping at the shortest; any returns the first true value, every the
-; last one (#t on an empty/all-true walk). all stays the boolean form
-; for callers that only want #t/#f.
+; any / every: SRFI-1 shapes (Issue #5003 / #5096) — any number of lists,
+; stopping at the shortest (a later list may run out before the first);
+; any returns the first true value, every the last one (#t on an
+; empty/all-true walk). all stays the boolean form for callers that
+; only want #t/#f.
+(define (any-list-empty? ls)
+  (let loop ((xs ls))
+    (if (null? xs)
+        #f
+        (if (null? (car xs))
+            #t
+            (loop (cdr xs))))))
+
 (define (any pred . lists)
   (let loop ((ls lists))
-    (if (or (null? ls) (null? (car ls)))
+    (if (or (null? ls) (any-list-empty? ls))
       #f
       (let ((r (apply pred (map car ls))))
         (if r r (loop (map cdr ls)))))))
 
 (define (every pred . lists)
   (let loop ((ls lists) (last #t))
-    (if (or (null? ls) (null? (car ls)))
+    (if (or (null? ls) (any-list-empty? ls))
       last
       (let ((r (apply pred (map car ls))))
         (if r (loop (map cdr ls) r) #f)))))
@@ -306,12 +315,30 @@
 ; export list above, so (require "std/list" all:) keeps exposing them —
 ; they now resolve to the primitives.
 
-; (values x ...) — one value is returned as is; several are packed in a
-; list that let-values / call-with-values unpack. Aura has no native
-; multiple values.
+; (values x ...) — one value is returned as is. Zero or several values
+; are a vector tagged 'values, which let-values / call-with-values
+; unpack. A bare list is one value: (list 1 2) is not (values 1 2).
+; Aura has no native multiple-values return (#5096).
 (define (values . xs)
-  (if (and (pair? xs) (null? (cdr xs))) (car xs) xs))
+  (if (and (pair? xs) (null? (cdr xs)))
+      (car xs)
+      (let ((v (make-vector (+ (length xs) 1) #f)))
+        (vector-set! v 0 'values)
+        (let loop ((i 1) (ys xs))
+          (if (null? ys)
+              v
+              (begin
+                (vector-set! v i (car ys))
+                (loop (+ i 1) (cdr ys))))))))
 
 (define (call-with-values producer consumer)
   (let ((v (producer)))
-    (if (list? v) (apply consumer v) (consumer v))))
+    (if (and (vector? v)
+             (> (vector-length v) 0)
+             (eq? (vector-ref v 0) 'values))
+        (apply consumer
+               (let loop ((i 1) (acc (list)))
+                 (if (>= i (vector-length v))
+                     (reverse acc)
+                     (loop (+ i 1) (cons (vector-ref v i) acc)))))
+        (consumer v))))

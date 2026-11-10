@@ -1635,6 +1635,28 @@ static void file_reclaim_mark_value(
     }
 }
 
+namespace {
+// Issue #5099: pending body closures are exact ids. The pin watermark also
+// covers every closure allocated before the newest pending body, which kept
+// finished fibers' capture frames allocated until the last join.
+struct PendingClosurePins {
+    std::unordered_set<std::uint64_t> ids;
+    std::uint64_t freeze = 0;
+    explicit PendingClosurePins(const Evaluator& ev) {
+        // Issue #4704: acquire the effective watermark on the sweep thread
+        // so a worker's pending-body release happens-before this mark.
+        (void)ev.gc_safe_closure_id();
+        freeze = ev.gc_freeze_floor();
+        std::vector<std::uint64_t> raw;
+        aura_collect_pending_body_closures(&ev, raw);
+        ids.insert(raw.begin(), raw.end());
+    }
+    [[nodiscard]] bool operator()(std::uint64_t id) const {
+        return id < freeze || ids.contains(id);
+    }
+};
+} // namespace
+
 bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     // Same destructive-GC predicate as compact_sweep. Do not also skip on
     // mutation_boundary_depth: a boundary held across cs.eval would disable
@@ -1672,6 +1694,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
     const std::uint64_t closure_hi_at_mark = aura_gc_sweep_published_closure_hi() != 0
                                                  ? aura_gc_sweep_published_closure_hi()
                                                  : closure_id_watermark();
+    const PendingClosurePins pending_pins(*this);
 
     if (view.live_ir)
         view.live_ir->clear();
@@ -1919,7 +1942,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
                 for (const auto& cl_sh : closures_shards_) {
                     for (const auto& kv : cl_sh.map) {
                         const auto id = kv.first;
-                        const bool keep = id < gc_safe_closure_id() || live_tw.contains(id) ||
+                        const bool keep = pending_pins(id) || live_tw.contains(id) ||
                                           seen_ir.contains(id);
                         if (!keep || !expanded.insert(id).second)
                             continue;
@@ -1950,7 +1973,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
         for (auto& cl_sh : closures_shards_) {
             for (auto it = cl_sh.map.begin(); it != cl_sh.map.end();) {
                 const auto id = it->first;
-                if (id < gc_safe_closure_id() || id >= closure_hi_at_mark || live_tw.contains(id) ||
+                if (pending_pins(id) || id >= closure_hi_at_mark || live_tw.contains(id) ||
                     seen_ir.contains(id)) {
                     ++it;
                     continue;
@@ -1975,6 +1998,7 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
             env_frame_on_freelist_.resize(env_frames_.size(), 0);
         std::vector<EnvId> rebuilt;
         rebuilt.reserve(env_frames_.size());
+        std::size_t newly = 0;
         for (std::size_t i = 0; i < env_frames_.size(); ++i) {
             const bool live = i < live_frame.size() && live_frame[i] != 0;
             const bool newborn = i >= n_frames;
@@ -1990,13 +2014,17 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
                 fr.pool_ = nullptr;
                 fr.live_safe_top_ = false; // Issue #5059
                 fr.version_ = INVALID_VERSION;
+                ++newly;
             }
             env_frame_on_freelist_[i] = 1;
             const auto id = static_cast<EnvId>(i);
             rebuilt.push_back(id);
             dead_snaps.push_back(id);
         }
-        env_frame_reclaimed_total_.fetch_add(rebuilt.size(), std::memory_order_relaxed);
+        // Issue #5100: a frame already on the freelist is not reclaimed again.
+        // Counting the whole dead set on every pass made the counter grow
+        // with (sweeps × live slots) during fiber churn.
+        env_frame_reclaimed_total_.fetch_add(newly, std::memory_order_relaxed);
         env_frame_reuse_ = std::move(rebuilt);
     }
     {
@@ -2144,6 +2172,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
     const std::uint64_t closure_hi_at_mark = aura_gc_sweep_published_closure_hi() != 0
                                                  ? aura_gc_sweep_published_closure_hi()
                                                  : closure_id_watermark();
+    const PendingClosurePins pending_pins(*this);
     // Same destructive-GC predicate as compact_sweep, plus an
     // EnvFrameLifetimeGuard: freelist reuse would alias a held index.
     // A whole-eval mutation boundary is NOT a skip — file mode holds
@@ -2434,7 +2463,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                 for (const auto& kv : cl_sh.map) {
                     const auto id = kv.first;
                     const bool keep =
-                        id < gc_safe_closure_id() || live_tw.contains(id) || seen_ir.contains(id);
+                        pending_pins(id) || live_tw.contains(id) || seen_ir.contains(id);
                     if (!keep || !expanded.insert(id).second)
                         continue;
                     if (kv.second.env_id != NULL_ENV_ID)
@@ -2464,7 +2493,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         for (auto& cl_sh : closures_shards_) {
             for (auto it = cl_sh.map.begin(); it != cl_sh.map.end();) {
                 const auto id = it->first;
-                if (id < gc_safe_closure_id() || id >= closure_hi_at_mark || live_tw.contains(id) ||
+                if (pending_pins(id) || id >= closure_hi_at_mark || live_tw.contains(id) ||
                     seen_ir.contains(id)) {
                     ++it;
                     continue;
@@ -2486,6 +2515,7 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
             env_frame_on_freelist_.resize(env_frames_.size(), 0);
         std::vector<EnvId> rebuilt;
         rebuilt.reserve(env_frames_.size());
+        std::size_t newly = 0;
         for (std::size_t i = 0; i < env_frames_.size(); ++i) {
             const bool live = i < live_frame.size() && live_frame[i] != 0;
             // Allocated after the snapshot: another fiber's frame. Keep it.
@@ -2502,14 +2532,16 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
                 fr.pool_ = nullptr;
                 fr.live_safe_top_ = false; // Issue #5059
                 fr.version_ = INVALID_VERSION;
+                ++newly;
             }
             env_frame_on_freelist_[i] = 1;
             const auto id = static_cast<EnvId>(i);
             rebuilt.push_back(id);
             dead_snaps.push_back(id);
         }
-        // Issue #5057 AC4: count the frames this sweep handed back.
-        env_frame_reclaimed_total_.fetch_add(rebuilt.size(), std::memory_order_relaxed);
+        // Issue #5057 AC4 / #5100: count frames newly handed back, not the
+        // frames that were already on the freelist.
+        env_frame_reclaimed_total_.fetch_add(newly, std::memory_order_relaxed);
         env_frame_reuse_ = std::move(rebuilt);
     }
     {
