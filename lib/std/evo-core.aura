@@ -82,8 +82,10 @@
 ;   mutate:rebind until (set-code "…") + (eval-current) installs it. Install
 ;   once, before creating any search: a second set-code replaces the AST the
 ;   module closures were compiled against.
-; * Under Restricted (aura soft) mutate is granted for workspace 0 only, so
-;   a trial's child workspace refuses the mutation; evo:trial then reports
+; * A local single-tenant Restricted session (preset=dev, #4322/#5086) can
+;   mutate:rebind inside a trial's child workspace. The child COW stays off
+;   the live worldline; AURA_SANDBOX=off is not required. Strict and
+;   multi-tenant sessions still refuse that mutation; evo:trial then reports
 ;   status "error" and leaves the live worldline alone (it never falls back
 ;   to mutating live). The suite runs with AURA_SANDBOX=off, like every
 ;   tests/suite file.
