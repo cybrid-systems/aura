@@ -76,6 +76,23 @@ int main() {
 
     const auto self = aura::compiler::paths::resolve_self_executable();
     expect(!self.empty() && self.front() == '/', "self executable is an absolute readlink");
+    // Issue #5087: the release bundle's /proc/self/exe is rt/ld.so. The
+    // launcher exports AURA_SELF=bin/aura, and that is the re-exec path.
+    {
+        const char* prev = std::getenv("AURA_SELF");
+        const std::string saved = prev ? prev : std::string();
+        ::setenv("AURA_SELF", "/tmp/aura-self-missing", 1);
+        const auto ignored = aura::compiler::paths::resolve_self_executable();
+        expect(ignored != "/tmp/aura-self-missing",
+               "5087: a non-executable AURA_SELF does not replace /proc/self/exe");
+        ::setenv("AURA_SELF", self.c_str(), 1);
+        const auto via = aura::compiler::paths::resolve_self_executable();
+        expect(via == self, "5087: an executable AURA_SELF is the re-exec path");
+        if (saved.empty())
+            ::unsetenv("AURA_SELF");
+        else
+            ::setenv("AURA_SELF", saved.c_str(), 1);
+    }
 
     std::string kept = "KEEP";
     expect(!aura::compiler::io::append_fd(-1, kept) && kept == "KEEP",
