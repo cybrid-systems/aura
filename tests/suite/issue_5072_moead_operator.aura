@@ -1,0 +1,66 @@
+; #5072: an unknown operator string is an error, not silent DE.
+; "rand" stays the uniform-random arm and says so on the report.
+
+(require "std/moead" all:)
+
+(define fails 0)
+(define (expect cond name)
+  (if cond
+      #t
+      (begin
+        (set! fails (+ fails 1))
+        (display "FAIL-5072 ")
+        (display name)
+        (newline))))
+
+(define (caught th)
+  (try (begin (th) "")
+       (catch (e) (if (string? e) e (format "~a" e)))))
+
+(define (base op)
+  (hash "n-obj" 2 "H" 4 "T" 4 "dim" 3 "seed" 1
+        "bounds" (list (list 0.0 1.0))
+        "operator" op))
+
+(define msg (caught (lambda () (moead:make (base "xyzz")))))
+(expect (not (string=? msg "")) "unknown operator raises")
+(expect (not (= -1 (string-index msg "xyzz" 0))) "the diagnostic names xyzz")
+(expect (not (= -1 (string-index msg "de-explore" 0))) "the diagnostic names de-explore")
+(expect (not (= -1 (string-index msg "rand" 0))) "the diagnostic names rand")
+(expect (not (= -1 (string-index msg "sbx" 0))) "the diagnostic names sbx")
+
+(define de (moead:make (base "de")))
+(define rand (moead:make (base "rand")))
+(define sbx (moead:make (base "sbx")))
+(expect (string=? (hash-ref (moead:report rand) "operator-meaning") "random")
+        "rand means random")
+(expect (string=? (hash-ref (moead:report de) "operator-meaning") "de")
+        "de means de")
+(define gde (hash-ref (car (moead:ask de 4)) "genome"))
+(define grd (hash-ref (car (moead:ask rand 4)) "genome"))
+(expect (not (equal? gde grd)) "rand does not reproduce the DE genome")
+(expect (= 4 (length (moead:ask sbx 4))) "sbx still proposes")
+
+(define proc (moead:make (base (lambda (s gen slot r) (list 0.25 0.25 0.25)))))
+(expect (equal? (hash-ref (car (moead:ask proc 1)) "genome") (list 0.25 0.25 0.25))
+        "a procedure operator is accepted")
+
+(define chooser (moead:make (base (hash "choose" (lambda (s sub) "de")))))
+(expect (string=? (hash-ref (moead:report chooser) "operator-meaning") "choose")
+        "a choose hash is accepted")
+(expect (= 2 (length (moead:ask chooser 2))) "the chooser still proposes")
+
+(define bad-hash (caught (lambda () (moead:make (base (hash "nope" 1))))))
+(expect (not (string=? bad-hash "")) "a hash without choose is refused")
+
+(define help (moead:help))
+(expect (not (= -1 (string-index help "not DE" 0))) "help says unknown strings are not DE")
+(expect (not (= -1 (string-index help "uniform random" 0))) "help says rand is random")
+
+(if (= fails 0)
+    (display "OK-5072 moead operator\n")
+    (begin
+      (display "FAIL-5072 fails=")
+      (display fails)
+      (newline)
+      (error "5072 suite failed")))

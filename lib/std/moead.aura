@@ -39,7 +39,7 @@
 (define moead-schema-version 1)
 
 (define (moead:help)
-  "std/moead (#4940): (moead:make (hash \"n-obj\" 2 \"H\" 39 \"T\" 10 \"scalar\" \"tchebycheff\" \"operator\" \"de\" \"dim\" 30)) -> s; (moead:ask s 40) -> candidates; (moead:tell! s cands objs) -> #t; (moead:run! s eval 20000) -> s; (moead:front s) (moead:weights s). Scalars: tchebycheff | pbi | ws. dd #t turns on the MOEA/DD dominance+decomposition archive. Operator: de | de-explore | sbx | rand, a proposal callable (s gen slot r) -> genome|hash (#4942: prop:moead-operator), or (hash \"choose\" (lambda (s sub) name)) for MOEA/D-FRRMAB (#4945). \"init-genome\" seeds a code-genome population from source text.")
+  "std/moead (#4940): (moead:make (hash \"n-obj\" 2 \"H\" 39 \"T\" 10 \"scalar\" \"tchebycheff\" \"operator\" \"de\" \"dim\" 30)) -> s; (moead:ask s 40) -> candidates; (moead:tell! s cands objs) -> #t; (moead:run! s eval 20000) -> s; (moead:front s) (moead:weights s). Scalars: tchebycheff | pbi | ws. dd #t turns on the MOEA/DD dominance+decomposition archive. Operator: de | de-explore | sbx | rand, a proposal callable (s gen slot r) -> genome|hash (#4942: prop:moead-operator), or (hash \"choose\" (lambda (s sub) name)) for MOEA/D-FRRMAB (#4945). Any other string is an error naming that set; it is not DE. \"rand\" is uniform random sampling, not differential evolution. \"init-genome\" seeds a code-genome population from source text.")
 
 (define (moead:schema) moead-schema-version)
 
@@ -351,10 +351,51 @@
                   (if (null? fl) fl (cdr fl))
                   (cons (/ d sp) acc)))))))
 
+; ── operator (#5072) ───────────────────────────────────────────────
+; Accepted: "de", "de-explore", "sbx", "rand", a procedure, or
+; (hash "choose" f). Anything else used to fall through to DE, so a typo
+; (and, before v0.2, the spelling "rand") silently changed the search.
+(define (moead-operator-name? op)
+  (and (string? op)
+       (or (string=? op "de") (string=? op "de-explore")
+           (string=? op "sbx") (string=? op "rand"))))
+
+(define (moead-operator-accepted? op)
+  (cond ((procedure? op) #t)
+        ((hash? op) (procedure? (md-opt op "choose" #f)))
+        (else (moead-operator-name? op))))
+
+(define (moead-operator-text op)
+  (cond ((string? op) (string-append "\"" op "\""))
+        ((procedure? op) "a procedure")
+        ((hash? op) "a hash")
+        ((eq? op #f) "#f")
+        ((eq? op #t) "#t")
+        ((number? op) (number->string op))
+        (else "a value")))
+
+(define (moead-operator-meaning op)
+  (cond ((and (string? op) (string=? op "rand")) "random")
+        ((string? op) op)
+        ((procedure? op) "procedure")
+        ((hash? op) "choose")
+        (else "unknown")))
+
+(define (moead-refuse-operator who op)
+  (error (string-append who ": unknown operator " (moead-operator-text op)
+                        "; accepted: \"de\", \"de-explore\", \"sbx\", \"rand\", "
+                        "a procedure, or (hash \"choose\" f)")))
+
 ; ── state ───────────────────────────────────────────────────────────
 (define (moead:make opts)
   (let* ((o (if (hash? opts) opts (hash)))
-         (m0 (md-opt o "n-obj" 2))
+         (op0 (md-opt o "operator" "de")))
+    (if (not (moead-operator-accepted? op0))
+        (moead-refuse-operator "moead:make" op0)
+        (moead-make-state o op0))))
+
+(define (moead-make-state o op0)
+  (let* ((m0 (md-opt o "n-obj" 2))
          (m (if (and (integer? m0) (>= m0 1)) m0 2))
          (H0 (md-opt o "H" 12))
          (H (if (and (integer? H0) (>= H0 1)) H0 12))
@@ -388,7 +429,7 @@
                                       "objs" (list)
                                       "sub" i)
                                 acc))))))
-    (hash "kind" "moead" "schema" moead-schema-version
+    (let ((s (hash "kind" "moead" "schema" moead-schema-version
           "seed" seed "n-obj" m "H" H "T" T "dim" dim "bounds" bounds
           "weights" ws "weights-h" (md-index-hash ws)
           "neighbors" (md-neighbors ws T)
@@ -396,7 +437,8 @@
                      (if (string? sc) sc "tchebycheff"))
           "theta" (md-num (md-opt o "theta" 5.0))
           "nr" (md-opt o "nr" 2) "delta" (md-num (md-opt o "delta" 0.9))
-          "operator" (md-opt o "operator" "de")
+          "operator" op0
+          "operator-meaning" (moead-operator-meaning op0)
           "proposer" (md-opt o "proposer" #f)
           "init-genome" init
           "dd" (eq? (md-opt o "dd" #f) #t)
@@ -407,6 +449,16 @@
           "span0" (list) "span-floor" (list)
           "pop" pop "gen" 0 "slot" n "nfe" 0
           "archive" (pareto:archive (hash "dirs" dirs "cap" n "trim" "hv")))))
+      ; #5072: "rand" used to mean DE (unknown strings fell through). Say so
+      ; in the audit log when recording is on, and keep the meaning on the handle.
+      (if (and (string? op0) (string=? op0 "rand"))
+          (evo:record! "moead:operator" "OPERATOR"
+                       "operator \"rand\" is uniform random sampling, not differential evolution"
+                       (hash "operator" "rand" "meaning" "random"
+                             "note" "before v0.2 an unknown operator, including \"rand\", fell through to DE")
+                       "" 0)
+          #f)
+      s)))
 
 (define (moead-valid? s)
   (and (hash? s) (string=? (md-opt s "kind" "") "moead")))
@@ -481,6 +533,9 @@
        ;; deliberate "bad" arm in the FRRMAB test (and a legitimate
        ;; restart move in a search that has stalled).
        (md-genome dim bounds r))
+      ;; #5072: do not treat an unknown string as DE.
+      ((not (moead-operator-name? op))
+       (moead-refuse-operator "moead" op))
       (else
        (let* ((k (length nbrs))
               (i1 (md-rand-int! r k))
@@ -725,6 +780,8 @@
          (ref (md-opt s "ref" #f))
          (ref* (if (list? ref) ref (pareto:ref-point objs dirs 0.1))))
     (hash "kind" "moead" "gen" (md-opt s "gen" 0) "nfe" (md-opt s "nfe" 0)
+          "operator" (md-opt s "operator" "de")
+          "operator-meaning" (md-opt s "operator-meaning" "")
           "subproblems" (length (moead:weights s))
           "front-size" (length f)
           "ideal" (let ((z (md-opt s "zmin" (list))))
