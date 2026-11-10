@@ -31,9 +31,7 @@ def aura(args: list[str], cwd: str, log: Path) -> subprocess.CompletedProcess[st
     env["AURA_SANDBOX"] = "off"
     env.pop("AURA_PIPELINE_STRICT", None)
     env["AURA_EVO_LOG"] = str(log)
-    return subprocess.run(
-        [str(AURA_BIN), *args], cwd=cwd, capture_output=True, text=True, env=env, timeout=120
-    )
+    return subprocess.run([str(AURA_BIN), *args], cwd=cwd, capture_output=True, text=True, env=env, timeout=120)
 
 
 class MoeadOperatorAudit(unittest.TestCase):
