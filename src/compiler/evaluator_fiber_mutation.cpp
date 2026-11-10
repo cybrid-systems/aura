@@ -3601,6 +3601,7 @@ extern "C" void aura_collect_pending_body_closures(const void* evaluator,
         }
         out.insert(out.end(), st.unkeyed_cids.begin(), st.unkeyed_cids.end());
     } catch (...) {
+        // [SILENCE-PRIM-#5099] noexcept C ABI: drop a partial id list.
         out.clear();
     }
 }
