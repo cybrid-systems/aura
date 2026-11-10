@@ -1,0 +1,21 @@
+; #5066: parallel CLI fibers still compute the modulo loop correctly.
+; Scaling numbers are recorded by tests/python/bench_fiber_scale_5066.py;
+; this file is the correctness regression (a wrong fast path fails the sum).
+
+(define WORK 20000)
+(define (body)
+  (let loop ((i 0) (a 0))
+    (if (>= i WORK) a
+      (loop (+ i 1) (+ a (modulo i 7))))))
+(define one (body))
+(define ids (list (fiber:spawn (lambda () (body)))
+                  (fiber:spawn (lambda () (body)))
+                  (fiber:spawn (lambda () (body)))
+                  (fiber:spawn (lambda () (body)))))
+(define (join-all xs acc)
+  (if (null? xs) acc
+    (join-all (cdr xs) (+ acc (fiber:join (car xs))))))
+(define total (join-all ids 0))
+(if (= total (* 4 one))
+  (begin (display "OK-5066 ") (display total) (newline))
+  (begin (display "FAIL-5066 ") (display total) (newline) (exit 1)))
