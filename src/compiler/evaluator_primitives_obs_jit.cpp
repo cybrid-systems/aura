@@ -2178,6 +2178,32 @@ void register_metrics_facade_stats_catalog(PrimRegistrar add, Evaluator& ev) {
     });
 }
 
+// Issue #5117: a session mid sets bit 63 (#3964 / #4432). make_int's hot
+// contract aborts under the restricted sandbox (production harden) and
+// try/catch cannot see it. The query face already publishes the low 62
+// bits; the group snapshot must do the same.
+[[nodiscard]] static std::int64_t metrics_reemit_mid_fixnum(std::uint64_t mid) noexcept {
+    constexpr auto kMask =
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max() >> 1);
+    return static_cast<std::int64_t>(mid & kMask);
+}
+
+// Issue #5117: every other counter is a magnitude. Clamp it into the
+// fixnum domain so a leftover high bit cannot abort the process.
+[[nodiscard]] static std::int64_t metrics_counter_fixnum(std::uint64_t raw) noexcept {
+    constexpr auto kMax = std::numeric_limits<std::int64_t>::max() >> 1;
+    if (raw > static_cast<std::uint64_t>(kMax))
+        return kMax;
+    return static_cast<std::int64_t>(raw);
+}
+
+[[nodiscard]] static EvalValue metrics_group_value(std::string_view name,
+                                                   std::uint64_t raw) noexcept {
+    if (name == "aot_last_reemit_mid")
+        return make_int(metrics_reemit_mid_fixnum(raw));
+    return make_int(metrics_counter_fixnum(raw));
+}
+
 // Issue #5031: (engine:metrics) registration phase.
 void register_metrics_facade_engine_metrics(PrimRegistrar add, Evaluator& ev) {
     // Issue #1433 / P1a: (engine:metrics [name | :all | :prefix s | :group g])
@@ -2219,7 +2245,7 @@ void register_metrics_facade_engine_metrics(PrimRegistrar add, Evaluator& ev) {
         // the cost. The table is filled once; each call only loads atomics.
         struct MetricsFieldLoad {
             const char* name;
-            std::int64_t (*load)(const CompilerMetrics*);
+            std::uint64_t (*load)(const CompilerMetrics*);
         };
         static const auto kFieldsByGroup = [] {
             static const char* kOrder[] = {"compile", "jit", "mutate", "query",
@@ -2233,8 +2259,8 @@ void register_metrics_facade_engine_metrics(PrimRegistrar add, Evaluator& ev) {
             std::array<std::vector<MetricsFieldLoad>, 8> table;
 #define AURA_COMPILER_METRICS_FIELD(name)                                                          \
     table[index_of(metrics_group_for_field(#name))].push_back(                                     \
-        {#name, [](const CompilerMetrics* m) -> std::int64_t {                                     \
-             return static_cast<std::int64_t>(m->name.load(std::memory_order_relaxed));            \
+        {#name, [](const CompilerMetrics* m) -> std::uint64_t {                                    \
+             return m->name.load(std::memory_order_relaxed);                                       \
          }});
 #include "compiler_metrics_fields.inc"
 #undef AURA_COMPILER_METRICS_FIELD
@@ -2260,12 +2286,13 @@ void register_metrics_facade_engine_metrics(PrimRegistrar add, Evaluator& ev) {
                 const auto& src = kFieldsByGroup[static_cast<std::size_t>(i)];
                 dst.reserve(src.size());
                 for (const auto& field : src) {
-                    auto val = make_int(field.load(m));
                     // Issue #3779: steal_complete_total SSOT is process-wide.
-                    if (std::string_view(field.name) == "steal_complete_total")
-                        val = make_int(
-                            static_cast<std::int64_t>(aura::gc_hooks::steal_complete_total()));
-                    dst.emplace_back(field.name, val);
+                    const auto raw = std::string_view(field.name) == "steal_complete_total"
+                                         ? aura::gc_hooks::steal_complete_total()
+                                         : field.load(m);
+                    // Issue #5117: never make_int a raw counter. A reemit mid
+                    // sets bit 63 and aborts the process under --preset dev.
+                    dst.emplace_back(field.name, metrics_group_value(field.name, raw));
                 }
             }
             return groups;
@@ -2429,29 +2456,22 @@ void register_metrics_facade_engine_metrics(PrimRegistrar add, Evaluator& ev) {
             for (auto& p : nested)
                 kv.push_back(std::move(p));
             // Back-compat nested "compiler" key with env/arena snapshot (#1385).
+            // Issue #5117: same fixnum clamp as the group snapshot.
+            auto counter = [](std::uint64_t raw) { return make_int(metrics_counter_fixnum(raw)); };
             std::vector<std::pair<std::string, EvalValue>> ck;
-            ck.push_back({"env_frames_size_total",
-                          make_int(static_cast<std::int64_t>(m->env_frames_size_total.load()))});
-            ck.push_back({"env_frames_stale_count",
-                          make_int(static_cast<std::int64_t>(m->env_frames_stale_count.load()))});
+            ck.push_back({"env_frames_size_total", counter(m->env_frames_size_total.load())});
+            ck.push_back({"env_frames_stale_count", counter(m->env_frames_stale_count.load())});
             // Issue #5057 AC4: frame-arena pressure beside the slot count.
-            ck.push_back({"env_frames_live_total",
-                          make_int(static_cast<std::int64_t>(m->env_frames_live_total.load()))});
-            ck.push_back({"env_frames_high_water",
-                          make_int(static_cast<std::int64_t>(m->env_frames_high_water.load()))});
+            ck.push_back({"env_frames_live_total", counter(m->env_frames_live_total.load())});
+            ck.push_back({"env_frames_high_water", counter(m->env_frames_high_water.load())});
             ck.push_back(
-                {"env_frame_reuse_hits_total",
-                 make_int(static_cast<std::int64_t>(m->env_frame_reuse_hits_total.load()))});
+                {"env_frame_reuse_hits_total", counter(m->env_frame_reuse_hits_total.load())});
             ck.push_back(
-                {"env_frame_reuse_misses_total",
-                 make_int(static_cast<std::int64_t>(m->env_frame_reuse_misses_total.load()))});
+                {"env_frame_reuse_misses_total", counter(m->env_frame_reuse_misses_total.load())});
             ck.push_back(
-                {"env_frames_reclaimed_total",
-                 make_int(static_cast<std::int64_t>(m->env_frames_reclaimed_total.load()))});
-            ck.push_back({"ast_arena_bytes_in_use",
-                          make_int(static_cast<std::int64_t>(m->ast_arena_bytes_in_use.load()))});
-            ck.push_back({"ast_arena_upstream_bytes",
-                          make_int(static_cast<std::int64_t>(m->ast_arena_upstream_bytes.load()))});
+                {"env_frames_reclaimed_total", counter(m->env_frames_reclaimed_total.load())});
+            ck.push_back({"ast_arena_bytes_in_use", counter(m->ast_arena_bytes_in_use.load())});
+            ck.push_back({"ast_arena_upstream_bytes", counter(m->ast_arena_upstream_bytes.load())});
             kv.push_back({"compiler", build_hash(ck)});
         }
         return build_hash(kv);
