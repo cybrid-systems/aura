@@ -330,6 +330,27 @@ __attribute__((weak, used)) void aura_fiber_root_pending_body_latest(void* evalu
 __attribute__((weak, used)) void aura_fiber_release_pending_body_latest(void* evaluator) noexcept {
     (void)evaluator;
 }
+__attribute__((weak, used)) void aura_fiber_note_spawn_body(std::uint64_t closure_id) noexcept {
+    (void)closure_id;
+}
+__attribute__((weak, used)) std::uint64_t aura_fiber_take_spawn_body() noexcept {
+    return 0;
+}
+__attribute__((weak, used)) std::uint64_t
+aura_fiber_root_pending_closure(void* evaluator, std::uint64_t closure_id) noexcept {
+    (void)evaluator;
+    return closure_id;
+}
+__attribute__((weak, used)) void
+aura_fiber_release_pending_closure(void* evaluator, std::uint64_t closure_id) noexcept {
+    (void)evaluator;
+    (void)closure_id;
+}
+__attribute__((weak, used)) void
+aura_collect_pending_body_closures(const void* evaluator, std::vector<std::uint64_t>& out) noexcept {
+    (void)evaluator;
+    (void)out;
+}
 // Issue #4706: tree-walker root segment hand-off (strong definitions in
 // evaluator_eval_flat.cpp). Without the evaluator module there are no
 // walker roots, so detach reports an empty segment and attach/free are

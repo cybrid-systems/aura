@@ -30,6 +30,7 @@ import aura.compiler.value;
 // Issue #4768: body-liveness for the file-heap sweep gate (runtime_ssot.cpp).
 extern "C" void aura_fiber_body_enter() noexcept;
 extern "C" void aura_fiber_body_exit() noexcept;
+extern "C" int aura_fiber_bodies_running_other() noexcept;
 
 namespace aura::compiler::primitives_detail {
 
@@ -1945,6 +1946,7 @@ void RegSplitParts::register_messaging_fiber_spawn_primitive(PrimRegistrar add, 
             // waiting for its turn (a cooperative yield) does not stall on
             // a takeover that will never come.
             cli_body_lock_publish_takeover();
+            bool result_published = false;
             // Issue #1291: wait until spawn path publishes the real fid
             // AND registers s_fiber_results[fid] (g_fiber_spawn may run
             // the body before returning / before register).
@@ -1976,13 +1978,22 @@ void RegSplitParts::register_messaging_fiber_spawn_primitive(PrimRegistrar add, 
                     if (it != s_fiber_results.end()) {
                         it->second.ready = true;
                         s_fiber_results_cv.notify_all();
-                        return;
+                        result_published = true;
+                        break;
                     }
                 }
                 std::this_thread::yield();
             }
             // Best-effort notify even if registration raced past timeout.
-            s_fiber_results_cv.notify_all();
+            if (!result_published)
+                s_fiber_results_cv.notify_all();
+            // Issue #5099 / #5100: this body has returned, so its capture
+            // frames are dead except the still-pinned body closure. When no
+            // other body is inside the walker, reclaim now — a batch's frames
+            // otherwise stay allocated until a later full-heap pass, and each
+            // pass recounted the whole dead set.
+            if (result_published && aura_fiber_bodies_running_other() == 0)
+                (void)ev.reclaim_tw_unreachable_now();
         };
         // Issue #4842: a fiber:spawn body started from inside an orch agent
         // body inherits the agent-apply waiver. The parent body holds the
@@ -2030,6 +2041,9 @@ void RegSplitParts::register_messaging_fiber_spawn_primitive(PrimRegistrar add, 
             // the fallback so the caller sees an honest failure.
             bool spawn_failed = false;
             try {
+                // Issue #5099: the scheduler pin must name THIS closure, not
+                // every closure allocated before the spawn.
+                aura_fiber_note_spawn_body(static_cast<std::uint64_t>(cid));
                 fid = aura::messaging::g_fiber_spawn(run_body);
             } catch (const std::exception&) {
                 fid = 0;
@@ -2546,6 +2560,11 @@ void RegSplitParts::register_messaging_fiber_join_primitive(PrimRegistrar add, E
 }
 
 EvalValue RegSplitParts::fiber_join_publish_result(Evaluator& ev, std::int64_t fid) {
+    // Issue #5099: the pending-body pin is released when this join returns
+    // (PendingBodyRootRelease). Arm a sweep so the next opcode reclaims that
+    // body closure's capture frame without an explicit (gc). The counter
+    // only grows by frames that were not already on the freelist (#5100).
+    ev.arm_file_heap_reclaim_trigger();
     // Result is ready (or timed out). Fetch and return.
     std::shared_ptr<std::optional<EvalValue>> result_ptr;
     {

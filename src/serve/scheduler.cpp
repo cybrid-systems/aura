@@ -479,27 +479,32 @@ std::int64_t spawn_with_pinned_body(Scheduler& sched, void* evaluator, Fiber::Fu
     // The pin has to be in place BEFORE the fiber exists: the scheduler
     // may run the body on a worker concurrently, and the body closure is a
     // tree-walker temporary that fiber:spawn drops on return.
-    if (evaluator)
-        aura_fiber_root_pending_body_latest(evaluator);
+    // Issue #5099: pin the body closure id fiber:spawn noted, not every
+    // closure allocated before this spawn. A watermark over the newest id
+    // also pinned capture frames of fibers that had already finished.
+    const std::uint64_t noted = aura_fiber_take_spawn_body();
+    const std::uint64_t pinned =
+        evaluator ? aura_fiber_root_pending_closure(evaluator, noted) : noted;
     auto* fiber = sched.spawn_with_affinity(
-        [body = std::move(body), evaluator]() mutable {
+        [body = std::move(body), evaluator, pinned]() mutable {
             // Release the pin once the body has been applied: the closure
             // is not needed any more. The guard also releases on the error
             // path.
             struct PendingBodyPinRelease : ::aura::core::NoCopy {
                 void* evaluator;
+                std::uint64_t cid;
                 ~PendingBodyPinRelease() {
                     if (evaluator)
-                        aura_fiber_release_pending_body_latest(evaluator);
+                        aura_fiber_release_pending_closure(evaluator, cid);
                 }
-            } pin_release{{}, evaluator};
+            } pin_release{{}, evaluator, pinned};
             body();
         },
         worker_id, stack_size);
     if (!fiber) {
         // The fiber was never created: drop the pin now (no body will run).
         if (evaluator)
-            aura_fiber_release_pending_body_latest(evaluator);
+            aura_fiber_release_pending_closure(evaluator, pinned);
         return 0;
     }
     return static_cast<std::int64_t>(fiber->id());
