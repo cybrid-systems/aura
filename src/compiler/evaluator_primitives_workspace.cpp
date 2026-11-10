@@ -1800,7 +1800,7 @@ void RegSplitParts::register_workspace_dispatch_primitive(PrimRegistrar add, Eva
         if (op == "discard")
             return call_named("mw:discard", rest);
         if (op == "snapshot")
-            return call_named("workspace:snapshot", rest);
+            return call_named("mw:snapshot", rest);
 
         return make_void(); // unknown op
     });
