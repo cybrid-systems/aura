@@ -213,7 +213,7 @@ static void ac3269_1_unique_after_tls_skip() {
     CHECK(mem.find("WorkspaceUniqueIfNeeded compact_hold") != std::string::npos,
           "3269 AC1: unique workspace");
     CHECK(mem.find("Issue #3269") != std::string::npos, "3269 AC1: cite");
-    auto cpos = mem.find("add(\"arena:compact\"");
+    auto cpos = mem.find("add(\"mw:arena-compact\"");
     CHECK(cpos != std::string::npos, "3269 AC1: compact public");
     auto cwin = mem.substr(cpos, 700);
     CHECK(cwin.find("with_arena_compact_idle") != std::string::npos,

@@ -191,7 +191,7 @@ int run_protected_metadata_1838() {
         }
         CHECK(!src.empty(), "read compile_07.cpp");
         CHECK(src.find("#1838") != std::string::npos, "cites #1838");
-        auto pos = src.find("\"hygiene:protected?\"");
+        auto pos = src.find("\"qr:protected?\"");
         CHECK(pos != std::string::npos, "primitive present");
         auto win = src.substr(pos, 800);
         CHECK(win.find("try_acquire_metadata_reader_lock") != std::string::npos,

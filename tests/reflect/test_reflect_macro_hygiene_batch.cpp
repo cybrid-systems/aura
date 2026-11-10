@@ -1037,7 +1037,7 @@ int run_3752_propagate_marker_mse() {
         }
         CHECK(!src.empty() && src.find("Issue #3752") != std::string::npos,
               "3752: compile cites #3752");
-        const auto prop = src.find("add(\"syntax:propagate-marker\"");
+        const auto prop = src.find("add(\"mw:propagate-marker\"");
         CHECK(prop != std::string::npos, "3752: propagate-marker present");
         const auto win = src.substr(prop, 3500);
         CHECK(win.find("deny_marker_clear_without_mse") != std::string::npos,

@@ -2107,7 +2107,7 @@ static void ac4428_string_fill_and_closure_value() {
               "4428: string-fill! window stays body-choke-free");
     }
     const auto mem_src = read_file("src/compiler/evaluator_primitives_memory.cpp");
-    const auto cfpos = mem_src.find("\"closure:free!\"");
+    const auto cfpos = mem_src.find("\"mw:closure-free\"");
     CHECK(cfpos != std::string::npos, "4428: closure:free! body located");
     if (cfpos != std::string::npos) {
         const auto win = mem_src.substr(cfpos, 1600);
@@ -4696,7 +4696,8 @@ int run_test_dispatch_required_effects() {
         auto c3 = cs.eval("(car (string->list *s4036*))");
         CHECK(c3 && is_int(*c3) && as_int(*c3) == 97, "4036 AC1: string content unchanged");
         auto r4 = cs.eval("(mutate :closure-free 0)");
-        CHECK(!r4.has_value() || is_error(*r4), "4036 AC1: closure:free! denies");
+        CHECK((r4.has_value() && is_bool(*r4) && !as_bool(*r4)) || is_error(*r4),
+              "4036 AC1: closure:free! denies");
         if (cm)
             CHECK(cm->dispatch_required_effects_deny_total.load() > ddeny0,
                   "4036 AC1: dispatch deny counter advanced");
