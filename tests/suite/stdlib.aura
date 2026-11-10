@@ -29,6 +29,11 @@
 (test-suite "stdlib:string"
   (require std/string)
   (check= "hello" (string-trim "  hello  "))
+  ;; Issue #5089: trim every ASCII whitespace byte, not only space.
+  (check= "hello" (string-trim "\n\thello\r\n"))
+  (check= "4" (string-trim "4\n"))
+  (check= "" (string-trim " \t\r\n"))
+  (check= "a b" (string-trim "\ta b\n"))
   (check= ("a" "b" "c") (string-split "a,b,c" ","))
   (check= "a b" (string-join '("a" "b") " "))
   (check= "HELLO" (string-upcase "hello"))
