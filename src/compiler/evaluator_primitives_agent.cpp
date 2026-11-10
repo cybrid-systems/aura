@@ -6206,15 +6206,12 @@ std::optional<EvalValue> RegSplitParts::scope_join_all_exec(
     const bool descendants_live = !tree_settled_now && scope->child_count() > 0;
     const bool join_guard_deny =
         descendants_live && !tree_join && aura::compiler::typed_audit::production_defaults_active();
-    if (scope == root) {
-        if (tree_settled_now) {
-            aura::orch::drop_agent_scope(static_cast<void*>(&ev));
-            // Issue #4783: the scope is gone; live bodies keep their
-            // own shared_ptr, the table entry must not outlive it.
-            std::scoped_lock<std::mutex> lk(g_scope_body_tally_mu);
-            g_scope_body_tallies.erase(body_tally_key);
-        }
-    }
+    // Issue #5103: do not drop the per-Evaluator scope when the tree
+    // settles. A second join / watch / cancel used to raise "no scope".
+    // Finished handles are released; the empty scope stays registered
+    // and later joins return an idle status. ~Evaluator still drops it.
+    if (scope == root && tree_settled_now)
+        scope->release_settled_members();
     st.scope_ptr = scope;
     st.jr = jr;
     st.body_errors = std::move(body_errors);
