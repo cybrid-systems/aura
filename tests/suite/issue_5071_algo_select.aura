@@ -1,0 +1,69 @@
+; #5071: select:features-fn! / select:offline / select:feedback! must update
+; the handle they are given. hash-set returns a fresh hash, so the
+; documented calls used to leave the selector empty and select:choose
+; returned () with no signal.
+
+(require "std/algo-select" all:)
+
+(define fails 0)
+(define (expect cond name)
+  (if cond
+      #t
+      (begin
+        (set! fails (+ fails 1))
+        (display "FAIL-5071 ")
+        (display name)
+        (newline))))
+
+(define (feat inst)
+  (hash "a" (* 1.0 (string->number (substring inst 1 (string-length inst))))))
+
+(define matrix
+  (hash "members" (list "m1" "m2")
+        "instances" (list "i1" "i2" "i3")
+        "means" (list (list 0.9 0.5) (list 0.6 0.7) (list 0.4 0.8))
+        "scores" (list (list 0.9 0.5) (list 0.6 0.7) (list 0.4 0.8))))
+
+(define s (select:make (hash "model" "knn" "k" 3)))
+(define unfitted
+  (try (begin (select:choose s "i2" 2) "no-error")
+       (catch (e) "raised")))
+(expect (string=? unfitted "raised") "choose before offline is an error")
+
+; Documented calls: the return value is not threaded.
+(select:features-fn! s feat)
+(select:offline s matrix (hash))
+(define chosen (select:choose s "i2" 2))
+; i2's neighbours average higher on m2 than m1, so the ranking is (m2 m1).
+; The bug returned (). Both call styles must agree on this non-empty selection.
+(expect (equal? chosen (list "m2" "m1")) "in-place sequence selects (m2 m1)")
+(expect (equal? (hash-ref s "keys" (list)) (list "a")) "keys were written onto s")
+(expect (not (null? (hash-ref s "X" (list)))) "X was written onto s")
+
+(define t0 (select:make (hash "model" "knn" "k" 3)))
+(define t1 (select:features-fn! t0 feat))
+(define t2 (select:offline t1 matrix (hash)))
+(expect (equal? (select:choose t2 "i2" 2) chosen) "threaded sequence matches")
+(expect (equal? (select:choose t0 "i2" 2) chosen) "the original handle was updated")
+
+(select:feedback! s "i2" "m2" 9.0)
+(expect (not (null? (hash-ref s "rewards" (list)))) "feedback! wrote rewards onto s")
+(expect (pair? (select:choose s "i2" 1)) "choose still selects after feedback")
+
+(define empty (select:make (hash "model" "knn" "k" 1)))
+(select:offline empty
+                (hash "members" (list) "instances" (list)
+                      "means" (list) "scores" (list))
+                (hash))
+(expect (null? (select:choose empty "i1" 2)) "empty matrix selects nothing")
+
+(define help (select:help))
+(expect (not (= -1 (string-index help "in place" 0))) "help states in-place updates")
+
+(if (= fails 0)
+    (display "OK-5071 algo-select\n")
+    (begin
+      (display "FAIL-5071 fails=")
+      (display fails)
+      (newline)
+      (error "5071 suite failed")))
