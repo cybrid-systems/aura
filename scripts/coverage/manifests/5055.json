@@ -9,7 +9,7 @@
         "Execution model: concurrent bodies in the CLI backend (Issue #5055)",
         "its own OS thread",
         "read-modify-write",
-        "fiber:overlay-begin",
+        "(mutate :overlay-begin)",
         "Reproducibility"
       ]
     },
