@@ -31,6 +31,16 @@
 (ok-5118 (procedure? orch:agent-join) "orch:agent-join resolves")
 (ok-5118 (procedure? orch:metrics) "orch:metrics resolves")
 
+;; Issue #5131: the 22 kernel-resident verbs are the live surface now, so the
+;; reference must describe them as kernel-resident and must not still carry the
+;; one-cycle deprecation marker that #5118 put on them.
+(define api-5118 (query :api-reference))
+(ok-5118 (string? api-5118) "api-reference is a string")
+(ok-5118 (if (string? api-5118)
+             (= (string-find api-5118 "DEPRECATED (#5118)") -1)
+             #f)
+         "no #5118 deprecation marker is left in the reference")
+
 (if (= fails-5118 0)
     (display "OK-5118\n")
     (exit 1))
