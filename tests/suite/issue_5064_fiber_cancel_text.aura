@@ -1,0 +1,49 @@
+; #5064: try/catch on the fiber's own stack must see the documented
+; cancel payload, not a located "type error:" diagnostic.
+; docs/stdlib/fiber-cancel.md is the contract hosts match on: cancellation
+; is a cooperative condition, the same shape as (error ...), not a type error.
+
+(define (string-contains-5064 s sub)
+  (let ((n (string-length s)) (m (string-length sub)))
+    (let loop ((i 0))
+      (cond
+        ((> (+ i m) n) #f)
+        ((string=? (substring s i (+ i m)) sub) #t)
+        (else (loop (+ i 1)))))))
+
+(define fails 0)
+(define (expect cond name)
+  (if cond
+    #t
+    (begin
+      (set! fails (+ fails 1))
+      (display "FAIL-5064 ")
+      (display name)
+      (newline)
+      (display "  value: ")
+      (display cond)
+      (newline))))
+
+(define payload "fiber-cancelled: cancel requested via (fiber:cancel)")
+
+(define cf (fiber:spawn (lambda ()
+  (try (let loop ((i 0))
+         (fiber:yield)
+         (loop (+ i 1)))
+       (catch (e) (format "~a" e))))))
+(define accepted (fiber:cancel cf))
+(define joined (fiber:join cf))
+
+(expect (eq? accepted #t) "fiber:cancel accepts a live yielding fiber")
+(expect (equal? joined payload) "catch sees the documented payload")
+(expect (not (string-contains-5064 joined "type error")) "payload is not a type error")
+(if (not (equal? joined payload))
+  (begin (display "  joined: ") (display joined) (newline)))
+
+(define bf (fiber:spawn (lambda () (error "boom"))))
+(define boom (try (fiber:join bf) (catch (e) (format "~a" e))))
+(expect (equal? boom "boom") "a user error joined from outside has no type-error prefix")
+
+(if (= fails 0)
+  (begin (display "OK-5064") (newline))
+  (exit 1))
