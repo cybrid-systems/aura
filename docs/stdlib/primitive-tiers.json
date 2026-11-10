@@ -48,7 +48,8 @@
     "K-F64": "f64vector numeric kernels (dot/sum/max-index/sub!/ewma!) run over the locked native view of the f64 heap; an Aura loop would be an interpreted call per element, so the move needs a #5135 baseline in the CI image before it can be considered",
     "K-NUM-HOT": "abs/max/min sit in numeric loops and lcm is variadic with i64 edge handling (kI64Min/i64 overflow); an Aura body would either add a call per arithmetic step or narrow the contract, so all four stay kernel",
     "K-ORCH-STATE": "orchestration verbs whose body reads scheduler or fiber session state (agent scopes, the agent name table, agent_poll forced yield, reclaimed-body waits, handoff tokens); Aura code cannot own that state atomically, so they are the live kernel surface and std/orch builds on the same five primitives (#5131)",
-    "K-SLOT-GOV": "pair/string shorthand readers enforce a per-slot tenant gate (inrange_slot_tenant_allows, #4505) before every car/cdr; Aura code cannot see slot ownership, so moving these to the stdlib would silently drop the cross-tenant read check"
+    "K-SLOT-GOV": "pair/string shorthand readers enforce a per-slot tenant gate (inrange_slot_tenant_allows, #4505) before every car/cdr; Aura code cannot see slot ownership, so moving these to the stdlib would silently drop the cross-tenant read check",
+    "K-PAIR-TABLE": "pair-table family: every member walks the tenanted pair table, so a read can be denied per slot (length returns a typed cross-tenant deny #4111, list? audits and answers #f through jit_pair_cdr), and take/length also own typed failure values and the pair-mint quota. Verified on length, list? and take; the group is kernel until a single name is proven to avoid all three."
   },
   "kernel_exceptions": [
     "arithmetic-shift",
@@ -94,8 +95,8 @@
     "orch:supervise-batch"
   ],
   "counts": {
-    "kernel": 488,
-    "stdlib-candidate": 58,
+    "kernel": 507,
+    "stdlib-candidate": 39,
     "delete": 1
   },
   "primitives": {
@@ -200,8 +201,8 @@
       "rule": "K-ENGINE"
     },
     "append": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "apply": {
       "tier": "kernel",
@@ -225,8 +226,8 @@
       "rule": "S-PURE"
     },
     "assv": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "atan": {
       "tier": "kernel",
@@ -525,8 +526,8 @@
       "rule": "K-CTRL"
     },
     "drop": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "engine:metrics": {
       "tier": "kernel",
@@ -669,8 +670,8 @@
       "rule": "K-FIBER"
     },
     "filter": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "float?": {
       "tier": "kernel",
@@ -681,12 +682,12 @@
       "rule": "K-NUM"
     },
     "foldl": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "for-each": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "format": {
       "tier": "stdlib-candidate",
@@ -882,28 +883,28 @@
       "rule": "K-NUM-HOT"
     },
     "length": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "list": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "list->string": {
       "tier": "stdlib-candidate",
       "rule": "S-STR"
     },
     "list->vector": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "list-ref": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "list-sort": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "list?": {
       "tier": "stdlib-candidate",
@@ -950,24 +951,24 @@
       "rule": "K-VAL"
     },
     "map": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "max": {
       "tier": "kernel",
       "rule": "K-NUM-HOT"
     },
     "member": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "memory-pressure": {
       "tier": "kernel",
       "rule": "K-GOV"
     },
     "memv": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "min": {
       "tier": "kernel",
@@ -2012,8 +2013,8 @@
       "rule": "K-GOV"
     },
     "reverse": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "rollback": {
       "tier": "kernel",
@@ -2244,8 +2245,8 @@
       "rule": "K-AGENT"
     },
     "take": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "tan": {
       "tier": "kernel",
@@ -2308,16 +2309,16 @@
       "rule": "K-VAL"
     },
     "vector->list": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "vector-copy": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "vector-fill!": {
-      "tier": "stdlib-candidate",
-      "rule": "S-LIST"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "vector-length": {
       "tier": "kernel",
