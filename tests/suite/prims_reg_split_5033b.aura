@@ -51,6 +51,9 @@
 (check (= 0 (workspace :current)) "dispatcher :current")
 (check (list? (workspace :list)) "dispatcher :list")
 (check (integer? (workspace :snapshot "s5033b-dispatch")) "dispatcher :snapshot")
+;; Issue #5097: :snapshot must reach mw:snapshot, not the retired alias.
+(check (eq? #t (mutate :restore (workspace :snapshot "s5033b-restore")))
+       "dispatcher :snapshot yields a restorable id")
 (check (void? (workspace :not-an-op)) "dispatcher unknown op -> void")
 
 ;; ── sync-from / conflicts-with / merge / discard / delete ────────────
