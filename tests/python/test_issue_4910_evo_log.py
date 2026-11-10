@@ -90,7 +90,7 @@ class EvoLog(unittest.TestCase):
             self.assertIn("evidence: score=0.71 threshold=0.7", text.stdout)
             self.assertIn("diff:     +", text.stdout)
             # evo:record! verdicts are the candidates; automatic records are listed only.
-            self.assertIn("(2 candidates: 1 KEEP, 1 ROLLBACK)", text.stdout)
+            self.assertIn("(2 records: 1 KEEP, 1 ROLLBACK)", text.stdout)
             self.assertNotIn("mutate:rebind", text.stdout)
             full = aura(["evo", "log", "--all", "--log", str(log)], d, env_for(None))
             self.assertEqual(full.returncode, 0, full.stderr)
@@ -441,13 +441,232 @@ class EvoReportMultiObjective(unittest.TestCase):
             front = aura(["evo", "log", "--front", "--log", str(log)], d, env_for(None))
             self.assertEqual(front.returncode, 0, front.stderr)
             # (2,2) dominates (4,3); the other three are non-dominated.
-            self.assertIn("(3 candidates:", front.stdout)
-            self.assertNotIn("(4 candidates:", front.stdout)
+            self.assertIn("(3 records: 2 KEEP, 1 ROLLBACK)", front.stdout)
+            self.assertNotIn("(4 records:", front.stdout)
             chain = aura(["evo", "log", "--lineage", "3", "--log", str(log)], d, env_for(None))
             self.assertEqual(chain.returncode, 0, chain.stderr)
-            self.assertIn("(3 candidates:", chain.stdout)
+            self.assertIn("(3 records: 2 KEEP, 1 ROLLBACK)", chain.stdout)
             self.assertIn("parent #2", chain.stdout)
             self.assertIn("parent -", chain.stdout)
+
+
+def _viewbox(svg: str) -> tuple[float, float, float, float]:
+    import re
+
+    m = re.search(r'viewBox="([0-9.]+) ([0-9.]+) ([0-9.]+) ([0-9.]+)"', svg)
+    assert m, svg[:200]
+    return tuple(float(x) for x in m.groups())  # type: ignore[return-value]
+
+
+class EvoLineageIds(unittest.TestCase):
+    """#5069 #5070 #5073 #5074: record-id parents, multi-parent edges,
+    unknown --lineage ids, and a header that counts every decision."""
+
+    @staticmethod
+    def _row(i: int, parent: str, candidate: str, parents: list[str], decision: str = "KEEP") -> dict:
+        return {
+            "v": 2,
+            "id": f"run#{i}",
+            "parent": parent,
+            "run": "run",
+            "seq": i,
+            "ts_ms": 0,
+            "kind": "record",
+            "target": candidate,
+            "decision": decision,
+            "reason": "gate",
+            "evidence": {"score": float(i)},
+            "old": "",
+            "new": "",
+            "dur_ms": 1.0,
+            "algo": "x",
+            "gen": i,
+            "slot": 0,
+            "search": "s",
+            "candidate": candidate,
+            "parents": parents,
+            "behavior": {"x": 0.1, "y": 0.2},
+            "objectives": {"loss": float(i), "cost": float(5 - i)},
+            "constraints": {},
+        }
+
+    def test_multiparent_edges_and_unresolved(self) -> None:
+        recs = [
+            self._row(1, "", "r1", []),
+            self._row(2, "run#1", "r2", ["r1"]),
+            self._row(3, "run#2", "r3", ["r1"]),
+            self._row(4, "run#3", "r4", ["r2", "r3"]),
+            self._row(5, "", "r5", ["missing"], "SCORED"),
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "log.jsonl"
+            log.write_text("".join(json.dumps(x) + "\n" for x in recs))
+            out = Path(d) / "report"
+            rep = aura(["evo", "report", "--html", str(out), "--log", str(log)], d, env_for(None))
+            self.assertEqual(rep.returncode, 0, rep.stderr)
+            self.assertIn("did not resolve", rep.stderr)
+            tree = (out / "lineage.svg").read_text()
+            # r2→r1, r3→r2, r3→r1, r4→r3, r4→r2. r5's "missing" is not an edge.
+            self.assertEqual(tree.count("<line "), 5, tree)
+            _x, _y, _w, h = _viewbox(tree)
+            self.assertGreater(h, 102.0, tree[:120])
+            page = (out / "index.html").read_text()
+            self.assertIn("5 edges", page)
+            self.assertIn("1 unresolved parent link", page)
+
+    def test_unknown_lineage_id_is_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "log.jsonl"
+            log.write_text(json.dumps(self._row(1, "", "r1", [])) + "\n")
+            bad = aura(["evo", "log", "--lineage", "nosuchid", "--log", str(log)], d, env_for(None))
+            self.assertNotEqual(bad.returncode, 0)
+            self.assertIn("no record with id 'nosuchid'", bad.stderr)
+            self.assertIn("run#1", bad.stderr)
+            self.assertNotIn("(no evolution records)", bad.stdout)
+            cand = aura(["evo", "log", "--lineage", "c4f27d205", "--log", str(log)], d, env_for(None))
+            self.assertNotEqual(cand.returncode, 0, cand.stderr)
+            by_name = aura(["evo", "log", "--lineage", "r1", "--log", str(log)], d, env_for(None))
+            self.assertEqual(by_name.returncode, 0, by_name.stderr)
+            self.assertIn("#1", by_name.stdout)
+            by_suffix = aura(["evo", "log", "--lineage", "1", "--log", str(log)], d, env_for(None))
+            self.assertEqual(by_suffix.returncode, 0, by_suffix.stderr)
+            empty = Path(d) / "empty.jsonl"
+            empty.write_text("")
+            none = aura(["evo", "log", "--lineage", "nosuchid", "--log", str(empty)], d, env_for(None))
+            self.assertEqual(none.returncode, 0, none.stderr)
+            self.assertIn("(no evolution records)", none.stdout)
+
+    def test_header_counts_every_decision(self) -> None:
+        recs = [
+            self._row(1, "", "a", [], "PROPOSE"),
+            self._row(2, "run#1", "b", [], "SCORED"),
+            self._row(3, "run#2", "b", [], "SCORED"),
+            self._row(4, "run#3", "b", [], "KEEP"),
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "log.jsonl"
+            log.write_text("".join(json.dumps(x) + "\n" for x in recs))
+            text = aura(["evo", "log", "--log", str(log)], d, env_for(None))
+            self.assertEqual(text.returncode, 0, text.stderr)
+            self.assertIn("(4 records: 1 PROPOSE, 2 SCORED, 1 KEEP, 0 ROLLBACK)", text.stdout)
+            front = aura(["evo", "log", "--front", "--log", str(log)], d, env_for(None))
+            self.assertEqual(front.returncode, 0, front.stderr)
+            self.assertRegex(front.stdout, r"\(\d+ records: .*\)")
+            # The filtered header's counters still add up to the rows shown.
+            import re
+
+            m = re.search(r"\((\d+) records: ([^)]*)\)", front.stdout)
+            self.assertIsNotNone(m, front.stdout)
+            assert m is not None
+            total = int(m.group(1))
+            parts = [int(p.split()[0]) for p in m.group(2).split(", ") if p.strip()]
+            self.assertEqual(sum(parts), total)
+
+
+class EvoCoreParentChain(unittest.TestCase):
+    """#5069: std/evo-core parents are record ids, and the chain survives import."""
+
+    PROG = """
+(require "std/evo-core" all:)
+(define s (evo:search (hash "algo" "repro" "seed" 1 "budget" 8 "pop" 4
+                            "apply" (lambda (s c) #t)
+                            "proposer" (lambda (s gen slot rng)
+                                         (hash "genome" (list gen slot)
+                                               "parents" (if (> gen 0)
+                                                             (list "P-A" "P-B")
+                                                             (list))
+                                               "behavior" (hash "x" 0.5 "y" 0.5))))))
+(define c (evo:ask s 2))
+(evo:tell! s c (list (hash "objectives" (hash "loss" 1.0 "cost" 1.0)
+                           "constraints" (hash "ok" 0.0))
+                      (hash "objectives" (hash "loss" 2.0 "cost" 0.5)
+                           "constraints" (hash "ok" 0.0))))
+(evo:commit! s (car c) (hash "objectives" (hash "loss" 1.0 "cost" 1.0)
+                             "constraints" (hash "ok" 0.0)))
+(define kid (evo:child (car c) (list 9 9)
+                       (hash "parents" (list (evo:candidate-id (car c))
+                                             (evo:candidate-id (car (cdr c)))))))
+(evo:tell! s (list kid) (list (hash "objectives" (hash "loss" 0.4 "cost" 0.4)
+                                    "constraints" (hash "ok" 0.0))))
+(display (json-encode (evo:export s)))
+(newline)
+"""
+
+    RESUME = """
+(require "std/evo-core" all:)
+(define blob (json-parse (read-file "blob.json")))
+(define s (evo:import blob (hash "apply" (lambda (s c) #t)
+                                  "proposer" (lambda (s gen slot rng)
+                                               (hash "genome" (list "next"))))))
+(define c (evo:ask s 1))
+(evo:tell! s c (list (hash "objectives" (hash "loss" 0.1 "cost" 0.1)
+                           "constraints" (hash "ok" 0.0))))
+(display (hash-ref (evo:report s) "tip-record"))
+(newline)
+"""
+
+    def test_parent_is_record_id_and_survives_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "p.aura").write_text(self.PROG)
+            log = Path(d) / "evo.jsonl"
+            r = aura(["p.aura"], d, env_for(log))
+            self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
+            recs = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+            ids = {x["id"] for x in recs}
+            self.assertGreaterEqual(len(recs), 3, recs)
+            keeps = [x for x in recs if x["decision"] == "KEEP"]
+            self.assertTrue(keeps, recs)
+            for x in recs:
+                parent = x["parent"]
+                self.assertNotEqual(parent, x["id"], x)
+                if parent:
+                    self.assertIn(parent, ids, x)
+                    self.assertNotRegex(parent, r"^c[0-9a-f]+$")
+                cand = x.get("candidate") or ""
+                if cand:
+                    self.assertNotEqual(parent, cand, x)
+            self.assertTrue(any(x["parent"] == "" for x in recs))
+            # A recombination record names two candidate parents; the report
+            # draws both of those edges.
+            multi = [x for x in recs if isinstance(x.get("parents"), list) and len(x["parents"]) == 2]
+            self.assertTrue(multi, recs)
+            last = recs[-1]["id"]
+            chain = aura(["evo", "log", "--lineage", last, "--log", str(log)], d, env_for(None))
+            self.assertEqual(chain.returncode, 0, chain.stderr)
+            self.assertIn(f"({len(recs)} records:", chain.stdout)
+            self.assertIn("PROPOSE", chain.stdout)
+            self.assertIn("SCORED", chain.stdout)
+            self.assertIn("KEEP", chain.stdout)
+            self.assertIn("parent -", chain.stdout)
+            by_cand = aura(
+                ["evo", "log", "--lineage", keeps[-1]["candidate"], "--log", str(log)],
+                d,
+                env_for(None),
+            )
+            self.assertEqual(by_cand.returncode, 0, by_cand.stderr)
+            self.assertIn("KEEP", by_cand.stdout)
+            out = Path(d) / "report"
+            rep = aura(["evo", "report", "--html", str(out), "--log", str(log)], d, env_for(None))
+            self.assertEqual(rep.returncode, 0, rep.stderr)
+            tree = (out / "lineage.svg").read_text()
+            # The linear chain plus at least the second recombination parent.
+            self.assertGreater(tree.count("<line "), len(recs) - 1, tree)
+            _x, _y, w, h = _viewbox(tree)
+            self.assertGreater(h, 102.0)
+            self.assertLess(w, 17000.0)
+            page = (out / "index.html").read_text()
+            self.assertIn("edges", page)
+            blob = r.stdout.strip().splitlines()[-1]
+            self.assertTrue(blob.startswith("{"), r.stdout)
+            (Path(d) / "blob.json").write_text(blob)
+            (Path(d) / "resume.aura").write_text(self.RESUME)
+            r2 = aura(["resume.aura"], d, env_for(log))
+            self.assertEqual(r2.returncode, 0, r2.stderr + r2.stdout)
+            recs2 = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+            self.assertGreater(len(recs2), len(recs))
+            # The resumed process's first record parents to the exported
+            # tip-record, a record id already in the log.
+            self.assertEqual(recs2[len(recs)]["parent"], last)
 
 
 if __name__ == "__main__":

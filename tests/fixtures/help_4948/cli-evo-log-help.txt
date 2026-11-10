@@ -1,7 +1,10 @@
 usage: aura evo log [--json] [--all] [--run ID|last] [--front] [--lineage ID]
        aura evo report --html DIR
 
-  log --front      only the non-dominated candidates (first two objectives)
-  log --lineage ID  the parent chain of one candidate
+  log --front       only the non-dominated candidates (first two objectives)
+  log --lineage ID  ancestor chain of one record, root -> ID
+                    ID is a record id (<run>#<seq>), the #<seq> suffix,
+                    or a candidate name (v2 "candidate" or the target column).
+                    An unknown id is an error when the log has records.
   report            score curve, Pareto scatter, HV curve, QD heat map,
                     lineage tree, candidate folds, surrogate pre-screen
