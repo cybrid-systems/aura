@@ -47,6 +47,21 @@ SET_META_RE = re.compile(r'set_meta\s*\(\s*"([^"]+)"')
 
 _REGISTRAR_FILES = {"ffi_primitives_impl.cpp"}
 
+# A registration under `if (false)` is dead surface: clang-format may split
+# `if (false) add(...)` onto two lines, and the regex scan would otherwise
+# list it as a live primitive (#5097 retired the orch: names this way).
+_DEAD_GUARD_RE = re.compile(r"^\s*if\s*\(\s*false\s*\)\s*\{?\s*$")
+
+
+def _dead_registration(text: str, pos: int) -> bool:
+    for line in reversed(text[:pos].splitlines()):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            continue
+        return bool(_DEAD_GUARD_RE.match(line))
+    return False
+
+
 # Comment stripper for lib/std token scans (keeps string contents).
 _COMMENT_RE = re.compile(r";[^\n]*")
 
@@ -71,11 +86,27 @@ def scan_registrations() -> list[Registration]:
         rel = path.relative_to(ROOT).as_posix()
         text = path.read_text(encoding="utf-8", errors="replace")
         if _registrar_add_tu(path):
-            found += [Registration(m.group(1), rel, "add") for m in FFI_ADD_RE.finditer(text)]
-            found += [Registration(m.group(1), rel, "register_prim") for m in REGISTER_PRIM_RE.finditer(text)]
-            found += [Registration(m.group(1), rel, "add_mutate") for m in ADD_MUTATE_RE.finditer(text)]
+            found += [
+                Registration(m.group(1), rel, "add")
+                for m in FFI_ADD_RE.finditer(text)
+                if not _dead_registration(text, m.start())
+            ]
+            found += [
+                Registration(m.group(1), rel, "register_prim")
+                for m in REGISTER_PRIM_RE.finditer(text)
+                if not _dead_registration(text, m.start())
+            ]
+            found += [
+                Registration(m.group(1), rel, "add_mutate")
+                for m in ADD_MUTATE_RE.finditer(text)
+                if not _dead_registration(text, m.start())
+            ]
         else:
-            found += [Registration(m.group(1), rel, "add") for m in PRIMITIVE_RE.finditer(text)]
+            found += [
+                Registration(m.group(1), rel, "add")
+                for m in PRIMITIVE_RE.finditer(text)
+                if not _dead_registration(text, m.start())
+            ]
         if rel == HOT_TABLE_TU:
             found += [Registration(m.group(1), rel, "table") for m in TABLE_RE.finditer(text)]
             found += [Registration(m.group(1), rel, "table") for m in SET_META_RE.finditer(text)]
