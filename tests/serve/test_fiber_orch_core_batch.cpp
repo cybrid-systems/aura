@@ -844,7 +844,7 @@ namespace aura_fiber_run_orch_agent_spawn {
 //   AC2: agent_send / mailbox attach
 //   AC3: parallel_intend batch (orch stats bump; #1966 dropped conduct_parallel)
 //   AC4: Aura orch:spawn-agent + orch:agent-join
-//   AC5: orch:parallel-intend alias
+//   AC5: parallel-intend alias
 //   AC6: query:orch-module-stats schema 1588
 //   AC7: #2008 keepalive emit / stall detect / default zero-cost
 //   AC8: #2011 orch:agent-send / agent-recv + quota-reject typed error
@@ -974,10 +974,10 @@ namespace {
     }
 
     static void ac5_parallel_alias() {
-        std::println("\n--- AC5: orch:parallel-intend alias ---");
+        std::println("\n--- AC5: parallel-intend alias ---");
         CompilerService cs;
         auto n = cs.eval(R"(
-(hash-ref (orch:parallel-intend
+(hash-ref (parallel-intend
             (vector (lambda () 1) (lambda () 2))
             :timeout-ms 10000)
            "ok-count")
@@ -1010,18 +1010,18 @@ namespace {
         {
             CompilerService cs;
             auto r = cs.eval(R"(
-(orch:parallel-intend
+(parallel-intend
   (vector (lambda () 1) (lambda () 2) (lambda () 3))
   :timeout-ms 10000)
 )");
             CHECK(r && is_hash(*r), "batch hash");
             auto ev_serialized = cs.eval(R"(
-(if (hash-ref (orch:parallel-intend (vector (lambda () 1)) :timeout-ms 5000) "eval-serialized") 1 0)
+(if (hash-ref (parallel-intend (vector (lambda () 1)) :timeout-ms 5000) "eval-serialized") 1 0)
 )");
             CHECK(ev_serialized && is_int(*ev_serialized) && as_int(*ev_serialized) == 1,
                   "batch hash \"eval-serialized\" == #t");
             auto schema_2081 = cs.eval(R"(
-(hash-ref (orch:parallel-intend (vector (lambda () 1)) :timeout-ms 5000) "schema-2081")
+(hash-ref (parallel-intend (vector (lambda () 1)) :timeout-ms 5000) "schema-2081")
 )");
             CHECK(schema_2081 && is_int(*schema_2081) && as_int(*schema_2081) == 2081,
                   "batch hash \"schema-2081\" == 2081");
@@ -1032,11 +1032,11 @@ namespace {
         {
             CompilerService cs;
             auto status = cs.eval(R"(
-(hash-ref (orch:parallel-intend (vector (lambda () 1) (lambda () 2)) :timeout-ms 5000) "status")
+(hash-ref (parallel-intend (vector (lambda () 1) (lambda () 2)) :timeout-ms 5000) "status")
 )");
             CHECK(status && is_string(*status), "status key still present (regression)");
             auto ok_count = cs.eval(R"(
-(hash-ref (orch:parallel-intend (vector (lambda () 1) (lambda () 2)) :timeout-ms 5000) "ok-count")
+(hash-ref (parallel-intend (vector (lambda () 1) (lambda () 2)) :timeout-ms 5000) "ok-count")
 )");
             CHECK(ok_count && is_int(*ok_count) && as_int(*ok_count) == 2,
                   "ok-count still == 2 (regression)");

@@ -179,13 +179,11 @@ namespace {
                 continue;
             if (view.starts_with("orch:") && !is_orch_verb_5006(view)) {
                 // Issue #5118: std/orch never grew these verbs. The registered
-                // name is the function to call. orch:parallel-intend is the
-                // one alias whose body is a different live primitive.
-                const std::string replacement = (view == "orch:parallel-intend")
-                                                    ? std::string("parallel-intend")
-                                                    : std::string(view);
+                // name is the function to call. (The one verb whose body was a
+                // different primitive, orch:parallel-intend, is gone: #5131
+                // retired it and its callers now use parallel-intend.)
                 retire_name(prims, slot,
-                            "DEPRECATED (#5118): call (" + replacement +
+                            "DEPRECATED (#5118): call (" + std::string(view) +
                                 " ...). This registration is the function; std/orch does not "
                                 "replace it.");
                 continue;

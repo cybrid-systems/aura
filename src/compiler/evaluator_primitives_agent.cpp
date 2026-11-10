@@ -7446,15 +7446,6 @@ void RegSplitParts::register_orch_workflow_primitives(Evaluator& ev, AddFn& add)
     auto orch_keyword_key = [&ev](const EvalValue& v) -> std::string {
         return RegSplitParts::orch_keyword_key(ev, v);
     };
-    add("orch:parallel-intend", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        auto prim = ev.primitives_.lookup("parallel-intend");
-        if (!prim) {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "orch:parallel-intend: parallel-intend not registered",
-                                        ev.primitive_error_counter_ptr());
-        }
-        return (*prim)(a);
-    });
 
     // Issue #2852: supervised-batch / workflow-apply sugar. Maps a composed
     // WorkflowFailurePolicy onto parallel_intend (Phase A) + scope.watch_all
