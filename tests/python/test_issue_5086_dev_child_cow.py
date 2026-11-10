@@ -36,13 +36,12 @@ PROG = """
                                         (hash "objectives" (hash "y" (score 5))
                                               "constraints" (hash)
                                               "behavior" (hash))))))
-(display (list "root" root-rb
-               "status" (hash-ref t "status")
-               "err" (hash-ref t "error" #f)
-               "y" (evo:objective t "y")
-               "live" (score 5)
-               "unchanged" (hash-ref t "live-unchanged")))
-(newline)
+(display "ROOT ") (display root-rb) (newline)
+(display "STATUS ") (display (hash-ref t "status")) (newline)
+(display "ERR ") (display (hash-ref t "error" #f)) (newline)
+(display "Y ") (display (evo:objective t "y")) (newline)
+(display "LIVE ") (display (score 5)) (newline)
+(display "UNCHANGED ") (display (hash-ref t "live-unchanged")) (newline)
 """
 
 
@@ -67,13 +66,12 @@ class DevChildCow(unittest.TestCase):
                 timeout=120,
             )
             self.assertEqual(r.returncode, 0, r.stderr + r.stdout)
-            line = r.stdout.strip().splitlines()[-1]
-            self.assertNotIn("cow-refused", r.stdout + r.stderr, line)
-            self.assertIn("root #t", line)
-            self.assertIn("status ok", line)
-            self.assertIn("y 45", line)
-            self.assertIn("live 15", line)
-            self.assertIn("unchanged #t", line)
+            self.assertNotIn("cow-refused", r.stdout + r.stderr)
+            self.assertIn("ROOT #t", r.stdout)
+            self.assertIn("STATUS ok", r.stdout)
+            self.assertIn("Y 45", r.stdout)
+            self.assertIn("LIVE 15", r.stdout)
+            self.assertIn("UNCHANGED #t", r.stdout)
 
 
 if __name__ == "__main__":
