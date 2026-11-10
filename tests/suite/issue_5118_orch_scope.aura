@@ -1,0 +1,36 @@
+;; Issue #5118 — scope and workflow verbs resolve after (require "std/orch").
+;; v0.2.0 returned hashes. Unregistering the kernel names made both calls
+;; unbound, and std/orch has no replacement body. The names must resolve.
+
+(require "std/orch" all:)
+
+(define (missing-5118? thunk)
+  (eq? (try (thunk) (catch (caught) 'missing-5118)) 'missing-5118))
+
+(define scope-5118
+  (try (orch:scope-spawn "s5118" (lambda () 1)) (catch (caught) 'missing-5118)))
+(define flow-5118
+  (try (orch:compose-workflow 'collect-all) (catch (caught) 'missing-5118)))
+
+(define fails-5118 0)
+(define (ok-5118 cond name)
+  (if cond
+      #t
+      (begin (set! fails-5118 (+ fails-5118 1))
+             (display "FAIL-5118 ") (display name) (newline))))
+
+(ok-5118 (not (missing-5118? (lambda () (orch:scope-spawn "s5118b" (lambda () 1)))))
+         "orch:scope-spawn resolves")
+(ok-5118 (not (eq? scope-5118 'missing-5118)) "orch:scope-spawn returns")
+(ok-5118 (hash? scope-5118) "orch:scope-spawn returns a hash")
+(ok-5118 (not (missing-5118? (lambda () (orch:compose-workflow 'collect-all))))
+         "orch:compose-workflow resolves")
+(ok-5118 (not (eq? flow-5118 'missing-5118)) "orch:compose-workflow returns")
+(ok-5118 (hash? flow-5118) "orch:compose-workflow returns a hash")
+(ok-5118 (procedure? orch:supervise-batch) "orch:supervise-batch resolves")
+(ok-5118 (procedure? orch:agent-join) "orch:agent-join resolves")
+(ok-5118 (procedure? orch:metrics) "orch:metrics resolves")
+
+(if (= fails-5118 0)
+    (display "OK-5118\n")
+    (exit 1))
