@@ -19,6 +19,7 @@ module;
 #include "lock_order_audit.h"            // Issue #2354: Closures rank
 #include "fiber_result_roots.hh"         // Issue #4710: fiber:join result roots
 #include "fiber_overlay_roots.hh"        // Issue #4849: pending COW overlay roots
+#include "metrics_intern_roots.hh"       // #5065: interned engine:metrics key strings
 #include "typed_mutation_audit.h"        // Issue #2984: compact vs proof linear_root_count
 
 module aura.compiler.evaluator;
@@ -1813,6 +1814,12 @@ bool Evaluator::reclaim_file_mode_unreachable(FileModeReclaimView& view) {
             for (const auto raw : overlay_pending)
                 roots.push_back(EvalValue(raw));
         }
+        std::vector<std::int64_t> metrics_keys;
+        if (metrics_intern_roots::collect(metrics_keys) > 0) {
+            roots.reserve(roots.size() + metrics_keys.size());
+            for (const auto raw : metrics_keys)
+                roots.push_back(EvalValue(raw));
+        }
     }
 
     const std::size_t n_pairs = pairs_.size();
@@ -2296,6 +2303,12 @@ bool Evaluator::reclaim_tw_unreachable(std::span<const Env* const> stack_envs,
         if (fiber_overlay_roots::collect(overlay_pending) > 0) {
             work.reserve(work.size() + overlay_pending.size());
             for (const auto raw : overlay_pending)
+                work.push_back(EvalValue(raw));
+        }
+        std::vector<std::int64_t> metrics_keys;
+        if (metrics_intern_roots::collect(metrics_keys) > 0) {
+            work.reserve(work.size() + metrics_keys.size());
+            for (const auto raw : metrics_keys)
                 work.push_back(EvalValue(raw));
         }
     }
