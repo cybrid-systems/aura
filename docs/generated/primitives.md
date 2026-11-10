@@ -2,20 +2,20 @@
 
 # Primitives (generated)
 
-**557** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**530** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 439 · **stdlib-candidate** 86 · **delete** 5 · **unclassified** 27
+**kernel** 439 · **stdlib-candidate** 86 · **delete** 5
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 52 primitives (9%)
-- **core**: 469 primitives (84%)
-- **internal-observable**: 35 primitives (6%)
+- **mutation-safety**: 51 primitives (10%)
+- **core**: 443 primitives (84%)
+- **internal-observable**: 35 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
 Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.py` (Issue #559 taxonomy: mutation-safety / internal-observable / convenience / core default). Per-primitive classification overrides via `docs/primitive_categories.yaml` were removed per Anqi 2026-07-19 directive (aura philosophy, no per-issue plan docs).
@@ -92,10 +92,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `mutate:validate-reflected` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_query_tail.cpp`
 - `mutate:wrap` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
 
-## Workspace: (1)
-
-- `workspace:snapshot` *[mutation-safety]* `unclassified` — `src/compiler/evaluator_primitives_workspace.cpp`
-
 ## Fiber: (4)
 
 - `fiber:cancel` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -134,7 +130,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (303)
+## Core builtins (301)
 
 - `%base64-decode` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -203,7 +199,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `check-capability` *[core]* `kernel` — `src/compiler/evaluator_primitives_policy.cpp`
 - `check-module-signature` *[core]* `kernel` — `src/compiler/evaluator_primitives_types.cpp`
 - `check-preconditions` *[core]* `kernel` — `src/compiler/evaluator_primitives_diagnostic.cpp`
-- `check-success` *[core]* `unclassified` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check=` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `cons` *[core]* `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
 - `cos` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
@@ -214,7 +209,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `define-linear` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `define-lookup` *[core]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `deserialize-workspace` *[core]* `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
-- `diagnose` *[core]* `unclassified` — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `display` *[core]* `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `drop` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
 - `eof-object` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -540,37 +534,13 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `offload:snapshot` *[core]* `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
 - `offload:submit` *[core]* `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Orch: (29)
+## Orch: (5)
 
-- `orch:agent-ask` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-directory` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-export-via-token` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-import-via-token` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-join` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-poll` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-recv` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-reply` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-send` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-touch` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-wait-reclaimed` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:cancel` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:compose-workflow` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:join` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:join-via-token` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:parallel-intend` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:recv` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:reset-metrics` *[core]* `unclassified` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `orch:run-workflow` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-cancel-all` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-child` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-join-all` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-resolve` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-spawn` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-sweep-reclaimed-pending` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-watch` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:send` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:spawn` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:supervise-batch` *[core]* `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
 
 ## Primitives: (2)
 
@@ -666,7 +636,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (52)
+### Mutation safety (must remain primitive) (51)
 
 - `c-alloc` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-free` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
@@ -719,9 +689,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace-persist-format-version` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-persist-info` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-state` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `workspace:snapshot` `unclassified` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (469)
+### Core builtins (must remain primitive) (443)
 
 - `%base64-decode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -808,7 +777,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `check-capability` `kernel` — `src/compiler/evaluator_primitives_policy.cpp`
 - `check-module-signature` `kernel` — `src/compiler/evaluator_primitives_types.cpp`
 - `check-preconditions` `kernel` — `src/compiler/evaluator_primitives_diagnostic.cpp`
-- `check-success` `unclassified` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check=` `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `cons` `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
 - `cos` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
@@ -819,7 +787,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `define-linear` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `define-lookup` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `deserialize-workspace` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
-- `diagnose` `unclassified` — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `display` `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `drop` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
 - `engine:metrics` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
@@ -997,35 +964,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `offload:snapshot` `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
 - `offload:submit` `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
 - `or` `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
-- `orch:agent-ask` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-directory` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-export-via-token` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-import-via-token` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-join` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-poll` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-recv` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-reply` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-send` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-touch` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-wait-reclaimed` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:cancel` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:compose-workflow` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:join` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:join-via-token` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:parallel-intend` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:recv` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:reset-metrics` `unclassified` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `orch:run-workflow` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-cancel-all` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-child` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-join-all` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-resolve` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-spawn` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-sweep-reclaimed-pending` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-watch` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:send` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:spawn` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:supervise-batch` `unclassified` — `src/compiler/evaluator_primitives_agent.cpp`
 - `pair?` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `parallel-intend` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `pin-stable-refs` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
@@ -1777,33 +1720,3 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `inexact` *[D-ALIAS]* — `src/compiler/evaluator_primitives_math.cpp`
 - `primitives:contract-probe` *[D-ALIAS]* — `src/compiler/evaluator_primitives_test.cpp`
 - `truncate` *[D-ALIAS]* — `src/compiler/evaluator_primitives_math.cpp`
-
-### unclassified (27)
-
-- `check-success` *[]* — `src/compiler/evaluator_primitives_runtime.cpp`
-- `diagnose` *[]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
-- `orch:agent-ask` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-directory` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-export-via-token` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-import-via-token` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-join` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-poll` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-recv` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-reply` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-send` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-touch` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:agent-wait-reclaimed` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:compose-workflow` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:join-via-token` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:parallel-intend` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:reset-metrics` *[]* — `src/compiler/evaluator_primitives_messaging.cpp`
-- `orch:run-workflow` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-cancel-all` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-child` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-join-all` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-resolve` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-spawn` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-sweep-reclaimed-pending` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:scope-watch` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:supervise-batch` *[]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `workspace:snapshot` *[]* — `src/compiler/evaluator_primitives_workspace.cpp`
