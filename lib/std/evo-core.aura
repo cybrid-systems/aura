@@ -52,6 +52,8 @@
 ;                               "behavior" … ["error" …]))
 ;   apply:    (lambda (s c) -> #t | #f)    default: mutate:rebind of the
 ;             candidate's string genome into its "target" define.
+;             evo:trial calls this same shape (#5085). A one-argument
+;             apply (the old trial calling convention) still runs.
 ;   accept:   (lambda (s c eval) -> bool)  optional extra gate (Pareto gate
 ;             lives in P1 std/pareto; P0 gates only on feasibility).
 ;
@@ -817,6 +819,36 @@
         (if (string? e) e (evo-value-text e)))
       ""))
 
+; Trial and commit! share the apply contract (lambda (s c) -> #t|#f).
+; ctx is not a search handle: it carries the candidate's target and gen,
+; which is enough for evo:default-apply (s is unused there) and for an
+; apply written against commit!. A one-argument apply, the shape trial
+; used to call (#5085), still runs — only an arity mismatch on the
+; two-argument call is retried with the candidate alone.
+(define (evo-arity-mismatch? e)
+  (let ((t (if (string? e) e (evo-value-text e))))
+    (not (= -1 (string-index t "arity mismatch" 0)))))
+
+(define (evo-trial-ctx cand)
+  (hash "kind" "evo-trial"
+        "id" ""
+        "algo" "trial"
+        "gen" (evo-opt cand "gen" 0)
+        "target" (evo-opt cand "target" #f)
+        "tip" ""))
+
+(define (evo-call-apply apply-fn ctx cand)
+  (let ((two (try (apply-fn ctx cand)
+                  (catch (e) (list 'evo-apply-err e)))))
+    (if (and (pair? two)
+             (eq? (car two) 'evo-apply-err)
+             (evo-arity-mismatch? (car (cdr two))))
+        (try (apply-fn cand)
+             (catch (e) (list 'evo-caught e)))
+        (if (and (pair? two) (eq? (car two) 'evo-apply-err))
+            (list 'evo-caught (car (cdr two)))
+            two))))
+
 ; (evo:trial cand opts) -> result hash; the live workspace is never
 ; written. timeout-ms is a measured deadline: the trial refuses a result
 ; that overran it (Aura has no preemptive interrupt in-process; the
@@ -870,7 +902,9 @@
             (evo-trial-refused cand o root before
                                "isolation-unavailable: workspace:switch refused"))
     (let* ((t0 (monotonic-ms))
-           (res (try (let ((ar (if apply-fn (apply-fn cand) #t)))
+           (res (try (let ((ar (if apply-fn
+                                (evo-call-apply apply-fn (evo-trial-ctx cand) cand)
+                                #t)))
                        (cond ((eq? ar #t) (if eval-fn
                                               (eval-fn cand)
                                               (hash "objectives" (hash)
