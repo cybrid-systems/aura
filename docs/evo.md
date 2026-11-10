@@ -102,6 +102,14 @@ result. *Cost*: archive maintenance is O(front) per insert. *Safety*:
 `pareto:accept?` is a commit gate; the archive is a plain value.
 Papers: NSGA-II (Deb et al., 2002), MOEA/D (Zhang & Li, 2007).
 
+`moead:make`'s `"operator"` is `"de"`, `"de-explore"`, `"sbx"`, `"rand"`, a
+proposal procedure, or `(hash "choose" f)`. Any other string is an error that
+names that set — it is not silently treated as DE. `"rand"` is uniform random
+sampling inside the bounds, not differential evolution (before v0.2 the same
+spelling fell through to DE). Choosing `"rand"` appends an `OPERATOR` record
+to the evolution log when `AURA_EVO_LOG` is set, and `moead:report` includes
+`operator-meaning`.
+
 `std/swarm`'s multi-objective surface is a thin delegation to this module
 (#4740/#4940): vector fitness goes through `pareto:dominates?`,
 `pareto:hypervolume` and the Pareto archive; swarm contributes the population
