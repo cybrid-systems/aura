@@ -49,7 +49,11 @@
     "K-NUM-HOT": "abs/max/min sit in numeric loops and lcm is variadic with i64 edge handling (kI64Min/i64 overflow); an Aura body would either add a call per arithmetic step or narrow the contract, so all four stay kernel",
     "K-ORCH-STATE": "orchestration verbs whose body reads scheduler or fiber session state (agent scopes, the agent name table, agent_poll forced yield, reclaimed-body waits, handoff tokens); Aura code cannot own that state atomically, so they are the live kernel surface and std/orch builds on the same five primitives (#5131)",
     "K-SLOT-GOV": "pair/string shorthand readers enforce a per-slot tenant gate (inrange_slot_tenant_allows, #4505) before every car/cdr; Aura code cannot see slot ownership, so moving these to the stdlib would silently drop the cross-tenant read check",
-    "K-PAIR-TABLE": "pair-table family: every member walks the tenanted pair table, so a read can be denied per slot (length returns a typed cross-tenant deny #4111, list? audits and answers #f through jit_pair_cdr), and take/length also own typed failure values and the pair-mint quota. Verified on length, list? and take; the group is kernel until a single name is proven to avoid all three."
+    "K-PAIR-TABLE": "pair-table family: every member walks the tenanted pair table, so a read can be denied per slot (length returns a typed cross-tenant deny #4111, list? audits and answers #f through jit_pair_cdr), and take/length also own typed failure values and the pair-mint quota. Verified on length, list? and take; the group is kernel until a single name is proven to avoid all three.",
+    "K-STR-HEAP": "string and symbol readers/writers: each read or write goes through the tenant-stamped string heap (inrange_string_tenant_allows, #4428) and a denied access is a typed error, so an Aura body would drop the cross-tenant check",
+    "K-HASH-HEAP": "hash and ihash readers: the table lives in the tenanted heap, entries carry per-slot tenant stamps and the deny path is a typed error; Aura cannot inspect slot ownership",
+    "K-PARSE": "reader/parser surfaces (json, read-from-string, verify:parse-*): the body drives the FlatAST reader and mints strings, so the failure shapes and the parse state are kernel-owned",
+    "K-ERR": "the assertion helpers build the engine error value through push_error_cause; an Aura (error ...) raises a different value, so moving them would change what a failing test observes"
   },
   "kernel_exceptions": [
     "arithmetic-shift",
@@ -95,8 +99,8 @@
     "orch:supervise-batch"
   ],
   "counts": {
-    "kernel": 507,
-    "stdlib-candidate": 39,
+    "kernel": 546,
+    "stdlib-candidate": 0,
     "delete": 1
   },
   "primitives": {
@@ -222,8 +226,8 @@
       "rule": "K-NUM"
     },
     "assert": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-ERR"
     },
     "assv": {
       "tier": "kernel",
@@ -457,8 +461,8 @@
       "rule": "K-VAL"
     },
     "check": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-ERR"
     },
     "check-capability": {
       "tier": "kernel",
@@ -473,9 +477,8 @@
       "rule": "K-AGENT"
     },
     "check=": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE",
-      "note": "test helper (check + equal?); belongs in std/test, which already documents (check (equal? a b)) as the canonical form. Still used by tests/suite/*.aura, so retire the call sites before deleting the registration."
+      "tier": "kernel",
+      "rule": "K-ERR"
     },
     "compile:relower-strategy": {
       "tier": "kernel",
@@ -502,8 +505,8 @@
       "rule": "K-CLOCK"
     },
     "datum->string": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-ERR"
     },
     "declare-type": {
       "tier": "kernel",
@@ -550,8 +553,8 @@
       "rule": "K-HOT"
     },
     "equal?": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-STR-HEAP"
     },
     "eqv?": {
       "tier": "kernel",
@@ -690,8 +693,8 @@
       "rule": "K-PAIR-TABLE"
     },
     "format": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-STR-HEAP"
     },
     "gc": {
       "tier": "kernel",
@@ -746,24 +749,24 @@
       "rule": "K-VAL"
     },
     "hash->alist": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-HASH-HEAP"
     },
     "hash-copy": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-HASH-HEAP"
     },
     "hash-has-key?": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-HASH-HEAP"
     },
     "hash-keys": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-HASH-HEAP"
     },
     "hash-length": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-HASH-HEAP"
     },
     "hash-ref": {
       "tier": "kernel",
@@ -778,24 +781,24 @@
       "rule": "K-VAL"
     },
     "hash-values": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-HASH-HEAP"
     },
     "hash?": {
       "tier": "kernel",
       "rule": "K-VAL"
     },
     "ihash-count": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-HASH-HEAP"
     },
     "ihash-has-key?": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-HASH-HEAP"
     },
     "ihash-keys": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-HASH-HEAP"
     },
     "ihash-ref": {
       "tier": "kernel",
@@ -859,16 +862,16 @@
       "rule": "K-AGENT"
     },
     "json-encode": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-PARSE"
     },
     "json-get-string": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-PARSE"
     },
     "json-parse": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-PARSE"
     },
     "keyword->string": {
       "tier": "kernel",
@@ -891,8 +894,8 @@
       "rule": "K-PAIR-TABLE"
     },
     "list->string": {
-      "tier": "stdlib-candidate",
-      "rule": "S-STR"
+      "tier": "kernel",
+      "rule": "K-STR-HEAP"
     },
     "list->vector": {
       "tier": "kernel",
@@ -907,8 +910,8 @@
       "rule": "K-PAIR-TABLE"
     },
     "list?": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-PAIR-TABLE"
     },
     "load": {
       "tier": "kernel",
@@ -1398,8 +1401,8 @@
       "rule": "K-VAL"
     },
     "number->string": {
-      "tier": "stdlib-candidate",
-      "rule": "S-STR"
+      "tier": "kernel",
+      "rule": "K-PARSE"
     },
     "number?": {
       "tier": "kernel",
@@ -1925,8 +1928,8 @@
       "rule": "K-IO"
     },
     "read-all-from-string": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-PARSE"
     },
     "read-byte": {
       "tier": "kernel",
@@ -1937,8 +1940,8 @@
       "rule": "K-IO"
     },
     "read-from-string": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-PARSE"
     },
     "read-line": {
       "tier": "kernel",
@@ -2145,36 +2148,36 @@
       "rule": "K-AGENT"
     },
     "string->list": {
-      "tier": "stdlib-candidate",
-      "rule": "S-STR"
+      "tier": "kernel",
+      "rule": "K-STR-HEAP"
     },
     "string->number": {
-      "tier": "stdlib-candidate",
-      "rule": "S-STR"
+      "tier": "kernel",
+      "rule": "K-PARSE"
     },
     "string-append": {
       "tier": "kernel",
       "rule": "K-VAL"
     },
     "string-copy": {
-      "tier": "stdlib-candidate",
-      "rule": "S-STR"
+      "tier": "kernel",
+      "rule": "K-STR-HEAP"
     },
     "string-fill!": {
-      "tier": "stdlib-candidate",
-      "rule": "S-STR"
+      "tier": "kernel",
+      "rule": "K-STR-HEAP"
     },
     "string-hash": {
       "tier": "kernel",
       "rule": "K-STR"
     },
     "string-index": {
-      "tier": "stdlib-candidate",
-      "rule": "S-STR"
+      "tier": "kernel",
+      "rule": "K-STR-HEAP"
     },
     "string-join": {
-      "tier": "stdlib-candidate",
-      "rule": "S-STR"
+      "tier": "kernel",
+      "rule": "K-STR-HEAP"
     },
     "string-length": {
       "tier": "kernel",
@@ -2185,24 +2188,24 @@
       "rule": "K-VAL"
     },
     "string<=?": {
-      "tier": "stdlib-candidate",
-      "rule": "S-STR"
+      "tier": "kernel",
+      "rule": "K-STR-HEAP"
     },
     "string<?": {
-      "tier": "stdlib-candidate",
-      "rule": "S-STR"
+      "tier": "kernel",
+      "rule": "K-STR-HEAP"
     },
     "string=?": {
-      "tier": "stdlib-candidate",
-      "rule": "S-STR"
+      "tier": "kernel",
+      "rule": "K-STR-HEAP"
     },
     "string>=?": {
-      "tier": "stdlib-candidate",
-      "rule": "S-STR"
+      "tier": "kernel",
+      "rule": "K-STR-HEAP"
     },
     "string>?": {
-      "tier": "stdlib-candidate",
-      "rule": "S-STR"
+      "tier": "kernel",
+      "rule": "K-STR-HEAP"
     },
     "string?": {
       "tier": "kernel",
@@ -2217,8 +2220,8 @@
       "rule": "K-ENGINE"
     },
     "symbol-append": {
-      "tier": "stdlib-candidate",
-      "rule": "S-STR"
+      "tier": "kernel",
+      "rule": "K-STR-HEAP"
     },
     "symbol?": {
       "tier": "kernel",
@@ -2345,24 +2348,24 @@
       "rule": "K-VERIFY"
     },
     "verify:parse-assert-failure": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-PARSE"
     },
     "verify:parse-coverage-feedback": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-PARSE"
     },
     "verify:parse-formal-cex": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-PARSE"
     },
     "verify:report-coverage": {
       "tier": "kernel",
       "rule": "K-VERIFY"
     },
     "verify:suggest-constraint-refine": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PURE"
+      "tier": "kernel",
+      "rule": "K-PARSE"
     },
     "void": {
       "tier": "kernel",
