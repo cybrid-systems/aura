@@ -1,10 +1,30 @@
 # Changelog
 
-## Unreleased (0.2.1)
+## 0.2.1
+
+Patch release on the 0.2 channel. The v0.2.0 alias window is closed: the `ast:` / `workspace:` / `syntax:` / `fiber:` prefixes and the seven bare spellings are unbound, so a caller uses `(query :op)` / `(mutate :op)`. The API is still not stable.
 
 - Stdlib (#5096): SRFI-1 `any`/`every` stop at the shortest list; `force` forces a nested promise; `parameter?` rejects ordinary procedures and `parameterize` evaluates the parameter expression once; `values` is not a bare list, so `let-values` and `call-with-values` treat `(list 1 2)` as one value; SRFI-151 `bitwise-bit-set?` is `(index n)` and `bitwise-fold` walks bits in `[0, integer-length)`; `frequencies` and `hash-get` accept a missing key, and SRFI-125 `hash-table-walk` is `(hash-table proc)`; the eof object is unique, so a successful `write-char` is not eof.
 - Primitives (#5097, #5094, #5095): `(query :op)` is read-only and `(mutate :op)` is write-only. The verbs no longer scan `ast:`, `workspace:`, `syntax:`, or `fiber:`. Snapshot and restore are mutate ops. `fiber:spawn` / `yield` / `join` / `cancel` stay kernel names. The v0.2.0 alias window is closed for those prefixes and the seven bare spellings: those names are unbound. `(query :api-reference)` prints `PrimMeta.doc` for a name that is still deprecated. The registration gate counts `add_mutate` names.
 - Orchestration (#5118): `std/orch` never gained the scope, workflow, or agent-directory verbs, so unregistering them removed the capability. They are registered again and deprecated for one cycle. The doc hint names the function to call: the verb itself, except `orch:parallel-intend`, whose hint names `parallel-intend`. `orch:spawn-agent` was already registered. `orch:metrics` is a bare name again and reads the same scheduler counters as `(stats:get "orch:metrics")`. Moved aliases such as `ast:snapshot` and `workspace:discard` stay unbound; callers use `(mutate :op)` / `(query :op)`.
+- The REPL follows the closed window (#4908): `:propose`, its keep/rollback path, `:defs` and `:history` call `mw:snapshot`, `mw:restore`, `qr:find-define` and `qr:mutation-log-summary`. A proposal no longer fails with `unbound variable: ast:snapshot`, and `:defs` stops marking every definition `(not live)`.
+- Evaluation (#4466): the integer fast path kept one cell-store stamp for both operands of an arithmetic form, so inside a `while` whose bodies are closures a top-level accumulator lost one step and `(+ p p)` summed the value from before a `set!` with the one after. Each operand carries its own stamp now.
+- Security (#4036): `(mutate :closure-free n)` passes the Mutate choke again. The verb dispatcher calls the write body directly, which had skipped the dispatch gate, so a Restricted or multi-tenant caller without a grant was refused by the id check with no deny row. The deny is audited as `closure:free`, the name the isolation consult already writes.
+- Stdlib: `string-trim`, `string-trim-left` and `string-trim-right` drop every ASCII whitespace byte, not just a space.
+- Evo: `aura evo log` resolves a `parents` entry to the record id it wrote, so `--lineage` and the report's lineage graph link candidates; the walk is linear in the log instead of re-scanning it per entry. A mutate made in a child workspace is recorded as FORK rather than a live KEEP, and `trial apply` takes the same `(s c)` contract as `commit!`.
+- Workspace: a child layer can take copy-on-write of the kernel's own tree, `require` type-checks as a load instead of an unbound name, and `engine:metrics` no longer aborts after a workspace mutation; the default metrics snapshot is faster.
+- Runtime: `aura-executable-path` reports the launcher that was run rather than the resolved image, `fiber:cancel`'s catch text matches the documented payload, `--worker-threads` is accepted before `--load`, and a CLI fiber integer loop stops copying a free variable once per iteration.
+- Fixes: MOEA/D refuses an unknown operator string instead of falling back silently, `std/algo-select` updates its handles in place so the shared-row totals do not drift, and the orchestration scope survives a settled join.
+- Build and release: a package and its image label record the git sha (#5067), and `resolve_git_sha.sh` pins the safe directory and ignores a leaked `GIT_DIR`.
+- Install and smoke coverage is unchanged: Ubuntu 24.04, Ubuntu 26.10, Debian 12, Rocky Linux 9, and openEuler 24.03 LTS SP4, on x86_64 and arm64.
+- `AURA_VERSION=v0.2.1` selects the GitHub Release asset `aura-0.2.1-linux-<arch>.tar.gz`; the default install remains nightly. Images: `ghcr.io/cybrid-systems/aura:0.2.1`, `:0.2`, and `:latest`. `:nightly` stays the rolling build from `main`.
+- A tag release runs the chaos SOAK (300s, 8 workers, 256 fibers) and the production concurrency gate before assets are uploaded.
+
+Not in this version:
+
+- macOS, Windows, and other Linux distributions.
+- `aura::eval` ships in the build tree only; the installed bundle does not carry the C++ header or library yet.
+- The evolve-strategy kit is not pinned to this tag. It follows `main` and now calls `mw:snapshot` / `mw:restore`, so a kit checkout from before that commit fails on the closed window.
 
 ## 0.2.0
 
