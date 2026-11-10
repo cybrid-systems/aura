@@ -2021,6 +2021,15 @@ void RegSplitParts::register_memory_closure_free_primitives(PrimRegistrar add, E
         if (a.empty())
             return make_bool(false);
         if (is_int(a[0])) {
+            // Issue #4036 / #5097: (mutate :closure-free n) reaches this prim
+            // through the verb dispatcher, which calls the body directly and
+            // so no longer runs the dispatch choke that used to deny
+            // closure:free! and leave its deny row. Keep the Mutate choke on
+            // the int path, under the JIT audit name the isolation consult
+            // and the #4036 ring assertion both use.
+            if (!ev.require_effect(aura::compiler::security::kEffectMutate, "closure:free", 0,
+                                   ev.capability_tenant_id()))
+                return make_bool(false);
             // Issue #4036: isolation-checked free with the calling
             // Evaluator's principal + face — the same capability_tenant_id_
             // require_effect just allowed the Mutate effect with. Deny →
