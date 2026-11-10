@@ -31,9 +31,9 @@
 ; (bitwise-merge mask a b) — SRFI-151 alias of bitwise-if.
 (define bitwise-merge bitwise-if)
 
-; (bitwise-bit-set? i k) — is bit k of i set?
-(define (bitwise-bit-set? i k)
-  (not (= 0 (bitwise-and i (arithmetic-shift 1 k)))))
+; (bitwise-bit-set? index n) — SRFI-151: is bit `index` of integer `n` set?
+(define (bitwise-bit-set? index n)
+  (not (= 0 (bitwise-and n (arithmetic-shift 1 index)))))
 
 ; (bitwise-first-bit-set i) — index of the lowest set bit, -1 for 0.
 (define (bitwise-first-bit-set i)
@@ -49,15 +49,19 @@
   (bitwise-and (arithmetic-shift i (- start))
                (- (arithmetic-shift 1 (- end start)) 1)))
 
-; (bitwise-fold proc seed i) — fold proc bit-by-bit, LSB first.
+; (bitwise-fold proc seed i) — fold proc over set bits in
+; [0, integer-length(i)), LSB first. A negative is two's complement:
+; the sign-extended bits at and above integer-length are not visited,
+; and the bits of (bitwise-not i) are not the bits of i (#5096).
 (define (bitwise-fold proc seed i)
-  (let loop ((n (if (< i 0) (bitwise-not i) i)) (bit 0) (acc seed))
-    (if (= n 0)
-        acc
-        (loop (arithmetic-shift n -1) (+ bit 1)
-              (if (= 0 (bitwise-and n 1))
-                  acc
-                  (proc bit acc))))))
+  (let ((len (integer-length i)))
+    (let loop ((bit 0) (acc seed))
+      (if (>= bit len)
+          acc
+          (loop (+ bit 1)
+                (if (bitwise-bit-set? bit i)
+                    (proc bit acc)
+                    acc))))))
 
 ; (bitwise-for-each proc i) — call proc on each set bit index, LSB first.
 (define (bitwise-for-each proc i)
