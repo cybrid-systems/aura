@@ -91,7 +91,13 @@ def main() -> int:
     must("Issue #3779", "AC2 dump cite", obs)
     must("steal_complete_total", "AC2 overlay field", obs)
     must("gc_hooks::steal_complete_total()", "AC2 overlay SSOT", obs)
-    must('groups.find("telemetry")', "AC2 telemetry group", obs)
+    # #5065: the default snapshot no longer builds a string-keyed group map.
+    # The overlay still replaces steal_complete_total from gc_hooks, matched
+    # by field name inside the static telemetry group.
+    if 'groups.find("telemetry")' not in obs and 'std::string_view(field.name) == "steal_complete_total"' not in obs:
+        fails.append(
+            'AC2 telemetry group: missing groups.find("telemetry") or the field-name steal_complete_total overlay'
+        )
 
     must("AURA_COMPILER_METRICS_FIELD(steal_complete_total)", "AC3 .inc retained", inc)
     must("steal_complete_total{0}; // #2203", "AC3 AdaptiveStealStats key", metrics)
