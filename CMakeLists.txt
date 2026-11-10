@@ -1912,6 +1912,16 @@ aura_add_issue_test(test_address_bits_scratch)
 # Issue #3018: engine:metrics :all / :prefix fail-soft on hash insert miss.
 aura_add_issue_test(test_engine_metrics_facade)
 aura_issue_test_link_light(test_engine_metrics_facade)
+# Issue #5117: (engine:metrics) after set-code / mutate:rebind must not
+# SIGABRT under the restricted sandbox (--preset dev / --preset ci).
+# Spawns the aura CLI only — do not link aura_test_objects.
+add_executable(test_engine_metrics_after_mutate
+               tests/compiler/test_engine_metrics_after_mutate.cpp)
+target_compile_features(test_engine_metrics_after_mutate PUBLIC cxx_std_26)
+target_compile_options(test_engine_metrics_after_mutate PRIVATE -Wall -Wextra -Werror)
+add_test(NAME test_engine_metrics_after_mutate_verification
+         COMMAND test_engine_metrics_after_mutate)
+set_tests_properties(test_engine_metrics_after_mutate_verification PROPERTIES LABELS "issue")
 # Issue #2315: production chaos soak for steal × mutate × GC × mailbox.
 # Runtime-gated by AURA_CHAOS_STEAL_GC=1; production binaries / default test
 # runs unaffected when unset. CI opt-in: set AURA_CHAOS_DURATION_S=60+
