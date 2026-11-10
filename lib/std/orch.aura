@@ -379,41 +379,104 @@
       (orch-yield-safe)
       r)))
 
+; Cooperative wait. There is no kernel sleep: a tight yield loop watches
+; the steady clock, and fiber:yield is the cancellation safepoint so a
+; caller that finished early can stop the timer.
+(define (orch-wait-sec sec)
+  (let ((start (monotonic-ms))
+        (limit (* sec 1000)))
+    (let loop ()
+      (if (>= (- (monotonic-ms) start) limit)
+        #t
+        (begin (fiber:yield) (loop))))))
+
+(define (orch-join-ordered ids)
+  (let loop ((xs ids) (acc (quote ())))
+    (if (null? xs)
+      (reverse acc)
+      (loop (cdr xs)
+            (cons (try (fiber:join (car xs)) (catch (e) 'error)) acc)))))
+
 ; (orch:parallel fns input [timeout-seconds]) → results
 ; Each fn runs in its own fiber; join is on this caller (#109: no serial
 ; fallback — no fibers means an empty result, not a quiet serial run).
+;
+; Timeout used to cons the timer onto the id list and then fiber:join the
+; workers first. Join blocks, so a worker that only fiber:yields never
+; finishes and the timer is never observed (#5061). The timer and the
+; workers now race on a buffered channel. A worker that has not reported
+; by the deadline is cancelled (its next yield raises) and contributes #f;
+; workers that finished keep their results, in spawn order.
 (define (orch:parallel fns input . timeout-arg)
   (define timeout-sec (if (pair? timeout-arg) (car timeout-arg) #f))
   (if (null? fns) (quote ())
-    (let ((fiber-ids (quote ())))
+    (let ((nfn (length fns)))
       (orch-yield-safe)
-      (define (spawn-all remaining)
-        (when (pair? remaining)
-          (define worker (orch-wrap-with-yield (car remaining)))
-          (define fid (try (fiber:spawn (lambda () (worker input)))
-                           (catch (e) 0)))
-          (if (not (= fid 0))
-            (set! fiber-ids (cons fid fiber-ids)))
-          (spawn-all (cdr remaining))))
-      (spawn-all fns)
-      (if (null? fiber-ids) (quote ())
-        (let* ((timeout-fid (if timeout-sec
-                             (fiber:spawn (lambda ()
-                               (sleep timeout-sec)
-                               'timeout))
-                             #f))
-               (all-ids (if timeout-fid (cons timeout-fid fiber-ids) fiber-ids))
-               (results (quote ())))
-          (define (collect-all ids)
-            (when (pair? ids)
-              (define r (try (fiber:join (car ids)) (catch (e) 'error)))
-              (set! results (cons r results))
-              (collect-all (cdr ids))))
-          (collect-all (reverse all-ids))
-          (orch-yield-safe)
-          (if timeout-sec
-            (reverse (cdr results))
-            (reverse results)))))))
+      (if (not timeout-sec)
+        (let ((fiber-ids (quote ())))
+          (define (spawn-all remaining)
+            (when (pair? remaining)
+              (define worker (orch-wrap-with-yield (car remaining)))
+              (define fid (try (fiber:spawn (lambda () (worker input)))
+                               (catch (e) 0)))
+              (if (not (= fid 0))
+                (set! fiber-ids (cons fid fiber-ids)))
+              (spawn-all (cdr remaining))))
+          (spawn-all fns)
+          (if (null? fiber-ids) (quote ())
+            (begin
+              (orch-yield-safe)
+              (orch-join-ordered (reverse fiber-ids)))))
+        (let ((done (channel:create (+ nfn 2)))
+              (fids (make-vector nfn 0))
+              (seen (make-vector nfn #f)))
+          (define (spawn-all remaining idx)
+            (if (null? remaining)
+              idx
+              (let* ((my idx)
+                     (worker (orch-wrap-with-yield (car remaining)))
+                     (fid (try (fiber:spawn (lambda ()
+                               (define r (try (worker input) (catch (e) 'error)))
+                               (channel:send done my)
+                               r))
+                              (catch (e) 0))))
+                (if (= fid 0)
+                  (spawn-all (cdr remaining) idx)
+                  (begin
+                    (vector-set! fids idx fid)
+                    (spawn-all (cdr remaining) (+ idx 1)))))))
+          (define n (spawn-all fns 0))
+          (if (= n 0) (quote ())
+            (let ((timer (try (fiber:spawn (lambda ()
+                             (orch-wait-sec timeout-sec)
+                             (channel:send done -1)))
+                           (catch (e) 0))))
+              (define (collect got)
+                (if (>= got n)
+                  #f
+                  (let ((msg (channel:recv done)))
+                    (if (< msg 0)
+                      #t
+                      (begin
+                        (vector-set! seen msg #t)
+                        (collect (+ got 1)))))))
+              (define timed-out (collect 0))
+              (when timed-out
+                (let cancel-rest ((i 0))
+                  (when (< i n)
+                    (when (not (vector-ref seen i))
+                      (try (fiber:cancel (vector-ref fids i)) (catch (e) #f)))
+                    (cancel-rest (+ i 1)))))
+              (try (fiber:cancel timer) (catch (e) #f))
+              (define (gather i)
+                (if (>= i n)
+                  (quote ())
+                  (let ((v (try (fiber:join (vector-ref fids i)) (catch (e) 'error))))
+                    (cons (if (vector-ref seen i) v #f) (gather (+ i 1))))))
+              (define out (gather 0))
+              (try (fiber:join timer) (catch (e) #f))
+              (orch-yield-safe)
+              out)))))))
 
 (define (orch:parallel-with-yield fns input . timeout-arg)
   (if (pair? timeout-arg)
