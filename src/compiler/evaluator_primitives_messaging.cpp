@@ -137,6 +137,13 @@ std::int64_t fiber_body_id_4778() noexcept {
     return current_fiber_body_id();
 }
 
+// #5064: file-mode diagnostics must not rewrite a fiber body's error value.
+// The CLI thread backend does not set g_current_fiber, so aura_fiber_current_id
+// stays 0 there; this reads the same id the cancel safepoint uses.
+extern "C" int aura_fiber_body_active() noexcept {
+    return fiber_body_id_4778() != 0 ? 1 : 0;
+}
+
 namespace {
 
     // Arm cancellation for fid. Always re-arms (kDelivered -> kPending).
@@ -171,18 +178,29 @@ namespace {
     // Takes the standard primitive error channels by reference: the
     // Evaluator members are private and this is not a friend function
     // (only the register_* entries are), so callers pass them through.
+    // The catchable condition a cancelled fiber observes. Marked as a user
+    // error (#4909): cancellation is a cooperative condition the program
+    // handles, like (error ...), not a type error. File mode otherwise
+    // prints it as "type error:" and a fiber-local try/catch that was
+    // stringified before the handler ran could not match the payload in
+    // docs/stdlib/fiber-cancel.md (#5064).
+    // Heap and the error store are private. Callers inside the register
+    // lambdas pass them; this function only calls the public mark_user_error.
     template <typename Heap>
-    EvalValue fiber_cancel_condition_value(Heap& string_heap, std::vector<EvalValue>& error_values,
+    EvalValue fiber_cancel_condition_value(Evaluator& ev, Heap& string_heap,
+                                           std::vector<EvalValue>& error_values,
                                            std::atomic<std::uint64_t>* error_counter) {
-        return make_primitive_error(string_heap, error_values,
-                                    "fiber-cancelled: cancel requested via (fiber:cancel)",
-                                    error_counter);
+        auto err = make_primitive_error(string_heap, error_values,
+                                        "fiber-cancelled: cancel requested via (fiber:cancel)",
+                                        error_counter);
+        ev.mark_user_error(err);
+        return err;
     }
 
     // The condition a cancelled body observes at a safepoint. Returns
     // nullopt when this body has no pending request.
     template <typename Heap>
-    std::optional<EvalValue> fiber_cancel_safepoint(Heap& string_heap,
+    std::optional<EvalValue> fiber_cancel_safepoint(Evaluator& ev, Heap& string_heap,
                                                     std::vector<EvalValue>& error_values,
                                                     std::atomic<std::uint64_t>* error_counter) {
         bool cancelled = fiber_cancel_take(current_fiber_body_id());
@@ -199,7 +217,7 @@ namespace {
             cancelled = true;
         if (!cancelled)
             return std::nullopt;
-        return fiber_cancel_condition_value(string_heap, error_values, error_counter);
+        return fiber_cancel_condition_value(ev, string_heap, error_values, error_counter);
     }
 
     // Issue #4710: publish the registry's values as GC roots. A body's
@@ -2151,7 +2169,7 @@ void RegSplitParts::register_messaging_fiber_lifecycle_primitives(PrimRegistrar 
         // Issue #4708: the yield is the primary cancellation safepoint. A
         // cancelled body raises a catchable condition here BEFORE the
         // hand-off, so try/catch cleanup runs on the fiber's own stack.
-        if (auto cancel_cond = fiber_cancel_safepoint(ev.string_heap_, ev.error_values_,
+        if (auto cancel_cond = fiber_cancel_safepoint(ev, ev.string_heap_, ev.error_values_,
                                                       ev.primitive_error_counter_ptr()))
             return *cancel_cond;
         const bool scheduler_backend = aura::messaging::g_fiber_yield != nullptr;
@@ -2347,7 +2365,7 @@ void RegSplitParts::register_messaging_fiber_join_primitive(PrimRegistrar add, E
                         fiber_cancel_take(static_cast<int64_t>(joiner_fiber->id()))) {
                         if (joiner_target_id && aura::serve::g_scheduler)
                             aura::serve::g_scheduler->remove_joiner(joiner_target_id, joiner_fiber);
-                        return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
+                        return fiber_cancel_condition_value(ev, ev.string_heap_, ev.error_values_,
                                                             ev.primitive_error_counter_ptr());
                     }
                     if (!static_cast<aura::serve::Fiber*>(aura::messaging::g_fiber_lookup(fid)))
@@ -2415,7 +2433,7 @@ void RegSplitParts::register_messaging_fiber_join_primitive(PrimRegistrar add, E
             const auto join_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(200);
             while (!is_ready()) {
                 if (fiber_cancel_take(current_fiber_body_id()))
-                    return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
+                    return fiber_cancel_condition_value(ev, ev.string_heap_, ev.error_values_,
                                                         ev.primitive_error_counter_ptr());
                 if (std::chrono::steady_clock::now() >= join_deadline)
                     break;
@@ -2457,7 +2475,7 @@ void RegSplitParts::register_messaging_fiber_join_primitive(PrimRegistrar add, E
                             break;
                     }
                     if (fiber_cancel_take(current_fiber_body_id()))
-                        return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
+                        return fiber_cancel_condition_value(ev, ev.string_heap_, ev.error_values_,
                                                             ev.primitive_error_counter_ptr());
                     if (std::chrono::steady_clock::now() >= join_deadline)
                         break;
@@ -2470,7 +2488,7 @@ void RegSplitParts::register_messaging_fiber_join_primitive(PrimRegistrar add, E
                 // the cv until the target publishes (or the 200s ceiling).
                 while (!is_ready()) {
                     if (fiber_cancel_take(current_fiber_body_id()))
-                        return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
+                        return fiber_cancel_condition_value(ev, ev.string_heap_, ev.error_values_,
                                                             ev.primitive_error_counter_ptr());
                     if (std::chrono::steady_clock::now() >= join_deadline)
                         break;
@@ -2758,7 +2776,7 @@ void RegSplitParts::register_messaging_channel_primitives(PrimRegistrar add, Eva
             bool cancelled = false;
             const bool sent = channel_send_cooperative(view, std::move(msg), fiber, &cancelled);
             if (cancelled)
-                return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
+                return fiber_cancel_condition_value(ev, ev.string_heap_, ev.error_values_,
                                                     ev.primitive_error_counter_ptr());
             return make_bool(sent);
         }
@@ -2809,7 +2827,7 @@ void RegSplitParts::register_messaging_channel_primitives(PrimRegistrar add, Eva
             bool cancelled = false;
             auto msg = channel_recv_cooperative(view, fiber, &cancelled);
             if (cancelled)
-                return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
+                return fiber_cancel_condition_value(ev, ev.string_heap_, ev.error_values_,
                                                     ev.primitive_error_counter_ptr());
             if (!msg)
                 return make_string(0); // channel closed
@@ -2829,7 +2847,7 @@ void RegSplitParts::register_messaging_channel_primitives(PrimRegistrar add, Eva
                 --ch.waiting_receivers;
                 ul.unlock();
                 ch.cv.notify_all();
-                return fiber_cancel_condition_value(ev.string_heap_, ev.error_values_,
+                return fiber_cancel_condition_value(ev, ev.string_heap_, ev.error_values_,
                                                     ev.primitive_error_counter_ptr());
             }
             ch.cv.wait_for(ul, std::chrono::milliseconds(50));
