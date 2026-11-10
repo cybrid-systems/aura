@@ -97,7 +97,7 @@
 | `std/socket` | `tcp-connect` `tcp-send` `tcp-recv` `tcp-close` `tcp-listen` `tcp-local-port` `tcp-accept` `tcp-accept-timeout` | socket.aura — TCP socket library (client + server) |
 | `std/sort` | `list-sort` `list-stable-sort` `list-sort!` `list-stable-sort!` `vector-sort` `vector-stable-sort` `vector-sort!` `vector-stable-sort!` … (+3) | lib/std/sort.aura — SRFI-132 sorting (Issue #5003) |
 | `std/stack` | `make-stack` `stack-push` `stack-pop` `stack-top` `stack-empty?` `stack-length` `stack->list` `list->stack` | stack.aura — LIFO stack (pair-based) |
-| `std/stats` | `get` `list` `contains?` `count` `prefix` `filter` | Aura standard observability / stats module |
+| `std/stats` | `stats:get` `stats:list` `stats:contains?` `stats:count` `stats:prefix` `stats:filter` | Aura standard observability / stats module |
 | `std/string` | `string-split` `string-split-words` `string-join` `string-trim` `string-upcase` `string-downcase` `string-contains?` `string-prefix?` … (+20) | Aura standard string library |
 | `std/struct` | — | Aura struct library — define-struct as a macro |
 | `std/surface` | `;` `──` `string` `(stdlib` `composition)` `string-split` `string-split-words` `string-join` … (+89) | lib/std/surface.aura — recommended public convenience surface (P3) |

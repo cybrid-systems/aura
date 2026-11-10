@@ -2108,7 +2108,7 @@ static void engine_metrics_hash_force_overflow_sentinel(FlatHashTable* ht, Evalu
 // never FlatHashTable::destroy + return void for capacity alone.
 // create() failure (OOM) still returns void.
 template <class Range> static EvalValue build_engine_metrics_hash(Evaluator& ev, const Range& kv) {
-    std::uint64_t need = static_cast<std::uint64_t>(std::size(kv)) * 2 + 8;
+    std::uint64_t need = static_cast<std::uint64_t>(kv.size()) * 2 + 8;
     std::uint64_t cap = 16;
     while (cap < need && cap < (1ull << 63))
         cap <<= 1;
