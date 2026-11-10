@@ -132,7 +132,7 @@
 (define cow-prov-rec (car (reverse cow-log1)))
 (assert! (and (eq? cow-prov-ok #t) (= (length cow-log1) (+ cow-log0 1)))
          "G: exactly one mutation-log record per overlay commit")
-(assert! (and (cow-has? cow-prov-rec "op=fiber:overlay-commit")
+(assert! (and (cow-has? cow-prov-rec "op=mw:overlay-commit")
               (cow-has? cow-prov-rec "sum=bindings=cow-prov ")
               (cow-has? cow-prov-rec "epoch="))
          "G: the record names the overlay commit and its bindings")

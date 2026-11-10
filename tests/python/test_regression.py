@@ -5755,7 +5755,7 @@ def test_fiber_cow_overlay_commit_mutation_log_4715():
 
     The commit writes env bindings, not AST nodes, so it used to be invisible
     to (query :mutation-log). It must now leave one record with
-    op=fiber:overlay-commit, the committed bindings and the epoch, and a
+    op=mw:overlay-commit, the committed bindings and the epoch, and a
     rejected commit must leave a RolledBack record naming the winner.
     """
     program = """
@@ -5786,12 +5786,12 @@ def test_fiber_cow_overlay_commit_mutation_log_4715():
 (display
  (list (if (eq? ok #t) 1 0)
        (- n1 n0)
-       (if (and (has? rec "op=fiber:overlay-commit")
+       (if (and (has? rec "op=mw:overlay-commit")
                 (has? rec "sum=bindings=cow-prov ")
                 (has? rec "epoch="))
            "commit-rec-ok" "commit-rec-bad")
        (if (string? msg) 1 0)
-       (if (and (has? rec2 "op=fiber:overlay-commit")
+       (if (and (has? rec2 "op=mw:overlay-commit")
                 (has? rec2 "conflict=cow-prov-c")
                 (has? rec2 "winner-fiber=")
                 (has? rec2 "kind=write-write"))
