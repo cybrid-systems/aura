@@ -43,7 +43,8 @@
     "K-EXC-5095": "add_mutate names are the public write surface (#5095). They were registered before this gate could see them. v0.2.1 counts them; a new add_mutate name still needs a removal or a kernel_exceptions entry.",
     "K-EXC-5096": "eof-object is the unique R7RS eof sentinel (#5096). eof-object? already rejects every other value, including void, so a successful write-char is not eof. The constructor has to be the same host value the predicate recognizes; a per-module vector would not be eq? to the primitive. No registration was removable in the stdlib fix.",
     "K-EXC-5118": "Restored orch verbs (#5118). #5111 unregistered the scope, workflow, directory and metrics names before std/orch had a body for them. They stay registered and deprecated for one cycle. The doc hint names the function to call (the verb itself, or parallel-intend for orch:parallel-intend). No other registration was removable in the same change.",
-    "K-R7RS": "R7RS-small required procedure; a conversion spelling exists, but removing this name would break the declared R7RS surface"
+    "K-R7RS": "R7RS-small required procedure; a conversion spelling exists, but removing this name would break the declared R7RS surface",
+    "K-CHAR": "character comparison used inside every string and parser loop (char=?/char<?); an Aura body adds a call per comparison, so it stays kernel until #5135 can measure the move in the CI image"
   },
   "kernel_exceptions": [
     "arithmetic-shift",
@@ -89,8 +90,8 @@
     "orch:supervise-batch"
   ],
   "counts": {
-    "kernel": 465,
-    "stdlib-candidate": 81,
+    "kernel": 467,
+    "stdlib-candidate": 79,
     "delete": 1
   },
   "primitives": {
@@ -439,12 +440,12 @@
       "rule": "K-IO"
     },
     "char<?": {
-      "tier": "stdlib-candidate",
-      "rule": "S-CHAR"
+      "tier": "kernel",
+      "rule": "K-CHAR"
     },
     "char=?": {
-      "tier": "stdlib-candidate",
-      "rule": "S-CHAR"
+      "tier": "kernel",
+      "rule": "K-CHAR"
     },
     "char?": {
       "tier": "kernel",

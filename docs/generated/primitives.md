@@ -6,7 +6,7 @@
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 465 · **stdlib-candidate** 81 · **delete** 1
+**kernel** 467 · **stdlib-candidate** 79 · **delete** 1
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
@@ -187,8 +187,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `ceiling` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `char->integer` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `char-ready?` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `char<?` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
-- `char=?` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
+- `char<?` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
+- `char=?` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `char?` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `check` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check-capability` *[core]* `kernel` — `src/compiler/evaluator_primitives_policy.cpp`
@@ -782,8 +782,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `channel:try-recv` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `char->integer` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `char-ready?` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `char<?` `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
-- `char=?` `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
+- `char<?` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
+- `char=?` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `char?` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `check` `stdlib-candidate` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check-capability` `kernel` — `src/compiler/evaluator_primitives_policy.cpp`
@@ -1216,7 +1216,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (465)
+### kernel (467)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1285,6 +1285,8 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `channel:try-recv` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `char->integer` *[K-VAL]* — `src/compiler/evaluator_primitives_char.cpp`
 - `char-ready?` *[K-IO]* — `src/compiler/evaluator_primitives_char.cpp`
+- `char<?` *[K-CHAR]* — `src/compiler/evaluator_primitives_core.cpp`
+- `char=?` *[K-CHAR]* — `src/compiler/evaluator_primitives_core.cpp`
 - `char?` *[K-VAL]* — `src/compiler/evaluator_primitives_char.cpp`
 - `check-capability` *[K-GOV]* — `src/compiler/evaluator_primitives_policy.cpp`
 - `check-module-signature` *[K-ENGINE]* — `src/compiler/evaluator_primitives_types.cpp`
@@ -1684,7 +1686,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `write` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `write-file` *[K-IO]* — `src/compiler/evaluator_primitives_file.cpp`
 
-### stdlib-candidate (81)
+### stdlib-candidate (79)
 
 - `abs` *[S-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
 - `append` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
@@ -1702,8 +1704,6 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `cddar` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `cdddr` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `cddr` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
-- `char<?` *[S-CHAR]* — `src/compiler/evaluator_primitives_core.cpp`
-- `char=?` *[S-CHAR]* — `src/compiler/evaluator_primitives_core.cpp`
 - `check` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check=` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `datum->string` *[S-PURE]* — `src/compiler/evaluator_primitives_eval.cpp`
