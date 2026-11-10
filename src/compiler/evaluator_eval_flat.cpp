@@ -5996,7 +5996,9 @@ namespace {
     thread_local int tls_fast_i_n_5066 = 0;
     thread_local const aura::ast::FlatAST* tls_fast_flat_5066 = nullptr;
 
-    void tls_fast_i_clear_5066() noexcept { tls_fast_i_n_5066 = 0; }
+    void tls_fast_i_clear_5066() noexcept {
+        tls_fast_i_n_5066 = 0;
+    }
 
     std::optional<FastIOp> fast_iop_5066(std::string_view name) {
         if (name == "+")
@@ -6025,7 +6027,8 @@ namespace {
     std::optional<EvalValue> eval_fast_iop_5066(FastIOp op, std::int64_t x, std::int64_t y);
 
     std::optional<EvalValue> eval_fast_site_5066(const std::atomic<std::uint64_t>& top_gen,
-                                                 std::uint64_t defuse, const aura::ast::FlatAST& flat,
+                                                 std::uint64_t defuse,
+                                                 const aura::ast::FlatAST& flat,
                                                  const aura::ast::StringPool& pool, const Env& env,
                                                  FastISite& site, int depth) {
         if (depth > 4)
@@ -6165,36 +6168,36 @@ namespace {
     std::optional<EvalValue> eval_fast_iop_5066(FastIOp op, std::int64_t x, std::int64_t y) {
         std::int64_t next = 0;
         switch (op) {
-        case FastIOp::Add:
-            if (__builtin_add_overflow(x, y, &next) || !types::fits_fixnum(next))
-                return std::nullopt;
-            return make_int(next);
-        case FastIOp::Sub:
-            if (__builtin_sub_overflow(x, y, &next) || !types::fits_fixnum(next))
-                return std::nullopt;
-            return make_int(next);
-        case FastIOp::Mul:
-            if (__builtin_mul_overflow(x, y, &next) || !types::fits_fixnum(next))
-                return std::nullopt;
-            return make_int(next);
-        case FastIOp::Mod:
-            if (y == 0 || (x == std::numeric_limits<std::int64_t>::min() && y == -1))
-                return std::nullopt;
-            next = x % y;
-            // Floor modulo, same sign as the divisor (#4486).
-            if (next != 0 && ((next < 0) != (y < 0)))
-                next += y;
-            if (!types::fits_fixnum(next))
-                return std::nullopt;
-            return make_int(next);
-        case FastIOp::Ge:
-            return make_bool(x >= y);
-        case FastIOp::Gt:
-            return make_bool(x > y);
-        case FastIOp::Le:
-            return make_bool(x <= y);
-        case FastIOp::Lt:
-            return make_bool(x < y);
+            case FastIOp::Add:
+                if (__builtin_add_overflow(x, y, &next) || !types::fits_fixnum(next))
+                    return std::nullopt;
+                return make_int(next);
+            case FastIOp::Sub:
+                if (__builtin_sub_overflow(x, y, &next) || !types::fits_fixnum(next))
+                    return std::nullopt;
+                return make_int(next);
+            case FastIOp::Mul:
+                if (__builtin_mul_overflow(x, y, &next) || !types::fits_fixnum(next))
+                    return std::nullopt;
+                return make_int(next);
+            case FastIOp::Mod:
+                if (y == 0 || (x == std::numeric_limits<std::int64_t>::min() && y == -1))
+                    return std::nullopt;
+                next = x % y;
+                // Floor modulo, same sign as the divisor (#4486).
+                if (next != 0 && ((next < 0) != (y < 0)))
+                    next += y;
+                if (!types::fits_fixnum(next))
+                    return std::nullopt;
+                return make_int(next);
+            case FastIOp::Ge:
+                return make_bool(x >= y);
+            case FastIOp::Gt:
+                return make_bool(x > y);
+            case FastIOp::Le:
+                return make_bool(x <= y);
+            case FastIOp::Lt:
+                return make_bool(x < y);
         }
         return std::nullopt;
     }
@@ -6550,7 +6553,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
     std::size_t& c_stack_depth = aura::serve::aura_eval_c_stack_depth_slot();
     struct FastFlatScope5066 {
         const aura::ast::FlatAST* prev;
-        explicit FastFlatScope5066(const aura::ast::FlatAST* f) : prev(tls_fast_flat_5066) {
+        explicit FastFlatScope5066(const aura::ast::FlatAST* f)
+            : prev(tls_fast_flat_5066) {
             tls_fast_flat_5066 = f;
         }
         ~FastFlatScope5066() { tls_fast_flat_5066 = prev; }
@@ -6837,9 +6841,7 @@ Evaluator::FlatStep Evaluator::eval_flat_on_set(EvalFlatCursor& cur, const aura:
     // defuse_version_. Bumping defuse makes a named-let that set!s drop
     // its loop binding ("unbound variable: loop").
     struct CellStoreBump5066 {
-        ~CellStoreBump5066() {
-            g_cell_store_gen_5066.fetch_add(1, std::memory_order_release);
-        }
+        ~CellStoreBump5066() { g_cell_store_gen_5066.fetch_add(1, std::memory_order_release); }
     } cell_store_bump_5066;
     // Issue #4715 AC2: an open overlay owns the write. A set!
     // of a top-level binding is captured as a private cell (the
@@ -11067,9 +11069,9 @@ std::optional<EvalResult> Evaluator::eval_flat_prepare_visit(EvalFlatCursor& cur
             FastISite& site = tls_fast_i_5066[i];
             if (site.flat != f || site.node != current_id)
                 continue;
-            if (auto v = eval_fast_site_5066(
-                    top_bind_gen_, g_cell_store_gen_5066.load(std::memory_order_acquire), *f, *p,
-                    eval_env, site, 0))
+            if (auto v = eval_fast_site_5066(top_bind_gen_,
+                                             g_cell_store_gen_5066.load(std::memory_order_acquire),
+                                             *f, *p, eval_env, site, 0))
                 return EvalResult(*v);
             break;
         }
