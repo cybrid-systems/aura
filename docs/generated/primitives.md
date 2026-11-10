@@ -2,11 +2,11 @@
 
 # Primitives (generated)
 
-**554** registrations scanned from `src/**/*.cpp` (24 marked **deprecated** — Issue #1438).
+**553** registrations scanned from `src/**/*.cpp` (23 marked **deprecated** — Issue #1438).
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 467 · **stdlib-candidate** 86 · **delete** 1
+**kernel** 466 · **stdlib-candidate** 86 · **delete** 1
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
@@ -14,7 +14,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 51 primitives (9%)
-- **core**: 467 primitives (84%)
+- **core**: 466 primitives (84%)
 - **internal-observable**: 35 primitives (6%)
 - **convenience**: 1 primitives (0%)
 
@@ -534,7 +534,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `offload:snapshot` *[core]* `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
 - `offload:submit` *[core]* `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
 
-## Orch: (29)
+## Orch: (28)
 
 - `orch:agent-ask` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-directory` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
@@ -551,7 +551,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `orch:compose-workflow` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:join` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:join-via-token` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:metrics` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_messaging.cpp`
 - `orch:parallel-intend` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:recv` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:run-workflow` *[core]* `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
@@ -714,7 +713,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace-persist-info` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-state` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 
-### Core builtins (must remain primitive) (467)
+### Core builtins (must remain primitive) (466)
 
 - `%base64-decode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -1003,7 +1002,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `orch:compose-workflow` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:join` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:join-via-token` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:metrics` `kernel` **deprecated** — `src/compiler/evaluator_primitives_messaging.cpp`
 - `orch:parallel-intend` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:recv` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:run-workflow` `kernel` **deprecated** — `src/compiler/evaluator_primitives_agent.cpp`
@@ -1230,7 +1228,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (467)
+### kernel (466)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1500,7 +1498,6 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `orch:compose-workflow` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:join` *[K-ORCH-VERB-5006]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:join-via-token` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:metrics` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `orch:parallel-intend` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:recv` *[K-ORCH-VERB-5006]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:run-workflow` *[K-EXC-5118]* — `src/compiler/evaluator_primitives_agent.cpp`
@@ -1795,7 +1792,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 
 ## Deprecated (Issue #1438)
 
-Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **24** names:
+Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(workspace :op)` / `(engine:metrics)`. **23** names:
 
 - `orch:agent-ask` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-directory` — `src/compiler/evaluator_primitives_agent.cpp`
@@ -1810,7 +1807,6 @@ Still registered for compatibility. Prefer `(query :op)` / `(mutate :op)` / `(wo
 - `orch:agent-wait-reclaimed` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:compose-workflow` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:join-via-token` — `src/compiler/evaluator_primitives_agent.cpp`
-- `orch:metrics` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `orch:parallel-intend` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:run-workflow` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:scope-cancel-all` — `src/compiler/evaluator_primitives_agent.cpp`

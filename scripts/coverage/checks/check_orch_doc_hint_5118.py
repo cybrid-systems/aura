@@ -64,9 +64,17 @@ def main() -> int:
     messaging = (ROOT / "src/compiler/evaluator_primitives_messaging.cpp").read_text(encoding="utf-8")
     registry = (ROOT / "src/compiler/evaluator_primitives_registry.cpp").read_text(encoding="utf-8")
     live = live_adds(agent) | live_adds(messaging)
+    # Issue #5131: a name on this list is satisfied either by its kernel
+    # registration or by a definition in lib/std/orch (the migration target).
+    # The list stays at 24 so a migrated name cannot silently disappear from
+    # both homes.
+    orch_mod = (ROOT / "lib/std/orch.aura").read_text(encoding="utf-8")
     for name in RESTORED:
-        if name not in live:
-            fails.append(f"{name} is not a live add()")
+        if name in live:
+            continue
+        if f"(define ({name}" in orch_mod:
+            continue
+        fails.append(f"{name} is neither a live add() nor defined in std/orch")
     if "parallel-intend" not in live_adds(agent):
         fails.append("parallel-intend is not registered, so the alias hint has no target")
     if "DEPRECATED (#5118)" not in registry:
