@@ -8560,7 +8560,7 @@ int main() {
         CHECK(is_error(r), "4400 AC4: direct restore without Mutate is an error");
         const auto msg = ev.soft_error_message(r);
         CHECK(msg.find("effect-denied:") != std::string::npos, "4400 AC4: effect-denied visible");
-        CHECK(msg.find("op=ast:restore") != std::string::npos, "4400 AC4: deny op is ast:restore");
+        CHECK(msg.find("op=mw:restore") != std::string::npos, "4400 AC4: deny op is mw:restore");
         auto after = cs.eval("(marker)");
         CHECK(after && is_int(*after) && as_int(*after) == 9, "4400 AC4: workspace stays B");
         ::unsetenv("AURA_MULTI_TENANT");
@@ -8603,14 +8603,14 @@ int main() {
               "4400 AC5: empty-source log rewrite pays Mutate before log.clear");
         CHECK(persist.find("if (blob.source.empty())") != std::string::npos,
               "4400 AC5: log Mutate gate is only the empty-source branch");
-        const auto restore_at = ast.find("add(\"ast:restore\"");
-        const auto restore_end = ast.find("add(\"ast:diff\"", restore_at);
+        const auto restore_at = ast.find("add(\"mw:restore\"");
+        const auto restore_end = ast.find("add(\"qr:diff\"", restore_at);
         CHECK(restore_at != std::string::npos && restore_end != std::string::npos &&
                   restore_end > restore_at,
               "4400 AC5: ast:restore body located");
         if (restore_at != std::string::npos && restore_end > restore_at) {
             const auto body = ast.substr(restore_at, restore_end - restore_at);
-            const auto op_at = body.find("const std::string_view ast_restore_op = \"ast:restore\"");
+            const auto op_at = body.find("const std::string_view ast_restore_op = \"mw:restore\"");
             const auto req_at = body.find("require_effect");
             const auto acq_at = body.find("try_acquire");
             // Issue #4772: the flat write is the image delta assign.
@@ -8631,7 +8631,7 @@ int main() {
               "4400 AC5: set-code not added to EXEMPT_2ARG_OPS");
         CHECK(exempt.find("\"deserialize-workspace\"") == std::string::npos,
               "4400 AC5: deserialize-workspace not added to EXEMPT_2ARG_OPS");
-        CHECK(exempt.find("\"ast:restore\"") == std::string::npos,
+        CHECK(exempt.find("\"mw:restore\"") == std::string::npos,
               "4400 AC5: ast:restore not added to EXEMPT_2ARG_OPS");
         CHECK(exempt.find("len(EXEMPT_2ARG_OPS) != 7") != std::string::npos,
               "4400 AC5: EXEMPT_2ARG_OPS count guard stays 7");

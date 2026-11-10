@@ -6184,7 +6184,7 @@ static void ac3752_2_propagate_clear_with_mse() {
 static void ac3752_3_set_marker_gate_unchanged() {
     std::println("\n--- #3752 AC3: syntax:set-marker clear gate unchanged (#3650) ---");
     const auto cmp = read_file("src/compiler/evaluator_primitives_compile.cpp");
-    const auto set_pos = cmp.find("add(\"syntax:set-marker\"");
+    const auto set_pos = cmp.find("add(\"mw:set-marker\"");
     CHECK(set_pos != std::string::npos, "3752 AC3: set-marker present");
     const auto set_win = cmp.substr(set_pos, 2500);
     CHECK(set_win.find("deny_marker_clear_without_mse") != std::string::npos,
@@ -6218,7 +6218,7 @@ static void ac3752_4_soft_propagate_unchanged() {
 static void ac3752_5_source_and_no_artifacts() {
     std::println("\n--- #3752 AC5: source-cite + no forbidden artifacts ---");
     const auto cmp = read_file("src/compiler/evaluator_primitives_compile.cpp");
-    const auto prop = cmp.find("add(\"syntax:propagate-marker\"");
+    const auto prop = cmp.find("add(\"mw:propagate-marker\"");
     CHECK(prop != std::string::npos, "3752 AC5: propagate-marker present");
     const auto win = cmp.substr(prop, 3500);
     CHECK(win.find("Issue #3752") != std::string::npos, "3752 AC5: propagate cites #3752");
