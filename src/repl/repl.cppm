@@ -489,7 +489,7 @@ public:
 
     bool in_workspace_(const std::string& name) {
         std::string node;
-        eval_quiet_("(workspace:find-define " + quote_(name) + ")", &node);
+        eval_quiet_("(qr:find-define " + quote_(name) + ")", &node);
         return !node.empty();
     }
 
@@ -544,7 +544,7 @@ public:
         // the printed form is not a literal the reader can restore from.
         static int snap_seq = 0;
         const std::string snap_var = "__repl_snap_" + std::to_string(++snap_seq);
-        if (auto err = eval_quiet_("(define " + snap_var + " (ast:snapshot \"repl-propose\"))");
+        if (auto err = eval_quiet_("(define " + snap_var + " (mw:snapshot \"repl-propose\"))");
             !err.empty()) {
             std::fprintf(stdout, ":propose: snapshot failed: %s\n", err.c_str());
             return false;
@@ -580,7 +580,7 @@ public:
         }
         std::signal(SIGINT, prev_int);
         if (!ok) {
-            eval_quiet_("(ast:restore " + snap_var + ")");
+            eval_quiet_("(mw:restore " + snap_var + ")");
             eval_quiet_("(eval-current)");
             // The workspace text cache can still hold the rejected candidate;
             // re-evaluating the pre-proposal definition keeps the live source
@@ -1473,7 +1473,7 @@ public:
         // ast:restore + eval-current then lowers a stale node id (abort in
         // lower_flat_expr) — the kit's `:reload backtest.aura` + evolve!.
         std::string node;
-        eval_quiet_("(workspace:find-define " + quote_(name) + ")", &node);
+        eval_quiet_("(qr:find-define " + quote_(name) + ")", &node);
         if (node.empty()) {
             auto err = eval_quiet_(def.src);
             redefined = err.empty();
@@ -1600,7 +1600,7 @@ private:
             if (it == defs_.end())
                 continue;
             std::string node;
-            eval_quiet_("(workspace:find-define " + quote_(n) + ")", &node);
+            eval_quiet_("(qr:find-define " + quote_(n) + ")", &node);
             std::fprintf(stdout, "%-24s %-5s %s:%d%s\n", n.c_str(),
                          it->second.is_fn ? "fn" : "value", it->second.file.c_str(),
                          it->second.line, it->second.is_fn && node.empty() ? "  (not live)" : "");
@@ -1613,7 +1613,7 @@ private:
             std::fprintf(stdout, "#%zu %s\n", i + 1, events_[i].c_str());
         std::string out;
         if (auto err = eval_quiet_(
-                "(let ((h (mutation-log:summary)))"
+                "(let ((h (qr:mutation-log-summary)))"
                 " (if (hash? h)"
                 "  (format \"total ~a, committed ~a, rolled-back ~a, last #~a ~a\""
                 "   (hash-ref h \"total\") (hash-ref h \"committed\") (hash-ref h \"rolled-back\")"
