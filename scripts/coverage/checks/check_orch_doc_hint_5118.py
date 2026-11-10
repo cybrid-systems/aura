@@ -30,7 +30,6 @@ RESTORED = (
     "orch:compose-workflow",
     "orch:join-via-token",
     "orch:metrics",
-    "orch:parallel-intend",
     "orch:run-workflow",
     "orch:scope-cancel-all",
     "orch:scope-child",
@@ -79,8 +78,6 @@ def main() -> int:
         fails.append("parallel-intend is not registered, so the alias hint has no target")
     if "DEPRECATED (#5118)" not in registry:
         fails.append("registry does not build a #5118 PrimMeta.doc hint")
-    if 'replacement = (view == "orch:parallel-intend")' not in registry:
-        fails.append("orch:parallel-intend hint does not name parallel-intend")
     if "std::string(view)" not in registry:
         fails.append("other orch hints do not name the registered verb")
     if fails:

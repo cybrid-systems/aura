@@ -6,7 +6,7 @@
 ;;   (orch:agent-send name payload)
 ;;   (orch:agent-recv name [:wait bool] [:timeout-ms n])
 ;;   (orch:agent-join name [:timeout-ms n])
-;;   (orch:parallel-intend …)
+;;   (parallel-intend …)
 ;;   (engine:metrics \"query:orch-module-stats\")
 ;;
 ;; Run:
@@ -43,7 +43,7 @@
 
 ;; ── parallel-intend alias ─────────────────────────────
 (define batch
-  (orch:parallel-intend
+  (parallel-intend
    (vector (lambda () 1) (lambda () 2) (lambda () 3))
    :max-concurrency 2
    :timeout-ms 10000))
