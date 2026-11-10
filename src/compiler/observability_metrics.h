@@ -2641,7 +2641,7 @@ struct CompilerMetrics {
     // exercised (high rate = hot path; needs benchmarking).
     std::atomic<std::uint64_t> stable_ref_provenance_query_total{0};
     // Issue #623: arena auto-compact threshold setter counter.
-    // Bumped on every (arena:set-auto-compact-threshold ratio)
+    // Bumped on every (mutate :set-auto-compact-threshold ratio)
     // call so the Agent can see how often the production-harden
     // threshold is being tuned at runtime (unusual in steady-state;
     // bursts indicate a memory-pressure watchdog is reacting).

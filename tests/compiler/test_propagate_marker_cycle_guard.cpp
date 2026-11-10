@@ -84,7 +84,7 @@ int main() {
         auto r = cs.eval("(car (query :find \"f\"))");
         CHECK(r && is_int(*r), "find f");
         const auto root = as_int(*r);
-        auto prop = cs.eval(std::format("(syntax:propagate-marker {} 1)", root));
+        auto prop = cs.eval(std::format("(mutate :propagate-marker {} 1)", root));
         CHECK(prop && is_int(*prop), "propagate returns int");
         CHECK(as_int(*prop) > 1, "acyclic updates > 1 node");
     }
@@ -100,7 +100,7 @@ int main() {
         flat->set_child(a, 0, b);
         flat->set_child(b, 0, a);
         const auto t0 = clock::now();
-        auto prop = cs.eval(std::format("(syntax:propagate-marker {} 1)", a));
+        auto prop = cs.eval(std::format("(mutate :propagate-marker {} 1)", a));
         const auto ms =
             std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - t0).count();
         CHECK(prop && is_int(*prop), "cycle propagate returns");
@@ -119,7 +119,7 @@ int main() {
         auto s = flat->add_if(lit, lit, lit);
         flat->set_child(s, 1, s); // then-branch → self
         const auto t0 = clock::now();
-        auto prop = cs.eval(std::format("(syntax:propagate-marker {} 2)", s));
+        auto prop = cs.eval(std::format("(mutate :propagate-marker {} 2)", s));
         const auto ms =
             std::chrono::duration_cast<std::chrono::milliseconds>(clock::now() - t0).count();
         CHECK(prop && is_int(*prop), "self-loop propagate returns");

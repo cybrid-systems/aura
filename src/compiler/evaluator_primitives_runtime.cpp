@@ -1222,7 +1222,7 @@ void RegSplitParts::register_error_primitives(PrimRegistrar add, Evaluator& ev) 
         return make_bool(false);
     });
 
-    add("check-success", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    if (false) add("check-success", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_pair(a[1]))
             return make_bool(false);
         // Get normalized output (strip quotes)

@@ -42,12 +42,12 @@ def main() -> int:
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
-    pos = ws.find("workspace:rollback-to")
+    pos = ws.find("mw:rollback-to")
     if pos < 0:
         fails.append("AC1: workspace:rollback-to not found")
         win = ""
     else:
-        end = ws.find("workspace:rollback-latest", pos)
+        end = ws.find("mw:rollback-latest", pos)
         if end < 0:
             end = pos + 3500
         win = ws[pos:end]

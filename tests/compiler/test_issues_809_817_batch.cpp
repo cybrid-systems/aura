@@ -115,10 +115,10 @@ static void run_matrix(CompilerService& cs) {
     CHECK(href(cs, "query:runtime-production-health", "drift-violations") >= 3, "drift-violations");
     CHECK(href(cs, "query:runtime-production-health", "recommended-action") == 1,
           "recommended-action when unpaid drift");
-    auto heal = cs.eval("(runtime:self-heal-on-drift)");
+    auto heal = cs.eval("(mutate :self-heal-on-drift)");
     CHECK(heal && is_bool(*heal), "self-heal returns bool");
-    (void)cs.eval("(runtime:self-heal-on-drift)");
-    (void)cs.eval("(runtime:self-heal-on-drift)");
+    (void)cs.eval("(mutate :self-heal-on-drift)");
+    (void)cs.eval("(mutate :self-heal-on-drift)");
     CHECK(href(cs, "query:runtime-production-health", "self-heal-invocations") >= 3,
           "self-heal-invocations");
     CHECK(href(cs, "query:runtime-production-health", "health-score") == 100,
@@ -137,12 +137,12 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- #816 edsl-struct-meta-stats + define-struct ---");
     check_schema(cs, "query:edsl-struct-meta-stats", 816);
-    auto ok = cs.eval("(edsl:define-struct \"MyStruct\" \"doc\" \"fields:int\")");
+    auto ok = cs.eval("(mutate :define-struct \"MyStruct\" \"doc\" \"fields:int\")");
     CHECK(ok && is_bool(*ok), "edsl:define-struct returns bool");
     CHECK(href(cs, "query:edsl-struct-meta-stats", "define-struct-total") >= 1,
           "define-struct-total");
     CHECK(href(cs, "query:edsl-struct-meta-stats", "validate-pass") >= 1, "validate-pass");
-    auto bad = cs.eval("(edsl:define-struct)");
+    auto bad = cs.eval("(mutate :define-struct)");
     CHECK(bad && is_bool(*bad), "arity-fail define-struct returns bool");
     CHECK(href(cs, "query:edsl-struct-meta-stats", "validate-fail") >= 1, "validate-fail");
     CHECK(href(cs, "query:edsl-struct-meta-stats", "validate-pass-pct") >= 0 &&

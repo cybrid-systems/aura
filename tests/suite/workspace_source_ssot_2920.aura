@@ -41,9 +41,9 @@
            (set! ok #f)))
 
 ; Snapshot captures workspace unparse (#2918); restore restamps text (#2920)
-(define sid (ast:snapshot "ssot-2920"))
+(define sid (mutate :snapshot "ssot-2920"))
 (set-code "(define other 0)")
-(if (ast:restore sid)
+(if (mutate :restore sid)
     #t
     (begin (display "FAIL-2920 restore\n") (set! ok #f)))
 (define restored (current-source :workspace))

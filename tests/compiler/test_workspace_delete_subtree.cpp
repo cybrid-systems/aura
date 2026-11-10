@@ -171,7 +171,7 @@ int run_test_workspace_delete_subtree() {
         CHECK(list_has_id(cs, child), "AC3: list has child before");
         CHECK(list_has_id(cs, grand), "AC3: list has grand before");
 
-        auto del = cs.eval(std::format("(workspace:delete {})", child));
+        auto del = cs.eval(std::format("(mutate :workspace-delete {})", child));
         CHECK(del && is_bool(*del) && as_bool(*del), "AC3: delete child #t");
 
         CHECK(!list_has_id(cs, child), "AC3: list no longer has child");
@@ -198,7 +198,7 @@ int run_test_workspace_delete_subtree() {
         auto cur = cs.eval("(workspace :current)");
         CHECK(cur && is_int(*cur) && as_int(*cur) == leaf, "AC4: current is leaf");
 
-        auto del = cs.eval(std::format("(workspace:delete {})", mid));
+        auto del = cs.eval(std::format("(mutate :workspace-delete {})", mid));
         CHECK(del && is_bool(*del) && as_bool(*del), "AC4: delete mid subtree");
         auto cur2 = cs.eval("(workspace :current)");
         CHECK(cur2 && is_int(*cur2) && as_int(*cur2) == 0, "AC4: rebound to root 0");
@@ -220,7 +220,7 @@ int run_test_workspace_delete_subtree() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define z 1)\")").has_value(), "3957: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3957: eval");
-        auto d0 = cs.eval("(workspace:discard 0)");
+        auto d0 = cs.eval("(mutate :discard 0)");
         CHECK(d0 && is_bool(*d0) && !as_bool(*d0),
               "3957: root own-flat discard is #f not vacuous #t");
         CHECK(cs.evaluator().workspace_flat() != nullptr, "3957: root flat still live");
@@ -253,7 +253,7 @@ int run_test_workspace_delete_subtree() {
               "reg: set-code child define");
         CHECK(cs.eval("(eval-current)").has_value(), "reg: eval child");
 
-        auto del = cs.eval(std::format("(workspace:delete {})", child));
+        auto del = cs.eval(std::format("(mutate :workspace-delete {})", child));
         CHECK(del && is_bool(*del) && as_bool(*del), "reg: delete child");
 
         // Real mutate round → mark_define_dirty → expire_stale_live_closures_
@@ -265,7 +265,7 @@ int run_test_workspace_delete_subtree() {
         CHECK(r.has_value() && is_int(*r) && as_int(*r) == 42,
               "reg: root define callable after child delete");
 
-        // Discard path: same hole (workspace:discard deletes ws.flat).
+        // Discard path: same hole (mutate :discard deletes ws.flat).
         auto c2 = cs.eval("(workspace :create \"uaf-discard\")");
         CHECK(c2 && is_int(*c2), "reg: create discard child");
         const auto child2 = as_int(*c2);
@@ -274,7 +274,7 @@ int run_test_workspace_delete_subtree() {
         CHECK(cs.eval("(set-code \"(define gone2 (lambda (x) x))\")").has_value(),
               "reg: set-code discard define");
         CHECK(cs.eval("(eval-current)").has_value(), "reg: eval discard child");
-        auto dis = cs.eval(std::format("(workspace:discard {})", child2));
+        auto dis = cs.eval(std::format("(mutate :discard {})", child2));
         CHECK(dis && is_bool(*dis) && as_bool(*dis), "reg: discard child");
         CHECK(cs.eval("(mutate:set-body \"keep\" \"(lambda (x) (+ x 41))\")").has_value(),
               "reg: mutate after discard");

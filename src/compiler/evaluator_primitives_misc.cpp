@@ -101,7 +101,7 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // g_tl_arena is thread-local TLarena declared in runtime_shared.h
     register_prim(
-        add, ev, "arena-offset",
+        add, ev, "query:arena-offset",
         [](const auto&) -> EvalValue { return make_int(static_cast<int64_t>(g_tl_arena.offset)); },
         pure_general(0, "() -> int", "Thread-local arena offset (bytes)."));
 }

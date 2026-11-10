@@ -33,7 +33,7 @@
 ; ── Thin aliases for stats:get-only names (#2734 / #2737) ───────
 (define (ast:nodes) (stats:get "ast:nodes"))
 (define (ast:defs) (stats:get "ast:defs"))
-(define (ast:generation) (stats:get "ast:generation"))
+(define (query :generation) (stats:get "qr:generation"))
 (define (ast:version) (stats:get "ast:version"))
 (define (ast:summary) (stats:get "ast:summary"))
 (define (ast:node-count) (stats:get "ast:node-count"))
@@ -90,7 +90,7 @@
 (define (ast:ref-stats)
   (list
     (list "snapshot"    (mutate :snapshot 0))
-    (list "stable-ref"   (query "ast:stable-ref" 0))
+    (list "stable-ref"   (query "qr:stable-ref-pair" 0))
     (list "defs"         (ast:defs))
     (list "nodes"        (ast:nodes))))
 

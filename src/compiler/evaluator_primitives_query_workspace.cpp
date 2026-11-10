@@ -4889,7 +4889,7 @@ void register_workspace_query_dispatch_parts(WorkspaceQueryPrims& P, PrimRegistr
             return k;
         };
         // Issue #5009: the op may be a keyword (:node-type) or a string.
-        // A string spells the retired primitive name verbatim ("ast:stable-ref"),
+        // A string spells the retired primitive name verbatim ("qr:stable-ref-pair"),
         // which is how the long tail of reads stays reachable without a
         // second public name.
         auto as_text = [&](const EvalValue& v) -> std::string {
@@ -5015,28 +5015,25 @@ void register_workspace_query_dispatch_parts(WorkspaceQueryPrims& P, PrimRegistr
         if (op == "root")
             return call_named("query:root", rest);
 
-        // Issue #5009: (query :fiber-backend) replaces (fiber:spawn-backend).
+        // Issue #5009 / #5097: (query :fiber-backend) is the read of the
+        // spawn backend. The body is query:fiber-backend. fiber:spawn /
+        // yield / join / cancel are not query ops.
         if (op == "fiber-backend" || op == "spawn-backend")
-            return call_named("fiber:spawn-backend", rest);
+            return call_named("qr:fiber-backend", rest);
 
-        // Issue #5006: bare names that read engine state are ops of this verb.
-        // The bare registration stays for one release cycle as a deprecated
-        // alias (#5008 channel); (api-reference) prints the registered table,
-        // (arena-offset) the thread-local arena bump offset, and
-        // (auto-rollback-on-panic) the panic rollback flag.
+        // Issue #5006: engine-state reads are ops of this verb.
         if (op == "api-reference")
-            return call_named("api-reference", std::span<const EvalValue>());
+            return call_named("qr:api-reference", std::span<const EvalValue>());
         if (op == "arena-offset")
-            return call_named("arena-offset", std::span<const EvalValue>());
+            return call_named("query:arena-offset", std::span<const EvalValue>());
         if (op == "auto-rollback-on-panic" || op == "panic-auto-rollback")
             return call_named("panic-auto-rollback?", std::span<const EvalValue>());
 
-        // Issue #5009: the long tail of reads shares this one verb. An op that
-        // carried a prefix is the primitive name itself ("ast:stable-ref");
-        // a bare op is resolved against the retired read prefixes in a fixed
-        // order, so (query :memory-used) and (query :reasons) stay reachable
-        // while ast:/workspace:/dirty:/mutation-log:/syntax: leave the public
-        // surface.
+        // Issue #5097: a read op names one query: primitive. The verb does
+        // not scan ast: / workspace: / dirty: / mutation-log: / syntax: /
+        // fiber:. A string op is the query: name itself ("qr:diff"),
+        // never a retired prefix. Snapshot, restore, and the scheduler are
+        // not reads.
         {
             auto try_named = [&](const std::string& prim) -> std::optional<EvalValue> {
                 if (q_impls) {
@@ -5051,16 +5048,26 @@ void register_workspace_query_dispatch_parts(WorkspaceQueryPrims& P, PrimRegistr
                 return std::nullopt;
             };
             if (op.find(':') != std::string::npos) {
-                if (auto hit = try_named(op))
-                    return *hit;
-                return mev("no-prim", "query dispatch: missing " + op);
+                if (op.starts_with("query:")) {
+                    if (auto hit = try_named(op))
+                        return *hit;
+                    // Bodies moved off the retired prefixes live as qr: (#3175
+                    // keeps the public query: add() list small).
+                    if (auto hit = try_named("qr:" + op.substr(std::string("query:").size())))
+                        return *hit;
+                } else if (op.starts_with("qr:")) {
+                    if (auto hit = try_named(op))
+                        return *hit;
+                }
+                return mev("no-prim",
+                           "query dispatch: '" + op +
+                               "' is not a query op — use (query :op). Retired prefixes "
+                               "(ast: workspace: dirty: mutation-log: syntax: fiber:) are unbound.");
             }
-            static constexpr const char* kReadPrefixes[] = {
-                "query:", "ast:", "workspace:", "dirty:", "mutation-log:", "syntax:", "fiber:"};
-            for (const char* prefix : kReadPrefixes) {
-                if (auto hit = try_named(std::string(prefix) + op))
-                    return *hit;
-            }
+            if (auto hit = try_named(std::string("query:") + op))
+                return *hit;
+            if (auto hit = try_named(std::string("qr:") + op))
+                return *hit;
         }
 
         // Issue #4909: `(query :code)` is not an op, but the primitive

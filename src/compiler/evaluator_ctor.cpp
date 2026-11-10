@@ -253,7 +253,7 @@ Evaluator::Evaluator() {
     }
 
     // Issue #3562: mirror process sandbox onto this Evaluator's legacy
-    // bool so string gates (workspace:delete / fiber:spawn / load /
+    // bool so string gates (mutate :workspace-delete / fiber:spawn / load /
     // read-file deny_io) engage when apply_production_security_defaults
     // already set Restricted without calling set_effect_sandbox_mode
     // (which would rewrite the process SSOT). Do NOT call set_mode here.

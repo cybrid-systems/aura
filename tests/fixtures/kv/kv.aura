@@ -156,7 +156,7 @@
   "执行事务队列中的所有命令。失败时自动回滚。"
   (if (not *tx-active*)
       "ERR EXEC without MULTI"
-      (let ((snap (ast:snapshot "tx-pre")))
+      (let ((snap (mutate :snapshot "tx-pre")))
         (set! *tx-active* #f)
         (let* ((queue (reverse *tx-queue*))
                (results (kv-tx-run queue '())))

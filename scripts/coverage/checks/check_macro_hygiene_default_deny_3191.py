@@ -3,7 +3,7 @@
 
 Issue #3239 retired mutate:sv-add-coverpoint / mutate:sv-weaken-property.
 This linter now covers the remaining tweak-literal lockless gate only.
-Global (hygiene:set-allow-macro-mutate! #t) still unlocks. Soft/Off:
+Global (mutate :set-allow-macro-mutate #t) still unlocks. Soft/Off:
 zero extra cost on non-macro target (single atomic load).
 
 Contract:

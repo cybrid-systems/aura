@@ -132,7 +132,7 @@ int run_test_replace_subtree_new_body_hygiene() {
         CHECK(ws, "AC2: workspace");
         auto target = find_replace_target(*ws);
         CHECK(target != NULL_NODE, "AC2: found target child");
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", target)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", target)).has_value(),
               "AC2: stamp target MacroIntroduced");
         auto r = cs.eval(std::format("(mutate:replace-subtree {} \"99\")", target));
         CHECK(r.has_value(), "AC2: returns");
@@ -214,7 +214,7 @@ int run_test_replace_subtree_new_body_hygiene() {
         auto* ws = cs.evaluator().workspace_flat();
         auto target = find_replace_target(*ws);
         CHECK(target != NULL_NODE, "3061 AC1: target");
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", target)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", target)).has_value(),
               "3061 AC1: stamp");
         auto denied = cs.eval(std::format("(mutate:replace-subtree {} \"99\")", target));
         CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene-protected",
@@ -232,12 +232,12 @@ int run_test_replace_subtree_new_body_hygiene() {
         auto* ws = cs.evaluator().workspace_flat();
         auto target = find_replace_target(*ws);
         CHECK(target != NULL_NODE, "3061 AC2: target");
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", target)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", target)).has_value(),
               "3061 AC2: stamp");
-        CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #t)").has_value(), "3061 AC2: global on");
+        CHECK(cs.eval("(mutate :set-allow-macro-mutate #t)").has_value(), "3061 AC2: global on");
         auto r = cs.eval(std::format("(mutate:replace-subtree {} \"2\")", target));
         CHECK(r.has_value() && merr_kind(cs, *r) != "hygiene", "3061 AC2: global unlocks");
-        CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #f)").has_value(), "3061 AC2: global off");
+        CHECK(cs.eval("(mutate :set-allow-macro-mutate #f)").has_value(), "3061 AC2: global off");
     }
     {
         std::println("\n--- #3061 AC5: source + linter ---");

@@ -42,15 +42,16 @@ def main() -> int:
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
-    pos = ws.find("workspace:rollback-latest")
+    pos = ws.find("mw:rollback-latest")
     if pos < 0:
-        fails.append("AC1: workspace:rollback-latest not found")
+        fails.append("AC1: mw:rollback-latest not found")
         win = ""
     else:
+        start = max(0, pos - 1500)
         end = ws.find("workspace:mutation-count", pos)
         if end < 0:
             end = pos + 2500
-        win = ws[pos:end]
+        win = ws[start:end]
 
     # AC1
     must("Issue #2787", "AC1", win)

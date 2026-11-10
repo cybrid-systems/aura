@@ -196,7 +196,7 @@ def run_session(n_cycles):
                     stats["crash"] += 1
                     break
                 # Verify can-write returns false
-                resp = send(proc, f"(display (workspace:can-write? {wid}))")
+                resp = send(proc, f"(display (query :can-write? {wid}))")
                 if resp is None:
                     stats["crash"] += 1
                     break
@@ -208,7 +208,7 @@ def run_session(n_cycles):
                 stats["ok"] += 3
 
             # Verify root is still writable
-            resp = send(proc, "(display (workspace:can-write? 0))")
+            resp = send(proc, "(display (query :can-write? 0))")
             if resp is None:
                 stats["crash"] += 1
                 break
@@ -263,7 +263,7 @@ def run_session(n_cycles):
             deletable = [wid for wid in workspace_ids if wid > 0]
             if deletable:
                 wid = rng.choice(deletable)
-                resp = send(proc, f"(display (workspace:delete {wid}))")
+                resp = send(proc, f"(display (mutate :workspace-delete {wid}))")
                 if resp is None:
                     stats["crash"] += 1
                     break

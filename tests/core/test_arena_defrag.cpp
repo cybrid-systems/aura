@@ -34,7 +34,7 @@
 //        true after request_defrag() with no safepoint
 //   AC3: 2-thread concurrent arena.create<T>() + defrag()
 //        loop runs for 3s without SIGSEGV/SIGABRT
-//   AC4: (arena:request-defrag) returns bool (true iff a
+//   AC4: (mutate :arena-request-defrag) returns bool (true iff a
 //        safepoint is registered to observe the flag)
 
 #include "test_harness.hpp"
@@ -129,7 +129,7 @@ bool test_ac2_warn_no_safepoint_primitive() {
     // one-shot flag, then OUR explicit request fires it (no safepoint is
     // registered in this bare test process).
     aura::ast::reset_no_safepoint_warned_for_test();
-    auto rr = cs.eval("(arena:request-defrag)");
+    auto rr = cs.eval("(mutate :arena-request-defrag)");
     CHECK(rr.has_value(), "AC2b: request_defrag primitive returns a value");
 
     // Now: warning should have fired (true)
@@ -176,11 +176,11 @@ bool test_ac3_concurrent_alloc_defrag() {
     return true;
 }
 
-// ── AC4: (arena:request-defrag) returns bool ─────────────────
+// ── AC4: (mutate :arena-request-defrag) returns bool ─────────────────
 bool test_ac4_request_defrag_returns_bool() {
-    std::println("\n--- AC4: (arena:request-defrag) returns bool ---");
+    std::println("\n--- AC4: (mutate :arena-request-defrag) returns bool ---");
     aura::compiler::CompilerService cs;
-    auto r = cs.eval("(arena:request-defrag)");
+    auto r = cs.eval("(mutate :arena-request-defrag)");
     CHECK(r.has_value(), "AC4: primitive returns a value");
     if (r && aura::compiler::types::is_bool(*r)) {
         auto b = aura::compiler::types::as_bool(*r);
@@ -253,7 +253,7 @@ static void ac3269_3_snapshot_comment() {
 static void ac3269_4_compact_under_guard() {
     std::println("\n--- #3269 AC4: same-fiber Guard pauses compact; idle compact runs ---");
     aura::compiler::CompilerService cs;
-    auto idle = cs.eval("(arena:compact)");
+    auto idle = cs.eval("(mutate :arena-compact)");
     CHECK(idle.has_value() && aura::compiler::types::is_int(*idle) &&
               aura::compiler::types::as_int(*idle) >= 0,
           "3269 AC4: idle compact");
@@ -270,7 +270,7 @@ static void ac3269_4_compact_under_guard() {
         // 0 and eval returns a non-int. Drive the prim directly so the
         // #3269 TLS skip (with_arena_compact_idle) is what we measure.
         auto& prims = cs.evaluator().primitives();
-        const auto slot = prims.slot_for_name("arena:compact");
+        const auto slot = prims.slot_for_name("mw:arena-compact");
         auto fnopt = prims.slot_lookup_fast(slot);
         CHECK(fnopt.has_value(), "3269 AC4: arena:compact slot");
         if (!fnopt)
@@ -280,7 +280,7 @@ static void ac3269_4_compact_under_guard() {
               "3269 AC4: compact under Guard returns 0");
         CHECK(cs.evaluator().compaction_paused_by_boundary() >= 1, "3269 AC4: paused counter");
     }
-    auto after = cs.eval("(arena:compact)");
+    auto after = cs.eval("(mutate :arena-compact)");
     CHECK(after.has_value() && aura::compiler::types::is_int(*after) &&
               aura::compiler::types::as_int(*after) >= 0,
           "3269 AC4: compact after Guard");

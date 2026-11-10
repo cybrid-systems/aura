@@ -45,7 +45,7 @@ def main() -> int:
     must("-(++thread_fiber_id)" not in msg, "AC1: no negative thread id formula")
     must("Never returns 0 or -1" in msg or "never -1" in msg.lower(), "AC1: contract in source")
 
-    must("fiber:spawn-backend" in msg, "AC2: spawn-backend prim")
+    must("qr:fiber-backend" in msg, "AC2: spawn-backend prim")
     must("#2656" in bridge or "thread" in bridge.lower(), "AC2: bridge documents fallback")
 
     must("#2656" in doc, "AC3: denseness doc")

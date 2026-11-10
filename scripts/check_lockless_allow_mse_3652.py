@@ -132,7 +132,7 @@ def _rows(efl: str, mut: str, cpp: str, test: str, build: str, allow: str) -> li
 
     # AC6 — set-allow-macro-mutate! capability gate.
     must("deny_marker_clear_without_mse(ev, 0)", "AC6 set-allow gate", cpp)
-    must("(hygiene:set-allow-macro-mutate! #t) requires MacroSelfEvo capability", "AC6 merr", cpp)
+    must("(mutate :set-allow-macro-mutate #t) requires MacroSelfEvo capability", "AC6 merr", cpp)
     must("Issue #3652: arming the global opt-out is itself capability-gated", "AC6 cite", cpp)
 
     # AC7 — test wiring + no artifacts + registration.

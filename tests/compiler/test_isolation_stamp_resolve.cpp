@@ -111,7 +111,7 @@ int run_test_isolation_stamp_resolve() {
         const auto t_before = ev.capability_tenant_id();
         CHECK(t_before == 42, "principal still 42");
         ev.set_capability_tenant_id(7);
-        auto r1 = cs.eval(std::format("(ast:stable-ref {})", id));
+        auto r1 = cs.eval(std::format("(query :stable-ref-pair {})", id));
         CHECK(r1 && is_pair(*r1), "ast:stable-ref returns pair");
         auto r2 = cs.eval(std::format("(query:as-stable-ref {})", id));
         CHECK(r2 && is_pair(*r2), "query:as-stable-ref returns pair");

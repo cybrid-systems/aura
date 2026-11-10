@@ -396,7 +396,7 @@ static void ac2990_1_single_writer_default() {
               Evaluator::ConcurrentMutationPolicy::SingleWriter,
           "AC1: default SingleWriter");
     CHECK(!cs.evaluator().scoped_parallel_enabled(), "AC1: scoped_parallel off");
-    auto p = cs.eval("(workspace:concurrent-mutation-policy)");
+    auto p = cs.eval("(query :concurrent-mutation-policy)");
     CHECK(p.has_value() && is_int(*p) && as_int(*p) == 0, "AC1: EDSL getter 0");
 
     // TLS region_key must NOT redirect try_acquire under SingleWriter.
@@ -420,9 +420,9 @@ static void ac2990_1_single_writer_default() {
 static void ac2990_2_scoped_parallel_disjoint() {
     std::println("\n--- #2990 AC2: ScopedParallel disjoint admit ---");
     CompilerService cs;
-    CHECK(cs.eval("(workspace:set-concurrent-mutation-policy 1)").has_value(),
+    CHECK(cs.eval("(mutate :set-concurrent-mutation-policy 1)").has_value(),
           "AC2: opt-in ScopedParallel");
-    auto p = cs.eval("(workspace:concurrent-mutation-policy)");
+    auto p = cs.eval("(query :concurrent-mutation-policy)");
     CHECK(p.has_value() && is_int(*p) && as_int(*p) == 1, "AC2: policy == 1");
     Evaluator& ev = cs.evaluator();
     CHECK(ev.scoped_parallel_enabled(), "AC2: scoped_parallel on");
@@ -441,7 +441,7 @@ static void ac2990_2_scoped_parallel_disjoint() {
 static void ac2990_3_overlap_fallback() {
     std::println("\n--- #2990 AC3: ScopedParallel overlap → SingleWriter fallback ---");
     CompilerService cs;
-    (void)cs.eval("(workspace:set-concurrent-mutation-policy \"scoped-parallel\")");
+    (void)cs.eval("(mutate :set-concurrent-mutation-policy \"scoped-parallel\")");
     Evaluator& ev = cs.evaluator();
     ev.set_workspace_region_concurrency_enabled(true);
     auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
@@ -467,7 +467,7 @@ static void ac2990_4_stats_and_health() {
     CHECK(href_ws(cs, "health-admit-wired") == 1, "AC4: #2985 health wired (not reimplemented)");
     CHECK(href_ws(cs, "agent-scope-policy-wired") == 1, "AC4: #2976 wired");
     CHECK(href_ws(cs, "policy") == 0, "AC4: default policy 0");
-    (void)cs.eval("(workspace:set-concurrent-mutation-policy 1)");
+    (void)cs.eval("(mutate :set-concurrent-mutation-policy 1)");
     CHECK(href_ws(cs, "policy") == 1, "AC4: policy 1 after opt-in");
     CHECK(href_ws(cs, "scoped-parallel-opt-in-total") >= 1, "AC4: opt-in total");
     const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
@@ -492,7 +492,7 @@ static void ac3039_1_production_overlap_hard_reject() {
     aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
     apply_production_audit_defaults();
     CompilerService cs;
-    CHECK(cs.eval("(workspace:set-concurrent-mutation-policy 1)").has_value(),
+    CHECK(cs.eval("(mutate :set-concurrent-mutation-policy 1)").has_value(),
           "3039 AC1: opt-in ScopedParallel");
     Evaluator& ev = cs.evaluator();
     ev.set_workspace_region_concurrency_enabled(true);
@@ -530,7 +530,7 @@ static void ac3039_2_production_disjoint_proceeds() {
     aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
     apply_production_audit_defaults();
     CompilerService cs;
-    CHECK(cs.eval("(workspace:set-concurrent-mutation-policy \"scoped-parallel\")").has_value(),
+    CHECK(cs.eval("(mutate :set-concurrent-mutation-policy \"scoped-parallel\")").has_value(),
           "3039 AC2: opt-in");
     Evaluator& ev = cs.evaluator();
     ev.set_workspace_region_concurrency_enabled(true);
@@ -560,7 +560,7 @@ static void ac3039_3_soft_observe_only() {
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
     apply_dev_audit_defaults();
     CompilerService cs;
-    CHECK(cs.eval("(workspace:set-concurrent-mutation-policy 1)").has_value(), "3039 AC3: opt-in");
+    CHECK(cs.eval("(mutate :set-concurrent-mutation-policy 1)").has_value(), "3039 AC3: opt-in");
     Evaluator& ev = cs.evaluator();
     ev.set_workspace_region_concurrency_enabled(true);
     auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
@@ -630,7 +630,7 @@ static void ac4086_cross_thread_mask_overlap_rejects() {
     aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
     apply_production_audit_defaults();
     CompilerService cs;
-    CHECK(cs.eval("(workspace:set-concurrent-mutation-policy 1)").has_value(),
+    CHECK(cs.eval("(mutate :set-concurrent-mutation-policy 1)").has_value(),
           "4086: opt-in ScopedParallel");
     Evaluator& ev = cs.evaluator();
     ev.set_workspace_region_concurrency_enabled(true);
@@ -712,7 +712,7 @@ static void ac4086_same_key_shard_serializes() {
     aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
     apply_production_audit_defaults();
     CompilerService cs;
-    CHECK(cs.eval("(workspace:set-concurrent-mutation-policy 1)").has_value(),
+    CHECK(cs.eval("(mutate :set-concurrent-mutation-policy 1)").has_value(),
           "4086 same-key: opt-in");
     Evaluator& ev = cs.evaluator();
     ev.set_workspace_region_concurrency_enabled(true);

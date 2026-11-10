@@ -85,7 +85,7 @@ static void ac_1123_1140() {
 
     // #1139
     {
-        auto r = cs.eval("(runtime:self-heal-on-drift)");
+        auto r = cs.eval("(mutate :self-heal-on-drift)");
         CHECK(r && is_bool(*r), "self-heal returns bool");
     }
 
@@ -405,7 +405,7 @@ static void ac_1246_1250() {
     // #1249: agent strategy primitives must not crash on normal string args
     // (bounds-hardened heap_str path).
     {
-        auto d = cs.eval(R"((define-strategy "s1249" "body"))");
+        auto d = cs.eval(R"((mutate :define-strategy "s1249" "body"))");
         CHECK(d && aura::compiler::types::is_bool(*d), "define-strategy returns bool");
         auto f = cs.eval(R"((strategy-field "s1249" "body"))");
         CHECK(f && aura::compiler::types::is_string(*f), "strategy-field body is string");
@@ -908,13 +908,13 @@ static void ac_1291_1295() {
         if (wid > 0) {
             (void)cs2.eval(std::format("(workspace :switch {})", wid));
             (void)cs2.eval("(mutate:rebind \"f\" \"(lambda (x) (* x 2))\")");
-            auto del = cs2.eval(std::format("(workspace:delete {})", wid));
+            auto del = cs2.eval(std::format("(mutate :workspace-delete {})", wid));
             CHECK(del.has_value(), "workspace:delete active");
             auto a = cs2.eval("(+ 2 2)");
             CHECK(a && is_int(*a) && as_int(*a) == 4, "eval after delete active (#1292)");
         } else {
             // create may return non-int id representation — still OK
-            (void)cs2.eval("(workspace:delete 1)");
+            (void)cs2.eval("(mutate :workspace-delete 1)");
             auto a = cs2.eval("(+ 2 2)");
             CHECK(a && is_int(*a) && as_int(*a) == 4, "eval after delete path");
         }
@@ -929,7 +929,7 @@ static void ac_1291_1295() {
             aura::compiler::types::as_bool(*mode)) {
             auto d1 = sand.eval("(compile:mark-narrowing-dirty! 0)");
             CHECK(d1.has_value() && is_error(*d1), "mark-narrowing-dirty! sunk #3172 (not public)");
-            auto d2 = sand.eval("(jit:exception-fibers-clear)");
+            auto d2 = sand.eval("(mutate :exception-fibers-clear)");
             CHECK(d2.has_value() && is_error(*d2),
                   "exception-fibers-clear denied in sandbox (#1295)");
         } else {
@@ -1286,8 +1286,8 @@ static void ac_1316_1320() {
 
     // #1320 / #3173: public arena:compact (defrag-now sunk)
     {
-        auto d = cs.eval("(arena:compact)");
-        CHECK(d && is_int(*d) && as_int(*d) >= 0, "arena:compact");
+        auto d = cs.eval("(mutate :arena-compact)");
+        CHECK(d && is_int(*d) && as_int(*d) >= 0, "mw:arena-compact");
     }
 
     {

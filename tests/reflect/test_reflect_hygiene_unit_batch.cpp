@@ -204,11 +204,11 @@ int run_protected_metadata_1838() {
         std::println("\n--- AC2: hygiene:protected? returns bool ---");
         CompilerService cs;
         CHECK(cs.eval("(define x 1)").has_value(), "seed");
-        auto bad = cs.eval("(hygiene:protected?)");
+        auto bad = cs.eval("(query :protected?)");
         CHECK(bad && is_bool(*bad) && !as_bool(*bad), "no-arg → #f");
-        auto oob = cs.eval("(hygiene:protected? 999999)");
+        auto oob = cs.eval("(query :protected? 999999)");
         CHECK(oob && is_bool(*oob) && !as_bool(*oob), "OOB → #f");
-        auto z = cs.eval("(hygiene:protected? 0)");
+        auto z = cs.eval("(query :protected? 0)");
         CHECK(z && is_bool(*z), "valid id returns bool");
     }
 
@@ -222,13 +222,13 @@ int run_protected_metadata_1838() {
         CHECK(rid && is_int(*rid), "find y");
         const auto id = as_int(*rid);
         // Marker 1 = MacroIntroduced.
-        auto set = cs.eval(std::format("(syntax:set-marker {} 1)", id));
+        auto set = cs.eval(std::format("(mutate :set-marker {} 1)", id));
         CHECK(set && is_bool(*set) && as_bool(*set), "set-marker ok");
-        auto prot = cs.eval(std::format("(hygiene:protected? {})", id));
+        auto prot = cs.eval(std::format("(query :protected? {})", id));
         CHECK(prot && is_bool(*prot) && as_bool(*prot), "node protected after MacroIntroduced");
-        auto clear = cs.eval(std::format("(syntax:set-marker {} 0)", id));
+        auto clear = cs.eval(std::format("(mutate :set-marker {} 0)", id));
         CHECK(clear && is_bool(*clear) && as_bool(*clear), "clear marker ok");
-        auto unprot = cs.eval(std::format("(hygiene:protected? {})", id));
+        auto unprot = cs.eval(std::format("(query :protected? {})", id));
         CHECK(unprot && is_bool(*unprot) && !as_bool(*unprot), "node not protected after User");
     }
 
@@ -291,7 +291,7 @@ int run_workspace_marker_macro_1678() {
 
     // Mark y as MacroIntroduced (marker id 1) via public syntax:set-marker.
     {
-        auto m = cs.eval("(syntax:set-marker (car (cdr (query:defines))) 1)");
+        auto m = cs.eval("(mutate :set-marker (car (cdr (query:defines))) 1)");
         CHECK(m && is_bool(*m) && as_bool(*m), "set MacroIntroduced on y");
     }
 
@@ -305,7 +305,7 @@ int run_workspace_marker_macro_1678() {
 
     // Mark z as MacroIntroduced as well → walk ≥ 2.
     {
-        auto m = cs.eval("(syntax:set-marker (car (cdr (cdr (query:defines)))) 1)");
+        auto m = cs.eval("(mutate :set-marker (car (cdr (cdr (query:defines)))) 1)");
         CHECK(m && is_bool(*m) && as_bool(*m), "set MacroIntroduced on z");
     }
 

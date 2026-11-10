@@ -1347,7 +1347,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_exhausted_min_dirty_reemit.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Continuous Defuse fail to exhaust → force-JIT mask set +
 - `tests/orch/test_failure_policy_bridge.cpp` (—) [large, domain_suite, theme_orch] — Issue #2756 — WorkflowFailurePolicy composition (batch + AgentScope +
 - `tests/compiler/test_followup_smoke.cpp` (—) [small, followup, domain_suite, theme_compiler] — tests/test_followup_smoke.cpp — Smoke test for follow-up ship
-- `tests/compiler/test_followups.cpp` (—) [followup, domain_suite, theme_compiler] — (mutation-log:diff / dirty:summary /
+- `tests/compiler/test_followups.cpp` (—) [followup, domain_suite, theme_compiler] — (query :mutation-log-diff / dirty:summary /
 - `tests/compiler/test_full_strategy_partial_recovery.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2029; partial_recovery_* counters + boundary path
 - `tests/core/test_gc_defer_mutation_hold.cpp` (—) [domain_suite, theme_core] — AC1: During outermost Guard body, should_defer_destructive_gc()==true
 - `tests/compiler/test_grant_bound_mid_force.cpp` (—) [domain_suite, theme_compiler] — AC1: Restricted grant → bound_mutation_id != 0

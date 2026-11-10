@@ -84,7 +84,7 @@ struct CommitRecord {
 // Issue #4715 follow-up: structured conflict condition. The primitive face
 // renders this both as a trailing key=value suffix on the historical
 // "fiber:cow-conflict: <name>" string (so existing callers/tests keep
-// working) and as a hash via (fiber:overlay-conflict).
+// working) and as a hash via (mutate :overlay-conflict).
 //
 // read_only distinguishes the two validation arms:
 //   false — write-write: another fiber committed the SAME binding after we
@@ -102,7 +102,7 @@ struct ConflictInfo {
     [[nodiscard]] bool valid() const noexcept { return !binding.empty(); }
 };
 
-// Aggregate observability for the (fiber:overlay-report) primitive.
+// Aggregate observability for the (mutate :overlay-report) primitive.
 struct OverlayStats {
     std::uint64_t begins = 0;
     std::uint64_t commits = 0;
@@ -177,7 +177,7 @@ template <typename V> struct FiberOverlay {
     // allocate one so the commit publishes a single cell index: a reader
     // resolves either the old cell or the new one, never a half-written
     // payload (the "old-or-new, never torn" property). Names written through
-    // the EDSL (fiber:overlay-define / set!) carry no cell here; their commit
+    // the EDSL (mutate :overlay-define / set!) carry no cell here; their commit
     // materializes one.
     std::unordered_map<std::string, std::uint64_t> cells;
     // Issue #4771: non-zero while a prepare() ticket holds this overlay's

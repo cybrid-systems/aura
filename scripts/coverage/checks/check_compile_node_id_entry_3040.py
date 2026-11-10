@@ -32,9 +32,9 @@ RESIDUAL_SITES = (
     "compile:mark-narrowing-dirty!",
     "compile:per-defuse-index-add",
     "compile:subtree-bump",
-    "syntax:set-marker",
-    "syntax:propagate-marker",
-    "syntax:set-provenance",
+    "mw:set-marker",
+    "mw:propagate-marker",
+    "mw:set-provenance",
 )
 
 MUTATE_MARKERS = (

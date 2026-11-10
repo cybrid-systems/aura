@@ -191,7 +191,7 @@ std::atomic<std::uint64_t> Fiber::join_latency_hist_[Fiber::kJoinLatencyHistBuck
 
 // Issue #618: GC safepoint frequency tuning atomic. Initialized to
 // 50 (matches historical every-Nth-allocation heuristic). The
-// (orchestration:tune-gc-frequency ratio) primitive writes here;
+// (mutate :tune-gc-frequency ratio) primitive writes here;
 // the scheduler can opt-in to consult it (follow-up).
 namespace {
     std::atomic<std::uint32_t> g_gc_frequency_tune_ratio_{50};

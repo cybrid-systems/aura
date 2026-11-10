@@ -45,11 +45,11 @@ def main() -> int:
     cmake = _read("CMakeLists.txt")
 
     # Locate sync-from window
-    pos = ws.find('add("workspace:sync-from"')
+    pos = ws.find('add("mw:sync-from"')
     if pos < 0:
         fails.append("AC1: workspace:sync-from not found")
         pos = 0
-    end = ws.find('add("workspace:discard"', pos)
+    end = ws.find('add("mw:discard"', pos)
     if end < 0:
         end = pos + 5000
     win = ws[pos:end]
@@ -70,7 +70,7 @@ def main() -> int:
     # AC4
     must("ac2784", "AC4", test)
     must("2784", "AC4", test)
-    must("workspace:sync-from", "AC4", test)
+    must("mw:sync-from", "AC4", test)
     must("my-fn", "AC4", test)
     if not (ROOT / "tests" / "compiler" / "test_workspace_sync_from.cpp").is_file():
         fails.append("AC4: missing tests/compiler/test_workspace_sync_from.cpp")

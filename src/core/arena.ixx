@@ -1772,7 +1772,7 @@ public:
     }
 
     // Issue #300 (P1) Phase 3: defrag request flag. Set by
-    // (arena:request-defrag) primitive to signal that a defrag is
+    // (mutate :arena-request-defrag) primitive to signal that a defrag is
     // desired. The main thread or a fiber coordinator can then
     // decide when to actually run the defrag. Reset by the
     // primitive that observes it (or by defrag() itself when it
@@ -1818,7 +1818,7 @@ public:
         // Issue #1397: atomic compare-exchange so the return value
         // distinguishes "newly set this call" from "already set by
         // a prior call". test_issue_300 AC5 encodes this semantics:
-        // the first (arena:request-defrag) returns #t, every
+        // the first (mutate :arena-request-defrag) returns #t, every
         // subsequent call (regardless of whether defrag has run
         // and reset the flag via clear_defrag_request()) observes
         // the already-true state and returns #f. Returning the
@@ -2603,7 +2603,7 @@ public:
     // or stop-the-world mark + GC integration — both tracked as
     // separate follow-ups).
     //
-    // Why a separate counter: in production, (arena:compact) is
+    // Why a separate counter: in production, (mutate :arena-compact) is
     // called periodically as part of normal maintenance, while
     // (arena:defrag) is a heavier operation that the Aura-HV
     // self-evolution loop triggers when fragmentation ratio

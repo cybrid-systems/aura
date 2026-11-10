@@ -30,9 +30,9 @@ from _aura_harness import AURA_BIN  # noqa: E402
 PROG = r"""
 (set-code "(define (params) (list 1 2))\n")
 (mutate:rebind "nope" "(lambda (xs r) (member r xs))" "x")
-(define snap (ast:snapshot "s1"))
+(define snap (mutate :snapshot "s1"))
 (mutate:rebind "params" "(lambda () (list 3 4))" "step")
-(ast:restore snap)
+(mutate :restore snap)
 (eval-current)
 (display (params))
 (newline)

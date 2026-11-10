@@ -11,7 +11,7 @@ inline constexpr const char* kSetCode = "set-code";
 inline constexpr const char* kEvalCurrent = "eval-current";
 inline constexpr const char* kEvalCurrentOutput = "eval-current-output";
 inline constexpr const char* kCurrentSource = "current-source";
-inline constexpr const char* kApiReference = "api-reference";
+inline constexpr const char* kApiReference = "qr:api-reference";
 
 // Common query / mutate prefixes (for documentation / prefix checks).
 inline constexpr const char* kQueryPrefix = "query:";

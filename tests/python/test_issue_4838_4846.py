@@ -99,9 +99,9 @@ class TestIssueBatch4838To4846(unittest.TestCase):
     def test_4845_overlay_misuse_is_not_silent(self) -> None:
         proc = _run(
             """
-(display (list 'set-no-tx (try (fiber:overlay-set! "k" 5) (catch (e) (list 'err e))))) (newline)
-(display (list 'commit-no-tx (fiber:overlay-commit))) (newline)
-(display (list 'rollback-no-tx (fiber:overlay-rollback))) (newline)
+(display (list 'set-no-tx (try (mutate :overlay-set! "k" 5) (catch (e) (list 'err e))))) (newline)
+(display (list 'commit-no-tx (mutate :overlay-commit))) (newline)
+(display (list 'rollback-no-tx (mutate :overlay-rollback))) (newline)
 """,
             "--load",
         )

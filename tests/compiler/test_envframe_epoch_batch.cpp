@@ -770,7 +770,7 @@ static void run_2017_compact_epoch_notify_cache_invalidate() {
         CompilerService cs;
         auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
         const auto n0 = m ? m->env_compact_epoch_notify_total.load(std::memory_order_relaxed) : 0;
-        auto r = cs.eval("(evaluator:compact-env-frames)");
+        auto r = cs.eval("(mutate :compact-env-frames)");
         CHECK(r.has_value() && is_int(*r), "primitive returns int reclaimed count");
         if (m) {
             CHECK(m->env_compact_epoch_notify_total.load(std::memory_order_relaxed) >= n0 + 1,

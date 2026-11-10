@@ -422,18 +422,18 @@ void RegSplitParts::workspace_merge_splice(
 // Issue #5033: workspace snapshots + rollback surfaces.
 void RegSplitParts::register_workspace_snapshot_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #737: (workspace:snapshot name) → snapshot ID.
-    // Named convenience wrapper over (ast:snapshot name) for
+    // Named convenience wrapper over (mutate :snapshot name) for
     // AI Agent multi-round edit loops.
-    add("workspace:snapshot", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    if (false) add("workspace:snapshot", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_int(-1);
-        auto snap_fn = ev.primitives_.lookup("ast:snapshot");
+        auto snap_fn = ev.primitives_.lookup("mw:snapshot");
         if (!snap_fn)
             return make_int(-1);
         return (*snap_fn)(a);
     });
 
-    // Issue #737 / #2788: (workspace:rollback-to name-or-id) → #t on
+    // Issue #737 / #2788: (mutate :rollback-to name-or-id) → #t on
     // success; typed make_merr on failure:
     //   "not-found"         — name/id does not resolve
     //   "concurrent-delete" — name hit but sources_ shorter / pair drift
@@ -441,10 +441,10 @@ void RegSplitParts::register_workspace_snapshot_primitives(PrimRegistrar add, Ev
     // Name→id resolve + sources_ size check share one exclusive
     // workspace lock (Issue #2788); restore runs after the lock is
     // released so ast:restore's MutationBoundaryGuard cannot deadlock.
-    add("workspace:rollback-to", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("mw:rollback-to", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty())
             return ev.make_merr("bad-arg", "workspace:rollback-to: missing name-or-id");
-        auto restore_fn = ev.primitives_.lookup("ast:restore");
+        auto restore_fn = ev.primitives_.lookup("mw:restore");
         if (!restore_fn)
             return ev.make_merr("no-restore", "workspace:rollback-to: ast:restore unavailable");
 
@@ -539,7 +539,7 @@ void RegSplitParts::register_workspace_snapshot_primitives(PrimRegistrar add, Ev
         return (*restore_fn)({make_int(static_cast<std::int64_t>(*resolved))});
     });
 
-    // (workspace:rollback-latest) → mutation-id of the most recent
+    // (mutate :rollback-latest) → mutation-id of the most recent
     //   committed mutation, after rolling it back. Returns 0 if no
     //   committed mutation exists. Issue #142: convenience wrapper
     //   for LLM callers that don't track mutation IDs.
@@ -553,7 +553,7 @@ void RegSplitParts::register_workspace_snapshot_primitives(PrimRegistrar add, Ev
     // place (no second O(N) search by mutation_id). Field-level path
     // uses try_rollback_record(rec) instead of rollback(mid). Exclusive
     // WorkspaceUniqueIfNeeded already serializes concurrent log appends.
-    add("workspace:rollback-latest", [&ev](const auto&) -> EvalValue {
+    add("mw:rollback-latest", [&ev](const auto&) -> EvalValue {
         // Issue #1994 (F-004) / Wave1 B-09: unique workspace lock, but
         // adopt outer MutationBoundaryGuard exclusive hold (no re-lock).
         Evaluator::WorkspaceUniqueIfNeeded wlock(ev);
@@ -705,12 +705,12 @@ void RegSplitParts::register_workspace_layering_primitives(PrimRegistrar add, Ev
 // Issue #5033: cross-layer resolve + define lookup.
 void RegSplitParts::register_workspace_inspection_primitives(PrimRegistrar add, Evaluator& ev) {
 
-    // Issue #276: (workspace:resolve-stable-ref from-layer node-id gen [to-layer])
+    // Issue #276: (query :resolve-stable-ref from-layer node-id gen [to-layer])
     // Remaps a StableNodeRef captured in one workspace layer to the
     // current (or explicit) target layer. Cross-layer resolution uses
     // the per-layer NodeIdRemapTable and treats unchanged nodes as live
     // even when generation advanced after a child-layer mutate.
-    add("workspace:resolve-stable-ref", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("qr:resolve-stable-ref", [&ev](std::span<const EvalValue> a) -> EvalValue {
         // Issue #1994 / Wave1 B-09: pin (shared or adopt Guard exclusive).
         auto pin = ev.pin_workspace_flat();
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) ||
@@ -720,7 +720,7 @@ void RegSplitParts::register_workspace_inspection_primitives(PrimRegistrar add, 
         // 5th arg = ref tenant_id for provenance check.
         const auto ref_tenant =
             a.size() >= 5 && is_int(a[4]) ? static_cast<std::uint64_t>(as_int(a[4])) : 0;
-        if (!ev.check_workspace_isolation(0, ref_tenant, 0, "workspace:resolve-stable-ref"))
+        if (!ev.check_workspace_isolation(0, ref_tenant, 0, "qr:resolve-stable-ref"))
             return make_void();
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
         auto from_layer = static_cast<std::uint32_t>(as_int(a[0]));
@@ -758,7 +758,7 @@ void RegSplitParts::register_workspace_inspection_primitives(PrimRegistrar add, 
         return make_pair(pair_pid);
     });
 
-    // Issue #372: (workspace:find-define name)
+    // Issue #372: (query :find-define name)
     //   → NodeId of the first Define node whose name matches
     //     `name` in the current workspace's flat, or void if
     //     not found.
@@ -771,9 +771,9 @@ void RegSplitParts::register_workspace_inspection_primitives(PrimRegistrar add, 
     // (workspace :switch) to a child can re-resolve by name:
     //
     //   (workspace :switch parent-id)
-    //   (define ref-id (workspace:find-define "my-fn"))
+    //   (define ref-id (query :find-define "my-fn"))
     //   (workspace :switch child-id)
-    //   (define child-ref (workspace:find-define "my-fn"))
+    //   (define child-ref (query :find-define "my-fn"))
     //
     // The two NodeIds may differ (parent's pre-mutation vs
     // child's post-COW), but both refer to "my-fn" in their
@@ -783,7 +783,7 @@ void RegSplitParts::register_workspace_inspection_primitives(PrimRegistrar add, 
     // when no WorkspaceTree is initialized (no (workspace :create)
     // has been called yet) — useful for ad-hoc lookups in tests
     // and for callers that haven't adopted the workspace_tree.
-    add("workspace:find-define", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("qr:find-define", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]) || !ev.workspace_flat_ || !ev.workspace_pool_)
             return make_void();
         auto name_idx = as_string_idx(a[0]);
@@ -951,8 +951,8 @@ void RegSplitParts::register_workspace_lifecycle_primitives(
 void RegSplitParts::register_workspace_memory_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #97 Action 3: per-workspace memory primitives
-    // (workspace:memory-used) → bytes used by current workspace
-    add("workspace:memory-used", [&ev](const auto&) -> EvalValue {
+    // (query :memory-used) → bytes used by current workspace
+    add("qr:memory-used", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_tree_)
             return make_int(0);
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -962,8 +962,8 @@ void RegSplitParts::register_workspace_memory_primitives(PrimRegistrar add, Eval
         return make_int(static_cast<std::int64_t>(n->memory_used));
     });
 
-    // (workspace:memory-limit) → current limit (or -1 if unlimited)
-    add("workspace:memory-limit", [&ev](const auto&) -> EvalValue {
+    // (query :memory-limit) → current limit (or -1 if unlimited)
+    add("qr:memory-limit", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_tree_)
             return make_int(-1);
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -975,8 +975,8 @@ void RegSplitParts::register_workspace_memory_primitives(PrimRegistrar add, Eval
         return make_int(static_cast<std::int64_t>(n->memory_budget));
     });
 
-    // (workspace:set-memory-limit bytes) → #t/#f. 0 = unlimited.
-    add("workspace:set-memory-limit", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    // (mutate :set-memory-limit bytes) → #t/#f. 0 = unlimited.
+    add("mw:set-memory-limit", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
             return make_bool(false);
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -991,9 +991,9 @@ void RegSplitParts::register_workspace_memory_primitives(PrimRegistrar add, Eval
     });
 
     // Issue #2990: ConcurrentMutationPolicy EDSL surface.
-    // (workspace:set-concurrent-mutation-policy 0|1|"single-writer"|"scoped-parallel")
+    // (mutate :set-concurrent-mutation-policy 0|1|"single-writer"|"scoped-parallel")
     // Production default is SingleWriter (0). Returns #t on success.
-    add("workspace:set-concurrent-mutation-policy",
+    add("mw:set-concurrent-mutation-policy",
         [&ev](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty())
                 return make_bool(false);
@@ -1022,7 +1022,7 @@ void RegSplitParts::register_workspace_memory_primitives(PrimRegistrar add, Eval
             }
             return make_bool(false);
         });
-    add("workspace:concurrent-mutation-policy", [&ev](const auto&) -> EvalValue {
+    add("qr:concurrent-mutation-policy", [&ev](const auto&) -> EvalValue {
         return make_int(
             static_cast<std::int64_t>(static_cast<std::uint8_t>(ev.concurrent_mutation_policy())));
     });
@@ -1043,15 +1043,15 @@ void RegSplitParts::register_workspace_delete_primitives(
                 return make_int(0);
             return make_int(static_cast<std::int64_t>(n->cow_refused_count));
         });
-    // (workspace:delete id) → #t
+    // (mutate :workspace-delete id) → #t
     // Issue #2789: delete_child recursively tombstones the whole subtree
     // (descendants before parent). Rebind evaluator if active is under idx.
-    add("workspace:delete", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
+    add("mw:workspace-delete", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
         // Issue #4778: another fiber body drives the worldline.
         if (const auto h4778 = worldline_foreign_driver_4778(
                 &ev, ev.workspace_tree_, static_cast<std::uint64_t>(fiber_body_id_4778()));
             h4778 != 0)
-            return RegSplitParts::workspace_worldline_driver_error_4778(ev, "workspace:delete",
+            return RegSplitParts::workspace_worldline_driver_error_4778(ev, "mw:workspace-delete",
                                                                         h4778);
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
             return make_bool(false);
@@ -1151,9 +1151,9 @@ void RegSplitParts::register_workspace_lock_primitives(PrimRegistrar add, Evalua
         return make_bool(true);
     }};
 
-    // (workspace:can-write? [id])
+    // (query :can-write? [id])
     //   → #t if workspace allows mutations
-    add("workspace:can-write?", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("qr:can-write?", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (!ev.workspace_tree_)
             return make_bool(true);
         auto* __tw2 = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -1174,7 +1174,7 @@ void RegSplitParts::register_workspace_sync_primitives(PrimRegistrar add, Evalua
     // ═══════════════════════════════════════════════════════════════
 
 
-    // (workspace:sync-from source-id symbol-name)
+    // (mutate :sync-from source-id symbol-name)
     //   → #t on success, #f if symbol not found or source workspace invalid
     //   Pulls a symbol's definition from another workspace into the current one.
     //   Uses mutate:rebind with the *actual* source body (Issue #2784 —
@@ -1182,7 +1182,7 @@ void RegSplitParts::register_workspace_sync_primitives(PrimRegistrar add, Evalua
     // Issue #2784 lineage stamp for query/linter surfaces.
     constexpr int kWorkspaceSyncFromBodyIssue = 2784;
     (void)kWorkspaceSyncFromBodyIssue;
-    add("workspace:sync-from", [&ev](const auto& a) -> EvalValue {
+    add("mw:sync-from", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !ev.workspace_tree_)
             return make_bool(false);
         auto src_id = static_cast<std::uint32_t>(as_int(a[0]));
@@ -1275,16 +1275,16 @@ void RegSplitParts::register_workspace_sync_primitives(PrimRegistrar add, Evalua
 void RegSplitParts::register_workspace_discard_primitives(
     PrimRegistrar add, Evaluator& ev, std::function<void()> destroy_defuse_index) {
 
-    // (workspace:discard id)
+    // (mutate :discard id)
     //   → #t on success
     //   Discards a child workspace's local changes, resetting to parent state.
-    add("workspace:discard",
+    add("mw:discard",
         [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
             // Issue #4778: another fiber body drives the worldline.
             if (const auto h4778 = worldline_foreign_driver_4778(
                     &ev, ev.workspace_tree_, static_cast<std::uint64_t>(fiber_body_id_4778()));
                 h4778 != 0)
-                return RegSplitParts::workspace_worldline_driver_error_4778(ev, "workspace:discard",
+                return RegSplitParts::workspace_worldline_driver_error_4778(ev, "mw:discard",
                                                                             h4778);
             if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
                 return make_bool(false);
@@ -1585,11 +1585,11 @@ void RegSplitParts::register_workspace_conflict_primitives(PrimRegistrar add, Ev
         return names;
     };
 
-    // (workspace:conflicts-with child-id) -> list of symbol names
+    // (query :conflicts-with child-id) -> list of symbol names
     //   that exist in BOTH parent (root, id=0) and child.
     //   Returns an unordered list of strings, or () if no conflicts.
     //   Dry run - does NOT modify either workspace.
-    add("workspace:conflicts-with", [&ev, extract_defines](const auto& a) -> EvalValue {
+    add("qr:conflicts-with", [&ev, extract_defines](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
             return make_void();
         auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -1636,12 +1636,12 @@ void RegSplitParts::register_workspace_conflict_primitives(PrimRegistrar add, Ev
         return result;
     });
 
-    // (workspace:merge-3way base-id ours-id theirs-id [strategy: ...]) -> #t
+    // (mutate :merge-3way base-id ours-id theirs-id [strategy: ...]) -> #t
     //   Source-level 3-way merge. The merged source combines all 3.
     //   Conflict resolution: "ours" wins by default; "theirs" makes theirs
     //   win. For 3-way structural merge (with base as ancestor), see
     //   docs/issue-closings/98-closing.md.
-    add("workspace:merge-3way", [&ev](const auto& a) -> EvalValue {
+    add("mw:merge-3way", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !ev.workspace_tree_)
             return make_bool(false);
         auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -1694,7 +1694,7 @@ void RegSplitParts::register_workspace_conflict_primitives(PrimRegistrar add, Ev
 void RegSplitParts::register_workspace_dispatch_primitive(PrimRegistrar add, Evaluator& ev,
                                                           std::shared_ptr<ImplTable> w_impls) {
 
-    // Issue #295 Phase 0: (ws:try-mutation expr-string)
+    // Issue #295 Phase 0: (mutate :try-mutation expr-string)
     // — run expr-string in a sandboxed workspace. On success,
     // returns (result . snapshot-id). On failure (exception
     // or error-value), the workspace is automatically rolled
@@ -1704,16 +1704,16 @@ void RegSplitParts::register_workspace_dispatch_primitive(PrimRegistrar add, Eva
     // loop. Agents can propose a mutation, run it via
     // ws:try-mutation, and either commit (keep the snapshot)
     // or rollback. See docs/design/hardware/aura_hv.md.
-    add("ws:try-mutation", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("mw:try-mutation", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
             return make_bool(false);
         // Snapshot the current workspace
-        if (!ev.primitives_.lookup("ast:snapshot"))
+        if (!ev.primitives_.lookup("mw:snapshot"))
             return make_bool(false);
-        auto snap_id_opt = (*ev.primitives_.lookup("ast:snapshot"))({});
+        auto snap_id_opt = (*ev.primitives_.lookup("mw:snapshot"))({});
         if (!is_int(snap_id_opt))
             return make_bool(false);
         auto snap_id = as_int(snap_id_opt);
@@ -1732,7 +1732,7 @@ void RegSplitParts::register_workspace_dispatch_primitive(PrimRegistrar add, Eva
             result = make_void();
         }
         if (types::is_error(result) || types::is_void(result)) {
-            if (auto restore_fn = ev.primitives_.lookup("ast:restore")) {
+            if (auto restore_fn = ev.primitives_.lookup("mw:restore")) {
                 (*restore_fn)({make_int(snap_id)});
             }
             // Issue #4361: ast:restore put the flat back. Rebind defines
@@ -1787,7 +1787,7 @@ void RegSplitParts::register_workspace_dispatch_primitive(PrimRegistrar add, Eva
         if (op == "merge")
             return call_named("workspace:merge", rest);
         if (op == "merge-3way" || op == "merge_3way")
-            return call_named("workspace:merge-3way", rest);
+            return call_named("mw:merge-3way", rest);
         if (op == "lock")
             return call_named("workspace:lock", rest);
         if (op == "unlock")
@@ -1798,9 +1798,9 @@ void RegSplitParts::register_workspace_dispatch_primitive(PrimRegistrar add, Eva
         if (op == "current")
             return call_named("workspace:current", rest);
         if (op == "delete")
-            return call_named("workspace:delete", rest);
+            return call_named("mw:workspace-delete", rest);
         if (op == "discard")
-            return call_named("workspace:discard", rest);
+            return call_named("mw:discard", rest);
         if (op == "snapshot")
             return call_named("workspace:snapshot", rest);
 

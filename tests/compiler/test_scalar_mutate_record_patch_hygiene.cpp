@@ -11,7 +11,7 @@
 //   AC3: :allow-macro? #t opts out — record-patch succeeds (mid >= 0)
 //        + propagate_macro_introduced_marker fires for parity with
 //        replace-type / replace-value.
-//   AC4: global (hygiene:set-allow-macro-mutate! #t) opts out.
+//   AC4: global (mutate :set-allow-macro-mutate #t) opts out.
 //   AC5: deny path bumps existing reject counters (no new metric keys).
 //   AC6: chokepoint — guard is the only entry, after node resolve and
 //        before flat.add_mutation; lockless / atomic-batch sub-ops that
@@ -110,7 +110,7 @@ int run_test_scalar_mutate_record_patch_hygiene() {
         auto find_r = cs.eval("(car (query :find \"target-rp\"))");
         CHECK(find_r && is_int(*find_r), "AC2: find target-rp");
         auto nid = static_cast<aura::ast::NodeId>(as_int(*find_r));
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", nid)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", nid)).has_value(),
               "AC2: stamp MacroIntroduced");
         auto r = cs.eval(std::format("(mutate:record-patch {} \"op-name\" \"summary\")", nid));
         CHECK(r.has_value(), "AC2: record-patch returns");
@@ -127,7 +127,7 @@ int run_test_scalar_mutate_record_patch_hygiene() {
         auto find_r = cs.eval("(car (query :find \"target-rp2\"))");
         CHECK(find_r && is_int(*find_r), "AC3: find target-rp2");
         auto nid = static_cast<aura::ast::NodeId>(as_int(*find_r));
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", nid)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", nid)).has_value(),
               "AC3: stamp MacroIntroduced");
         auto denied = cs.eval(std::format("(mutate:record-patch {} \"op-name\" \"summary\")", nid));
         CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene-protected",
@@ -141,20 +141,20 @@ int run_test_scalar_mutate_record_patch_hygiene() {
 
     // ── AC4: global allow_macro_mutate_=#t opts out ──
     {
-        std::println("\n--- AC4: global (hygiene:set-allow-macro-mutate! #t) opts out ---");
+        std::println("\n--- AC4: global (mutate :set-allow-macro-mutate #t) opts out ---");
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define target-rp3 9)\")").has_value(), "AC4: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "AC4: eval");
         auto find_r = cs.eval("(car (query :find \"target-rp3\"))");
         CHECK(find_r && is_int(*find_r), "AC4: find target-rp3");
         auto nid = static_cast<aura::ast::NodeId>(as_int(*find_r));
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", nid)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", nid)).has_value(),
               "AC4: stamp MacroIntroduced");
         // First confirm default deny (baseline).
         auto denied = cs.eval(std::format("(mutate:record-patch {} \"op-name\" \"summary\")", nid));
         CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene-protected",
               "AC4: denied before global flag");
-        CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #t)").has_value(),
+        CHECK(cs.eval("(mutate :set-allow-macro-mutate #t)").has_value(),
               "AC4: set global allow_macro_mutate_");
         auto allowed =
             cs.eval(std::format("(mutate:record-patch {} \"op-name\" \"summary\")", nid));
@@ -162,7 +162,7 @@ int run_test_scalar_mutate_record_patch_hygiene() {
         CHECK(is_int(*allowed), "AC4: success mid is int");
         CHECK(as_int(*allowed) >= 0, "AC4: mid >= 0");
         // Reset global for clean state on subsequent tests.
-        CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #f)").has_value(), "AC4: reset global");
+        CHECK(cs.eval("(mutate :set-allow-macro-mutate #f)").has_value(), "AC4: reset global");
     }
 
     // ── AC5: counters bump on deny ──
@@ -178,7 +178,7 @@ int run_test_scalar_mutate_record_patch_hygiene() {
         auto find_r = cs.eval("(car (query :find \"target-rp4\"))");
         CHECK(find_r && is_int(*find_r), "AC5: find target-rp4");
         auto nid = static_cast<aura::ast::NodeId>(as_int(*find_r));
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", nid)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", nid)).has_value(),
               "AC5: stamp MacroIntroduced");
         auto denied = cs.eval(std::format("(mutate:record-patch {} \"op-name\" \"summary\")", nid));
         CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene-protected",

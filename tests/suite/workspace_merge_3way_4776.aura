@@ -63,7 +63,7 @@
 
 ;; p3: merging a deleted / unknown id is an error
 (define w5 (workspace :create "cand5"))
-(workspace:delete w5)
+(mutate :workspace-delete w5)
 (assert! (equal? (try (begin (workspace :merge w5) "no-error") (catch (e) "error")) "error")
          "p3: merge of a deleted workspace raises")
 (assert! (equal? (try (begin (workspace :merge 9999) "no-error") (catch (e) "error")) "error")

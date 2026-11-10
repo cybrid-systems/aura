@@ -44,7 +44,7 @@ def main() -> int:
         must("set_inline_respect_macro_hygiene(!enable)", "AC2 toggle after gate", win)
 
     must(
-        "(hygiene:set-allow-macro-mutate! #t) requires MacroSelfEvo capability",
+        "(mutate :set-allow-macro-mutate #t) requires MacroSelfEvo capability",
         "AC3 mutate flag retained",
         cpp,
     )

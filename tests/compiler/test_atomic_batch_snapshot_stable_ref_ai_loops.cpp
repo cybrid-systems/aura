@@ -71,7 +71,7 @@ int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run() {
                   aura::compiler::types::as_int(*snap) >= 0,
               "workspace:snapshot returns non-negative id");
         (void)cs.eval("(mutate:rebind \"x\" \"99\")");
-        auto restored = cs.eval("(workspace:rollback-to \"pre-edit\")");
+        auto restored = cs.eval("(mutate :rollback-to \"pre-edit\")");
         CHECK(restored && aura::compiler::types::is_bool(*restored) &&
                   aura::compiler::types::as_bool(*restored),
               "workspace:rollback-to by name succeeds");

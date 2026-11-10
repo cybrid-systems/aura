@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased (0.2.1)
+
+- Primitives (#5097, #5094, #5095): `(query :op)` is read-only and `(mutate :op)` is write-only. The verbs no longer scan `ast:`, `workspace:`, `syntax:`, or `fiber:`. Snapshot and restore are mutate ops. `fiber:spawn` / `yield` / `join` / `cancel` stay kernel names. The v0.2.0 alias window is closed: those prefixes, the non-kernel `orch:` names, and the seven bare spellings are unbound. `(query :api-reference)` prints `PrimMeta.doc` for a name that is still deprecated. The registration gate counts `add_mutate` names.
+
 ## 0.2.0
 
 Minor release on the 0.2 channel. The language and CLI surface changed where an alias replaces a retired name; the API is still not stable.
