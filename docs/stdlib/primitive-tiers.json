@@ -41,7 +41,8 @@
   "D-BARE-5006": "retired bare name (#5006): the name stays registered one release cycle as a deprecated alias; its replacement is a std library function or a query / mutate op",
   "K-FFI-5006": "kernel by the FFI host-effect rule (#5006): the c-* family is dlopen/dlsym/native memory, installed only by (require \"std/ffi\") under effect:ffi; Aura has no expression for a host pointer, so the names stay kernel with std/ffi as their library face (the #3176 deferred-surface contract pins the registration)",
   "K-EXC-5095": "add_mutate names are the public write surface (#5095). They were registered before this gate could see them. v0.2.1 counts them; a new add_mutate name still needs a removal or a kernel_exceptions entry.",
-  "K-EXC-5096": "eof-object is the unique R7RS eof sentinel (#5096). eof-object? already rejects every other value, including void, so a successful write-char is not eof. The constructor has to be the same host value the predicate recognizes; a per-module vector would not be eq? to the primitive. No registration was removable in the stdlib fix."
+  "K-EXC-5096": "eof-object is the unique R7RS eof sentinel (#5096). eof-object? already rejects every other value, including void, so a successful write-char is not eof. The constructor has to be the same host value the predicate recognizes; a per-module vector would not be eq? to the primitive. No registration was removable in the stdlib fix.",
+  "K-EXC-5118": "Restored orch verbs (#5118). #5111 unregistered the scope, workflow, directory and metrics names before std/orch had a body for them. They stay registered and deprecated for one cycle. The doc hint names the function to call (the verb itself, or parallel-intend for orch:parallel-intend). No other registration was removable in the same change."
  },
  "kernel_exceptions": [
   "arithmetic-shift",
@@ -50,22 +51,46 @@
   "bitwise-ior",
   "bitwise-not",
   "bitwise-xor",
-  "integer-length",
-  "orch:spawn",
-  "orch:send",
-  "orch:recv",
-  "orch:join",
-  "orch:cancel",
   "c-alloc",
   "c-free",
   "c-func",
   "c-load",
   "c-opaque",
   "c-struct-size",
-  "eof-object"
+  "eof-object",
+  "integer-length",
+  "orch:agent-ask",
+  "orch:agent-directory",
+  "orch:agent-export-via-token",
+  "orch:agent-import-via-token",
+  "orch:agent-join",
+  "orch:agent-poll",
+  "orch:agent-recv",
+  "orch:agent-reply",
+  "orch:agent-send",
+  "orch:agent-touch",
+  "orch:agent-wait-reclaimed",
+  "orch:cancel",
+  "orch:compose-workflow",
+  "orch:join",
+  "orch:join-via-token",
+  "orch:metrics",
+  "orch:parallel-intend",
+  "orch:recv",
+  "orch:run-workflow",
+  "orch:scope-cancel-all",
+  "orch:scope-child",
+  "orch:scope-join-all",
+  "orch:scope-resolve",
+  "orch:scope-spawn",
+  "orch:scope-sweep-reclaimed-pending",
+  "orch:scope-watch",
+  "orch:send",
+  "orch:spawn",
+  "orch:supervise-batch"
  ],
  "counts": {
-  "kernel": 439,
+  "kernel": 463,
   "stdlib-candidate": 86,
   "delete": 5
  },
@@ -1422,17 +1447,132 @@
    "tier": "kernel",
    "rule": "K-HOT"
   },
+  "orch:agent-ask": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:agent-directory": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:agent-export-via-token": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:agent-import-via-token": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:agent-join": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:agent-poll": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:agent-recv": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:agent-reply": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:agent-send": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:agent-touch": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:agent-wait-reclaimed": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
   "orch:cancel": {
    "tier": "kernel",
    "rule": "K-ORCH-VERB-5006"
+  },
+  "orch:compose-workflow": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
   },
   "orch:join": {
    "tier": "kernel",
    "rule": "K-ORCH-VERB-5006"
   },
+  "orch:join-via-token": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:metrics": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:parallel-intend": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
   "orch:recv": {
    "tier": "kernel",
    "rule": "K-ORCH-VERB-5006"
+  },
+  "orch:run-workflow": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:scope-cancel-all": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:scope-child": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:scope-join-all": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:scope-resolve": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:scope-spawn": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:scope-sweep-reclaimed-pending": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
+  },
+  "orch:scope-watch": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
   },
   "orch:send": {
    "tier": "kernel",
@@ -1441,6 +1581,11 @@
   "orch:spawn": {
    "tier": "kernel",
    "rule": "K-ORCH-VERB-5006"
+  },
+  "orch:supervise-batch": {
+   "tier": "kernel",
+   "rule": "K-EXC-5118",
+   "deprecated": true
   },
   "pair?": {
    "tier": "kernel",
