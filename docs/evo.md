@@ -34,6 +34,12 @@ Safety: the path is operator configuration, never program-chosen. The log is
 an audit trail, not a program file write. `evo:trial` runs apply+evaluate in a
 child workspace and refuses to fall back to mutating the live worldline.
 
+A `mutate:*` that succeeds in that child workspace is recorded as decision
+`FORK` with `"scope":"fork"` (#5088). It is not a live `KEEP`: the worldline
+tip does not advance, and the rewrite disappears with the child workspace
+(and with a trial subprocess). Count live commits from `decision=KEEP` on
+workspace 0.
+
 ## Reading a run
 
 ```
