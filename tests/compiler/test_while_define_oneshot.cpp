@@ -461,6 +461,15 @@ static void ac4466_while_multi_body() {
          "(lambda () (set! i (+ i 1))))\n"
          "(display s)\n",
          "3"},
+        // #4466 follow-up: one arithmetic node reading the same top-level
+        // cell twice used to take slot 0 from after the set! and slot 1
+        // from before it (q ended at 1+2 instead of 2+2).
+        {"twice",
+         "(define p 0)\n(define q 0)\n"
+         "(while (lambda () (< p 3)) (lambda () (set! q (+ p p))) "
+         "(lambda () (set! p (+ p 1))))\n"
+         "(display q)\n",
+         "4"},
         {"vec",
          "(define v (vector 0 0 0))\n(define i 0)\n"
          "(while (< i 3) (vector-set! v i i) (set! i (+ i 1)))\n"

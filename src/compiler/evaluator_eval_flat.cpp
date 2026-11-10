@@ -5983,7 +5983,11 @@ namespace {
         // var is a different frame on every call to the enclosing function;
         // caching that integer returned the first call's value.
         std::uint64_t cgen = 0;
-        std::uint64_t dgen = 0; // cell-store generation at the copy (set! bumps it)
+        // #4466 follow-up: the cell-store generation is per operand slot.
+        // One shared stamp let slot 0's re-read publish a fresh generation
+        // and slot 1 keep the pre-set! integer, so (+ p p) summed one old
+        // and one new operand and a top-level accumulator lost a step.
+        std::uint64_t dgen[2] = {0, 0};
         // FlatAST::generation() when the site was recorded. A workspace
         // rebuild can keep this flat's address and recycle NodeIds.
         std::uint16_t flat_gen = 0;
@@ -6105,11 +6109,11 @@ namespace {
             site.arg_cell = 0;
             site.arg_miss = 0;
         }
-        if ((site.arg_const & bit) != 0 && site.dgen == defuse) {
+        if ((site.arg_const & bit) != 0 && site.dgen[which] == defuse) {
             out = which == 0 ? site.c0 : site.c1;
             return true;
         }
-        if ((site.arg_miss & bit) != 0 && site.dgen == defuse)
+        if ((site.arg_miss & bit) != 0 && site.dgen[which] == defuse)
             return false;
         // One lookup, then the copy is reused until top_bind_gen_ changes.
         // lookup_by_symid returns the raw binding (cell sentinel intact).
@@ -6154,7 +6158,7 @@ namespace {
             else
                 site.c1 = slot;
             site.cgen = gen2;
-            site.dgen = defuse;
+            site.dgen[which] = defuse;
         };
         if (!bound || types::is_cell(*bound)) {
             if (stable) {
@@ -6162,7 +6166,7 @@ namespace {
                 site.arg_const =
                     static_cast<std::uint8_t>(site.arg_const & static_cast<std::uint8_t>(~bit));
                 site.cgen = gen2;
-                site.dgen = defuse;
+                site.dgen[which] = defuse;
             }
             return false;
         }
