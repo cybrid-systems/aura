@@ -12,7 +12,11 @@ if [ -n "${AURA_GIT_SHA:-}" ]; then
   printf '%s\n' "$AURA_GIT_SHA"
   exit 0
 fi
-sha=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)
+# CI runs this with a HOME the checkout step replaced (its safe.directory
+# entry is gone) and with GIT_DIR/GIT_WORK_TREE possibly left by an earlier
+# step, so a bare rev-parse answered "unknown" on a real checkout. Pin the
+# safe directory for this call and ignore a leaked GIT_DIR.
+sha=$(env -u GIT_DIR -u GIT_WORK_TREE git -c safe.directory="$ROOT" -C "$ROOT" rev-parse HEAD 2>/dev/null || true)
 if [ -z "$sha" ]; then
   if [ "${AURA_REQUIRE_GIT_SHA:-}" = 1 ]; then
     echo "resolve_git_sha: refusing commit unknown" >&2
