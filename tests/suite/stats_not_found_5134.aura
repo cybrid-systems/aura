@@ -1,0 +1,29 @@
+; #5134: one public name, one failure shape.
+; The kernel stats:get (registered so agents need no require) answered
+; void for an unknown name while the Aura mirror in std/stats answered
+; the engine's typed not-found record, so (stats:get "no-such") had two
+; shapes depending on whether std/stats had been required.
+
+(define before (stats:get "5134:definitely-not-a-stat"))
+(require "std/stats" all:)
+(define after (stats:get "5134:definitely-not-a-stat"))
+
+(define (nf? v)
+  (and (hash? v)
+       (equal? (hash-ref v "status" #f) "not-found")
+       (eq? (hash-ref v "ok" #t) #f)))
+
+(define (check)
+  (and (nf? before)
+       (nf? after)
+       (hash? (stats:get "all"))))
+
+(define host (if (check) 1 0))
+(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+
+(if (and (= host 1) (= guest 1))
+    (begin (display "OK-5134") (newline))
+    (begin
+      (display "FAIL-5134 before=") (display before)
+      (display " after=") (display after) (newline)
+      (exit 1)))

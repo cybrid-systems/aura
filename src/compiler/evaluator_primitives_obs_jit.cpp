@@ -2522,7 +2522,16 @@ void register_metrics_facade_stats_lookup(PrimRegistrar add, Evaluator& ev) {
             return (*fn)({});
         if (auto fn = ev.primitives().lookup(name))
             return (*fn)({});
-        return make_void();
+        // Issue #5134: an unknown name is a failed read, not an empty result.
+        // The Aura mirror in lib/std/stats.aura already answers the engine's
+        // typed not-found record, so this arm answering void gave one public
+        // name two shapes depending on whether std/stats had been required.
+        std::vector<std::pair<std::string, EvalValue>> nf;
+        nf.push_back({"ok", make_bool(false)});
+        nf.push_back({"status", make_string(ev.string_heap_mut().mint("not-found"))});
+        nf.push_back({"error", make_string(ev.string_heap_mut().mint("no-such-stat"))});
+        nf.push_back({"name", make_string(ev.string_heap_mut().mint(name))});
+        return build_engine_metrics_hash(ev, nf);
     });
 
     // (stats:prefix "query:") → list of catalog names matching prefix
