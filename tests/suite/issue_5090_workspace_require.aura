@@ -1,0 +1,39 @@
+; Issue #5090: mutate typecheck of a workspace must see host bindings,
+; and require/import written into that source is a load form, not an
+; unbound variable. A name that nobody bound still fails closed.
+(require "std/evo-core" all:)
+
+(define (fail why)
+  (display why)
+  (newline)
+  (error why))
+
+(set-code "(define (uses-host) (evo:candidate 1))
+(define (local x) (+ x 1))")
+(eval-current)
+(define host-rb (mutate:rebind "uses-host" "(lambda () (evo:candidate 1))" "host"))
+(define local-rb (mutate:rebind "local" "(lambda (x) (+ x 2))" "local"))
+(if (not (eq? host-rb #t)) (fail "host require binding rejected"))
+(if (not (eq? local-rb #t)) (fail "local define rejected"))
+
+(set-code "(require \"std/evo-core\" all:)
+(define (f) (evo:candidate 1))
+(define (g x) (+ x 1))")
+(eval-current)
+(define called (try (f) (catch (e) e)))
+(if (not (hash? called)) (fail "runtime require did not bind evo:candidate"))
+(define req-rb (mutate:rebind "g" "(lambda (x) (+ x 2))" "sibling"))
+(define body-rb (mutate:rebind "f" "(lambda () (evo:candidate 1))" "body"))
+(define in-rb (mutate:rebind "f"
+                             "(lambda () (require \"std/evo-core\" all:) (evo:candidate 1))"
+                             "inside"))
+(define bad-rb (mutate:rebind "g" "(lambda (x) (not-a-real-name x))" "free"))
+(if (not (eq? req-rb #t)) (fail "require form rejected a sibling rebind"))
+(if (not (eq? body-rb #t)) (fail "require export rejected"))
+(if (not (eq? in-rb #t)) (fail "require inside the body rejected"))
+(if (eq? bad-rb #t) (fail "free name committed"))
+(define bad-msg (if (and (pair? bad-rb) (pair? (cdr bad-rb)) (string? (car (cdr bad-rb))))
+                    (car (cdr bad-rb))
+                    ""))
+(if (= -1 (string-index bad-msg "unbound" 0)) (fail "free name was not unbound"))
+(display "OK-5090\n")
