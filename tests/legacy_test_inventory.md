@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-11-09 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-11-10 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** living document — re-run the script after consolidations.
 
 ## Purpose
@@ -33,10 +33,10 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 96 | 96 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 279 | 279 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 280 | 280 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 110 | 110 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 28 | 28 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 61 | 61 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 132 | 132 | P2 — often thin schema probes; collapse into obs matrix |
@@ -1242,13 +1242,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (279)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (280)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (279)
+#### domain/ (280)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1475,6 +1475,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_restamp_sla_observability.cpp` (—) [large, obs_named, domain_suite, theme_core] — AC1: After forced wrap, query surface reports restamp-us / nodes /
 - `tests/core/test_restricted_unset_principal.cpp` (—) [domain_suite, theme_core] — AC1: Restricted + tenant=0 + Mutate side-effect → deny + IsolationDeny
 - `tests/core/test_sandbox_mode_atomic.cpp` (—) [domain_suite, theme_core] — AC1: sandbox_mode is atomic-backed (AtomicEffectSandboxMode)
+- `tests/compiler/test_scalar_mutate_record_patch_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #3131 in evaluator_primitives_mutate.cpp —
 - `tests/compiler/test_security_audit_fold.cpp` (—) [domain_suite, theme_compiler] — AC1: >128 effect denies under enabled SecurityEvent WAL → after
 - `tests/compiler/test_security_audit_trail.cpp` (—) [domain_suite, theme_compiler] — Issue #2075 — unified SecurityEvent schema + default-on mutation/effect audit WAL.
 - `tests/compiler/test_security_audit_unify.cpp` (—) [large, domain_suite, theme_compiler] — AC1: check_and_record_effect allow + deny both append SecurityEvent
@@ -1686,13 +1687,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_walk_runtime.cpp` (—) [domain_suite, theme_compiler] — AC1: a Let whose value is Linear is discovered by name, including when
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (62)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (61)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (62)
+#### domain/ (61)
 
 - `tests/reflect/test_ast_pod_reflect_b3.cpp` (—) [domain_suite, theme_reflect] — Wave B3: small AST public PODs via auto_serialize / to_json.
 - `tests/core/test_aura_core_embed.cpp` (—) [domain_suite, theme_core] — fiber_context) — no aura_test_objects, no evaluator, no reflect. It proves
@@ -1751,7 +1752,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_rest_param_hygiene_self_evo.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2018; rest pre-scan + dotted preserve + metric
 - `tests/compiler/test_rest_param_nested_qq_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2239; counters + v_read accessors + helper +
 - `tests/compiler/test_rollback_by_marker.cpp` (—) [domain_suite, theme_compiler] — - AC1: existing primitives registered + callable
-- `tests/compiler/test_scalar_mutate_record_patch_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #3131 in evaluator_primitives_mutate.cpp —
 - `tests/compiler/test_stamp_rest_param_hygiene_marker.cpp` (—) [domain_suite, theme_compiler] — AC1: stamp_rest_param_hygiene cites #2808; set_marker MacroIntroduced
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_symbol_eq.cpp` (—) [domain_suite, theme_compiler] — AC1: (eq? 'commit 'commit) → #t  (interned short-str cache)
