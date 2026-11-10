@@ -57,158 +57,154 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
-namespace {
-
-    // The public name stays unregistered (#5097). agent:recover-from-error still
-    // needs the classifier, so it calls this directly instead of the primitive slot.
-    EvalValue diagnose_error_string(Evaluator& ev, const std::string& msg) {
-        // Build diagnosis result as list: (cause target fix-type fix-data explanation)
-        auto make_diag = [&](const std::string& cause, const std::string& target,
-                             const std::string& fix, const std::string& data,
-                             const std::string& expl) -> EvalValue {
-            auto push = [&](const std::string& s) -> std::uint64_t {
-                auto sidx = ev.string_heap_.mint(s);
-                return sidx;
-            };
-            auto nil = EvalValue(0);
-            auto make_item = [&](const std::string& s) -> EvalValue {
-                auto sidx = push(s);
-                return make_string(sidx);
-            };
-            // Build: (cause target fix-type fix-data expl) as proper list
-            auto e_pair = make_pair(ev.pairs_.size());
-            ev.pairs_.push_back({make_item(expl), nil});
-            auto d_pair = make_pair(ev.pairs_.size());
-            ev.pairs_.push_back({make_item(data), e_pair});
-            auto f_pair = make_pair(ev.pairs_.size());
-            ev.pairs_.push_back({make_item(fix), d_pair});
-            auto t_pair = make_pair(ev.pairs_.size());
-            ev.pairs_.push_back({make_item(target), f_pair});
-            auto c_pair = make_pair(ev.pairs_.size());
-            ev.pairs_.push_back({make_item(cause), t_pair});
-            return c_pair;
+// The public name stays unregistered (#5097). agent:recover-from-error still
+// needs the classifier, so it calls this directly instead of the primitive slot.
+EvalValue RegSplitParts::diagnose_error_string(Evaluator& ev, const std::string& msg) {
+    // Build diagnosis result as list: (cause target fix-type fix-data explanation)
+    auto make_diag = [&](const std::string& cause, const std::string& target,
+                         const std::string& fix, const std::string& data,
+                         const std::string& expl) -> EvalValue {
+        auto push = [&](const std::string& s) -> std::uint64_t {
+            auto sidx = ev.string_heap_.mint(s);
+            return sidx;
         };
-
-        // ── Known unbound variable mappings ──
-        // Format: {root-cause, target-fn, fix-type, fix-data, explanation}
-        struct FixEntry {
-            std::string cause;
-            std::string fix_type;
-            std::string fix_data;
-            std::string explanation;
+        auto nil = EvalValue(0);
+        auto make_item = [&](const std::string& s) -> EvalValue {
+            auto sidx = push(s);
+            return make_string(sidx);
         };
-        static const std::unordered_map<std::string, FixEntry, aura::core::TransparentStringHash,
-                                        std::equal_to<>>
-            unbound_fixes = {
-                {"for-each",
-                 {"missing-require", "add-require", "std/list",
-                  "Add (require \"std/list\" all:) to use for-each"}},
-                {"map",
-                 {"missing-require", "add-require", "std/list",
-                  "Add (require \"std/list\" all:) to use map"}},
-                {"filter",
-                 {"missing-require", "add-require", "std/list",
-                  "Add (require \"std/list\" all:) to use filter"}},
-                {"foldl",
-                 {"missing-require", "add-require", "std/list",
-                  "Add (require \"std/list\" all:) to use foldl"}},
-                {"make-hash",
-                 {"missing-require", "add-require", "std/hash",
-                  "Add (require \"std/hash\" all:) to use make-hash"}},
-                {"hash-ref",
-                 {"missing-require", "add-require", "std/hash",
-                  "Add (require \"std/hash\" all:) to use hash-ref"}},
-                {"rule:define",
-                 {"missing-require", "add-require", "std/rule",
-                  "Add (require \"std/rule\" all:) to use rule:define"}},
-                // Issue #561: synthesize:fill + synthesize:pipeline
-                // lint hint references removed — these were dead
-                // hints pointing to a non-existent std/pipeline module.
-                // Decision documented in
-                // docs/design/synthesize-namespace-decision.md
-                // (synthesize:fill is a real primitive in agent.cpp
-                // that wraps LLM calls; synthesize:pipeline is a
-                // docs/AI-strategy concept, not an actual primitive).
-                {"define-type",
-                 {"missing-require", "add-require", "std/data",
-                  "Add (require \"std/data\" all:) to use define-type"}},
-                {"c-func",
-                 {"missing-require", "add-require", "std/ffi",
-                  "Add (require \"std/ffi\" all:) to use c-func"}},
-        };
+        // Build: (cause target fix-type fix-data expl) as proper list
+        auto e_pair = make_pair(ev.pairs_.size());
+        ev.pairs_.push_back({make_item(expl), nil});
+        auto d_pair = make_pair(ev.pairs_.size());
+        ev.pairs_.push_back({make_item(data), e_pair});
+        auto f_pair = make_pair(ev.pairs_.size());
+        ev.pairs_.push_back({make_item(fix), d_pair});
+        auto t_pair = make_pair(ev.pairs_.size());
+        ev.pairs_.push_back({make_item(target), f_pair});
+        auto c_pair = make_pair(ev.pairs_.size());
+        ev.pairs_.push_back({make_item(cause), t_pair});
+        return c_pair;
+    };
 
-        // Detect "unbound variable: X" and match against known symbols
-        std::string prefix = "unbound variable: ";
-        auto upos = msg.find(prefix);
-        if (upos != std::string::npos) {
-            auto target = msg.substr(upos + prefix.size());
-            // Strip trailing punctuation
-            while (!target.empty() && (target.back() == '.' || target.back() == '!' ||
-                                       target.back() == '?' || target.back() == ':'))
-                target.pop_back();
-            auto it = unbound_fixes.find(target);
-            if (it != unbound_fixes.end()) {
-                return make_diag(it->second.cause, target, it->second.fix_type, it->second.fix_data,
-                                 it->second.explanation);
-            }
-            // Unknown unbound variable — generic suggestion
-            return make_diag("unbound-variable", target, "define-or-require", "",
-                             "Define '" + target +
-                                 "' with (define ...) or add the right (require ...)");
-        }
+    // ── Known unbound variable mappings ──
+    // Format: {root-cause, target-fn, fix-type, fix-data, explanation}
+    struct FixEntry {
+        std::string cause;
+        std::string fix_type;
+        std::string fix_data;
+        std::string explanation;
+    };
+    static const std::unordered_map<std::string, FixEntry, aura::core::TransparentStringHash,
+                                    std::equal_to<>>
+        unbound_fixes = {
+            {"for-each",
+             {"missing-require", "add-require", "std/list",
+              "Add (require \"std/list\" all:) to use for-each"}},
+            {"map",
+             {"missing-require", "add-require", "std/list",
+              "Add (require \"std/list\" all:) to use map"}},
+            {"filter",
+             {"missing-require", "add-require", "std/list",
+              "Add (require \"std/list\" all:) to use filter"}},
+            {"foldl",
+             {"missing-require", "add-require", "std/list",
+              "Add (require \"std/list\" all:) to use foldl"}},
+            {"make-hash",
+             {"missing-require", "add-require", "std/hash",
+              "Add (require \"std/hash\" all:) to use make-hash"}},
+            {"hash-ref",
+             {"missing-require", "add-require", "std/hash",
+              "Add (require \"std/hash\" all:) to use hash-ref"}},
+            {"rule:define",
+             {"missing-require", "add-require", "std/rule",
+              "Add (require \"std/rule\" all:) to use rule:define"}},
+            // Issue #561: synthesize:fill + synthesize:pipeline
+            // lint hint references removed — these were dead
+            // hints pointing to a non-existent std/pipeline module.
+            // Decision documented in
+            // docs/design/synthesize-namespace-decision.md
+            // (synthesize:fill is a real primitive in agent.cpp
+            // that wraps LLM calls; synthesize:pipeline is a
+            // docs/AI-strategy concept, not an actual primitive).
+            {"define-type",
+             {"missing-require", "add-require", "std/data",
+              "Add (require \"std/data\" all:) to use define-type"}},
+            {"c-func",
+             {"missing-require", "add-require", "std/ffi",
+              "Add (require \"std/ffi\" all:) to use c-func"}},
+    };
 
-        // Detect "type error: cannot call: X"
-        prefix = "type error: cannot call: ";
-        auto tpos = msg.find(prefix);
-        if (tpos != std::string::npos) {
-            auto target = msg.substr(tpos + prefix.size());
-            return make_diag("type-error-unbound", target, "define-function", "",
-                             "Define the function '" + target + "' before calling it");
+    // Detect "unbound variable: X" and match against known symbols
+    std::string prefix = "unbound variable: ";
+    auto upos = msg.find(prefix);
+    if (upos != std::string::npos) {
+        auto target = msg.substr(upos + prefix.size());
+        // Strip trailing punctuation
+        while (!target.empty() && (target.back() == '.' || target.back() == '!' ||
+                                   target.back() == '?' || target.back() == ':'))
+            target.pop_back();
+        auto it = unbound_fixes.find(target);
+        if (it != unbound_fixes.end()) {
+            return make_diag(it->second.cause, target, it->second.fix_type, it->second.fix_data,
+                             it->second.explanation);
         }
-
-        // Detect parse errors
-        if (msg.find("parse error") != std::string::npos ||
-            msg.find("expected expression") != std::string::npos) {
-            return make_diag("parse-error", "", "fix-syntax", msg.substr(0, 60),
-                             "Check syntax: unbalanced parens, missing quotes, or wrong form");
-        }
-
-        // Detect #<procedure> / closure
-        if (msg.find("procedure") != std::string::npos ||
-            msg.find("uncalled function") != std::string::npos) {
-            return make_diag("closure-no-display", "", "add-display", "",
-                             "Add (display (your-function args)) at the end of your code");
-        }
-
-        // Issue #2917 / #2916: soft heap / resource quota — raise limit or free pressure.
-        if (msg.find("prim-heap-quota:") != std::string::npos) {
-            std::string dim = "pairs";
-            if (msg.find("strings") != std::string::npos)
-                dim = "strings";
-            else if (msg.find("vectors") != std::string::npos)
-                dim = "vectors";
-            return make_diag("prim-heap-quota", dim, "raise-quota", dim,
-                             "Raise (resource:quota-set \"" + dim +
-                                 "\" N) or free heap pressure before retrying");
-        }
-        if (msg.find("quota exceeded") != std::string::npos ||
-            msg.find("resource quota") != std::string::npos) {
-            return make_diag("resource-quota", "", "raise-quota", "memory",
-                             "Raise resource:quota-set limit or reduce concurrent work");
-        }
-
-        // Type mismatch residual (mutate / typecheck last_mutate_error_)
-        if (msg.find("type") != std::string::npos &&
-            (msg.find("mismatch") != std::string::npos || msg.find("error") != std::string::npos ||
-             msg.find("deny") != std::string::npos)) {
-            return make_diag("type-mismatch", "", "clear-hold-or-rewrite", "",
-                             "Clear strict hold via recover or rewrite the offending mutate");
-        }
-
-        return make_bool(false);
+        // Unknown unbound variable — generic suggestion
+        return make_diag("unbound-variable", target, "define-or-require", "",
+                         "Define '" + target +
+                             "' with (define ...) or add the right (require ...)");
     }
 
-} // namespace
+    // Detect "type error: cannot call: X"
+    prefix = "type error: cannot call: ";
+    auto tpos = msg.find(prefix);
+    if (tpos != std::string::npos) {
+        auto target = msg.substr(tpos + prefix.size());
+        return make_diag("type-error-unbound", target, "define-function", "",
+                         "Define the function '" + target + "' before calling it");
+    }
+
+    // Detect parse errors
+    if (msg.find("parse error") != std::string::npos ||
+        msg.find("expected expression") != std::string::npos) {
+        return make_diag("parse-error", "", "fix-syntax", msg.substr(0, 60),
+                         "Check syntax: unbalanced parens, missing quotes, or wrong form");
+    }
+
+    // Detect #<procedure> / closure
+    if (msg.find("procedure") != std::string::npos ||
+        msg.find("uncalled function") != std::string::npos) {
+        return make_diag("closure-no-display", "", "add-display", "",
+                         "Add (display (your-function args)) at the end of your code");
+    }
+
+    // Issue #2917 / #2916: soft heap / resource quota — raise limit or free pressure.
+    if (msg.find("prim-heap-quota:") != std::string::npos) {
+        std::string dim = "pairs";
+        if (msg.find("strings") != std::string::npos)
+            dim = "strings";
+        else if (msg.find("vectors") != std::string::npos)
+            dim = "vectors";
+        return make_diag("prim-heap-quota", dim, "raise-quota", dim,
+                         "Raise (resource:quota-set \"" + dim +
+                             "\" N) or free heap pressure before retrying");
+    }
+    if (msg.find("quota exceeded") != std::string::npos ||
+        msg.find("resource quota") != std::string::npos) {
+        return make_diag("resource-quota", "", "raise-quota", "memory",
+                         "Raise resource:quota-set limit or reduce concurrent work");
+    }
+
+    // Type mismatch residual (mutate / typecheck last_mutate_error_)
+    if (msg.find("type") != std::string::npos &&
+        (msg.find("mismatch") != std::string::npos || msg.find("error") != std::string::npos ||
+         msg.find("deny") != std::string::npos)) {
+        return make_diag("type-mismatch", "", "clear-hold-or-rewrite", "",
+                         "Clear strict hold via recover or rewrite the offending mutate");
+    }
+
+    return make_bool(false);
+}
 
 void RegSplitParts::register_diagnose_primitive(PrimRegistrar add, Evaluator& ev) {
     // (diagnose error-string) — Analyze structured error and return fix strategy
