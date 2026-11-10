@@ -451,8 +451,16 @@ int main() {
         aura_metrics_catalog_clear_runtime_for_test();
         const auto seed = aura_metrics_catalog_size();
         CHECK(seed > 0, "3531 AC1: boot seed non-empty");
-        CHECK(hash_int(cs, "(engine:metrics)", "schema-3531") == 3531,
-              "3531 AC1: schema-3531 on engine:metrics");
+        // #5065: issue/schema stamps stay on drift-check and the not-found
+        // hash. The default snapshot no longer carries them.
+        {
+            auto issue_key = cs.eval("(hash-has-key? (engine:metrics) \"issue-3531\")");
+            auto schema_key = cs.eval("(hash-has-key? (engine:metrics) \"schema-3531\")");
+            CHECK(issue_key && is_bool(*issue_key) && !as_bool(*issue_key),
+                  "5065: issue-3531 is not on the default engine:metrics snapshot");
+            CHECK(schema_key && is_bool(*schema_key) && !as_bool(*schema_key),
+                  "5065: schema-3531 is not on the default engine:metrics snapshot");
+        }
         CHECK(hash_int(cs, "(engine:metrics)", "catalog-runtime-wired") == 1,
               "3531 AC1: catalog-runtime-wired");
         CHECK(hash_int(cs, "(stats:get \"stats:drift-check\")", "schema-3531") == 3531,
