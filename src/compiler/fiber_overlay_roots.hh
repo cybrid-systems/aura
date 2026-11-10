@@ -1,6 +1,6 @@
 // Issue #4849: GC roots for pending COW-overlay writes.
 //
-// (fiber:overlay-begin) ... (fiber:overlay-define / set! / write) store
+// (mutate :overlay-begin) ... (mutate :overlay-define / set! / write) store
 // their pending values ONLY in the process-level OverlayRegistry until
 // fiber:overlay-commit publishes them into the shared env. Neither the
 // tree-walker reclaim nor the file-mode reclaim could name that registry,

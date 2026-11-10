@@ -31,16 +31,16 @@
 (check (string? (caught (lambda () (fiber:join f-4840)))) "#4840 join raises fiber-cancelled")
 
 ; ── #4845 ─────────────────────────────────────────────────
-(check (string? (caught (lambda () (fiber:overlay-set! "k" 5))))
+(check (string? (caught (lambda () (mutate :overlay-set! "k" 5))))
        "#4845 overlay-set! without an overlay is an error")
-(check (not (fiber:overlay-commit)) "#4845 overlay-commit without an overlay returns #f")
-(fiber:overlay-begin)
-(fiber:overlay-define "k" 1)
-(check (equal? 1 (fiber:overlay-get "k" -1)) "#4845 overlay-define still works")
-(check (string? (caught (lambda () (fiber:overlay-set! "nope" 1))))
+(check (not (mutate :overlay-commit)) "#4845 overlay-commit without an overlay returns #f")
+(mutate :overlay-begin)
+(mutate :overlay-define "k" 1)
+(check (equal? 1 (mutate :overlay-get "k" -1)) "#4845 overlay-define still works")
+(check (string? (caught (lambda () (mutate :overlay-set! "nope" 1))))
        "#4845 overlay-set! of an unknown binding is an error")
-(check (fiber:overlay-set! "k" 5) "#4845 overlay-set! of a known binding still works")
-(check (fiber:overlay-commit) "#4845 commit with an overlay still works")
+(check (mutate :overlay-set! "k" 5) "#4845 overlay-set! of a known binding still works")
+(check (mutate :overlay-commit) "#4845 commit with an overlay still works")
 
 ; ── #4846 ─────────────────────────────────────────────────
 (defmacro (sw-4846 a b) (list (quote list) b a))

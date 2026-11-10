@@ -111,7 +111,7 @@ infer_required_effects_from_name(std::string_view name) noexcept {
     // NOT also body-check (double-consume of single-use, same note as c-*
     // below). Soft/Off: require_effect is a no-op.
     if (name == "set-car!" || name == "set-cdr!" || name == "string-fill!" ||
-        name == "closure:free!")
+        name == "mw:closure-free")
         return kEffectMutate;
     // Issue #3725: std/ffi installs c-* after a one-shot require_effect;
     // c-load/c-func bodies did not re-enter the choke, so revoke /

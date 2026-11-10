@@ -253,12 +253,12 @@ static void ac5_tenant_and_pin() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define y 2)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    // (ast:ref-serialize id gen mid ws fiber tenant wrap cow pin)
-    auto r = cs.eval("(ast:ref-serialize 1 1 99 0 3 2056 1 10 1)");
+    // (query :ref-serialize id gen mid ws fiber tenant wrap cow pin)
+    auto r = cs.eval("(query :ref-serialize 1 1 99 0 3 2056 1 10 1)");
     CHECK(r.has_value(), "ast:ref-serialize with provenance args");
     // Round-trip via deserialize still returns 4-tuple (compat shape).
     auto d =
-        cs.eval("(let ((s (ast:ref-serialize 1 1 99 0 3 2056 1 10 1))) (ast:ref-deserialize s))");
+        cs.eval("(let ((s (query :ref-serialize 1 1 99 0 3 2056 1 10 1))) (query :ref-deserialize s))");
     CHECK(d.has_value(), "ast:ref-deserialize after v2 serialize");
 }
 

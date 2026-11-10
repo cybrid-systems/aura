@@ -4917,7 +4917,7 @@ void InferenceEngine::init_primitive_env_part2(TypeId Int, TypeId Bool, TypeId F
     // std/evolve
     // Issue #63 Phase 3: evolve-strategy now returns the new strategy name (String).
     register_primitive("evolve-strategy", {String}, String);
-    register_primitive("define-strategy", {String, String}, Bool);
+    register_primitive("mw:define-strategy", {String, String}, Bool);
     register_primitive("register-strategy!", {String, String}, Bool);
     register_primitive("strategy-field", {String, String}, Dyn);
     register_primitive("strategy-set-field!", {String, String, Dyn}, Bool);
@@ -6584,7 +6584,7 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                  cname == "=" || cname == "<" || cname == ">" || cname == "<=" || cname == ">=" ||
                  // Issue #63 Phase 3: strategy primitives take optional
                  // :key value keyword args, so are variadic.
-                 cname == "define-strategy" || cname == "evolve-strategy");
+                 cname == "mw:define-strategy" || cname == "evolve-strategy");
         }
         // Issue #4398: dotted-rest has no upper bound. Synthesize args past
         // the prefix so a free name there is still UnboundVariable. Do not

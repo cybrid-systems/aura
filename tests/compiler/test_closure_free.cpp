@@ -150,7 +150,7 @@ int main() {
     // ── Aura primitives ──
     {
         CompilerService cs;
-        auto r = cs.eval("(closure:free! -1)");
+        auto r = cs.eval("(mutate :closure-free -1)");
         CHECK(r && is_bool(*r) && as_bool(*r), "closure:free! returns #t for int");
         auto s = cs.eval("(stats:get \"closure:free-stats\")");
         CHECK(s && is_hash(*s), "closure:free-stats is hash");
@@ -168,7 +168,7 @@ int main() {
     // Bad arg
     {
         CompilerService cs;
-        auto r = cs.eval("(closure:free!)");
+        auto r = cs.eval("(mutate :closure-free)");
         CHECK(r && is_bool(*r) && !as_bool(*r), "closure:free! no-arg → #f");
     }
 

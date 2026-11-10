@@ -161,7 +161,7 @@ def main() -> int:
     # Issue #5009: the write surface is (mutate :restore …); ast:restore is the
     # deprecated alias it forwards to, so accept either spelling.
     must(
-        ("(mutate :restore snap-id)" in else_arm or "(ast:restore snap-id)" in else_arm)
+        ("(mutate :restore snap-id)" in else_arm or "(mutate :restore snap-id)" in else_arm)
         and "(list 'rejected" in else_arm,
         "AC2: not-ok branch restores the snapshot and reports rejected",
     )
@@ -174,7 +174,7 @@ def main() -> int:
     must('(list \'error "post-verify-error-raised")' in apply_body, "AC2: throw face reported as structured error")
     pv_arm = _slice(apply_body, "(try (post-verify)", "(not pv)")
     must(
-        "(mutate :restore snap-id)" in pv_arm or "(ast:restore snap-id)" in pv_arm,
+        "(mutate :restore snap-id)" in pv_arm or "(mutate :restore snap-id)" in pv_arm,
         "AC2: throw branch restores the snapshot (was: escaped, no restore)",
     )
     must(

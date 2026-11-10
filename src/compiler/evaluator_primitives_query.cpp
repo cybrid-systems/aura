@@ -2890,9 +2890,9 @@ void register_query_gc_tune_parts(PrimRegistrar add, std::pmr::vector<Pair>& pai
                                   void*& type_registry, ModulePathResolver resolve_module_path,
                                   Evaluator& ev) {
 
-    // Issue #618: (orchestration:tune-gc-frequency ratio) —
+    // Issue #618: (mutate :tune-gc-frequency ratio) —
     // setter for the GC safepoint frequency tuning atomic.
-    // (orchestration:tune-gc-frequency) with no arg reads back
+    // (mutate :tune-gc-frequency) with no arg reads back
     // the current value. With an int arg in [0, 100] writes +
     // returns the previous value. Out-of-range args are clamped
     // (negative -> 0; > 100 -> 100) so callers don't have to
@@ -2904,7 +2904,7 @@ void register_query_gc_tune_parts(PrimRegistrar add, std::pmr::vector<Pair>& pai
     // (query:scheduler-mutation-coord-stats) so the LLM-aware
     // tuning loop can be wired up without re-touching the
     // scheduler in the same PR.
-    add("orchestration:tune-gc-frequency", [](std::span<const EvalValue> a) -> EvalValue {
+    add("mw:tune-gc-frequency", [](std::span<const EvalValue> a) -> EvalValue {
         auto& ratio = aura::serve::gc_frequency_tune_ratio();
         const std::uint64_t prev = ratio.load(std::memory_order_relaxed);
         if (a.empty()) {

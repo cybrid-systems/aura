@@ -3554,7 +3554,7 @@ bool test_broadcast_primitive() {
 
 // ── Test: scheduler:pin via spawn_with_affinity (P2) ──────────
 // Verify that spawn_with_affinity pins to the correct worker.
-// Uses the same mechanism as the Aura (scheduler:pin) primitive.
+// Uses the same mechanism as the Aura (mutate :scheduler-pin) primitive.
 
 bool test_scheduler_pin_primitive() {
     std::println("\n--- Test: scheduler:pin via spawn_with_affinity ---");

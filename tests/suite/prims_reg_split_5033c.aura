@@ -40,7 +40,7 @@
 (check (hash? (stats:get "query:parallel-orch-stats")) "query:parallel-orch-stats")
 (check (or (string? (stats:get "orch:metrics")) (list? (stats:get "orch:metrics")))
        "orch:metrics")
-(check (integer? (fiber:spawn-backend)) "fiber:spawn-backend")
+(check (integer? (query :fiber-backend)) "qr:fiber-backend")
 (check (eq? #f (fiber:cancel 999999)) "fiber:cancel unknown fiber")
 
 ;; ── messaging parts: fiber lifecycle + join ──────────────────────────
@@ -65,7 +65,7 @@
 (check (hash? (stats:get "string-pool:stats")) "string-pool:stats")
 (check (hash? (stats:get "dirty:counts")) "dirty:counts")
 (check (hash? (stats:get "dirty:summary")) "dirty:summary")
-(check (integer? (dirty:reasons 0)) "dirty:reasons")
+(check (integer? (query :reasons 0)) "qr:reasons")
 (check (integer? (stats:get "arena:estimate")) "arena:estimate int")
 (check (hash? (stats:get "closure:free-stats")) "closure:free-stats")
 (check (eq? #t (gc-heap)) "gc-heap runs a collection")

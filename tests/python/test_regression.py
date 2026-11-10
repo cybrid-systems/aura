@@ -5643,7 +5643,7 @@ def test_fiber_cow_overlay_conflict_condition_4715():
     string (existing callers match that prefix), and the same verdict now
     carries binding / winner fiber / our epoch / committed epoch / sequences /
     kind as trailing fields and as a condition object from
-    (fiber:overlay-conflict).
+    (mutate :overlay-conflict).
     """
     program = """
 (begin
@@ -5653,14 +5653,14 @@ def test_fiber_cow_overlay_conflict_condition_4715():
 ;; #4845: overlay-set! requires a bound name; seed the shared binding.
 (define cow-cond 0)
 (define (cow-writer val)
-  (fiber:overlay-begin)
-  (fiber:overlay-set! "cow-cond" val)
-  (if (error? (fiber:overlay-commit)) 0 1))
-(fiber:overlay-begin)
-(fiber:overlay-set! "cow-cond" 2)
+  (mutate :overlay-begin)
+  (mutate :overlay-set! "cow-cond" val)
+  (if (error? (mutate :overlay-commit)) 0 1))
+(mutate :overlay-begin)
+(mutate :overlay-set! "cow-cond" 2)
 (define win (fiber:join (fiber:spawn (lambda () (cow-writer 1)))))
-(define msg (try (fiber:overlay-commit) (catch (e) e)))
-(define cond (fiber:overlay-conflict))
+(define msg (try (mutate :overlay-commit) (catch (e) e)))
+(define cond (mutate :overlay-conflict))
 (define (has? s part) (>= (string-index s part) 0))
 (display
  (list win
@@ -5697,7 +5697,7 @@ def test_fiber_cow_overlay_conflict_condition_4715():
         "#4715: the structured conflict condition (binding/winner/our epoch/"
         "committed epoch) is gone from the overlay data layer"
     )
-    assert '"fiber:overlay-conflict"' in cow and "overlay_conflict_message" in cow, (
+    assert '"mw:overlay-conflict"' in cow and "overlay_conflict_message" in cow, (
         "#4715: the condition-object primitive / message renderer is gone"
     )
 
@@ -5712,15 +5712,15 @@ def test_fiber_cow_overlay_write_skew_read_set_4715():
     program = """
 (define w 1)
 (define (cow-writer)
-  (fiber:overlay-begin)
-  (fiber:overlay-set! "w" 5)
-  (if (error? (fiber:overlay-commit)) 0 1))
-(fiber:overlay-begin)
+  (mutate :overlay-begin)
+  (mutate :overlay-set! "w" 5)
+  (if (error? (mutate :overlay-commit)) 0 1))
+(mutate :overlay-begin)
 (define seen w)
-(fiber:overlay-define "zg" (+ seen 100))
+(mutate :overlay-define "zg" (+ seen 100))
 (define won (fiber:join (fiber:spawn (lambda () (cow-writer)))))
-(define msg (try (fiber:overlay-commit) (catch (e) e)))
-(define cond (fiber:overlay-conflict))
+(define msg (try (mutate :overlay-commit) (catch (e) e)))
+(define cond (mutate :overlay-conflict))
 (define (has? s part) (>= (string-index s part) 0))
 (display
  (list seen won
@@ -5733,10 +5733,10 @@ def test_fiber_cow_overlay_write_skew_read_set_4715():
                 (eq? (hash-ref cond "read-only") #t)
                 (string=? (hash-ref cond "kind") "read-set"))
            "cond-ok" "cond-bad")
-       (fiber:overlay-get "w" -1)
-       (fiber:overlay-get "zg" -1)
-       (if (and (has? (fiber:overlay-report) "read-conflicts=1")
-                (has? (fiber:overlay-report) "conflicts=1"))
+       (mutate :overlay-get "w" -1)
+       (mutate :overlay-get "zg" -1)
+       (if (and (has? (mutate :overlay-report) "read-conflicts=1")
+                (has? (mutate :overlay-report) "conflicts=1"))
            "report-ok" "report-bad")))
 (newline)
 """
@@ -5769,19 +5769,19 @@ def test_fiber_cow_overlay_commit_mutation_log_4715():
 (define (last-rec) (car (reverse (ml))))
 (define (has? s part) (>= (string-index s part) 0))
 (define n0 (length (ml)))
-(fiber:overlay-begin)
-(fiber:overlay-define "cow-prov" 77)
-(define ok (fiber:overlay-commit))
+(mutate :overlay-begin)
+(mutate :overlay-define "cow-prov" 77)
+(define ok (mutate :overlay-commit))
 (define rec (last-rec))
 (define n1 (length (ml)))
 (define (cow-writer val)
-  (fiber:overlay-begin)
-  (fiber:overlay-set! "cow-prov-c" val)
-  (if (error? (fiber:overlay-commit)) 0 1))
-(fiber:overlay-begin)
-(fiber:overlay-set! "cow-prov-c" 2)
+  (mutate :overlay-begin)
+  (mutate :overlay-set! "cow-prov-c" val)
+  (if (error? (mutate :overlay-commit)) 0 1))
+(mutate :overlay-begin)
+(mutate :overlay-set! "cow-prov-c" 2)
 (fiber:join (fiber:spawn (lambda () (cow-writer 1))))
-(define msg (try (fiber:overlay-commit) (catch (e) e)))
+(define msg (try (mutate :overlay-commit) (catch (e) e)))
 (define rec2 (last-rec))
 (display
  (list (if (eq? ok #t) 1 0)
@@ -5805,7 +5805,7 @@ def test_fiber_cow_overlay_commit_mutation_log_4715():
             f"attempt) must leave a mutation-log record; got {line!r}"
         )
     cow = (REPO / "src/compiler/evaluator_primitives_fiber_cow.cpp").read_text(encoding="utf-8")
-    assert "record_overlay_commit" in cow and "fiber:overlay-commit" in cow, (
+    assert "record_overlay_commit" in cow and "mw:overlay-commit" in cow, (
         "#4715: the overlay-commit provenance record is gone"
     )
 
@@ -5815,10 +5815,10 @@ def test_ast_snapshot_no_workspace_warning_pipe_silent_4797():
 
     tests/python/run-tests.sh compares per-case text with 2>&1, so a stderr
     note turned four green rows red in asan-verify. A piped run must stay
-    silent while the -1 contract and (ast:snapshot-fail-reason) stay
+    silent while the -1 contract and (query :snapshot-fail-reason) stay
     observable — only an interactive stderr (isatty) gets the explanation.
     """
-    code = '(begin (display (ast:snapshot "s")) (newline) (display (ast:snapshot-fail-reason)) (newline))'
+    code = '(begin (display (mutate :snapshot "s")) (newline) (display (query :snapshot-fail-reason)) (newline))'
     env = os.environ.copy()
     env["AURA_PIPELINE_STRICT"] = "0"
     env["AURA_SANDBOX"] = "off"
@@ -6001,7 +6001,7 @@ sys.exit(1 if (snippet_rc != 0 or failed_s > 0) else 0)
 def test_fiber_cow_overlay_disjoint_commit_4715():
     """Issue #4715 AC1: two fibers defining disjoint names both commit.
 
-    Each body opens a private overlay (fiber:overlay-begin), writes a name the
+    Each body opens a private overlay (mutate :overlay-begin), writes a name the
     other never touches, and commits. The commit is the fast-forward case (the
     workspace mutation epoch did not move), so both bindings reach the shared
     top env and the main body reads both through the same overlay-get path
@@ -6010,15 +6010,15 @@ def test_fiber_cow_overlay_disjoint_commit_4715():
     """
     program = """
 (define (cow-body name val)
-  (fiber:overlay-begin)
-  (fiber:overlay-define name val)
-  (if (error? (fiber:overlay-commit)) 0 1))
+  (mutate :overlay-begin)
+  (mutate :overlay-define name val)
+  (if (error? (mutate :overlay-commit)) 0 1))
 (define fa (fiber:spawn (lambda () (cow-body "cow-a" 7))))
 (define fb (fiber:spawn (lambda () (cow-body "cow-b" 9))))
 (display (list (+ (fiber:join fa) (fiber:join fb))
-               (fiber:overlay-get "cow-a" -1)
-               (fiber:overlay-get "cow-b" -1)
-               (fiber:overlay-report)))
+               (mutate :overlay-get "cow-a" -1)
+               (mutate :overlay-get "cow-b" -1)
+               (mutate :overlay-report)))
 (newline)
 """
     out = _run_aura_4715(program, runs=2)
@@ -6031,7 +6031,7 @@ def test_fiber_cow_overlay_disjoint_commit_4715():
         )
     tu = (REPO / "src/compiler/evaluator_primitives_fiber_cow.cpp").read_text(encoding="utf-8")
     hh = (REPO / "src/compiler/fiber_cow_overlay.hh").read_text(encoding="utf-8")
-    assert "fiber:overlay-commit" in tu and "ev.top_env().bind(name, make_cell(ci))" in tu, (
+    assert "mw:overlay-commit" in tu and "ev.top_env().bind(name, make_cell(ci))" in tu, (
         "#4715: the commit primitive no longer applies the overlay into the shared env"
     )
     assert "commit_seq > ov.base_seq" in hh, "#4715: the write-write conflict scan (commit-log sequence) is gone"
@@ -6054,17 +6054,17 @@ def test_fiber_cow_overlay_same_name_conflict_4715():
     """
     arm_a = """
 (define (cow-writer val)
-  (fiber:overlay-begin)
-  (fiber:overlay-define "cow-shared" val)
-  (if (error? (fiber:overlay-commit)) 0 1))
-(fiber:overlay-begin)
-(fiber:overlay-define "cow-shared" 10)
+  (mutate :overlay-begin)
+  (mutate :overlay-define "cow-shared" val)
+  (if (error? (mutate :overlay-commit)) 0 1))
+(mutate :overlay-begin)
+(mutate :overlay-define "cow-shared" 10)
 (define cow-f (fiber:spawn (lambda () (cow-writer 20))))
 (define cow-won (fiber:join cow-f))
-(define cow-lost (if (error? (fiber:overlay-commit)) 0 1))
+(define cow-lost (if (error? (mutate :overlay-commit)) 0 1))
 (display (list cow-won cow-lost
-               (fiber:overlay-get "cow-shared" -1)
-               (fiber:overlay-report)))
+               (mutate :overlay-get "cow-shared" -1)
+               (mutate :overlay-report)))
 (newline)
 """
     line = _run_aura_4715(arm_a, runs=3)[2]
@@ -6076,14 +6076,14 @@ def test_fiber_cow_overlay_same_name_conflict_4715():
     )
     arm_b = """
 (define (cow-writer val)
-  (fiber:overlay-begin)
-  (fiber:overlay-define "cow-shared" val)
-  (if (error? (fiber:overlay-commit)) 0 1))
+  (mutate :overlay-begin)
+  (mutate :overlay-define "cow-shared" val)
+  (if (error? (mutate :overlay-commit)) 0 1))
 (define cow-f1 (fiber:spawn (lambda () (cow-writer 10))))
 (define cow-f2 (fiber:spawn (lambda () (cow-writer 20))))
 (display (list (+ (fiber:join cow-f1) (fiber:join cow-f2))
-               (fiber:overlay-get "cow-shared" -1)
-               (fiber:overlay-report)))
+               (mutate :overlay-get "cow-shared" -1)
+               (mutate :overlay-report)))
 (newline)
 """
     serial = _run_aura_4715(arm_b, runs=2)
@@ -6113,16 +6113,16 @@ def test_fiber_cow_overlay_rollback_single_fiber_4715():
     """
     program = """
 (define cow-keep 41)
-(fiber:overlay-begin)
-(fiber:overlay-define "cow-drop" 1)
-(fiber:overlay-set! "cow-keep" 99)
-(define cow-before (fiber:overlay-pending))
-(define cow-rolled (fiber:overlay-rollback))
+(mutate :overlay-begin)
+(mutate :overlay-define "cow-drop" 1)
+(mutate :overlay-set! "cow-keep" 99)
+(define cow-before (mutate :overlay-pending))
+(define cow-rolled (mutate :overlay-rollback))
 (display (list cow-before cow-rolled
-               (fiber:overlay-get "cow-keep" -1)
-               (fiber:overlay-get "cow-drop" -1)
+               (mutate :overlay-get "cow-keep" -1)
+               (mutate :overlay-get "cow-drop" -1)
                (begin (set! cow-keep 42) cow-keep)
-               (fiber:overlay-report)))
+               (mutate :overlay-report)))
 (newline)
 """
     line = _run_aura_4715(program)[0]
@@ -6145,17 +6145,17 @@ def test_fiber_cow_overlay_torn_read_4715():
     program = """
 (define cow-v 0)
 (define (cow-committer)
-  (fiber:overlay-begin)
-  (fiber:overlay-define "cow-v" 1)
-  (fiber:overlay-commit)
+  (mutate :overlay-begin)
+  (mutate :overlay-define "cow-v" 1)
+  (mutate :overlay-commit)
   1)
 (define fc (fiber:spawn (lambda () (cow-committer))))
 (define (cow-read i acc)
   (if (< i 50)
-      (let ((v (fiber:overlay-get "cow-v" -1)))
+      (let ((v (mutate :overlay-get "cow-v" -1)))
         (if (or (= v 0) (= v 1)) (cow-read (+ i 1) (+ acc 1)) acc))
       acc))
-(display (list (cow-read 0 0) (fiber:join fc) (fiber:overlay-get "cow-v" -1)))
+(display (list (cow-read 0 0) (fiber:join fc) (mutate :overlay-get "cow-v" -1)))
 (newline)
 """
     line = _run_aura_4715(program)[0]
@@ -6186,7 +6186,7 @@ def test_fiber_cow_overlay_rebind_eval_current_4715():
   (eval-current)
   #t)
 (display
- (let* ((open (fiber:overlay-begin))
+ (let* ((open (mutate :overlay-begin))
         (m (try (mutate:rebind "cow-target" "(lambda (x) (* x 7))" "cow") (catch (e) #f)))
         (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
         (own (cow-target 7))
@@ -6198,12 +6198,12 @@ def test_fiber_cow_overlay_rebind_eval_current_4715():
                     (loop (+ i 1)
                           (and ok (let ((v (cow-target 7))) (or (= v 14) (= v 49)))))
                     ok)))))
-        (cm (fiber:overlay-commit))
+        (cm (mutate :overlay-commit))
         (after (cow-target 7))
         (seen (fiber:join w)))
    (list (if (eq? m #t) 1 0) (if (eq? ec #t) 1 0) own
          (if (or (= sib 14) (= sib 49)) 1 0) (if (error? cm) 0 1) after seen
-         (fiber:overlay-report))))
+         (mutate :overlay-report))))
 (newline)
 """
     out = _run_aura_4715(program, runs=2)
@@ -6234,15 +6234,15 @@ def test_fiber_cow_overlay_scalar_rebind_private_4715():
   (eval-current)
   #t)
 (display
- (let* ((open (fiber:overlay-begin))
+ (let* ((open (mutate :overlay-begin))
         (m (try (mutate:rebind "cow-n" "9" "cow") (catch (e) #f)))
         (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
         (own cow-n)
         (sib (fiber:join (fiber:spawn (lambda () cow-n))))
-        (cm (fiber:overlay-commit))
+        (cm (mutate :overlay-commit))
         (after cow-n))
    (list (if (eq? m #t) 1 0) (if (eq? ec #t) 1 0) own sib
-         (if (error? cm) 0 1) after (fiber:overlay-report))))
+         (if (error? cm) 0 1) after (mutate :overlay-report))))
 (newline)
 """
     for attempt, line in enumerate(_run_aura_4715(program, runs=2)):
@@ -6271,21 +6271,21 @@ def test_fiber_cow_overlay_rebind_conflict_4715():
   (eval-current)
   #t)
 (display
- (let* ((open (fiber:overlay-begin))
+ (let* ((open (mutate :overlay-begin))
         (m (try (mutate:rebind "cow-n" "9" "cow") (catch (e) #f)))
         (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
         (own cow-n)
         (sib (fiber:join
               (fiber:spawn
                (lambda ()
-                 (fiber:overlay-begin)
-                 (fiber:overlay-set! "cow-n" 11)
-                 (if (error? (fiber:overlay-commit)) 0 1)))))
-        (cm (try (fiber:overlay-commit) (catch (e) e)))
+                 (mutate :overlay-begin)
+                 (mutate :overlay-set! "cow-n" 11)
+                 (if (error? (mutate :overlay-commit)) 0 1)))))
+        (cm (try (mutate :overlay-commit) (catch (e) e)))
         (after cow-n))
    (list own sib
          (if (and (string? cm) (>= (string-index cm "fiber:cow-conflict: cow-n") 0)) 1 0)
-         after (fiber:overlay-report))))
+         after (mutate :overlay-report))))
 (newline)
 """
     for attempt, line in enumerate(_run_aura_4715(program, runs=3)):
@@ -6312,12 +6312,12 @@ def test_fiber_cow_overlay_set_bang_private_4715():
   (eval-current)
   #t)
 (display
- (let* ((open (fiber:overlay-begin))
+ (let* ((open (mutate :overlay-begin))
         (set-r (begin (set! cow-s 9) cow-s))
         (sib (fiber:join (fiber:spawn (lambda () cow-s))))
-        (cm (fiber:overlay-commit))
+        (cm (mutate :overlay-commit))
         (after cow-s))
-   (list set-r sib (if (error? cm) 0 1) after (fiber:overlay-report))))
+   (list set-r sib (if (error? cm) 0 1) after (mutate :overlay-report))))
 (newline)
 """
     line = _run_aura_4715(program, runs=2)[1]

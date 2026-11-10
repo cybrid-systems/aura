@@ -571,7 +571,7 @@ void Evaluator::restore_panic_checkpoint_on_arena_compact_if_needed() noexcept {
 }
 
 // Issue #1637: hot-swap deopt variant — invoked from the
-// (hot-swap:fn "name" "new-source") primitive's post-callback path via
+// (mutate :hot-swap-fn "name" "new-source") primitive's post-callback path via
 // aura_evaluator_hot_swap_panic_restore() trampoline. Bumps
 // post_hot_swap_checkpoint_restore_total so re-deopt + recover
 // sequences are observable without conflating with steal/compact.

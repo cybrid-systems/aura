@@ -31,7 +31,7 @@
 (check "chain before" (chain2) 20)
 ; A typed define after many engines still type-checks (shared prim env).
 (check "string prims typed" (string-length (knob)) 8)
-(define sid (ast:snapshot "scale"))
+(define sid (mutate :snapshot "scale"))
 (check "snapshot id" (>= sid 0) #t)
 ; Rebind a callee: dependents (found through the dep graph) see it.
 (mutate:rebind "base" "(lambda () 41)" "4557")
@@ -44,7 +44,7 @@
 (check "knob swapped" (knob) "vector")
 (check "filler untouched" (wsf150 0) 150)
 ; Restore: every define returns to the snapshot.
-(ast:restore sid)
+(mutate :restore sid)
 (eval-current)
 (check "knob restored" (knob) "skiplist")
 (check "callee restored" (base) 1)

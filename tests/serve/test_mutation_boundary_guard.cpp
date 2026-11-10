@@ -167,7 +167,7 @@ static void ac5_runtime() {
     CHECK(r1.has_value() && (is_bool(*r1) || is_error(*r1)), "clear-macro-dirty");
     auto r2 = cs.eval("(compile:mark-narrowing-dirty! 0)");
     CHECK(r2.has_value() && (is_bool(*r2) || is_error(*r2)), "mark-narrowing");
-    auto r3 = cs.eval("(evaluator:compact-env-frames)");
+    auto r3 = cs.eval("(mutate :compact-env-frames)");
     CHECK(r3.has_value() && is_int(*r3), "compact-env-frames");
 
     auto& ev = cs.evaluator();

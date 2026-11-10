@@ -177,13 +177,13 @@ void ObservabilityPrims::register_jit_p0(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(ev.get_intrinsic_count_fn_()));
     });
 
-    // (jit:deopt-fn? fn-name threshold) — Issue #193: returns
+    // (query :deopt-fn? fn-name threshold) — Issue #193: returns
     // #t if the function should be deopted (i.e., its
     // unhandled-opcode count exceeds the threshold). Default
     // threshold is 0 (any hit triggers deopt). Production code
     // should pass a non-zero threshold (e.g. 10) to avoid
     // thrashing on transient bugs during initial JIT warmup.
-    add("jit:deopt-fn?", [&ev](const auto& a) -> EvalValue {
+    add("qr:deopt-fn?", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
@@ -226,12 +226,12 @@ void ObservabilityPrims::register_jit_p0(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 1 (orig lines 11759-11884)
 void ObservabilityPrims::register_jit_p1(PrimRegistrar add, Evaluator& ev) {
 
-    // (jit:exception-fibers-clear) — Issue #195: clear all
+    // (mutate :exception-fibers-clear) — Issue #195: clear all
     // per-fiber exception state. Returns void. Used by the
     // session-reset path.
     // Issue #1295 (P0): requires kCapExceptionControl in sandbox —
     // process-global clear can corrupt in-flight try/catch on other fibers.
-    add("jit:exception-fibers-clear", [&ev](const auto&) -> EvalValue {
+    add("mw:exception-fibers-clear", [&ev](const auto&) -> EvalValue {
         // Issue #1326 Phase 1: deprecation path (cross-fiber race; prefer C++ reset).
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             record_write_side_prim_deprecation(m);
@@ -2296,8 +2296,18 @@ void register_metrics_facade_engine_metrics(PrimRegistrar add, Evaluator& ev) {
             const auto rest = a.size() > 1 ? a.subspan(1) : std::span<const EvalValue>{};
             if (auto fn = ObservabilityPrims::lookup_stats_impl(name))
                 return (*fn)(rest);
-            if (auto fn = ev.primitives().lookup(name))
-                return (*fn)(rest);
+            // Issue #5094: a deprecated primitive is not a metrics key. Calling
+            // it (ast:snapshot, diagnose, …) ran the retired operation. Stats
+            // names still fall through: their replacement is this facade.
+            if (auto fn = ev.primitives().lookup(name)) {
+                const auto slot = ev.primitives().slot_for_name(name);
+                const bool stats_name = name.find("-stats") != std::string::npos;
+                if (slot < ev.primitives().slot_count() &&
+                    ev.primitives().meta_for_slot(slot).deprecated && !stats_name)
+                    ; // not-found below
+                else
+                    return (*fn)(rest);
+            }
             // Issue #3645: by-name lookup miss → typed not-found hash
             // (was make_void()). A typo'd or unregistered name must be
             // distinguishable from an empty stats hash / a slim-s0 void
@@ -5580,7 +5590,7 @@ void ObservabilityPrims::register_jit_p30(PrimRegistrar add, Evaluator& ev) {
     //       to wire to actual runtime reflect
     //       validation hook for edsl:define-struct /
     //       extend-struct / extend-kit per body
-    //       "(edsl:define-struct name doc schema
+    //       "(mutate :define-struct name doc schema
     //       [attrs]) — defines new NodeTag + builders
     //       + auto-wires runtime reflect validate +
     //       hygiene/linear checks + Guard provenance;
@@ -7865,7 +7875,7 @@ void ObservabilityPrims::register_jit_p48(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #814 / #1139: runtime:self-heal-on-drift — return #t only when
     // metrics are attached (heal path actually recorded); else #f.
-    add("runtime:self-heal-on-drift", [&ev](const auto&) -> EvalValue {
+    add("mw:self-heal-on-drift", [&ev](const auto&) -> EvalValue {
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             m->runtime_self_heal_invocations_total.fetch_add(1, std::memory_order_relaxed);
@@ -7879,8 +7889,8 @@ void ObservabilityPrims::register_jit_p48(PrimRegistrar add, Evaluator& ev) {
     // Issue #816: edsl:define-struct name doc schema — Phase 1 registry
     // that validates non-empty name/schema and records metrics. Full
     // NodeTag generation is Phase 2.
-    add("edsl:define-struct", [&ev](const auto& a) -> EvalValue {
-        // (edsl:define-struct name doc schema) — name/schema required strings.
+    add("mw:define-struct", [&ev](const auto& a) -> EvalValue {
+        // (mutate :define-struct name doc schema) — name/schema required strings.
         if (a.size() < 3) {
             if (ev.compiler_metrics_) {
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);

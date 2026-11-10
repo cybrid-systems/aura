@@ -163,7 +163,7 @@ namespace {
         // closure as "closure-freed".
         // Issue #4816 follow-up: only an IR-namespace id (kClosureIdHighBit,
         // #4502) can live in runtime_closures_. A tree-walker id that is in
-        // neither closures_ nor the JIT table was freed (closure:free!
+        // neither closures_ nor the JIT table was freed (mutate :closure-free
         // erased it): deferring it to the bridge too reported a freed
         // generator as live and skipped the #1719 freed-during-call count.
         return types::is_ir_closure_id(raw) && static_cast<bool>(ev.closure_bridge());
@@ -2695,7 +2695,7 @@ void RegSplitParts::register_strategy_definition_primitives(Evaluator& ev, AddFn
     //   :max-attempts <int>     (1..20, default 3)
     //   :temperature <float>   (0.0..1.0, default 0.3)
     //   :sys-prompt-template <str>
-    add("define-strategy", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("mw:define-strategy", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_bool(false);
         auto name = heap_str_from(ev.string_heap_, a[0]);
@@ -4617,7 +4617,7 @@ void RegSplitParts::register_agent_join_primitive(Evaluator& ev, AddFn& add) {
     };
     // (orch:agent-join name [:timeout-ms n] [:drain-ms n])
     // Issue #2153: :drain-ms secondary cancel-drain window (default 2000).
-    add("orch:agent-join",
+    if (false) add("orch:agent-join",
         [&ev, build_orch_hash, orch_keyword_key, add_identity_plane, add_deny_class,
          add_reclaimed_pending_lifecycle](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty()) {
@@ -4923,7 +4923,7 @@ void RegSplitParts::register_agent_wait_reclaimed_primitive(Evaluator& ev, AddFn
     // Issue #2924: (orch:agent-wait-reclaimed name [:timeout-ms n])
     // Wait for still-running body after status=reclaimed; never frees
     // reservation on Timeout (#2661). Returns Invalid when not reclaimed.
-    add("orch:agent-wait-reclaimed",
+    if (false) add("orch:agent-wait-reclaimed",
         [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty()) {
                 return make_primitive_error(ev.string_heap_, ev.error_values_,
@@ -5078,7 +5078,7 @@ void RegSplitParts::register_scope_spawn_primitive(Evaluator& ev, AddFn& add) {
     //   [:max-no-yield-ms n] ... → hash {ok, id, name, schema=2588, status}.
     // Body thunk is optional for MVP (empty body = supervised no-op);
     // closure-ID parsing mirrors orch:spawn-agent pattern.
-    add("orch:scope-spawn",
+    if (false) add("orch:scope-spawn",
         [&ev, build_orch_hash, orch_keyword_key, add_deny_class, add_reclaimed_pending_lifecycle,
          parse_scope_addr_kw, resolve_scope_addr,
          make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
@@ -5563,7 +5563,7 @@ void RegSplitParts::register_scope_child_primitives(Evaluator& ev, AddFn& add) {
     // so later orch:scope-spawn / watch / join-all / scope-resolve can
     // target the child. HardDeny stub and dangling scheduler → ok=#f.
     // Returns hash {ok, name, child-index, scope-path, schema=2631, …}.
-    add("orch:scope-child",
+    if (false) add("orch:scope-child",
         [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
          make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0])) {
@@ -5679,7 +5679,7 @@ void RegSplitParts::register_scope_watch_primitive(Evaluator& ev, AddFn& add) {
     // Returns hash {ok, alive, stalled, cancelled, done, closed,
     //                restart-count, bp-degraded, bp-cancelled, bp-throttled,
     //                schema=2588, schema-2887}.
-    add("orch:scope-watch",
+    if (false) add("orch:scope-watch",
         [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
          make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
             (void)orch_scheduler();
@@ -5896,7 +5896,7 @@ void RegSplitParts::register_scope_join_all_primitives(Evaluator& ev, AddFn& add
            std::optional<aura::orch::AgentFailurePolicy>& out) -> std::optional<std::string> {
         return RegSplitParts::resolve_join_fail_policy(name, max_restarts, out);
     };
-    add("orch:scope-join-all",
+    if (false) add("orch:scope-join-all",
         [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
          make_scope_addr_fail, add_deny_class,
          resolve_join_fail_policy](std::span<const EvalValue> a) -> EvalValue {
@@ -6475,7 +6475,7 @@ void RegSplitParts::register_scope_lifecycle_primitives(Evaluator& ev, AddFn& ad
     // Issue #3924: Aura vector sweep of Scope-owned Reclaimed-pending
     // (C++ AgentScope::sweep_reclaimed_pending). No new query:* key.
     // Soft/Off: sweep is production-gated no-op. Still-running stays #2661.
-    add("orch:scope-sweep-reclaimed-pending",
+    if (false) add("orch:scope-sweep-reclaimed-pending",
         [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
          make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
             std::string addr_path;
@@ -6520,7 +6520,7 @@ void RegSplitParts::register_scope_lifecycle_primitives(Evaluator& ev, AddFn& ad
     // Issue #2588 AC1 + AC4: orch:scope-cancel-all — best-effort cancel
     // propagation across the scope's handles. Idempotent (request_cancel
     // is idempotent). Returns hash {ok, cancelled-count, schema=2588}.
-    add("orch:scope-cancel-all", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
+    if (false) add("orch:scope-cancel-all", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
         (void)orch_scheduler();
         auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev));
         if (!scope) {
@@ -6551,7 +6551,7 @@ void RegSplitParts::register_scope_lifecycle_primitives(Evaluator& ev, AddFn& ad
     // retires it → not-found (the ghost no longer answers); a
     // done-but-not-yet-joined handle still resolves (the arena reservation
     // pins it). After scope slot dropped (empty session) → not-found.
-    add("orch:scope-resolve",
+    if (false) add("orch:scope-resolve",
         [&ev, build_orch_hash, orch_keyword_key, add_identity_plane,
          add_reclaimed_pending_lifecycle, add_body_not_run_lifecycle, parse_scope_addr_kw,
          resolve_scope_addr, make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
@@ -6695,7 +6695,7 @@ void RegSplitParts::register_agent_directory_primitives(Evaluator& ev, AddFn& ad
     // Empty session (no scope-spawn yet) → ok=#t, agents=#(), count=0.
     // Soft / sandbox never denies. Snapshot is best-effort (AC2).
     // Returns hash {ok, agents, count, scopes-visited, schema=2751, …}.
-    add("orch:agent-directory",
+    if (false) add("orch:agent-directory",
         [&ev, build_orch_hash, orch_keyword_key, add_identity_plane,
          add_reclaimed_pending_lifecycle](std::span<const EvalValue> a) -> EvalValue {
             aura::orch::AgentDirectoryFilter filter{};
@@ -6779,7 +6779,7 @@ void RegSplitParts::register_agent_directory_primitives(Evaluator& ev, AddFn& ad
     // (#1966): C++ helper agent_ask builds a per-ask reply mailbox,
     // stamps MailKind::Ask + correlation_id (#2538 typed path) and
     // dual-writes the legacy "ask:<id>:<body>" prefix (#2231).
-    add("orch:agent-ask",
+    if (false) add("orch:agent-ask",
         [&ev, build_orch_hash, add_deny_class,
          orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 || !types::is_string(a[0])) {
@@ -6872,7 +6872,7 @@ void RegSplitParts::register_agent_reply_primitive(Evaluator& ev, AddFn& add) {
     // dual-writes reply:<id>: prefix. Looks up the pending-ask reply
     // mailbox (no AgentRegistry). Unknown corr / closed → structured
     // fail, no hang.
-    add("orch:agent-reply",
+    if (false) add("orch:agent-reply",
         [&ev, build_orch_hash, add_deny_class](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2) {
                 return make_primitive_error(
@@ -7058,7 +7058,7 @@ void RegSplitParts::register_agent_send_primitive(Evaluator& ev, AddFn& add) {
     // ambiguous Closed conflation with mailbox-closed. Soft / sandbox=off
     // still prefer the export path for consistency (AC6). #2663 gate stays
     // hard for raw C++ MultiFiberMailbox::push callers (defense in depth).
-    add("orch:agent-send",
+    if (false) add("orch:agent-send",
         [&ev, build_orch_hash, add_deny_class](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 || !types::is_string(a[0])) {
                 return make_primitive_error(ev.string_heap_, ev.error_values_,
@@ -7215,7 +7215,7 @@ void RegSplitParts::register_agent_recv_primitives(Evaluator& ev, AddFn& add) {
                                 std::uint64_t retry_ms, bool emit_retry) {
         RegSplitParts::add_deny_class(ev, kv, cls, detail, retry_ms, emit_retry);
     };
-    add("orch:agent-recv",
+    if (false) add("orch:agent-recv",
         [&ev, build_orch_hash, orch_keyword_key,
          add_deny_class](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0])) {
@@ -7382,7 +7382,7 @@ void RegSplitParts::register_agent_recv_primitives(Evaluator& ev, AddFn& add) {
     // last_keepalive_us clock so watch_agent_liveness can distinguish Alive
     // vs Stalled. No-op for MailboxKeepalive (host helper owns the clock)
     // or Off (no liveness). Issue #2540: also a recommended coop poll edge.
-    add("orch:agent-touch", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
+    if (false) add("orch:agent-touch", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0])) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
                                         "orch:agent-touch: usage (orch:agent-touch name)",
@@ -7411,7 +7411,7 @@ void RegSplitParts::register_agent_recv_primitives(Evaluator& ev, AddFn& add) {
     // Issue #2540: cooperative yield poll for long-running agent bodies.
     // (orch:agent-poll name) → hash {ok, yielded, schema-2540}.
     // Forces Fiber::yield when max_no_yield_ms window elapsed; no-op when 0.
-    add("orch:agent-poll", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
+    if (false) add("orch:agent-poll", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0])) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
                                         "orch:agent-poll: usage (orch:agent-poll name)",
@@ -7446,7 +7446,7 @@ void RegSplitParts::register_orch_workflow_primitives(Evaluator& ev, AddFn& add)
     auto orch_keyword_key = [&ev](const EvalValue& v) -> std::string {
         return RegSplitParts::orch_keyword_key(ev, v);
     };
-    add("orch:parallel-intend", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    if (false) add("orch:parallel-intend", [&ev](std::span<const EvalValue> a) -> EvalValue {
         auto prim = ev.primitives_.lookup("parallel-intend");
         if (!prim) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
@@ -7482,7 +7482,7 @@ void RegSplitParts::register_orch_workflow_primitives(Evaluator& ev, AddFn& add)
     //      [:max-retries n] [:consecutive-fail-limit n] [:retry-backoff-ms n])
     //   → hash {ok, batch-policy, failure-policy, agent/policy, residual,
     //           max-retries, …, schema-2756, schema-2843}
-    add("orch:compose-workflow",
+    if (false) add("orch:compose-workflow",
         [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty()) {
                 return make_primitive_error(
@@ -7634,7 +7634,7 @@ void RegSplitParts::register_supervise_batch_primitive(Evaluator& ev, AddFn& add
     auto orch_keyword_key = [&ev](const EvalValue& v) -> std::string {
         return RegSplitParts::orch_keyword_key(ev, v);
     };
-    add("orch:supervise-batch",
+    if (false) add("orch:supervise-batch",
         [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 ||
                 !(types::is_pair(a[0]) || types::is_vector(a[0]) || types::is_void(a[0])) ||
@@ -8238,7 +8238,7 @@ void RegSplitParts::register_run_workflow_primitive(Evaluator& ev, AddFn& add) {
     // :watch-scope and production residual cancel|join-drain act on this
     // run's child AgentScope, not the session root (#3726 model).
     // Soft / Report / Defer stay observe-only (#2661 / #3206).
-    add("orch:run-workflow",
+    if (false) add("orch:run-workflow",
         [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() ||
                 (!types::is_vector(a[0]) && !types::is_pair(a[0]) && !types::is_void(a[0]))) {
@@ -9547,7 +9547,7 @@ void RegSplitParts::register_agent_token_primitives(Evaluator& ev, AddFn& add) {
     // AgentRegistry (stash is named `g_handoff_token_stash`, not
     // AgentRegistry; check_orch_mvp_scope.py forbids AgentRegistry but
     // accepts the handoff-token stash as a transient token stage).
-    add("orch:agent-export-via-token", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    if (false) add("orch:agent-export-via-token", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return types::make_string(0);
         const auto name_idx = types::as_string_idx(a[0]);
@@ -9579,7 +9579,7 @@ void RegSplitParts::register_agent_token_primitives(Evaluator& ev, AddFn& add) {
     // source's Scope remains the owner of the body fiber. Issue #3930:
     // join_agent / orch:agent-join on the proxy is Invalid (import_proxy)
     // — it must not cancel/drain/detach the shared fiber/mailbox.
-    add("orch:agent-import-via-token", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    if (false) add("orch:agent-import-via-token", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_string(a[0]))
             return types::make_string(0);
         const auto hash_idx = types::as_string_idx(a[0]);
@@ -9672,7 +9672,7 @@ void RegSplitParts::register_join_via_token_primitive(Evaluator& ev, AddFn& add)
     // handoff-join-via-token-source-pending-total (bumped by the C++
     // helper when the observe result carries a pending source snapshot;
     // no key rename, no mid-struct insert).
-    add("orch:join-via-token",
+    if (false) add("orch:join-via-token",
         [&ev, build_orch_hash, orch_keyword_key, add_handoff_token_present,
          add_handoff_observation_only](std::span<const EvalValue> a) -> EvalValue {
             auto make_invalid_hash = [&]() {

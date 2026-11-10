@@ -67,7 +67,7 @@ static std::string unlock_window(const std::string& src) {
         pos = src.find("workspace:unlock");
     if (pos == std::string::npos)
         return {};
-    auto end = src.find("workspace:can-write?", pos);
+    auto end = src.find("qr:can-write?", pos);
     if (end == std::string::npos)
         end = pos + 700;
     return src.substr(pos, end - pos);
@@ -167,9 +167,9 @@ int run_test_workspace_lock_unlock() {
         auto mut = cs.eval("(mutate:replace-pattern \"(define x 1)\" \"(define x 2)\")");
         CHECK(mutate_not_read_only_denied(cs, mut),
               "AC3: mutate on active root not read-only-denied after locking non-active");
-        auto cw = cs.eval("(workspace:can-write?)");
+        auto cw = cs.eval("(query :can-write?)");
         CHECK(cw && is_bool(*cw) && as_bool(*cw), "AC3: can-write? active still #t");
-        auto cw_child = cs.eval(std::format("(workspace:can-write? {})", child));
+        auto cw_child = cs.eval(std::format("(query :can-write? {})", child));
         CHECK(cw_child && is_bool(*cw_child) && !as_bool(*cw_child),
               "AC3: can-write? child #f after lock");
     }
@@ -183,14 +183,14 @@ int run_test_workspace_lock_unlock() {
         CHECK(cur && is_int(*cur) && as_int(*cur) == 0, "AC4: active is 0");
         auto lk = cs.eval("(workspace :lock 0 #t)");
         CHECK(lk && is_bool(*lk) && as_bool(*lk), "AC4: lock active #t");
-        auto cw = cs.eval("(workspace:can-write?)");
+        auto cw = cs.eval("(query :can-write?)");
         CHECK(cw && is_bool(*cw) && !as_bool(*cw), "AC4: can-write? #f when active locked");
         auto mut_denied = cs.eval("(mutate:replace-pattern \"(define y 10)\" \"(define y 11)\")");
         CHECK(mutate_read_only_denied(cs, mut_denied),
               "AC4: mutate read-only-denied on active lock");
         auto un = cs.eval("(workspace :unlock 0)");
         CHECK(un && is_bool(*un) && as_bool(*un), "AC4: unlock active #t");
-        auto cw2 = cs.eval("(workspace:can-write?)");
+        auto cw2 = cs.eval("(query :can-write?)");
         CHECK(cw2 && is_bool(*cw2) && as_bool(*cw2), "AC4: can-write? restored #t");
         auto mut_ok = cs.eval("(mutate:replace-pattern \"(define y 10)\" \"(define y 12)\")");
         CHECK(mutate_not_read_only_denied(cs, mut_ok),
@@ -210,7 +210,7 @@ int run_test_workspace_lock_unlock() {
         // Unlock non-active child — must not clear active quick flag.
         auto un = cs.eval(std::format("(workspace :unlock {})", child));
         CHECK(un && is_bool(*un) && as_bool(*un), "AC5: unlock non-active");
-        auto cw = cs.eval("(workspace:can-write?)");
+        auto cw = cs.eval("(query :can-write?)");
         CHECK(cw && is_bool(*cw) && !as_bool(*cw),
               "AC5: active still read-only after unlocking non-active");
         auto mut = cs.eval("(mutate:replace-pattern \"(define z 3)\" \"(define z 4)\")");

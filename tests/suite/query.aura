@@ -47,12 +47,9 @@
   (set-code "(display 42)")
   (check (null? (query:callers-of "nobody"))))
 
-; ── Issue #5009: one read verb, one write verb ─────────────────
-; (query :op …) and (mutate :op …) are the public surface; the duplicate
-; ast: / workspace: / dirty: / mutation-log: / ws: / syntax: prefixes stay
-; registered for one release cycle behind the alias window. Run the same
-; operation through both and require identical results.
-; Failures exit 1 so the suite runner actually gates on them.
+; ── Issue #5009 / #5097: one read verb, one write verb ─────────
+; (query :op) reads. (mutate :op) writes. The old prefixes are unbound.
+; A short op names one primitive. Failures exit 1.
 
 (define fails5009 0)
 (define (ok5009 cond name)
@@ -61,42 +58,51 @@
       (begin (set! fails5009 (+ fails5009 1))
              (display "FAIL-5009 ") (display name) (newline))))
 
-(set-code "(define (helper x) (* x 2)) (define (main y) (+ (helper y) 1)) (display (main 5))")
+(define (raised5009 thunk)
+  (eq? (try (thunk) (catch (caught) 'raised-5009)) 'raised-5009))
 
-(ok5009 (equal? (query :generation) (ast:generation)) "query :generation")
-(ok5009 (equal? (query "ast:generation") (ast:generation)) "string op names the primitive")
-(ok5009 (equal? (query :memory-used) (workspace:memory-used)) "query :memory-used")
-(ok5009 (equal? (query :memory-limit) (workspace:memory-limit)) "query :memory-limit")
-(ok5009 (equal? (query :reasons 0) (dirty:reasons 0)) "query :reasons")
-(ok5009 (equal? (query :validate-nodes) (ast:validate-nodes)) "query :validate-nodes")
+(set-code "(define (f x) x)")
 
-; The short op resolves the modern query:stable-ref; the legacy ast: ref
-; format is reached with the explicit name, so no caller silently changes shape.
-(ok5009 (equal? (query "ast:stable-ref" 0) (ast:stable-ref 0)) "query ast:stable-ref")
-(ok5009 (not (equal? (query :stable-ref 0) (ast:stable-ref 0)))
-        "short :stable-ref is not the ast: shape")
+(ok5009 (integer? (query :generation)) "query :generation reads")
+(ok5009 (equal? (query "qr:generation") (query :generation))
+        "string op is the query: name")
+(ok5009 (integer? (query :memory-used)) "query :memory-used reads")
+(ok5009 (integer? (query :memory-limit)) "query :memory-limit reads")
+(ok5009 (not (raised5009 (lambda () (query :validate-nodes)))) "query :validate-nodes runs")
 
-; Hashes compare by identity, so compare the numeric projection both faces
-; build from the same mutation log.
-(let* ((a (query "mutation-log:summary"))
-       (b (mutation-log:summary))
-       (pick (lambda (h) (list (hash-ref h "total" -1)
-                               (hash-ref h "committed" -1)
-                               (hash-ref h "last-mutation-id" -1)))))
-  (ok5009 (and (hash? a) (hash? b)) "mutation-log summary is a hash")
-  (ok5009 (equal? (pick a) (pick b)) "mutation-log summary projection"))
+(ok5009 (raised5009 (lambda () (ast:generation))) "ast:generation is unbound")
+(ok5009 (raised5009 (lambda () (ast:snapshot "nope"))) "ast:snapshot is unbound")
+(ok5009 (raised5009 (lambda () (workspace:memory-used))) "workspace:memory-used is unbound")
+(ok5009 (raised5009 (lambda () (query "ast:generation"))) "retired string op is not a query")
 
-(let* ((a (mutate :snapshot "algebra-a"))
-       (b (ast:snapshot "algebra-b"))
-       (ra (mutate :restore a))
-       (rb (ast:restore b)))
-  (ok5009 (and (integer? a) (integer? b)) "snapshot ids are ints")
-  (ok5009 (equal? ra rb) "restore agrees"))
+; Snapshot and restore are writes. A read must not checkpoint or roll back.
+(define before5009 (query :code))
+(ok5009 (raised5009 (lambda () (query :snapshot))) "query :snapshot is unknown")
+(ok5009 (equal? (query :code) before5009) "query :snapshot did not edit the workspace")
+(define sid5009 (mutate :snapshot "algebra"))
+(ok5009 (integer? sid5009) "mutate :snapshot returns an id")
+(mutate :rebind "f" "(lambda (x) (+ x 1))" "bump")
+(ok5009 (not (equal? (query :code) before5009)) "rebind changed the code")
+(ok5009 (eq? (mutate :restore sid5009) #t) "mutate :restore rolls back")
+(ok5009 (equal? (query :code) before5009) "code is the snapshot again")
+(ok5009 (raised5009 (lambda () (query :restore sid5009))) "query :restore is unknown")
+
+; The scheduler is not a query or mutate op.
+(ok5009 (raised5009 (lambda () (query :spawn))) "query :spawn is not fiber:spawn")
+(ok5009 (raised5009 (lambda () (query :yield))) "query :yield is not fiber:yield")
+(ok5009 (raised5009 (lambda () (mutate :cancel 1))) "mutate :cancel is not fiber:cancel")
+
+; One short name, one shape. The pair-shaped ref is its own op.
+(ok5009 (not (equal? (query :stable-ref 0) (query :stable-ref-pair 0)))
+        "query :stable-ref is not the pair shape")
+(ok5009 (raised5009 (lambda () (mutate :stable-ref 0)))
+        "mutate :stable-ref is not a second shape")
 
 (let ((sid (mutate :snapshot "algebra-diff")))
-  (ok5009 (equal? (query :diff sid) (ast:diff sid)) "query :diff"))
+  (ok5009 (pair? (query :diff sid)) "query :diff is the line-pair read")
+  (ok5009 (equal? (query :diff sid) (query "qr:diff" sid)) "query:diff string form")
+  (ok5009 (hash? (query :mutation-log-summary)) "mutation-log summary is its own op"))
 
-; Unknown ops fail loudly rather than answering with a default.
 (define badq (try (query :no-such-op-5009) (catch (caught) caught)))
 (ok5009 (and (pair? badq) (equal? (car badq) "bad-arg")) "query rejects unknown op")
 (define badm (try (mutate :no-such-op-5009) (catch (caught) caught)))

@@ -24,11 +24,11 @@
 (check (or (void? ex) (= 6 ex)) "eval-expr callable")
 
 ;; ── ir-cache-v2 group ──
-(check (boolean? (ir-cache-v2:dirty? "f")) "ir-cache-v2:dirty?")
-(check (list? (ir-cache-v2:dependents "f")) "ir-cache-v2:dependents")
+(check (boolean? (query :ir-dirty? "f")) "qr:ir-dirty?")
+(check (list? (query :ir-dependents "f")) "qr:ir-dependents")
 
 ;; ── api-reference ──
-(check (string? (api-reference)) "api-reference string")
+(check (string? (query :api-reference)) "api-reference string")
 
 ;; ── typecheck group ──
 (check (string? (typecheck-current)) "typecheck-current")

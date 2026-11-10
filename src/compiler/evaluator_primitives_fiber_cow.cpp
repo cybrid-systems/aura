@@ -112,7 +112,7 @@ namespace {
     // (tests and callers match that prefix), so it stays byte-identical and
     // the condition fields ride along as trailing key=value pairs — the same
     // additive shape query:mutation-log uses. Programmatic callers read the
-    // condition object from (fiber:overlay-conflict).
+    // condition object from (mutate :overlay-conflict).
     std::string overlay_conflict_message(const cow::ConflictInfo& ci) {
         std::string out = "fiber:cow-conflict: " + ci.binding + " binding=" + ci.binding +
                           " winner-fiber=" + std::to_string(ci.winner_fiber) +
@@ -228,7 +228,7 @@ namespace {
             summary = std::format("bindings={} epoch={} fast-forward={}", bindings, epoch,
                                   r.fast_forward ? 1 : 0);
         }
-        flat->add_mutation(aura::ast::NULL_NODE, "fiber:overlay-commit", "", "", summary,
+        flat->add_mutation(aura::ast::NULL_NODE, "mw:overlay-commit", "", "", summary,
                            rejected ? aura::ast::MutationStatus::RolledBack
                                     : aura::ast::MutationStatus::Committed);
     }
@@ -411,7 +411,7 @@ void RegSplitParts::register_fiber_overlay_primitives(
                                     ev.primitive_error_counter_ptr());
     };
 
-    add("fiber:overlay-begin", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
+    add("mw:overlay-begin", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
         if (auto denied = deny(ev, "fiber"))
             return *denied;
         // Snapshot the workspace COW mutation epoch: equal at commit time
@@ -423,9 +423,9 @@ void RegSplitParts::register_fiber_overlay_primitives(
         return make_int(static_cast<std::int64_t>(base));
     });
 
-    // (fiber:overlay-define name value) — private define; nothing reaches the
+    // (mutate :overlay-define name value) — private define; nothing reaches the
     // shared env until fiber:overlay-commit.
-    add("fiber:overlay-define",
+    add("mw:overlay-define",
         [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
             if (auto denied = deny(ev, "fiber"))
                 return *denied;
@@ -440,8 +440,8 @@ void RegSplitParts::register_fiber_overlay_primitives(
             return make_bool(true);
         });
 
-    // (fiber:overlay-set! name value) — private rebind of a base binding.
-    add("fiber:overlay-set!", [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
+    // (mutate :overlay-set! name value) — private rebind of a base binding.
+    add("mw:overlay-set!", [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
         if (auto denied = deny(ev, "fiber"))
             return *denied;
         if (a.size() < 2)
@@ -471,10 +471,10 @@ void RegSplitParts::register_fiber_overlay_primitives(
         return make_bool(true);
     });
 
-    // (fiber:overlay-get name default) — overlay value, else the committed
+    // (mutate :overlay-get name default) — overlay value, else the committed
     // env value, else default. The read copies one EvalValue: a concurrent
     // commit/rebind can only be observed before or after, never torn.
-    add("fiber:overlay-get", [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
+    add("mw:overlay-get", [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
         if (auto denied = deny(ev, "fiber"))
             return *denied;
         if (a.empty())
@@ -498,8 +498,8 @@ void RegSplitParts::register_fiber_overlay_primitives(
         return a.size() > 1 ? a[1] : make_bool(false);
     });
 
-    // (fiber:overlay-has name) — overlay-local membership only.
-    add("fiber:overlay-has", [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
+    // (mutate :overlay-has name) — overlay-local membership only.
+    add("mw:overlay-has", [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
         if (auto denied = deny(ev, "fiber"))
             return *denied;
         if (a.empty())
@@ -512,10 +512,10 @@ void RegSplitParts::register_fiber_overlay_primitives(
         return make_bool(reg.peek(owner, fiber_cow_overlay_key(), name, local));
     });
 
-    // (fiber:overlay-commit) — merge the overlay into the shared env.
+    // (mutate :overlay-commit) — merge the overlay into the shared env.
     // #t: every binding applied (fast-forward or per-binding merge).
     // error object: write-write conflict; nothing applied, overlay dropped.
-    add("fiber:overlay-commit", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
+    add("mw:overlay-commit", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
         if (auto denied = deny(ev, "fiber"))
             return *denied;
         // Issue #4845: commit with no open overlay is not a successful
@@ -586,11 +586,11 @@ void RegSplitParts::register_fiber_overlay_primitives(
         return make_bool(r.ok);
     });
 
-    // (fiber:overlay-conflict) — Issue #4715 follow-up: the structured
+    // (mutate :overlay-conflict) — Issue #4715 follow-up: the structured
     // condition of the last rejected commit by the calling fiber, as a hash
     // (binding / winner-fiber / our-epoch / committed-epoch / our-seq /
     // winner-seq / kind / read-only / schema), or #f when there is none.
-    add("fiber:overlay-conflict",
+    add("mw:overlay-conflict",
         [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
             if (auto denied = deny(ev, "fiber"))
                 return *denied;
@@ -600,22 +600,22 @@ void RegSplitParts::register_fiber_overlay_primitives(
             return overlay_conflict_condition(ev, *ci);
         });
 
-    // (fiber:overlay-rollback) — failure / cancel path: drop the overlay.
-    add("fiber:overlay-rollback", [&reg, owner](std::span<const EvalValue>) -> EvalValue {
+    // (mutate :overlay-rollback) — failure / cancel path: drop the overlay.
+    add("mw:overlay-rollback", [&reg, owner](std::span<const EvalValue>) -> EvalValue {
         const bool dropped = reg.rollback(owner, fiber_cow_overlay_key());
         overlay_sync_tls(owner); // #4715 AC2: disarmed after rollback
         return make_bool(dropped);
     });
 
-    // (fiber:overlay-pending) — number of bindings held privately right now.
-    add("fiber:overlay-pending", [&reg, owner](std::span<const EvalValue>) -> EvalValue {
+    // (mutate :overlay-pending) — number of bindings held privately right now.
+    add("mw:overlay-pending", [&reg, owner](std::span<const EvalValue>) -> EvalValue {
         return make_int(static_cast<std::int64_t>(reg.pending(owner, fiber_cow_overlay_key())));
     });
 
-    // (fiber:overlay-report) — deterministic observability string; the test
+    // (mutate :overlay-report) — deterministic observability string; the test
     // rows pin the counters so a vacuous pass (no overlay ever opened)
     // cannot go green.
-    add("fiber:overlay-report", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
+    add("mw:overlay-report", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
         const cow::OverlayStats s = reg.stats(owner);
         // #4715 follow-up appends the read-set subset; every pre-follow-up
         // field keeps its name and position so existing pins stay valid.

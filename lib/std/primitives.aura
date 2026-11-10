@@ -87,7 +87,7 @@
     "Full catalog: docs/generated/primitives.md"))
 
 ; (primitives:reference) - the LLM-facing table (#5006): the bare
-; (api-reference) is a deprecated alias for (query :api-reference).
+; (query :api-reference) is a deprecated alias for (query :api-reference).
 (define (primitives:reference)
   (query :api-reference))
 

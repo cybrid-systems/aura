@@ -95,13 +95,13 @@ void ac4476_cli_batch_restore_once() {
         f << "(display \"start\") (newline)\n";
         f << "(set-code \"(define k 0)\\n(define f (lambda (n) (+ n 1)))\")\n";
         f << "(eval-current)\n";
-        f << "(define s0 (ast:snapshot \"p\"))\n";
+        f << "(define s0 (mutate :snapshot \"p\"))\n";
         f << "(define (go)\n";
         f << "  (mutate:atomic-batch (list (list \"mutate:rebind\" \"k\" "
              "\"(lambda (n) (+ n 10))\" \"a\")\n";
         f << "                             (list \"mutate:rebind\" \"f\" "
              "\"(lambda (a0) (k a0))\" \"b\")))\n";
-        f << "  (ast:restore s0)\n";
+        f << "  (mutate :restore s0)\n";
         f << "  (eval-current)\n";
         f << "  7)\n";
         f << "(define r #f)\n";

@@ -207,7 +207,7 @@ static void run_matrix(CompilerService& cs) {
         (void)created;
         const auto mm_before = fiber_ws_mismatch(cs);
         // from-layer=0, node=0, gen=0, to-layer=0, workspace_id=9 (mismatch)
-        auto resolved = cs.eval("(workspace:resolve-stable-ref 0 0 0 0 9)");
+        auto resolved = cs.eval("(query :resolve-stable-ref 0 0 0 0 9)");
         (void)resolved;
         CHECK(fiber_ws_mismatch(cs) > mm_before || fiber_ws_mismatch(cs) >= mm_before,
               "workspace:resolve-stable-ref mismatch path exercised (or tree unavailable)");
@@ -218,7 +218,7 @@ static void run_matrix(CompilerService& cs) {
         auto created = cs.eval("(workspace :create \"child\")");
         (void)created;
         const auto cc_before = cross_cow_refresh(cs);
-        auto resolved = cs.eval("(workspace:resolve-stable-ref 0 0 0)");
+        auto resolved = cs.eval("(query :resolve-stable-ref 0 0 0)");
         (void)resolved;
         // resolve may miss (no remap table entry) — still ok; enforce path ran.
         CHECK(cross_cow_refresh(cs) >= cc_before, "cross-cow-refresh non-decreasing after resolve");
@@ -322,10 +322,10 @@ static void run_matrix(CompilerService& cs) {
     const auto res3a = ev.get_stable_ref_workspace_resolves();
     auto resolved = cs.eval("(begin "
                             "  (workspace :switch 0) "
-                            "  (define rx (ast:stable-ref 1)) "
+                            "  (define rx (query :stable-ref-pair 1)) "
                             "  (workspace :switch 1) "
                             "  (mutate:rebind \"x\" \"(quote 9)\" \"mut\") "
-                            "  (define r (workspace:resolve-stable-ref 0 (car rx) (cdr rx))) "
+                            "  (define r (query :resolve-stable-ref 0 (car rx) (cdr rx))) "
                             "  (if r 1 0))");
     CHECK(resolved && is_int(*resolved) && as_int(*resolved) == 1,
           "workspace:resolve-stable-ref succeeds across COW child");
@@ -338,9 +338,9 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC4: ref-valid? on resolved ref ---");
     auto valid = cs.eval("(begin "
                          "  (workspace :switch 0) "
-                         "  (define rx (ast:stable-ref 1)) "
+                         "  (define rx (query :stable-ref-pair 1)) "
                          "  (workspace :switch 1) "
-                         "  (define r (workspace:resolve-stable-ref 0 (car rx) (cdr rx))) "
+                         "  (define r (query :resolve-stable-ref 0 (car rx) (cdr rx))) "
                          "  (if r (query:ref-valid? r) #f))");
     CHECK(valid && is_bool(*valid) && as_bool(*valid),
           "resolved ref valid in child layer after mutate");
@@ -356,9 +356,9 @@ static void run_matrix(CompilerService& cs) {
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(begin "
                       "  (workspace :switch 0) "
-                      "  (define rx (ast:stable-ref 1)) "
+                      "  (define rx (query :stable-ref-pair 1)) "
                       "  (workspace :switch 1) "
-                      "  (workspace:resolve-stable-ref 0 (car rx) (cdr rx)))");
+                      "  (query :resolve-stable-ref 0 (car rx) (cdr rx)))");
     }
     const auto res6b = ev.get_stable_ref_workspace_resolves();
     const auto stats6b = workspace_tree_stats(cs);

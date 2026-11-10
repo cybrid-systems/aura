@@ -9380,7 +9380,7 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3722 rollback effect-gate linter failed — run python3 scripts/check_rollback_effect_gate_3722.py")
         return r
-    # Issue #3772 (#3365/#3415 residual): the Agent EDSL (ast:stable-ref)
+    # Issue #3772 (#3365/#3415 residual): the Agent EDSL (query :stable-ref-pair)
     # packs (id . gen) and drops the tenant stamp — ast:ref-get /
     # ast:ref-valid? / ast:stable-refs-valid? observed FlatAST layout-only
     # with no isolation consult while the C++ authority (#3365) denies

@@ -16,7 +16,7 @@
         (newline))))
 
 (display "backend\n")
-(define be (fiber:spawn-backend))
+(define be (query :fiber-backend))
 (assert! (or (= be 1) (= be 2)) "spawn-backend is 1 or 2")
 (display "  backend=") (display be) (newline)
 

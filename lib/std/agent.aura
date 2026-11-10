@@ -199,7 +199,7 @@
 (define (agent:decision-metrics)
   (agent-bump! "metrics-calls")
   (try
-    (let* ((ml (try (query "mutation-log:summary")
+    (let* ((ml (try (query "qr:mutation-log-summary")
                     (catch (e) (hash "total" 0 "committed" 0 "rolled-back" 0))))
            ; #1449: atomic-batch:stats is facade-only — prefer stats:get
            (ab (try (stats:get "atomic-batch:stats")

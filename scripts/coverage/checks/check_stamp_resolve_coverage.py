@@ -76,7 +76,7 @@ EXPORT_RETURN_PRIMS = (
     "query:stable-ref",
     "query:ensure-ref",
     "query:parent-stable",
-    "ast:stable-ref",
+    "qr:stable-ref-pair",
 )
 
 

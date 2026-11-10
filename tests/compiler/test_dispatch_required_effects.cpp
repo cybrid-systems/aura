@@ -1934,7 +1934,7 @@ static void ac4891_closure_stamp_reclaim() {
     reset_all();
     CompilerService cs;
     auto& ev = cs.evaluator();
-    auto free_fn = ev.primitives().lookup("closure:free!");
+    auto free_fn = ev.primitives().lookup("mw:closure-free");
     CHECK(free_fn.has_value(), "4891: closure:free! present");
     if (!free_fn)
         return;
@@ -1991,7 +1991,7 @@ static void ac4428_string_fill_and_closure_value() {
     auto& ev = cs.evaluator();
     ev.set_effect_sandbox_mode(1); // Restricted + MT → production face
     auto fill_fn = ev.primitives().lookup("string-fill!");
-    auto free_fn = ev.primitives().lookup("closure:free!");
+    auto free_fn = ev.primitives().lookup("mw:closure-free");
     CHECK(fill_fn && free_fn, "4428: string-fill! and closure:free! present");
     if (!(fill_fn && free_fn)) {
         aura::core::provenance::set_multi_tenant_env_active(false);
@@ -2026,7 +2026,7 @@ static void ac4428_string_fill_and_closure_value() {
               "4428: string bytes unchanged");
         CHECK(ev.find_active_closure(cid).has_value(), "4428: closure still present");
         CHECK(ring_has_isolation_deny("string-fill!"), "4428: IsolationDeny string-fill!");
-        CHECK(ring_has_isolation_deny("closure:free!"), "4428: IsolationDeny closure:free!");
+        CHECK(ring_has_isolation_deny("mw:closure-free"), "4428: IsolationDeny closure:free!");
     }
     {
         aura::compiler::Evaluator::TenantScope t7(ev, 7);
@@ -2092,7 +2092,7 @@ static void ac4428_string_fill_and_closure_value() {
         CHECK(!ev.find_active_closure(soft_cid).has_value(), "4428: Off free removed the closure");
         CHECK(!ring_has_isolation_deny("string-fill!"),
               "4428: Off records no string IsolationDeny");
-        CHECK(!ring_has_isolation_deny("closure:free!"),
+        CHECK(!ring_has_isolation_deny("mw:closure-free"),
               "4428: Off records no closure IsolationDeny");
     }
 
@@ -4645,7 +4645,7 @@ int run_test_dispatch_required_effects() {
         CHECK(infer_required_effects_from_name("set-cdr!") == kEffectMutate, "4036: set-cdr!");
         CHECK(infer_required_effects_from_name("string-fill!") == kEffectMutate,
               "4036: string-fill!");
-        CHECK(infer_required_effects_from_name("closure:free!") == kEffectMutate,
+        CHECK(infer_required_effects_from_name("mw:closure-free") == kEffectMutate,
               "4036: closure:free!");
         CHECK(infer_required_effects_from_name("hash-ref") == kEffectNone, "4036: read stays None");
         // Dispatch is the single choke: prim bodies must NOT also call
@@ -4695,7 +4695,7 @@ int run_test_dispatch_required_effects() {
         CHECK(!r3.has_value() || is_error(*r3), "4036 AC1: string-fill! denies");
         auto c3 = cs.eval("(car (string->list *s4036*))");
         CHECK(c3 && is_int(*c3) && as_int(*c3) == 97, "4036 AC1: string content unchanged");
-        auto r4 = cs.eval("(closure:free! 0)");
+        auto r4 = cs.eval("(mutate :closure-free 0)");
         CHECK(!r4.has_value() || is_error(*r4), "4036 AC1: closure:free! denies");
         if (cm)
             CHECK(cm->dispatch_required_effects_deny_total.load() > ddeny0,
@@ -4792,14 +4792,14 @@ int run_test_dispatch_required_effects() {
         CHECK(sa >= 0 && sb >= 0, "4036 AC3: slots allocated");
         CHECK(aura_closure_is_freed(sa) == 0, "4036 AC3: sa live before free");
         // Same-tenant: effect allow (grant) → slot tenant == caller → free.
-        auto r = cs.eval(std::format("(closure:free! {})", sa));
+        auto r = cs.eval(std::format("(mutate :closure-free {})", sa));
         CHECK(r && is_bool(*r) && as_bool(*r), "4036 AC3: same-tenant free allowed");
         CHECK(aura_closure_is_freed(sa) == 1, "4036 AC3: sa freed");
         // Caller switches tenant; sb stays stamped 4036. Bool-false result
         // proves the deny came from the closure check (dispatch/workspace
         // denies surface as error values) — non-vacuous.
         ev.set_capability_tenant_id(7777);
-        auto r2 = cs.eval(std::format("(closure:free! {})", sb));
+        auto r2 = cs.eval(std::format("(mutate :closure-free {})", sb));
         CHECK(r2 && is_bool(*r2) && !as_bool(*r2), "4036 AC3: cross-tenant free denied");
         CHECK(aura_closure_is_freed(sb) == 0, "4036 AC3: sb NOT freed (zero free)");
         CHECK(aura_closure_live_count() >= 1, "4036 AC3: foreign slot still live");
@@ -4845,7 +4845,7 @@ int run_test_dispatch_required_effects() {
         CHECK(cs.eval("(define *s4036x* \"hi\")").has_value(), "4036 AC5: define string");
         CHECK(cs.eval("(string-fill! *s4036x* 65)").has_value(), "4036 AC5: string-fill! works");
         const auto sid = aura_alloc_closure(5);
-        auto r4 = cs.eval(std::format("(closure:free! {})", sid));
+        auto r4 = cs.eval(std::format("(mutate :closure-free {})", sid));
         CHECK(r4 && is_bool(*r4) && as_bool(*r4), "4036 AC5: closure:free! works");
         CHECK(aura_closure_is_freed(sid) == 1, "4036 AC5: slot freed");
         const auto src = read_file("src/compiler/security_side_effect.hh");
@@ -5279,7 +5279,7 @@ int run_test_dispatch_required_effects() {
         ev.set_effect_sandbox_mode(1);
         set_mode(SandboxMode::Restricted);
         ev.set_capability_tenant_id(4058);
-        auto e1 = cs.eval("(with-capability \"exception-control\" (jit:exception-fibers-clear))");
+        auto e1 = cs.eval("(with-capability \"exception-control\" (mutate :exception-fibers-clear))");
         CHECK(e1 && is_error(*e1), "4058 AC2: stack-disguised exception-fibers-clear denied");
         bool reason4058 = false;
         for (const auto& s : ev.string_heap())
@@ -5292,7 +5292,7 @@ int run_test_dispatch_required_effects() {
         // capability gate, not syntax.
         reset_all();
         CompilerService cs2;
-        auto e2 = cs2.eval("(with-capability \"exception-control\" (jit:exception-fibers-clear))");
+        auto e2 = cs2.eval("(with-capability \"exception-control\" (mutate :exception-fibers-clear))");
         CHECK(e2 && !is_error(*e2), "4058 AC2: Off face keeps the prim working");
     }
 

@@ -672,10 +672,10 @@ namespace aura_422_detail {
         if (!find_r || !is_int(*find_r))
             return false;
         nid_out = as_int(*find_r);
-        auto set_r = cs.eval("(syntax:set-marker " + std::to_string(nid_out) + " 1)");
+        auto set_r = cs.eval("(mutate :set-marker " + std::to_string(nid_out) + " 1)");
         if (!set_r || !is_bool(*set_r) || !as_bool(*set_r))
             return false;
-        auto prot = cs.eval("(hygiene:protected? " + std::to_string(nid_out) + ")");
+        auto prot = cs.eval("(query :protected? " + std::to_string(nid_out) + ")");
         return prot && is_bool(*prot) && as_bool(*prot);
     }
 
@@ -973,10 +973,10 @@ int run_366_syntax_marker_primitives_smoke() {
     auto find = cs.eval("(query :find \"y\")");
     CHECK(find.has_value(), "query:find y reachable");
     // set-marker / propagate may be optional surfaces; no crash is the smoke.
-    auto setm = cs.eval("(syntax:set-marker 0 0)");
+    auto setm = cs.eval("(mutate :set-marker 0 0)");
     (void)setm;
     CHECK(true, "syntax:set-marker invoked");
-    auto prop = cs.eval("(syntax:propagate-marker 0 0)");
+    auto prop = cs.eval("(mutate :propagate-marker 0 0)");
     (void)prop;
     CHECK(true, "syntax:propagate-marker invoked");
     return g_failed ? 1 : 0;
@@ -1055,11 +1055,11 @@ int run_3752_propagate_marker_mse() {
         grant_3752_production_mutate(cs);
         aura::core::capability::g_capability_registry().revoke(
             cs.evaluator().capability_tenant_id(), "tenant-admin");
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find))).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", as_int(*find))).has_value(),
               "3752: stamp MacroIntroduced");
         auto& ws = *cs.evaluator().workspace_flat();
         CHECK(ws.is_macro_introduced(id), "3752: stamped");
-        auto denied = cs.eval(std::format("(syntax:propagate-marker {} 0)", as_int(*find)));
+        auto denied = cs.eval(std::format("(mutate :propagate-marker {} 0)", as_int(*find)));
         CHECK(denied.has_value() && merr_kind_3752(cs, *denied) == "hygiene-protected",
               "3752: Restricted no-MSE propagate 0 denied");
         CHECK(ws.is_macro_introduced(id), "3752: markers stay 1");
@@ -1077,14 +1077,14 @@ int run_3752_propagate_marker_mse() {
         auto find = cs.eval("(car (query :find \"y\"))");
         CHECK(find && is_int(*find), "3752: mse find y");
         const auto id = static_cast<aura::ast::NodeId>(as_int(*find));
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find))).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", as_int(*find))).has_value(),
               "3752: mse stamp");
         grant_3752_production_mutate(cs);
         using aura::core::capability::MacroSelfEvoPolicy;
         const auto tenant = cs.evaluator().capability_tenant_id();
         aura::core::capability::g_capability_registry().grant_macro_self_evo(
             tenant, MacroSelfEvoPolicy{}, aura_test_grant_prov(), tenant);
-        auto cleared = cs.eval(std::format("(syntax:propagate-marker {} 0)", as_int(*find)));
+        auto cleared = cs.eval(std::format("(mutate :propagate-marker {} 0)", as_int(*find)));
         CHECK(cleared.has_value() && is_int(*cleared) && as_int(*cleared) >= 1,
               "3752: Restricted + MSE propagate 0 succeeds");
         CHECK(!cs.evaluator().workspace_flat()->is_macro_introduced(id),
@@ -1254,9 +1254,9 @@ using aura::test::g_passed;
 int run_373_macro_mutate_guard_smoke() {
     std::println("\n=== #373: MacroIntroduced mutate guards smoke ===");
     CompilerService cs;
-    auto a = cs.eval("(hygiene:allow-macro-mutate?)");
+    auto a = cs.eval("(query :allow-macro-mutate?)");
     CHECK(a.has_value(), "hygiene:allow-macro-mutate? reachable");
-    (void)cs.eval("(hygiene:set-allow-macro-mutate! #f)");
+    (void)cs.eval("(mutate :set-allow-macro-mutate #f)");
     CHECK(cs.eval("(set-code \""
                   "(define-hygienic-macro (m x) x) (m 1) (define myvar 2)\")")
               .has_value(),
@@ -1266,7 +1266,7 @@ int run_373_macro_mutate_guard_smoke() {
     CHECK(mi.has_value(), "query:macro-introduced");
     auto bm = cs.eval("(query:by-marker \"MacroIntroduced\")");
     CHECK(bm.has_value(), "query:by-marker MacroIntroduced");
-    auto prot = cs.eval("(hygiene:protected? 0)");
+    auto prot = cs.eval("(query :protected? 0)");
     CHECK(prot.has_value() || true, "hygiene:protected? surface");
     return g_failed ? 1 : 0;
 }

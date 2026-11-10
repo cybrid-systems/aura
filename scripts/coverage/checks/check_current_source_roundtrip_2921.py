@@ -36,7 +36,7 @@ def main() -> int:
     must("kRoundtripNoMutate" in unit, "AC1: table")
     must("2918" in unit and "2919" in unit and "2920" in unit, "AC5: cross-cites")
     must("mutate:rebind" in unit, "AC1: mutate case")
-    must("ast:snapshot" in unit, "AC1: snapshot case")
+    must("(mutate :snapshot" in unit, "AC1: snapshot case")
     must("Extending the table" in unit or "Extend here" in unit, "AC4: extend docs in unit")
 
     suite = _read("tests/suite/current_source_roundtrip_2921.aura")

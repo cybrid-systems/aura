@@ -101,7 +101,7 @@ int run_test_rebind_new_body_hygiene() {
         auto find_r = cs.eval("(car (query :find \"myvar\"))");
         CHECK(find_r && is_int(*find_r), "AC2: find myvar");
         auto nid = as_int(*find_r);
-        auto set_r = cs.eval(std::format("(syntax:set-marker {} 1)", nid));
+        auto set_r = cs.eval(std::format("(mutate :set-marker {} 1)", nid));
         CHECK(set_r && is_bool(*set_r) && as_bool(*set_r), "AC2: stamp MacroIntroduced");
         auto r = cs.eval("(mutate:rebind \"myvar\" \"99\")");
         CHECK(r.has_value(), "AC2: rebind returns");
@@ -144,7 +144,7 @@ int run_test_rebind_new_body_hygiene() {
         CHECK(cs.eval("(eval-current)").has_value(), "AC4: eval");
         auto find_r = cs.eval("(car (query :find \"g\"))");
         CHECK(find_r && is_int(*find_r), "AC4: find g");
-        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", as_int(*find_r))).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", as_int(*find_r))).has_value(),
               "AC4: stamp g");
         auto denied = cs.eval("(mutate:rebind \"g\" \"2\")");
         CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene-protected",

@@ -1,6 +1,6 @@
 // @category: integration
 // @reason: Test follow-up primitives across #278/#280/#282
-//          (mutation-log:diff / dirty:summary /
+//          (query :mutation-log-diff / dirty:summary /
 //          multi-predicate OR combine-bits /
 //          query:provenance-of* wildcard /
 //          query:narrowings-at-mutation join).
@@ -27,9 +27,9 @@ static int64_t run_int(aura::compiler::CompilerService& cs, const std::string& s
     return aura::compiler::types::as_int(*r);
 }
 
-// AC1: (mutation-log:diff from to) returns matching records
+// AC1: (query :mutation-log-diff from to) returns matching records
 bool test_mutation_log_diff() {
-    std::println("\n--- AC1: (mutation-log:diff from to) ---");
+    std::println("\n--- AC1: (query :mutation-log-diff from to) ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(define (f x) (+ x 1))\")")) {
         ++g_failed;
@@ -56,20 +56,20 @@ bool test_mutation_log_diff() {
     auto n_total = run_int(cs, "(stats:get \"mutation-count\")");
     CHECK(n_total >= n_before + 3, "3 rebinds added 3+ mutations");
     // Diff from 0 to MAX returns all mutations
-    auto n_all = run_int(cs, "(length (mutation-log:diff 0 -1))");
+    auto n_all = run_int(cs, "(length (query :mutation-log-diff 0 -1))");
     CHECK(n_all == n_total, "diff 0..-1 returns all mutations");
     // Diff from the last-2 to MAX returns 2 mutations
-    auto n_from2 = run_int(cs, "(length (mutation-log:diff 2 -1))");
+    auto n_from2 = run_int(cs, "(length (query :mutation-log-diff 2 -1))");
     // The exact count depends on how many mutations set-code added
     // before the rebinds. We just verify the count is consistent:
     // diff(2..-1) >= diff(n..-1) for any n > 2.
-    auto n_from3 = run_int(cs, "(length (mutation-log:diff 3 -1))");
+    auto n_from3 = run_int(cs, "(length (query :mutation-log-diff 3 -1))");
     CHECK(n_from2 >= n_from3, "diff(2..-1) >= diff(3..-1) (range shrinks)");
     // Diff from 1 to 1 returns 1 (single mutation)
-    auto n_1_1 = run_int(cs, "(length (mutation-log:diff 1 1))");
+    auto n_1_1 = run_int(cs, "(length (query :mutation-log-diff 1 1))");
     CHECK(n_1_1 == 1, "diff 1..1 returns 1 mutation");
     // Inverted range returns 0
-    auto n_inv = run_int(cs, "(length (mutation-log:diff 5 2))");
+    auto n_inv = run_int(cs, "(length (query :mutation-log-diff 5 2))");
     CHECK(n_inv == 0, "diff 5..2 (inverted) returns 0");
     return true;
 }
@@ -171,8 +171,8 @@ bool test_backward_compat() {
         return false;
     }
     // Existing primitives still work
-    auto r1 = cs.eval("(mutation-log:summary)");
-    CHECK(r1.has_value(), "(mutation-log:summary) still works");
+    auto r1 = cs.eval("(query :mutation-log-summary)");
+    CHECK(r1.has_value(), "(query :mutation-log-summary) still works");
     auto r2 = cs.eval("(stats:get \"dirty:counts\")");
     CHECK(r2.has_value(), "(stats:get \"dirty:counts\") still works");
     auto r3 = cs.eval("(stats:get \"dirty:reasons\")");
@@ -248,9 +248,9 @@ bool test_hash_to_alist() {
         ++g_failed;
         return false;
     }
-    // hash->alist on (mutation-log:summary) should return a list
+    // hash->alist on (query :mutation-log-summary) should return a list
     // of (key . value) pairs.
-    auto n = run_int(cs, "(length (hash->alist (mutation-log:summary)))");
+    auto n = run_int(cs, "(length (hash->alist (query :mutation-log-summary)))");
     CHECK(n >= 5,
           "hash->alist returns >= 5 entries (total/committed/rolled-back/by-operator/last-*)");
     return true;

@@ -297,7 +297,7 @@ static std::int64_t stamp_macro_introduced_4664(aura::compiler::CompilerService&
     if (!find_f || !is_int(*find_f))
         return -1;
     const auto id = as_int(*find_f);
-    if (!cs.eval(std::format("(syntax:set-marker {} 1)", id)).has_value())
+    if (!cs.eval(std::format("(mutate :set-marker {} 1)", id)).has_value())
         return -1;
     return id;
 }

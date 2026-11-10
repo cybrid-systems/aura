@@ -185,7 +185,7 @@ int run_evolve_analytics_1724() {
         const auto m0 = m->agent_evolve_analytics_parse_failures.load(std::memory_order_relaxed);
 
         auto def =
-            cs.eval(R"AURA((define-strategy "s1724bad" "(lambda (x) x)" :max-attempts 3))AURA");
+            cs.eval(R"AURA((mutate :define-strategy "s1724bad" "(lambda (x) x)" :max-attempts 3))AURA");
         CHECK(static_cast<bool>(def), "define-strategy s1724bad");
 
         auto evo = cs.eval(
@@ -210,7 +210,7 @@ int run_evolve_analytics_1724() {
         const auto m0 = m->agent_evolve_analytics_parse_failures.load(std::memory_order_relaxed);
 
         auto def =
-            cs.eval(R"AURA((define-strategy "s1724ok" "(lambda (x) x)" :max-attempts 3))AURA");
+            cs.eval(R"AURA((mutate :define-strategy "s1724ok" "(lambda (x) x)" :max-attempts 3))AURA");
         CHECK(static_cast<bool>(def), "define-strategy s1724ok");
 
         auto evo = cs.eval(
@@ -327,11 +327,11 @@ int run_evolve_name_collision_1726() {
         std::println("\n--- AC3: base name taken → base-2 ---");
         CompilerService cs;
         CHECK(static_cast<bool>(
-                  cs.eval(R"AURA((define-strategy "s1726" "(lambda (x) x)" :max-attempts 3))AURA")),
+                  cs.eval(R"AURA((mutate :define-strategy "s1726" "(lambda (x) x)" :max-attempts 3))AURA")),
               "define s1726");
         // Occupy the default evolved name "s1726-v1".
         CHECK(static_cast<bool>(cs.eval(
-                  R"AURA((define-strategy "s1726-v1" "(lambda (x) x)" :max-attempts 3))AURA")),
+                  R"AURA((mutate :define-strategy "s1726-v1" "(lambda (x) x)" :max-attempts 3))AURA")),
               "occupy s1726-v1");
 
         auto evo = cs.eval(
@@ -364,17 +364,17 @@ int run_evolve_name_collision_1726() {
         const auto m0 = m->agent_evolve_name_collision_exhausted.load(std::memory_order_relaxed);
 
         CHECK(static_cast<bool>(cs.eval(
-                  R"AURA((define-strategy "s1726e" "(lambda (x) x)" :max-attempts 3))AURA")),
+                  R"AURA((mutate :define-strategy "s1726e" "(lambda (x) x)" :max-attempts 3))AURA")),
               "define s1726e");
 
         // Occupy base evolved name and the first several -N variants so
         // one evolve still succeeds at a higher suffix (proves loop works).
         // Full 10000-slot exhaust is covered by source AC1 (cap + void).
         CHECK(
-            static_cast<bool>(cs.eval(R"AURA((define-strategy "s1726e-v1" "(lambda (x) x)"))AURA")),
+            static_cast<bool>(cs.eval(R"AURA((mutate :define-strategy "s1726e-v1" "(lambda (x) x)"))AURA")),
             "occupy s1726e-v1");
         for (int i = 2; i <= 5; ++i) {
-            auto expr = std::string("(define-strategy \"s1726e-v1-") + std::to_string(i) +
+            auto expr = std::string("(mutate :define-strategy \"s1726e-v1-") + std::to_string(i) +
                         "\" \"(lambda (x) x)\")";
             CHECK(static_cast<bool>(cs.eval(expr)),
                   std::string("occupy s1726e-v1-") + std::to_string(i));
@@ -473,7 +473,7 @@ int run_strategies_mtx_1722() {
         CHECK(agent.find("#1722") != std::string::npos, "agent cites #1722");
 
         const char* prims[] = {
-            "define-strategy",     "register-strategy!", "strategy-field",
+            "mw:define-strategy",     "register-strategy!", "strategy-field",
             "strategy-set-field!", "strategy-inspect",   "evolve-strategy",
         };
         for (const char* name : prims) {
@@ -487,12 +487,12 @@ int run_strategies_mtx_1722() {
     {
         std::println("\n--- AC3: concurrent define-strategy / strategy-field ---");
         CompilerService cs;
-        (void)cs.eval(R"AURA((define-strategy "s1722" "(lambda (x) x)"))AURA");
+        (void)cs.eval(R"AURA((mutate :define-strategy "s1722" "(lambda (x) x)"))AURA");
         std::atomic<int> errors{0};
         auto writer = [&]() {
             for (int i = 0; i < 40; ++i) {
                 auto r = cs.eval(
-                    R"AURA((define-strategy "s1722" "(lambda (x) (+ x 1))" :max-attempts 3))AURA");
+                    R"AURA((mutate :define-strategy "s1722" "(lambda (x) (+ x 1))" :max-attempts 3))AURA");
                 if (!r)
                     errors.fetch_add(1);
             }
@@ -883,7 +883,7 @@ int run_top_errors_stoi_1725() {
         const auto m0 = m->agent_evolve_analytics_parse_failures.load(std::memory_order_relaxed);
 
         auto def =
-            cs.eval(R"AURA((define-strategy "s1725bad" "(lambda (x) x)" :max-attempts 3))AURA");
+            cs.eval(R"AURA((mutate :define-strategy "s1725bad" "(lambda (x) x)" :max-attempts 3))AURA");
         CHECK(static_cast<bool>(def), "define-strategy s1725bad");
 
         // Well-formed rates (no stod bump); bad count token → stoi throw.
@@ -903,7 +903,7 @@ int run_top_errors_stoi_1725() {
         const auto m0 = m->agent_evolve_analytics_parse_failures.load(std::memory_order_relaxed);
 
         auto def =
-            cs.eval(R"AURA((define-strategy "s1725ok" "(lambda (x) x)" :max-attempts 3))AURA");
+            cs.eval(R"AURA((mutate :define-strategy "s1725ok" "(lambda (x) x)" :max-attempts 3))AURA");
         CHECK(static_cast<bool>(def), "define-strategy s1725ok");
 
         // rates that skip max-attempts heuristics; top-errors drives prompt hint.

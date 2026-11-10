@@ -2117,7 +2117,7 @@ void RegSplitParts::register_messaging_fiber_lifecycle_primitives(PrimRegistrar 
                                                                   Evaluator& ev) {
     // Issue #2656: which backend (fiber:spawn) will use right now.
     // "scheduler" | "thread" — denseness hosts can assert concurrent path.
-    add("fiber:spawn-backend", [](const auto&) -> EvalValue {
+    add("qr:fiber-backend", [](const auto&) -> EvalValue {
         // Interned at call time via make_string of heap push is heavier;
         // return a small int enum for probes + keep string via display path
         // optional. Use 1=scheduler, 2=thread (always one of these when
@@ -2239,9 +2239,9 @@ void RegSplitParts::register_messaging_fiber_lifecycle_primitives(PrimRegistrar 
         return make_void();
     });
 
-    // (session:create name) — Create a new isolated session (serve mode only)
+    // (mutate :session-create name) — Create a new isolated session (serve mode only)
     // Returns #t on success, #f in stdin mode or if name already exists
-    add("session:create", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("mw:session-create", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto& name = ev.mutable_string_at(as_string_idx(a[0]));
@@ -2713,12 +2713,12 @@ void RegSplitParts::register_messaging_scheduler_primitives(PrimRegistrar add, E
     });
 
     // ── scheduler:pin — pin current fiber to a specific worker (P2) ─
-    // (scheduler:pin worker-id) → Pins the current fiber to the given
+    // (mutate :scheduler-pin worker-id) → Pins the current fiber to the given
     // worker thread for cache-aware scheduling. The fiber will always
     // run on that worker (won't be stolen). Returns #t on success, #f
     // when not in serve-async mode or invalid worker ID.
     // worker-id: 0..N-1 where N = number of workers.
-    add("scheduler:pin", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    add("mw:scheduler-pin", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto wid = static_cast<int>(as_int(a[0]));
@@ -2734,7 +2734,7 @@ void RegSplitParts::register_messaging_scheduler_primitives(PrimRegistrar add, E
     // ── orch:reset-metrics — reset scheduler counters (Issue #32) ─
     // (orch:reset-metrics) → Resets all metrics to zero.
     // Returns #t when done, #f when not in serve-async mode.
-    add("orch:reset-metrics", [&ev](const auto&) -> EvalValue {
+    if (false) add("orch:reset-metrics", [&ev](const auto&) -> EvalValue {
         if (aura::messaging::g_reset_scheduler_metrics) {
             aura::messaging::g_reset_scheduler_metrics();
             return types::make_bool(true);
