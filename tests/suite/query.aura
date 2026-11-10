@@ -61,6 +61,11 @@
 (define (raised5009 thunk)
   (eq? (try (thunk) (catch (caught) 'raised-5009)) 'raised-5009))
 
+; An unknown op is a bad-arg pair, not a thrown error. try returns that pair.
+(define (bad-op-5009 thunk)
+  (let ((v (try (thunk) (catch (caught) caught))))
+    (and (pair? v) (equal? (car v) "bad-arg"))))
+
 (set-code "(define (f x) x)")
 
 (ok5009 (integer? (query :generation)) "query :generation reads")
@@ -73,11 +78,13 @@
 (ok5009 (raised5009 (lambda () (ast:generation))) "ast:generation is unbound")
 (ok5009 (raised5009 (lambda () (ast:snapshot "nope"))) "ast:snapshot is unbound")
 (ok5009 (raised5009 (lambda () (workspace:memory-used))) "workspace:memory-used is unbound")
-(ok5009 (raised5009 (lambda () (query "ast:generation"))) "retired string op is not a query")
+(ok5009 (let ((v (try (query "ast:generation") (catch (caught) caught))))
+          (and (pair? v) (equal? (car v) "no-prim")))
+        "retired string op is not a query")
 
 ; Snapshot and restore are writes. A read must not checkpoint or roll back.
 (define before5009 (query :code))
-(ok5009 (raised5009 (lambda () (query :snapshot))) "query :snapshot is unknown")
+(ok5009 (bad-op-5009 (lambda () (query :snapshot))) "query :snapshot is unknown")
 (ok5009 (equal? (query :code) before5009) "query :snapshot did not edit the workspace")
 (define sid5009 (mutate :snapshot "algebra"))
 (ok5009 (integer? sid5009) "mutate :snapshot returns an id")
@@ -85,17 +92,17 @@
 (ok5009 (not (equal? (query :code) before5009)) "rebind changed the code")
 (ok5009 (eq? (mutate :restore sid5009) #t) "mutate :restore rolls back")
 (ok5009 (equal? (query :code) before5009) "code is the snapshot again")
-(ok5009 (raised5009 (lambda () (query :restore sid5009))) "query :restore is unknown")
+(ok5009 (bad-op-5009 (lambda () (query :restore sid5009))) "query :restore is unknown")
 
 ; The scheduler is not a query or mutate op.
-(ok5009 (raised5009 (lambda () (query :spawn))) "query :spawn is not fiber:spawn")
-(ok5009 (raised5009 (lambda () (query :yield))) "query :yield is not fiber:yield")
-(ok5009 (raised5009 (lambda () (mutate :cancel 1))) "mutate :cancel is not fiber:cancel")
+(ok5009 (bad-op-5009 (lambda () (query :spawn))) "query :spawn is not fiber:spawn")
+(ok5009 (bad-op-5009 (lambda () (query :yield))) "query :yield is not fiber:yield")
+(ok5009 (bad-op-5009 (lambda () (mutate :cancel 1))) "mutate :cancel is not fiber:cancel")
 
 ; One short name, one shape. The pair-shaped ref is its own op.
 (ok5009 (not (equal? (query :stable-ref 0) (query :stable-ref-pair 0)))
         "query :stable-ref is not the pair shape")
-(ok5009 (raised5009 (lambda () (mutate :stable-ref 0)))
+(ok5009 (bad-op-5009 (lambda () (mutate :stable-ref 0)))
         "mutate :stable-ref is not a second shape")
 
 (let ((sid (mutate :snapshot "algebra-diff")))

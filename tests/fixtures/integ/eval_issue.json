@@ -43,7 +43,7 @@
   },
   {
     "name": "issue_135_workspace_can_write_1",
-    "code": "(workspace:can-write? 1)",
+    "code": "(query :can-write? 1)",
     "pipeline": "eval",
     "expected": "#t"
   },
@@ -61,7 +61,7 @@
   },
   {
     "name": "issue_135_workspace_set_memory_limit_1048576",
-    "code": "(workspace :create \"mem-test\")\n(workspace:set-memory-limit 1048576)",
+    "code": "(workspace :create \"mem-test\")\n(mutate :set-memory-limit 1048576)",
     "pipeline": "eval",
     "expected": "#t"
   },
@@ -73,7 +73,7 @@
   },
   {
     "name": "issue_141_if_procedure_workspace_conflicts_with",
-    "code": "(if (procedure? workspace:conflicts-with) 1 0)",
+    "code": "(if (procedure? qr:conflicts-with) 1 0)",
     "pipeline": "eval",
     "expected": "1"
   },
@@ -103,7 +103,7 @@
   },
   {
     "name": "issue_187_arena_compact",
-    "code": "(arena:compact)",
+    "code": "(mutate :arena-compact)",
     "pipeline": "eval",
     "expected": ">=0"
   },
@@ -115,13 +115,13 @@
   },
   {
     "name": "issue_187_string_pool_compact",
-    "code": "(string-pool:compact)",
+    "code": "(mutate :string-pool-compact)",
     "pipeline": "eval",
     "expected": ">=0"
   },
   {
     "name": "issue_188_dirty_reasons_999999",
-    "code": "(dirty:reasons 999999)",
+    "code": "(query :reasons 999999)",
     "pipeline": "eval",
     "expected": "0"
   },
@@ -145,19 +145,19 @@
   },
   {
     "name": "issue_191_ast_ref_valid_999999_0",
-    "code": "(ast:ref-valid? 999999 0)",
+    "code": "(query :ref-valid-id-gen 999999 0)",
     "pipeline": "eval",
     "expected": "#f"
   },
   {
     "name": "issue_194_jit_deopt_fn_f_0",
-    "code": "(jit:deopt-fn? \"f\" 0)",
+    "code": "(query :deopt-fn? \"f\" 0)",
     "pipeline": "eval",
     "expected": "#f"
   },
   {
     "name": "issue_194_jit_deopt_fn_never_seen_function",
-    "code": "(jit:deopt-fn? \"never-seen-function\")",
+    "code": "(query :deopt-fn? \"never-seen-function\")",
     "pipeline": "eval",
     "expected": "#f"
   },
@@ -175,7 +175,7 @@
   },
   {
     "name": "issue_196_ast_generation",
-    "code": "(stats:get \"ast:generation\")",
+    "code": "(query :generation)",
     "pipeline": "eval",
     "expected": ">=0"
   },

@@ -4,6 +4,7 @@
 (require "std/io" all:)
 (require "std/process" all:)
 (require "std/ffi" all:)
+(require "std/test" all:)
 
 (define fails 0)
 (define (check pred msg)

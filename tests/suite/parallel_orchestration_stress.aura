@@ -130,9 +130,10 @@
 (define t4-ok (= jsum 1000))
 (section "fiber-join-storm" t4-ok)
 
-;; ── T5: orch:parallel-intend alias (#1588) ───────────────────
+;; ── T5: parallel-intend (#1588). The orch:parallel-intend alias is
+;; unregistered (#5097); the kernel name is parallel-intend.
 (define t5
-  (orch:parallel-intend
+  (parallel-intend
     (list (lambda () 1) (lambda () 2))
     :timeout-ms 10000))
 (define t5-ok

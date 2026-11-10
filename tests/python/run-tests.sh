@@ -916,6 +916,9 @@ _read_stdin_case() {
         _record_fail "$name" "       expected: $expected" "       got:      $actual"
     fi
 }
+# #5096/#5104: the R7RS eof-object is a unique value. read-line and
+# read-byte still return void at EOF (#4325), so the blank line stays a
+# string and the following read is void, not that object.
 _read_stdin_case "4325-blank-then-eof" $'\n' \
     '(begin (define a (read-line)) (define b (read-line)) (display (string-length a)) (display (eof-object? a)) (display (void? b)) (display (eq? a b)))' \
     '0#f#t#f'

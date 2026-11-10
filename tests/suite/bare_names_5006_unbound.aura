@@ -1,0 +1,28 @@
+; Issue #5006 / #5097 — the retired bare spellings stay unbound.
+; File mode runs every load form before the body, so this check lives in a
+; file that does not load std/diagnose or std/test.
+
+(define (raised5006u thunk)
+  (eq? (try (thunk) (catch (caught) 'raised-5006u)) 'raised-5006u))
+
+(define fails5006u 0)
+(define (ok5006u cond name)
+  (if cond
+      #t
+      (begin (set! fails5006u (+ fails5006u 1))
+             (display "FAIL-5006-unbound ") (display name) (newline))))
+
+(ok5006u (raised5006u (lambda () (diagnose "unbound variable: map")))
+         "bare diagnose is unbound")
+(ok5006u (raised5006u (lambda () (arena-offset)))
+         "bare arena-offset is unbound")
+(ok5006u (raised5006u (lambda () (define-strategy "n" "(phase check 1)")))
+         "bare define-strategy is unbound")
+(ok5006u (raised5006u (lambda () (edsl:define-struct "AliasStruct" "doc" "f:int")))
+         "bare edsl:define-struct is unbound")
+(ok5006u (raised5006u (lambda () (check-success "a" (list "a"))))
+         "bare check-success is unbound")
+
+(if (= fails5006u 0)
+    (display "OK-5006-unbound\n")
+    (exit 1))
