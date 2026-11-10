@@ -87,7 +87,8 @@ int main() {
         auto replaced = cs.eval("(set-code \"(define restore-boot 2)\")");
         show_err(replaced, "set-code overwrites the snapshot");
         expect(replaced.has_value(), "workspace moved off the snapshot");
-        auto back = cs.eval(std::format("(mutate :restore {})", aura::compiler::types::as_int(*snap)));
+        auto back =
+            cs.eval(std::format("(mutate :restore {})", aura::compiler::types::as_int(*snap)));
         show_err(back, "mw:restore");
         expect(back.has_value() && aura::compiler::types::is_bool(*back) &&
                    aura::compiler::types::as_bool(*back),

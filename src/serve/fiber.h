@@ -63,13 +63,13 @@ extern "C" std::uint64_t aura_fiber_take_spawn_body() noexcept;
 // Returns the closure id that was actually pinned (0 stays 0 only when the
 // evaluator is null).
 extern "C" std::uint64_t aura_fiber_root_pending_closure(void* evaluator,
-                                                        std::uint64_t closure_id) noexcept;
+                                                         std::uint64_t closure_id) noexcept;
 extern "C" void aura_fiber_release_pending_closure(void* evaluator,
-                                                  std::uint64_t closure_id) noexcept;
+                                                   std::uint64_t closure_id) noexcept;
 // Snapshot of body-closure ids the sweep must keep. Keyed roots store
 // closure_id+1; this writes the closure id itself.
 extern "C" void aura_collect_pending_body_closures(const void* evaluator,
-                                                  std::vector<std::uint64_t>& out) noexcept;
+                                                   std::vector<std::uint64_t>& out) noexcept;
 // Issue #4713: tree-walker safepoint (walker opcode back-edge / yield / join
 // wait). A collector that requested an epoch parks the calling fiber here
 // until the mark+sweep is done; one atomic load when no epoch is in flight.

@@ -2101,14 +2101,15 @@ static void ac4792_cross_epoch_restore_keeps_stamps() {
     CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current");
     auto b1 = cs.eval("(u4792)");
     CHECK(b1 && is_int(*b1) && as_int(*b1) == 3, "4792 AC4: S1 caller sees S1 body");
-    CHECK(
-        cs.eval(std::format("(mutate :restore {})", s3 && is_int(*s3) ? as_int(*s3) : -1)).has_value(),
-        "4792: restore post-restore snapshot");
+    CHECK(cs.eval(std::format("(mutate :restore {})", s3 && is_int(*s3) ? as_int(*s3) : -1))
+              .has_value(),
+          "4792: restore post-restore snapshot");
     CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current");
     auto b3 = cs.eval("(u4792)");
     CHECK(b3 && is_int(*b3) && as_int(*b3) == 101,
           "4792 AC4: post-restore capture restores its own edit");
-    CHECK(cs.eval(std::format("(mutate :restore {})", ids[0])).has_value(), "4792: restore S0 again");
+    CHECK(cs.eval(std::format("(mutate :restore {})", ids[0])).has_value(),
+          "4792: restore S0 again");
     CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current");
     auto b0 = cs.eval("(u4792)");
     CHECK(b0 && is_int(*b0) && as_int(*b0) == 2, "4792 AC4: back to S0");

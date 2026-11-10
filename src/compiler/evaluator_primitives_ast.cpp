@@ -918,11 +918,12 @@ void RegSplitParts::register_ast_snapshot_primitive(PrimRegistrar add, Evaluator
                 static std::atomic<bool> s_no_ws_warned{false};
                 if (::isatty(::fileno(stderr)) &&
                     !s_no_ws_warned.exchange(true, std::memory_order_relaxed)) {
-                    std::println(std::cerr,
-                                 "WARNING: ast:snapshot -> -1 (:no-workspace): no live workspace "
-                                 "source. Definitions loaded from a file / -e / --load are not "
-                                 "tracked in the live AST; install them with (set-code \"...\") "
-                                 "+ (eval-current) first. See (query :snapshot-fail-reason) (#4797).");
+                    std::println(
+                        std::cerr,
+                        "WARNING: ast:snapshot -> -1 (:no-workspace): no live workspace "
+                        "source. Definitions loaded from a file / -e / --load are not "
+                        "tracked in the live AST; install them with (set-code \"...\") "
+                        "+ (eval-current) first. See (query :snapshot-fail-reason) (#4797).");
                 }
                 return make_int(-1);
             }

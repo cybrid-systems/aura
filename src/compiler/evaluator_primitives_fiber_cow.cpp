@@ -425,20 +425,18 @@ void RegSplitParts::register_fiber_overlay_primitives(
 
     // (mutate :overlay-define name value) — private define; nothing reaches the
     // shared env until fiber:overlay-commit.
-    add("mw:overlay-define",
-        [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
-            if (auto denied = deny(ev, "fiber"))
-                return *denied;
-            if (a.size() < 2)
-                return make_bool(false);
-            const std::string name = overlay_arg_name(ev.string_heap_, a[0]);
-            if (name.empty())
-                return make_bool(false);
-            reg.write(owner, fiber_cow_overlay_key(), name, a[1],
-                      aura::core::current_mutation_epoch());
-            overlay_sync_tls(owner); // #4715 AC2: write() auto-begins
-            return make_bool(true);
-        });
+    add("mw:overlay-define", [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
+        if (auto denied = deny(ev, "fiber"))
+            return *denied;
+        if (a.size() < 2)
+            return make_bool(false);
+        const std::string name = overlay_arg_name(ev.string_heap_, a[0]);
+        if (name.empty())
+            return make_bool(false);
+        reg.write(owner, fiber_cow_overlay_key(), name, a[1], aura::core::current_mutation_epoch());
+        overlay_sync_tls(owner); // #4715 AC2: write() auto-begins
+        return make_bool(true);
+    });
 
     // (mutate :overlay-set! name value) — private rebind of a base binding.
     add("mw:overlay-set!", [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
@@ -590,15 +588,14 @@ void RegSplitParts::register_fiber_overlay_primitives(
     // condition of the last rejected commit by the calling fiber, as a hash
     // (binding / winner-fiber / our-epoch / committed-epoch / our-seq /
     // winner-seq / kind / read-only / schema), or #f when there is none.
-    add("mw:overlay-conflict",
-        [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
-            if (auto denied = deny(ev, "fiber"))
-                return *denied;
-            const auto ci = reg.last_conflict(owner, fiber_cow_overlay_key());
-            if (!ci)
-                return make_bool(false);
-            return overlay_conflict_condition(ev, *ci);
-        });
+    add("mw:overlay-conflict", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
+        if (auto denied = deny(ev, "fiber"))
+            return *denied;
+        const auto ci = reg.last_conflict(owner, fiber_cow_overlay_key());
+        if (!ci)
+            return make_bool(false);
+        return overlay_conflict_condition(ev, *ci);
+    });
 
     // (mutate :overlay-rollback) — failure / cancel path: drop the overlay.
     add("mw:overlay-rollback", [&reg, owner](std::span<const EvalValue>) -> EvalValue {

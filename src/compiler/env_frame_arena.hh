@@ -66,7 +66,7 @@ inline std::atomic<std::uint64_t> g_exhausted_total{0};
 // from Evaluator::alloc_env_frame after the #4459 reuse freelist came back
 // empty and the store refused the append. Never returns.
 [[noreturn]] inline void fail(std::size_t allocated_frames, std::size_t live_frames,
-                                 std::size_t max_slots) {
+                              std::size_t max_slots) {
     g_exhausted_total.fetch_add(1, std::memory_order_relaxed);
     // Issue #5057: the exhaustion exit is CATCHABLE in production, not an
     // abort(). #4790 made the silent captureless closure loud by killing the

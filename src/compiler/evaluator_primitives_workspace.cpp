@@ -424,14 +424,15 @@ void RegSplitParts::register_workspace_snapshot_primitives(PrimRegistrar add, Ev
     // Issue #737: (workspace:snapshot name) → snapshot ID.
     // Named convenience wrapper over (mutate :snapshot name) for
     // AI Agent multi-round edit loops.
-    if (false) add("workspace:snapshot", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
-            return make_int(-1);
-        auto snap_fn = ev.primitives_.lookup("mw:snapshot");
-        if (!snap_fn)
-            return make_int(-1);
-        return (*snap_fn)(a);
-    });
+    if (false)
+        add("workspace:snapshot", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_string(a[0]))
+                return make_int(-1);
+            auto snap_fn = ev.primitives_.lookup("mw:snapshot");
+            if (!snap_fn)
+                return make_int(-1);
+            return (*snap_fn)(a);
+        });
 
     // Issue #737 / #2788: (mutate :rollback-to name-or-id) → #t on
     // success; typed make_merr on failure:
@@ -993,35 +994,34 @@ void RegSplitParts::register_workspace_memory_primitives(PrimRegistrar add, Eval
     // Issue #2990: ConcurrentMutationPolicy EDSL surface.
     // (mutate :set-concurrent-mutation-policy 0|1|"single-writer"|"scoped-parallel")
     // Production default is SingleWriter (0). Returns #t on success.
-    add("mw:set-concurrent-mutation-policy",
-        [&ev](std::span<const EvalValue> a) -> EvalValue {
-            if (a.empty())
-                return make_bool(false);
-            auto apply = [&](Evaluator::ConcurrentMutationPolicy p) {
-                ev.set_concurrent_mutation_policy(p);
-                return make_bool(true);
-            };
-            if (is_int(a[0])) {
-                const auto v = as_int(a[0]);
-                if (v == 0)
-                    return apply(Evaluator::ConcurrentMutationPolicy::SingleWriter);
-                if (v == 1)
-                    return apply(Evaluator::ConcurrentMutationPolicy::ScopedParallel);
-                return make_bool(false);
-            }
-            if (is_string(a[0])) {
-                auto idx = as_string_idx(a[0]);
-                if (idx >= ev.string_heap_.size())
-                    return make_bool(false);
-                const auto& s = ev.string_at(idx);
-                if (s == "single-writer" || s == "SingleWriter")
-                    return apply(Evaluator::ConcurrentMutationPolicy::SingleWriter);
-                if (s == "scoped-parallel" || s == "ScopedParallel")
-                    return apply(Evaluator::ConcurrentMutationPolicy::ScopedParallel);
-                return make_bool(false);
-            }
+    add("mw:set-concurrent-mutation-policy", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty())
             return make_bool(false);
-        });
+        auto apply = [&](Evaluator::ConcurrentMutationPolicy p) {
+            ev.set_concurrent_mutation_policy(p);
+            return make_bool(true);
+        };
+        if (is_int(a[0])) {
+            const auto v = as_int(a[0]);
+            if (v == 0)
+                return apply(Evaluator::ConcurrentMutationPolicy::SingleWriter);
+            if (v == 1)
+                return apply(Evaluator::ConcurrentMutationPolicy::ScopedParallel);
+            return make_bool(false);
+        }
+        if (is_string(a[0])) {
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return make_bool(false);
+            const auto& s = ev.string_at(idx);
+            if (s == "single-writer" || s == "SingleWriter")
+                return apply(Evaluator::ConcurrentMutationPolicy::SingleWriter);
+            if (s == "scoped-parallel" || s == "ScopedParallel")
+                return apply(Evaluator::ConcurrentMutationPolicy::ScopedParallel);
+            return make_bool(false);
+        }
+        return make_bool(false);
+    });
     add("qr:concurrent-mutation-policy", [&ev](const auto&) -> EvalValue {
         return make_int(
             static_cast<std::int64_t>(static_cast<std::uint8_t>(ev.concurrent_mutation_policy())));
@@ -1046,62 +1046,63 @@ void RegSplitParts::register_workspace_delete_primitives(
     // (mutate :workspace-delete id) → #t
     // Issue #2789: delete_child recursively tombstones the whole subtree
     // (descendants before parent). Rebind evaluator if active is under idx.
-    add("mw:workspace-delete", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
-        // Issue #4778: another fiber body drives the worldline.
-        if (const auto h4778 = worldline_foreign_driver_4778(
-                &ev, ev.workspace_tree_, static_cast<std::uint64_t>(fiber_body_id_4778()));
-            h4778 != 0)
-            return RegSplitParts::workspace_worldline_driver_error_4778(ev, "mw:workspace-delete",
-                                                                        h4778);
-        if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
-            return make_bool(false);
-        // Issue #1294 Phase 1: capability gate for workspace control.
-        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWorkspace) &&
-            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
-            ev.bump_capability_denial();
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "capability denied: workspace required",
-                                        ev.primitive_error_counter_ptr());
-        }
-        auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-        auto idx = static_cast<std::uint32_t>(as_int(a[0]));
-        // Issue #1292 (P0) / #2789: if we delete the active workspace OR any
-        // ancestor of the active workspace, free of owned flat/pool would
-        // leave ev.workspace_flat_ dangling. Capture before recursive delete.
-        const bool need_rebind = wt->is_under(wt->active_idx(), idx);
-        for (std::uint32_t i = 1; i < wt->size(); ++i) {
-            if (!wt->is_under(i, idx))
-                continue;
-            auto& n = wt->nodes_[i];
-            if (n.has_own_flat && n.flat && n.flat != n.parent_flat_) {
-                RegSplitParts::workspace_detach_frames_from_pool(ev, n.pool);
-                // Issue #4378: expire closures holding this flat BEFORE
-                // delete_child frees it (heap-use-after-free in the
-                // expire_stale_live_closures_ walk otherwise).
-                (void)ev.expire_closures_with_flat(n.flat);
+    add("mw:workspace-delete",
+        [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
+            // Issue #4778: another fiber body drives the worldline.
+            if (const auto h4778 = worldline_foreign_driver_4778(
+                    &ev, ev.workspace_tree_, static_cast<std::uint64_t>(fiber_body_id_4778()));
+                h4778 != 0)
+                return RegSplitParts::workspace_worldline_driver_error_4778(
+                    ev, "mw:workspace-delete", h4778);
+            if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
+                return make_bool(false);
+            // Issue #1294 Phase 1: capability gate for workspace control.
+            if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWorkspace) &&
+                !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+                ev.bump_capability_denial();
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "capability denied: workspace required",
+                                            ev.primitive_error_counter_ptr());
             }
-        }
-        if (!wt->delete_child(idx))
-            return make_bool(false);
-        if (need_rebind) {
-            wt->set_active(0);
-            auto* ws = wt->active();
-            if (ws) {
-                ev.workspace_flat_ = ws->flat;
-                ev.workspace_pool_ = ws->pool;
-                ev.workspace_read_only_ = ws->read_only;
-                if (ws->flat)
-                    ws->flat->set_workspace_cow_epoch(ws->cow_epoch);
-            } else {
-                ev.workspace_flat_ = nullptr;
-                ev.workspace_pool_ = nullptr;
-                ev.workspace_read_only_ = false;
+            auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+            auto idx = static_cast<std::uint32_t>(as_int(a[0]));
+            // Issue #1292 (P0) / #2789: if we delete the active workspace OR any
+            // ancestor of the active workspace, free of owned flat/pool would
+            // leave ev.workspace_flat_ dangling. Capture before recursive delete.
+            const bool need_rebind = wt->is_under(wt->active_idx(), idx);
+            for (std::uint32_t i = 1; i < wt->size(); ++i) {
+                if (!wt->is_under(i, idx))
+                    continue;
+                auto& n = wt->nodes_[i];
+                if (n.has_own_flat && n.flat && n.flat != n.parent_flat_) {
+                    RegSplitParts::workspace_detach_frames_from_pool(ev, n.pool);
+                    // Issue #4378: expire closures holding this flat BEFORE
+                    // delete_child frees it (heap-use-after-free in the
+                    // expire_stale_live_closures_ walk otherwise).
+                    (void)ev.expire_closures_with_flat(n.flat);
+                }
             }
-            // ASAN fix #107: drop def-use index bound to freed flat.
-            destroy_defuse_index();
-        }
-        return make_bool(true);
-    });
+            if (!wt->delete_child(idx))
+                return make_bool(false);
+            if (need_rebind) {
+                wt->set_active(0);
+                auto* ws = wt->active();
+                if (ws) {
+                    ev.workspace_flat_ = ws->flat;
+                    ev.workspace_pool_ = ws->pool;
+                    ev.workspace_read_only_ = ws->read_only;
+                    if (ws->flat)
+                        ws->flat->set_workspace_cow_epoch(ws->cow_epoch);
+                } else {
+                    ev.workspace_flat_ = nullptr;
+                    ev.workspace_pool_ = nullptr;
+                    ev.workspace_read_only_ = false;
+                }
+                // ASAN fix #107: drop def-use index bound to freed flat.
+                destroy_defuse_index();
+            }
+            return make_bool(true);
+        });
 }
 
 // Issue #5033: workspace lock/unlock + write permission.
@@ -1278,69 +1279,66 @@ void RegSplitParts::register_workspace_discard_primitives(
     // (mutate :discard id)
     //   → #t on success
     //   Discards a child workspace's local changes, resetting to parent state.
-    add("mw:discard",
-        [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
-            // Issue #4778: another fiber body drives the worldline.
-            if (const auto h4778 = worldline_foreign_driver_4778(
-                    &ev, ev.workspace_tree_, static_cast<std::uint64_t>(fiber_body_id_4778()));
-                h4778 != 0)
-                return RegSplitParts::workspace_worldline_driver_error_4778(ev, "mw:discard",
-                                                                            h4778);
-            if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
-                return make_bool(false);
-            auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-            auto idx = static_cast<std::uint32_t>(as_int(a[0]));
-            if (idx == 0 || idx >= tree->size())
-                return make_bool(false);
-            auto& ws = tree->nodes_[idx];
-            if (!ws.has_own_flat)
-                return make_bool(true); // already in parent state
+    add("mw:discard", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
+        // Issue #4778: another fiber body drives the worldline.
+        if (const auto h4778 = worldline_foreign_driver_4778(
+                &ev, ev.workspace_tree_, static_cast<std::uint64_t>(fiber_body_id_4778()));
+            h4778 != 0)
+            return RegSplitParts::workspace_worldline_driver_error_4778(ev, "mw:discard", h4778);
+        if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
+            return make_bool(false);
+        auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+        auto idx = static_cast<std::uint32_t>(as_int(a[0]));
+        if (idx == 0 || idx >= tree->size())
+            return make_bool(false);
+        auto& ws = tree->nodes_[idx];
+        if (!ws.has_own_flat)
+            return make_bool(true); // already in parent state
 
-            // Issue #3957: own-flat without parent is not vacuous success —
-            // there is no parent to restore. Fail closed (#f); #3863 Guard
-            // still wraps the parent rebind path.
-            if (!ws.parent_flat_)
-                return make_bool(false);
+        // Issue #3957: own-flat without parent is not vacuous success —
+        // there is no parent to restore. Fail closed (#f); #3863 Guard
+        // still wraps the parent rebind path.
+        if (!ws.parent_flat_)
+            return make_bool(false);
 
-            if (ws.parent_flat_) {
-                // Issue #3863: discard deletes/rebinds the active flat —
-                // wrap the scope in MutationBoundaryGuard (fulfills the
-                // #1904 TODO) so concurrent shared query:* fibers cannot
-                // observe torn workspace_flat_ pointers (MT torn flat,
-                // EDSL I1 residual). Guard acquisition failure → the
-                // discard is refused (consistent false per Verify 1).
-                std::unique_ptr<Evaluator::MutationBoundaryGuard> held_guard;
-                if (!ev.mutation_boundary_held() && ev.mutation_boundary_depth() == 0) {
-                    auto gr =
-                        Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, nullptr);
-                    if (!gr)
-                        return make_bool(false); // guard-reject (Verify 1)
-                    held_guard = std::move(*gr);
-                }
-                if (ws.pool && ws.pool != ws.parent_pool_) {
-                    RegSplitParts::workspace_detach_frames_from_pool(ev, ws.pool);
-                }
-                // Issue #4378: expire closures holding the doomed flat before
-                // the delete (heap-use-after-free in the expire walk).
-                (void)ev.expire_closures_with_flat(ws.flat);
-                std::unique_ptr<aura::ast::FlatAST>{ws.flat}.reset();
-                std::unique_ptr<aura::ast::StringPool>{ws.pool}.reset();
-                ws.flat = ws.parent_flat_;
-                ws.pool = ws.parent_pool_;
-                ws.has_own_flat = false;
-                ws.generation = 0;
-                ws.cow_epoch = 0;
-                ws.remap = aura::ast::mutation::NodeIdRemapTable{};
-                // If we just discarded the active workspace, sync pointers
-                if (idx == tree->active_idx()) {
-                    ev.workspace_flat_ = ws.flat;
-                    ev.workspace_pool_ = ws.pool;
-                    // (ASAN fix #107 leak) delete the old index.
-                    destroy_defuse_index();
-                }
+        if (ws.parent_flat_) {
+            // Issue #3863: discard deletes/rebinds the active flat —
+            // wrap the scope in MutationBoundaryGuard (fulfills the
+            // #1904 TODO) so concurrent shared query:* fibers cannot
+            // observe torn workspace_flat_ pointers (MT torn flat,
+            // EDSL I1 residual). Guard acquisition failure → the
+            // discard is refused (consistent false per Verify 1).
+            std::unique_ptr<Evaluator::MutationBoundaryGuard> held_guard;
+            if (!ev.mutation_boundary_held() && ev.mutation_boundary_depth() == 0) {
+                auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, nullptr);
+                if (!gr)
+                    return make_bool(false); // guard-reject (Verify 1)
+                held_guard = std::move(*gr);
             }
-            return make_bool(true);
-        });
+            if (ws.pool && ws.pool != ws.parent_pool_) {
+                RegSplitParts::workspace_detach_frames_from_pool(ev, ws.pool);
+            }
+            // Issue #4378: expire closures holding the doomed flat before
+            // the delete (heap-use-after-free in the expire walk).
+            (void)ev.expire_closures_with_flat(ws.flat);
+            std::unique_ptr<aura::ast::FlatAST>{ws.flat}.reset();
+            std::unique_ptr<aura::ast::StringPool>{ws.pool}.reset();
+            ws.flat = ws.parent_flat_;
+            ws.pool = ws.parent_pool_;
+            ws.has_own_flat = false;
+            ws.generation = 0;
+            ws.cow_epoch = 0;
+            ws.remap = aura::ast::mutation::NodeIdRemapTable{};
+            // If we just discarded the active workspace, sync pointers
+            if (idx == tree->active_idx()) {
+                ev.workspace_flat_ = ws.flat;
+                ev.workspace_pool_ = ws.pool;
+                // (ASAN fix #107 leak) delete the old index.
+                destroy_defuse_index();
+            }
+        }
+        return make_bool(true);
+    });
 }
 
 // (workspace :merge child-id)
