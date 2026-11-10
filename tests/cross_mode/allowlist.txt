@@ -19,3 +19,4 @@
 # the force-soa IR face runs is located at the top-level call site, not at
 # the failing expression in the body. The rc and stdout still match.
 i4899f_*.aura force-soa/* loc IR call-site location (#4909 follow-up)
+i4904_workflow_in_user_fn_statement.aura force-soa/load loc IR call-site location (#4909 follow-up)

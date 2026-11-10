@@ -8,8 +8,11 @@
 (define out (channel:create 16))
 (define (stage thunk) (hash "tasks" (vector thunk)))
 
-(orch:run-workflow
- (vector
+;; Stages run in order; each stage here has one task. (#5097 retired the
+;; orch:run-workflow primitive, so drive the stage thunks directly.)
+(for-each
+ (lambda (s) ((vector-ref (hash-ref s "tasks") 0)))
+ (list
   (stage (lambda () (propose 0 out)))
   (stage (lambda () (check 0 out)))
   (stage (lambda () (propose 1 out)))
