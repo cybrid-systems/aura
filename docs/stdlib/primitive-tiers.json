@@ -45,7 +45,8 @@
     "K-EXC-5118": "Restored orch verbs (#5118). #5111 unregistered the scope, workflow, directory and metrics names before std/orch had a body for them. They stay registered and deprecated for one cycle. The doc hint names the function to call (the verb itself, or parallel-intend for orch:parallel-intend). No other registration was removable in the same change.",
     "K-R7RS": "R7RS-small required procedure; a conversion spelling exists, but removing this name would break the declared R7RS surface",
     "K-CHAR": "character comparison used inside every string and parser loop (char=?/char<?); an Aura body adds a call per comparison, so it stays kernel until #5135 can measure the move in the CI image",
-    "K-F64": "f64vector numeric kernels (dot/sum/max-index/sub!/ewma!) run over the locked native view of the f64 heap; an Aura loop would be an interpreted call per element, so the move needs a #5135 baseline in the CI image before it can be considered"
+    "K-F64": "f64vector numeric kernels (dot/sum/max-index/sub!/ewma!) run over the locked native view of the f64 heap; an Aura loop would be an interpreted call per element, so the move needs a #5135 baseline in the CI image before it can be considered",
+    "K-NUM-HOT": "abs/max/min sit in numeric loops and lcm is variadic with i64 edge handling (kI64Min/i64 overflow); an Aura body would either add a call per arithmetic step or narrow the contract, so all four stay kernel"
   },
   "kernel_exceptions": [
     "arithmetic-shift",
@@ -91,8 +92,8 @@
     "orch:supervise-batch"
   ],
   "counts": {
-    "kernel": 472,
-    "stdlib-candidate": 74,
+    "kernel": 476,
+    "stdlib-candidate": 70,
     "delete": 1
   },
   "primitives": {
@@ -161,8 +162,8 @@
       "rule": "K-FIBER"
     },
     "abs": {
-      "tier": "stdlib-candidate",
-      "rule": "S-NUM"
+      "tier": "kernel",
+      "rule": "K-NUM-HOT"
     },
     "acos": {
       "tier": "kernel",
@@ -875,8 +876,8 @@
       "rule": "K-VAL"
     },
     "lcm": {
-      "tier": "stdlib-candidate",
-      "rule": "S-NUM"
+      "tier": "kernel",
+      "rule": "K-NUM-HOT"
     },
     "length": {
       "tier": "stdlib-candidate",
@@ -951,8 +952,8 @@
       "rule": "S-LIST"
     },
     "max": {
-      "tier": "stdlib-candidate",
-      "rule": "S-NUM"
+      "tier": "kernel",
+      "rule": "K-NUM-HOT"
     },
     "member": {
       "tier": "stdlib-candidate",
@@ -967,8 +968,8 @@
       "rule": "S-LIST"
     },
     "min": {
-      "tier": "stdlib-candidate",
-      "rule": "S-NUM"
+      "tier": "kernel",
+      "rule": "K-NUM-HOT"
     },
     "mod": {
       "tier": "kernel",
