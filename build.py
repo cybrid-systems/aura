@@ -25294,15 +25294,25 @@ def cmd_chaos_soak_hard_gate_2722():
         f"duration={env['AURA_CHAOS_DURATION_S']}s seed={env['AURA_CHAOS_SEED']} "
         "mb_starve_max=0"
     )
-    # Generous wall (300s SOAK + watchdog + overhead). Release job timeout
-    # is the GitHub Actions job-level timeout (60 min default — well above
-    # this worst case).
-    timeout_s = max(900, int(env["AURA_CHAOS_DURATION_S"]) + 600)
+    # Wall for the soak child only (the build above is not part of it). The
+    # release container runs 8 workers / 256 fibers on a 2-vCPU runner; the
+    # v0.2.1 tag release died on the old max(900, duration + 600) cap with
+    # every residual gate already printing PASS, i.e. the soak itself was
+    # slower than 900 s there, not hung. Budget 3x the soak plus a fixed
+    # margin for that shape; the GitHub job timeout still bounds the step.
+    soak_s = int(env["AURA_CHAOS_DURATION_S"])
+    timeout_s = max(1800, soak_s * 3 + 900)
     start = time.time()
     try:
         r = subprocess.run([str(bin_path)], cwd=ROOT, env=env, timeout=timeout_s)
     except subprocess.TimeoutExpired:
-        fail(f"chaos SOAK hard gate timed out after {timeout_s}s (hang?) — release blocked")
+        fail(
+            f"chaos SOAK hard gate timed out after {timeout_s}s "
+            f"(duration={soak_s}s workers={env['AURA_CHAOS_WORKERS']} "
+            f"fibers={env['AURA_CHAOS_FIBERS']}; a runner too slow for the "
+            "soak reports here, while a true hang leaves the residual "
+            "counters non-zero) — release blocked"
+        )
         return 1
     elapsed = time.time() - start
     if r.returncode != 0:
