@@ -142,8 +142,10 @@ def main() -> int:
     must('env.setdefault("AURA_CHAOS_FIBERS", "256")', "AC3", build)
     must('env.setdefault("AURA_CHAOS_DURATION_S", "300")', "AC3", build)
     must('env.setdefault("AURA_CHAOS_MB_STARVE_MAX", "0")', "AC3", build)
-    # Generous wall — 300s SOAK + watchdog + overhead.
-    must("timeout_s = max(900,", "AC3", build)
+    # Generous wall — 3x the SOAK + a fixed margin: the release runner runs
+    # 8 workers / 256 fibers on 2 vCPUs and the v0.2.1 tag release outlasted
+    # the old 900 s cap while every residual gate had already printed PASS.
+    must("timeout_s = max(1800,", "AC3", build)
 
     # ============================================================
     # AC4: required for any tag / release candidate — wired in
