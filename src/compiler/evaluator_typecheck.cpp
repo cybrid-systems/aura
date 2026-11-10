@@ -428,9 +428,9 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // Issue #5090: collect before the top_ lock. Loading a module
             // binds names and must not run under that shared lock.
             std::vector<std::string> required_names;
-            append_workspace_require_names([&](const std::string& path) { return load_module_file(path); },
-                                           modules_, *workspace_flat_, *workspace_pool_,
-                                           required_names);
+            append_workspace_require_names(
+                [&](const std::string& path) { return load_module_file(path); }, modules_,
+                *workspace_flat_, *workspace_pool_, required_names);
             auto top_bind_guard = top_.lock_bindings_shared(); // #4717 shared top env
             {
                 std::uint64_t h = 1469598103934665603ull;
