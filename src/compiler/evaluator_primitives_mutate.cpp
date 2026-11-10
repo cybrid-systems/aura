@@ -11720,6 +11720,25 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 if (auto now = define_src(target); !now.empty())
                     new_src = std::move(now);
             }
+            // Issue #5088: a mutate inside a child workspace is the trial
+            // fork's private rewrite. It dies with that workspace (and with
+            // the trial subprocess). decision=KEEP made the line look like a
+            // live worldline commit. FORK plus scope=fork stays out of the
+            // KEEP count; log_append advances the tip only on KEEP.
+            const std::uint32_t active_ws =
+                ev.workspace_tree_ ? static_cast<WorkspaceTree*>(ev.workspace_tree_)->active_idx()
+                                   : 0;
+            std::string extras;
+            int version = 1;
+            if (active_ws != 0) {
+                version = 2;
+                extras = "\"scope\":\"fork\"";
+                if (decision == "KEEP") {
+                    decision = "FORK";
+                    if (reason.empty())
+                        reason = "fork-worldline";
+                }
+            }
             aura::evo::log_append({.kind = op,
                                    .target = target,
                                    .decision = decision,
@@ -11728,7 +11747,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                    .old_src = old_src,
                                    .new_src = new_src,
                                    .parent = {},
-                                   .dur_ms = ms});
+                                   .dur_ms = ms,
+                                   .extras_json = extras,
+                                   .version = version});
             return r;
         };
         // Issue #4910: `ade` = add + evolution-log wrap: every mutate:* lands
