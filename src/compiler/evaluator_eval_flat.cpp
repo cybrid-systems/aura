@@ -5984,6 +5984,9 @@ namespace {
         // caching that integer returned the first call's value.
         std::uint64_t cgen = 0;
         std::uint64_t dgen = 0; // cell-store generation at the copy (set! bumps it)
+        // FlatAST::generation() when the site was recorded. A workspace
+        // rebuild can keep this flat's address and recycle NodeIds.
+        std::uint16_t flat_gen = 0;
         std::int64_t c0 = 0;
         std::int64_t c1 = 0;
         std::uint8_t arg_const = 0; // top-cell int, stable until top_bind_gen_ / set!
@@ -6068,7 +6071,8 @@ namespace {
         if (tag == aura::ast::NodeTag::Call) {
             for (int i = 0; i < tls_fast_i_n_5066; ++i) {
                 FastISite& inner = tls_fast_i_5066[i];
-                if (inner.flat != &flat || inner.node != node)
+                if (inner.flat != &flat || inner.node != node ||
+                    inner.flat_gen != flat.generation())
                     continue;
                 auto v = eval_fast_site_5066(top_gen, defuse, flat, pool, env, inner, depth + 1);
                 if (!v || !types::is_int(*v))
@@ -6243,7 +6247,7 @@ namespace {
                                    aura::ast::NodeId node) noexcept {
         for (int i = 0; i < tls_fast_i_n_5066; ++i) {
             FastISite& site = tls_fast_i_5066[i];
-            if (site.flat == &flat && site.node == node)
+            if (site.flat == &flat && site.node == node && site.flat_gen == flat.generation())
                 return &site;
         }
         return nullptr;
@@ -6458,11 +6462,13 @@ void Evaluator::remember_prim_call(aura::ast::NodeId call_id, aura::ast::NodeId 
                 slot_i = tls_fast_i_n_5066++;
             if (slot_i >= 0) {
                 FastISite& site = tls_fast_i_5066[slot_i];
+                const auto flat_gen = tls_fast_flat_5066->generation();
                 const bool same = site.flat == tls_fast_flat_5066 && site.node == call_id &&
-                                  site.op == *op && site.arg0 == children[1] &&
-                                  site.arg1 == children[2];
+                                  site.flat_gen == flat_gen && site.op == *op &&
+                                  site.arg0 == children[1] && site.arg1 == children[2];
                 site.flat = tls_fast_flat_5066;
                 site.node = call_id;
+                site.flat_gen = flat_gen;
                 site.sym = sym;
                 site.top_gen = top_bind_gen_.load(std::memory_order_relaxed);
                 site.op = *op;
@@ -6681,7 +6687,7 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
     if (aura::serve::g_current_fiber == nullptr && !env.is_shared_top_env()) {
         for (int i = 0; i < tls_fast_i_n_5066; ++i) {
             FastISite& site = tls_fast_i_5066[i];
-            if (site.flat != &flat || site.node != id)
+            if (site.flat != &flat || site.node != id || site.flat_gen != flat.generation())
                 continue;
             if (auto v = eval_fast_site_5066(top_bind_gen_,
                                              g_cell_store_gen_5066.load(std::memory_order_acquire),
@@ -6794,8 +6800,12 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         FastFlatScope5066(const FastFlatScope5066&) = delete;
         FastFlatScope5066& operator=(const FastFlatScope5066&) = delete;
     } fast_flat_scope_5066{&flat};
-    if (c_stack_depth == 0)
+    if (c_stack_depth == 0) {
         tls_fast_i_clear_5066();
+        // Closure ids and the apply epoch restart per CompilerService. A
+        // thread-local meta hit would run another service's body.
+        tls_tw_meta_5066.ok = false;
+    }
     // Issue #4745 follow-up: the #4599 per-node memo is keyed by NodeId and
     // scoped to one flat. A workspace/rebuilt flat can keep the same address
     // (and even the same pool) while its slots are recycled for different
@@ -11315,7 +11325,7 @@ std::optional<EvalResult> Evaluator::eval_flat_prepare_visit(EvalFlatCursor& cur
         !eval_env.is_shared_top_env()) {
         for (int i = 0; i < tls_fast_i_n_5066; ++i) {
             FastISite& site = tls_fast_i_5066[i];
-            if (site.flat != f || site.node != current_id)
+            if (site.flat != f || site.node != current_id || site.flat_gen != f->generation())
                 continue;
             if (auto v = eval_fast_site_5066(top_bind_gen_,
                                              g_cell_store_gen_5066.load(std::memory_order_acquire),

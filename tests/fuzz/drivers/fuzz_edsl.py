@@ -69,7 +69,7 @@ OPS = [
     "(display (query:reaches {val}))",
     '(display (mutate :snapshot "snap-{i}"))',
     "(display (query :diff 0))",
-    "(display (ast:list-snapshots))",
+    '(display (stats:get "ast:list-snapshots"))',
     "(display (mutate :restore 0))",
     '(display (mutate:splice 1 0 "(display 42)" "fuzz splice"))',
     '(display (mutate:wrap 0 "(begin _)" "fuzz wrap"))',

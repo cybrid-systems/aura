@@ -178,10 +178,16 @@ namespace {
             if (retired)
                 continue;
             if (view.starts_with("orch:") && !is_orch_verb_5006(view)) {
-                retire_name(
-                    prims, slot,
-                    "DEPRECATED (#5006): choose orchestration from std/orch; the kernel keeps "
-                    "orch:spawn/send/recv/join/cancel.");
+                // Issue #5118: std/orch never grew these verbs. The registered
+                // name is the function to call. orch:parallel-intend is the
+                // one alias whose body is a different live primitive.
+                const std::string replacement = (view == "orch:parallel-intend")
+                                                    ? std::string("parallel-intend")
+                                                    : std::string(view);
+                retire_name(prims, slot,
+                            "DEPRECATED (#5118): call (" + replacement +
+                                " ...). This registration is the function; std/orch does not "
+                                "replace it.");
                 continue;
             }
             for (const auto& bare : kRetiredBare5006) {

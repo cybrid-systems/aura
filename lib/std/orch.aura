@@ -21,6 +21,11 @@
 ; handler owns the work; orch owns delivery, join and cancel. Serve-mode
 ; agents (no handler) still fall back to the cross-session send/recv path.
 ;
+; Issue #5118: scope, workflow, and the agent directory are kernel verbs
+; (orch:scope-spawn, orch:scope-join-all, orch:compose-workflow,
+; orch:supervise-batch, orch:agent-join, …). This module does not
+; reimplement them. They resolve because the kernel still registers them.
+;
 ; Issue #5004: std/orchestrator keeps one release of forwarding; this
 ; module is the implementation it forwards to.
 ;

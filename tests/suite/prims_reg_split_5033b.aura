@@ -32,7 +32,7 @@
 (check (pair? (query :mutation-log-diff 0 -1)) "diff after rebind")
 
 ;; ── workspace parts: snapshots / layering / lifecycle / policy ────────
-(check (integer? (workspace:snapshot "s5033b")) "workspace:snapshot")
+(check (integer? (workspace :snapshot "s5033b")) "workspace :snapshot")
 (check (eq? #t (mutate :rollback-to "s5033b")) "mw:rollback-to")
 (check (integer? (workspace :create "c5033b")) "workspace :create")
 (check (list? (workspace :list)) "workspace :list")

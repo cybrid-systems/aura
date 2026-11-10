@@ -51,6 +51,8 @@ struct RegSplitParts {
     static void register_persist_deserialize(PrimRegistrar add, Evaluator& ev);
     static void register_persist_info(PrimRegistrar add, Evaluator& ev);
     static void register_diagnose_primitive(PrimRegistrar add, Evaluator& ev);
+    // Unregistered bare name (#5097). Recovery still classifies with this.
+    static EvalValue diagnose_error_string(Evaluator& ev, const std::string& msg);
     static void register_apply_fix_primitive(PrimRegistrar add, Evaluator& ev);
     static void register_check_preconditions_primitive(PrimRegistrar add, Evaluator& ev);
     static void register_agent_recover_primitive(PrimRegistrar add, Evaluator& ev);
