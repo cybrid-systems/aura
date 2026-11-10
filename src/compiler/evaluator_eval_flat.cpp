@@ -71,6 +71,22 @@ extern "C" const char* aura_macro_hygiene_last_limit_reason_string(void) noexcep
 
 namespace aura::compiler {
 
+// #5066: a FastISite lives for the thread and is keyed only by AST node.
+// Free-var fixnums (the `n` closed over by a named-let) used to be copied
+// once and reused until set! / top_bind_gen_. The next call of the same
+// body then kept the previous call's value. materialize_call_env is a
+// fresh frame; TCO overwrite does not come through here, so a tight loop
+// still reuses the copy taken on its first iteration.
+thread_local std::uint64_t tls_fast_call_epoch_5066 = 1;
+
+void note_fresh_call_env_5066() noexcept {
+    ++tls_fast_call_epoch_5066;
+}
+
+std::uint64_t fast_call_epoch_5066() noexcept {
+    return tls_fast_call_epoch_5066;
+}
+
 using aura::compiler::macro_exp::inner_expand_production_limit_deny;
 using aura::compiler::macro_exp::stamp_rest_param_hygiene;
 
@@ -2555,6 +2571,7 @@ Evaluator::apply_closure_eval_body(ClosureId cid, std::span<const EvalValue> arg
     // internally (Issue #145 P0 follow-up — env_frames_
     // deque map-array reallocation race under fiber:spawn).
     Env ne = materialize_call_env(cl_copy);
+    note_fresh_call_env_5066();
     ne.set_primitives(&primitives_);
     // materialize_call_env returns a default Env (owner_=nullptr) for
     // no-capture closures; set owner so eval_flat's primitive dispatch
@@ -3384,6 +3401,7 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 current = pairs_[arg_pair].cdr;
             }
             Env tail_env = materialize_call_env(cl);
+            note_fresh_call_env_5066();
             tail_env.set_primitives(&primitives_);
 
             // Issue #145: set the pool so bind_symid can mirror
@@ -5981,6 +5999,14 @@ namespace {
         // drops the copy so a later define is re-read under the env lock.
         std::uint64_t cgen = 0;
         std::uint64_t dgen = 0; // defuse_version_ at the copy (set! bumps it)
+        // fast_call_epoch_5066() at the copy. A fresh materialize_call_env
+        // advances it so the next call of this node cannot reuse a free
+        // var from the previous frame. TCO reuse leaves the epoch alone.
+        std::uint64_t call_epoch = 0;
+        // FlatAST::generation() at record time. Workspace rebind reuses
+        // the flat address and NodeIds; a site from the previous tree
+        // must not answer eval-current.
+        std::uint16_t flat_gen = 0;
         std::int64_t c0 = 0;
         std::int64_t c1 = 0;
         std::uint8_t arg_const = 0; // raw int, stable until top_bind_gen_
@@ -6045,6 +6071,58 @@ namespace {
         return eval_fast_iop_5066(site.op, x, y);
     }
 
+    // A call parameter or a captured free var changes without set! and
+    // without top_bind_gen_ (the next call of the same AST node). Only a
+    // binding that is not on this frame and not in the capture chain is
+    // a top-level cell, which is the copy the site is allowed to keep.
+    bool frame_binds_name_5066(const Env& env, std::string_view name) {
+        const auto* frame_pool = env.pool();
+        if (frame_pool != nullptr) {
+            const auto slots = env.bindings_symid_iter();
+            if (!slots.empty()) {
+                for (const auto& [sym, val] : slots) {
+                    (void)val;
+                    if (frame_pool->resolve(sym) == name)
+                        return true;
+                }
+                // SymId rows are the call-frame source of truth. The string
+                // mirror is only consulted when that table was never filled.
+                return false;
+            }
+        }
+        for (const auto& [bound_name, val] : env.bindings()) {
+            (void)val;
+            if (bound_name == name)
+                return true;
+        }
+        return false;
+    }
+
+    bool operand_is_lexical_5066(const Env& env, const aura::ast::StringPool& pool,
+                                 aura::ast::SymId sym) {
+        const auto name = pool.resolve(sym);
+        if (name.empty())
+            return false;
+        // Parameter whose SymId probe missed still lives on this frame.
+        if (frame_binds_name_5066(env, name))
+            return true;
+        if (const auto& snap = env.cap_snapshot()) {
+            for (const CapSnapshot* frame = snap.get(); frame != nullptr;
+                 frame = frame->parent.get()) {
+                if (frame->live_safe_top)
+                    break;
+                if (frame->name_index_.find(name) != frame->name_index_.end())
+                    return true;
+            }
+        }
+        for (const Env* parent = env.parent(); parent != nullptr && !parent->is_shared_top_env();
+             parent = parent->parent()) {
+            if (frame_binds_name_5066(*parent, name))
+                return true;
+        }
+        return false;
+    }
+
     bool load_fast_operand_5066(const std::atomic<std::uint64_t>& top_gen, std::uint64_t defuse,
                                 const aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,
                                 const Env& env, FastISite& site, int which, std::int64_t& out,
@@ -6065,7 +6143,8 @@ namespace {
         if (tag == aura::ast::NodeTag::Call) {
             for (int i = 0; i < tls_fast_i_n_5066; ++i) {
                 FastISite& inner = tls_fast_i_5066[i];
-                if (inner.flat != &flat || inner.node != node)
+                if (inner.flat != &flat || inner.node != node ||
+                    inner.flat_gen != flat.generation())
                     continue;
                 auto v = eval_fast_site_5066(top_gen, defuse, flat, pool, env, inner, depth + 1);
                 if (!v || !types::is_int(*v))
@@ -6090,6 +6169,16 @@ namespace {
                 return true;
             }
             return false;
+        }
+        // Drop a copy taken under a previous call frame before any hit.
+        // Locals already returned above; this is the free-var / top-level
+        // arm. set! still invalidates through `defuse` (g_cell_store_gen).
+        const auto call_epoch = fast_call_epoch_5066();
+        if (site.call_epoch != call_epoch) {
+            site.arg_const = 0;
+            site.arg_cell = 0;
+            site.arg_miss = 0;
+            site.call_epoch = call_epoch;
         }
         const auto bit = static_cast<std::uint8_t>(1u << which);
         const auto gen1 = top_gen.load(std::memory_order_acquire);
@@ -6158,7 +6247,11 @@ namespace {
             return false;
         }
         out = types::as_int(*bound);
-        if (stable) {
+        // Re-read parameters and captured free vars on every hit. Caching
+        // them froze the first call's `n` into later calls of the same
+        // named-let / lambda body (and a TCO loop whose param missed the
+        // SymId probe never advanced).
+        if (stable && !operand_is_lexical_5066(env, pool, sym)) {
             store_slot(out);
             site.arg_const = static_cast<std::uint8_t>(site.arg_const | bit);
         }
@@ -6225,11 +6318,13 @@ void Evaluator::remember_prim_call(aura::ast::NodeId call_id, aura::ast::NodeId 
                 slot_i = tls_fast_i_n_5066++;
             if (slot_i >= 0) {
                 FastISite& site = tls_fast_i_5066[slot_i];
+                const auto flat_gen = tls_fast_flat_5066->generation();
                 const bool same = site.flat == tls_fast_flat_5066 && site.node == call_id &&
-                                  site.op == *op && site.arg0 == children[1] &&
-                                  site.arg1 == children[2];
+                                  site.flat_gen == flat_gen && site.op == *op &&
+                                  site.arg0 == children[1] && site.arg1 == children[2];
                 site.flat = tls_fast_flat_5066;
                 site.node = call_id;
+                site.flat_gen = flat_gen;
                 site.sym = sym;
                 site.top_gen = top_bind_gen_.load(std::memory_order_relaxed);
                 site.op = *op;
@@ -6448,7 +6543,7 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
     if (aura::serve::g_current_fiber == nullptr && !env.is_shared_top_env()) {
         for (int i = 0; i < tls_fast_i_n_5066; ++i) {
             FastISite& site = tls_fast_i_5066[i];
-            if (site.flat != &flat || site.node != id)
+            if (site.flat != &flat || site.node != id || site.flat_gen != flat.generation())
                 continue;
             if (auto v = eval_fast_site_5066(top_bind_gen_,
                                              g_cell_store_gen_5066.load(std::memory_order_acquire),
@@ -6561,8 +6656,15 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         FastFlatScope5066(const FastFlatScope5066&) = delete;
         FastFlatScope5066& operator=(const FastFlatScope5066&) = delete;
     } fast_flat_scope_5066{&flat};
-    if (c_stack_depth == 0)
+    if (c_stack_depth == 0) {
+        // Both tables are thread-local and outlive an Evaluator. Closure
+        // ids and closures_apply_epoch_ restart with each CompilerService,
+        // so a cache hit here would apply another service's body (wrong
+        // arity, or a freed flat). A top-level eval is the boundary; the
+        // named-let loop stays inside this frame and keeps the copy.
         tls_fast_i_clear_5066();
+        tls_tw_meta_5066.ok = false;
+    }
     // Issue #4745 follow-up: the #4599 per-node memo is keyed by NodeId and
     // scoped to one flat. A workspace/rebuilt flat can keep the same address
     // (and even the same pool) while its slots are recycled for different
@@ -8762,6 +8864,7 @@ Evaluator::FlatStep Evaluator::eval_flat_on_closure(EvalFlatCursor& cur,
             // Drop the stamp before materialize re-enters eval.
             tco.live = false;
             tail_env = materialize_call_env(cl.to_closure());
+            note_fresh_call_env_5066();
             tail_env->set_primitives(&primitives_);
 
             // Issue #145: set the pool so bind_symid can mirror
@@ -11067,7 +11170,7 @@ std::optional<EvalResult> Evaluator::eval_flat_prepare_visit(EvalFlatCursor& cur
         !eval_env.is_shared_top_env()) {
         for (int i = 0; i < tls_fast_i_n_5066; ++i) {
             FastISite& site = tls_fast_i_5066[i];
-            if (site.flat != f || site.node != current_id)
+            if (site.flat != f || site.node != current_id || site.flat_gen != f->generation())
                 continue;
             if (auto v = eval_fast_site_5066(top_bind_gen_,
                                              g_cell_store_gen_5066.load(std::memory_order_acquire),
@@ -12310,6 +12413,7 @@ Evaluator::eval_data_forms_apply(const types::EvalValue& data, const Env& env, a
                 }
                 // Create tail env and apply
                 Env tail_env = materialize_call_env(cl);
+                note_fresh_call_env_5066();
                 tail_env.set_primitives(&primitives_);
 
                 // Issue #145: set the pool so bind_symid can mirror
