@@ -3378,7 +3378,7 @@ static OneshotLaunch parse_oneshot_launch(int argc, char** argv) {
     };
     if (argc > 1) {
         for (int i = 1; i < argc; ++i) {
-            const std::string_view a(argv[i]);
+            std::string_view a(argv[i]);
             if (a == "--quiet") { // Issue #4912
                 quiet_4912 = true;
                 continue;
@@ -3452,7 +3452,20 @@ static OneshotLaunch parse_oneshot_launch(int argc, char** argv) {
             }
             if (a.starts_with("--worker-threads="))
                 continue;
-            if (a == "--health-port") {
+            // #5063: --load is a normal option. The dedicated path handles
+            // `aura --load FILE` (argv[1]). Flags before it used to make the
+            // oneshot parser call --load unknown.
+            if (a == "--load") {
+                if (i + 1 >= argc) {
+                    std::println(std::cerr, "error: --load requires a file argument");
+                    std::println(std::cerr, "hint: 'aura --help' for usage");
+                    out.status = 1;
+                    return out;
+                }
+                ++i;
+                a = argv[i];
+                // Fall through to the bare-path reader below.
+            } else if (a == "--health-port") {
                 if (i + 1 < argc)
                     ++i;
                 continue;
@@ -5714,10 +5727,16 @@ static CliPrep prepare_cli_runtime(int& argc, char** argv) {
         (void)health_atexit;
     }
 
-    if (argc > 1 && std::string_view(argv[1]) == "--health-server")
+    if (argc > 1 && std::string_view(argv[1]) == "--health-server") {
         prep.status = run_cli_health_server(argc, argv, health_port);
-    return prep;
+        return prep;
+    }
 
+    // #5063: this return used to be unconditional, so --worker-threads was
+    // never stripped and num_workers stayed 0. `aura --worker-threads N
+    // --load file` then fell through to the oneshot parser, which skipped
+    // the flag and rejected --load as unknown. serve-async / bench never
+    // saw an explicit worker count either.
     int wt_idx = parse_worker_threads();
     if (wt_idx >= 0) {
         // Shift remaining args to remove --worker-threads. Compact from the
