@@ -128,13 +128,13 @@ jobs:
 (define (step i cand)
   (let* ((live-value (guess))
          (src (format "(define (guess) ~a)" cand))
-         (snap (ast:snapshot (format "step-~a" i)))
+         (snap (mutate :snapshot (format "step-~a" i)))
          (ok (mutate:rebind "guess" src "evolve")))
     (eval-current)
     (if (and (eq? ok #t) (keep? live-value cand))
         (display (format "~a ~a~a   live ~a\n" i (pad "KEEP" 10) (pad src 19) (live)))
         (begin
-          (ast:restore snap)
+          (mutate :restore snap)
           (eval-current)
           (display (format "~a ~a~a   live ~a\n" i (pad "ROLLBACK" 10) (pad src 19) (live)))))))
 
