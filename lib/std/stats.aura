@@ -16,7 +16,14 @@
 ; tracked as future follow-up under the Issue #560 migration
 ; plan). The wrapper just routes by string name.
 
-(export get list contains? count prefix filter)
+; Names match the definitions below. The previous export list
+; (get list contains? …) named bindings this file never defines, so
+; require dropped stats:contains? and stats:filter and left the
+; documented stats:* names unbound (#5062).
+(export stats:get stats:list stats:contains? stats:count stats:prefix stats:filter)
+
+; member? is stdlib, not a primitive. Export stays above the require (#2769).
+(require "std/list" all:)
 
 ; ── Master registry (manually maintained for P0) ────────────────
 ; New stats primitives added to the engine should be appended

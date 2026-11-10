@@ -1,0 +1,48 @@
+; #5061: orch:parallel's timeout must interrupt a worker that only yields.
+; The old join order blocked on the worker, so the timer fiber never ran
+; and the call hung until an external kill.
+
+(require "std/orch" all:)
+
+(define fails 0)
+(define (expect cond name)
+  (if cond
+    #t
+    (begin
+      (set! fails (+ fails 1))
+      (display "FAIL-5061 ")
+      (display name)
+      (newline))))
+
+(define (hang x)
+  (let loop ((i 0))
+    (fiber:yield)
+    (loop (+ i 1))))
+
+(define t0 (monotonic-ms))
+(define hung (orch:parallel (list hang) 0 1))
+(define dt (- (monotonic-ms) t0))
+(expect (pair? hung) "timeout returns a result list")
+(expect (not (car hung)) "yielding worker is #f after timeout")
+(expect (and (> dt 500) (< dt 4000)) "timeout returns in about one second")
+
+(define t1 (monotonic-ms))
+(define fast (orch:parallel (list (lambda (x) (+ x 1))
+                                  (lambda (x) (+ x 2)))
+                            5 2))
+(define fast-dt (- (monotonic-ms) t1))
+(expect (equal? fast (list 6 7)) "finished workers keep spawn order")
+(expect (< fast-dt 1500) "a finished parallel call does not wait out the timeout")
+
+(define mixed (orch:parallel (list (lambda (x) (+ x 3)) hang) 1 1))
+(expect (equal? mixed (list 4 #f)) "a fast sibling is kept when another worker times out")
+
+(define errs (orch:parallel (list (lambda (x) (error "boom"))
+                                  (lambda (x) (+ x 1)))
+                            5))
+(expect (and (pair? errs) (eq? (car errs) 'error) (= (car (cdr errs)) 6))
+        "a raised worker does not drop its sibling")
+
+(if (= fails 0)
+  (begin (display "OK-5061") (newline))
+  (exit 1))
