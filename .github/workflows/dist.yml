@@ -51,7 +51,7 @@ jobs:
       - name: Build aura
         run: |
           git config --global --add safe.directory '*'
-          cmake -S . -B build -G Ninja -Wno-author -DCMAKE_BUILD_TYPE=Release "-DAURA_BUILD_VERSION=${VER#v}"
+          cmake -S . -B build -G Ninja -Wno-author -DCMAKE_BUILD_TYPE=Release "-DAURA_BUILD_VERSION=${VER#v}" "-DAURA_BUILD_GIT_SHA=${GITHUB_SHA}"
           ninja -C build -j3 aura
       - name: Test
         run: |
@@ -121,7 +121,7 @@ jobs:
               set -e; . /etc/os-release; echo "$PRETTY_NAME $(uname -m)"
               AURA_DOWNLOAD_BASE=/src/dist sh /src/install.sh
               a=$HOME/.local/bin/aura
-              $a --version | grep -Eq "^aura ${AURA_VERSION#v} \([0-9a-f]{9}\)$"
+              $a --version | grep -Eq "^aura ${AURA_VERSION#v} \([0-9a-f]{40}\)$"
               test "$($a /src/dist/smoke.aura)" = 3
               cd /tmp && $a new evolve demo && cd demo
               $a run > run.out && grep -q "^(guess) => 42$" run.out &&
@@ -131,7 +131,11 @@ jobs:
       - name: Runtime image
         run: |
           tag=$IMAGE:${GITHUB_SHA::9}-${{ matrix.arch }}
-          docker build -f scripts/docker/Dockerfile --build-arg BUNDLE=dist/aura-${VER#v}-linux-${{ matrix.arch }}.tar.gz -t "$tag" .
+          docker build -f scripts/docker/Dockerfile \
+            --build-arg BUNDLE=dist/aura-${VER#v}-linux-${{ matrix.arch }}.tar.gz \
+            --build-arg AURA_VERSION=${VER#v} \
+            --build-arg AURA_REVISION=${GITHUB_SHA} \
+            -t "$tag" .
           size=$(docker image inspect -f '{{.Size}}' "$tag")
           echo "image $tag: $((size / 1048576)) MB"
           test "$size" -lt 524288000

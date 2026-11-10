@@ -194,8 +194,18 @@ if(NOT DEFINED AURA_BUILD_VERSION)
         set(AURA_BUILD_VERSION "dev")
     endif()
 endif()
-execute_process(COMMAND git -C "${CMAKE_SOURCE_DIR}" rev-parse --short=9 HEAD
-    OUTPUT_VARIABLE AURA_BUILD_GIT_SHA OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+# #5067: prefer an explicit sha (release workflow sets AURA_GIT_SHA /
+# -DAURA_BUILD_GIT_SHA from GITHUB_SHA). git rev-parse in the release
+# container failed with "dubious ownership" and the package shipped
+# "commit unknown". Full hash, not a 9-char abbreviation.
+if(NOT DEFINED AURA_BUILD_GIT_SHA OR AURA_BUILD_GIT_SHA STREQUAL "")
+    if(DEFINED ENV{AURA_GIT_SHA} AND NOT "$ENV{AURA_GIT_SHA}" STREQUAL "")
+        set(AURA_BUILD_GIT_SHA "$ENV{AURA_GIT_SHA}")
+    else()
+        execute_process(COMMAND git -C "${CMAKE_SOURCE_DIR}" rev-parse HEAD
+            OUTPUT_VARIABLE AURA_BUILD_GIT_SHA OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    endif()
+endif()
 if(AURA_BUILD_GIT_SHA STREQUAL "")
     set(AURA_BUILD_GIT_SHA "unknown")
 endif()
