@@ -46,11 +46,7 @@ class ResolveGitSha(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 check=False,
-                env={
-                    k: v
-                    for k, v in os.environ.items()
-                    if k not in ("AURA_GIT_SHA", "GIT_DIR")
-                }
+                env={k: v for k, v in os.environ.items() if k not in ("AURA_GIT_SHA", "GIT_DIR")}
                 | {"AURA_REQUIRE_GIT_SHA": "1"},
             )
             self.assertNotEqual(r.returncode, 0)
