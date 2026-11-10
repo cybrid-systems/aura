@@ -71,7 +71,18 @@ def scan_registrations() -> list[Registration]:
         rel = path.relative_to(ROOT).as_posix()
         text = path.read_text(encoding="utf-8", errors="replace")
         if _registrar_add_tu(path):
-            found += [Registration(m.group(1), rel, "add") for m in FFI_ADD_RE.finditer(text)]
+            # `if (false) add("name"` is how v0.2.1 unregistered a primitive
+            # without deleting its body. clang-format puts add() on the next
+            # line; that line is not a live registration.
+            live_adds = []
+            for match in FFI_ADD_RE.finditer(text):
+                line_start = text.rfind("\n", 0, match.start()) + 1
+                prev_end = line_start - 1
+                prev_start = text.rfind("\n", 0, max(prev_end, 0)) + 1
+                if text[prev_start:prev_end].strip() == "if (false)":
+                    continue
+                live_adds.append(match)
+            found += [Registration(m.group(1), rel, "add") for m in live_adds]
             found += [Registration(m.group(1), rel, "register_prim") for m in REGISTER_PRIM_RE.finditer(text)]
             found += [Registration(m.group(1), rel, "add_mutate") for m in ADD_MUTATE_RE.finditer(text)]
         else:

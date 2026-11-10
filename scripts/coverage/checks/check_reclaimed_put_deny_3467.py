@@ -66,7 +66,7 @@ AGENT_PRIMS_REQUIRED: tuple[str, ...] = (
     # tree-settled / descendants-live blame fields.
     "tree_settled_now",
     "tree_settled()",
-    "if (scope == root)",
+    "if (scope == root && tree_settled_now)",
 )
 
 # Issue #3496: the live-fiber + both-pending-flag walk is tree_settled
