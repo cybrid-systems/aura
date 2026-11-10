@@ -37,6 +37,7 @@ module;
 #include "serve/metrics.h"
 #include "hash_meta.h"
 #include "basis_points.h"
+#include "metrics_intern_roots.hh" // #5065: interned engine:metrics keys are GC roots
 #include "serve/fiber.h"
 #include "serve/steal_safety.h"           // Issue #2929: StealInvariant counters / last reject bits
 #include "serve/runtime_production_abi.h" // Issue #2955 production ABI self-check counters
@@ -1913,6 +1914,130 @@ std::atomic<std::uint64_t> g_engine_metrics_force_hash_cap{0};
 std::atomic<std::uint64_t> g_query_hash_overflow_total{0};
 std::atomic<std::uint64_t> g_query_hash_force_cap{0};
 
+// #5065: field names and catalog names are stable. Minting one string per
+// key per snapshot was the whole cost of (engine:metrics) (~2350 heap-lock
+// round trips). Intern once per heap, and pin the slots (metrics_intern_roots)
+// so a reclaim cannot reuse them under the cache.
+struct MetricsInternTable {
+    const void* heap = nullptr;
+    std::uint64_t gen = ~0ull;
+    aura::core::TransparentStringMap<std::uint64_t> slots;
+    std::vector<std::int64_t> roots;
+    std::size_t names_count = 0;
+    std::int64_t names_head = 0;
+    bool names_ok = false;
+};
+std::mutex g_metrics_intern_mu;
+std::unordered_map<const void*, MetricsInternTable> g_metrics_intern;
+
+std::size_t collect_metrics_intern_roots(std::vector<std::int64_t>& out) {
+    std::lock_guard<std::mutex> lock(g_metrics_intern_mu);
+    std::size_t n = 0;
+    for (const auto& entry : g_metrics_intern) {
+        const auto& t = entry.second;
+        out.insert(out.end(), t.roots.begin(), t.roots.end());
+        n += t.roots.size();
+        if (t.names_ok) {
+            out.push_back(t.names_head);
+            ++n;
+        }
+    }
+    return n;
+}
+
+struct InstallMetricsInternRoots {
+    InstallMetricsInternRoots() { metrics_intern_roots::install(&collect_metrics_intern_roots); }
+};
+const InstallMetricsInternRoots g_install_metrics_intern_roots;
+
+bool metrics_intern_slot_is(Evaluator& ev, std::uint64_t slot, std::string_view key) {
+    auto& heap = ev.string_heap_mut();
+    if (slot >= heap.size())
+        return false;
+    if (auto* mu = heap.mutex()) {
+        std::lock_guard<std::recursive_mutex> lock(*mu);
+        return heap[slot] == key;
+    }
+    return heap[slot] == key;
+}
+
+std::uint64_t metrics_intern_key(Evaluator& ev, std::string_view key) {
+    auto& heap = ev.string_heap_mut();
+    const void* id = &heap;
+    const auto gen = heap.write_generation();
+    std::uint64_t cached = 0;
+    bool have_cached = false;
+    {
+        std::lock_guard<std::mutex> lock(g_metrics_intern_mu);
+        if (g_metrics_intern.size() > 8)
+            g_metrics_intern.clear();
+        auto& t = g_metrics_intern[id];
+        if (t.heap != id || t.gen != gen) {
+            t = MetricsInternTable{};
+            t.heap = id;
+            t.gen = gen;
+        } else if (auto it = t.slots.find(key); it != t.slots.end()) {
+            cached = it->second;
+            have_cached = true;
+        }
+    }
+    // Heap lock is the GC lock. Take it only while the intern mutex is not held.
+    if (have_cached && metrics_intern_slot_is(ev, cached, key))
+        return cached;
+    if (have_cached) {
+        std::lock_guard<std::mutex> lock(g_metrics_intern_mu);
+        auto& live = g_metrics_intern[id];
+        if (live.gen == gen)
+            live.slots.erase(std::string(key));
+    }
+    const auto slot = heap.mint(std::string(key));
+    const auto bits = make_string(slot).val;
+    std::lock_guard<std::mutex> lock(g_metrics_intern_mu);
+    auto& t = g_metrics_intern[id];
+    if (t.heap != id || t.gen != gen) {
+        t = MetricsInternTable{};
+        t.heap = id;
+        t.gen = gen;
+    }
+    t.slots.insert_or_assign(std::string(key), slot);
+    t.roots.push_back(bits);
+    return slot;
+}
+
+// The stats-names list is the same shape until the catalog grows. Building
+// it is hundreds of pairs; keep the head rooted with the intern table.
+EvalValue metrics_cached_names(Evaluator& ev, const std::vector<std::string>& stats) {
+    auto& heap = ev.string_heap_mut();
+    const void* id = &heap;
+    const auto gen = heap.write_generation();
+    {
+        std::lock_guard<std::mutex> lock(g_metrics_intern_mu);
+        if (const auto it = g_metrics_intern.find(id); it != g_metrics_intern.end()) {
+            const auto& t = it->second;
+            if (t.gen == gen && t.names_ok && t.names_count == stats.size()) {
+                EvalValue head;
+                head.val = t.names_head;
+                return head;
+            }
+        }
+    }
+    EvalValue result = make_void();
+    for (auto it = stats.rbegin(); it != stats.rend(); ++it) {
+        const auto sidx = metrics_intern_key(ev, *it);
+        const auto pid = ev.pairs().size();
+        ev.pairs().push_back({make_string(sidx), result});
+        result = make_pair(pid);
+    }
+    std::lock_guard<std::mutex> lock(g_metrics_intern_mu);
+    auto& t = g_metrics_intern[id];
+    if (t.heap == id && t.gen == gen) {
+        t.names_count = stats.size();
+        t.names_head = result.val;
+        t.names_ok = true;
+    }
+    return result;
+}
+
 // Issue #3018: insert one k/v into an unpublished FlatHashTable.
 // Returns false on probe exhaustion (table full / collisions).
 static bool engine_metrics_hash_try_insert(FlatHashTable* ht, Evaluator& ev, std::string_view k,
@@ -1927,8 +2052,7 @@ static bool engine_metrics_hash_try_insert(FlatHashTable* ht, Evaluator& ev, std
     auto keys = ht->keys();
     auto vals = ht->values();
     const auto hcap = ht->capacity;
-    auto& sh = ev.string_heap_mut();
-    const auto kidx = sh.mint(std::string(k));
+    const auto kidx = metrics_intern_key(ev, k);
     const EvalValue key_ev = make_string(kidx);
     for (std::size_t at = 0; at < hcap; ++at) {
         const auto idx = ((h >> 1) + at) & (hcap - 1);
@@ -1983,9 +2107,8 @@ static void engine_metrics_hash_force_overflow_sentinel(FlatHashTable* ht, Evalu
 // stamp overflow=1, bump engine_metrics_hash_overflow_total.
 // never FlatHashTable::destroy + return void for capacity alone.
 // create() failure (OOM) still returns void.
-static EvalValue build_engine_metrics_hash(Evaluator& ev,
-                                           std::span<const std::pair<std::string, EvalValue>> kv) {
-    std::uint64_t need = static_cast<std::uint64_t>(kv.size()) * 2 + 8;
+template <class Range> static EvalValue build_engine_metrics_hash(Evaluator& ev, const Range& kv) {
+    std::uint64_t need = static_cast<std::uint64_t>(std::size(kv)) * 2 + 8;
     std::uint64_t cap = 16;
     while (cap < need && cap < (1ull << 63))
         cap <<= 1;
@@ -2060,7 +2183,7 @@ void register_metrics_facade_engine_metrics(PrimRegistrar add, Evaluator& ev) {
     // Issue #1433 / P1a: (engine:metrics [name | :all | :prefix s | :group g])
     // Issue #3018: build_hash fail-soft on insert miss (never void for capacity).
     add("engine:metrics", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
+        auto build_hash = [&](const auto& kv) -> EvalValue {
             return build_engine_metrics_hash(ev, kv);
         };
 
@@ -2091,54 +2214,71 @@ void register_metrics_facade_engine_metrics(PrimRegistrar add, Evaluator& ev) {
 
         const auto& stats = ObservabilityPrims::stats_primitives();
 
-        // Collect CompilerMetrics atomics into group maps (Issue #1433).
-        auto dump_metric_groups = [&](CompilerMetrics* m)
-            -> std::unordered_map<std::string, std::vector<std::pair<std::string, EvalValue>>,
-                                  aura::core::TransparentStringHash, std::equal_to<>> {
-            std::unordered_map<std::string, std::vector<std::pair<std::string, EvalValue>>,
-                               aura::core::TransparentStringHash, std::equal_to<>>
-                groups;
+        // #5065: group membership is fixed. Building an unordered_map of
+        // 2350 freshly allocated field-name strings on every snapshot was
+        // the cost. The table is filled once; each call only loads atomics.
+        struct MetricsFieldLoad {
+            const char* name;
+            std::int64_t (*load)(const CompilerMetrics*);
+        };
+        static const auto kFieldsByGroup = [] {
+            static const char* kOrder[] = {"compile", "jit", "mutate", "query",
+                                           "arena",   "gc",  "eval",   "telemetry"};
+            auto index_of = [](const char* group) {
+                for (int i = 0; i < 8; ++i)
+                    if (std::string_view(kOrder[i]) == group)
+                        return i;
+                return 7;
+            };
+            std::array<std::vector<MetricsFieldLoad>, 8> table;
+#define AURA_COMPILER_METRICS_FIELD(name)                                                          \
+    table[index_of(metrics_group_for_field(#name))].push_back(                                     \
+        {#name, [](const CompilerMetrics* m) -> std::int64_t {                                     \
+             return static_cast<std::int64_t>(m->name.load(std::memory_order_relaxed));            \
+         }});
+#include "compiler_metrics_fields.inc"
+#undef AURA_COMPILER_METRICS_FIELD
+            return table;
+        }();
+
+        struct MetricsGroupDump {
+            const char* name;
+            std::vector<std::pair<std::string_view, EvalValue>> fields;
+        };
+        auto dump_metric_groups = [&](CompilerMetrics* m) -> std::array<MetricsGroupDump, 8> {
+            static const char* kOrder[] = {"compile", "jit", "mutate", "query",
+                                           "arena",   "gc",  "eval",   "telemetry"};
+            std::array<MetricsGroupDump, 8> groups{};
+            for (int i = 0; i < 8; ++i)
+                groups[static_cast<std::size_t>(i)].name = kOrder[i];
             if (!m)
                 return groups;
             if (auto* svc = static_cast<CompilerService*>(ev.compiler_service()))
                 svc->refresh_env_arena_metrics(*m);
-#define AURA_COMPILER_METRICS_FIELD(name)                                                          \
-    groups[metrics_group_for_field(#name)].emplace_back(                                           \
-        #name, make_int(static_cast<std::int64_t>(m->name.load(std::memory_order_relaxed))));
-#include "compiler_metrics_fields.inc"
-            // Issue #3779: Agent-visible steal_complete_total SSOT is process-wide
-            // gc_hooks (query hashes already read it; AdaptiveStealStats mirrors).
-            // Overlay :group / :prefix dump so a lagged per-eval CompilerMetrics
-            // mirror cannot disagree with the process face. No new key; field
-            // name unchanged (append-only .inc retained). Soft/Off unchanged.
-            {
-                auto it = groups.find("telemetry");
-                if (it != groups.end()) {
-                    for (auto& [fname, val] : it->second) {
-                        if (fname == "steal_complete_total") {
-                            val = make_int(
-                                static_cast<std::int64_t>(aura::gc_hooks::steal_complete_total()));
-                            break;
-                        }
-                    }
+            for (int i = 0; i < 8; ++i) {
+                auto& dst = groups[static_cast<std::size_t>(i)].fields;
+                const auto& src = kFieldsByGroup[static_cast<std::size_t>(i)];
+                dst.reserve(src.size());
+                for (const auto& field : src) {
+                    auto val = make_int(field.load(m));
+                    // Issue #3779: steal_complete_total SSOT is process-wide.
+                    if (std::string_view(field.name) == "steal_complete_total")
+                        val = make_int(
+                            static_cast<std::int64_t>(aura::gc_hooks::steal_complete_total()));
+                    dst.emplace_back(field.name, val);
                 }
             }
             return groups;
         };
 
-        auto groups_to_nested =
-            [&](std::unordered_map<std::string, std::vector<std::pair<std::string, EvalValue>>,
-                                   aura::core::TransparentStringHash, std::equal_to<>>& groups)
+        auto groups_to_nested = [&](std::array<MetricsGroupDump, 8>& groups)
             -> std::vector<std::pair<std::string, EvalValue>> {
-            static const char* kOrder[] = {"compile", "jit", "mutate", "query",
-                                           "arena",   "gc",  "eval",   "telemetry"};
             std::vector<std::pair<std::string, EvalValue>> out;
             out.reserve(8);
-            for (const char* g : kOrder) {
-                auto it = groups.find(g);
-                if (it == groups.end() || it->second.empty())
+            for (auto& group : groups) {
+                if (group.fields.empty())
                     continue;
-                out.emplace_back(g, build_hash(it->second));
+                out.emplace_back(group.name, build_hash(group.fields));
             }
             return out;
         };
@@ -2232,12 +2372,11 @@ void register_metrics_facade_engine_metrics(PrimRegistrar add, Evaluator& ev) {
                 }
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                     auto groups = dump_metric_groups(m);
-                    for (auto& [g, fields] : groups) {
-                        (void)g;
-                        for (auto& [fname, val] : fields) {
+                    for (auto& group : groups) {
+                        for (auto& [fname, val] : group.fields) {
                             if (fname.size() >= field_pfx.size() &&
                                 fname.compare(0, field_pfx.size(), field_pfx) == 0)
-                                kv.push_back({fname, val});
+                                kv.push_back({std::string(fname), val});
                         }
                     }
                 }
@@ -2251,12 +2390,11 @@ void register_metrics_facade_engine_metrics(PrimRegistrar add, Evaluator& ev) {
                     return make_void();
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
                 auto groups = dump_metric_groups(m);
-                auto it = groups.find(group);
-                if (it == groups.end()) {
-                    // Empty group hash still valid
-                    return build_hash(std::span<const std::pair<std::string, EvalValue>>{});
+                for (auto& one : groups) {
+                    if (one.name == group)
+                        return build_hash(one.fields);
                 }
-                return build_hash(it->second);
+                return build_hash(std::span<const std::pair<std::string, EvalValue>>{});
             }
         }
 
@@ -2265,27 +2403,18 @@ void register_metrics_facade_engine_metrics(PrimRegistrar add, Evaluator& ev) {
         std::vector<std::pair<std::string, EvalValue>> kv;
         kv.push_back({"schema", make_int(2)});
         kv.push_back({"stats-count", make_int(static_cast<std::int64_t>(stats.size()))});
-        // Issue #3531: runtime catalog sentinels on the existing facade.
-        kv.push_back({"schema-3531", make_int(3531)});
-        kv.push_back({"issue-3531", make_int(3531)});
+        // #5065: issue-3531 / schema-3531 are development stamps. They stay
+        // on the not-found hash and on stats:drift-check. The default
+        // snapshot is the diagnostic view agents actually read.
         kv.push_back({"catalog-runtime-wired", make_int(1)});
-        {
-            EvalValue names_list = make_void();
-            for (auto it = stats.rbegin(); it != stats.rend(); ++it) {
-                auto sidx = ev.string_heap_mut().mint(*it);
-                auto pid = ev.pairs().size();
-                ev.pairs().push_back({make_string(sidx), names_list});
-                names_list = make_pair(pid);
-            }
-            kv.push_back({"stats-names", names_list});
-        }
+        kv.push_back({"stats-names", metrics_cached_names(ev, stats)});
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             auto groups = dump_metric_groups(m);
             auto nested = groups_to_nested(groups);
             // Total atomic field count for golden tests (≥200).
             std::int64_t field_total = 0;
-            for (auto& [g, fields] : groups)
-                field_total += static_cast<std::int64_t>(fields.size());
+            for (auto& group : groups)
+                field_total += static_cast<std::int64_t>(group.fields.size());
             kv.push_back({"metrics-field-count", make_int(field_total)});
             for (auto& p : nested)
                 kv.push_back(std::move(p));
