@@ -2110,7 +2110,12 @@ static void ac4428_string_fill_and_closure_value() {
     const auto cfpos = mem_src.find("\"mw:closure-free\"");
     CHECK(cfpos != std::string::npos, "4428: closure:free! body located");
     if (cfpos != std::string::npos) {
-        const auto win = mem_src.substr(cfpos, 1600);
+        // Bound the window structurally: the body of the registration
+        // function that owns this prim, not a fixed character budget that
+        // rots as soon as the body grows (#4036 added the Mutate choke).
+        const auto fn_end = mem_src.find("\n}", cfpos);
+        const auto win = mem_src.substr(cfpos, fn_end == std::string::npos ? mem_src.size() - cfpos
+                                                                           : fn_end - cfpos);
         CHECK(win.find("aura_free_closure_checked") != std::string::npos,
               "4428: int path still uses aura_free_closure_checked");
         CHECK(win.find("tw_closure_tenant_allows") != std::string::npos,
