@@ -585,8 +585,15 @@ static int usage(const char* argv0) {
                  argv0);
     std::println(std::cerr, "       {} evo report --html DIR [--all] [--run ID|last] [--log FILE]",
                  argv0);
-    std::println(std::cerr, "note: --front keeps the candidates non-dominated on the first two "
-                            "objectives (min/min); report adds Pareto, HV, QD, lineage");
+    std::println(std::cerr,
+                 "note: --lineage ID accepts a record id (<run>#<seq>), the #<seq> suffix,");
+    std::println(std::cerr,
+                 "      or a candidate name (v2 \"candidate\" member or the target column).");
+    std::println(std::cerr,
+                 "      An unknown id is an error. --front keeps candidates non-dominated");
+    std::println(
+        std::cerr,
+        "      on the first two objectives (min/min); report adds Pareto, HV, QD, lineage");
     std::println(std::cerr,
                  "hint: records come from AURA_EVO_LOG (aura run in a project defaults it to "
                  ".aura/evo/log.jsonl); see docs/evo.md");
@@ -654,37 +661,127 @@ static std::vector<J> front_filter(const std::vector<J>& recs) {
     return out;
 }
 
-// The ancestor chain of one candidate: walk "parent" to the root, then keep
+// Record ids are "<run>#<seq>". A bare "#<seq>" suffix is the short form
+// `aura evo log` prints. Candidate names live in the v2 "candidate" member
+// and, for std/evo-core, in "target".
+static bool id_suffix_eq(const std::string& id, const std::string& target) {
+    const auto h = id.rfind('#');
+    return h != std::string::npos && id.substr(h + 1) == target;
+}
+
+// A record id, its #<seq> suffix, or a candidate name. Record ids win so
+// "--lineage 3" stays the third record even if some candidate is also named
+// "3". A candidate name that labels several records (SCORED then KEEP)
+// resolves to the latest one, which is the end of that candidate's chain.
+static std::string find_record_id(const std::vector<J>& recs, const std::string& target) {
+    if (target.empty())
+        return {};
+    for (const auto& r : recs) {
+        const std::string id = r.str("id");
+        if (id == target || id_suffix_eq(id, target))
+            return id;
+    }
+    std::string by_name;
+    for (const auto& r : recs) {
+        const std::string id = r.str("id");
+        if (id.empty())
+            continue;
+        if (r.str("candidate") == target || r.str("target") == target)
+            by_name = id;
+    }
+    return by_name;
+}
+
+// `parent` is a record id on new logs. Older std/evo-core logs (and the v2
+// `parents` list) store a candidate id; map that onto the earliest record
+// that carries the name. Empty when nothing in the log matches.
+static std::string resolve_parent_record(const std::vector<J>& recs, const std::string& parent) {
+    if (parent.empty())
+        return {};
+    for (const auto& r : recs)
+        if (r.str("id") == parent)
+            return parent;
+    for (const auto& r : recs) {
+        const std::string id = r.str("id");
+        if (!id.empty() && (r.str("candidate") == parent || r.str("target") == parent))
+            return id;
+    }
+    return {};
+}
+
+// The ancestor chain of one record: walk "parent" to the root, then keep
 // the records whose id is on the chain (oldest first).
 static std::vector<J> lineage_filter(const std::vector<J>& recs, const std::string& target) {
-    auto matches = [&](const std::string& id) {
-        if (id == target)
-            return true;
-        const auto h = id.rfind('#');
-        return h != std::string::npos && id.substr(h + 1) == target;
-    };
-    std::string cur;
-    for (const auto& r : recs)
-        if (matches(r.str("id"))) {
-            cur = r.str("id");
-            break;
-        }
+    std::string cur = find_record_id(recs, target);
     std::vector<std::string> chain;
     std::size_t guard = 0;
     while (!cur.empty() && guard++ <= recs.size() + 1) {
         chain.push_back(cur);
-        std::string next;
+        std::string raw;
         for (const auto& r : recs)
             if (r.str("id") == cur) {
-                next = r.str("parent");
+                raw = r.str("parent");
                 break;
             }
+        const std::string next = resolve_parent_record(recs, raw);
+        if (next.empty() || next == cur)
+            break;
         cur = next;
     }
     std::vector<J> out;
     for (const auto& r : recs)
         if (std::find(chain.begin(), chain.end(), r.str("id")) != chain.end())
             out.push_back(r);
+    return out;
+}
+
+// Every decision that occurs, so the header sums to the record count.
+// PROPOSE / SCORED lead; KEEP and ROLLBACK are always shown (even at 0).
+static std::string decision_breakdown(const std::vector<J>& recs, const std::string& run,
+                                      bool only_user, std::size_t& n_out) {
+    std::vector<std::pair<std::string, std::size_t>> counts;
+    auto add = [&](const std::string& name) {
+        for (auto& c : counts)
+            if (c.first == name) {
+                ++c.second;
+                return;
+            }
+        counts.emplace_back(name, 1);
+    };
+    std::size_t n = 0;
+    for (const auto& x : recs) {
+        if (x.str("run") != run || (only_user && x.str("kind") != "record"))
+            continue;
+        ++n;
+        add(x.str("decision"));
+    }
+    n_out = n;
+    constexpr std::size_t kTaken = static_cast<std::size_t>(-1);
+    auto take = [&](const std::string& name) -> std::size_t {
+        for (auto& c : counts)
+            if (c.first == name) {
+                const std::size_t v = c.second;
+                c.second = kTaken;
+                return v;
+            }
+        return 0;
+    };
+    std::string out;
+    auto append = [&](const std::string& name, std::size_t v, bool always) {
+        if (!always && v == 0)
+            return;
+        if (!out.empty())
+            out += ", ";
+        out += std::to_string(v);
+        out += ' ';
+        out += name.empty() ? "(blank)" : name;
+    };
+    const std::string preferred[] = {"PROPOSE", "SCORED", "KEEP", "ROLLBACK"};
+    for (const auto& name : preferred)
+        append(name, take(name), name == "KEEP" || name == "ROLLBACK");
+    for (const auto& c : counts)
+        if (c.second != kTaken && c.second > 0)
+            append(c.first, c.second, true);
     return out;
 }
 
@@ -706,16 +803,10 @@ static int cmd_log(const std::vector<J>& recs, bool as_json) {
         const auto& r = recs[k];
         if (r.str("run") != run) {
             run = r.str("run");
-            std::size_t keep = 0, rb = 0, n = 0;
+            std::size_t n = 0;
             const bool only_user = user_verdicts(recs, &run);
-            for (const auto& x : recs) {
-                if (x.str("run") != run || (only_user && x.str("kind") != "record"))
-                    continue;
-                ++n;
-                keep += x.str("decision") == "KEEP";
-                rb += x.str("decision") == "ROLLBACK";
-            }
-            std::println("run {}  ({} candidates: {} KEEP, {} ROLLBACK)", run, n, keep, rb);
+            const std::string breakdown = decision_breakdown(recs, run, only_user, n);
+            std::println("run {}  ({} records: {})", run, n, breakdown);
         }
         const std::string parent = r.str("parent").empty() ? "-" : short_id(r.str("parent"));
         std::println("  {:<5} {:<8} {:<16} {:<20} {:>9.3f}ms  parent {}", short_id(r.str("id")),
@@ -850,6 +941,14 @@ struct LNode {
     std::string parent;
     std::vector<std::string> parents;
     std::string decision;
+    std::string name; // v2 candidate, else target — the name a user copies
+};
+
+struct LineageArt {
+    std::string svg;
+    std::size_t nodes = 0;
+    std::size_t edges = 0;
+    std::size_t unresolved = 0;
 };
 
 // Depth of each node from its parent chain (roots at 0). Records are written
@@ -863,15 +962,29 @@ static std::size_t node_at(const std::vector<std::pair<std::string, std::size_t>
     return static_cast<std::size_t>(-1);
 }
 
-static std::size_t node_depth(const std::vector<LNode>& ns,
-                              const std::vector<std::pair<std::string, std::size_t>>& idx,
-                              std::size_t i) {
+// Record id first, then the candidate/target name. The first record that
+// introduces a name wins, so a parent edge lands on that candidate.
+static std::size_t
+resolve_lineage_node(const std::vector<std::pair<std::string, std::size_t>>& by_id,
+                     const std::vector<std::pair<std::string, std::size_t>>& by_name,
+                     const std::string& id) {
+    if (id.empty())
+        return static_cast<std::size_t>(-1);
+    const std::size_t at = node_at(by_id, id);
+    if (at != static_cast<std::size_t>(-1))
+        return at;
+    return node_at(by_name, id);
+}
+
+static std::size_t node_depth_resolved(
+    const std::vector<LNode>& ns, const std::vector<std::pair<std::string, std::size_t>>& by_id,
+    const std::vector<std::pair<std::string, std::size_t>>& by_name, std::size_t i) {
     std::size_t d = 0;
     std::string cur = ns[i].parent;
     std::size_t guard = 0;
     while (!cur.empty() && guard++ <= ns.size()) {
-        const std::size_t at = node_at(idx, cur);
-        if (at == static_cast<std::size_t>(-1))
+        const std::size_t at = resolve_lineage_node(by_id, by_name, cur);
+        if (at == static_cast<std::size_t>(-1) || at == i)
             break;
         cur = ns[at].parent;
         ++d;
@@ -879,17 +992,22 @@ static std::size_t node_depth(const std::vector<LNode>& ns,
     return d;
 }
 
-static std::string lineage_svg(const std::vector<LNode>& ns, std::size_t& drawn) {
+static LineageArt lineage_svg(const std::vector<LNode>& ns) {
+    LineageArt art;
     if (ns.empty())
-        return {};
-    std::vector<std::pair<std::string, std::size_t>> idx;
-    idx.reserve(ns.size());
-    for (std::size_t i = 0; i < ns.size(); ++i)
-        idx.emplace_back(ns[i].id, i);
+        return art;
+    std::vector<std::pair<std::string, std::size_t>> by_id;
+    std::vector<std::pair<std::string, std::size_t>> by_name;
+    by_id.reserve(ns.size());
+    for (std::size_t i = 0; i < ns.size(); ++i) {
+        by_id.emplace_back(ns[i].id, i);
+        if (!ns[i].name.empty() && node_at(by_name, ns[i].name) == static_cast<std::size_t>(-1))
+            by_name.emplace_back(ns[i].name, i);
+    }
     std::vector<std::size_t> depth(ns.size());
     std::size_t maxd = 0;
     for (std::size_t i = 0; i < ns.size(); ++i) {
-        depth[i] = node_depth(ns, idx, i);
+        depth[i] = node_depth_resolved(ns, by_id, by_name, i);
         maxd = std::max(maxd, depth[i]);
     }
     std::vector<std::size_t> per_layer(maxd + 1, 0);
@@ -912,24 +1030,31 @@ static std::string lineage_svg(const std::vector<LNode>& ns, std::size_t& drawn)
                     "aria-label=\"lineage tree\">",
                     W, H, W, H);
     svg += std::format("<rect x=\"0\" y=\"0\" width=\"{0}\" height=\"{1}\" fill=\"#fff\"/>", W, H);
-    drawn = 0;
+    std::vector<std::pair<std::size_t, std::size_t>> drawn_edges;
     for (std::size_t i = 0; i < ns.size(); ++i) {
         const auto edge = [&](const std::string& pid) {
-            const std::size_t at = node_at(idx, pid);
-            if (at == static_cast<std::size_t>(-1))
+            if (pid.empty())
                 return;
+            const std::size_t at = resolve_lineage_node(by_id, by_name, pid);
+            if (at == static_cast<std::size_t>(-1) || at == i) {
+                ++art.unresolved;
+                return;
+            }
+            for (const auto& e : drawn_edges)
+                if (e.first == at && e.second == i)
+                    return;
+            drawn_edges.emplace_back(at, i);
             svg += std::format("<line x1=\"{:.1f}\" y1=\"{:.1f}\" x2=\"{:.1f}\" y2=\"{:.1f}\" "
                                "stroke=\"#bbb\"/>",
                                pos[at].first, pos[at].second, pos[i].first, pos[i].second);
         };
-        if (!ns[i].parent.empty())
-            edge(ns[i].parent);
+        edge(ns[i].parent);
         for (const auto& p : ns[i].parents)
-            if (p != ns[i].parent)
-                edge(p);
+            edge(p);
     }
+    art.edges = drawn_edges.size();
     for (std::size_t i = 0; i < ns.size(); ++i) {
-        ++drawn;
+        ++art.nodes;
         svg += std::format("<circle cx=\"{:.1f}\" cy=\"{:.1f}\" r=\"4\" class=\"{}\" "
                            "fill=\"{}\"><title>{} {}</title></circle>",
                            pos[i].first, pos[i].second, ns[i].decision == "KEEP" ? "k" : "r",
@@ -937,7 +1062,8 @@ static std::string lineage_svg(const std::vector<LNode>& ns, std::size_t& drawn)
                            html_escape(short_id(ns[i].id)), html_escape(ns[i].decision));
     }
     svg += "</svg>";
-    return svg;
+    art.svg = std::move(svg);
+    return art;
 }
 
 static int cmd_report(const std::vector<J>& recs, const std::filesystem::path& dir,
@@ -1025,14 +1151,25 @@ static int cmd_report(const std::vector<J>& recs, const std::filesystem::path& d
         n.id = r.str("id");
         n.parent = r.str("parent");
         n.decision = r.str("decision");
+        n.name = r.str("candidate");
+        if (n.name.empty())
+            n.name = r.str("target");
         if (const J* ps = r.get("parents"); ps && ps->t == J::T::Arr)
             for (const auto& p : ps->arr)
                 if (p.t == J::T::Str && !p.s.empty())
                     n.parents.push_back(p.s);
         nodes.push_back(std::move(n));
     }
-    std::size_t lineage_nodes = 0;
-    const std::string lineage_svg_text = lineage_svg(nodes, lineage_nodes);
+    const LineageArt lineage = lineage_svg(nodes);
+    const std::string& lineage_svg_text = lineage.svg;
+    const std::size_t lineage_nodes = lineage.nodes;
+    const std::size_t lineage_edges = lineage.edges;
+    const std::size_t lineage_unresolved = lineage.unresolved;
+    if (lineage_unresolved > 0)
+        std::println(std::cerr,
+                     "warning: lineage: {} parent link(s) did not resolve to a record id or a "
+                     "candidate name in {}",
+                     lineage_unresolved, log_path.string());
     // Objective space: scatter (first two numeric objectives) and the
     // cumulative hypervolume curve of the front after each measurement.
     std::vector<ObjPt> opts;
@@ -1143,8 +1280,14 @@ static int cmd_report(const std::vector<J>& recs, const std::filesystem::path& d
         h += std::format("<h2>QD map</h2><p>{} cells filled · {} evaluated candidates</p>",
                          qd_filled, cells.size()) +
              qd_svg;
-    if (!lineage_svg_text.empty())
-        h += std::format("<h2>Lineage</h2><p>{} nodes</p>", lineage_nodes) + lineage_svg_text;
+    if (!lineage_svg_text.empty()) {
+        h += std::format("<h2>Lineage</h2><p>{} nodes, {} edges", lineage_nodes, lineage_edges);
+        if (lineage_unresolved > 0)
+            h += std::format(", <span class=\"ROLLBACK\">{} unresolved parent link(s)</span>",
+                             lineage_unresolved);
+        h += "</p>";
+        h += lineage_svg_text;
+    }
     if (!surrogate_rows.empty()) {
         h += std::format("<h2>Surrogate pre-screen</h2><p>{} record(s)</p>"
                          "<table><tr><th>id</th><th>decision</th><th>reason</th>"
@@ -1301,8 +1444,22 @@ static int aura_evo_4910(int argc, char** argv) {
                 shown.push_back(std::move(r));
         recs = std::move(shown);
     }
-    if (!lineage_id.empty())
-        recs = lineage_filter(recs, lineage_id);
+    if (!lineage_id.empty()) {
+        if (!recs.empty()) {
+            auto filtered = lineage_filter(recs, lineage_id);
+            if (filtered.empty()) {
+                const std::string example = recs.front().str("id");
+                std::println(std::cerr,
+                             "error: no record with id '{}' in {}; ids are record ids like {}, "
+                             "the #<seq> suffix, or a candidate name (v2 \"candidate\" member or "
+                             "the target column)",
+                             lineage_id, log_path.string(),
+                             example.empty() ? std::string("<run>#<seq>") : example);
+                return 1;
+            }
+            recs = std::move(filtered);
+        }
+    }
     if (front)
         recs = front_filter(recs);
     if (sub == "log")

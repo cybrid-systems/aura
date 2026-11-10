@@ -1101,8 +1101,11 @@ inline constexpr SubHelp4935 kSubHelp4935[] = {
      "[--lineage ID]\n"
      "       aura evo report --html DIR\n"
      "\n"
-     "  log --front      only the non-dominated candidates (first two objectives)\n"
-     "  log --lineage ID  the parent chain of one candidate\n"
+     "  log --front       only the non-dominated candidates (first two objectives)\n"
+     "  log --lineage ID  ancestor chain of one record, root -> ID\n"
+     "                    ID is a record id (<run>#<seq>), the #<seq> suffix,\n"
+     "                    or a candidate name (v2 \"candidate\" or the target column).\n"
+     "                    An unknown id is an error when the log has records.\n"
      "  report            score curve, Pareto scatter, HV curve, QD heat map,\n"
      "                    lineage tree, candidate folds, surrogate pre-screen\n"},
     {"lsp", "language server on stdio (see docs/editor.md)", "usage: aura lsp\n"},
