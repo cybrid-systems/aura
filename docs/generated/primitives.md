@@ -6,7 +6,7 @@
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 463 · **stdlib-candidate** 86 · **delete** 5
+**kernel** 467 · **stdlib-candidate** 86 · **delete** 1
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
@@ -184,7 +184,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `cddr` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
 - `cdr` *[core]* `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
 - `ceil` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
-- `ceiling` *[core]* `delete` — `src/compiler/evaluator_primitives_math.cpp`
+- `ceiling` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `char->integer` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `char-alphabetic?` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
 - `char-downcase` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_core.cpp`
@@ -221,7 +221,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `eval` *[core]* `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
 - `eval-expr` *[core]* `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
 - `evolve-strategy` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `exact` *[core]* `delete` — `src/compiler/evaluator_primitives_math.cpp`
+- `exact` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `exact->inexact` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `exact?` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `exit` *[core]* `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
@@ -273,7 +273,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `immutable-hash` *[core]* `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
 - `immutable-hash?` *[core]* `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
 - `import` *[core]* `kernel` — `src/compiler/evaluator_primitives_module.cpp`
-- `inexact` *[core]* `delete` — `src/compiler/evaluator_primitives_math.cpp`
+- `inexact` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `inexact->exact` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `inexact?` *[core]* `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `integer->char` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -404,7 +404,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `take` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
 - `tan` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `trunc` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
-- `truncate` *[core]* `delete` — `src/compiler/evaluator_primitives_math.cpp`
+- `truncate` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `type-of` *[core]* `kernel` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `type-registry-compact` *[core]* `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
 - `type?` *[core]* `kernel` — `src/compiler/evaluator_primitives_reflect.cpp`
@@ -781,7 +781,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `cddr` `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
 - `cdr` `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
 - `ceil` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
-- `ceiling` `delete` — `src/compiler/evaluator_primitives_math.cpp`
+- `ceiling` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `channel:close` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `channel:create` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `channel:recv` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -828,7 +828,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `evo:log-path` `kernel` — `src/compiler/evaluator_primitives_json.cpp`
 - `evo:record!` `kernel` — `src/compiler/evaluator_primitives_json.cpp`
 - `evolve-strategy` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `exact` `delete` — `src/compiler/evaluator_primitives_math.cpp`
+- `exact` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `exact->inexact` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `exact?` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `exit` `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
@@ -885,7 +885,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `immutable-hash` `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
 - `immutable-hash?` `kernel` — `src/compiler/evaluator_primitives_vector.cpp`
 - `import` `kernel` — `src/compiler/evaluator_primitives_module.cpp`
-- `inexact` `delete` — `src/compiler/evaluator_primitives_math.cpp`
+- `inexact` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `inexact->exact` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `inexact?` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
 - `integer->char` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -1148,7 +1148,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `take` `stdlib-candidate` — `src/compiler/evaluator_primitives_list.cpp`
 - `tan` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `trunc` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
-- `truncate` `delete` — `src/compiler/evaluator_primitives_math.cpp`
+- `truncate` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `type-of` `kernel` — `src/compiler/evaluator_primitives_reflect.cpp`
 - `type-registry-compact` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
 - `type:set-gradual-permissiveness` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
@@ -1230,7 +1230,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (463)
+### kernel (467)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1291,6 +1291,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `car` *[K-VAL]* — `src/compiler/evaluator_primitives_builtins.cpp`
 - `cdr` *[K-VAL]* — `src/compiler/evaluator_primitives_builtins.cpp`
 - `ceil` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
+- `ceiling` *[K-R7RS]* — `src/compiler/evaluator_primitives_math.cpp`
 - `channel:close` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `channel:create` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `channel:recv` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1327,6 +1328,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `evo:log-path` *[K-IO]* — `src/compiler/evaluator_primitives_json.cpp`
 - `evo:record!` *[K-IO]* — `src/compiler/evaluator_primitives_json.cpp`
 - `evolve-strategy` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `exact` *[K-R7RS]* — `src/compiler/evaluator_primitives_math.cpp`
 - `exact->inexact` *[K-VAL]* — `src/compiler/evaluator_primitives_math.cpp`
 - `exact?` *[K-VAL]* — `src/compiler/evaluator_primitives_core.cpp`
 - `exit` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
@@ -1366,6 +1368,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `immutable-hash` *[K-VAL]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `immutable-hash?` *[K-VAL]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `import` *[K-ENGINE]* — `src/compiler/evaluator_primitives_module.cpp`
+- `inexact` *[K-R7RS]* — `src/compiler/evaluator_primitives_math.cpp`
 - `inexact->exact` *[K-VAL]* — `src/compiler/evaluator_primitives_math.cpp`
 - `inexact?` *[K-VAL]* — `src/compiler/evaluator_primitives_core.cpp`
 - `integer->char` *[K-VAL]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1665,6 +1668,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `synthesize:register-template` *[K-AGENT]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `tan` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
 - `trunc` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
+- `truncate` *[K-R7RS]* — `src/compiler/evaluator_primitives_math.cpp`
 - `type-of` *[K-ENGINE]* — `src/compiler/evaluator_primitives_reflect.cpp`
 - `type-registry-compact` *[K-ENGINE]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `type:set-gradual-permissiveness` *[K-ENGINE]* — `src/compiler/evaluator_primitives_compile.cpp`
@@ -1785,13 +1789,9 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `verify:parse-formal-cex` *[S-PURE]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `verify:suggest-constraint-refine` *[S-PURE]* — `src/compiler/evaluator_primitives_compile.cpp`
 
-### delete (5)
+### delete (1)
 
-- `ceiling` *[D-ALIAS]* — `src/compiler/evaluator_primitives_math.cpp`
-- `exact` *[D-ALIAS]* — `src/compiler/evaluator_primitives_math.cpp`
-- `inexact` *[D-ALIAS]* — `src/compiler/evaluator_primitives_math.cpp`
 - `primitives:contract-probe` *[D-ALIAS]* — `src/compiler/evaluator_primitives_test.cpp`
-- `truncate` *[D-ALIAS]* — `src/compiler/evaluator_primitives_math.cpp`
 
 ## Deprecated (Issue #1438)
 
