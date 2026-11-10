@@ -144,6 +144,15 @@ extern "C" int aura_fiber_body_active() noexcept {
     return fiber_body_id_4778() != 0 ? 1 : 0;
 }
 
+// #5066: 0 keeps the historical unlimited thread-per-fiber default.
+// Called from aura_main once --worker-threads has been parsed. Module
+// scope so the CLI entry point and the anonymous-namespace permit share it.
+std::atomic<int> s_cli_body_limit{0};
+
+extern "C" void aura_set_cli_fiber_body_limit(int n) noexcept {
+    s_cli_body_limit.store(n > 0 ? n : 0, std::memory_order_release);
+}
+
 namespace {
 
     // Arm cancellation for fid. Always re-arms (kDelivered -> kPending).
@@ -324,6 +333,40 @@ namespace {
     // may not have started yet, and a yield that does not see it would hand
     // the turn over to nobody and run the body to completion.
     std::atomic<std::size_t> s_cli_body_pending{0};
+
+    // #5066: --worker-threads N caps how many CLI fiber bodies run at once.
+    // 0 means unlimited (one OS thread per fiber, the historical --load
+    // default). The permit is taken for the whole body so a pure CPU loop
+    // actually occupies one of the N workers.
+    std::mutex s_cli_body_limit_mu;
+    std::condition_variable s_cli_body_limit_cv;
+    int s_cli_body_inflight = 0;
+
+    struct CliFiberBodyPermit {
+        bool held = false;
+        CliFiberBodyPermit() {
+            const int limit = s_cli_body_limit.load(std::memory_order_acquire);
+            if (limit <= 0)
+                return;
+            std::unique_lock<std::mutex> lock(s_cli_body_limit_mu);
+            s_cli_body_limit_cv.wait(lock, [&] {
+                return s_cli_body_inflight < s_cli_body_limit.load(std::memory_order_relaxed);
+            });
+            ++s_cli_body_inflight;
+            held = true;
+        }
+        ~CliFiberBodyPermit() {
+            if (!held)
+                return;
+            {
+                std::lock_guard<std::mutex> lock(s_cli_body_limit_mu);
+                --s_cli_body_inflight;
+            }
+            s_cli_body_limit_cv.notify_one();
+        }
+        CliFiberBodyPermit(const CliFiberBodyPermit&) = delete;
+        CliFiberBodyPermit& operator=(const CliFiberBodyPermit&) = delete;
+    };
 
     // Monotonic counter of SPAWNED bodies. The parent spawns its children
     // ONE AT A TIME, so a body that yields early can see "no sibling yet"
@@ -2035,9 +2078,11 @@ void RegSplitParts::register_messaging_fiber_spawn_primitive(PrimRegistrar add, 
                 // the sweep gate and waits (see aura_fiber_body_enter).
                 s_thread_fiber_threads.emplace(
                     fid, std::make_pair(static_cast<const void*>(&ev), std::thread([run_body]() {
+                                            CliFiberBodyPermit permit;
                                             aura_fiber_body_enter();
                                             run_body();
                                             aura_fiber_body_exit();
+                                            (void)permit;
                                         })));
             }
             return make_int(fid);

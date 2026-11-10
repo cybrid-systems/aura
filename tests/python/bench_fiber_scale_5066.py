@@ -17,6 +17,9 @@ sys.path.insert(0, str(ROOT / "tests" / "python"))
 from _aura_harness import AURA_BIN  # noqa: E402
 
 WORK = int(os.environ.get("FIBER_WORK", "150000"))
+# Empty: historical unlimited thread-per-fiber. "n": one worker per fiber.
+# A positive integer: pass --worker-threads that value (the #5066 cap).
+FIBER_WORKERS = os.environ.get("FIBER_WORKERS", "")
 NS = [1, 2, 4, 8, 16, 32]
 SRC = """
 (define N {n})
@@ -52,11 +55,17 @@ def main() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "fiber.aura"
             path.write_text(SRC.format(n=n, work=WORK))
+            cmd = [str(AURA_BIN)]
+            if FIBER_WORKERS == "n":
+                cmd.extend(["--worker-threads", str(n)])
+            elif FIBER_WORKERS:
+                cmd.extend(["--worker-threads", FIBER_WORKERS])
+            cmd.extend(["--load", str(path)])
             r = subprocess.run(
-                [str(AURA_BIN), "--load", str(path)],
+                cmd,
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=180,
                 env=env,
             )
         print(r.stdout.strip() or r.stderr.strip())

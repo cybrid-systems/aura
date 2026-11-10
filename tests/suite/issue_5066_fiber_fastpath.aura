@@ -1,0 +1,60 @@
+; #5066: the integer fast path must stay exact under fibers.
+; A local shadow of `+` is not the primitive. set! on a cell is re-read
+; on later iterations (the cache must not freeze the first value).
+; Floor modulo keeps the divisor's sign. Many fibers agree on the sum.
+
+(define (shadowed)
+  (let ((+ (lambda (a b) 0)))
+    (+ 1 2)))
+
+(define W 10)
+(define (bump)
+  (let loop ((i 0) (a 0))
+    (if (>= i 5) a
+      (begin
+        (set! W (+ W 1))
+        (loop (+ i 1) (+ a W))))))
+
+(define (floorm)
+  (if (and (= (modulo -5 3) 1)
+           (= (modulo 5 -3) -1)
+           (= (modulo -5 -3) -2))
+      1
+      0))
+
+(define WORK 3000)
+(define (body)
+  (let loop ((i 0) (a 0))
+    (if (>= i WORK) a
+      (loop (+ i 1) (+ a (modulo i 7))))))
+
+(define one (body))
+(define (spawn-n n)
+  (let loop ((i 0) (ids '()))
+    (if (>= i n) ids
+      (loop (+ i 1) (cons (fiber:spawn (lambda () (body))) ids)))))
+(define (join-all xs acc)
+  (if (null? xs) acc
+    (join-all (cdr xs) (+ acc (fiber:join (car xs))))))
+
+(define sid (fiber:spawn (lambda () (shadowed))))
+(define bid (fiber:spawn (lambda () (bump))))
+(define fid (fiber:spawn (lambda () (floorm))))
+(define shadow-v (fiber:join sid))
+(define bump-v (fiber:join bid))
+(define floor-v (fiber:join fid))
+(define total (join-all (spawn-n 16) 0))
+
+(if (and (= shadow-v 0)
+         (= bump-v 65)
+         (= floor-v 1)
+         (= total (* 16 one)))
+    (begin (display "OK-5066-fast ") (display total) (newline))
+    (begin
+      (display "FAIL-5066-fast shadow=") (display shadow-v)
+      (display " bump=") (display bump-v)
+      (display " floor=") (display floor-v)
+      (display " total=") (display total)
+      (display " one=") (display one)
+      (newline)
+      (exit 1)))
