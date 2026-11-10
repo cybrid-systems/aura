@@ -47,7 +47,8 @@
     "K-CHAR": "character comparison used inside every string and parser loop (char=?/char<?); an Aura body adds a call per comparison, so it stays kernel until #5135 can measure the move in the CI image",
     "K-F64": "f64vector numeric kernels (dot/sum/max-index/sub!/ewma!) run over the locked native view of the f64 heap; an Aura loop would be an interpreted call per element, so the move needs a #5135 baseline in the CI image before it can be considered",
     "K-NUM-HOT": "abs/max/min sit in numeric loops and lcm is variadic with i64 edge handling (kI64Min/i64 overflow); an Aura body would either add a call per arithmetic step or narrow the contract, so all four stay kernel",
-    "K-ORCH-STATE": "orchestration verbs whose body reads scheduler or fiber session state (agent scopes, the agent name table, agent_poll forced yield, reclaimed-body waits, handoff tokens); Aura code cannot own that state atomically, so they are the live kernel surface and std/orch builds on the same five primitives (#5131)"
+    "K-ORCH-STATE": "orchestration verbs whose body reads scheduler or fiber session state (agent scopes, the agent name table, agent_poll forced yield, reclaimed-body waits, handoff tokens); Aura code cannot own that state atomically, so they are the live kernel surface and std/orch builds on the same five primitives (#5131)",
+    "K-SLOT-GOV": "pair/string shorthand readers enforce a per-slot tenant gate (inrange_slot_tenant_allows, #4505) before every car/cdr; Aura code cannot see slot ownership, so moving these to the stdlib would silently drop the cross-tenant read check"
   },
   "kernel_exceptions": [
     "arithmetic-shift",
@@ -93,8 +94,8 @@
     "orch:supervise-batch"
   ],
   "counts": {
-    "kernel": 476,
-    "stdlib-candidate": 70,
+    "kernel": 488,
+    "stdlib-candidate": 58,
     "delete": 1
   },
   "primitives": {
@@ -343,28 +344,28 @@
       "note": "FFI host effect, installed on (require \"std/ffi\") under effect:ffi (#3176); std/ffi is the library face"
     },
     "caaar": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PAIR"
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
     },
     "caadr": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PAIR"
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
     },
     "caar": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PAIR"
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
     },
     "cadar": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PAIR"
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
     },
     "caddr": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PAIR"
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
     },
     "cadr": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PAIR"
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
     },
     "capability-stack": {
       "tier": "kernel",
@@ -379,28 +380,28 @@
       "rule": "K-VAL"
     },
     "cdaar": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PAIR"
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
     },
     "cdadr": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PAIR"
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
     },
     "cdar": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PAIR"
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
     },
     "cddar": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PAIR"
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
     },
     "cdddr": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PAIR"
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
     },
     "cddr": {
-      "tier": "stdlib-candidate",
-      "rule": "S-PAIR"
+      "tier": "kernel",
+      "rule": "K-SLOT-GOV"
     },
     "cdr": {
       "tier": "kernel",

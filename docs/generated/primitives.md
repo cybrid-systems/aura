@@ -6,7 +6,7 @@
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 476 · **stdlib-candidate** 70 · **delete** 1
+**kernel** 488 · **stdlib-candidate** 58 · **delete** 1
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
@@ -167,21 +167,21 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `broadcast` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `bytes->f64vector` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `bytes-i32-ref` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `caaar` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `caadr` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `caar` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cadar` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `caddr` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cadr` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
+- `caaar` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `caadr` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `caar` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cadar` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `caddr` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cadr` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `capability-stack` *[core]* `kernel` — `src/compiler/evaluator_primitives_policy.cpp`
 - `capability?` *[core]* `kernel` — `src/compiler/evaluator_primitives_policy.cpp`
 - `car` *[core]* `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
-- `cdaar` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cdadr` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cdar` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cddar` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cdddr` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cddr` *[core]* `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdaar` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdadr` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdar` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cddar` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdddr` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cddr` *[core]* `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `cdr` *[core]* `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
 - `ceil` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `ceiling` *[core]* `kernel` — `src/compiler/evaluator_primitives_math.cpp`
@@ -757,21 +757,21 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `broadcast` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `bytes->f64vector` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `bytes-i32-ref` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
-- `caaar` `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `caadr` `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `caar` `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cadar` `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `caddr` `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cadr` `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
+- `caaar` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `caadr` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `caar` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cadar` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `caddr` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cadr` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `capability-stack` `kernel` — `src/compiler/evaluator_primitives_policy.cpp`
 - `capability?` `kernel` — `src/compiler/evaluator_primitives_policy.cpp`
 - `car` `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
-- `cdaar` `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cdadr` `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cdar` `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cddar` `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cdddr` `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
-- `cddr` `stdlib-candidate` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdaar` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdadr` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdar` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cddar` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdddr` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
+- `cddr` `kernel` — `src/compiler/evaluator_primitives_pair.cpp`
 - `cdr` `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
 - `ceil` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
 - `ceiling` `kernel` — `src/compiler/evaluator_primitives_math.cpp`
@@ -1216,7 +1216,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (476)
+### kernel (488)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1273,9 +1273,21 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `c-struct-ref` *[K-FFI]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-set!` *[K-FFI]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[K-FFI]* — `src/compiler/ffi_primitives_impl.cpp`
+- `caaar` *[K-SLOT-GOV]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `caadr` *[K-SLOT-GOV]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `caar` *[K-SLOT-GOV]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cadar` *[K-SLOT-GOV]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `caddr` *[K-SLOT-GOV]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cadr` *[K-SLOT-GOV]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `capability-stack` *[K-GOV]* — `src/compiler/evaluator_primitives_policy.cpp`
 - `capability?` *[K-GOV]* — `src/compiler/evaluator_primitives_policy.cpp`
 - `car` *[K-VAL]* — `src/compiler/evaluator_primitives_builtins.cpp`
+- `cdaar` *[K-SLOT-GOV]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdadr` *[K-SLOT-GOV]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdar` *[K-SLOT-GOV]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cddar` *[K-SLOT-GOV]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cdddr` *[K-SLOT-GOV]* — `src/compiler/evaluator_primitives_pair.cpp`
+- `cddr` *[K-SLOT-GOV]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `cdr` *[K-VAL]* — `src/compiler/evaluator_primitives_builtins.cpp`
 - `ceil` *[K-NUM]* — `src/compiler/evaluator_primitives_math.cpp`
 - `ceiling` *[K-R7RS]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -1695,23 +1707,11 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `write` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `write-file` *[K-IO]* — `src/compiler/evaluator_primitives_file.cpp`
 
-### stdlib-candidate (70)
+### stdlib-candidate (58)
 
 - `append` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
 - `assert` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `assv` *[S-LIST]* — `src/compiler/evaluator_primitives_list.cpp`
-- `caaar` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
-- `caadr` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
-- `caar` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
-- `cadar` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
-- `caddr` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
-- `cadr` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
-- `cdaar` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
-- `cdadr` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
-- `cdar` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
-- `cddar` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
-- `cdddr` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
-- `cddr` *[S-PAIR]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `check` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check=` *[S-PURE]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `datum->string` *[S-PURE]* — `src/compiler/evaluator_primitives_eval.cpp`
