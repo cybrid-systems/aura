@@ -8,12 +8,12 @@
 
 ; Macro-introduced Call nodes (for targeted cleanup / refactoring).
 (define (query:macro-introduced-calls)
-  (query:filter
-    (query:where :syntax-marker "MacroIntroduced")
-    (query:where :node-type "Call")))
+  (query :filter
+    (query :where :syntax-marker "MacroIntroduced")
+    (query :where :node-type "Call")))
 
 ; Macro-introduced Define nodes.
 (define (query:macro-introduced-defines)
-  (query:filter
-    (query:where :syntax-marker "MacroIntroduced")
-    (query:where :node-type "Define")))
+  (query :filter
+    (query :where :syntax-marker "MacroIntroduced")
+    (query :where :node-type "Define")))

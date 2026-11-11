@@ -740,7 +740,7 @@ void RegSplitParts::register_workspace_inspection_primitives(PrimRegistrar add, 
             ev.bump_stable_ref_cross_cow_refresh();
             ev.bump_stable_ref_provenance_enforced();
             // Issue #424: return (id . (gen . nil)) — same stable-ref
-            // pair shape as (query:stable-ref) so (query:ref-valid?)
+            // pair shape as (query :stable-ref) so (query :ref-valid?)
             // accepts cross-layer resolved refs.
             auto gen_pid = ev.pairs_.size();
             ev.pairs_.push_back({make_int(static_cast<std::int64_t>(resolved->gen)), make_void()});
@@ -1485,7 +1485,7 @@ void RegSplitParts::register_workspace_merge_primitives(
             // Issue #4729: keep the root log and make ids monotonic
             // across the flat swap, then append the merge itself so
             // (query :mutation-log N) and
-            // (query:last-mutation-provenance) see the merge.
+            // (query :last-mutation-provenance) see the merge.
             if (pre_merge_flat_4779 && pre_merge_flat_4779 != ev.workspace_flat_) {
                 std::pmr::vector<aura::ast::MutationRecord>& old_log =
                     pre_merge_flat_4779->all_mutations();

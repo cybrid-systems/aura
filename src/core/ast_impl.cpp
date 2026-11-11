@@ -1444,7 +1444,7 @@ void FlatAST::mark_dirty_upward(const NodeId id, std::uint8_t reasons, std::uint
     }
     mark_dirty_total_nodes_.fetch_add(touched, std::memory_order_relaxed);
     // Issue #547: mark the tag_arity_index dirty so the
-    // next (query:pattern) call knows to rebuild (or
+    // next (query :pattern) call knows to rebuild (or
     // patch) the index. mark_tag_arity_index_dirty()
     // bumps the dirty_marks counter (stats).
     mark_tag_arity_index_dirty();

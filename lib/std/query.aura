@@ -18,10 +18,10 @@
 ;     demoted (none yet — full audit + plan in the doc)
 ;
 ; Recommended Agent pattern:
-;   1. (query:node-types)             ; discover primitive namespaces
+;   1. (query :node-types)             ; discover primitive namespaces
 ;   2. (query:help "find")             ; read the help string
 ;   3. (query :find name)               ; find a node by name
-;   4. (query:where '(<3) (filter-call)) ; filter nodes by predicate
+;   4. (query :where '(<3) (filter-call)) ; filter nodes by predicate
 ;
 ; Where each step is one engine primitive call (no stdlib
 ; wrapper needed — the engine primitives ARE the right API
@@ -122,12 +122,12 @@
                (new-acc (cons current acc)))
           (loop (append rest children) new-acc))))))
 ; ── Issue #278 — high-level "all defines / all calls" wrappers ──
-;     The (query:defines / calls / defines-by-marker /
+;     The (query :defines / calls / defines-by-marker /
 ;     calls-by-marker) primitives are implemented as C++
 ;     engine primitives (see
 ;     src/compiler/evaluator_primitives_query_workspace.cpp).
 ;     They were originally planned as Aura stdlib wrappers
-;     that compose (query:by-marker) + (query:defines /
+;     that compose (query :by-marker) + (query :defines /
 ;     calls), but (define (query:foo) ...) at top level
 ;     inside a (require ... all:) module hits a flat-
 ;     evaluator closure issue (colon-prefixed names produce

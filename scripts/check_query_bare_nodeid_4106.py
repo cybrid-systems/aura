@@ -104,7 +104,9 @@ def main() -> int:
     allow = _read("scripts/coverage/root_check_allowlist.txt")
 
     # ── AC1: stable-ref production resolve + soft mint retained ──────────
-    sr = window(qws, 'add("query:stable-ref"', 'add("query:ensure-ref"', "AC1 stable-ref")
+    sr = window(
+        qws, 'add_hidden(\n        "query:stable-ref"', 'add_hidden(\n        "query:ensure-ref"', "AC1 stable-ref"
+    )
     must("Issue #4106", "AC1 cites the issue", sr)
     must("production_defaults_active()", "AC1 production gate", sr)
     must('resolve_query_node_arg(a, "query:stable-ref"', "AC1 operand resolve (#3395)", sr)
@@ -116,7 +118,9 @@ def main() -> int:
     )
 
     # ── AC2: ensure-ref refusal faces + non-refresh rule ─────────────────
-    ens = window(qws, 'add("query:ensure-ref"', 'add("query:ref-valid?"', "AC2 ensure-ref")
+    ens = window(
+        qws, 'add_hidden(\n        "query:ensure-ref"', 'add_hidden(\n        "query:ref-valid?"', "AC2 ensure-ref"
+    )
     must("Issue #4106", "AC2 cites the issue", ens)
     must("refuse_valid0", "AC2 shared valid=0 refusal builder", ens)
     must(
@@ -125,13 +129,13 @@ def main() -> int:
         ens,
     )
     must(
-        "if (!aura::compiler::typed_audit::production_defaults_active())\n                    stamped.wrap_epoch = 0;",
+        "if (!aura::compiler::typed_audit::production_defaults_active())\n                        stamped.wrap_epoch = 0;",
         "AC2 wrap_epoch=0 gated to Soft legacy pack",
         ens,
     )
     must(
         "if (aura::compiler::typed_audit::production_defaults_active() && !was_valid)\n"
-        "            return refuse_valid0(held.id, held.gen, from_packed);",
+        "                return refuse_valid0(held.id, held.gen, from_packed);",
         "AC2 packed stale non-refresh before export_held_ref",
         ens,
     )
@@ -157,7 +161,7 @@ def main() -> int:
     must("prod_4106 && !ev.allow_query_stable_ref_export(nid)", "AC3 #3287 torn gate", prov)
 
     # ── AC4: reaches production resolve before the walk ──────────────────
-    rea = window(qdef, 'add("query:reaches"', 'add("query:effects"', "AC4 reaches")
+    rea = window(qdef, 'add_hidden(\n        "query:reaches"', 'add_hidden(\n        "query:effects"', "AC4 reaches")
     must("Issue #4106", "AC4 cites the issue", rea)
     must("raw node-id rejected under production", "AC4 #3395 stale-ref face", rea)
     must("Evaluator::get_query_evaluator()", "AC4 current-Evaluator lookup", rea)
@@ -166,7 +170,7 @@ def main() -> int:
     must("cb.reaches_for_node(idx, target)", "AC4 soft walk retained", rea)
 
     # ── AC5: ref-counts production resolve before the parent walk ────────
-    rc = window(qws, '"query:ref-counts"', 'add("query:dirty-subtree"', "AC5 ref-counts")
+    rc = window(qws, '"query:ref-counts"', 'add_hidden(\n        "query:dirty-subtree"', "AC5 ref-counts")
     must("Issue #4106", "AC5 cites the issue", rc)
     must('resolve_query_node_arg(a, "query:ref-counts"', "AC5 operand resolve", rc)
     must("production_defaults_active()", "AC5 production gate", rc)

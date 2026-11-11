@@ -121,9 +121,9 @@ static void ac4594_bare_catch_expr() {
     {
         // query: forces the tree walker. The #f arm is not evaluated.
         CompilerService cs;
-        CHECK(eval_int_eq(cs, "(if #f (query:root) (try (car 5) (catch 0)))", 0),
+        CHECK(eval_int_eq(cs, "(if #f (query :root) (try (car 5) (catch 0)))", 0),
               "#4594 walker: (catch 0) yields 0");
-        CHECK(eval_bool(cs, "(if #f (query:root) "
+        CHECK(eval_bool(cs, "(if #f (query :root) "
                             "(let ((code-str \"kept\")) "
                             "(string=? (try (car 5) (catch code-str)) \"kept\")))"),
               "#4594 walker: bare catch reads the enclosing variable");

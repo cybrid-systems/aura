@@ -425,7 +425,7 @@ namespace aura_639_detail {
         (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (pair? x) (car x) 0))\" "
                       "\"issue-639-prov\")");
         (void)cs.eval("(typecheck-current)");
-        auto prov = cs.eval("(query:provenance-of \"x\")");
+        auto prov = cs.eval("(query :provenance-of \"x\")");
         CHECK(prov.has_value(), "provenance-of returns value");
     }
 
@@ -538,7 +538,7 @@ namespace aura_627_detail {
                       "\"issue-627-check\")");
         auto tc = cs.eval("(typecheck-current)");
         CHECK(tc.has_value(), "typecheck-current after mutate succeeds");
-        auto prov = cs.eval("(query:provenance-of \"x\")");
+        auto prov = cs.eval("(query :provenance-of \"x\")");
         CHECK(prov.has_value(), "check-mode provenance present after mutate");
     }
 

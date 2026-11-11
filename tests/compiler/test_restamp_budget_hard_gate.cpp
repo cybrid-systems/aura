@@ -228,13 +228,24 @@ void test_ac10_recovery_hint_in_restamp_lag() {
         // path by more than the 4000-char window).
         const auto kw = std::string{kKeywords[i]};
         auto pos = text.find("[\"" + kw + "\"]"); // (*q_impls)[...] registration
-        if (pos == std::string::npos)
-            pos = text.find("add(\"" + kw + "\""); // add(...) registration
+        // Issue #5144: the alias bodies register dispatch-only, and
+        // clang-format may wrap the call, so anchor on the quoted name and
+        // accept add_hidden( as well as add(.
+        for (auto at = text.find("\"" + kw + "\"");
+             pos == std::string::npos && at != std::string::npos;
+             at = text.find("\"" + kw + "\"", at + 1)) {
+            const auto back = at >= 160 ? at - 160 : 0;
+            const auto lead = text.substr(back, at - back);
+            if (lead.find("add_hidden(") != std::string::npos ||
+                lead.find("add(") != std::string::npos) {
+                pos = at;
+            }
+        }
         expect_true(std::string{kKeywords[i]} + ": keyword found", pos != std::string::npos);
         if (pos == std::string::npos)
             continue;
         // A registration site may sit more than 4000 chars before its
-        // reject path (query:ensure-ref is ~6KB). Accept any occurrence of
+        // reject path (query :ensure-ref is ~6KB). Accept any occurrence of
         // the keyword whose window carries both the structured error and
         // the recovery hint -- the contract is the reject path, not the
         // distance from the registration line.

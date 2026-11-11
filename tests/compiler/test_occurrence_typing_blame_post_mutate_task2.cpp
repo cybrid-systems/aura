@@ -98,7 +98,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC4: query:provenance-of present after mutate ---");
     (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 2) 0))\" "
                   "\"issue-576-prov\")");
-    auto prov = cs.eval("(query:provenance-of \"x\")");
+    auto prov = cs.eval("(query :provenance-of \"x\")");
     CHECK(prov.has_value(), "query:provenance-of after predicate mutate");
 
     std::println("\n--- AC5: occurrence-stale-count == 0 after auto re-narrow ---");

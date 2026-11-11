@@ -1364,7 +1364,7 @@
       ";; Load code into workspace (set-code takes a STRING argument)",
       "(set-code \"(define (double x) (* x 2))\")",
       ";; Query the AST for Define nodes",
-      "(display (query:node-type \"Define\"))"
+      "(display (query :node-type \"Define\"))"
     ]
   ],
   [
@@ -1558,7 +1558,7 @@
       ";; Step 1: Load code into AST",
       "(set-code \"(define (f x) (+ x 1))\")",
       ";; Step 2: Query the AST to verify",
-      "(display (query:node-type \"Define\"))"
+      "(display (query :node-type \"Define\"))"
     ]
   ],
   [

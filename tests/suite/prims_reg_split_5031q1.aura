@@ -13,7 +13,7 @@
 (define (hget h k) (hash-ref h k))
 
 ;; ── query.cpp: module export / index / observability phase ──────────
-(check (list? (query:module-exports "tests/suite/edsl.aura")) "query:module-exports")
+(check (list? (query :module-exports "tests/suite/edsl.aura")) "query:module-exports")
 (check (hash? (stats:get "query:module-export-cache-stats")) "module-export-cache-stats")
 (check (integer? (stats:get "query:jit-fallback-stats")) "jit-fallback-stats")
 (check (hash? (stats:get "query:ir-marker-stats")) "ir-marker-stats")
@@ -49,7 +49,7 @@
 
 ;; ── query_tail.cpp: feedback / adt / typed-budget phase ─────────────
 (check (string? (stats:get "query:type-feedback")) "query:type-feedback")
-(check (list? (query:mutations-since 0)) "query:mutations-since")
+(check (list? (query :mutations-since 0)) "query:mutations-since")
 (check (list? (stats:get "query:last-mutation-blame")) "query:last-mutation-blame")
 (check (integer? (stats:get "query:adt-exhaustiveness-stats")) "adt-exhaustiveness-stats")
 (check (integer? (stats:get "query:adt-match-exhaust-stats")) "adt-match-exhaust-stats")
@@ -67,7 +67,7 @@
 
 ;; ── query_tail.cpp: schema / occurrence / pass-pipeline phase ───────
 (check (integer? (mutate :validate-reflected)) "mutate:validate-reflected")
-(check (boolean? (query:schema "int")) "query:schema")
+(check (boolean? (query :schema "int")) "query:schema")
 (check (boolean? (stats:get "mutate:validate-against-schema" "(+ 1 2)" "int")) "validate-against-schema")
 (check (hash? (stats:get "query:pass-pipeline-incremental-stats-hash")) "pass-pipeline hash")
 (check (integer? (stats:get "query:occurrence-stats")) "occurrence-stats")

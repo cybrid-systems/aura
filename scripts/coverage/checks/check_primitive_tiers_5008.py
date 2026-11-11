@@ -394,6 +394,49 @@ RETIRED_MUTATE_ALIASES_022 = frozenset(
 # Issue #5144: Batch 5 re-tier names. Each one moved to a std home (or to the
 # (engine:metrics "name") face) and its public registration + tier row are gone.
 # A later add() of the same name would reopen the surface this batch closed.
+
+# Issue #5144 batch 3: the query: read aliases are dispatch-only. (query :op)
+# still resolves the body through the query verb, but the name has no public
+# registration and no tier row.
+RETIRED_QUERY_ALIASES_022 = frozenset(
+    {
+        "query:arena-offset",
+        "query:as-stable-ref",
+        "query:by-marker",
+        "query:calls",
+        "query:calls-by-marker",
+        "query:code",
+        "query:defines",
+        "query:defines-by-marker",
+        "query:dirty-impact",
+        "query:dirty-nodes",
+        "query:dirty-subtree",
+        "query:effects",
+        "query:ensure-ref",
+        "query:filter",
+        "query:last-mutation-provenance",
+        "query:module-exports",
+        "query:mutation-impact",
+        "query:mutations-since",
+        "query:node-marker",
+        "query:node-provenance",
+        "query:node-type",
+        "query:node-types",
+        "query:pattern",
+        "query:provenance-of",
+        "query:provenance-of*",
+        "query:reaches",
+        "query:ref-valid?",
+        "query:result-fresh?",
+        "query:result-matches",
+        "query:root",
+        "query:schema",
+        "query:stable-ref",
+        "query:stable-ref-provenance",
+        "query:type-feedback",
+        "query:where",
+    }
+)
 RETIRED_RETIER_ALIASES_022 = frozenset(
     {
         # std/persist constant (blob format version)
@@ -429,6 +472,7 @@ def check_retired_022(tiers: dict, catalog: set[str]) -> list[str]:
         (RETIRED_QR_ALIASES_022, "#5143", "(query :<op>)"),
         (RETIRED_MUTATE_ALIASES_022, "#5144", "(mutate :<op>)"),
         (RETIRED_RETIER_ALIASES_022, "#5144 batch 5", "(query :<op>) / (engine:metrics)"),
+        (RETIRED_QUERY_ALIASES_022, "#5144 batch 3", "(query :<op>)"),
     ):
         for name in sorted(retired):
             if name in catalog:

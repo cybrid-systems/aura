@@ -920,7 +920,7 @@ static void run_1659_mutation_safety() {
             if ((i % 11) == 0) {
                 (void)ev.enforce_linear_boundary_consistency(
                     Evaluator::kLinearGcRootAuditTypedMutate, true);
-                (void)cs.eval("(query:pattern '(define _ _))");
+                (void)cs.eval("(query :pattern '(define _ _))");
             }
         }
         {

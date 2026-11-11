@@ -107,22 +107,22 @@ int run_test_isolation_stamp_resolve() {
         // returned (id . gen) pair's underlying ref carries the
         // current tenant. We probe by re-calling make_stamped_ref
         // for comparison and checking the live tenant value via
-        // (query:stable-ref-provenance) on the same id.
+        // (query :stable-ref-provenance) on the same id.
         const auto t_before = ev.capability_tenant_id();
         CHECK(t_before == 42, "principal still 42");
         ev.set_capability_tenant_id(7);
         auto r1 = cs.eval(std::format("(query :stable-ref-pair {})", id));
         CHECK(r1 && is_pair(*r1), "ast:stable-ref returns pair");
-        auto r2 = cs.eval(std::format("(query:as-stable-ref {})", id));
+        auto r2 = cs.eval(std::format("(query :as-stable-ref {})", id));
         CHECK(r2 && is_pair(*r2), "query:as-stable-ref returns pair");
         // Provenance probe: query returns tenant-id of the stamped
         // ref at capture time. Both should be 7 (current principal
         // when the prim ran).
-        auto prov = cs.eval(std::format("(query:stable-ref-provenance {})", id));
+        auto prov = cs.eval(std::format("(query :stable-ref-provenance {})", id));
         CHECK(prov && is_hash(*prov), "provenance hash");
         auto href_q = [&](std::string_view key) {
-            auto r =
-                cs.eval(std::format("(hash-ref (query:stable-ref-provenance {}) \"{}\")", id, key));
+            auto r = cs.eval(
+                std::format("(hash-ref (query :stable-ref-provenance {}) \"{}\")", id, key));
             if (!r || !is_int(*r))
                 return std::int64_t{-1};
             return as_int(*r);

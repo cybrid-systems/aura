@@ -189,7 +189,7 @@ static void ac4_expand_ir_and_jit() {
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "macro workspace");
     (void)cs.eval("(eval-current)");
-    (void)cs.eval("(query:pattern \"*\")");
+    (void)cs.eval("(query :pattern \"*\")");
 
     // IR module walk should see MacroIntroduced (or AST markers / lowering stamps).
     const auto ir_macro = href(cs, "query:ir-hygiene-stats", "ir-instr-macro-introduced");
@@ -288,7 +288,7 @@ static void ac7_mutate_requery() {
               cs.eval("(mutate :rebind \"base\" \"10\")").has_value(),
           "mutate:rebind");
     CHECK(cs.eval("(eval-current)").has_value(), "eval after mutate");
-    (void)cs.eval("(query:pattern \"*\")");
+    (void)cs.eval("(query :pattern \"*\")");
     CHECK(href(cs, "query:ir-hygiene-stats", "hygiene-leakage") == 0, "hygiene-leakage == 0");
     CHECK(href(cs, "query:ir-hygiene-stats", "schema") == 2022, "schema 2022 after mutate");
     CHECK(href(cs, "query:ir-hygiene-stats", "jit-native-marker-side-table-wired") == 1,
@@ -425,7 +425,7 @@ static void ac3064_2_instr_marker_after_lowering() {
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "3064 AC2: macro workspace");
     (void)cs.eval("(eval-current)");
-    (void)cs.eval("(query:pattern \"*\")");
+    (void)cs.eval("(query :pattern \"*\")");
     const auto ir_macro = href(cs, "query:ir-hygiene-stats", "ir-instr-macro-introduced");
     const auto markers = href(cs, "query:ir-hygiene-stats", "macro-markers");
     const auto stamped = href(cs, "query:ir-hygiene-stats", "ir-hygiene-stamped-count");

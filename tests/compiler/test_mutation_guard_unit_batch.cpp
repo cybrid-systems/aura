@@ -1059,10 +1059,10 @@ int run_subtree_bump_1847() {
         // Load two defines so query:defines-by-marker yields ids.
         auto set = cs.eval("(set-code \"(define x 1) (define y 2)\")");
         CHECK(set.has_value(), "set-code ok");
-        auto defs = cs.eval("(query:defines-by-marker \"User\")");
+        auto defs = cs.eval("(query :defines-by-marker \"User\")");
         CHECK(defs.has_value(), "defines-by-marker ok");
         // Bump first define's subtree (car of list).
-        auto r = cs.eval("(compile:subtree-bump (car (query:defines-by-marker \"User\")))");
+        auto r = cs.eval("(compile:subtree-bump (car (query :defines-by-marker \"User\")))");
         CHECK(!r || is_error(*r), "subtree-bump Lisp sunk #3172");
         auto noop = cs.eval("(compile:subtree-bump 999999999)");
         CHECK(!noop || is_error(*noop), "OOR id also sunk");
@@ -1077,7 +1077,7 @@ int run_subtree_bump_1847() {
         std::println("\n--- AC3: under outer MutationBoundaryGuard ---");
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define z 3)\")").has_value(), "set-code seed");
-        auto id_v = cs.eval("(car (query:defines-by-marker \"User\"))");
+        auto id_v = cs.eval("(car (query :defines-by-marker \"User\"))");
         CHECK(id_v && is_int(*id_v), "resolve define id outside Guard");
         const auto id = as_int(*id_v);
         auto& ev = cs.evaluator();
@@ -1857,10 +1857,10 @@ int run_282_provenance_of_smoke() {
     CHECK(cs.eval("(set-code \"(define (f x) (if (string? x) (length x) 0))\")").has_value(),
           "set-code f");
     CHECK(cs.eval("(typecheck-current)").has_value(), "typecheck-current");
-    auto count = run_int(cs, "(length (query:provenance-of \"x\"))");
+    auto count = run_int(cs, "(length (query :provenance-of \"x\"))");
     CHECK(count >= 1, "provenance of x >= 1");
     CHECK(cs.eval("(f \"hi\")").has_value(), "f evaluates");
-    auto unk = run_int(cs, "(length (query:provenance-of \"no-such-var\"))");
+    auto unk = run_int(cs, "(length (query :provenance-of \"no-such-var\"))");
     CHECK(unk == 0, "unknown var provenance = 0");
     return g_failed ? 1 : 0;
 }
@@ -2389,7 +2389,7 @@ int run_344_dirty_reason_counts_smoke() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     auto r1 = cs.eval("(engine:metrics \"compile:dirty-reason-counts\")");
     CHECK(r1.has_value(), "dirty-reason-counts with workspace");
-    auto dn = cs.eval("(query:dirty-nodes)");
+    auto dn = cs.eval("(query :dirty-nodes)");
     CHECK(dn.has_value(), "query:dirty-nodes reachable");
     return g_failed ? 1 : 0;
 }
@@ -2405,7 +2405,7 @@ int run_328_self_evo_mutation_loop_smoke() {
     CHECK(cs.eval("(set-code \"(define a 1) (define b (+ a 2))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
     for (int i = 0; i < 5; ++i) {
-        (void)cs.eval("(query:pattern \"a\")");
+        (void)cs.eval("(query :pattern \"a\")");
         (void)cs.eval("(mutate :rebind \"a\" \"" + std::to_string(i + 1) + "\")");
         CHECK(cs.eval("(eval-current)").has_value(), "eval after mutate");
     }
@@ -2450,7 +2450,7 @@ int run_346_mutation_log_smoke() {
     (void)cs.eval("(mutate :rebind \"m\" \"2\")");
     auto log = cs.eval("(query :mutation-log)");
     CHECK(log.has_value(), "query:mutation-log reachable");
-    auto since = cs.eval("(query:mutations-since 0)");
+    auto since = cs.eval("(query :mutations-since 0)");
     CHECK(since.has_value(), "query:mutations-since reachable");
     return g_failed ? 1 : 0;
 }
@@ -2491,7 +2491,7 @@ int run_348_occurrence_dirty_rebind_smoke() {
     CHECK(cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) 2 0))\" \"#348\")")
               .has_value(),
           "rebind with if");
-    auto dn = cs.eval("(query:dirty-nodes)");
+    auto dn = cs.eval("(query :dirty-nodes)");
     CHECK(dn.has_value(), "query:dirty-nodes reachable");
     auto dr = cs.eval("(engine:metrics \"compile:dirty-reason-counts\")");
     CHECK(dr.has_value(), "dirty-reason-counts");
@@ -2608,11 +2608,11 @@ int run_371_tag_arity_index_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define x 1) (+ x 2)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(query:pattern \"*\")");
+    (void)cs.eval("(query :pattern \"*\")");
     auto idx = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
     CHECK(idx.has_value(), "query:pattern-index-stats");
     (void)cs.eval("(mutate :rebind \"x\" \"3\")");
-    (void)cs.eval("(query:pattern \"*\")");
+    (void)cs.eval("(query :pattern \"*\")");
     CHECK(true, "mutate + re-query ok");
     return g_failed ? 1 : 0;
 }
@@ -2932,7 +2932,7 @@ int run_1502_batch_rollback_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define a 1) (define b 2)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    CHECK(cs.eval("(length (query:defines))").has_value(), "defines count");
+    CHECK(cs.eval("(length (query :defines))").has_value(), "defines count");
     (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     CHECK(cs.eval("(query :mutation-log)").has_value(), "mutation-log");
     return g_failed ? 1 : 0;
@@ -3159,8 +3159,8 @@ int run_278_std_query_wrappers_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define a 1) (define b 2)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    CHECK(cs.eval("(length (query:defines))").has_value(), "query:defines");
-    CHECK(cs.eval("(length (query:calls))").has_value() || true, "query:calls");
+    CHECK(cs.eval("(length (query :defines))").has_value(), "query:defines");
+    CHECK(cs.eval("(length (query :calls))").has_value() || true, "query:calls");
     return g_failed ? 1 : 0;
 }
 } // namespace aura_mut_run_wave46_278
@@ -3379,7 +3379,7 @@ int run_317_defuse_interface_smoke() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     auto du = cs.eval("(query :def-use \"bus\")");
     CHECK(du.has_value() || true, "query:def-use surface");
-    CHECK(cs.eval("(query:node-type \"Interface\")").has_value() || true,
+    CHECK(cs.eval("(query :node-type \"Interface\")").has_value() || true,
           "query:node-type Interface");
     return g_failed ? 1 : 0;
 }
@@ -3396,7 +3396,7 @@ int run_318_verify_suggest_smoke() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     auto s = cs.eval("(verify:suggest-constraint-refine)");
     CHECK(s.has_value() || true, "suggest-constraint-refine surface");
-    auto w = cs.eval("(query:where :node-type \"Define\")");
+    auto w = cs.eval("(query :where :node-type \"Define\")");
     CHECK(w.has_value() || true, "query:where Define");
     return g_failed ? 1 : 0;
 }
@@ -3412,10 +3412,10 @@ int run_319_sv_closed_loop_smoke() {
     CHECK(cs.eval("(set-code \"(define constraint-1 1) (define constraint-2 2)\")").has_value(),
           "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto n0 = cs.eval("(length (query:defines))");
+    auto n0 = cs.eval("(length (query :defines))");
     CHECK(n0.has_value(), "defines count");
     (void)cs.eval("(mutate :rebind \"constraint-1\" \"10\")");
-    auto n1 = cs.eval("(length (query:defines))");
+    auto n1 = cs.eval("(length (query :defines))");
     CHECK(n1.has_value(), "defines after rebind");
     CHECK(cs.eval("(engine:metrics \"query:verify-dirty-stats\")").has_value() || true,
           "verify-dirty-stats");
@@ -3458,10 +3458,10 @@ int run_484_replace_pattern_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(begin (+ 1 1) (+ 2 2) (+ 3 3))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto before = cs.eval("(length (query:pattern \"(+ ... ...)\"))");
+    auto before = cs.eval("(length (query :pattern \"(+ ... ...)\"))");
     CHECK(before.has_value(), "query:pattern before");
     (void)cs.eval("(mutate :replace-pattern \"(+ ... ...)\" \"(* ... ...)\" \"w48\")");
-    auto after = cs.eval("(length (query:pattern \"(* ... ...)\"))");
+    auto after = cs.eval("(length (query :pattern \"(* ... ...)\"))");
     CHECK(after.has_value() || true, "query:pattern after replace surface");
     return g_failed ? 1 : 0;
 }
@@ -3648,9 +3648,9 @@ int run_292_pattern_guard_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(begin 1 2 3)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto plain = cs.eval("(length (query:pattern \"?x\"))");
+    auto plain = cs.eval("(length (query :pattern \"?x\"))");
     CHECK(plain.has_value(), "query:pattern plain");
-    auto g = cs.eval("(length (query:pattern \"(:guard \\\"(integer? ?x)\\\" ?x)\"))");
+    auto g = cs.eval("(length (query :pattern \"(:guard \\\"(integer? ?x)\\\" ?x)\"))");
     CHECK(g.has_value() || true, "query:pattern :guard surface");
     return g_failed ? 1 : 0;
 }
@@ -3760,7 +3760,7 @@ int run_211_tag_arity_index_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(begin (+ 1 1) (* 2 2))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    CHECK(cs.eval("(length (query:pattern \"(+ ... ...)\"))").has_value(), "query:pattern");
+    CHECK(cs.eval("(length (query :pattern \"(+ ... ...)\"))").has_value(), "query:pattern");
     return g_failed ? 1 : 0;
 }
 } // namespace aura_mut_run_wave51_211
@@ -3853,7 +3853,7 @@ int run_620_stable_ref_provenance_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto r = cs.eval("(query:stable-ref-provenance 0)");
+    auto r = cs.eval("(query :stable-ref-provenance 0)");
     CHECK(r.has_value() || true, "stable-ref-provenance surface");
     CHECK(cs.eval("(engine:metrics \"query:stable-ref-stats\")").has_value(), "stable-ref-stats");
     return g_failed ? 1 : 0;
@@ -4089,7 +4089,7 @@ int run_482_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(begin (+ 1 2) (+ 3 4))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    CHECK(cs.eval("(length (query:pattern \"(+ ... ...)\"))").has_value(), "query:pattern");
+    CHECK(cs.eval("(length (query :pattern \"(+ ... ...)\"))").has_value(), "query:pattern");
     (void)cs.eval("(mutate :replace-pattern \"(+ ... ...)\" \"(* ... ...)\" \"w54\")");
     CHECK(true, "replace-pattern surface");
     return g_failed ? 1 : 0;
@@ -4233,7 +4233,7 @@ int run_142_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define y 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto w = cs.eval("(query:where :node-type \"Define\")");
+    auto w = cs.eval("(query :where :node-type \"Define\")");
     CHECK(w.has_value() || true, "query:where surface");
     return g_failed ? 1 : 0;
 }
@@ -4293,7 +4293,7 @@ int run_289_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(begin (+ 1 2) (+ 3 4 5))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    CHECK(cs.eval("(length (query:pattern \"(+ ... ...)\"))").has_value(), "query:pattern");
+    CHECK(cs.eval("(length (query :pattern \"(+ ... ...)\"))").has_value(), "query:pattern");
     return g_failed ? 1 : 0;
 }
 } // namespace aura_mut_run_wave56_289

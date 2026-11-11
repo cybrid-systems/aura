@@ -91,7 +91,8 @@ def main() -> int:
     ps_body = qws[ps_b : ps_e if ps_e != -1 else ps_b + 3000] if ps_b != -1 else ""
     must("Issue #3862", "AC3862 parent-stable cite", ps_body)
     must("end_query_epoch_maybe_result", "AC3862 parent-stable finish", ps_body)
-    sr_b = qws.find('("query:stable-ref",')
+    # #5144: the registration is dispatch-only now; anchor on add_hidden().
+    sr_b = qws.find('add_hidden(\n        "query:stable-ref"')
     sr_e = qws.find("query:ensure-ref", sr_b) if sr_b != -1 else -1
     sr_body = qws[sr_b : sr_e if sr_e != -1 else sr_b + 3000] if sr_b != -1 else ""
     must("Issue #3862", "AC3862 stable-ref cite", sr_body)

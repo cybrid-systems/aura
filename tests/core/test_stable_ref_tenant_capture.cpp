@@ -363,7 +363,7 @@ void ac3287_1_residual_lag_deny_surface() {
     const auto q = read_src("src/compiler/evaluator_primitives_query.cpp");
     // Anchor on the surface body: skip the leading comment occurrence and
     // land on the add(...) registration (the gate lives just inside).
-    auto qwin_slice = brace_body(q, "add(\"query:stable-ref-provenance\"");
+    auto qwin_slice = brace_body(q, "add_hidden(\n        \"query:stable-ref-provenance\"");
     CHECK(qwin_slice.ok, "3287 AC1: stable-ref-provenance surface body found");
     auto qwin = qwin_slice.view;
     CHECK(qwin.find("Issue #3287") != std::string::npos, "3287 AC1: surface cites #3287");
@@ -406,7 +406,7 @@ void ac3287_1_residual_lag_deny_surface() {
     if (lag != NULL_NODE) {
         CHECK(!ev.allow_query_stable_ref_export(lag),
               "3287 AC1: production rejects lag on provenance surface gate");
-        auto prov = cs.eval("(query:stable-ref-provenance " +
+        auto prov = cs.eval("(query :stable-ref-provenance " +
                             std::to_string(static_cast<std::int64_t>(lag)) + ")");
         // Deny-clean-hit: either false or a hash whose is-live is not a
         // green pre-mutate gen — never a clean success on the lag node.

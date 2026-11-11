@@ -533,7 +533,7 @@ static void run_324_flatast_compact() {
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(mutate :compact-nodes)");
     CHECK(r.has_value(), "(mutate :compact-nodes) callable");
-    auto q = cs.eval("(query:pattern \"a\")");
+    auto q = cs.eval("(query :pattern \"a\")");
     CHECK(q.has_value(), "query:pattern works post-compact");
 }
 
@@ -940,7 +940,7 @@ static void run_322_dual_path_soa_envid() {
         (void)cs.eval("(eval-current)");
         auto r = cs.eval("(mutate :compact-nodes)");
         CHECK(r.has_value(), "(mutate :compact-nodes) callable");
-        auto q = cs.eval("(query:pattern \"a\")");
+        auto q = cs.eval("(query :pattern \"a\")");
         CHECK(q.has_value(), "query:pattern works post-compact");
     }
     // S5: dual-path consistency across mutations

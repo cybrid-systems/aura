@@ -181,7 +181,7 @@ static void ac6_mutate_stress() {
             std::format("(mutate :rebind \"f\" \"(lambda (x) (+ x {}))\" \"#1661\")", i % 9));
         (void)cs.eval("(eval-current)");
         if ((i % 11) == 0)
-            (void)cs.eval("(query:pattern '(define _ _))");
+            (void)cs.eval("(query :pattern '(define _ _))");
     }
     CHECK(href(cs, "schema") == 1661, "schema holds under stress");
     CHECK(m->shape_fold_count.load(std::memory_order_relaxed) >= fold0, "fold non-decreasing");

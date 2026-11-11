@@ -2011,7 +2011,7 @@ static void ac3724_1_query_root_deny_does_not_occupy() {
     aura::core::provenance::set_multi_tenant_env_active(true);
     ev.set_effect_sandbox_mode(1);
     ev.set_capability_tenant_id(7);
-    auto root = cs.eval("(query:root)");
+    auto root = cs.eval("(query :root)");
     CHECK(root.has_value() && aura::compiler::types::is_int(*root),
           "3724 AC1: query:root returns int");
     const auto nid = static_cast<std::uint32_t>(aura::compiler::types::as_int(*root));
@@ -2052,7 +2052,7 @@ static void ac3724_2_owner_not_isolation_denied_after_a_deny() {
     CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
           "3724 AC2: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3724 AC2: eval-current");
-    auto root = cs.eval("(query:root)");
+    auto root = cs.eval("(query :root)");
     CHECK(root.has_value() && aura::compiler::types::is_int(*root), "3724 AC2: query:root");
     const auto nid = static_cast<std::uint32_t>(aura::compiler::types::as_int(*root));
     auto owned = ev.export_ref(nid);
@@ -2088,7 +2088,7 @@ static void ac3724_3_export_ref_still_occupies() {
     aura::core::provenance::set_multi_tenant_env_active(true);
     ev.set_effect_sandbox_mode(1);
     ev.set_capability_tenant_id(99);
-    auto root = cs.eval("(query:root)");
+    auto root = cs.eval("(query :root)");
     CHECK(root.has_value() && aura::compiler::types::is_int(*root), "3724 AC3: query:root");
     const auto nid = static_cast<std::uint32_t>(aura::compiler::types::as_int(*root));
     (void)ev.export_ref(nid);
@@ -2394,7 +2394,7 @@ static void ac3773_1_restricted_stale_ref_denies_before_effect() {
     CHECK(cs.eval("(eval-current)").has_value(), "3773 AC1: eval-current");
     auto* ws = ev.workspace_flat();
     CHECK(ws != nullptr, "3773 AC1: workspace");
-    auto root = cs.eval("(query:root)");
+    auto root = cs.eval("(query :root)");
     CHECK(root.has_value() && aura::compiler::types::is_int(*root), "3773 AC1: query:root");
     const auto nid = static_cast<std::uint32_t>(aura::compiler::types::as_int(*root));
     auto stale = ev.export_ref(nid);
@@ -2476,7 +2476,7 @@ static void ac3773_2_fresh_stamped_ref_still_passes() {
     // Re-arm mid after set-code Guard (may bump Mutation epoch / clear face).
     ev.clear_boundary_audit_mid_for_test();
     ev.note_boundary_audit_mid_for_test(mid);
-    auto root = cs.eval("(query:root)");
+    auto root = cs.eval("(query :root)");
     CHECK(root.has_value() && aura::compiler::types::is_int(*root), "3773 AC2: query:root");
     const auto nid = static_cast<std::uint32_t>(aura::compiler::types::as_int(*root));
     auto fresh = ev.export_ref(nid);
@@ -2503,7 +2503,7 @@ static void ac3773_3_soft_off_skips_freshness_gate() {
     CHECK(cs.eval("(eval-current)").has_value(), "3773 AC3: eval-current");
     auto* ws = ev.workspace_flat();
     CHECK(ws != nullptr, "3773 AC3: workspace");
-    auto root = cs.eval("(query:root)");
+    auto root = cs.eval("(query :root)");
     CHECK(root.has_value() && aura::compiler::types::is_int(*root), "3773 AC3: query:root");
     const auto nid = static_cast<std::uint32_t>(aura::compiler::types::as_int(*root));
     auto stale = ev.export_ref(nid);

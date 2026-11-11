@@ -145,7 +145,7 @@ bool test_query_safe_fallback_wrappers() {
     f.close();
     // (query:nodes-with-marker m) returns empty list for non-string
     const bool has_nodes_safe = content.find("(if (string? marker)") != std::string::npos &&
-                                content.find("(query:by-marker marker)") != std::string::npos;
+                                content.find("(query :by-marker marker)") != std::string::npos;
     // (query:find-by-name n) returns -1 for non-string
     const bool has_find_safe = content.find("(if (string? name)") != std::string::npos &&
                                content.find("(query :find name)") != std::string::npos &&
@@ -196,16 +196,16 @@ bool test_regression_core_query_primitives() {
     CHECK(r1.has_value(), "(query :node \"a\") (regression - core)");
     auto r2 = cs.eval("(query :children-stable 0)");
     CHECK(r2.has_value(), "(query :children-stable) (regression - core)");
-    auto r3 = cs.eval("(query:by-marker \"MacroIntroduced\")");
-    CHECK(r3.has_value(), "(query:by-marker) (regression - core)");
+    auto r3 = cs.eval("(query :by-marker \"MacroIntroduced\")");
+    CHECK(r3.has_value(), "(query :by-marker) (regression - core)");
     auto r4 = cs.eval("(engine:metrics \"query:tag-arity-count\")");
     CHECK(r4.has_value(), "(engine:metrics \"query:tag-arity-count\") SlimSurface stats_impl");
     auto r5 = cs.eval("(query:templates)");
     CHECK(r5.has_value() && aura::compiler::types::is_error(*r5), "3175: query:templates sunk");
-    auto r_calls = cs.eval("(query:calls)");
-    CHECK(r_calls.has_value(), "(query:calls) core path");
-    auto r_defs = cs.eval("(query:defines)");
-    CHECK(r_defs.has_value(), "(query:defines) core path");
+    auto r_calls = cs.eval("(query :calls)");
+    CHECK(r_calls.has_value(), "(query :calls) core path");
+    auto r_defs = cs.eval("(query :defines)");
+    CHECK(r_defs.has_value(), "(query :defines) core path");
     auto r6 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     CHECK(r6.has_value(),
           "(engine:metrics \"query:envframe-dualpath-stats\") (regression for #543)");

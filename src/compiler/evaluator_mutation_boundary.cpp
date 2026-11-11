@@ -2370,7 +2370,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // Append to the ring buffer (lockless; the
         // 8-slot ring tolerates torn writes from
         // concurrent boundaries — worst case is one
-        // stale entry visible to (query:mutation-impact)
+        // stale entry visible to (query :mutation-impact)
         // for one read, which is acceptable for
         // observability). We index by ring_seq_
         // modulo the ring size.

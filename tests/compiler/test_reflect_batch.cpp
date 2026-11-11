@@ -121,14 +121,14 @@ static void run_454_matrix() {
     CHECK(defs && is_pair(*defs), "ast:defs returns alist");
     auto node_r = cs.eval("(query:reflect-node-members 0)");
     CHECK(node_r && is_pair(*node_r), "reflect-node-members returns alist");
-    auto marker_r = cs.eval("(query:node-marker 0)");
+    auto marker_r = cs.eval("(query :node-marker 0)");
     CHECK(marker_r && is_string(*marker_r), "node-marker returns string");
 
     std::println("\n--- AC3 (#454): SyntaxMarker schema introspection ---");
     (void)cs.eval("(typecheck-current)");
-    auto schema = cs.eval("(query:schema \"User\")");
+    auto schema = cs.eval("(query :schema \"User\")");
     CHECK(schema.has_value(), "query:schema User reachable");
-    auto macro_marker = cs.eval("(query:node-marker 0)");
+    auto macro_marker = cs.eval("(query :node-marker 0)");
     CHECK(macro_marker && is_string(*macro_marker), "node-marker on define");
 
     std::println("\n--- AC4 (#454): query:marker-stats ---");
@@ -148,7 +148,7 @@ static void run_454_matrix() {
     CHECK(cs.eval("(eval-current)").has_value(), "mutate workspace setup");
     const auto stats6a = bridge_stats_454(cs);
     const auto skips0 = cs.evaluator().get_macro_introduced_skipped_in_query();
-    (void)cs.eval("(query:pattern \"acc\")");
+    (void)cs.eval("(query :pattern \"acc\")");
     const auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
     for (int i = 0; i < 3; ++i) {
         CHECK(cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(10 + i) + "\")").has_value(),
@@ -246,11 +246,11 @@ static void run_1611_allow_flag() {
     CHECK(setup_macro_ws_1611(cs), "macro workspace");
     auto allow0 = cs.eval("(query :allow-macro-mutate?)");
     CHECK(allow0 && is_bool(*allow0), "hygiene:allow-macro-mutate? reachable");
-    auto macro_list = cs.eval("(query:by-marker \"MacroIntroduced\")");
+    auto macro_list = cs.eval("(query :by-marker \"MacroIntroduced\")");
     if (macro_list && !is_int(*macro_list)) {
-        auto len = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+        auto len = cs.eval("(length (query :by-marker \"MacroIntroduced\"))");
         if (len && is_int(*len) && as_int(*len) > 0) {
-            auto first = cs.eval("(car (query:by-marker \"MacroIntroduced\"))");
+            auto first = cs.eval("(car (query :by-marker \"MacroIntroduced\"))");
             if (first && is_int(*first)) {
                 auto v = cs.eval(std::format("(reflect:validate-macro-body {})", as_int(*first)));
                 CHECK(v.has_value(), "reflect:validate-macro-body returns");
@@ -493,8 +493,8 @@ static void run_551_regression() {
     auto r2 = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(r2.has_value() && is_int(*r2),
           "(engine:metrics \"query:typed-mutation-stats\") (regression for #550)");
-    auto r3 = cs.eval("(query:dirty-impact)");
-    CHECK(r3.has_value() && is_int(*r3), "(query:dirty-impact) (regression for #550)");
+    auto r3 = cs.eval("(query :dirty-impact)");
+    CHECK(r3.has_value() && is_int(*r3), "(query :dirty-impact) (regression for #550)");
     auto r4 = cs.eval("(engine:metrics \"query:self-evolution-stability-stats\")");
     CHECK(r4.has_value() && is_int(*r4),
           "(engine:metrics \"query:self-evolution-stability-stats\") (regression for #549)");

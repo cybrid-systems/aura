@@ -291,7 +291,7 @@ int run_workspace_marker_macro_1678() {
 
     // Mark y as MacroIntroduced (marker id 1) via public syntax:set-marker.
     {
-        auto m = cs.eval("(mutate :set-marker (car (cdr (query:defines))) 1)");
+        auto m = cs.eval("(mutate :set-marker (car (cdr (query :defines))) 1)");
         CHECK(m && is_bool(*m) && as_bool(*m), "set MacroIntroduced on y");
     }
 
@@ -305,7 +305,7 @@ int run_workspace_marker_macro_1678() {
 
     // Mark z as MacroIntroduced as well → walk ≥ 2.
     {
-        auto m = cs.eval("(mutate :set-marker (car (cdr (cdr (query:defines)))) 1)");
+        auto m = cs.eval("(mutate :set-marker (car (cdr (cdr (query :defines)))) 1)");
         CHECK(m && is_bool(*m) && as_bool(*m), "set MacroIntroduced on z");
     }
 
@@ -407,7 +407,7 @@ int run_subtree_counter_1848() {
         std::println("\n--- AC2: bump then stats:get bump-count ---");
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define x 1) (define y 2)\")").has_value(), "set-code");
-        auto id_v = cs.eval("(car (query:defines-by-marker \"User\"))");
+        auto id_v = cs.eval("(car (query :defines-by-marker \"User\"))");
         CHECK(id_v && is_int(*id_v), "resolve define id");
         const auto id = as_int(*id_v);
 
@@ -449,7 +449,7 @@ int run_subtree_counter_1848() {
         std::println("\n--- AC3: concurrent shared readers + unique bump ---");
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define a 1) (define b 2)\")").has_value(), "seed");
-        auto id_v = cs.eval("(car (query:defines-by-marker \"User\"))");
+        auto id_v = cs.eval("(car (query :defines-by-marker \"User\"))");
         CHECK(id_v && is_int(*id_v), "id");
         const auto id = static_cast<std::uint32_t>(as_int(*id_v));
         auto& ev = cs.evaluator();

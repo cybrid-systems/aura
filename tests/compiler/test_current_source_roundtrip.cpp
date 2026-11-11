@@ -1877,7 +1877,7 @@ static void ac4729_merge_and_restore_keep_provenance() {
 (set-code "(define (f x) (+ x 1)) (define (g) 2)")
 (eval-current)
 (define (ml) (let ((l (query :mutation-log 100))) (if (list? l) l (list))))
-(define (mid) (let ((p (query:last-mutation-provenance))) (if (hash? p) (hash-ref p "mutation_id") -1)))
+(define (mid) (let ((p (query :last-mutation-provenance))) (if (hash? p) (hash-ref p "mutation_id") -1)))
 (mutate :rebind "f" "(lambda (x) (+ x 2))" "root-rebind")
 (eval-current)
 (define n-pre (length (ml)))

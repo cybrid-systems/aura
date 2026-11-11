@@ -256,7 +256,7 @@
           (replacement (rule-replace r))
           (cond-fn (rule-condition r))
           (scope (rule-scope r)))
-      (define matches (query:pattern pattern))
+      (define matches (query :pattern pattern))
       (if (not (pair? matches)) 0
         (let ((fixed 0))
           (for-each
@@ -305,7 +305,7 @@
           (let ((pattern (rule-pattern r))
                 (cond-fn (rule-condition r))
                 (scope (rule-scope r)))
-            (define matches (query:pattern pattern))
+            (define matches (query :pattern pattern))
             (define valid-matches
               (filter (lambda (node)
                 (and (check-condition cond-fn node)

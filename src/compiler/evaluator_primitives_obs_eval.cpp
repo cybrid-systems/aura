@@ -1408,7 +1408,7 @@ void ObservabilityPrims::register_eval_p10(PrimRegistrar add, Evaluator& ev) {
     // Discovery before this PR (preserved, not duplication):
     // the existing infrastructure covers ~70% of the
     // cross-fiber provenance observability surface:
-    //   - (query:stable-ref-provenance) (#604) — base
+    //   - (query :stable-ref-provenance) (#604) — base
     //     provenance summary primitive (no SV-specific track)
     //   - (query:stable-ref-provenance-sv-stats-hash) (#631)
     //     — historical hash primitive
@@ -12450,7 +12450,7 @@ void ObservabilityPrims::register_eval_p69(PrimRegistrar add, Evaluator& ev) {
     // (primitive:extend-kit name doc schema [category] [safety] body-expr)
     // generative primitive + capture contract probe + auto-meta
     // backfill + test skeleton generator integration + DEFINE_
-    // PRIMITIVE macro work + Agent ergonomics (query:pattern for
+    // PRIMITIVE macro work + Agent ergonomics (query :pattern for
     // extension primitives + primitive:describe-extension) + tests/
     // test_primitives_extension_kit_ai_gen.cpp harness + CI step
     // runs kit on sample extensions + primitives_style.md +

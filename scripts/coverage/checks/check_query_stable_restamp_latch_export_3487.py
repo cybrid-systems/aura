@@ -93,14 +93,14 @@ def main() -> int:
     held = sec[held_i : held_i + 400] if held_i >= 0 else ""
     must("allow_query_stable_ref_export", "AC6 export_held_ref uses allow", held)
 
-    sr_i = qws.find('add("query:stable-ref"')
+    sr_i = qws.find('add_hidden(\n        "query:stable-ref"')
     # Issue #4106: the production bare-int resolve branch widened the body;
     # widen the window from 2200 to 3600 so the #3487 cite stays pinned.
     sr = qws[sr_i : sr_i + 3600] if sr_i >= 0 else ""
     must("allow_query_stable_ref_export", "AC6 query:stable-ref uses allow", sr)
     must("Issue #3487", "AC6 query:stable-ref cite", sr)
 
-    ens_i = qws.find('add("query:ensure-ref"')
+    ens_i = qws.find('add_hidden(\n        "query:ensure-ref"')
     # Issue #4106: the refuse_valid0 builder + production refuse blocks now
     # sit between the registration and the torn-gate/stamp arm; widen the
     # window from 2800 to 5200 so the allow gate + #3487 cite stay pinned.
@@ -108,7 +108,7 @@ def main() -> int:
     must("allow_query_stable_ref_export", "AC6 query:ensure-ref uses allow", ens)
     must("Issue #3487", "AC6 query:ensure-ref cite", ens)
 
-    asr_i = asr.find('add("query:as-stable-ref"')
+    asr_i = asr.find('add_hidden(\n        "query:as-stable-ref"')
     asr_win = asr[asr_i : asr_i + 1600] if asr_i >= 0 else ""
     must("allow_query_stable_ref_export", "AC6 as-stable-ref uses allow", asr_win)
     must("Issue #3487", "AC6 as-stable-ref cite", asr_win)

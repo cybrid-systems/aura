@@ -452,7 +452,7 @@ static void ac15_take_drop_errors() {
     CompilerService cs_walk;
     auto walked = with_stdout_capture([&] {
         (void)cs_walk.eval(
-            R"((begin (display (if #f (query:root) (if (error? (drop 42 1)) 1 0))) (newline)))");
+            R"((begin (display (if #f (query :root) (if (error? (drop 42 1)) 1 0))) (newline)))");
     });
     CHECK(trim_nl(walked) == "1", "AC15: walker error? sees (drop 42 1)");
     // `and` is tree-walker-only (strict pipeline fallback-forbidden), so the

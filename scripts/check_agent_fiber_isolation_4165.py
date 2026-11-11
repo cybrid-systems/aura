@@ -132,9 +132,9 @@ def main() -> int:
     hits = qws.count("ev.agent_scoped_fiber_id()")
     if hits < 2:
         fails.append(f"AC3 query_workspace resolve sites: expected >=2, found {hits}")
-    fresh = window(qws, 'add("query:result-fresh?"', 'add("query:result-matches"', "AC3 result-fresh?")
+    fresh = window(qws, 'add_hidden("query:result-fresh?"', 'add_hidden("query:result-matches"', "AC3 result-fresh?")
     must("Issue #4165", "AC3 result-fresh? cites the issue", fresh)
-    matches = window(qws, 'add("query:result-matches"', "auto query_epoch_stats_fn =", "AC3 result-matches")
+    matches = window(qws, 'add_hidden("query:result-matches"', "auto query_epoch_stats_fn =", "AC3 result-matches")
     must("Issue #4165", "AC3 result-matches cites the issue", matches)
     must("ev.agent_scoped_fiber_id()", "AC3 stable-ref-provenance Agent-scoped", qprov)
 

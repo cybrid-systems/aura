@@ -144,17 +144,17 @@ int run_test_stable_ref_export_validate() {
               "2404 AC3: no stale-reject on happy path");
 
         // query:stable-ref routes export_ref_safe
-        auto packed = cs.eval(std::format("(query:stable-ref {})", nid));
+        auto packed = cs.eval(std::format("(query :stable-ref {})", nid));
         CHECK(packed && is_pair(*packed), "AC1: query:stable-ref returns pair");
 
         // query:ensure-ref diagnostic surface
-        auto ens = cs.eval(std::format("(query:ensure-ref {})", nid));
+        auto ens = cs.eval(std::format("(query :ensure-ref {})", nid));
         CHECK(ens && is_hash(*ens), "AC1: query:ensure-ref returns hash");
-        CHECK(href_ensure(cs, std::format("(query:ensure-ref {})", nid), "valid") == 1,
+        CHECK(href_ensure(cs, std::format("(query :ensure-ref {})", nid), "valid") == 1,
               "AC1: ensure-ref valid=1");
-        CHECK(href_ensure(cs, std::format("(query:ensure-ref {})", nid), "schema-2404") == 2404,
+        CHECK(href_ensure(cs, std::format("(query :ensure-ref {})", nid), "schema-2404") == 2404,
               "AC1: ensure-ref schema-2404");
-        CHECK(href_ensure(cs, std::format("(query:ensure-ref {})", nid),
+        CHECK(href_ensure(cs, std::format("(query :ensure-ref {})", nid),
                           "stable-ref-export-wired") == 1,
               "AC1: ensure-ref wired");
     }
@@ -262,9 +262,9 @@ int run_test_stable_ref_export_validate() {
         (void)gen_before;
 
         // query:ensure-ref on packed pair after activity
-        auto ens = cs.eval(std::format("(query:ensure-ref {})", nid2));
+        auto ens = cs.eval(std::format("(query :ensure-ref {})", nid2));
         CHECK(ens && is_hash(*ens), "AC5: ensure-ref after mutate");
-        CHECK(href_ensure(cs, std::format("(query:ensure-ref {})", nid2), "valid") == 1,
+        CHECK(href_ensure(cs, std::format("(query :ensure-ref {})", nid2), "valid") == 1,
               "AC5: ensure-ref still valid for live id");
     }
 
@@ -506,7 +506,7 @@ int run_test_stable_ref_export_validate() {
             bool send_ok = false;
             for (int attempt = 0; attempt < 5 && !send_ok; ++attempt) {
                 auto send = cs.eval(std::format(
-                    R"((hash-ref (orch:agent-send "ac2848-agent" (query:stable-ref {})) "ok"))",
+                    R"((hash-ref (orch:agent-send "ac2848-agent" (query :stable-ref {})) "ok"))",
                     nid));
                 send_ok = send && is_bool(*send) && as_bool(*send);
                 if (!send_ok)
@@ -515,7 +515,7 @@ int run_test_stable_ref_export_validate() {
             CHECK(send_ok, "2848 AC1: agent-send StableNodeRef auto handoff → ok");
 
             auto auto_h = cs.eval(std::format(
-                R"((hash-ref (orch:agent-send "ac2848-agent" (query:stable-ref {})) "auto-handoff"))",
+                R"((hash-ref (orch:agent-send "ac2848-agent" (query :stable-ref {})) "auto-handoff"))",
                 nid));
             CHECK(auto_h && is_bool(*auto_h) && as_bool(*auto_h),
                   "2848 AC1: auto-handoff flag set on success");

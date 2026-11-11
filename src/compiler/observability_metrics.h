@@ -2636,7 +2636,7 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> gcc16_modules_env_hits_total{0};
     std::atomic<std::uint64_t> gcc16_modules_env_savings_total{0};
     // Issue #620: StableNodeRef provenance query counter.
-    // Bumped on every (query:stable-ref-provenance) call so the
+    // Bumped on every (query :stable-ref-provenance) call so the
     // Agent can see how often the provenance surface is being
     // exercised (high rate = hot path; needs benchmarking).
     std::atomic<std::uint64_t> stable_ref_provenance_query_total{0};
@@ -3295,7 +3295,7 @@ struct CompilerMetrics {
     //       (mutation_epoch + generation) mismatch on a held span
     //       under concurrent Guard.
     // Distinct from #2861 pattern_safe_span / pattern_epoch_mismatch
-    // (query:pattern walks) - these are the query:children-stable
+    // (query :pattern walks) - these are the query:children-stable
     // surfaces. Children-stable views are held ACROSS mutate rounds
     // so invalidation_detected + epoch_mismatch have longer
     // exposure windows than the pattern equivalents.

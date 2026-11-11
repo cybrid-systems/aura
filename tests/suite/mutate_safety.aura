@@ -208,7 +208,7 @@
 (set-code "(define (f x) (+ x 1))")
 (define src4742 (current-source :workspace))
 (define gen4742 (query :generation))
-(define mut4742 (length (query:mutations-since 0)))
+(define mut4742 (length (query :mutations-since 0)))
 
 (if (equal? (mutate :check "f" "(define (f x) (+ x 2))") #t)
     (display "  pass: clean candidate returns #t") (fail4742 "clean candidate"))
@@ -240,7 +240,7 @@
 (if (= (query :generation) gen4742)
     (display "  pass: generation unchanged") (fail4742 "generation changed"))
 (newline)
-(if (= (length (query:mutations-since 0)) mut4742)
+(if (= (length (query :mutations-since 0)) mut4742)
     (display "  pass: mutation log unchanged") (fail4742 "mutation log changed"))
 (newline)
 

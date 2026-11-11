@@ -26,7 +26,7 @@
       "path": "src/compiler/evaluator_primitives_mutate.cpp",
       "contains": [
         "Issue #3121",
-        "mev(\"restamp-lag\""
+        "mev(\n                    \"restamp-lag\","
       ]
     },
     {

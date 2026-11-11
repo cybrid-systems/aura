@@ -247,11 +247,11 @@ int run_test_stable_ref_tenant_mandate() {
         auto* ws = ev.workspace_flat();
         const auto id = first_live(*ws);
         ev.set_capability_tenant_id(77);
-        auto q = cs.eval(std::format("(query:stable-ref-provenance {})", id));
+        auto q = cs.eval(std::format("(query :stable-ref-provenance {})", id));
         CHECK(q && is_hash(*q), "provenance query hash");
-        CHECK(href_q(cs, std::format("(query:stable-ref-provenance {})", id), "tenant-id") == 77,
+        CHECK(href_q(cs, std::format("(query :stable-ref-provenance {})", id), "tenant-id") == 77,
               "query returns tenant-id 77");
-        CHECK(href_q(cs, std::format("(query:stable-ref-provenance {})", id), "schema-2056") ==
+        CHECK(href_q(cs, std::format("(query :stable-ref-provenance {})", id), "schema-2056") ==
                   2056,
               "schema-2056 on query");
     }

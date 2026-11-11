@@ -2,11 +2,11 @@
 
 # Primitives (generated)
 
-**436** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**401** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 435 · **stdlib-candidate** 0 · **delete** 1
+**kernel** 400 · **stdlib-candidate** 0 · **delete** 1
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
@@ -14,49 +14,11 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 17 primitives (4%)
-- **core**: 383 primitives (88%)
-- **internal-observable**: 35 primitives (8%)
+- **core**: 383 primitives (96%)
+- **internal-observable**: 0 primitives (0%)
 - **convenience**: 1 primitives (0%)
 
 Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.py` (Issue #559 taxonomy: mutation-safety / internal-observable / convenience / core default). Per-primitive classification overrides via `docs/primitive_categories.yaml` were removed per Anqi 2026-07-19 directive (aura philosophy, no per-issue plan docs).
-
-## Query: (35)
-
-- `query:arena-offset` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_misc.cpp`
-- `query:as-stable-ref` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `query:by-marker` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:calls` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:calls-by-marker` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:code` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:defines` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:defines-by-marker` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:dirty-impact` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_obs_mid.cpp`
-- `query:dirty-nodes` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `query:dirty-subtree` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:effects` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:ensure-ref` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:filter` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:last-mutation-provenance` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:module-exports` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutation-impact` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutations-since` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_tail.cpp`
-- `query:node-marker` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:node-provenance` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:node-type` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:node-types` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:pattern` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:provenance-of` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:provenance-of*` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:reaches` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:ref-valid?` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:result-fresh?` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:result-matches` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:root` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:schema` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_tail.cpp`
-- `query:stable-ref` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:stable-ref-provenance` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:type-feedback` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_tail.cpp`
-- `query:where` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 
 ## Fiber: (4)
 
@@ -939,44 +901,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `write` `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `write-file` `kernel` — `src/compiler/evaluator_primitives_file.cpp`
 
-### Internal observable (stats/counters) (35)
-
-- `query:arena-offset` `kernel` — `src/compiler/evaluator_primitives_misc.cpp`
-- `query:as-stable-ref` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `query:by-marker` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:calls` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:calls-by-marker` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:code` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:defines` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:defines-by-marker` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:dirty-impact` `kernel` — `src/compiler/evaluator_primitives_query_obs_mid.cpp`
-- `query:dirty-nodes` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `query:dirty-subtree` `kernel` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:effects` `kernel` — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:ensure-ref` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:filter` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:last-mutation-provenance` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:module-exports` `kernel` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutation-impact` `kernel` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutations-since` `kernel` — `src/compiler/evaluator_primitives_query_tail.cpp`
-- `query:node-marker` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:node-provenance` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:node-type` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:node-types` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:pattern` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:provenance-of` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:provenance-of*` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:reaches` `kernel` — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:ref-valid?` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:result-fresh?` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:result-matches` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:root` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:schema` `kernel` — `src/compiler/evaluator_primitives_query_tail.cpp`
-- `query:stable-ref` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:stable-ref-provenance` `kernel` — `src/compiler/evaluator_primitives_query.cpp`
-- `query:type-feedback` `kernel` — `src/compiler/evaluator_primitives_query_tail.cpp`
-- `query:where` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-
 ### Convenience (candidates for stdlib migration) (1)
 
 - `format` `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
@@ -985,7 +909,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (435)
+### kernel (400)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1265,41 +1189,6 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `query-annotate-functions` *[K-ENGINE]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `query-expected-type` *[K-ENGINE]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `query-type-of` *[K-ENGINE]* — `src/compiler/evaluator_primitives_eval.cpp`
-- `query:arena-offset` *[K-QRY]* — `src/compiler/evaluator_primitives_misc.cpp`
-- `query:as-stable-ref` *[K-QRY]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `query:by-marker` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:calls` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:calls-by-marker` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:code` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:defines` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:defines-by-marker` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:dirty-impact` *[K-QRY]* — `src/compiler/evaluator_primitives_query_obs_mid.cpp`
-- `query:dirty-nodes` *[K-QRY]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `query:dirty-subtree` *[K-QRY]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:effects` *[K-QRY]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:ensure-ref` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:filter` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:last-mutation-provenance` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:module-exports` *[K-QRY]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutation-impact` *[K-QRY]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:mutations-since` *[K-QRY]* — `src/compiler/evaluator_primitives_query_tail.cpp`
-- `query:node-marker` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:node-provenance` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:node-type` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:node-types` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:pattern` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:provenance-of` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:provenance-of*` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:reaches` *[K-QRY]* — `src/compiler/evaluator_primitives_query_defuse.cpp`
-- `query:ref-valid?` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:result-fresh?` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:result-matches` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:root` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:schema` *[K-QRY]* — `src/compiler/evaluator_primitives_query_tail.cpp`
-- `query:stable-ref` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
-- `query:stable-ref-provenance` *[K-QRY]* — `src/compiler/evaluator_primitives_query.cpp`
-- `query:type-feedback` *[K-QRY]* — `src/compiler/evaluator_primitives_query_tail.cpp`
-- `query:where` *[K-QRY]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `quotient` *[K-NUMDIV]* — `src/compiler/evaluator_primitives_math.cpp`
 - `raise` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `read` *[K-IO]* — `src/compiler/evaluator_primitives_file.cpp`

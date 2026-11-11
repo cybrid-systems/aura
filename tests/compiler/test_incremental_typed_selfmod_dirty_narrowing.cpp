@@ -12,7 +12,7 @@
 //   #509/#518/#526/#536/#537/#550 (orig):
 //     AC1: 4 dirty/narrowing counters reachable + start at 0
 //     AC2: (engine:metrics \"query:typed-mutation-stats\") returns integer sum
-//     AC3: (query:dirty-impact) returns touched_roots_size
+//     AC3: (query :dirty-impact) returns touched_roots_size
 //     AC4: narrowing_refresh_count bumps under Aura mutate
 //     AC5: short typed mutate cycle — narrowing + passes_skipped monotonic
 //     AC6: touched_roots_size observable + settable
@@ -105,12 +105,12 @@ static void ac2_orig() {
 
 // ── ORIG AC3: query:dirty-impact returns touched_roots_size ──
 static void ac3_orig() {
-    std::println("\n--- ORIG #550 AC3: (query:dirty-impact) ---");
+    std::println("\n--- ORIG #550 AC3: (query :dirty-impact) ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
-    auto r = cs.eval("(query:dirty-impact)");
-    CHECK(r.has_value(), "(query:dirty-impact) returns");
+    auto r = cs.eval("(query :dirty-impact)");
+    CHECK(r.has_value(), "(query :dirty-impact) returns");
     CHECK(aura::compiler::types::is_int(*r), "is integer");
     if (r && aura::compiler::types::is_int(*r)) {
         const auto v = aura::compiler::types::as_int(*r);
@@ -209,7 +209,7 @@ static void ac9_orig() {
     CompilerService cs;
     auto r1 = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1), "query:typed-mutation-stats");
-    auto r2 = cs.eval("(query:dirty-impact)");
+    auto r2 = cs.eval("(query :dirty-impact)");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2), "query:dirty-impact");
     auto r3 = cs.eval("(engine:metrics \"query:self-evolution-stability-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3), "self-evolution-stability");
@@ -339,8 +339,8 @@ static void ac8_task1() {
     CompilerService cs;
     auto r1 = cs.eval("(eval \"(+ 1 2)\")");
     CHECK(r1.has_value(), "(eval ...) works");
-    auto r2 = cs.eval("(query:dirty-impact)");
-    CHECK(r2.has_value(), "(query:dirty-impact) works after typed-mutate");
+    auto r2 = cs.eval("(query :dirty-impact)");
+    CHECK(r2.has_value(), "(query :dirty-impact) works after typed-mutate");
 }
 
 // ── TASK1 AC9: regression — (+ ...) arithmetic after typed mutate ──

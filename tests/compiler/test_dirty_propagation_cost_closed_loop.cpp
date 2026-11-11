@@ -81,7 +81,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(stats4b >= stats4a, "dirty cost stats monotonic over matrix");
 
     std::println("\n--- AC5: query:dirty-subtree regression ---");
-    auto dst = cs.eval("(query:dirty-subtree)");
+    auto dst = cs.eval("(query :dirty-subtree)");
     CHECK(dst.has_value(), "query:dirty-subtree returns value");
 
     std::println("\n--- AC6: query regression ---");

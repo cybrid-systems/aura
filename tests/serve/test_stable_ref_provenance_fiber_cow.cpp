@@ -756,7 +756,7 @@ static void ac3425_2_production_int_reject_v2_and_hash() {
     CHECK(cs.eval("(set-code \"(define t3425 (lambda (x) 1))\")").has_value(),
           "3425 AC2: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3425 AC2: eval");
-    CHECK(cs.eval("(define r3425i (query:as-stable-ref 1))").has_value(), "3425 AC2: bind int");
+    CHECK(cs.eval("(define r3425i (query :as-stable-ref 1))").has_value(), "3425 AC2: bind int");
     auto eq_int = cs.eval("(equal? (car r3425i) \"stale-ref\")");
     CHECK(eq_int && is_bool(*eq_int) && as_bool(*eq_int),
           "3425 AC2: production + bare int → stale-ref");
@@ -764,20 +764,20 @@ static void ac3425_2_production_int_reject_v2_and_hash() {
           "3425 AC2: bind hash");
     auto qr = cs.eval("qr3425");
     CHECK(qr && is_hash(*qr), "3425 AC2: QueryResult hash");
-    CHECK(cs.eval("(define p3425 (query:as-stable-ref qr3425))").has_value(),
+    CHECK(cs.eval("(define p3425 (query :as-stable-ref qr3425))").has_value(),
           "3425 AC2: pack hash");
     auto packed = cs.eval("p3425");
     auto packed_ok = cs.eval("(integer? (car p3425))");
     CHECK(packed && is_pair(*packed) && packed_ok && is_bool(*packed_ok) && as_bool(*packed_ok),
           "3425 AC2: production + hash → v2 pair");
-    CHECK(cs.eval("(define p3425b (query:as-stable-ref p3425))").has_value(),
+    CHECK(cs.eval("(define p3425b (query :as-stable-ref p3425))").has_value(),
           "3425 AC2: re-export");
     auto again_ok = cs.eval("(integer? (car p3425b))");
     CHECK(again_ok && is_bool(*again_ok) && as_bool(*again_ok),
           "3425 AC2: production + live v2 → v2 pair");
     CHECK(cs.eval("(mutate :replace-subtree qr3425 \"(lambda (x) 99)\")").has_value(),
           "3425 AC2: mutate identity");
-    CHECK(cs.eval("(define r3425s (query:as-stable-ref p3425))").has_value(),
+    CHECK(cs.eval("(define r3425s (query :as-stable-ref p3425))").has_value(),
           "3425 AC2: bind stale");
     auto eq_stale = cs.eval("(or (equal? (car r3425s) \"stale-ref\") "
                             "(equal? (car r3425s) \"restamp-lag\"))");
@@ -795,7 +795,7 @@ static void ac3425_3_soft_int_v1_unchanged() {
     CHECK(cs.eval("(set-code \"(define s3425 (lambda (x) 1))\")").has_value(),
           "3425 AC3: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3425 AC3: eval");
-    auto soft = cs.eval("(query:as-stable-ref 1)");
+    auto soft = cs.eval("(query :as-stable-ref 1)");
     CHECK(soft && is_pair(*soft), "3425 AC3: Soft int → v1 pair");
 }
 
@@ -971,7 +971,7 @@ static void test_ac3661_1_expired_gen_stale_ref() {
     auto hb = cs.eval("qrB3661");
     CHECK(ha && is_hash(*ha), "3661 AC1: A is schema-2 hash");
     CHECK(hb && is_hash(*hb), "3661 AC1: B is schema-2 hash");
-    CHECK(cs.eval("(define pA3661 (query:as-stable-ref qrA3661))").has_value(),
+    CHECK(cs.eval("(define pA3661 (query :as-stable-ref qrA3661))").has_value(),
           "3661 AC1: pack A v2");
     auto packed = cs.eval("pA3661");
     CHECK(packed && is_pair(*packed), "3661 AC1: packed v2 pair");
@@ -1039,7 +1039,7 @@ static void test_ac3661_2_matching_gen_succeeds() {
     CHECK(cs.eval("(define qrC3661 (query :find \"C3661\"))").has_value(), "3661 AC2: bind hash");
     auto h = cs.eval("qrC3661");
     CHECK(h && is_hash(*h), "3661 AC2: schema-2 hash");
-    CHECK(cs.eval("(define pC3661 (query:as-stable-ref qrC3661))").has_value(),
+    CHECK(cs.eval("(define pC3661 (query :as-stable-ref qrC3661))").has_value(),
           "3661 AC2: pack v2");
     auto packed = cs.eval("pC3661");
     CHECK(packed && is_pair(*packed), "3661 AC2: packed v2");
@@ -1063,9 +1063,9 @@ static void test_ac3661_3_soft_auto_refresh() {
               .has_value(),
           "3661 AC3: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3661 AC3: eval");
-    auto soft = cs.eval("(query:as-stable-ref 1)");
+    auto soft = cs.eval("(query :as-stable-ref 1)");
     CHECK(soft && is_pair(*soft), "3661 AC3: Soft int → v1 pair");
-    CHECK(cs.eval("(define pS3661 (query:as-stable-ref 1))").has_value(), "3661 AC3: bind packed");
+    CHECK(cs.eval("(define pS3661 (query :as-stable-ref 1))").has_value(), "3661 AC3: bind packed");
     CHECK(cs.eval("(mutate :rebind \"T3661\" \"9\")").has_value(), "3661 AC3: rebind T");
     CHECK(cs.eval("(define rS3661 (query :children pS3661))").has_value(),
           "3661 AC3: bind children after mutate");
@@ -1190,20 +1190,20 @@ static void ac4106_1_prod_mint_bare_int_refuses() {
     CHECK(cs.eval("(eval-current)").has_value(), "4106 AC1: eval");
     // stable-ref: the #3395 stale-ref face — never a schema-2 hash minted
     // from the current occupant of the int's slot.
-    auto sr4106 = cs.eval("(query:stable-ref 1)");
+    auto sr4106 = cs.eval("(query :stable-ref 1)");
     CHECK(sr4106.has_value(), "4106 AC1: bind");
     CHECK(kind4106(cs, *sr4106) == "stale-ref", "4106 AC1: stable-ref bare int → stale-ref");
     // ensure-ref: the diagnostic hash face — valid=0, refreshed=0, and no
     // make_stamped_safe_ref / export ever runs on the unstamped int.
-    auto ens4106 = cs.eval("(query:ensure-ref 1)");
+    auto ens4106 = cs.eval("(query :ensure-ref 1)");
     CHECK(ens4106 && is_hash(*ens4106), "4106 AC1: ensure-ref returns diagnostic hash");
-    auto ev4106 = cs.eval("(hash-ref (query:ensure-ref 1) \"valid\")");
+    auto ev4106 = cs.eval("(hash-ref (query :ensure-ref 1) \"valid\")");
     CHECK(ev4106 && is_int(*ev4106) && as_int(*ev4106) == 0, "4106 AC1: ensure-ref valid=0");
-    auto er4106 = cs.eval("(hash-ref (query:ensure-ref 1) \"refreshed\")");
+    auto er4106 = cs.eval("(hash-ref (query :ensure-ref 1) \"refreshed\")");
     CHECK(er4106 && is_int(*er4106) && as_int(*er4106) == 0, "4106 AC1: ensure-ref refreshed=0");
     // stable-ref-provenance: the primitive's existing #f refusal face —
     // never is-live=1 of the occupant.
-    auto pr4106 = cs.eval("(query:stable-ref-provenance 1)");
+    auto pr4106 = cs.eval("(query :stable-ref-provenance 1)");
     CHECK(pr4106 && is_bool(*pr4106) && !as_bool(*pr4106), "4106 AC1: provenance bare int → #f");
     aura_typed_audit_clear_readiness_evaluator();
     cs.evaluator().disarm_production_audit_defaults_for_test();
@@ -1235,25 +1235,25 @@ static void ac4106_2_prod_packed_and_hash_still_resolve() {
           "4106 AC2: bind hash");
     auto qr4106 = cs.eval("qr4106");
     CHECK(qr4106 && is_hash(*qr4106), "4106 AC2: QueryResult hash");
-    CHECK(cs.eval("(define p4106 (query:as-stable-ref qr4106))").has_value(), "4106 AC2: pack v2");
+    CHECK(cs.eval("(define p4106 (query :as-stable-ref qr4106))").has_value(), "4106 AC2: pack v2");
     auto pk4106 = cs.eval("p4106");
     CHECK(pk4106 && is_pair(*pk4106), "4106 AC2: v2 pair");
     // stable-ref on a live v2 pair → schema-2 hash (production export).
-    auto sp4106 = cs.eval("(query:stable-ref p4106)");
+    auto sp4106 = cs.eval("(query :stable-ref p4106)");
     CHECK(sp4106 && is_hash(*sp4106), "4106 AC2: live v2 → schema-2 hash out");
     // ensure-ref on the live v2 pair → valid=1, refreshed=0 (non-refresh
     // rule never fires on a fresh gen).
-    auto ev1 = cs.eval("(hash-ref (query:ensure-ref p4106) \"valid\")");
+    auto ev1 = cs.eval("(hash-ref (query :ensure-ref p4106) \"valid\")");
     CHECK(ev1 && is_int(*ev1) && as_int(*ev1) == 1, "4106 AC2: ensure-ref valid=1");
-    auto er1 = cs.eval("(hash-ref (query:ensure-ref p4106) \"refreshed\")");
+    auto er1 = cs.eval("(hash-ref (query :ensure-ref p4106) \"refreshed\")");
     CHECK(er1 && is_int(*er1) && as_int(*er1) == 0, "4106 AC2: ensure-ref refreshed=0");
     // provenance on the live v2 pair → schema-620 hash.
-    auto prp = cs.eval("(query:stable-ref-provenance p4106)");
+    auto prp = cs.eval("(query :stable-ref-provenance p4106)");
     CHECK(prp && is_hash(*prp), "4106 AC2: live v2 → schema-620 hash");
-    auto sch = cs.eval("(hash-ref (query:stable-ref-provenance p4106) \"schema\")");
+    auto sch = cs.eval("(hash-ref (query :stable-ref-provenance p4106) \"schema\")");
     CHECK(sch && is_int(*sch) && as_int(*sch) == 620, "4106 AC2: schema=620");
     // schema-2 hash operand resolves on stable-ref too.
-    auto sh4106 = cs.eval("(query:stable-ref qr4106)");
+    auto sh4106 = cs.eval("(query :stable-ref qr4106)");
     CHECK(sh4106 && is_hash(*sh4106), "4106 AC2: live hash → schema-2 hash out");
     aura_typed_audit_clear_readiness_evaluator();
     cs.evaluator().disarm_production_audit_defaults_for_test();
@@ -1284,7 +1284,7 @@ static void ac4106_3_recycled_slot_never_rebound() {
     CHECK(cs.eval("(eval-current)").has_value(), "4106 AC3: eval");
     CHECK(cs.eval("(define qr4106w (query :find \"w4106\" :as-query-result #t))").has_value(),
           "4106 AC3: bind hash");
-    CHECK(cs.eval("(define p4106w (query:as-stable-ref qr4106w))").has_value(),
+    CHECK(cs.eval("(define p4106w (query :as-stable-ref qr4106w))").has_value(),
           "4106 AC3: pack v2");
     // Force a deterministic recycle (the 3121 fixture idiom): bump the
     // workspace generation and restamp — every pre-bump packed gen now
@@ -1296,17 +1296,17 @@ static void ac4106_3_recycled_slot_never_rebound() {
         ws4106r->bump_generation();
         ws4106r->restamp_all_node_generations();
     }
-    auto sr4106s = cs.eval("(query:stable-ref p4106w)");
+    auto sr4106s = cs.eval("(query :stable-ref p4106w)");
     CHECK(sr4106s.has_value(), "4106 AC3: bind stale");
     const auto kind_s = kind4106(cs, *sr4106s);
     CHECK(kind_s == "stale-ref" || kind_s == "restamp-lag",
           "4106 AC3: stale v2 → stale-ref/restamp-lag (never reminted)");
-    auto pr4106s = cs.eval("(query:stable-ref-provenance p4106w)");
+    auto pr4106s = cs.eval("(query :stable-ref-provenance p4106w)");
     CHECK(pr4106s && is_bool(*pr4106s) && !as_bool(*pr4106s), "4106 AC3: stale v2 provenance → #f");
-    auto ev0 = cs.eval("(hash-ref (query:ensure-ref p4106w) \"valid\")");
+    auto ev0 = cs.eval("(hash-ref (query :ensure-ref p4106w) \"valid\")");
     CHECK(ev0 && is_int(*ev0) && as_int(*ev0) == 0,
           "4106 AC3: stale v2 ensure-ref valid=0 (no wrap-0 refresh)");
-    auto er0 = cs.eval("(hash-ref (query:ensure-ref p4106w) \"refreshed\")");
+    auto er0 = cs.eval("(hash-ref (query :ensure-ref p4106w) \"refreshed\")");
     CHECK(er0 && is_int(*er0) && as_int(*er0) == 0, "4106 AC3: stale v2 ensure-ref refreshed=0");
     aura_typed_audit_clear_readiness_evaluator();
     cs.evaluator().disarm_production_audit_defaults_for_test();
@@ -1323,9 +1323,9 @@ static void ac4106_4_soft_stable_ref_still_mints() {
     CHECK(cs.eval("(set-code \"(define s4106s (lambda (x) 4))\")").has_value(),
           "4106 AC4: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "4106 AC4: eval");
-    auto soft4106 = cs.eval("(query:stable-ref 1)");
+    auto soft4106 = cs.eval("(query :stable-ref 1)");
     CHECK(soft4106 && is_pair(*soft4106), "4106 AC4: Soft stable-ref still mints pair");
-    auto car4106 = cs.eval("(car (query:stable-ref 1))");
+    auto car4106 = cs.eval("(car (query :stable-ref 1))");
     CHECK(car4106 && is_int(*car4106), "4106 AC4: Soft mint car is the NodeId int");
 }
 
@@ -1580,9 +1580,9 @@ static void ac4165_2_same_agent_requery_fresh() {
           "4165 AC2: bind QueryResult hash");
     // Same Evaluator resolves its own held hash through the schema-2
     // operand face (#3395) — freshness via its own minted fiber id.
-    auto sr = cs.eval("(query:stable-ref q4165b)");
+    auto sr = cs.eval("(query :stable-ref q4165b)");
     CHECK(sr && is_hash(*sr), "4165 AC2: same-Agent schema-2 resolve stays fresh");
-    auto fresh = cs.eval("(query:result-fresh? q4165b)");
+    auto fresh = cs.eval("(query :result-fresh? q4165b)");
     CHECK(fresh && is_bool(*fresh) && as_bool(*fresh),
           "4165 AC2: query:result-fresh? #t for the Agent's own mint");
     cs.evaluator().disarm_production_audit_defaults_for_test();
@@ -1787,16 +1787,16 @@ static void ac4235_2_cross_agent_held_result_deny_same_evaluator() {
     const auto fid_v = fid && is_int(*fid) ? as_int(*fid) : -1;
     CHECK(fid_v >= 0x41650000LL, "4235 AC2: A's export stamped with A's own Agent-band mint");
     cs.evaluator().set_current_agent_fingerprint(0x5A'0000'0012ull); // Agent B, same Evaluator
-    auto fresh_b = cs.eval("(query:result-fresh? q4235a)");
+    auto fresh_b = cs.eval("(query :result-fresh? q4235a)");
     CHECK(fresh_b && is_bool(*fresh_b) && !as_bool(*fresh_b),
           "4235 AC2: B resolves A's held QueryResult stale (InvalidFiber deny bites)");
-    CHECK(cs.eval("(define m4235b (query:result-matches q4235a))").has_value(),
+    CHECK(cs.eval("(define m4235b (query :result-matches q4235a))").has_value(),
           "4235 AC2: B result-matches attempt binds");
     auto eq_stale = cs.eval("(equal? (car m4235b) \"stale-ref\")");
     CHECK(eq_stale && is_bool(*eq_stale) && as_bool(*eq_stale),
           "4235 AC2: B query:result-matches denies stale-ref");
     cs.evaluator().set_current_agent_fingerprint(0x5A'0000'0011ull); // back to Agent A
-    auto fresh_a = cs.eval("(query:result-fresh? q4235a)");
+    auto fresh_a = cs.eval("(query :result-fresh? q4235a)");
     CHECK(fresh_a && is_bool(*fresh_a) && as_bool(*fresh_a),
           "4235 AC2: A re-resolves its own export fresh under its own mint");
     cs.evaluator().disarm_production_audit_defaults_for_test();
@@ -1976,17 +1976,17 @@ static void ac4688_2_overflow_cross_agent_schema2_denies() {
     cs.evaluator().set_current_agent_fingerprint(0x468800000202ull); // overflow Agent B
     const auto mint_b = cs.evaluator().agent_scoped_fiber_id();
     CHECK(mint_b != mint_a, "4688 AC2: two overflow Agents on the full table mint distinct ids");
-    auto fresh_b = cs.eval("(query:result-fresh? q4688a)");
+    auto fresh_b = cs.eval("(query :result-fresh? q4688a)");
     CHECK(fresh_b && is_bool(*fresh_b) && !as_bool(*fresh_b),
           "4688 AC2: B does NOT resolve A's live schema-2 Fresh (InvalidFiber deny)");
     // Control: the same result under A's stamped fiber is Fresh — the deny
     // above is the fiber equality, not a generation/wrap/tenant mismatch.
     aura::core::capability::set_effect_fiber_id_override(static_cast<std::uint32_t>(fid_v));
-    auto fresh_own = cs.eval("(query:result-fresh? q4688a)");
+    auto fresh_own = cs.eval("(query :result-fresh? q4688a)");
     CHECK(fresh_own && is_bool(*fresh_own) && as_bool(*fresh_own),
           "4688 AC2: the export is otherwise fresh — only the foreign fiber denies");
     aura::core::capability::set_effect_fiber_id_override(0);
-    CHECK(cs.eval("(define m4688b (query:result-matches q4688a))").has_value(),
+    CHECK(cs.eval("(define m4688b (query :result-matches q4688a))").has_value(),
           "4688 AC2: B query:result-matches attempt binds");
     auto eq_stale = cs.eval("(equal? (car m4688b) \"stale-ref\")");
     CHECK(eq_stale && is_bool(*eq_stale) && as_bool(*eq_stale),
@@ -2231,7 +2231,7 @@ static void ac4438_fiberless_cross_agent_query_stale() {
               "4438: fiber face leaves multi-tenant off");
 
         cs.evaluator().set_current_agent_fingerprint(0x4438'0001ull);
-        auto rawp = cs.eval("(query:pattern \"a4438\" :as-query-result #t)");
+        auto rawp = cs.eval("(query :pattern \"a4438\" :as-query-result #t)");
         if (!rawp)
             std::println(stderr, "4438 raw empty {}", rawp.error().message);
         else if (aura::compiler::types::is_error(*rawp))
@@ -2240,7 +2240,7 @@ static void ac4438_fiberless_cross_agent_query_stale() {
             std::println(stderr, "4438 raw h=0 b={} p={} v={} kind={}", is_bool(*rawp) ? 1 : 0,
                          is_pair(*rawp) ? 1 : 0, aura::compiler::types::is_void(*rawp) ? 1 : 0,
                          kind4106(cs, *rawp));
-        CHECK(cs.eval("(define q4438 (query:pattern \"a4438\" :as-query-result #t))").has_value(),
+        CHECK(cs.eval("(define q4438 (query :pattern \"a4438\" :as-query-result #t))").has_value(),
               "4438: A query:pattern binds");
         auto qa = cs.eval("q4438");
         CHECK(qa && is_hash(*qa), "4438: A pattern is a schema-2 hash");
@@ -2253,9 +2253,9 @@ static void ac4438_fiberless_cross_agent_query_stale() {
         CHECK(node_a && list_has_string_4438(cs, *node_a, "a4438"),
               "4438: A query:node returns the symbol");
         CHECK(node_a && kind4106(cs, *node_a) != "stale-ref", "4438: A query:node is fresh");
-        auto rv_a = cs.eval("(query:ref-valid? q4438 :index 0)");
+        auto rv_a = cs.eval("(query :ref-valid? q4438 :index 0)");
         CHECK(rv_a && is_bool(*rv_a) && as_bool(*rv_a), "4438: A query:ref-valid? is true");
-        CHECK(cs.eval("(define p4438 (query:as-stable-ref q4438 :index 0))").has_value(),
+        CHECK(cs.eval("(define p4438 (query :as-stable-ref q4438 :index 0))").has_value(),
               "4438: A packs a v2 spine");
         auto pk = cs.eval("p4438");
         CHECK(pk && is_pair(*pk) && kind4106(cs, *pk) != "stale-ref",
@@ -2265,11 +2265,11 @@ static void ac4438_fiberless_cross_agent_query_stale() {
         // as persist-reject. The literal is the write the fiber gate must
         // admit for the owner. Delta 0 keeps 443801.
         CHECK(
-            cs.eval("(define lit4438 (query:pattern \"443801\" :as-query-result #t))").has_value(),
+            cs.eval("(define lit4438 (query :pattern \"443801\" :as-query-result #t))").has_value(),
             "4438: A literal pattern binds");
         auto litq = cs.eval("lit4438");
         CHECK(litq && is_hash(*litq), "4438: A literal pattern is a schema-2 hash");
-        CHECK(cs.eval("(define plit4438 (query:as-stable-ref lit4438 :index 0))").has_value(),
+        CHECK(cs.eval("(define plit4438 (query :as-stable-ref lit4438 :index 0))").has_value(),
               "4438: A packs the literal");
         auto mu_a = cs.eval("(mutate :tweak-literal plit4438 0)");
         const auto ka = mu_a ? kind4106(cs, *mu_a) : std::string("missing");
@@ -2284,12 +2284,12 @@ static void ac4438_fiberless_cross_agent_query_stale() {
               std::format("4438: B query:node is stale-ref (got {})", kb));
         CHECK(node_b && !list_has_string_4438(cs, *node_b, "a4438"),
               "4438: B query:node does not return A's symbol");
-        auto rv_b = cs.eval("(query:ref-valid? q4438 :index 0)");
+        auto rv_b = cs.eval("(query :ref-valid? q4438 :index 0)");
         CHECK(rv_b && is_bool(*rv_b) && !as_bool(*rv_b), "4438: B query:ref-valid? is false");
-        auto as_b = cs.eval("(query:as-stable-ref q4438 :index 0)");
+        auto as_b = cs.eval("(query :as-stable-ref q4438 :index 0)");
         CHECK(as_b && kind4106(cs, *as_b) == "stale-ref",
               "4438: B query:as-stable-ref is stale-ref");
-        auto re_b = cs.eval("(query:reaches q4438 :index 0)");
+        auto re_b = cs.eval("(query :reaches q4438 :index 0)");
         CHECK(re_b && kind4106(cs, *re_b) == "stale-ref", "4438: B query:reaches is stale-ref");
         auto ch_b = cs.eval("(query :children q4438 :index 0)");
         CHECK(ch_b && kind4106(cs, *ch_b) == "stale-ref", "4438: B query:children is stale-ref");
@@ -2305,7 +2305,7 @@ static void ac4438_fiberless_cross_agent_query_stale() {
               std::format("4438: B mutate of A's packed v2 is stale-ref (got {})", kmb));
         CHECK(literal_int_4438(cs, "a4438") == 443801, "4438: literal 443801 is unchanged");
 
-        CHECK(cs.eval("(define q4438b (query:pattern \"a4438\" :as-query-result #t))").has_value(),
+        CHECK(cs.eval("(define q4438b (query :pattern \"a4438\" :as-query-result #t))").has_value(),
               "4438: B re-queries the pattern");
         auto node_bb = cs.eval("(query :node q4438b :index 0)");
         CHECK(node_bb && kind4106(cs, *node_bb) != "stale-ref" && car_is_int_4438(cs, *node_bb),
@@ -2452,7 +2452,7 @@ static void ac4438_fiberless_cross_agent_query_stale() {
 // that slot) and then validated that fresh stamp against itself, so a deleted
 // node's id became a valid pinned cross-round handle for a DIFFERENT node.
 // with-pinned had the same promotion. The sibling faces already refuse a bare
-// int on the production face (query:as-stable-ref #3425, resolve_mutate_node_arg
+// int on the production face (query :as-stable-ref #3425, resolve_mutate_node_arg
 // #3395) and already refuse to occupancy-remake an expired-gen packed ref
 // (#3661), so the pin table was the asymmetric survivor.
 //
@@ -2565,7 +2565,7 @@ static void ac4696_3_prod_packed_ref_still_pins() {
     CHECK(cs.eval("(eval-current)").has_value(), "4696 AC3: eval-current");
     CHECK(cs.eval("(define qr4696 (query :find \"w4696\" :as-query-result #t))").has_value(),
           "4696 AC3: query result hash");
-    CHECK(cs.eval("(define p4696 (query:as-stable-ref qr4696))").has_value(), "4696 AC3: pack v2");
+    CHECK(cs.eval("(define p4696 (query :as-stable-ref qr4696))").has_value(), "4696 AC3: pack v2");
     auto pr = cs.eval("(pin-stable-refs p4696)");
     CHECK(pr && is_int(*pr) && as_int(*pr) >= 1, "4696 AC3: packed v2 ref pins");
     auto idv = cs.eval("(car p4696)");
@@ -2608,7 +2608,7 @@ static void ac4696_5_prod_expired_packed_ref_not_remade() {
     CHECK(cs.eval("(eval-current)").has_value(), "4696 AC5: eval-current");
     CHECK(cs.eval("(define qr4696b (query :find \"w4696b\" :as-query-result #t))").has_value(),
           "4696 AC5: query result hash");
-    CHECK(cs.eval("(define p4696b (query:as-stable-ref qr4696b))").has_value(),
+    CHECK(cs.eval("(define p4696b (query :as-stable-ref qr4696b))").has_value(),
           "4696 AC5: pack v2");
     // Deterministic expiry (the #4106 recycle idiom): bump the workspace
     // generation and restamp, so the packed gen no longer matches the

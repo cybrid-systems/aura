@@ -106,7 +106,7 @@ export struct MutationRecord {
 // *predicate* caused the narrowing, not which mutation
 // changed the AST.
 //
-// Used by (query:provenance-of var-name) to answer "why does
+// Used by (query :provenance-of var-name) to answer "why does
 // this variable have type T in this scope?".
 export struct NarrowingRecord {
     // The variable that was narrowed.

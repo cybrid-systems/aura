@@ -55,7 +55,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC2: query:pattern bumps query counters ---");
     const auto stats2a = edsl_stats(cs);
-    auto qp = cs.eval("(query:pattern \"x\")");
+    auto qp = cs.eval("(query :pattern \"x\")");
     CHECK(qp.has_value(), "query:pattern finds binding x");
     const auto stats2b = edsl_stats(cs);
     std::println("  edsl stats: {} -> {}", stats2a, stats2b);
@@ -80,7 +80,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: multi-round query→mutate→eval monotonic ---");
     const auto stats5a = edsl_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(query:pattern \"y\")");
+        (void)cs.eval("(query :pattern \"y\")");
         (void)cs.eval("(mutate :rebind \"y\" \"" + std::to_string(20 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(mutate :request-gc-safepoint 10)");

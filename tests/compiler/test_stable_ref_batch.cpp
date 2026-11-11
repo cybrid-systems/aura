@@ -75,9 +75,9 @@ static void run_matrix(CompilerService& cs) {
     CHECK(cc1 > cc0, "validate_stable_ref bumps cross_cow_invalidations");
 
     std::println("\n--- AC3: query:stable-ref + ref-valid? ---");
-    auto ref = cs.eval("(query:stable-ref 1)");
+    auto ref = cs.eval("(query :stable-ref 1)");
     CHECK(ref && is_pair(*ref), "query:stable-ref returns pair");
-    auto valid = cs.eval("(let ((r (query:stable-ref 1))) (query:ref-valid? r))");
+    auto valid = cs.eval("(let ((r (query :stable-ref 1))) (query :ref-valid? r))");
     CHECK(valid && is_bool(*valid), "query:ref-valid? returns bool");
 
     std::println("\n--- AC4: mutate:rebind + children-stable ---");
@@ -104,7 +104,7 @@ static void run_matrix(CompilerService& cs) {
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(mutate :rebind \"b\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(let ((r (query:stable-ref 1))) (query:ref-valid? r))");
+        (void)cs.eval("(let ((r (query :stable-ref 1))) (query :ref-valid? r))");
     }
     const auto stats6b = cow_fiber_stats(cs);
     std::println("  cow-fiber stats: {} -> {}", stats6a, stats6b);
@@ -198,7 +198,7 @@ static void run_matrix(CompilerService& cs) {
     // Seed a workspace define so query:stable-ref / mutate paths have nodes.
     CHECK(cs.eval("(set-code \"(define (f x) (+ x 1))\")").has_value(), "set-code seed");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current seed");
-    auto ref = cs.eval("(query:stable-ref 0)");
+    auto ref = cs.eval("(query :stable-ref 0)");
     // query:stable-ref may return void if node 0 is not a user node;
     // try finding a define body via workspace helpers when available.
     if (!ref || !is_hash(*ref)) {
@@ -341,7 +341,7 @@ static void run_matrix(CompilerService& cs) {
                          "  (define rx (query :stable-ref-pair 1)) "
                          "  (workspace :switch 1) "
                          "  (define r (query :resolve-stable-ref 0 (car rx) (cdr rx))) "
-                         "  (if r (query:ref-valid? r) #f))");
+                         "  (if r (query :ref-valid? r) #f))");
     CHECK(valid && is_bool(*valid) && as_bool(*valid),
           "resolved ref valid in child layer after mutate");
 

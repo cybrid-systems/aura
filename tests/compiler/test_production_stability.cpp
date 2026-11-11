@@ -99,7 +99,7 @@ int run_test_production_stability() {
 
     {
         // #1036 dirty-subtree callable (empty workspace → 0)
-        auto r = cs2.eval("(query:dirty-subtree 0)");
+        auto r = cs2.eval("(query :dirty-subtree 0)");
         CHECK(r && is_int(*r) && as_int(*r) >= 0, "dirty-subtree returns non-neg int");
     }
 

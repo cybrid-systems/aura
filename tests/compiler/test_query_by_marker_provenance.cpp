@@ -136,19 +136,19 @@ static void ac2_pattern_default_hygiene() {
     CHECK(macro_n_initial >= 0, "macro_markers visible in by-marker primitive");
 
     // Step 2 — default path filters MacroIntroduced; opt-in returns more.
-    auto r_h_def = cs.eval("(length (query:pattern \"*\"))");
-    auto r_h_opt = cs.eval("(length (query:pattern \"*\" :allow-macro-introduced #t))");
+    auto r_h_def = cs.eval("(length (query :pattern \"*\"))");
+    auto r_h_opt = cs.eval("(length (query :pattern \"*\" :allow-macro-introduced #t))");
     CHECK(r_h_def.has_value() && r_h_opt.has_value(), "lengths computed");
     CHECK(is_int(*r_h_def) && is_int(*r_h_opt), "lengths integral");
     CHECK(as_int(*r_h_opt) >= as_int(*r_h_def),
           "allow-macro >= default (macro residue only with opt-in)");
 
     // Step 3 — opt-in variants all parse without error
-    CHECK(cs.eval("(query:pattern \"*\" :include-macro-introduced #t)").has_value(),
+    CHECK(cs.eval("(query :pattern \"*\" :include-macro-introduced #t)").has_value(),
           "include-macro-introduced accepted");
-    CHECK(cs.eval("(query:pattern \"*\" :exclude-macro-introduced #f)").has_value(),
+    CHECK(cs.eval("(query :pattern \"*\" :exclude-macro-introduced #f)").has_value(),
           "exclude-macro-introduced #f accepted");
-    CHECK(cs.eval("(query:pattern \"base\" :respect-hygiene #f)").has_value(),
+    CHECK(cs.eval("(query :pattern \"base\" :respect-hygiene #f)").has_value(),
           ":respect-hygiene still recognized");
 
     // Step 4 — filtered counter monotonic after override activity
@@ -167,8 +167,8 @@ static void ac3_metrics_in_combined_surfaces() {
     CHECK(m != nullptr, "metrics");
 
     // Generate some baseline activity.
-    (void)cs.eval("(query:pattern \"*\")");
-    (void)cs.eval("(query:pattern \"*\" :allow-macro-introduced #t)");
+    (void)cs.eval("(query :pattern \"*\")");
+    (void)cs.eval("(query :pattern \"*\" :allow-macro-introduced #t)");
     (void)cs.eval("(engine:metrics \"query:by-marker\")");
     (void)cs.eval("(engine:metrics \"query:node-provenance\")");
     (void)cs.eval("(engine:metrics \"query:last-mutation-provenance\")");
@@ -273,12 +273,12 @@ static void ac3638_hit_fallback_telemetry() {
     const auto hit0 = aura::compiler::g_query_index_hit_total.load(std::memory_order_relaxed);
     // Cold index: the first indexed probe full-rebuilds (a cold rebuild
     // walks the whole tree = full-scan fallback).
-    auto r1 = cs.eval("(query:pattern \"(define ?f (lambda (?x) ?y))\" :nested-arity #t)");
+    auto r1 = cs.eval("(query :pattern \"(define ?f (lambda (?x) ?y))\" :nested-arity #t)");
     CHECK(r1.has_value(), "3638: cold query:pattern returns");
     CHECK(aura::compiler::g_query_full_scan_fallback_total.load(std::memory_order_relaxed) > fb0,
           "3638 AC2: cold probe = full-scan fallback");
     // Synced index: the second probe serves from the map (index hit).
-    auto r2 = cs.eval("(query:pattern \"(define ?g (lambda (?x) ?y))\" :nested-arity #t)");
+    auto r2 = cs.eval("(query :pattern \"(define ?g (lambda (?x) ?y))\" :nested-arity #t)");
     CHECK(r2.has_value(), "3638: warm query:pattern returns");
     CHECK(aura::compiler::g_query_index_hit_total.load(std::memory_order_relaxed) > hit0,
           "3638 AC2: synced probe = index hit");

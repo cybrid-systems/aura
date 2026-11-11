@@ -294,7 +294,7 @@ bool test_post_mutate_provenance_and_eval() {
     (void)cs.eval("(typecheck-current)");
     (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 12) 0))\" "
                   "\"issue-537-e2e\")");
-    auto prov = cs.eval("(query:provenance-of \"x\")");
+    auto prov = cs.eval("(query :provenance-of \"x\")");
     CHECK(prov.has_value(), "query:provenance-of after predicate mutate");
     auto r = cs.eval("(f 4)");
     CHECK(r.has_value() && aura::compiler::types::is_int(*r),

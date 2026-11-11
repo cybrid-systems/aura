@@ -99,7 +99,7 @@
 
 ; ── ast:to-dot — 当前 workspace 转 DOT 图 ──
 (define (ast:to-dot)
-  (define root (try (query:root) (catch #f)))
+  (define root (try (query :root) (catch #f)))
   (if (not root) "digraph AST { }"
     (let ((result "digraph AST {\n  rankdir=TB;\n  node [shape=box,fontname=\"monospace\"];\n"))
       ; 遍历所有节点

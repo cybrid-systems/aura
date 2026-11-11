@@ -223,7 +223,7 @@ static void run_4689_rollback_since_id() {
         const auto size_before = ws->size();
         const auto live_before = live_nodes_4689(*ws);
         const auto freed_before = ws->ghost_orphan_nodes_freed();
-        auto fr = cs.eval("(mutate :query-and-replace (query:where :callee \"f\") \"1)\")");
+        auto fr = cs.eval("(mutate :query-and-replace (query :where :callee \"f\") \"1)\")");
         CHECK(fr.has_value(), "4689 AC1: the rejected replace returns");
         const auto kind = fr ? merr_kind_4689(cs, *fr) : std::string("novalue");
         CHECK(kind == "parse-failure", std::format("4689 AC1: parse-failure (got {})", kind));
@@ -261,7 +261,7 @@ static void run_4689_rollback_since_id() {
         auto tw = cs.eval(std::format("(mutate :tweak-literal {} 5)", lit));
         CHECK(tw && is_int(*tw) && as_int(*tw) == 15, "4689 AC1b: the tweak commits 10 -> 15");
 
-        auto fr = cs.eval("(mutate :query-and-replace-batch (query:where :callee \"f\") \"1)\")");
+        auto fr = cs.eval("(mutate :query-and-replace-batch (query :where :callee \"f\") \"1)\")");
         CHECK(fr.has_value(), "4689 AC1b: the rejected batch returns");
         const auto kind = fr ? merr_kind_4689(cs, *fr) : std::string("novalue");
         CHECK(kind == "partial-fail", std::format("4689 AC1b: partial-fail (got {})", kind));
@@ -292,7 +292,7 @@ static void run_4689_rollback_since_id() {
             return;
         }
         const auto log_before = ws->mutation_log_view().size();
-        auto fr = cs.eval("(mutate :query-and-replace-batch (query:where :node-type \"Call\") "
+        auto fr = cs.eval("(mutate :query-and-replace-batch (query :where :node-type \"Call\") "
                           "\"(+ 1 2)\" :validate \"NoSuchType4689\")");
         CHECK(fr.has_value(), "4689 AC2: the rejected batch returns");
         const auto kind = fr ? merr_kind_4689(cs, *fr) : std::string("novalue");
@@ -313,7 +313,7 @@ static void run_4689_rollback_since_id() {
         CHECK(all_rolled_back, "4689 AC2: every batch row is RolledBack");
         CHECK(int_eq_4689(cs, "(f 2)", 3), "4689 AC2: (f 2) is still 3");
         CHECK(int_eq_4689(cs, "(h)", 5), "4689 AC2: (h) is still 5");
-        CHECK(eval_ok(cs, "(query:filter (query:where :callee \"f\"))"),
+        CHECK(eval_ok(cs, "(query :filter (query :where :callee \"f\"))"),
               "4689 AC2: the original call is still queryable");
     }
 

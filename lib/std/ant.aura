@@ -186,7 +186,7 @@
   (if (null? a) b (cons (car a) (colony-list-append (cdr a) b))))
 
 (define (colony-find-define name)
-  (let loop ((ids (query:node-type "Define")))
+  (let loop ((ids (query :node-type "Define")))
     (if (null? ids) #f
       (let ((info (query :node (car ids))))
         (if (and (string? (car (cdr info)))
@@ -221,18 +221,18 @@
   (let ((def (colony-find-define name)))
     (if (not def) (list)
       (colony-filter-ids (colony-collect-ids def)
-                         (query:node-type tag-name)))))
+                         (query :node-type tag-name)))))
 
 (define find-literal-ints
   (lambda (fn-name)
     (if (string=? fn-name "")
-        (query:node-type "LiteralInt")
+        (query :node-type "LiteralInt")
         (colony-literals-in fn-name "LiteralInt"))))
 
 (define find-literal-floats
   (lambda (fn-name)
     (if (string=? fn-name "")
-        (query:node-type "LiteralFloat")
+        (query :node-type "LiteralFloat")
         (colony-literals-in fn-name "LiteralFloat"))))
 
 ; ── Helper: try a mutation, return (success? output) ──

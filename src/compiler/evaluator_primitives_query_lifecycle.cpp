@@ -4442,7 +4442,7 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                                                 resolve_module_path, ev);
     register_query_lifecycle_mutation_memory_parts(add, pairs, string_heap, type_registry,
                                                    resolve_module_path, ev);
-    // (query:mutations-since <id>) — Issue #346: returns
+    // (query :mutations-since <id>) — Issue #346: returns
     // a pair-list of mutations with mutation_id >
     // the given id. Useful for "what changed since my
     // last checkpoint?" queries (the AI agent can

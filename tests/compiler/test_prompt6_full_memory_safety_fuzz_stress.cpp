@@ -225,7 +225,7 @@ bool test_fuzz_mutate_query_panic() {
                               std::to_string(val_dist(rng)) + "))");
                 break;
             case 2:
-                (void)cs.eval("(query:pattern \"base\")");
+                (void)cs.eval("(query :pattern \"base\")");
                 break;
             case 3:
                 (void)cs.eval("(query:epoch-delta-since-last-query)");

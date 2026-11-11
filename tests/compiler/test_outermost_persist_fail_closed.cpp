@@ -2415,7 +2415,7 @@ int run_test_outermost_persist_fail_closed() {
               "3697 soak: bind find hash");
         auto qr = cs.eval("qr3697");
         CHECK(qr && is_hash(*qr), "3697 soak: production find is schema-2 hash");
-        CHECK(cs.eval("(define qc3697 (query:filter (query:where :node-type \"LiteralInt\")))")
+        CHECK(cs.eval("(define qc3697 (query :filter (query :where :node-type \"LiteralInt\")))")
                   .has_value(),
               "3697 soak: bind literal matches");
         CHECK(aura::compiler::typed_audit::production_defaults_active(),

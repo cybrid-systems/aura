@@ -83,7 +83,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC5: query:pattern hot path ---");
     const auto q0 = cs.evaluator().get_total_query_calls();
-    (void)cs.eval("(query:pattern \"acc\")");
+    (void)cs.eval("(query :pattern \"acc\")");
     const auto q1 = cs.evaluator().get_total_query_calls();
     std::println("  total_query_calls: {} -> {}", q0, q1);
     CHECK(q1 >= q0, "query:pattern bumps or preserves query call count");
@@ -91,7 +91,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: multi-round hot-path matrix ---");
     const auto stats6a = primitives_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(query:pattern \"acc\")");
+        (void)cs.eval("(query :pattern \"acc\")");
         (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(+ 1 2)");

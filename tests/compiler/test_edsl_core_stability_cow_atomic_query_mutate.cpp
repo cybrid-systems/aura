@@ -68,8 +68,8 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC2: query:pattern bumps tag-arity-delta ---");
     const auto delta0 = hash_int(cs, "tag-arity-delta-patches");
-    (void)cs.eval("(query:pattern \"define\")");
-    (void)cs.eval("(query:pattern \"fact\")");
+    (void)cs.eval("(query :pattern \"define\")");
+    (void)cs.eval("(query :pattern \"fact\")");
     const auto delta1 = hash_int(cs, "tag-arity-delta-patches");
     std::println("  tag-arity-delta-patches: {} -> {}", delta0, delta1);
     CHECK(delta1 >= delta0, "tag-arity-delta-patches monotonic after query:pattern");
@@ -98,7 +98,7 @@ static void run_matrix(CompilerService& cs) {
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(mutate :rebind \"b\" \"" + std::to_string(20 + round) + "\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(query:pattern \"define\")");
+        (void)cs.eval("(query :pattern \"define\")");
     }
     const auto stats5b = stats_sum(cs);
     std::println("  edsl-core-stability sum: {} -> {}", stats5a, stats5b);

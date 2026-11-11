@@ -24,11 +24,11 @@
   (check (pair? (query :children)))
   (check (pair? (query :node)))
   (check (pair? (query :parent)))
-  (check (pair? (query:node-type)))
-  (check (pair? (query:pattern)))
+  (check (pair? (query :node-type)))
+  (check (pair? (query :pattern)))
   (check (pair? (query :def-use)))
-  (check (pair? (query:reaches)))
-  (check (pair? (query:effects))))
+  (check (pair? (query :reaches)))
+  (check (pair? (query :effects))))
 
 (test-suite "err:out-of-range"
   (check (pair? (mutate :remove-node 999)))

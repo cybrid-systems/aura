@@ -93,7 +93,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: query:provenance-of present after mutate ---");
     (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 2) 0))\" "
                   "\"issue-467-prov\")");
-    auto prov = cs.eval("(query:provenance-of \"x\")");
+    auto prov = cs.eval("(query :provenance-of \"x\")");
     CHECK(prov.has_value(), "query:provenance-of after predicate mutate");
 
     std::println("\n--- AC6: predicate swap → blame path observable ---");

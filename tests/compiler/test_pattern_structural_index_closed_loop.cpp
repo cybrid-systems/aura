@@ -69,11 +69,11 @@ static void run_matrix(CompilerService& cs) {
     const auto hits3a = ev.get_pattern_structural_index_hits();
     const auto misses3a = ev.get_pattern_structural_index_misses();
     // Non-matching (tag, arity) uses the index miss fast path.
-    (void)cs.eval("(query:pattern \"(+ 1 2)\")");
+    (void)cs.eval("(query :pattern \"(+ 1 2)\")");
     const auto misses3b = ev.get_pattern_structural_index_misses();
     CHECK(misses3b > misses3a, "non-matching pattern bumps structural index misses");
     // Matching define uses the index hit fast path (strict arity).
-    (void)cs.eval("(query:pattern \"(define v0 0)\" :strict-arity #t)");
+    (void)cs.eval("(query :pattern \"(define v0 0)\" :strict-arity #t)");
     const auto stats3b = pattern_structural_index_stats(cs);
     const auto hits3b = ev.get_pattern_structural_index_hits();
     const auto misses3c = ev.get_pattern_structural_index_misses();
@@ -106,7 +106,7 @@ static void run_matrix(CompilerService& cs) {
         ev.get_pattern_structural_index_hits() + ev.get_pattern_structural_index_misses();
     const auto stats6a = pattern_structural_index_stats(cs);
     for (int round = 0; round < 5; ++round) {
-        (void)cs.eval("(query:pattern \"(define v0 0)\" :strict-arity #t)");
+        (void)cs.eval("(query :pattern \"(define v0 0)\" :strict-arity #t)");
     }
     const auto fast6b =
         ev.get_pattern_structural_index_hits() + ev.get_pattern_structural_index_misses();

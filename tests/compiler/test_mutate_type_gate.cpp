@@ -801,7 +801,7 @@ int run_test_mutate_type_gate() {
             "(define (h xs) (apply + xs))"
             "(define (k n) (let ((i 0)) (while (< i n) (set! i (+ i 1))) i))"
             "(define (p n) (let ((i 0)) (current-time-ms) (workspace) (mutate :restore) "
-            "(engine:metrics) (query:defines) (query:code) i))";
+            "(engine:metrics) (query :defines) (query :code) i))";
 
         auto rebind_true = [](CompilerService& cs, const char* expr, const std::string& label) {
             auto r = cs.eval(expr);
@@ -836,8 +836,8 @@ int run_test_mutate_type_gate() {
                         std::string(tag) + " while statement");
             rebind_true(cs,
                         "(mutate :rebind \"p\" \"(lambda (n) (let ((i 0)) (current-time-ms) "
-                        "(workspace) (mutate :restore) (engine:metrics) (query:defines) "
-                        "(query:code) i))\" \"id\")",
+                        "(workspace) (mutate :restore) (engine:metrics) (query :defines) "
+                        "(query :code) i))\" \"id\")",
                         std::string(tag) + " primitive fallback");
         };
         drive(MutateTypeGate::Hard, "hard");

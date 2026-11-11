@@ -139,7 +139,7 @@ static void ac738_2_auto_pins() {
     CompilerService cs;
     CHECK(setup_parent(cs), "parent workspace setup");
     const auto pins_before = cs.evaluator().cow_boundary_pins_total();
-    (void)cs.eval("(query:stable-ref 1)");
+    (void)cs.eval("(query :stable-ref 1)");
     const auto pins_after = cs.evaluator().cow_boundary_pins_total();
     CHECK(pins_after > pins_before, "boundary pin counter grew after query:stable-ref");
 }
@@ -177,13 +177,13 @@ static void ac738_5_multi_round() {
     CompilerService cs;
     CHECK(setup_parent(cs), "loop setup");
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(query:stable-ref 1)");
+        (void)cs.eval("(query :stable-ref 1)");
         (void)cs.eval(std::format("(workspace :create \"child-{}\")", round));
         auto ws_id = 1 + round;
         (void)cs.eval(std::format("(workspace :switch {})", ws_id));
         (void)cs.eval(std::format("(mutate :rebind \"y\" \"{}\")", round + 10));
         auto valid =
-            cs.eval("(let ((r (query:stable-ref 1))) (if (pair? r) (query:ref-valid? r) #f))");
+            cs.eval("(let ((r (query :stable-ref 1))) (if (pair? r) (query :ref-valid? r) #f))");
         CHECK(valid.has_value(), std::format("round {} ref-valid? in child", round));
         (void)cs.eval("(workspace :switch 0)");
     }
@@ -471,7 +471,7 @@ static void ac1630_5_stress() {
         safe = local;
 
         if ((i % 11) == 0)
-            (void)cs.eval(std::format("(query:stable-ref {})", target));
+            (void)cs.eval(std::format("(query :stable-ref {})", target));
         if ((i % 17) == 0)
             (void)cs.eval("(mutate :rebind \"h\" \"(lambda (x) (* x 3))\" \"#1630\")");
     }

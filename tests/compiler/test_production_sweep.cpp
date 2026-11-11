@@ -693,7 +693,7 @@ static void ac_1276_1280() {
     {
         auto h = cs.eval("(engine:metrics \"query:hygiene-violation-stats\")");
         CHECK(h.has_value(), "query:hygiene-violation-stats callable");
-        auto d = cs.eval("(query:dirty-impact)");
+        auto d = cs.eval("(query :dirty-impact)");
         CHECK(d.has_value(), "query:dirty-impact callable");
     }
 

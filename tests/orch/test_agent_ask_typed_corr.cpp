@@ -487,12 +487,12 @@ int run_test_agent_ask_typed_corr() {
             aura::orch::g_pending_asks[corr4049] = reply_mb4049;
         }
         auto ok4049 = cs4049.eval(std::format(
-            R"((let ((h (orch:agent-reply {} (query:stable-ref {})))) (hash-ref h "ok")))",
+            R"((let ((h (orch:agent-reply {} (query :stable-ref {})))) (hash-ref h "ok")))",
             corr4049, nid4049));
         CHECK(ok4049 && is_bool(*ok4049) && as_bool(*ok4049),
               "4049 AC1: stable-ref reply ok (auto handoff ran)");
         auto wired4049 = cs4049.eval(std::format(
-            R"((let ((h (orch:agent-reply {} (query:stable-ref {})))) (hash-ref h "agent-reply-auto-handoff-wired")))",
+            R"((let ((h (orch:agent-reply {} (query :stable-ref {})))) (hash-ref h "agent-reply-auto-handoff-wired")))",
             corr4049, nid4049));
         CHECK(wired4049 && is_int(*wired4049) && as_int(*wired4049) == 1,
               "4049 AC1: auto-handoff wired sentinel");

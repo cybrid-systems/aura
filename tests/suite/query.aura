@@ -3,19 +3,19 @@
 
 ; ── query:filter 基础 ──
 (test-suite "query:filter-basic"
-  (check (pair? (query:filter (lambda (x) (= (% x 2) 0)) (list 1 2 3 4 5)))))
+  (check (pair? (query :filter (lambda (x) (= (% x 2) 0)) (list 1 2 3 4 5)))))
 
 (test-suite "query:filter-empty"
-  (check (null? (query:filter (lambda (x) #t) (quote ())))))
+  (check (null? (query :filter (lambda (x) #t) (quote ())))))
 
 (test-suite "query:filter-all-true"
-  (check (= (length (query:filter (lambda (x) #t) (list 1 2 3))) 3)))
+  (check (= (length (query :filter (lambda (x) #t) (list 1 2 3))) 3)))
 
 (test-suite "query:filter-all-false"
-  (check (null? (query:filter (lambda (x) #f) (list 1 2 3)))))
+  (check (null? (query :filter (lambda (x) #f) (list 1 2 3)))))
 
 (test-suite "query:filter-numeric-pred"
-  (check (pair? (query:filter (lambda (x) (> x 3)) (list 1 2 3 4 5)))))
+  (check (pair? (query :filter (lambda (x) (> x 3)) (list 1 2 3 4 5)))))
 
 ; ── query:uncalled ──
 (test-suite "query:uncalled-identity"

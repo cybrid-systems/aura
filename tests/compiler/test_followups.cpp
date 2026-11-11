@@ -119,9 +119,9 @@ bool test_or_combine_bits() {
     return true;
 }
 
-// AC4: (query:provenance-of*) wildcard (#282 follow-up #2)
+// AC4: (query :provenance-of*) wildcard (#282 follow-up #2)
 bool test_provenance_wildcard() {
-    std::println("\n--- AC4: (query:provenance-of*) wildcard ---");
+    std::println("\n--- AC4: (query :provenance-of*) wildcard ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval("(set-code \""
                  "(define (f x y) "
@@ -133,7 +133,7 @@ bool test_provenance_wildcard() {
     auto tc = cs.eval("(typecheck-current)");
     CHECK(tc.has_value(), "typecheck succeeds");
     // Wildcard returns all variables that have provenance
-    auto n = run_int(cs, "(length (query:provenance-of*))");
+    auto n = run_int(cs, "(length (query :provenance-of*))");
     CHECK(n >= 2, "wildcard returns >= 2 vars (x, y)");
     return true;
 }
@@ -193,7 +193,7 @@ bool test_check_mode_captures_provenance() {
     // Run check-mode only.
     auto tc = cs.eval("(typecheck-current)");
     CHECK(tc.has_value(), "(typecheck-current) runs");
-    auto n = run_int(cs, "(length (query:provenance-of \"x\"))");
+    auto n = run_int(cs, "(length (query :provenance-of \"x\"))");
     CHECK(n >= 1, "check-mode captured provenance for x");
     return true;
 }

@@ -229,7 +229,7 @@ static void ac8_stress() {
         (void)cs.eval(
             std::format("(mutate :rebind \"f\" \"(lambda (x) (+ x {}))\" \"i1918\")", i % 5));
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(query:pattern '(define _ _))");
+        (void)cs.eval("(query :pattern '(define _ _))");
         // Direct apply_closure path (same dual-path as eval call sites).
         if (auto r = cs.eval("(lambda (z) (+ z 1))"); r && is_closure(*r)) {
             auto cid = as_closure_id(*r);

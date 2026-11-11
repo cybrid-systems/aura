@@ -2684,7 +2684,7 @@ void register_query_obs_mid_children_parts(PrimRegistrar add, std::pmr::vector<P
     //   - children-stable-epoch-mismatch-total: QueryEpoch
     //       (mutation_epoch + generation) mismatch on a held span
     //       under concurrent Guard.
-    // Distinct from #2861 pattern-safety-stats (query:pattern walks)
+    // Distinct from #2861 pattern-safety-stats (query :pattern walks)
     // - these are the query:children-stable surfaces. Children-stable
     // views are held ACROSS mutate rounds so invalidation_detected +
     // epoch_mismatch have longer exposure windows than the pattern
@@ -4048,7 +4048,7 @@ void register_query_obs_mid_type_incremental_parts(PrimRegistrar add, std::pmr::
     // decide whether to schedule a full re-solve (size is
     // large or growth is monotonic) or trust the incremental
     // path (size is bounded).
-    add("query:dirty-impact", [](std::span<const EvalValue> a) -> EvalValue {
+    ev.primitives().add_hidden("query:dirty-impact", [](std::span<const EvalValue> a) -> EvalValue {
         (void)a;
         auto* ev = Evaluator::get_query_evaluator();
         if (!ev)

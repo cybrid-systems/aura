@@ -1203,12 +1203,13 @@ void register_workspace_query_handle_parts(WorkspaceQueryPrims& P, PrimRegistrar
     auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
     auto& resolve_query_node_arg = P.resolve_query_node_arg;
     auto pin_query_children = make_pin_query_children(P.ev);
-    // (query:root) — Return the current workspace root node ID, or #f if no workspace
+    // (query :root) — Return the current workspace root node ID, or #f if no workspace
     // Issue #3896: production must not export a bare NodeId through
     // end_query_epoch — resolve/mutate refuse bare int (#3395). Finish via
     // end_query_epoch_maybe_result with a singleton match list so schema-2
     // auto-upgrade stamps the root. Soft keeps the historical bare int.
-    add("query:root",
+    ev.primitives().add_hidden(
+        "query:root",
         [ws, mev, begin_query_epoch, end_query_epoch,
          end_query_epoch_maybe_result](const auto&) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
@@ -1302,7 +1303,7 @@ void register_workspace_query_stable_ref_parts(WorkspaceQueryPrims& P, PrimRegis
     auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
     auto& resolve_query_node_arg = P.resolve_query_node_arg;
     auto pin_query_children = make_pin_query_children(P.ev);
-    // Issue #235 / #2404: (query:stable-ref node-id) — Returns a
+    // Issue #235 / #2404: (query :stable-ref node-id) — Returns a
     // stable reference to a node as (node-id . current-gen).
     // The stable-ref can be passed back to mutate:* primitives
     // which will verify the generation matches before applying
@@ -1318,12 +1319,13 @@ void register_workspace_query_stable_ref_parts(WorkspaceQueryPrims& P, PrimRegis
     // The result is a 2-element list `(id . gen)` so the agent
     // can capture it as a single value and pass it through
     // multi-round edit pipelines.
-    add("query:stable-ref",
+    ev.primitives().add_hidden(
+        "query:stable-ref",
         [ws, mev, &ev, begin_query_epoch, end_query_epoch_maybe_result,
          resolve_query_node_arg](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
             if (a.empty() || (!is_int(a[0]) && !is_pair(a[0]) && !is_hash(a[0])))
-                return mev("bad-arg", "usage: (query:stable-ref node-id)");
+                return mev("bad-arg", "usage: (query :stable-ref node-id)");
             if (!ws.workspace_flat)
                 return mev("no-workspace", "no workspace AST loaded");
             auto& flat = *ws.workspace_flat;
@@ -1364,7 +1366,7 @@ void register_workspace_query_stable_ref_parts(WorkspaceQueryPrims& P, PrimRegis
                     return rerr;
             } else {
                 if (!is_int(a[0]))
-                    return mev("bad-arg", "usage: (query:stable-ref node-id)");
+                    return mev("bad-arg", "usage: (query :stable-ref node-id)");
                 node = static_cast<aura::ast::NodeId>(as_int(a[0]));
                 if (node >= flat.size())
                     return mev("out-of-range", "node ID " + std::to_string(node) +
@@ -1437,25 +1439,180 @@ void register_workspace_query_ensure_ref_parts(WorkspaceQueryPrims& P, PrimRegis
     auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
     auto& resolve_query_node_arg = P.resolve_query_node_arg;
     auto pin_query_children = make_pin_query_children(P.ev);
-    // Issue #2404: (query:ensure-ref node-id|stable-ref) — force
+    // Issue #2404: (query :ensure-ref node-id|stable-ref) — force
     // validate_or_refresh on an Agent-held handle and return a diagnostic
     // hash: valid / id / gen / refreshed / provenance snapshot keys +
     // schema-2404. Soft path: already-valid is metric-only (export-valid).
-    add("query:ensure-ref", [ws, mev, &ev, resolve_query_node_arg](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty())
-            return mev("bad-arg", "usage: (query:ensure-ref node-id|stable-ref)");
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
-        auto& flat = *ws.workspace_flat;
+    ev.primitives().add_hidden(
+        "query:ensure-ref", [ws, mev, &ev, resolve_query_node_arg](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty())
+                return mev("bad-arg", "usage: (query :ensure-ref node-id|stable-ref)");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+            auto& flat = *ws.workspace_flat;
 
-        // Issue #4106: shared valid=0 diagnostic face for the production
-        // refusals (bare-int occupancy reject in the is_int arm below; packed
-        // stale non-refresh at the export site) — exact field set of the
-        // historical !exported hash, so Agents see one refusal shape. Never
-        // mints a stamp of the current occupant.
-        auto refuse_valid0 = [&](aura::ast::NodeId id, std::uint16_t gen,
-                                 bool from_packed) -> EvalValue {
+            // Issue #4106: shared valid=0 diagnostic face for the production
+            // refusals (bare-int occupancy reject in the is_int arm below; packed
+            // stale non-refresh at the export site) — exact field set of the
+            // historical !exported hash, so Agents see one refusal shape. Never
+            // mints a stamp of the current occupant.
+            auto refuse_valid0 = [&](aura::ast::NodeId id, std::uint16_t gen,
+                                     bool from_packed) -> EvalValue {
+                auto* ht = FlatHashTable::create(32);
+                if (!ht)
+                    return make_void();
+                auto meta = ht->metadata();
+                auto keys = ht->keys();
+                auto vals = ht->values();
+                auto hcap = ht->capacity;
+                auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                    std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                    for (const char* p = k_str; *p; ++p)
+                        h = (h ^ static_cast<std::uint8_t>(*p)) *
+                            ::aura::compiler::stats::kFnvPrime;
+                    const auto fp = ::aura::compiler::hash::fingerprint(h);
+                    for (std::size_t at = 0; at < hcap; ++at) {
+                        auto idx = ((h >> 1) + at) & (hcap - 1);
+                        if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
+                            meta[idx] = fp;
+                            auto kidx = ws.string_heap.mint(k_str);
+                            keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                            vals[idx] = make_int(v).val;
+                            ht->size++;
+                            return;
+                        }
+                    }
+                };
+                insert_kv("valid", 0);
+                insert_kv("id", static_cast<std::int64_t>(id));
+                insert_kv("gen", static_cast<std::int64_t>(gen));
+                insert_kv("refreshed", 0);
+                insert_kv("from-packed", from_packed ? 1 : 0);
+                insert_kv("schema-2404", 2404);
+                insert_kv("issue-2404", 2404);
+                insert_kv("stable-ref-export-wired", 1);
+                insert_kv("restamp-generation-torn", flat.restamp_generation_torn() ? 1 : 0);
+                insert_kv("schema-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
+                insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
+                std::size_t hidx = 0;
+                {
+                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
+                    // (double free). Index read, push and stamp are one critical section.
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
+                    hidx = g_hash_tables.size();
+                    g_hash_tables.push_back(ht);
+                    aura_hash_stamp_new_table_owner();
+                }
+                return make_hash(hidx);
+            };
+
+            aura::ast::FlatAST::StableNodeRef held{};
+            bool from_packed = false;
+            if (is_int(a[0])) {
+                auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+                if (node >= flat.size())
+                    return mev("out-of-range", "node ID out of range");
+                std::uint32_t layer = 0;
+                if (ev.workspace_tree()) {
+                    auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree());
+                    layer = wt->active_idx();
+                }
+                const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+                // Issue #3230 / Issue #3487: torn/budget before make_safe_ref_layout.
+                if (!ev.allow_query_stable_ref_export(node))
+                    return mev("restamp-lag",
+                               "recovery: re-query after budget window or force full "
+                               "restamp before reusing refs; "
+                               "budget-exceeded: query:ensure-ref: restamp budget exceeded; "
+                               "generation torn for export (Issue #3230 / #3121 / #3058 / #3037)");
+                // Issue #4106: production — a bare int is occupancy, not identity.
+                // Never mint a green stamp of the current occupant: refuse with
+                // the diagnostic valid=0 face (no make_stamped_safe_ref / export
+                // runs on the unstamped int; the #3395 face in this primitive's
+                // ensure-ref shape). Soft keeps the historical stamp.
+                if (aura::compiler::typed_audit::production_defaults_active())
+                    return refuse_valid0(node, /*gen=*/0, /*from_packed=*/false);
+                held = ev.make_stamped_safe_ref(node, layer, cur_fiber);
+            } else if (is_pair(a[0])) {
+                from_packed = true;
+                auto& outer = ws.pairs[as_pair_idx(a[0])];
+                if (!is_int(outer.car) || !is_pair(outer.cdr))
+                    return mev("bad-arg", "stable-ref shape: (id . (gen . _))");
+                auto& inner = ws.pairs[as_pair_idx(outer.cdr)];
+                if (!is_int(inner.car))
+                    return mev("bad-arg", "stable-ref gen must be int");
+                held.id = static_cast<aura::ast::NodeId>(as_int(outer.car));
+                held.gen = static_cast<std::uint16_t>(as_int(inner.car));
+                // Partial packed form: remake stamp then refresh.
+                std::uint32_t layer = 0;
+                if (ev.workspace_tree()) {
+                    auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree());
+                    layer = wt->active_idx();
+                }
+                const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+                // Issue #3230: torn/budget before make_safe_ref_layout.
+                if (!ev.allow_query_stable_ref_export(held.id))
+                    return mev("restamp-lag",
+                               "recovery: re-query after budget window or force full "
+                               "restamp before reusing refs; "
+                               "budget-exceeded: query:ensure-ref: restamp budget exceeded; "
+                               "generation torn for export (Issue #3230 / #3121 / #3058 / #3037)");
+                // Preserve captured gen for staleness; stamp fiber/tenant.
+                auto stamped = ev.make_stamped_safe_ref(held.id, layer, cur_fiber);
+                // If packed gen is older, force stale so refresh path runs.
+                if (held.gen != 0 && held.gen != stamped.gen) {
+                    stamped.gen = held.gen;
+                    // wrap 0 allows refresh across gen mismatch (legacy pack).
+                    // Issue #4106: production never zeroes wrap_epoch — the
+                    // non-refresh rule (Issue #3661) refuses valid=0 at the
+                    // export site below instead of silently refreshing across
+                    // the held gen. Soft keeps the legacy-pack refresh.
+                    if (!aura::compiler::typed_audit::production_defaults_active())
+                        stamped.wrap_epoch = 0;
+                }
+                held = stamped;
+            } else if (is_hash(a[0]) && aura::compiler::typed_audit::production_defaults_active()) {
+                // Issue #4106: production accepts a schema-2 QueryResult match
+                // through the shared resolve gate (validated identity — never an
+                // unstamped int); the ensure report then reflects the live ref.
+                bool ok = true;
+                aura::ast::NodeId rnode = aura::ast::NULL_NODE;
+                auto rerr = resolve_query_node_arg(a, "query:ensure-ref", &ok, rnode);
+                if (!ok)
+                    return rerr;
+                std::uint32_t layer = 0;
+                if (ev.workspace_tree()) {
+                    auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree());
+                    layer = wt->active_idx();
+                }
+                const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+                held = ev.make_stamped_safe_ref(rnode, layer, cur_fiber);
+            } else {
+                return mev("bad-arg", "usage: (query :ensure-ref node-id|stable-ref)");
+            }
+
+            // Issue #3058: over-budget torn — do not stamp-green a
+            // pre-restamp gen. Production reject (same restamp-lag face
+            // as query:stable-ref). Soft: allow returns true + hash
+            // still reports restamp-generation-torn.
+            if (!ev.allow_query_stable_ref_export(held.id))
+                return mev(
+                    "restamp-lag",
+                    "budget-exceeded: query:ensure-ref: restamp budget exceeded; "
+                    "generation torn for export (Issue #3121 / #3058 / #3037); ; // Issue "
+                    "#3138: Agent recovery hint recovery: re-query after budget window or force "
+                    "full restamp before reusing refs");
+            const bool was_valid = held.is_valid_in(flat);
+            // Issue #4106: production non-refresh rule (same non-refresh rule as
+            // resolve_query_node_arg, Issue #3661) — a stale packed gen fails
+            // valid=0 with refreshed=0; export_held_ref's auto-refresh (policy
+            // default true) must not silently rebind Agent memory to the new
+            // generation. Soft keeps the refresh.
+            if (aura::compiler::typed_audit::production_defaults_active() && !was_valid)
+                return refuse_valid0(held.id, held.gen, from_packed);
+            auto exported = ev.export_held_ref(held);
+            // Build result hash via FlatHashTable (same pattern as obs stats).
             auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
@@ -1480,164 +1637,37 @@ void register_workspace_query_ensure_ref_parts(WorkspaceQueryPrims& P, PrimRegis
                     }
                 }
             };
-            insert_kv("valid", 0);
-            insert_kv("id", static_cast<std::int64_t>(id));
-            insert_kv("gen", static_cast<std::int64_t>(gen));
-            insert_kv("refreshed", 0);
-            insert_kv("from-packed", from_packed ? 1 : 0);
-            insert_kv("schema-2404", 2404);
-            insert_kv("issue-2404", 2404);
-            insert_kv("stable-ref-export-wired", 1);
-            insert_kv("restamp-generation-torn", flat.restamp_generation_torn() ? 1 : 0);
-            insert_kv("schema-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
-            insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
-            std::size_t hidx = 0;
-            {
-                // Issue #4860: unlocked size()+push_back raced a concurrent publish
-                // (double free). Index read, push and stamp are one critical section.
-                std::scoped_lock slock(ev.alloc_storage_lock_);
-                hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                aura_hash_stamp_new_table_owner();
-            }
-            return make_hash(hidx);
-        };
-
-        aura::ast::FlatAST::StableNodeRef held{};
-        bool from_packed = false;
-        if (is_int(a[0])) {
-            auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-            if (node >= flat.size())
-                return mev("out-of-range", "node ID out of range");
-            std::uint32_t layer = 0;
-            if (ev.workspace_tree()) {
-                auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree());
-                layer = wt->active_idx();
-            }
-            const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
-            // Issue #3230 / Issue #3487: torn/budget before make_safe_ref_layout.
-            if (!ev.allow_query_stable_ref_export(node))
-                return mev("restamp-lag",
-                           "recovery: re-query after budget window or force full "
-                           "restamp before reusing refs; "
-                           "budget-exceeded: query:ensure-ref: restamp budget exceeded; "
-                           "generation torn for export (Issue #3230 / #3121 / #3058 / #3037)");
-            // Issue #4106: production — a bare int is occupancy, not identity.
-            // Never mint a green stamp of the current occupant: refuse with
-            // the diagnostic valid=0 face (no make_stamped_safe_ref / export
-            // runs on the unstamped int; the #3395 face in this primitive's
-            // ensure-ref shape). Soft keeps the historical stamp.
-            if (aura::compiler::typed_audit::production_defaults_active())
-                return refuse_valid0(node, /*gen=*/0, /*from_packed=*/false);
-            held = ev.make_stamped_safe_ref(node, layer, cur_fiber);
-        } else if (is_pair(a[0])) {
-            from_packed = true;
-            auto& outer = ws.pairs[as_pair_idx(a[0])];
-            if (!is_int(outer.car) || !is_pair(outer.cdr))
-                return mev("bad-arg", "stable-ref shape: (id . (gen . _))");
-            auto& inner = ws.pairs[as_pair_idx(outer.cdr)];
-            if (!is_int(inner.car))
-                return mev("bad-arg", "stable-ref gen must be int");
-            held.id = static_cast<aura::ast::NodeId>(as_int(outer.car));
-            held.gen = static_cast<std::uint16_t>(as_int(inner.car));
-            // Partial packed form: remake stamp then refresh.
-            std::uint32_t layer = 0;
-            if (ev.workspace_tree()) {
-                auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree());
-                layer = wt->active_idx();
-            }
-            const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
-            // Issue #3230: torn/budget before make_safe_ref_layout.
-            if (!ev.allow_query_stable_ref_export(held.id))
-                return mev("restamp-lag",
-                           "recovery: re-query after budget window or force full "
-                           "restamp before reusing refs; "
-                           "budget-exceeded: query:ensure-ref: restamp budget exceeded; "
-                           "generation torn for export (Issue #3230 / #3121 / #3058 / #3037)");
-            // Preserve captured gen for staleness; stamp fiber/tenant.
-            auto stamped = ev.make_stamped_safe_ref(held.id, layer, cur_fiber);
-            // If packed gen is older, force stale so refresh path runs.
-            if (held.gen != 0 && held.gen != stamped.gen) {
-                stamped.gen = held.gen;
-                // wrap 0 allows refresh across gen mismatch (legacy pack).
-                // Issue #4106: production never zeroes wrap_epoch — the
-                // non-refresh rule (Issue #3661) refuses valid=0 at the
-                // export site below instead of silently refreshing across
-                // the held gen. Soft keeps the legacy-pack refresh.
-                if (!aura::compiler::typed_audit::production_defaults_active())
-                    stamped.wrap_epoch = 0;
-            }
-            held = stamped;
-        } else if (is_hash(a[0]) && aura::compiler::typed_audit::production_defaults_active()) {
-            // Issue #4106: production accepts a schema-2 QueryResult match
-            // through the shared resolve gate (validated identity — never an
-            // unstamped int); the ensure report then reflects the live ref.
-            bool ok = true;
-            aura::ast::NodeId rnode = aura::ast::NULL_NODE;
-            auto rerr = resolve_query_node_arg(a, "query:ensure-ref", &ok, rnode);
-            if (!ok)
-                return rerr;
-            std::uint32_t layer = 0;
-            if (ev.workspace_tree()) {
-                auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree());
-                layer = wt->active_idx();
-            }
-            const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
-            held = ev.make_stamped_safe_ref(rnode, layer, cur_fiber);
-        } else {
-            return mev("bad-arg", "usage: (query:ensure-ref node-id|stable-ref)");
-        }
-
-        // Issue #3058: over-budget torn — do not stamp-green a
-        // pre-restamp gen. Production reject (same restamp-lag face
-        // as query:stable-ref). Soft: allow returns true + hash
-        // still reports restamp-generation-torn.
-        if (!ev.allow_query_stable_ref_export(held.id))
-            return mev("restamp-lag",
-                       "budget-exceeded: query:ensure-ref: restamp budget exceeded; "
-                       "generation torn for export (Issue #3121 / #3058 / #3037); ; // Issue "
-                       "#3138: Agent recovery hint recovery: re-query after budget window or force "
-                       "full restamp before reusing refs");
-        const bool was_valid = held.is_valid_in(flat);
-        // Issue #4106: production non-refresh rule (same non-refresh rule as
-        // resolve_query_node_arg, Issue #3661) — a stale packed gen fails
-        // valid=0 with refreshed=0; export_held_ref's auto-refresh (policy
-        // default true) must not silently rebind Agent memory to the new
-        // generation. Soft keeps the refresh.
-        if (aura::compiler::typed_audit::production_defaults_active() && !was_valid)
-            return refuse_valid0(held.id, held.gen, from_packed);
-        auto exported = ev.export_held_ref(held);
-        // Build result hash via FlatHashTable (same pattern as obs stats).
-        auto* ht = FlatHashTable::create(32);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            const auto fp = ::aura::compiler::hash::fingerprint(h);
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == ::aura::compiler::hash::kEmptySlot) {
-                    meta[idx] = fp;
-                    auto kidx = ws.string_heap.mint(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+            if (!exported) {
+                insert_kv("valid", 0);
+                insert_kv("id", static_cast<std::int64_t>(held.id));
+                insert_kv("gen", static_cast<std::int64_t>(held.gen));
+                insert_kv("refreshed", 0);
+                insert_kv("from-packed", from_packed ? 1 : 0);
+                insert_kv("schema-2404", 2404);
+                insert_kv("issue-2404", 2404);
+                insert_kv("stable-ref-export-wired", 1);
+                insert_kv("restamp-generation-torn", flat.restamp_generation_torn() ? 1 : 0);
+                insert_kv("schema-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
+                insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
+                std::size_t hidx = 0;
+                {
+                    // Issue #4860: unlocked size()+push_back raced a concurrent publish
+                    // (double free). Index read, push and stamp are one critical section.
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
+                    hidx = g_hash_tables.size();
+                    g_hash_tables.push_back(ht);
+                    aura_hash_stamp_new_table_owner();
                 }
+                return make_hash(hidx);
             }
-        };
-        if (!exported) {
-            insert_kv("valid", 0);
-            insert_kv("id", static_cast<std::int64_t>(held.id));
-            insert_kv("gen", static_cast<std::int64_t>(held.gen));
-            insert_kv("refreshed", 0);
+            insert_kv("valid", 1);
+            insert_kv("id", static_cast<std::int64_t>(exported->id));
+            insert_kv("gen", static_cast<std::int64_t>(exported->gen));
+            insert_kv("refreshed", was_valid ? 0 : 1);
             insert_kv("from-packed", from_packed ? 1 : 0);
+            insert_kv("fiber-id", static_cast<std::int64_t>(exported->fiber_id));
+            insert_kv("tenant-id", static_cast<std::int64_t>(exported->tenant_id));
+            insert_kv("wrap-epoch", static_cast<std::int64_t>(exported->wrap_epoch));
             insert_kv("schema-2404", 2404);
             insert_kv("issue-2404", 2404);
             insert_kv("stable-ref-export-wired", 1);
@@ -1654,32 +1684,7 @@ void register_workspace_query_ensure_ref_parts(WorkspaceQueryPrims& P, PrimRegis
                 aura_hash_stamp_new_table_owner();
             }
             return make_hash(hidx);
-        }
-        insert_kv("valid", 1);
-        insert_kv("id", static_cast<std::int64_t>(exported->id));
-        insert_kv("gen", static_cast<std::int64_t>(exported->gen));
-        insert_kv("refreshed", was_valid ? 0 : 1);
-        insert_kv("from-packed", from_packed ? 1 : 0);
-        insert_kv("fiber-id", static_cast<std::int64_t>(exported->fiber_id));
-        insert_kv("tenant-id", static_cast<std::int64_t>(exported->tenant_id));
-        insert_kv("wrap-epoch", static_cast<std::int64_t>(exported->wrap_epoch));
-        insert_kv("schema-2404", 2404);
-        insert_kv("issue-2404", 2404);
-        insert_kv("stable-ref-export-wired", 1);
-        insert_kv("restamp-generation-torn", flat.restamp_generation_torn() ? 1 : 0);
-        insert_kv("schema-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
-        insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
-        std::size_t hidx = 0;
-        {
-            // Issue #4860: unlocked size()+push_back raced a concurrent publish
-            // (double free). Index read, push and stamp are one critical section.
-            std::scoped_lock slock(ev.alloc_storage_lock_);
-            hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            aura_hash_stamp_new_table_owner();
-        }
-        return make_hash(hidx);
-    });
+        });
 }
 
 // Issue #5031: ref validity registration phase.
@@ -1695,69 +1700,70 @@ void register_workspace_query_ref_valid_parts(WorkspaceQueryPrims& P, PrimRegist
     auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
     auto& resolve_query_node_arg = P.resolve_query_node_arg;
     auto pin_query_children = make_pin_query_children(P.ev);
-    // Issue #347 follow-up #1 / #393 / Issue #3767: (query:ref-valid?
+    // Issue #347 follow-up #1 / #393 / Issue #3767: (query :ref-valid?
     // stable-ref). Production packed v2 / QueryResult uses
     // unpack_query_stable_ref + FlatAST::is_valid (wrap + cow fence)
     // and capability tenant (same InvalidTenant face as
     // query_result_is_fresh_with_refs). Do not call is_valid_id_gen(id, gen)
     // with default wrap 0 under production_defaults.
     // Soft: historical (id . gen) is_valid_id_gen (zero extra atomics).
-    add("query:ref-valid?", [ws, mev, &ev, unpack_query_stable_ref](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty())
-            return mev("bad-arg", "usage: (query:ref-valid? stable-ref)");
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
-        auto& flat = *ws.workspace_flat;
-        if (aura::compiler::typed_audit::production_defaults_active()) {
-            if (is_hash(a[0])) {
-                using aura::compiler::query_result_decode::HashNodeKind;
-                using aura::compiler::query_result_decode::parse_query_result_match_index;
-                using aura::compiler::query_result_decode::resolve_query_result_match;
-                auto hr = resolve_query_result_match(
-                    a[0], ws.string_heap, ws.pairs, flat, ev.capability_tenant_id(),
-                    // Issue #4438: same per-Agent mint as the mutate hash arm.
-                    static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()), "query:ref-valid?",
-                    parse_query_result_match_index(a, ws.keyword_table));
-                return make_bool(hr.kind == HashNodeKind::Ok);
+    ev.primitives().add_hidden(
+        "query:ref-valid?", [ws, mev, &ev, unpack_query_stable_ref](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty())
+                return mev("bad-arg", "usage: (query :ref-valid? stable-ref)");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+            auto& flat = *ws.workspace_flat;
+            if (aura::compiler::typed_audit::production_defaults_active()) {
+                if (is_hash(a[0])) {
+                    using aura::compiler::query_result_decode::HashNodeKind;
+                    using aura::compiler::query_result_decode::parse_query_result_match_index;
+                    using aura::compiler::query_result_decode::resolve_query_result_match;
+                    auto hr = resolve_query_result_match(
+                        a[0], ws.string_heap, ws.pairs, flat, ev.capability_tenant_id(),
+                        // Issue #4438: same per-Agent mint as the mutate hash arm.
+                        static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()), "query:ref-valid?",
+                        parse_query_result_match_index(a, ws.keyword_table));
+                    return make_bool(hr.kind == HashNodeKind::Ok);
+                }
+                if (!is_pair(a[0]))
+                    return mev("bad-arg", "usage: (query :ref-valid? packed-v2-or-query-result)");
+                auto packed = unpack_query_stable_ref(a[0]);
+                if (!packed)
+                    return make_bool(false);
+                const auto& ref = *packed;
+                const auto cur_tenant = ev.capability_tenant_id();
+                if (cur_tenant != 0 && ref.tenant_id != cur_tenant)
+                    return make_bool(false);
+                // Issue #4438: tenant 0 under Restricted+MT consults occupancy.
+                // A foreign non-zero fiber denies even when the tenant matches.
+                if (ref.tenant_id == 0) {
+                    auto probe = ref;
+                    if (!ev.restamp_read_ref(probe, "query:ref-valid?"))
+                        return make_bool(false);
+                }
+                const auto cur_fiber = ev.agent_scoped_fiber_id();
+                if (cur_fiber != 0 && ref.fiber_id != 0 && ref.fiber_id != cur_fiber)
+                    return make_bool(false);
+                if (ref.workspace_id != 0)
+                    return make_bool(ref.is_valid_in_layer(flat, ref.workspace_id));
+                return make_bool(flat.is_valid(ref));
             }
             if (!is_pair(a[0]))
-                return mev("bad-arg", "usage: (query:ref-valid? packed-v2-or-query-result)");
-            auto packed = unpack_query_stable_ref(a[0]);
-            if (!packed)
-                return make_bool(false);
-            const auto& ref = *packed;
-            const auto cur_tenant = ev.capability_tenant_id();
-            if (cur_tenant != 0 && ref.tenant_id != cur_tenant)
-                return make_bool(false);
-            // Issue #4438: tenant 0 under Restricted+MT consults occupancy.
-            // A foreign non-zero fiber denies even when the tenant matches.
-            if (ref.tenant_id == 0) {
-                auto probe = ref;
-                if (!ev.restamp_read_ref(probe, "query:ref-valid?"))
-                    return make_bool(false);
-            }
-            const auto cur_fiber = ev.agent_scoped_fiber_id();
-            if (cur_fiber != 0 && ref.fiber_id != 0 && ref.fiber_id != cur_fiber)
-                return make_bool(false);
-            if (ref.workspace_id != 0)
-                return make_bool(ref.is_valid_in_layer(flat, ref.workspace_id));
-            return make_bool(flat.is_valid(ref));
-        }
-        if (!is_pair(a[0]))
-            return mev("bad-arg", "usage: (query:ref-valid? (id . gen))");
-        auto& outer = ws.pairs[as_pair_idx(a[0])];
-        if (!is_int(outer.car))
-            return mev("bad-arg", "stable-ref car must be a node id (int)");
-        auto id = static_cast<aura::ast::NodeId>(as_int(outer.car));
-        if (!is_pair(outer.cdr))
-            return mev("bad-arg", "stable-ref cdr must be a pair (gen . nil)");
-        auto& inner = ws.pairs[as_pair_idx(outer.cdr)];
-        if (!is_int(inner.car))
-            return mev("bad-arg", "stable-ref gen must be an int");
-        auto gen = static_cast<std::uint16_t>(as_int(inner.car));
-        return make_bool(flat.is_valid_id_gen(id, gen));
-    });
+                return mev("bad-arg", "usage: (query :ref-valid? (id . gen))");
+            auto& outer = ws.pairs[as_pair_idx(a[0])];
+            if (!is_int(outer.car))
+                return mev("bad-arg", "stable-ref car must be a node id (int)");
+            auto id = static_cast<aura::ast::NodeId>(as_int(outer.car));
+            if (!is_pair(outer.cdr))
+                return mev("bad-arg", "stable-ref cdr must be a pair (gen . nil)");
+            auto& inner = ws.pairs[as_pair_idx(outer.cdr)];
+            if (!is_int(inner.car))
+                return mev("bad-arg", "stable-ref gen must be an int");
+            auto gen = static_cast<std::uint16_t>(as_int(inner.car));
+            return make_bool(flat.is_valid_id_gen(id, gen));
+        });
 }
 
 
@@ -1774,13 +1780,14 @@ void register_workspace_query_lookup_parts(WorkspaceQueryPrims& P, PrimRegistrar
     auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
     auto& resolve_query_node_arg = P.resolve_query_node_arg;
     auto pin_query_children = make_pin_query_children(P.ev);
-    // (query:calls name) — Find all call sites of a named function
+    // (query :calls name) — Find all call sites of a named function
     // Issue #4088: the bare NodeId list exit now finishes via
     // end_query_epoch_maybe_result — Production auto-upgrades the list to
     // the schema-2 stamped hash (an Agent holding bare NodeIds across
     // rounds reads the occupant after slot reuse, never the node it
     // captured); Soft keeps the historical bare list (zero-cost).
-    add("query:calls",
+    ev.primitives().add_hidden(
+        "query:calls",
         [ws, mev, begin_query_epoch, end_query_epoch_maybe_result](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
             // Issue #278 follow-up: 0-arg call returns ALL
@@ -1789,7 +1796,7 @@ void register_workspace_query_lookup_parts(WorkspaceQueryPrims& P, PrimRegistrar
             // the named function — preserves pre-#278 caller
             // contracts.
             if (a.size() > 1 || (a.size() == 1 && !is_string(a[0])))
-                return mev("bad-arg", "usage: (query:calls) or (query:calls name)");
+                return mev("bad-arg", "usage: (query :calls) or (query :calls name)");
             if (!ws.workspace_flat || !ws.workspace_pool)
                 return mev("no-workspace", "no workspace AST loaded");
             aura::ast::SymId sym = aura::ast::INVALID_SYM;
@@ -1855,19 +1862,20 @@ void register_workspace_query_lookup_parts(WorkspaceQueryPrims& P, PrimRegistrar
             return end_query_epoch_maybe_result(qe, &flat, result, /*as_query_result=*/false);
         });
 
-    // Issue #278: (query:defines) — return all define
+    // Issue #278: (query :defines) — return all define
     // sites in the workspace. 0-arg returns every
     // (define ...) node regardless of name. 1-arg
-    // filters by name (preserves the (query:calls name)
+    // filters by name (preserves the (query :calls name)
     // symmetry for AI agent workflows).
     // Issue #4088: finish via end_query_epoch_maybe_result (was the bare
     // end_query_epoch) — Production auto-upgrades to the schema-2 stamped
     // hash; Soft keeps the historical bare list.
-    add("query:defines",
+    ev.primitives().add_hidden(
+        "query:defines",
         [ws, mev, begin_query_epoch, end_query_epoch_maybe_result](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
             if (a.size() > 1 || (a.size() == 1 && !is_string(a[0])))
-                return mev("bad-arg", "usage: (query:defines) or (query:defines name)");
+                return mev("bad-arg", "usage: (query :defines) or (query :defines name)");
             if (!ws.workspace_flat)
                 return mev("no-workspace", "no workspace AST loaded");
             aura::ast::SymId sym = aura::ast::INVALID_SYM;
@@ -1961,30 +1969,31 @@ void register_workspace_query_lookup_nav_parts(WorkspaceQueryPrims& P, PrimRegis
             return end_query_epoch_maybe_result(qe, &flat, result, /*as_query_result=*/false);
         });
 
-    // Issue #4345: (query:code) — return the workspace's authoritative
+    // Issue #4345: (query :code) — return the workspace's authoritative
     // source text (the live reader after any mutate). Editor agents view
     // the loaded buffer without a side channel; empty source is a
     // no-workspace error, not a silent empty string.
-    add("query:code", [ws, mev, &ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("query:code", [ws, mev, &ev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (!a.empty())
-            return mev("bad-arg", "usage: (query:code)");
+            return mev("bad-arg", "usage: (query :code)");
         auto text = ev.authoritative_workspace_source();
         if (text.empty())
             return mev("no-workspace", "no workspace source loaded");
         return make_string(ws.string_heap.mint(std::move(text)));
     });
 
-    // Issue #4345: (query:node-types) — census of NodeTag kinds in the
+    // Issue #4345: (query :node-types) — census of NodeTag kinds in the
     // workspace flat AST as ((tag-name . count) ...) in tag order. The
     // std/query discovery pattern recommended this name but no prim
     // bound it; tag names come from the shared Wave B1 table (empty
     // slots skipped).
-    add("query:node-types",
+    ev.primitives().add_hidden(
+        "query:node-types",
         [ws, mev, begin_query_epoch, end_query_epoch_maybe_result](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
             if (!a.empty())
-                return mev("bad-arg", "usage: (query:node-types)");
+                return mev("bad-arg", "usage: (query :node-types)");
             if (!ws.workspace_flat)
                 return mev("no-workspace", "no workspace AST loaded");
             auto& flat = *ws.workspace_flat;
@@ -2109,7 +2118,7 @@ void register_workspace_query_lookup_nav_parts(WorkspaceQueryPrims& P, PrimRegis
     //
     // Returns a predicate descriptor (a tagged pair) that query:filter
     // applies to each candidate node.
-    add("query:where", [ws, mev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("query:where", [ws, mev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.size() < 2 || !is_keyword(a[0]) || !is_string(a[1]))
             return mev("bad-arg", "usage: (where :field-name value-string)");
@@ -2456,22 +2465,23 @@ void register_workspace_query_filter_parts(WorkspaceQueryPrims& P, PrimRegistrar
     auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
     auto& resolve_query_node_arg = P.resolve_query_node_arg;
     auto pin_query_children = make_pin_query_children(P.ev);
-    // (query:filter predicate ...) — Filter workspace nodes matching ALL predicates.
+    // (query :filter predicate ...) — Filter workspace nodes matching ALL predicates.
     // Each predicate is created by (where :field value).
     // Returns a list of matching node IDs.
     //
     // Usage:
-    //   (query:filter (where :node-type "Call") (where :callee "sort"))
+    //   (query :filter (where :node-type "Call") (where :callee "sort"))
     //   → all Call nodes where the callee is "sort"
     //
-    //   (query:filter (where :defined-by "fib") (where :node-type "Lambda"))
+    //   (query :filter (where :defined-by "fib") (where :node-type "Lambda"))
     //   → the body Lambda of (define fib ...)
-    add("query:filter",
+    ev.primitives().add_hidden(
+        "query:filter",
         [ws, mev, &ev, begin_query_epoch, make_query_result_hash,
          pin_query_children](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
             if (a.empty())
-                return mev("bad-arg", "usage: (query:filter predicate ... "
+                return mev("bad-arg", "usage: (query :filter predicate ... "
                                       "[:hygiene #t|#f] [:include-macro-introduced #t] "
                                       "[:allow-macro? #t] [:exclude-macro-introduced #t|#f] "
                                       "[:as-query-result|#:query-result #t|#f])");
@@ -2646,17 +2656,18 @@ void register_workspace_query_node_shape_parts(WorkspaceQueryPrims& P, PrimRegis
     auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
     auto& resolve_query_node_arg = P.resolve_query_node_arg;
     auto pin_query_children = make_pin_query_children(P.ev);
-    // (query:node-type tag-name) — Find all nodes with a given NodeTag name
+    // (query :node-type tag-name) — Find all nodes with a given NodeTag name
     // Tag names: LiteralInt, Variable, Call, IfExpr, Lambda, Let, LetRec,
     //            Define, Begin, Set, Quote, LiteralString, TypeAnnotation,
     //            Coercion, LiteralFloat, MacroDef
     // Issue #4088: bare NodeId list exit — Production auto-upgrades the
     // list to the schema-2 stamped hash; Soft keeps the bare list.
-    add("query:node-type",
+    ev.primitives().add_hidden(
+        "query:node-type",
         [ws, mev, begin_query_epoch, end_query_epoch_maybe_result](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
             if (a.empty() || !is_string(a[0]))
-                return mev("bad-arg", "usage: (query:node-type tag-name)");
+                return mev("bad-arg", "usage: (query :node-type tag-name)");
             if (!ws.workspace_flat)
                 return mev("no-workspace", "no workspace AST loaded");
             auto idx = as_string_idx(a[0]);
@@ -2698,43 +2709,44 @@ void register_workspace_query_node_shape_parts(WorkspaceQueryPrims& P, PrimRegis
             return end_query_epoch_maybe_result(qe, &flat, result, /*as_query_result=*/false);
         });
 
-    // Issue #278: (query:node-marker node-id|stable-ref) — return
+    // Issue #278: (query :node-marker node-id|stable-ref) — return
     // the SyntaxMarker name for a node as a string.
     // Returns "User" / "MacroIntroduced" / "BoolLiteral"
     // (the canonical Aura-level names). Returns empty
     // string on out-of-range or unknown marker.
     // Issue #2186: resolve via ensure_valid_or_refresh.
-    add("query:node-marker", [ws, mev, resolve_query_node_arg](const auto& a) -> EvalValue {
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (a.empty())
-            return mev("bad-arg", "usage: (query:node-marker node-id|stable-ref)");
-        if (!ws.workspace_flat)
-            return mev("no-workspace", "no workspace AST loaded");
-        bool ok = true;
-        aura::ast::NodeId id = aura::ast::NULL_NODE;
-        auto err = resolve_query_node_arg(a, "query:node-marker", &ok, id);
-        if (!ok)
-            return err;
-        auto& flat = *ws.workspace_flat;
-        auto marker = flat.marker(id);
-        const char* name = "User";
-        switch (marker) {
-            case aura::ast::SyntaxMarker::User:
-                name = "User";
-                break;
-            case aura::ast::SyntaxMarker::MacroIntroduced:
-                name = "MacroIntroduced";
-                break;
-            case aura::ast::SyntaxMarker::BoolLiteral:
-                name = "BoolLiteral";
-                break;
-            case aura::ast::SyntaxMarker::EmptyList:
-                name = "EmptyList";
-                break;
-        }
-        auto idx = ws.string_heap.mint(name);
-        return make_string(idx);
-    });
+    ev.primitives().add_hidden(
+        "query:node-marker", [ws, mev, resolve_query_node_arg](const auto& a) -> EvalValue {
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (a.empty())
+                return mev("bad-arg", "usage: (query :node-marker node-id|stable-ref)");
+            if (!ws.workspace_flat)
+                return mev("no-workspace", "no workspace AST loaded");
+            bool ok = true;
+            aura::ast::NodeId id = aura::ast::NULL_NODE;
+            auto err = resolve_query_node_arg(a, "query:node-marker", &ok, id);
+            if (!ok)
+                return err;
+            auto& flat = *ws.workspace_flat;
+            auto marker = flat.marker(id);
+            const char* name = "User";
+            switch (marker) {
+                case aura::ast::SyntaxMarker::User:
+                    name = "User";
+                    break;
+                case aura::ast::SyntaxMarker::MacroIntroduced:
+                    name = "MacroIntroduced";
+                    break;
+                case aura::ast::SyntaxMarker::BoolLiteral:
+                    name = "BoolLiteral";
+                    break;
+                case aura::ast::SyntaxMarker::EmptyList:
+                    name = "EmptyList";
+                    break;
+            }
+            auto idx = ws.string_heap.mint(name);
+            return make_string(idx);
+        });
 
     // Issue #454: (query:reflect-node-members node-id|stable-ref) — reflection
     // bridge for FlatAST/SyntaxMarker introspection. Returns an alist
@@ -2963,25 +2975,61 @@ void register_workspace_query_index_parts(WorkspaceQueryPrims& P, PrimRegistrar 
     // workspace shared lock, and children come from children_columnar
     // (never the borrowed span). Soft/Off keeps the historical lock-free
     // bare-int body (zero-cost AC).
-    add("query:dirty-subtree", [ws, mev, &ev, resolve_query_node_arg](const auto& a) -> EvalValue {
-        if (aura::compiler::typed_audit::production_defaults_active()) {
-            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-            if (!ws.workspace_flat)
+    ev.primitives().add_hidden(
+        "query:dirty-subtree", [ws, mev, &ev, resolve_query_node_arg](const auto& a) -> EvalValue {
+            if (aura::compiler::typed_audit::production_defaults_active()) {
+                std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+                if (!ws.workspace_flat)
+                    return make_int(0);
+                auto& flat = *ws.workspace_flat;
+                if (a.empty())
+                    return make_int(0);
+                bool ok = true;
+                aura::ast::NodeId root = aura::ast::NULL_NODE;
+                auto err = resolve_query_node_arg(a, "query:dirty-subtree", &ok, root);
+                if (!ok)
+                    return err;
+                const std::uint8_t reason_mask =
+                    (a.size() >= 2 && is_int(a[1])) ? static_cast<std::uint8_t>(as_int(a[1]) & 0xFF)
+                                                    : 0xFF; // 0xFF = all reasons
+                if (root == aura::ast::NULL_NODE || root >= flat.size())
+                    return make_int(0);
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->dirty_subtree_bfs_walks_total.fetch_add(1, std::memory_order_relaxed);
+                std::uint64_t count = 0;
+                std::vector<aura::ast::NodeId> stack;
+                stack.push_back(root);
+                while (!stack.empty()) {
+                    const auto cur = stack.back();
+                    stack.pop_back();
+                    if (cur == aura::ast::NULL_NODE || cur >= flat.size())
+                        continue;
+                    if ((flat.dirty(cur) & reason_mask) != 0)
+                        ++count;
+                    for (auto child : flat.children_columnar(cur))
+                        stack.push_back(static_cast<aura::ast::NodeId>(child));
+                }
+                return make_int(static_cast<std::int64_t>(count));
+            }
+            // Soft / Off: historical body, equivalent to the
+            // evaluator_primitives_query.cpp registration this add overrides
+            // under production (get_query_evaluator lookup, no lock, borrowed
+            // children span — the Soft contract is zero-cost).
+            auto* qev = Evaluator::get_query_evaluator();
+            if (!qev)
                 return make_int(0);
-            auto& flat = *ws.workspace_flat;
-            if (a.empty())
+            if (a.empty() || !is_int(a[0]))
                 return make_int(0);
-            bool ok = true;
-            aura::ast::NodeId root = aura::ast::NULL_NODE;
-            auto err = resolve_query_node_arg(a, "query:dirty-subtree", &ok, root);
-            if (!ok)
-                return err;
+            auto* ws_flat = qev->workspace_flat();
+            if (!ws_flat)
+                return make_int(0);
+            auto root = static_cast<aura::ast::NodeId>(as_int(a[0]));
             const std::uint8_t reason_mask = (a.size() >= 2 && is_int(a[1]))
                                                  ? static_cast<std::uint8_t>(as_int(a[1]) & 0xFF)
                                                  : 0xFF; // 0xFF = all reasons
-            if (root == aura::ast::NULL_NODE || root >= flat.size())
+            if (root == aura::ast::NULL_NODE || root >= ws_flat->size())
                 return make_int(0);
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+            if (auto* m = static_cast<CompilerMetrics*>(qev->compiler_metrics()))
                 m->dirty_subtree_bfs_walks_total.fetch_add(1, std::memory_order_relaxed);
             std::uint64_t count = 0;
             std::vector<aura::ast::NodeId> stack;
@@ -2989,67 +3037,33 @@ void register_workspace_query_index_parts(WorkspaceQueryPrims& P, PrimRegistrar 
             while (!stack.empty()) {
                 const auto cur = stack.back();
                 stack.pop_back();
-                if (cur == aura::ast::NULL_NODE || cur >= flat.size())
+                if (cur == aura::ast::NULL_NODE || cur >= ws_flat->size())
                     continue;
-                if ((flat.dirty(cur) & reason_mask) != 0)
+                if ((ws_flat->dirty(cur) & reason_mask) != 0)
                     ++count;
-                for (auto child : flat.children_columnar(cur))
+                for (auto child : ws_flat->children(cur))
                     stack.push_back(static_cast<aura::ast::NodeId>(child));
             }
             return make_int(static_cast<std::int64_t>(count));
-        }
-        // Soft / Off: historical body, equivalent to the
-        // evaluator_primitives_query.cpp registration this add overrides
-        // under production (get_query_evaluator lookup, no lock, borrowed
-        // children span — the Soft contract is zero-cost).
-        auto* qev = Evaluator::get_query_evaluator();
-        if (!qev)
-            return make_int(0);
-        if (a.empty() || !is_int(a[0]))
-            return make_int(0);
-        auto* ws_flat = qev->workspace_flat();
-        if (!ws_flat)
-            return make_int(0);
-        auto root = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        const std::uint8_t reason_mask = (a.size() >= 2 && is_int(a[1]))
-                                             ? static_cast<std::uint8_t>(as_int(a[1]) & 0xFF)
-                                             : 0xFF; // 0xFF = all reasons
-        if (root == aura::ast::NULL_NODE || root >= ws_flat->size())
-            return make_int(0);
-        if (auto* m = static_cast<CompilerMetrics*>(qev->compiler_metrics()))
-            m->dirty_subtree_bfs_walks_total.fetch_add(1, std::memory_order_relaxed);
-        std::uint64_t count = 0;
-        std::vector<aura::ast::NodeId> stack;
-        stack.push_back(root);
-        while (!stack.empty()) {
-            const auto cur = stack.back();
-            stack.pop_back();
-            if (cur == aura::ast::NULL_NODE || cur >= ws_flat->size())
-                continue;
-            if ((ws_flat->dirty(cur) & reason_mask) != 0)
-                ++count;
-            for (auto child : ws_flat->children(cur))
-                stack.push_back(static_cast<aura::ast::NodeId>(child));
-        }
-        return make_int(static_cast<std::int64_t>(count));
-    });
+        });
 
-    // Issue #278: (query:defines-by-marker marker-name) —
+    // Issue #278: (query :defines-by-marker marker-name) —
     // return all Define nodes whose SyntaxMarker matches
     // the given name. Same marker vocabulary as
-    // (query:by-marker): "User" / "MacroIntroduced" /
-    // "BoolLiteral". Composes the (query:defines) +
-    // (query:by-marker) data without a stdlib wrapper
+    // (query :by-marker): "User" / "MacroIntroduced" /
+    // "BoolLiteral". Composes the (query :defines) +
+    // (query :by-marker) data without a stdlib wrapper
     // (the Aura-level (define ...) for colon-prefixed
     // names hits a flat-evaluator closure issue, so the
     // C++ engine primitive is the canonical implementation).
     // Issue #4088: bare NodeId list exit — Production auto-upgrades the
     // list to the schema-2 stamped hash; Soft keeps the bare list.
-    add("query:defines-by-marker",
+    ev.primitives().add_hidden(
+        "query:defines-by-marker",
         [ws, mev, begin_query_epoch, end_query_epoch_maybe_result](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
             if (a.empty() || !is_string(a[0]))
-                return mev("bad-arg", "usage: (query:defines-by-marker marker-name)");
+                return mev("bad-arg", "usage: (query :defines-by-marker marker-name)");
             if (!ws.workspace_flat)
                 return mev("no-workspace", "no workspace AST loaded");
             auto idx = as_string_idx(a[0]);
@@ -3104,17 +3118,18 @@ void register_workspace_query_marker_parts(WorkspaceQueryPrims& P, PrimRegistrar
     auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
     auto& resolve_query_node_arg = P.resolve_query_node_arg;
     auto pin_query_children = make_pin_query_children(P.ev);
-    // Issue #278: (query:calls-by-marker marker-name) —
+    // Issue #278: (query :calls-by-marker marker-name) —
     // return all Call nodes whose SyntaxMarker matches
     // the given name. C++ engine primitive (same
     // rationale as query:defines-by-marker).
     // Issue #4088: bare NodeId list exit — Production auto-upgrades the
     // list to the schema-2 stamped hash; Soft keeps the bare list.
-    add("query:calls-by-marker",
+    ev.primitives().add_hidden(
+        "query:calls-by-marker",
         [ws, mev, begin_query_epoch, end_query_epoch_maybe_result](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
             if (a.empty() || !is_string(a[0]))
-                return mev("bad-arg", "usage: (query:calls-by-marker marker-name)");
+                return mev("bad-arg", "usage: (query :calls-by-marker marker-name)");
             if (!ws.workspace_flat)
                 return mev("no-workspace", "no workspace AST loaded");
             auto idx = as_string_idx(a[0]);
@@ -3149,7 +3164,7 @@ void register_workspace_query_marker_parts(WorkspaceQueryPrims& P, PrimRegistrar
             return end_query_epoch_maybe_result(qe, &flat, result, /*as_query_result=*/false);
         });
 
-    // (query:by-marker marker-name) — Issue #244 / #1914: general marker
+    // (query :by-marker marker-name) — Issue #244 / #1914: general marker
     // query. Returns all nodes with the given SyntaxMarker.
     // marker-name is a string: "User" / "MacroIntroduced" /
     // "BoolLiteral". The opposite of (query:macro-introduced)
@@ -3162,14 +3177,15 @@ void register_workspace_query_marker_parts(WorkspaceQueryPrims& P, PrimRegistrar
     // Optional:
     //   limit-int (positional 2nd) — first N matches
     //   :where / :tag "NodeTag" — Issue #1914: compose with tag filter
-    //     e.g. (query:by-marker "User" :where "Define")
+    //     e.g. (query :by-marker "User" :where "Define")
     //   :limit N — keyword form of limit
     //   :as-query-result / :query-result — Issue #2933 QueryResult binding
     //
     // Issue #3354: by-marker is the explicit-allow path — requesting
     // "MacroIntroduced" is the Agent opt-in (same face as :allow-macro?).
     // Other markers never return MacroIntroduced (marker != target).
-    add("query:by-marker",
+    ev.primitives().add_hidden(
+        "query:by-marker",
         [ws, mev, &ev, begin_query_epoch, end_query_epoch_maybe_result,
          pin_query_children](const auto& a) -> EvalValue {
             // Issue #2403: time shared_lock hold; composite index when :where tag set.
@@ -3187,7 +3203,7 @@ void register_workspace_query_marker_parts(WorkspaceQueryPrims& P, PrimRegistrar
                 }
             } lock_timer{{}, ev, lock_t0};
             if (a.empty() || !is_string(a[0]))
-                return mev("bad-arg", "usage: (query:by-marker marker-name [limit-int] "
+                return mev("bad-arg", "usage: (query :by-marker marker-name [limit-int] "
                                       "[:where|:tag tag-name] [:limit N] [:as-query-result])");
             if (!ws.workspace_flat)
                 return mev("no-workspace", "no workspace AST loaded");
@@ -3372,18 +3388,19 @@ void register_workspace_query_provenance_parts(WorkspaceQueryPrims& P, PrimRegis
     auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
     auto& resolve_query_node_arg = P.resolve_query_node_arg;
     auto pin_query_children = make_pin_query_children(P.ev);
-    // Issue #1914: (query:node-provenance node-id|stable-ref) — full diagnostic hash
+    // Issue #1914: (query :node-provenance node-id|stable-ref) — full diagnostic hash
     // for AI root-cause of failed mutate / hygiene. Combines StableNodeRef
     // capture + SyntaxMarker + last mutation targeting this node + fiber.
     // Returns #f on bad args / OOR; hash otherwise (schema 1914).
     // Issue #2186: resolve handle via ensure_valid_or_refresh first.
-    add("query:node-provenance",
+    ev.primitives().add_hidden(
+        "query:node-provenance",
         [ws, mev, &ev, resolve_query_node_arg](const auto& a) -> EvalValue {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->provenance_query_total.fetch_add(1, std::memory_order_relaxed);
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
             if (a.empty())
-                return mev("bad-arg", "usage: (query:node-provenance node-id|stable-ref)");
+                return mev("bad-arg", "usage: (query :node-provenance node-id|stable-ref)");
             if (!ws.workspace_flat)
                 return mev("no-workspace", "no workspace AST loaded");
             auto& flat = *ws.workspace_flat;
@@ -3497,80 +3514,81 @@ void register_workspace_query_provenance_parts(WorkspaceQueryPrims& P, PrimRegis
             return make_hash(hidx);
         });
 
-    // Issue #1914: (query:last-mutation-provenance) — blame + hygiene context
+    // Issue #1914: (query :last-mutation-provenance) — blame + hygiene context
     // for the most recent workspace mutation. Hash schema 1914.
-    add("query:last-mutation-provenance", [ws, mev, &ev](const auto& a) -> EvalValue {
-        (void)a;
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-            m->provenance_query_total.fetch_add(1, std::memory_order_relaxed);
-        std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
-        if (!ws.workspace_flat)
-            return make_void();
-        auto& flat = *ws.workspace_flat;
-        const auto view = flat.mutation_log_view();
-        if (view.empty())
-            return make_void();
-        const auto& rec = view.back();
-        const auto nid = rec.target_node;
-        const bool in_range = nid < flat.size();
-        const bool is_macro = in_range && flat.is_macro_introduced(nid);
-        std::int64_t inv_hit = 0;
-        if (flat.last_invalidation_for(rec.mutation_id))
-            inv_hit = 1;
+    ev.primitives().add_hidden(
+        "query:last-mutation-provenance", [ws, mev, &ev](const auto& a) -> EvalValue {
+            (void)a;
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->provenance_query_total.fetch_add(1, std::memory_order_relaxed);
+            std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
+            if (!ws.workspace_flat)
+                return make_void();
+            auto& flat = *ws.workspace_flat;
+            const auto view = flat.mutation_log_view();
+            if (view.empty())
+                return make_void();
+            const auto& rec = view.back();
+            const auto nid = rec.target_node;
+            const bool in_range = nid < flat.size();
+            const bool is_macro = in_range && flat.is_macro_introduced(nid);
+            std::int64_t inv_hit = 0;
+            if (flat.last_invalidation_for(rec.mutation_id))
+                inv_hit = 1;
 
-        auto* ht = FlatHashTable::create(32);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            const auto fp = ::aura::compiler::hash::fingerprint(h);
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto i = ((h >> 1) + at) & (hcap - 1);
-                if (meta[i] == ::aura::compiler::hash::kEmptySlot) {
-                    meta[i] = fp;
-                    auto kidx = ws.string_heap.mint(k_str);
-                    keys[i] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[i] = make_int(v).val;
-                    ht->size++;
-                    return;
+            auto* ht = FlatHashTable::create(32);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                const auto fp = ::aura::compiler::hash::fingerprint(h);
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto i = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[i] == ::aura::compiler::hash::kEmptySlot) {
+                        meta[i] = fp;
+                        auto kidx = ws.string_heap.mint(k_str);
+                        keys[i] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[i] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
                 }
+            };
+            insert_kv("mutation_id", static_cast<std::int64_t>(rec.mutation_id));
+            insert_kv("target-node", static_cast<std::int64_t>(nid));
+            insert_kv("author-fingerprint", static_cast<std::int64_t>(rec.author_fingerprint));
+            insert_kv("parent-mutation-id", static_cast<std::int64_t>(rec.parent_mutation_id));
+            insert_kv("composite-transaction-id",
+                      static_cast<std::int64_t>(rec.composite_transaction_id));
+            insert_kv("macro-flag", is_macro ? 1 : 0);
+            insert_kv("macro_flag", is_macro ? 1 : 0);
+            insert_kv("invalidation-trace-hit", inv_hit);
+            insert_kv("invalidation-trace-size",
+                      static_cast<std::int64_t>(flat.invalidation_trace_size()));
+            insert_kv("operator-name-len", static_cast<std::int64_t>(rec.operator_name.size()));
+            insert_kv("summary-len", static_cast<std::int64_t>(rec.summary.size()));
+            insert_kv("fiber-id", static_cast<std::int64_t>(aura_fiber_current_id()));
+            insert_kv("workspace-gen", static_cast<std::int64_t>(flat.generation()));
+            insert_kv("reason", is_macro ? 2 : 1);
+            insert_kv("schema", 1914);
+            insert_kv("issue", 1914);
+            std::size_t hidx = 0;
+            {
+                // Issue #4860: unlocked size()+push_back raced a concurrent publish
+                // (double free). Index read, push and stamp are one critical section.
+                std::scoped_lock slock(ev.alloc_storage_lock_);
+                hidx = g_hash_tables.size();
+                g_hash_tables.push_back(ht);
+                aura_hash_stamp_new_table_owner();
             }
-        };
-        insert_kv("mutation_id", static_cast<std::int64_t>(rec.mutation_id));
-        insert_kv("target-node", static_cast<std::int64_t>(nid));
-        insert_kv("author-fingerprint", static_cast<std::int64_t>(rec.author_fingerprint));
-        insert_kv("parent-mutation-id", static_cast<std::int64_t>(rec.parent_mutation_id));
-        insert_kv("composite-transaction-id",
-                  static_cast<std::int64_t>(rec.composite_transaction_id));
-        insert_kv("macro-flag", is_macro ? 1 : 0);
-        insert_kv("macro_flag", is_macro ? 1 : 0);
-        insert_kv("invalidation-trace-hit", inv_hit);
-        insert_kv("invalidation-trace-size",
-                  static_cast<std::int64_t>(flat.invalidation_trace_size()));
-        insert_kv("operator-name-len", static_cast<std::int64_t>(rec.operator_name.size()));
-        insert_kv("summary-len", static_cast<std::int64_t>(rec.summary.size()));
-        insert_kv("fiber-id", static_cast<std::int64_t>(aura_fiber_current_id()));
-        insert_kv("workspace-gen", static_cast<std::int64_t>(flat.generation()));
-        insert_kv("reason", is_macro ? 2 : 1);
-        insert_kv("schema", 1914);
-        insert_kv("issue", 1914);
-        std::size_t hidx = 0;
-        {
-            // Issue #4860: unlocked size()+push_back raced a concurrent publish
-            // (double free). Index read, push and stamp are one critical section.
-            std::scoped_lock slock(ev.alloc_storage_lock_);
-            hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            aura_hash_stamp_new_table_owner();
-        }
-        return make_hash(hidx);
-    });
+            return make_hash(hidx);
+        });
 }
 
 // Issue #5031: hygiene registration phase.
@@ -3587,7 +3605,7 @@ void register_workspace_query_hygiene_parts(WorkspaceQueryPrims& P, PrimRegistra
     auto& resolve_query_node_arg = P.resolve_query_node_arg;
     auto pin_query_children = make_pin_query_children(P.ev);
     // (query:macro-introduced) — Issue #244: shortcut for
-    // (query:filter (where :marker "MacroIntroduced")).
+    // (query :filter (where :marker "MacroIntroduced")).
     // Returns a list of NodeIds whose SyntaxMarker is
     // SyntaxMarker::MacroIntroduced (i.e. code inserted by
     // a hygienic macro via clone_macro_body). Used by
@@ -3832,7 +3850,7 @@ void register_workspace_query_hygiene_parts(WorkspaceQueryPrims& P, PrimRegistra
 }
 
 // Issue #5031: pattern registration phase.
-// Issue #5031: per-call state for (query:pattern). The registration used to be a
+// Issue #5031: per-call state for (query :pattern). The registration used to be a
 // single 600-line lambda; the responsibility methods below carry the same body
 // slices in the same order so names, guards, early returns and captured owners
 // are unchanged. One instance is built per call (never shared across threads).
@@ -3890,7 +3908,7 @@ struct WorkspacePatternCall {
     EvalValue finish();
 };
 
-// Issue #5031: (query:pattern) keyword + pattern-string parsing.
+// Issue #5031: (query :pattern) keyword + pattern-string parsing.
 std::optional<EvalValue> WorkspacePatternCall::parse_args(std::span<const EvalValue> a) {
     auto& ws = this->ws;
     auto& mev = this->mev;
@@ -4002,7 +4020,7 @@ std::optional<EvalValue> WorkspacePatternCall::parse_args(std::span<const EvalVa
             }
         } else {
             return mev("bad-arg",
-                       "usage: (query:pattern expr [:include-macro-introduced [#t]]"
+                       "usage: (query :pattern expr [:include-macro-introduced [#t]]"
                        " [:allow-macro-introduced [#t]] [:allow-macro? [#t]]"
                        " [:exclude-macro-introduced [#t|#f]]"
                        " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]]"
@@ -4018,7 +4036,7 @@ std::optional<EvalValue> WorkspacePatternCall::parse_args(std::span<const EvalVa
     return std::nullopt;
 }
 
-// Issue #5031: (query:pattern) pattern parse/cache + matcher construction.
+// Issue #5031: (query :pattern) pattern parse/cache + matcher construction.
 std::optional<EvalValue> WorkspacePatternCall::prepare_match() {
     auto& ws = this->ws;
     auto& ev = this->ev;
@@ -4096,7 +4114,7 @@ std::optional<EvalValue> WorkspacePatternCall::prepare_match() {
     return std::nullopt;
 }
 
-// Issue #5031: (query:pattern) walk-shape pre-computation.
+// Issue #5031: (query :pattern) walk-shape pre-computation.
 std::optional<EvalValue> WorkspacePatternCall::prepare_walk() {
     auto& matcher = *matcher_ptr;
     // Issue #186 Phase 1: pre-compute the pattern's children
@@ -4209,7 +4227,7 @@ std::optional<EvalValue> WorkspacePatternCall::prepare_walk() {
     return ok;
 }
 
-// Issue #5031: (query:pattern) match walk (index fast path + full walk).
+// Issue #5031: (query :pattern) match walk (index fast path + full walk).
 std::optional<EvalValue> WorkspacePatternCall::walk() {
     auto& ws = this->ws;
     auto& ev = this->ev;
@@ -4423,7 +4441,7 @@ std::optional<EvalValue> WorkspacePatternCall::walk() {
     return std::nullopt;
 }
 
-// Issue #5031: (query:pattern) hygiene accounting + QueryEpoch finish.
+// Issue #5031: (query :pattern) hygiene accounting + QueryEpoch finish.
 EvalValue WorkspacePatternCall::finish() {
     auto& ws = this->ws;
     auto& ev = this->ev;
@@ -4477,7 +4495,7 @@ EvalValue WorkspacePatternCall::finish() {
     return end_query_epoch_maybe_result(qe, ws.workspace_flat, result, as_query_result);
 }
 
-// Issue #5031: (query:pattern) call driver — lock, checks, ordered phases.
+// Issue #5031: (query :pattern) call driver — lock, checks, ordered phases.
 template <typename PinChildrenFn>
 EvalValue WorkspacePatternCall::run(std::span<const EvalValue> a,
                                     const PinChildrenFn& pin_query_children) {
@@ -4503,7 +4521,7 @@ EvalValue WorkspacePatternCall::run(std::span<const EvalValue> a,
         }
     } lock_timer{{}, ev, lock_t0};
     if (a.empty())
-        return mev("bad-arg", "usage: (query:pattern expr [:include-macro-introduced [#t]]"
+        return mev("bad-arg", "usage: (query :pattern expr [:include-macro-introduced [#t]]"
                               " [:allow-macro-introduced [#t]] [:allow-macro? [#t]]"
                               " [:exclude-macro-introduced [#t|#f]]"
                               " [:respect-hygiene [#t|#f]]"
@@ -4540,7 +4558,7 @@ void register_workspace_query_pattern_parts(WorkspaceQueryPrims& P, PrimRegistra
     auto& begin_query_epoch = P.begin_query_epoch;
     auto& end_query_epoch_maybe_result = P.end_query_epoch_maybe_result;
     auto pin_query_children = make_pin_query_children(P.ev);
-    // (query:pattern "expr") — Find all nodes matching a structural pattern
+    // (query :pattern "expr") — Find all nodes matching a structural pattern
     //
     // Pattern syntax:
     //   (+ 1 2)     — exact match: Call("+", 1, 2)
@@ -4577,12 +4595,13 @@ void register_workspace_query_pattern_parts(WorkspaceQueryPrims& P, PrimRegistra
     // historical alias for :include-macro-introduced (AC-compatible);
     // default include_macro=false is the "respect hygiene ON" contract.
     // Agents observe query:hygiene-skip-count + query:safe-span-pin-count.
-    add("query:pattern",
-        [ws, mev, &ev, begin_query_epoch, end_query_epoch_maybe_result,
-         pin_query_children](const auto& a) -> EvalValue {
-            WorkspacePatternCall call{ws, mev, ev, begin_query_epoch, end_query_epoch_maybe_result};
-            return call.run(a, pin_query_children);
-        });
+    ev.primitives().add_hidden("query:pattern",
+                               [ws, mev, &ev, begin_query_epoch, end_query_epoch_maybe_result,
+                                pin_query_children](const auto& a) -> EvalValue {
+                                   WorkspacePatternCall call{ws, mev, ev, begin_query_epoch,
+                                                             end_query_epoch_maybe_result};
+                                   return call.run(a, pin_query_children);
+                               });
 }
 
 
@@ -4599,7 +4618,7 @@ void register_workspace_query_provenance_of_parts(WorkspaceQueryPrims& P, PrimRe
     auto& unpack_query_stable_ref = P.unpack_query_stable_ref;
     auto& resolve_query_node_arg = P.resolve_query_node_arg;
     auto pin_query_children = make_pin_query_children(P.ev);
-    // Issue #282: (query:provenance-of var-name) — return the
+    // Issue #282: (query :provenance-of var-name) — return the
     // list of NarrowingRecords that narrowed `var-name`. Each
     // entry is a hash with keys: :predicate, :refined-type,
     // :if-node, :cond-node, :is-negation, :narrow-evidence,
@@ -4607,10 +4626,10 @@ void register_workspace_query_provenance_of_parts(WorkspaceQueryPrims& P, PrimRe
     // found or no workspace loaded.
     //
     // Use case: AI agent debugging "why does x have type T in
-    // this branch?" → calls (query:provenance-of "x") to get
+    // this branch?" → calls (query :provenance-of "x") to get
     // the predicates that refined x.
     // Issue #4860: &ev is the publish lock the hash registry needs.
-    add("query:provenance-of", [ws, mev, &ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("query:provenance-of", [ws, mev, &ev](const auto& a) -> EvalValue {
         if (a.size() != 1 || !ws.workspace_flat) {
             mev("bad-arg", "query:provenance-of expects 1 string arg");
             return make_void();
@@ -4703,16 +4722,16 @@ void register_workspace_query_provenance_of_parts(WorkspaceQueryPrims& P, PrimRe
         return result;
     });
 
-    // Issue #282 follow-up #2: (query:provenance-of *) — list all
+    // Issue #282 follow-up #2: (query :provenance-of *) — list all
     // variables that have at least one narrowing provenance entry.
     // Returns a list of strings (variable names). Empty if no
     // workspace or no narrowings recorded.
     //
     // Use case: AI agent asking "what variables have been
     // narrowed in this scope?" without knowing the names up
-    // front. Pairs with (query:provenance-of var) to drill
+    // front. Pairs with (query :provenance-of var) to drill
     // into specific narrowings.
-    add("query:provenance-of*", [ws, mev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("query:provenance-of*", [ws, mev](const auto& a) -> EvalValue {
         if (a.size() != 0 || !ws.workspace_flat) {
             mev("bad-arg", "query:provenance-of* expects 0 args");
             return make_void();
@@ -4872,6 +4891,16 @@ void register_workspace_query_dispatch_parts(WorkspaceQueryPrims& P, PrimRegistr
     auto pin_query_children = make_pin_query_children(P.ev);
     auto& pairs = P.ws.pairs;
     auto& string_heap = P.ws.string_heap;
+    // Issue #5144: query:by-marker / :node-provenance / :last-mutation-provenance
+    // are dispatch-only now — but each also has a metrics stats-impl, and the
+    // verb consults stats-impl before the primitive table. Mirror the body into
+    // the verb fast-path map so (query :op …) keeps returning the node-id list
+    // / provenance hash the old query:NAME call shape returned.
+    for (const char* hidden :
+         {"query:by-marker", "query:node-provenance", "query:last-mutation-provenance"}) {
+        if (auto body = ev.primitives().lookup(hidden))
+            (*q_impls)[hidden] = std::move(*body);
+    }
     // ── Issue #1435 / #2628: (query :op …) unified dispatcher ─────
     // Canonical surface for core structural ops. Aliases live in private
     // q_impls / stats_impl only (no public add registrations).
@@ -5110,15 +5139,15 @@ void register_workspace_query_dispatch_parts(WorkspaceQueryPrims& P, PrimRegistr
             return make_bool(true);
         });
 
-    // Issue #2933 / Issue #3766: (query:result-fresh? qr) — Agent poll of
+    // Issue #2933 / Issue #3766: (query :result-fresh? qr) — Agent poll of
     // QueryResult memory. SlimSurface add() (not sink). Production uses
     // query_result_is_fresh_with_refs (occupancy + node_gen_ + wrap +
     // tenant/fiber/cow) — same SSOT as resolve_query_node_arg.
     // Do not decode via query_result_check_fresh under production_defaults.
     // Soft: epoch-only #f on stale (zero extra atomics on hash-miss).
-    add("query:result-fresh?", [ws, mev, &ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("query:result-fresh?", [ws, mev, &ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_hash(a[0]))
-            return mev("bad-arg", "usage: (query:result-fresh? query-result-hash)");
+            return mev("bad-arg", "usage: (query :result-fresh? query-result-hash)");
         if (!ws.workspace_flat)
             return mev("no-workspace", "no workspace AST loaded");
         aura::core::QueryResult qr;
@@ -5142,12 +5171,12 @@ void register_workspace_query_dispatch_parts(WorkspaceQueryPrims& P, PrimRegistr
         return make_bool(fresh);
     });
 
-    // Issue #2933 / #3766: (query:result-matches qr) — SlimSurface add().
+    // Issue #2933 / #3766: (query :result-matches qr) — SlimSurface add().
     // Production occupancy-stale → stale-ref (same kind as resolve).
     // Soft: epoch-only; returns matches even when epoch advanced.
-    add("query:result-matches", [ws, mev, &ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("query:result-matches", [ws, mev, &ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_hash(a[0]))
-            return mev("bad-arg", "usage: (query:result-matches query-result-hash)");
+            return mev("bad-arg", "usage: (query :result-matches query-result-hash)");
         if (!ws.workspace_flat)
             return mev("no-workspace", "no workspace AST loaded");
         auto hidx = as_hash_idx(a[0]);

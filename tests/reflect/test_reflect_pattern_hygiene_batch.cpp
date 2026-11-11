@@ -43,7 +43,7 @@ namespace aura_edsl_run_mandate_1636_1892 {
 //     AC5: stress re-query; skips grow; no crash
 //     AC6: #1609 lineage wire flags still present
 //   Issue #1892 (consolidates #1636 / #1609 / #1501 / #1653):
-//     AC1: default (query:pattern ...) never returns MacroIntroduced nodes
+//     AC1: default (query :pattern ...) never returns MacroIntroduced nodes
 //     AC2: macro_introduced_skipped_in_query_total non-zero under macro ws
 //     AC3: query:pattern-hygiene-stats schema 1892 + hygiene-leakage == 0
 //     AC4: :allow-macro-introduced #t opt-in works
@@ -93,7 +93,7 @@ namespace {
     static bool result_has_macro_leak_via_markers(CompilerService& cs,
                                                   std::string_view pattern_expr) {
         auto with_markers =
-            cs.eval(std::format("(query:pattern {} :with-markers #t)", pattern_expr));
+            cs.eval(std::format("(query :pattern {} :with-markers #t)", pattern_expr));
         if (!with_markers)
             return false;
         (void)with_markers;
@@ -114,7 +114,7 @@ namespace {
         if (skips0 < 0)
             skips0 = href(cs, "query:pattern-hygiene-stats", "root-skips");
 
-        auto r = cs.eval("(query:pattern '( * _ _))");
+        auto r = cs.eval("(query :pattern '( * _ _))");
         (void)r;
         auto skips1 =
             href(cs, "query:pattern-hygiene-stats", "macro_introduced_skipped_in_pattern_total");
@@ -122,7 +122,7 @@ namespace {
             skips1 = href(cs, "query:pattern-hygiene-stats", "root-skips");
         CHECK(skips1 >= skips0, "skips non-decreasing after pattern");
 
-        auto allow = cs.eval("(query:pattern '( * _ _) :allow-macro-introduced #t)");
+        auto allow = cs.eval("(query :pattern '( * _ _) :allow-macro-introduced #t)");
         (void)allow;
         CHECK(true, "allow-macro-introduced path ok");
     }
@@ -133,7 +133,7 @@ namespace {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define (h x) (+ x 1)) (h 1)\")").has_value(), "set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
-        (void)cs.eval("(query:pattern '(define _ _))");
+        (void)cs.eval("(query :pattern '(define _ _))");
         CHECK(href(cs, "query:pattern-hygiene-stats", "user-only-tag-arity-index-wired") == 1,
               "user-only index wired");
         CHECK(href(cs, "query:pattern-hygiene-stats", "marker-dimension-via-user-index-wired") == 1,
@@ -174,11 +174,11 @@ namespace {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define (u x) (* x 3)) (u 2)\")").has_value(), "set-code user");
         CHECK(cs.eval("(eval-current)").has_value(), "eval user");
-        auto n_user = list_len(cs, "(query:pattern '(define _ _))");
+        auto n_user = list_len(cs, "(query :pattern '(define _ _))");
         CHECK(n_user >= 0, "user pattern length readable");
 
         if (setup_macro_ws(cs)) {
-            auto n_def = list_len(cs, "(query:pattern '(define _ _))");
+            auto n_def = list_len(cs, "(query :pattern '(define _ _))");
             CHECK(n_def >= 0, "define pattern after macro ws");
             CHECK(true, "macro workspace query completed");
         }
@@ -192,10 +192,10 @@ namespace {
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
         const auto s0 = href(cs, "query:pattern-hygiene-stats", "root-skips");
         for (int i = 0; i < 200; ++i) {
-            auto r = cs.eval("(query:pattern '(define _ _))");
+            auto r = cs.eval("(query :pattern '(define _ _))");
             (void)r;
             if ((i % 17) == 0)
-                (void)cs.eval("(query:pattern '( * _ _) :allow-macro-introduced #t)");
+                (void)cs.eval("(query :pattern '( * _ _) :allow-macro-introduced #t)");
         }
         CHECK(href(cs, "query:pattern-hygiene-stats", "root-skips") >= s0, "skips non-decreasing");
         {
@@ -222,13 +222,13 @@ namespace {
         std::println("\n--- #1892 AC1: default query:pattern never returns MacroIntroduced ---");
         CompilerService cs;
         CHECK(setup_macro_ws(cs), "macro workspace");
-        (void)cs.eval("(query:pattern '( * _ _))");
-        (void)cs.eval("(query:pattern '(+ _ _))");
-        (void)cs.eval("(query:pattern '(define _ _))");
+        (void)cs.eval("(query :pattern '( * _ _))");
+        (void)cs.eval("(query :pattern '(+ _ _))");
+        (void)cs.eval("(query :pattern '(define _ _))");
         CHECK(!result_has_macro_leak_via_markers(cs, "'( * _ _)"), "no leakage on * pattern");
         CHECK(href(cs, "query:pattern-hygiene-stats", "hygiene-leakage") == 0,
               "hygiene-leakage == 0");
-        auto n_def = list_len(cs, "(query:pattern '(define _ _))");
+        auto n_def = list_len(cs, "(query :pattern '(define _ _))");
         CHECK(n_def >= 0, "define pattern length readable");
     }
 
@@ -245,8 +245,8 @@ namespace {
         // looked vacuous). Use the supported string form so the hygienic
         // index actually serves and credits the skips.
         for (int i = 0; i < 8; ++i) {
-            (void)cs.eval("(query:pattern \"...\")");
-            (void)cs.eval("(query:pattern \"(* _ _)\")");
+            (void)cs.eval("(query :pattern \"...\")");
+            (void)cs.eval("(query :pattern \"(* _ _)\")");
         }
         const auto s1 =
             href(cs, "query:pattern-hygiene-stats", "macro_introduced_skipped_in_query_total");
@@ -291,11 +291,11 @@ namespace {
         std::println("\n--- #1892 AC4: :allow-macro-introduced #t opt-in ---");
         CompilerService cs;
         CHECK(setup_macro_ws(cs), "macro workspace");
-        auto allow = cs.eval("(query:pattern '( * _ _) :allow-macro-introduced #t)");
+        auto allow = cs.eval("(query :pattern '( * _ _) :allow-macro-introduced #t)");
         CHECK(allow.has_value(), "allow path returns value");
-        auto include = cs.eval("(query:pattern '( * _ _) :include-macro-introduced #t)");
+        auto include = cs.eval("(query :pattern '( * _ _) :include-macro-introduced #t)");
         CHECK(include.has_value(), "include path returns value");
-        (void)cs.eval("(query:pattern '( * _ _))");
+        (void)cs.eval("(query :pattern '( * _ _))");
         CHECK(href(cs, "query:pattern-hygiene-stats", "hygiene-leakage") == 0,
               "default path still zero leakage after opt-in calls");
     }
@@ -313,11 +313,11 @@ namespace {
                 (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 1))\")");
                 (void)cs.eval("(eval-current)");
             }
-            (void)cs.eval("(query:pattern '(define _ _))");
+            (void)cs.eval("(query :pattern '(define _ _))");
             if ((i % 16) == 0)
-                (void)cs.eval("(query:pattern '( * _ _))");
+                (void)cs.eval("(query :pattern '( * _ _))");
             if ((i % 32) == 0)
-                (void)cs.eval("(query:pattern '( * _ _) :allow-macro-introduced #t)");
+                (void)cs.eval("(query :pattern '( * _ _) :allow-macro-introduced #t)");
         }
         CHECK(href(cs, "query:pattern-hygiene-stats", "hygiene-leakage") == leak0 ||
                   href(cs, "query:pattern-hygiene-stats", "hygiene-leakage") == 0,
@@ -526,10 +526,10 @@ namespace aura_issue_554_detail {
         CompilerService cs;
         (void)cs.eval("(set-code \"(define x 1)\")");
         (void)cs.eval("(eval-current)");
-        auto r = cs.eval("(query:pattern \"x\" :respect-hygiene #f)");
-        CHECK(r.has_value(), "(query:pattern :respect-hygiene #f) returns (regression for #547)");
-        auto r2 = cs.eval("(query:pattern \"x\")");
-        CHECK(r2.has_value(), "(query:pattern) without :respect-hygiene returns (default = skip)");
+        auto r = cs.eval("(query :pattern \"x\" :respect-hygiene #f)");
+        CHECK(r.has_value(), "(query :pattern :respect-hygiene #f) returns (regression for #547)");
+        auto r2 = cs.eval("(query :pattern \"x\")");
+        CHECK(r2.has_value(), "(query :pattern) without :respect-hygiene returns (default = skip)");
         return true;
     }
 
@@ -553,11 +553,11 @@ namespace aura_issue_554_detail {
         }
         // Rebuild + pattern query.
         ws->rebuild_tag_arity_index();
-        auto r1 = cs.eval("(query:pattern \"v\" :respect-hygiene #t)");
-        CHECK(r1.has_value(), "(query:pattern :respect-hygiene #t) returns");
+        auto r1 = cs.eval("(query :pattern \"v\" :respect-hygiene #t)");
+        CHECK(r1.has_value(), "(query :pattern :respect-hygiene #t) returns");
         // Default (skip MacroIntroduced).
-        auto r2 = cs.eval("(query:pattern \"v\")");
-        CHECK(r2.has_value(), "(query:pattern) default returns");
+        auto r2 = cs.eval("(query :pattern \"v\")");
+        CHECK(r2.has_value(), "(query :pattern) default returns");
         return true;
     }
 
@@ -887,11 +887,11 @@ namespace aura_issue_547_detail {
         // The new keyword should be recognized (not unknown).
         // If recognized, the call returns a value (or pair); if
         // unknown, it returns a bad-arg error.
-        auto r = cs.eval("(query:pattern \"x\" :respect-hygiene #f)");
-        CHECK(r.has_value(), "(query:pattern :respect-hygiene #f) returns (keyword recognized)");
+        auto r = cs.eval("(query :pattern \"x\" :respect-hygiene #f)");
+        CHECK(r.has_value(), "(query :pattern :respect-hygiene #f) returns (keyword recognized)");
         // Verify the default is still skip (hygiene-safe).
-        auto r2 = cs.eval("(query:pattern \"x\")");
-        CHECK(r2.has_value(), "(query:pattern) without :respect-hygiene returns (default = skip)");
+        auto r2 = cs.eval("(query :pattern \"x\")");
+        CHECK(r2.has_value(), "(query :pattern) without :respect-hygiene returns (default = skip)");
         return true;
     }
 
@@ -913,8 +913,8 @@ namespace aura_issue_547_detail {
         // path bumps macro_introduced_skipped_in_query_ when the
         // workspace has any MacroIntroduced nodes. The exact count
         // depends on workspace contents; we just check monotonicity.
-        auto r2 = cs.eval("(query:pattern \"x\")");
-        CHECK(r2.has_value(), "(query:pattern \"x\") returns");
+        auto r2 = cs.eval("(query :pattern \"x\")");
+        CHECK(r2.has_value(), "(query :pattern \"x\") returns");
         const auto after = cs.evaluator().get_macro_introduced_skipped_in_query();
         std::println("  macro_introduced_skipped_in_query: {} (baseline: {})", after, baseline);
         CHECK(after >= baseline, "macro_introduced_skipped_in_query observable + non-decreasing");
@@ -1002,25 +1002,25 @@ namespace aura_issue_547_detail {
         (void)cs.eval("(eval-current)");
         const auto hits0 = cs.evaluator().get_pattern_parse_cache_hits();
         const auto misses0 = cs.evaluator().get_pattern_parse_cache_misses();
-        auto first = cs.eval("(query:pattern \"(+ ?a ?b)\")");
+        auto first = cs.eval("(query :pattern \"(+ ?a ?b)\")");
         CHECK(first.has_value(), "#4933: first query:pattern returns");
         const auto hits1 = cs.evaluator().get_pattern_parse_cache_hits();
         const auto misses1 = cs.evaluator().get_pattern_parse_cache_misses();
         CHECK(misses1 == misses0 + 1, "#4933: first call parses the pattern");
         CHECK(hits1 == hits0, "#4933: first call is not served from the parse cache");
-        const auto len_first = cs.eval("(length (query:pattern \"(+ ?a ?b)\"))");
+        const auto len_first = cs.eval("(length (query :pattern \"(+ ?a ?b)\"))");
         const auto misses2 = cs.evaluator().get_pattern_parse_cache_misses();
         const auto hits2 = cs.evaluator().get_pattern_parse_cache_hits();
         CHECK(misses2 == misses1, "#4933: repeat call performs no new parse");
         CHECK(hits2 > hits1, "#4933: repeat call is served from the parse cache");
-        const auto len_second = cs.eval("(length (query:pattern \"(+ ?a ?b)\"))");
+        const auto len_second = cs.eval("(length (query :pattern \"(+ ?a ?b)\"))");
         CHECK(len_first.has_value() && len_second.has_value() &&
                   aura::compiler::types::as_int(*len_first) ==
                       aura::compiler::types::as_int(*len_second),
               "#4933: cached and parsed patterns return the same match count");
         // (gc-temp) resets the temp arena the parse lived in.
         (void)cs.eval("(gc-temp)");
-        auto after_gc = cs.eval("(query:pattern \"(+ ?a ?b)\")");
+        auto after_gc = cs.eval("(query :pattern \"(+ ?a ?b)\")");
         CHECK(after_gc.has_value(), "#4933: query:pattern after gc-temp returns");
         CHECK(cs.evaluator().get_pattern_parse_cache_misses() > misses2,
               "#4933: gc-temp drops the cached parse");
@@ -1202,16 +1202,18 @@ int run_hygiene_provenance_1914() {
                 break;
             }
         }
-        auto r = cs.eval(std::format("(query:node-provenance {})", nid));
+        auto r = cs.eval(std::format("(query :node-provenance {})", nid));
         CHECK(r.has_value() && is_hash(*r), "node-provenance is hash");
-        auto schema = cs.eval(std::format("(hash-ref (query:node-provenance {}) \"schema\")", nid));
+        auto schema =
+            cs.eval(std::format("(hash-ref (query :node-provenance {}) \"schema\")", nid));
         CHECK(schema && is_int(*schema) && as_int(*schema) == 1914, "schema 1914");
-        auto idk = cs.eval(std::format("(hash-ref (query:node-provenance {}) \"id\")", nid));
+        auto idk = cs.eval(std::format("(hash-ref (query :node-provenance {}) \"id\")", nid));
         CHECK(idk && is_int(*idk) && as_int(*idk) == nid, "id matches");
         auto macro =
-            cs.eval(std::format("(hash-ref (query:node-provenance {}) \"macro-flag\")", nid));
+            cs.eval(std::format("(hash-ref (query :node-provenance {}) \"macro-flag\")", nid));
         CHECK(macro && is_int(*macro) && as_int(*macro) >= 0, "macro-flag");
-        auto reason = cs.eval(std::format("(hash-ref (query:node-provenance {}) \"reason\")", nid));
+        auto reason =
+            cs.eval(std::format("(hash-ref (query :node-provenance {}) \"reason\")", nid));
         CHECK(reason && is_int(*reason) && as_int(*reason) >= 0, "reason");
         CHECK(load_u64(metrics_of(cs)->provenance_query_total) > 0, "prov query bumped");
         CHECK(href_hp(cs, "provenance_query_total") > 0, "stats sees prov queries");
@@ -1225,16 +1227,16 @@ int run_hygiene_provenance_1914() {
         // Drive a mutate to populate mutation log
         auto mut = cs.eval("(mutate :rebind \"z\" \"99\" \"1914-ac4\")");
         CHECK(mut.has_value(), "mutate");
-        auto r = cs.eval("(query:last-mutation-provenance)");
+        auto r = cs.eval("(query :last-mutation-provenance)");
         // May be hash or void if log empty under some paths — prefer hash.
         if (r && is_hash(*r)) {
-            auto schema = cs.eval("(hash-ref (query:last-mutation-provenance) \"schema\")");
+            auto schema = cs.eval("(hash-ref (query :last-mutation-provenance) \"schema\")");
             CHECK(schema && is_int(*schema) && as_int(*schema) == 1914, "schema 1914");
-            auto mid = cs.eval("(hash-ref (query:last-mutation-provenance) \"mutation_id\")");
+            auto mid = cs.eval("(hash-ref (query :last-mutation-provenance) \"mutation_id\")");
             CHECK(mid && is_int(*mid) && as_int(*mid) >= 0, "mutation_id");
-            auto target = cs.eval("(hash-ref (query:last-mutation-provenance) \"target-node\")");
+            auto target = cs.eval("(hash-ref (query :last-mutation-provenance) \"target-node\")");
             CHECK(target && is_int(*target), "target-node");
-            auto mflag = cs.eval("(hash-ref (query:last-mutation-provenance) \"macro-flag\")");
+            auto mflag = cs.eval("(hash-ref (query :last-mutation-provenance) \"macro-flag\")");
             CHECK(mflag && is_int(*mflag), "macro-flag");
         } else {
             // Fallback: still callable without error
@@ -1252,18 +1254,18 @@ int run_hygiene_provenance_1914() {
         std::println("\n--- AC5: query:by-marker :where ---");
         CompilerService cs;
         CHECK(seed(cs), "seed");
-        auto user = cs.eval("(query:by-marker \"User\")");
+        auto user = cs.eval("(query :by-marker \"User\")");
         CHECK(user.has_value(), "by-marker User");
-        auto with_where = cs.eval("(query:by-marker \"User\" :where \"Define\")");
+        auto with_where = cs.eval("(query :by-marker \"User\" :where \"Define\")");
         CHECK(with_where.has_value(), "by-marker User :where Define");
         // Length of filtered should be ≤ unfiltered
-        auto n_all = cs.eval("(length (query:by-marker \"User\"))");
-        auto n_def = cs.eval("(length (query:by-marker \"User\" :where \"Define\"))");
+        auto n_all = cs.eval("(length (query :by-marker \"User\"))");
+        auto n_def = cs.eval("(length (query :by-marker \"User\" :where \"Define\"))");
         if (n_all && is_int(*n_all) && n_def && is_int(*n_def)) {
             CHECK(as_int(*n_def) <= as_int(*n_all), "where filters subset");
             CHECK(as_int(*n_def) >= 0, "define count non-neg");
         }
-        auto mi = cs.eval("(query:by-marker \"MacroIntroduced\" :limit 5)");
+        auto mi = cs.eval("(query :by-marker \"MacroIntroduced\" :limit 5)");
         CHECK(mi.has_value(), "MacroIntroduced :limit");
         CHECK(load_u64(metrics_of(cs)->by_marker_where_filter_hits) > 0 ||
                   href_hp(cs, "by-marker-where-hits") >= 0,
@@ -1277,9 +1279,9 @@ int run_hygiene_provenance_1914() {
         CHECK(seed(cs), "seed");
         auto* m = metrics_of(cs);
         const auto hits0 = load_u64(m->pattern_hygiene_filter_hits);
-        auto pat = cs.eval("(query:pattern '(define _ _))");
+        auto pat = cs.eval("(query :pattern '(define _ _))");
         CHECK(pat.has_value(), "query:pattern default");
-        auto include = cs.eval("(query:pattern '(define _ _) :include-macro-introduced #t)");
+        auto include = cs.eval("(query :pattern '(define _ _) :include-macro-introduced #t)");
         CHECK(include.has_value(), "include-macro opt-in");
         // Stats surface carries AC keys
         CHECK(href(cs, "query:pattern-hygiene-stats", "default-exclude-macro-introduced") == 1 ||
@@ -1298,20 +1300,20 @@ int run_hygiene_provenance_1914() {
         CHECK(seed(cs), "seed");
         for (int i = 0; i < 10; ++i) {
             (void)cs.eval(std::format("(mutate :rebind \"z\" \"{}\" \"r{}\")", 100 + i, i));
-            auto lp = cs.eval("(query:last-mutation-provenance)");
+            auto lp = cs.eval("(query :last-mutation-provenance)");
             CHECK(lp.has_value(), std::format("last-prov round {}", i));
             auto* ws = cs.evaluator().workspace_flat();
             if (ws && ws->size() > 1) {
                 for (aura::ast::NodeId id = 1; id < ws->size(); ++id) {
                     if (ws->is_live_node(id)) {
                         auto np = cs.eval(
-                            std::format("(query:node-provenance {})", static_cast<int>(id)));
+                            std::format("(query :node-provenance {})", static_cast<int>(id)));
                         CHECK(np.has_value(), std::format("node-prov {}", id));
                         break;
                     }
                 }
             }
-            (void)cs.eval("(query:pattern '(define _ _))");
+            (void)cs.eval("(query :pattern '(define _ _))");
         }
         CHECK(href_hp(cs, "provenance_query_total") > 0, "prov total advanced");
         CHECK(href_hp(cs, "schema") == 1914, "schema holds");
@@ -1390,7 +1392,7 @@ namespace aura_421_detail {
         CHECK(s0 > 0, "pattern macro filter stats positive after macro eval");
 
         std::println("\n--- AC2: marker baseline ---");
-        auto macro_n = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+        auto macro_n = cs.eval("(length (query :by-marker \"MacroIntroduced\"))");
         CHECK(macro_n && is_int(*macro_n), "macro-introduced count available");
         CHECK(as_int(*macro_n) >= 3, "macro-introduced >= 3 nodes");
 
@@ -1399,7 +1401,7 @@ namespace aura_421_detail {
         const auto stats3a = pattern_macro_filter_stats(cs);
         const auto root3a = ev.get_macro_introduced_skipped_in_query();
         const auto rec3a = ev.get_pattern_recursive_macro_skipped();
-        (void)cs.eval("(query:pattern \"*\")");
+        (void)cs.eval("(query :pattern \"*\")");
         const auto stats3b = pattern_macro_filter_stats(cs);
         const auto root3b = ev.get_macro_introduced_skipped_in_query();
         const auto rec3b = ev.get_pattern_recursive_macro_skipped();
@@ -1409,7 +1411,7 @@ namespace aura_421_detail {
         CHECK(root3b > root3a, "query:pattern bumps root macro skips");
 
         std::println("\n--- AC4: macro-introduced vs by-marker ---");
-        auto by_marker = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+        auto by_marker = cs.eval("(length (query :by-marker \"MacroIntroduced\"))");
         CHECK(by_marker && is_int(*by_marker), "by-marker length is int");
         std::println("  macro-introduced = {}, by-marker = {}", as_int(*macro_n),
                      as_int(*by_marker));
@@ -1423,9 +1425,9 @@ namespace aura_421_detail {
               "zero pattern macro filter violations");
 
         std::println("\n--- AC6: :include-macro-introduced opt-in ---");
-        const auto default_cnt = result_count(cs, "(query:pattern \"*\")");
+        const auto default_cnt = result_count(cs, "(query :pattern \"*\")");
         const auto include_cnt =
-            result_count(cs, "(query:pattern \"*\" :include-macro-introduced #t)");
+            result_count(cs, "(query :pattern \"*\" :include-macro-introduced #t)");
         std::println("  default matches = {}, include matches = {}", default_cnt, include_cnt);
         CHECK(default_cnt >= 0 && include_cnt >= 0, "pattern match counts observable");
         CHECK(include_cnt >= default_cnt, "include-macro-introduced yields >= default matches");

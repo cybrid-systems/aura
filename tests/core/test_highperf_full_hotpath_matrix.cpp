@@ -106,7 +106,7 @@ bool test_cache_locality_win_monotonic() {
     const auto c0 = eval_int(cs, "(stats:get \"query:task4-cache-locality-win\")");
     for (int i = 0; i < 10; ++i) {
         (void)cs.eval("(query:tag-arity-count 32 0)");
-        (void)cs.eval("(query:pattern \"base\")");
+        (void)cs.eval("(query :pattern \"base\")");
     }
     const auto c1 = eval_int(cs, "(stats:get \"query:task4-cache-locality-win\")");
     std::println("  task4-cache-locality-win: {} -> {}", c0, c1);

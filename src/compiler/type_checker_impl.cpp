@@ -8169,7 +8169,7 @@ TypeId InferenceEngine::synthesize_flat_if(FlatAST& flat, StringPool& pool, Node
         // refined type as string, IfExpr + cond NodeIds,
         // negation flag, narrow_evidence bitmask, and the
         // capture epoch. The provenance log is queried via
-        // (query:provenance-of var-name) and used to build
+        // (query :provenance-of var-name) and used to build
         // BlameInfo when a narrowing becomes stale after
         // mutation. We only record positive (then-branch)
         // narrowings; negation is handled symmetrically in
@@ -9298,7 +9298,7 @@ void InferenceEngine::check_flat_if_narrowing(FlatAST& flat, StringPool& pool, N
             ownership_env_.mark(occ->var_name, OwnershipState::Owned);
             // Issue #283 follow-up #3: also capture provenance
             // in check-mode. This mirrors the synthesize_flat_if
-            // capture so (query:provenance-of var) works
+            // capture so (query :provenance-of var) works
             // whether the workspace was last typechecked via
             // synthesize or check. The capture_epoch is the
             // current inference engine's epoch.
