@@ -218,29 +218,36 @@ def check_benchmark_baseline_sync(errors: list[str], fixture_names: set[str]) ->
         _fail(errors, "benchmark_baseline.json: missing")
         return
     data: dict[str, Any] = json.loads(baseline_path.read_text(encoding="utf-8"))
-    cases = data.get("cases")
-    if not isinstance(cases, list):
-        _fail(errors, "benchmark_baseline.json: 'cases' must be an array")
-        return
-    baseline_names = {c["name"] for c in cases if isinstance(c, dict) and isinstance(c.get("name"), str)}
-    missing = sorted(fixture_names - baseline_names)
-    extra = sorted(baseline_names - fixture_names)
-    if missing:
-        _fail(
-            errors,
-            f"benchmark_baseline.json: missing {len(missing)} fixture case(s): {', '.join(missing)}",
-        )
-    if extra:
-        _fail(
-            errors,
-            f"benchmark_baseline.json: {len(extra)} stale case(s) not in fixture: {', '.join(extra)}",
-        )
-    if data.get("total_cases") != len(fixture_names):
-        _fail(
-            errors,
-            f"benchmark_baseline.json: total_cases={data.get('total_cases')} "
-            f"but benchmark fixtures have {len(fixture_names)} cases",
-        )
+    # Schema 2 keeps one slot per machine class (#1936 follow-up): CPU-seconds
+    # do not transfer between the arm64 dev image and the x86 CI runner, so
+    # every slot must cover the same fixture set.
+    platforms = data.get("platforms")
+    if isinstance(platforms, dict):
+        slots = [(tag, entry) for tag, entry in platforms.items() if isinstance(entry, dict)]
+        if not slots:
+            _fail(errors, "benchmark_baseline.json: 'platforms' has no entries")
+            return
+    else:
+        slots = [("default", data)]
+    for tag, entry in slots:
+        where = f"benchmark_baseline.json[{tag}]" if tag != "default" else "benchmark_baseline.json"
+        cases = entry.get("cases")
+        if not isinstance(cases, list):
+            _fail(errors, f"{where}: 'cases' must be an array")
+            continue
+        baseline_names = {c["name"] for c in cases if isinstance(c, dict) and isinstance(c.get("name"), str)}
+        missing = sorted(fixture_names - baseline_names)
+        extra = sorted(baseline_names - fixture_names)
+        if missing:
+            _fail(errors, f"{where}: missing {len(missing)} fixture case(s): {', '.join(missing)}")
+        if extra:
+            _fail(errors, f"{where}: {len(extra)} stale case(s) not in fixture: {', '.join(extra)}")
+        if entry.get("total_cases") != len(fixture_names):
+            _fail(
+                errors,
+                f"{where}: total_cases={entry.get('total_cases')} "
+                f"but benchmark fixtures have {len(fixture_names)} cases",
+            )
 
 
 def run_check() -> int:
