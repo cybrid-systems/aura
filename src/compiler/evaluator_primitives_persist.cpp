@@ -591,9 +591,8 @@ void RegSplitParts::register_persist_info(PrimRegistrar add, Evaluator& ev) {
         return make_hash(hidx);
     });
 
-    add("workspace-persist-format-version", [](const auto&) -> EvalValue {
-        return make_int(static_cast<std::int64_t>(kFormatVersion));
-    });
+    // Issue #5144: (workspace-persist-format-version) is retired. The blob
+    // format version is std/persist's persist:format-version constant.
 }
 
 void register_persist_primitives(PrimRegistrar add, Evaluator& ev) {

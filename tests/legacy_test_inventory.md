@@ -1532,7 +1532,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_lock_unlock.cpp` (—) [domain_suite, theme_compiler] — AC1: lock body guards workspace_read_only_ with active_idx (source)
 - `tests/compiler/test_workspace_region_concurrency.cpp` (—) [large, domain_suite, theme_compiler] — AC1: source cites #2121 + documents region strategy
 - `tests/compiler/test_workspace_rollback_latest.cpp` (—) [domain_suite, theme_compiler] — AC1: source has no second all_mutations() ID walk inside rollback-latest
-- `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
+- `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004), retargeted
 
 ### `fiber_orch` — Fiber / orchestration / steal / Guard (110)
 

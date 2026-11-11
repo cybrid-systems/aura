@@ -2541,49 +2541,9 @@ void RegSplitParts::register_intend_history_primitives(Evaluator& ev, AddFn& add
         return types::make_string(sidx);
     });
 
-    // ── workspace-state — 汇总当前 workspace 的定义 + 近期 mutations ───
-    // Issue #63 Phase 2: a single primitive that gives the LLM
-    // (or the EDSL) a snapshot of the workspace. The output is a
-    // human-readable string: lines starting with "DEFINE: " list
-    // top-level definitions; lines starting with "MUTATION: " list
-    // the most recent timeline entries (capped at last 10). The
-    // first line is a summary header "WORKSPACE: <n> defines" so
-    // the LLM has a one-token extractable count.
-    add("workspace-state", [&ev](const auto&) -> EvalValue {
-        // Issue #1994 / Wave1 B-09: pin (shared or adopt Guard exclusive).
-        auto pin = ev.pin_workspace_flat();
-        if (!pin || !pin.pool()) {
-            auto sidx =
-                ev.push_string_heap(std::string("WORKSPACE-ERROR: no workspace AST loaded"));
-            return types::make_string(sidx);
-        }
-        auto& flat = *pin;
-        auto& pool = *pin.pool();
-        std::string out;
-        // Top-level defines: walk the flat for Define nodes and
-        // collect their bound name.
-        std::size_t define_count = 0;
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            auto v = flat.get(id);
-            if (v.tag == aura::ast::NodeTag::Define && v.sym_id != aura::ast::INVALID_SYM) {
-                out += "DEFINE: " + std::string(pool.resolve(v.sym_id)) + "\n";
-                ++define_count;
-            }
-        }
-        if (define_count == 0)
-            out += "(no defines)\n";
-        // Recent mutations: last 10 timeline entries (Issue #1720 locked)
-        out += "MUTATIONS (last 10):\n";
-        {
-            auto tail = ev.timeline_tail(10);
-            out += (tail == "  (empty)\n") ? "  (none)\n" : tail;
-        }
-        // Prepend a one-line summary header so the LLM has an
-        // easy parse target: "WORKSPACE: <n> defines".
-        out = "WORKSPACE: " + std::to_string(define_count) + " defines\n" + out;
-        auto sidx = ev.push_string_heap(std::move(out));
-        return types::make_string(sidx);
-    });
+    // Issue #5144: (workspace-state) is retired. The snapshot is the
+    // Aura-level ws:state formatter in lib/std/workspace.aura, built from
+    // (stats:get "ast:defs") + the intend timeline; its text is unchanged.
 }
 
 // Issue #5033: intend-analytics aggregate.

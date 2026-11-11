@@ -2,19 +2,19 @@
 
 # Primitives (generated)
 
-**440** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**436** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 439 · **stdlib-candidate** 0 · **delete** 1
+**kernel** 435 · **stdlib-candidate** 0 · **delete** 1
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 19 primitives (4%)
-- **core**: 385 primitives (88%)
+- **mutation-safety**: 17 primitives (4%)
+- **core**: 383 primitives (88%)
 - **internal-observable**: 35 primitives (8%)
 - **convenience**: 1 primitives (0%)
 
@@ -96,7 +96,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (293)
+## Core builtins (291)
 
 - `%base64-decode` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[core]* `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -386,9 +386,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `with-capability` *[core]* `kernel` — `src/compiler/evaluator_primitives_policy.cpp`
 - `with-pinned` *[core]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `workspace` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace-persist-format-version` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-persist-info` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
-- `workspace-state` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 - `write` *[core]* `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `write-file` *[core]* `kernel` — `src/compiler/evaluator_primitives_file.cpp`
 
@@ -481,11 +479,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `primitives:alias` *[core]* `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `primitives:contract-probe` *[core]* `delete` — `src/compiler/evaluator_primitives_test.cpp`
 
-## Qr: (2)
-
-- `qr:ref-mutation-id` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:ref-workspace-id` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-
 ## Reflect: (3)
 
 - `reflect:provenance-blame` *[core]* `kernel` — `src/compiler/evaluator_primitives_query_reflect.cpp`
@@ -540,7 +533,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (19)
+### Mutation safety (must remain primitive) (17)
 
 - `c-alloc` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-free` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
@@ -558,11 +551,9 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `panic-checkpoint` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `panic-restore` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `panic-safe-source` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
-- `workspace-persist-format-version` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-persist-info` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
-- `workspace-state` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 
-### Core builtins (must remain primitive) (385)
+### Core builtins (must remain primitive) (383)
 
 - `%base64-decode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -822,8 +813,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `primitives:alias` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `primitives:contract-probe` `delete` — `src/compiler/evaluator_primitives_test.cpp`
 - `procedure?` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
-- `qr:ref-mutation-id` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:ref-workspace-id` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
 - `query` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query-annotate-functions` `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
 - `query-expected-type` `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
@@ -996,7 +985,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (439)
+### kernel (435)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1272,8 +1261,6 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `prim-hot-dispatch-hits` *[K-GOV]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `primitives:alias` *[K-ENGINE]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `procedure?` *[K-VAL]* — `src/compiler/evaluator_primitives_core.cpp`
-- `qr:ref-mutation-id` *[K-QRY]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:ref-workspace-id` *[K-QRY]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `query` *[K-CTRL]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query-annotate-functions` *[K-ENGINE]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `query-expected-type` *[K-ENGINE]* — `src/compiler/evaluator_primitives_eval.cpp`
@@ -1432,9 +1419,7 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `with-capability` *[K-GOV]* — `src/compiler/evaluator_primitives_policy.cpp`
 - `with-pinned` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `workspace` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `workspace-persist-format-version` *[K-WS]* — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-persist-info` *[K-WS]* — `src/compiler/evaluator_primitives_persist.cpp`
-- `workspace-state` *[K-WS]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `write` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `write-file` *[K-IO]* — `src/compiler/evaluator_primitives_file.cpp`
 
