@@ -167,6 +167,23 @@ inline std::atomic<int> g_lock_order_production_soft_default{0};
 // intended production but skipped apply_production_security_defaults() /
 // apply_production_lock_order_default(). Zero-extra when false (single
 // atomic load + cached env getenv).
+// Issue #5148: the operator asked for soft audit (no abort). Same
+// predicate as apply_production_lock_order_default's AUDIT=soft|1|on
+// branch. The Evaluator ctor must not promote this request to hard.
+[[nodiscard]] inline bool explicit_soft_audit_requested() noexcept {
+    const char* a = std::getenv("AURA_LOCK_ORDER_AUDIT");
+    if (a == nullptr || a[0] == '\0')
+        return false;
+    const bool force_off =
+        (a[0] == '0') || (a[0] == 'f' || a[0] == 'F') || (a[0] == 'n' || a[0] == 'N') ||
+        ((a[0] == 'o' || a[0] == 'O') && a[1] != '\0' && (a[1] == 'f' || a[1] == 'F'));
+    if (force_off)
+        return false;
+    return (a[0] == '1') || (a[0] == 's' || a[0] == 'S') || (a[0] == 't' || a[0] == 'T') ||
+           (a[0] == 'y' || a[0] == 'Y') ||
+           ((a[0] == 'o' || a[0] == 'O') && a[1] != '\0' && (a[1] == 'n' || a[1] == 'N'));
+}
+
 [[nodiscard]] inline bool production_defaults_expected() noexcept {
     if (g_lock_order_production_soft_default.load(std::memory_order_acquire) != 0)
         return true;
@@ -319,17 +336,13 @@ inline void apply_production_lock_order_default(bool sandbox_off) noexcept {
         const bool force_off =
             (a[0] == '0') || (a[0] == 'f' || a[0] == 'F') || (a[0] == 'n' || a[0] == 'N') ||
             ((a[0] == 'o' || a[0] == 'O') && a[1] != '\0' && (a[1] == 'f' || a[1] == 'F'));
-        const bool want_soft =
-            (a[0] == '1') || (a[0] == 's' || a[0] == 'S') || (a[0] == 't' || a[0] == 'T') ||
-            (a[0] == 'y' || a[0] == 'Y') ||
-            ((a[0] == 'o' || a[0] == 'O') && a[1] != '\0' && (a[1] == 'n' || a[1] == 'N'));
         if (force_off) {
             g_lock_order_mode.store(1, std::memory_order_release);
             g_lock_order_canary_enabled.store(0, std::memory_order_release);
             g_lock_order_production_soft_default.store(0, std::memory_order_release);
             return;
         }
-        if (want_soft) {
+        if (explicit_soft_audit_requested()) {
             g_lock_order_mode.store(2, std::memory_order_release);
             g_lock_order_canary_enabled.store(0, std::memory_order_release);
             // Env-forced soft: still mark production soft when under prod profile.

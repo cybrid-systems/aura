@@ -98,7 +98,17 @@ Evaluator::Evaluator() {
     // production_defaults_expected() returns false → single atomic load + env
     // getenv + branch → zero-extra (no set, no upgrade, no reject enable).
     if (aura::compiler::lock_order::production_defaults_expected()) {
-        if (aura::compiler::lock_order::g_lock_order_mode.load(std::memory_order_acquire) < 3) {
+        // Issue #5148: apply_production_lock_order_default stores mode 2
+        // for AURA_LOCK_ORDER_AUDIT=soft and then sets the production-soft
+        // gauge, which makes production_defaults_expected() true. Promoting
+        // that mode to 3 made "soft" abort. Mode 2 is already soft. Mode
+        // still 0/1 with the env set is the same request, unread so far.
+        // Embedder skip-init (mode 0/1, no soft env) still upgrades (#3554).
+        const int mode =
+            aura::compiler::lock_order::g_lock_order_mode.load(std::memory_order_acquire);
+        const bool keep_soft =
+            mode == 2 || aura::compiler::lock_order::explicit_soft_audit_requested();
+        if (mode < 3 && !keep_soft) {
             aura::compiler::lock_order::g_lock_order_mode.store(3, std::memory_order_release);
             aura::compiler::lock_order::g_lock_order_canary_enabled.store(
                 1, std::memory_order_release);
