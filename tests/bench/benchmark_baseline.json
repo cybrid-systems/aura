@@ -1,1745 +1,3195 @@
 {
-  "timestamp": "2026-11-11T17:43:28.639496+08:00",
-  "total_cases": 62,
-  "passed": 62,
-  "failed": 0,
-  "total_time_s": 0.87,
-  "cases": [
-    {
-      "name": "occurrence",
-      "code": "(let ((x \"hi\")) (if (string? x) x \"fallback\"))",
-      "pipeline": "typecheck",
-      "time_s": 0.009149,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.00705,
-      "stdout": "type: String\nno errors",
-      "stderr": "",
-      "time_samples": [
-        0.015672,
-        0.008362,
-        0.009149
+  "schema": 2,
+  "platforms": {
+    "linux-aarch64": {
+      "timestamp": "2026-11-11T19:19:41.112130+08:00",
+      "total_cases": 62,
+      "passed": 62,
+      "failed": 0,
+      "total_time_s": 0.531,
+      "cases": [
+        {
+          "name": "occurrence",
+          "code": "(let ((x \"hi\")) (if (string? x) x \"fallback\"))",
+          "pipeline": "typecheck",
+          "time_s": 0.008841,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004114,
+          "stdout": "type: String\nno errors",
+          "stderr": "",
+          "time_samples": [
+            0.008841,
+            0.007559,
+            0.009331
+          ],
+          "time_min_s": 0.007559,
+          "time_max_s": 0.009331,
+          "cpu_samples": [
+            0.004114,
+            0.00406,
+            0.004341
+          ],
+          "cpu_min_s": 0.00406
+        },
+        {
+          "name": "str_literal",
+          "code": "\"hi\"",
+          "pipeline": "typecheck",
+          "time_s": 0.008477,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004284,
+          "stdout": "type: String\nno errors",
+          "stderr": "",
+          "time_samples": [
+            0.004721,
+            0.008477,
+            0.008703
+          ],
+          "time_min_s": 0.004721,
+          "time_max_s": 0.008703,
+          "cpu_samples": [
+            0.00462,
+            0.004284,
+            0.003942
+          ],
+          "cpu_min_s": 0.003942
+        },
+        {
+          "name": "tc_add",
+          "code": "(+ 1 2)",
+          "pipeline": "typecheck",
+          "time_s": 0.008362,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004341,
+          "stdout": "type: Int\nno errors",
+          "stderr": "",
+          "time_samples": [
+            0.005908,
+            0.009062,
+            0.008362
+          ],
+          "time_min_s": 0.005908,
+          "time_max_s": 0.009062,
+          "cpu_samples": [
+            0.004452,
+            0.004341,
+            0.004201
+          ],
+          "cpu_min_s": 0.004201
+        },
+        {
+          "name": "tc_coercion",
+          "code": "(+ (string->number \"42\") 1)",
+          "pipeline": "typecheck",
+          "time_s": 0.005467,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.00413,
+          "stdout": "type: Int\nno errors",
+          "stderr": "",
+          "time_samples": [
+            0.005467,
+            0.008988,
+            0.004529
+          ],
+          "time_min_s": 0.004529,
+          "time_max_s": 0.008988,
+          "cpu_samples": [
+            0.00413,
+            0.003989,
+            0.004415
+          ],
+          "cpu_min_s": 0.003989
+        },
+        {
+          "name": "tc_lambda",
+          "code": "(lambda (x) x)",
+          "pipeline": "typecheck",
+          "time_s": 0.00448,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004341,
+          "stdout": "type: (x -> x)\nno errors",
+          "stderr": "",
+          "time_samples": [
+            0.004288,
+            0.00448,
+            0.004663
+          ],
+          "time_min_s": 0.004288,
+          "time_max_s": 0.004663,
+          "cpu_samples": [
+            0.004185,
+            0.004341,
+            0.00456
+          ],
+          "cpu_min_s": 0.004185
+        },
+        {
+          "name": "tc_let",
+          "code": "(let ((x 10)) x)",
+          "pipeline": "typecheck",
+          "time_s": 0.005952,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004169,
+          "stdout": "type: Int\nno errors",
+          "stderr": "",
+          "time_samples": [
+            0.005952,
+            0.008961,
+            0.004258
+          ],
+          "time_min_s": 0.004258,
+          "time_max_s": 0.008961,
+          "cpu_samples": [
+            0.004374,
+            0.004166,
+            0.004169
+          ],
+          "cpu_min_s": 0.004166
+        },
+        {
+          "name": "tc_literal",
+          "code": "42",
+          "pipeline": "typecheck",
+          "time_s": 0.008708,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004021,
+          "stdout": "type: Int\nno errors",
+          "stderr": "",
+          "time_samples": [
+            0.008708,
+            0.004034,
+            0.008872
+          ],
+          "time_min_s": 0.004034,
+          "time_max_s": 0.008872,
+          "cpu_samples": [
+            0.004039,
+            0.003936,
+            0.004021
+          ],
+          "cpu_min_s": 0.003936
+        },
+        {
+          "name": "tc_occurrence",
+          "code": "(let ((x \"hello\")) (if (string? x) x \"fallback\"))",
+          "pipeline": "typecheck",
+          "time_s": 0.004404,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004266,
+          "stdout": "type: String\nno errors",
+          "stderr": "",
+          "time_samples": [
+            0.004367,
+            0.004404,
+            0.00921
+          ],
+          "time_min_s": 0.004367,
+          "time_max_s": 0.00921,
+          "cpu_samples": [
+            0.004266,
+            0.00421,
+            0.004511
+          ],
+          "cpu_min_s": 0.00421
+        },
+        {
+          "name": "tc_str",
+          "code": "\"hello\"",
+          "pipeline": "typecheck",
+          "time_s": 0.004523,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004338,
+          "stdout": "type: String\nno errors",
+          "stderr": "",
+          "time_samples": [
+            0.004523,
+            0.009315,
+            0.004173
+          ],
+          "time_min_s": 0.004173,
+          "time_max_s": 0.009315,
+          "cpu_samples": [
+            0.004379,
+            0.004338,
+            0.004066
+          ],
+          "cpu_min_s": 0.004066
+        },
+        {
+          "name": "tc_string_append",
+          "code": "(string-append \"a\" \"b\")",
+          "pipeline": "typecheck",
+          "time_s": 0.008958,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004184,
+          "stdout": "type: String\nno errors",
+          "stderr": "",
+          "time_samples": [
+            0.008853,
+            0.008958,
+            0.009003
+          ],
+          "time_min_s": 0.008853,
+          "time_max_s": 0.009003,
+          "cpu_samples": [
+            0.00417,
+            0.004184,
+            0.004288
+          ],
+          "cpu_min_s": 0.00417
+        },
+        {
+          "name": "tc_string_length",
+          "code": "(string-length \"hello\")",
+          "pipeline": "typecheck",
+          "time_s": 0.008944,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004563,
+          "stdout": "type: Int\nno errors",
+          "stderr": "",
+          "time_samples": [
+            0.008944,
+            0.009864,
+            0.004669
+          ],
+          "time_min_s": 0.004669,
+          "time_max_s": 0.009864,
+          "cpu_samples": [
+            0.004212,
+            0.00469,
+            0.004563
+          ],
+          "cpu_min_s": 0.004212
+        },
+        {
+          "name": "tc_type_of",
+          "code": "(type-of 42)",
+          "pipeline": "typecheck",
+          "time_s": 0.0089,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004175,
+          "stdout": "type: Type\nno errors",
+          "stderr": "",
+          "time_samples": [
+            0.004266,
+            0.009067,
+            0.0089
+          ],
+          "time_min_s": 0.004266,
+          "time_max_s": 0.009067,
+          "cpu_samples": [
+            0.004175,
+            0.004231,
+            0.004059
+          ],
+          "cpu_min_s": 0.004059
+        },
+        {
+          "name": "tc_type_query",
+          "code": "(type? 42 \"Int\")",
+          "pipeline": "typecheck",
+          "time_s": 0.006153,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004865,
+          "stdout": "type: Bool\nno errors",
+          "stderr": "",
+          "time_samples": [
+            0.004807,
+            0.006153,
+            0.010003
+          ],
+          "time_min_s": 0.004807,
+          "time_max_s": 0.010003,
+          "cpu_samples": [
+            0.004709,
+            0.004865,
+            0.005071
+          ],
+          "cpu_min_s": 0.004709
+        },
+        {
+          "name": "wrong_arity",
+          "code": "(+ 1)",
+          "pipeline": "typecheck",
+          "time_s": 0.006982,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.005494,
+          "stdout": "type: Int\nno errors",
+          "stderr": "",
+          "time_samples": [
+            0.006982,
+            0.009968,
+            0.005675
+          ],
+          "time_min_s": 0.005675,
+          "time_max_s": 0.009968,
+          "cpu_samples": [
+            0.005494,
+            0.005042,
+            0.005553
+          ],
+          "cpu_min_s": 0.005042
+        },
+        {
+          "name": "ir_add",
+          "code": "(+ 1 2)",
+          "pipeline": "ir",
+          "time_s": 0.007059,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.005499,
+          "stdout": "3",
+          "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
+          "time_samples": [
+            0.010208,
+            0.007059,
+            0.005739
+          ],
+          "time_min_s": 0.005739,
+          "time_max_s": 0.010208,
+          "cpu_samples": [
+            0.005118,
+            0.005499,
+            0.005598
+          ],
+          "cpu_min_s": 0.005118
+        },
+        {
+          "name": "ir_closure",
+          "code": "(let ((f (lambda (x) (+ x 1)))) (f 41))",
+          "pipeline": "ir",
+          "time_s": 0.006325,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.005469,
+          "stdout": "42",
+          "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
+          "time_samples": [
+            0.009865,
+            0.006325,
+            0.005661
+          ],
+          "time_min_s": 0.005661,
+          "time_max_s": 0.009865,
+          "cpu_samples": [
+            0.005443,
+            0.006116,
+            0.005469
+          ],
+          "cpu_min_s": 0.005443
+        },
+        {
+          "name": "ir_fact",
+          "code": "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))",
+          "pipeline": "ir",
+          "time_s": 0.004952,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004683,
+          "stdout": "120",
+          "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
+          "time_samples": [
+            0.004952,
+            0.009288,
+            0.004782
+          ],
+          "time_min_s": 0.004782,
+          "time_max_s": 0.009288,
+          "cpu_samples": [
+            0.004824,
+            0.004562,
+            0.004683
+          ],
+          "cpu_min_s": 0.004562
+        },
+        {
+          "name": "ir_fib_10",
+          "code": "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 10))",
+          "pipeline": "ir",
+          "time_s": 0.00457,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004479,
+          "stdout": "55",
+          "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
+          "time_samples": [
+            0.00457,
+            0.009549,
+            0.004423
+          ],
+          "time_min_s": 0.004423,
+          "time_max_s": 0.009549,
+          "cpu_samples": [
+            0.004479,
+            0.004748,
+            0.004317
+          ],
+          "cpu_min_s": 0.004317
+        },
+        {
+          "name": "ir_if",
+          "code": "(if (< 3 5) 100 200)",
+          "pipeline": "ir",
+          "time_s": 0.004658,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004508,
+          "stdout": "100",
+          "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
+          "time_samples": [
+            0.004253,
+            0.009252,
+            0.004658
+          ],
+          "time_min_s": 0.004253,
+          "time_max_s": 0.009252,
+          "cpu_samples": [
+            0.004152,
+            0.004508,
+            0.004552
+          ],
+          "cpu_min_s": 0.004152
+        },
+        {
+          "name": "ir_lambda",
+          "code": "((lambda (x) (* x 2)) 5)",
+          "pipeline": "ir",
+          "time_s": 0.008091,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.00442,
+          "stdout": "10",
+          "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
+          "time_samples": [
+            0.008091,
+            0.009141,
+            0.004762
+          ],
+          "time_min_s": 0.004762,
+          "time_max_s": 0.009141,
+          "cpu_samples": [
+            0.00442,
+            0.004301,
+            0.004645
+          ],
+          "cpu_min_s": 0.004301
+        },
+        {
+          "name": "add",
+          "code": "(+ 1 2)",
+          "pipeline": "eval",
+          "time_s": 0.008109,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004578,
+          "stdout": "3",
+          "stderr": "",
+          "time_samples": [
+            0.008109,
+            0.004693,
+            0.009378
+          ],
+          "time_min_s": 0.004693,
+          "time_max_s": 0.009378,
+          "cpu_samples": [
+            0.004497,
+            0.004578,
+            0.004613
+          ],
+          "cpu_min_s": 0.004497
+        },
+        {
+          "name": "add_many",
+          "code": "(+ (+ (+ (+ 1 2) 3) 4) 5)",
+          "pipeline": "eval",
+          "time_s": 0.005985,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004712,
+          "stdout": "15",
+          "stderr": "",
+          "time_samples": [
+            0.00485,
+            0.005985,
+            0.009109
+          ],
+          "time_min_s": 0.00485,
+          "time_max_s": 0.009109,
+          "cpu_samples": [
+            0.004719,
+            0.004712,
+            0.004445
+          ],
+          "cpu_min_s": 0.004445
+        },
+        {
+          "name": "adt_list_length",
+          "code": "(define (length lst)   (if (null? lst) 0 (+ 1 (length (cdr lst))))) (length (list 1 2 3 4 5 6 7 8 9 10))",
+          "pipeline": "eval",
+          "time_s": 0.008999,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004318,
+          "stdout": "10",
+          "stderr": "",
+          "time_samples": [
+            0.008646,
+            0.009271,
+            0.008999
+          ],
+          "time_min_s": 0.008646,
+          "time_max_s": 0.009271,
+          "cpu_samples": [
+            0.004318,
+            0.004516,
+            0.004297
+          ],
+          "cpu_min_s": 0.004297
+        },
+        {
+          "name": "closure",
+          "code": "(let ((f (lambda (x) (+ x 1)))) (f 41))",
+          "pipeline": "eval",
+          "time_s": 0.004623,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.00453,
+          "stdout": "42",
+          "stderr": "",
+          "time_samples": [
+            0.004623,
+            0.004675,
+            0.004342
+          ],
+          "time_min_s": 0.004342,
+          "time_max_s": 0.004675,
+          "cpu_samples": [
+            0.00453,
+            0.00457,
+            0.004233
+          ],
+          "cpu_min_s": 0.004233
+        },
+        {
+          "name": "coerce_arith",
+          "code": "(+ 1 \"2\")",
+          "pipeline": "eval",
+          "time_s": 0.005056,
+          "output": "",
+          "error": "error: 1:2: type error: type mismatch \u2014 expected Int, got String '2' (in +, argument 2)\n   |\n  1 | (+ 1 \"2\")\n   |  ^",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 1,
+          "timed_out": false,
+          "cpu_s": 0.004479,
+          "stdout": "",
+          "stderr": "error: 1:2: type error: type mismatch \u2014 expected Int, got String '2' (in +, argument 2)\n   |\n  1 | (+ 1 \"2\")\n   |  ^",
+          "time_samples": [
+            0.004595,
+            0.00924,
+            0.005056
+          ],
+          "time_min_s": 0.004595,
+          "time_max_s": 0.00924,
+          "cpu_samples": [
+            0.004479,
+            0.004395,
+            0.00493
+          ],
+          "cpu_min_s": 0.004395
+        },
+        {
+          "name": "coerce_str_len",
+          "code": "(string-length 12345)",
+          "pipeline": "eval",
+          "time_s": 0.005929,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004532,
+          "stdout": "0",
+          "stderr": "",
+          "time_samples": [
+            0.006256,
+            0.005929,
+            0.004415
+          ],
+          "time_min_s": 0.004415,
+          "time_max_s": 0.006256,
+          "cpu_samples": [
+            0.004706,
+            0.004532,
+            0.004301
+          ],
+          "cpu_min_s": 0.004301
+        },
+        {
+          "name": "cons_car",
+          "code": "(car (cons 1 2))",
+          "pipeline": "eval",
+          "time_s": 0.004742,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004503,
+          "stdout": "1",
+          "stderr": "",
+          "time_samples": [
+            0.004617,
+            0.005906,
+            0.004742
+          ],
+          "time_min_s": 0.004617,
+          "time_max_s": 0.005906,
+          "cpu_samples": [
+            0.004503,
+            0.004483,
+            0.00463
+          ],
+          "cpu_min_s": 0.004483
+        },
+        {
+          "name": "cons_cdr",
+          "code": "(cdr (cons 1 2))",
+          "pipeline": "eval",
+          "time_s": 0.011156,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.006598,
+          "stdout": "2",
+          "stderr": "",
+          "time_samples": [
+            0.005352,
+            0.011786,
+            0.011156
+          ],
+          "time_min_s": 0.005352,
+          "time_max_s": 0.011786,
+          "cpu_samples": [
+            0.005165,
+            0.006598,
+            0.006733
+          ],
+          "cpu_min_s": 0.005165
+        },
+        {
+          "name": "div",
+          "code": "(/ 100 5)",
+          "pipeline": "eval",
+          "time_s": 0.005548,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.005336,
+          "stdout": "20",
+          "stderr": "",
+          "time_samples": [
+            0.010783,
+            0.005548,
+            0.004626
+          ],
+          "time_min_s": 0.004626,
+          "time_max_s": 0.010783,
+          "cpu_samples": [
+            0.005778,
+            0.005336,
+            0.004492
+          ],
+          "cpu_min_s": 0.004492
+        },
+        {
+          "name": "fib_20",
+          "code": "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 20))",
+          "pipeline": "eval",
+          "time_s": 0.025144,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.023847,
+          "stdout": "6765",
+          "stderr": "",
+          "time_samples": [
+            0.025144,
+            0.028649,
+            0.023181
+          ],
+          "time_min_s": 0.023181,
+          "time_max_s": 0.028649,
+          "cpu_samples": [
+            0.02502,
+            0.023847,
+            0.023042
+          ],
+          "cpu_min_s": 0.023042
+        },
+        {
+          "name": "higher_order",
+          "code": "((lambda (f) (f 10)) (lambda (x) (* x x)))",
+          "pipeline": "eval",
+          "time_s": 0.004712,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004427,
+          "stdout": "100",
+          "stderr": "",
+          "time_samples": [
+            0.004712,
+            0.006019,
+            0.004297
+          ],
+          "time_min_s": 0.004297,
+          "time_max_s": 0.006019,
+          "cpu_samples": [
+            0.004593,
+            0.004427,
+            0.004189
+          ],
+          "cpu_min_s": 0.004189
+        },
+        {
+          "name": "if_compare",
+          "code": "(if (< 3 5) 100 200)",
+          "pipeline": "eval",
+          "time_s": 0.009114,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004426,
+          "stdout": "100",
+          "stderr": "",
+          "time_samples": [
+            0.009514,
+            0.009114,
+            0.004573
+          ],
+          "time_min_s": 0.004573,
+          "time_max_s": 0.009514,
+          "cpu_samples": [
+            0.004426,
+            0.004404,
+            0.004462
+          ],
+          "cpu_min_s": 0.004404
+        },
+        {
+          "name": "if_false",
+          "code": "(if #f 42 0)",
+          "pipeline": "eval",
+          "time_s": 0.008947,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.007344,
+          "stdout": "0",
+          "stderr": "",
+          "time_samples": [
+            0.007299,
+            0.009081,
+            0.008947
+          ],
+          "time_min_s": 0.007299,
+          "time_max_s": 0.009081,
+          "cpu_samples": [
+            0.007189,
+            0.00739,
+            0.007344
+          ],
+          "cpu_min_s": 0.007189
+        },
+        {
+          "name": "if_true",
+          "code": "(if 1 42 0)",
+          "pipeline": "eval",
+          "time_s": 0.011933,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.007274,
+          "stdout": "42",
+          "stderr": "",
+          "time_samples": [
+            0.011933,
+            0.012049,
+            0.010581
+          ],
+          "time_min_s": 0.010581,
+          "time_max_s": 0.012049,
+          "cpu_samples": [
+            0.007096,
+            0.007274,
+            0.009282
+          ],
+          "cpu_min_s": 0.007096
+        },
+        {
+          "name": "lambda_apply",
+          "code": "((lambda (x) (* x 2)) 5)",
+          "pipeline": "eval",
+          "time_s": 0.009019,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004404,
+          "stdout": "10",
+          "stderr": "",
+          "time_samples": [
+            0.009291,
+            0.009019,
+            0.00457
+          ],
+          "time_min_s": 0.00457,
+          "time_max_s": 0.009291,
+          "cpu_samples": [
+            0.004495,
+            0.004154,
+            0.004404
+          ],
+          "cpu_min_s": 0.004154
+        },
+        {
+          "name": "let_add",
+          "code": "(let ((x 1) (y 2)) (+ x y))",
+          "pipeline": "eval",
+          "time_s": 0.004499,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004324,
+          "stdout": "3",
+          "stderr": "",
+          "time_samples": [
+            0.004434,
+            0.004499,
+            0.009277
+          ],
+          "time_min_s": 0.004434,
+          "time_max_s": 0.009277,
+          "cpu_samples": [
+            0.004324,
+            0.004346,
+            0.00421
+          ],
+          "cpu_min_s": 0.00421
+        },
+        {
+          "name": "let_simple",
+          "code": "(let ((x 10)) x)",
+          "pipeline": "eval",
+          "time_s": 0.007947,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004247,
+          "stdout": "10",
+          "stderr": "",
+          "time_samples": [
+            0.009021,
+            0.007947,
+            0.005696
+          ],
+          "time_min_s": 0.005696,
+          "time_max_s": 0.009021,
+          "cpu_samples": [
+            0.00416,
+            0.004247,
+            0.005548
+          ],
+          "cpu_min_s": 0.00416
+        },
+        {
+          "name": "letrec_fact",
+          "code": "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))",
+          "pipeline": "eval",
+          "time_s": 0.008049,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004286,
+          "stdout": "3628800",
+          "stderr": "",
+          "time_samples": [
+            0.004967,
+            0.008049,
+            0.009195
+          ],
+          "time_min_s": 0.004967,
+          "time_max_s": 0.009195,
+          "cpu_samples": [
+            0.004855,
+            0.004259,
+            0.004286
+          ],
+          "cpu_min_s": 0.004259
+        },
+        {
+          "name": "literal_int",
+          "code": "42",
+          "pipeline": "eval",
+          "time_s": 0.009038,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.007231,
+          "stdout": "42",
+          "stderr": "",
+          "time_samples": [
+            0.009038,
+            0.01197,
+            0.007032
+          ],
+          "time_min_s": 0.007032,
+          "time_max_s": 0.01197,
+          "cpu_samples": [
+            0.007374,
+            0.007231,
+            0.006922
+          ],
+          "cpu_min_s": 0.006922
+        },
+        {
+          "name": "literal_neg",
+          "code": "-5",
+          "pipeline": "eval",
+          "time_s": 0.011888,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.00721,
+          "stdout": "-5",
+          "stderr": "",
+          "time_samples": [
+            0.011888,
+            0.011999,
+            0.009003
+          ],
+          "time_min_s": 0.009003,
+          "time_max_s": 0.011999,
+          "cpu_samples": [
+            0.007113,
+            0.00721,
+            0.007316
+          ],
+          "cpu_min_s": 0.007113
+        },
+        {
+          "name": "literal_string",
+          "code": "\"hello\"",
+          "pipeline": "eval",
+          "time_s": 0.009056,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004331,
+          "stdout": "\"hello\"",
+          "stderr": "",
+          "time_samples": [
+            0.009813,
+            0.009056,
+            0.009023
+          ],
+          "time_min_s": 0.009023,
+          "time_max_s": 0.009813,
+          "cpu_samples": [
+            0.00473,
+            0.004244,
+            0.004331
+          ],
+          "cpu_min_s": 0.004244
+        },
+        {
+          "name": "mul",
+          "code": "(* 6 7)",
+          "pipeline": "eval",
+          "time_s": 0.008938,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004321,
+          "stdout": "42",
+          "stderr": "",
+          "time_samples": [
+            0.008938,
+            0.009019,
+            0.005862
+          ],
+          "time_min_s": 0.005862,
+          "time_max_s": 0.009019,
+          "cpu_samples": [
+            0.004178,
+            0.004321,
+            0.004402
+          ],
+          "cpu_min_s": 0.004178
+        },
+        {
+          "name": "multi_agent_pipeline",
+          "code": "(require \"std/orch\" all:) (define (pipeline x)   (define r1 (fiber:join (fiber:spawn (lambda () (* x 2)))))   (define r2 (fiber:join (fiber:spawn (lambda () (+ r1 1)))))   (define r3 (fiber:join (fiber:spawn (lambda () (* r2 3)))))   r3) (pipeline 10)",
+          "pipeline": "eval",
+          "time_s": 0.015111,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.014997,
+          "stdout": "63",
+          "stderr": "",
+          "time_samples": [
+            0.017273,
+            0.015111,
+            0.014532
+          ],
+          "time_min_s": 0.014532,
+          "time_max_s": 0.017273,
+          "cpu_samples": [
+            0.017188,
+            0.014997,
+            0.014422
+          ],
+          "cpu_min_s": 0.014422
+        },
+        {
+          "name": "nested_arith",
+          "code": "(+ (* 2 3) (/ 10 2))",
+          "pipeline": "eval",
+          "time_s": 0.005022,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004681,
+          "stdout": "11",
+          "stderr": "",
+          "time_samples": [
+            0.005022,
+            0.004808,
+            0.009206
+          ],
+          "time_min_s": 0.004808,
+          "time_max_s": 0.009206,
+          "cpu_samples": [
+            0.004902,
+            0.004681,
+            0.004506
+          ],
+          "cpu_min_s": 0.004506
+        },
+        {
+          "name": "par_orch_3_agents",
+          "code": "(require \"std/orch\" all:) (orch:parallel (list (lambda (x) (* x x)) (lambda (x) (* x 2)) (lambda (x) (+ x 100))) 5)",
+          "pipeline": "eval",
+          "time_s": 0.013726,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.013936,
+          "stdout": "(25 10 105)",
+          "stderr": "",
+          "time_samples": [
+            0.013665,
+            0.014038,
+            0.013726
+          ],
+          "time_min_s": 0.013665,
+          "time_max_s": 0.014038,
+          "cpu_samples": [
+            0.013936,
+            0.014449,
+            0.013889
+          ],
+          "cpu_min_s": 0.013889
+        },
+        {
+          "name": "par_orch_5_agents",
+          "code": "(require \"std/orch\" all:) (orch:parallel (list (lambda (x) (+ x 1)) (lambda (x) (+ x 2)) (lambda (x) (+ x 3)) (lambda (x) (+ x 4)) (lambda (x) (+ x 5))) 0)",
+          "pipeline": "eval",
+          "time_s": 0.01371,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.014051,
+          "stdout": "(1 2 3 4 5)",
+          "stderr": "",
+          "time_samples": [
+            0.013306,
+            0.016126,
+            0.01371
+          ],
+          "time_min_s": 0.013306,
+          "time_max_s": 0.016126,
+          "cpu_samples": [
+            0.013708,
+            0.015489,
+            0.014051
+          ],
+          "cpu_min_s": 0.013708
+        },
+        {
+          "name": "parallel_intend_small",
+          "code": "(hash-ref (parallel-intend (vector (lambda () 1) (lambda () 2)) :timeout-ms 10000) \"ok-count\")",
+          "pipeline": "eval",
+          "time_s": 0.012233,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.008758,
+          "stdout": "2",
+          "stderr": "",
+          "time_samples": [
+            0.011592,
+            0.017423,
+            0.012233
+          ],
+          "time_min_s": 0.011592,
+          "time_max_s": 0.017423,
+          "cpu_samples": [
+            0.008787,
+            0.008758,
+            0.008639
+          ],
+          "cpu_min_s": 0.008639
+        },
+        {
+          "name": "parallel_intend_with_gc",
+          "code": "(hash-ref (parallel-intend (vector (lambda () (begin (gc-heap) 1)) (lambda () 2)) :timeout-ms 10000) \"ok-count\")",
+          "pipeline": "eval",
+          "time_s": 0.012103,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.008626,
+          "stdout": "2",
+          "stderr": "",
+          "time_samples": [
+            0.012103,
+            0.012065,
+            0.012677
+          ],
+          "time_min_s": 0.012065,
+          "time_max_s": 0.012677,
+          "cpu_samples": [
+            0.008626,
+            0.008337,
+            0.009702
+          ],
+          "cpu_min_s": 0.008337
+        },
+        {
+          "name": "query_pattern_simple",
+          "code": "(set-code \"(begin (fib 1) (fib 2) (fib 3) (fib 4) (fib 5))\") (length (query :pattern \"(fib ...)\"))",
+          "pipeline": "eval",
+          "time_s": 0.009337,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004653,
+          "stdout": "5",
+          "stderr": "",
+          "time_samples": [
+            0.009496,
+            0.009337,
+            0.004951
+          ],
+          "time_min_s": 0.004951,
+          "time_max_s": 0.009496,
+          "cpu_samples": [
+            0.004653,
+            0.004374,
+            0.004815
+          ],
+          "cpu_min_s": 0.004374
+        },
+        {
+          "name": "query_pattern_with_let",
+          "code": "(set-code \"(begin (let ((x 1)) x) (let ((x 2)) x) (let ((x 3)) x))\") (length (query :pattern \"(let ((x ...)) ...)\"))",
+          "pipeline": "eval",
+          "time_s": 0.00605,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004575,
+          "stdout": "3",
+          "stderr": "",
+          "time_samples": [
+            0.00605,
+            0.004794,
+            0.006193
+          ],
+          "time_min_s": 0.004794,
+          "time_max_s": 0.006193,
+          "cpu_samples": [
+            0.004504,
+            0.004575,
+            0.004614
+          ],
+          "cpu_min_s": 0.004504
+        },
+        {
+          "name": "str_append",
+          "code": "(string-append \"a\" \"b\")",
+          "pipeline": "eval",
+          "time_s": 0.004708,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004462,
+          "stdout": "\"ab\"",
+          "stderr": "",
+          "time_samples": [
+            0.005916,
+            0.004708,
+            0.004464
+          ],
+          "time_min_s": 0.004464,
+          "time_max_s": 0.005916,
+          "cpu_samples": [
+            0.004462,
+            0.004603,
+            0.004366
+          ],
+          "cpu_min_s": 0.004366
+        },
+        {
+          "name": "str_length",
+          "code": "(string-length \"hello\")",
+          "pipeline": "eval",
+          "time_s": 0.004807,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.00449,
+          "stdout": "5",
+          "stderr": "",
+          "time_samples": [
+            0.004585,
+            0.009204,
+            0.004807
+          ],
+          "time_min_s": 0.004585,
+          "time_max_s": 0.009204,
+          "cpu_samples": [
+            0.004455,
+            0.00449,
+            0.004682
+          ],
+          "cpu_min_s": 0.004455
+        },
+        {
+          "name": "sub",
+          "code": "(- 10 3)",
+          "pipeline": "eval",
+          "time_s": 0.00849,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004585,
+          "stdout": "7",
+          "stderr": "",
+          "time_samples": [
+            0.009997,
+            0.004713,
+            0.00849
+          ],
+          "time_min_s": 0.004713,
+          "time_max_s": 0.009997,
+          "cpu_samples": [
+            0.004857,
+            0.004585,
+            0.00432
+          ],
+          "cpu_min_s": 0.00432
+        },
+        {
+          "name": "vec_basic",
+          "code": "(vector 1 2 3)",
+          "pipeline": "eval",
+          "time_s": 0.009416,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004479,
+          "stdout": "#(1 2 3)",
+          "stderr": "",
+          "time_samples": [
+            0.009723,
+            0.004571,
+            0.009416
+          ],
+          "time_min_s": 0.004571,
+          "time_max_s": 0.009723,
+          "cpu_samples": [
+            0.004648,
+            0.004479,
+            0.004394
+          ],
+          "cpu_min_s": 0.004394
+        },
+        {
+          "name": "vec_ref",
+          "code": "(vector-ref (vector 10 20 30) 1)",
+          "pipeline": "eval",
+          "time_s": 0.00606,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.004469,
+          "stdout": "20",
+          "stderr": "",
+          "time_samples": [
+            0.00606,
+            0.008973,
+            0.004585
+          ],
+          "time_min_s": 0.004585,
+          "time_max_s": 0.008973,
+          "cpu_samples": [
+            0.004469,
+            0.004256,
+            0.004493
+          ],
+          "cpu_min_s": 0.004256
+        },
+        {
+          "name": "hot_list_map_2k",
+          "code": "(let loop ((i 0) (xs (quote ()))) (if (= i 2000) (length (map (lambda (x) (* x 2)) xs)) (loop (+ i 1) (cons i xs))))",
+          "pipeline": "eval",
+          "time_s": 0.009347,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.009217,
+          "stdout": "2000",
+          "stderr": "",
+          "time_samples": [
+            0.009207,
+            0.014109,
+            0.009347
+          ],
+          "time_min_s": 0.009207,
+          "time_max_s": 0.014109,
+          "cpu_samples": [
+            0.009084,
+            0.009233,
+            0.009217
+          ],
+          "cpu_min_s": 0.009084
+        },
+        {
+          "name": "hot_hash_set_get_2k",
+          "code": "(let ((h (hash))) (let loop ((i 0)) (if (= i 2000) (hash-ref h 1999) (begin (hash-set! h i i) (loop (+ i 1))))))",
+          "pipeline": "eval",
+          "time_s": 0.018635,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.01365,
+          "stdout": "1999",
+          "stderr": "",
+          "time_samples": [
+            0.018635,
+            0.014863,
+            0.019036
+          ],
+          "time_min_s": 0.014863,
+          "time_max_s": 0.019036,
+          "cpu_samples": [
+            0.01365,
+            0.013506,
+            0.014157
+          ],
+          "cpu_min_s": 0.013506
+        },
+        {
+          "name": "hot_fiber_spawn_join_200",
+          "code": "(let loop ((i 0) (s 0)) (if (= i 200) s (loop (+ i 1) (+ s (fiber:join (fiber:spawn (lambda () 1)))))))",
+          "pipeline": "eval",
+          "time_s": 0.01592,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.013899,
+          "stdout": "200",
+          "stderr": "",
+          "time_samples": [
+            0.01592,
+            0.018915,
+            0.013924
+          ],
+          "time_min_s": 0.013924,
+          "time_max_s": 0.018915,
+          "cpu_samples": [
+            0.014535,
+            0.013899,
+            0.013863
+          ],
+          "cpu_min_s": 0.013863
+        },
+        {
+          "name": "replace_value_one_4320",
+          "code": "(set-code \"(define letter-a \\\"a\\\")\")\n(define t0 (monotonic-ms))\n(display (mutate :replace-value 0 \"Z\" \"k\"))\n(newline)\n(display (- (monotonic-ms) t0))\n(newline)\n",
+          "pipeline": "eval",
+          "time_s": 0.010999,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.006154,
+          "stdout": "1\n0",
+          "stderr": "",
+          "time_samples": [
+            0.01106,
+            0.010999,
+            0.010829
+          ],
+          "time_min_s": 0.010829,
+          "time_max_s": 0.01106,
+          "cpu_samples": [
+            0.006154,
+            0.006194,
+            0.006076
+          ],
+          "cpu_min_s": 0.006076
+        },
+        {
+          "name": "replace_value_seed_4320",
+          "code": "(set-code \"(define lit-0 \\\"v0\\\") (define lit-1 \\\"v1\\\") (define lit-2 \\\"v2\\\") (define lit-3 \\\"v3\\\") (define lit-4 \\\"v4\\\") (define lit-5 \\\"v5\\\") (define lit-6 \\\"v6\\\") (define lit-7 \\\"v7\\\") (define lit-8 \\\"v8\\\") (define lit-9 \\\"v9\\\") (define lit-10 \\\"v10\\\") (define lit-11 \\\"v11\\\") (define lit-12 \\\"v12\\\") (define lit-13 \\\"v13\\\") (define lit-14 \\\"v14\\\") (define lit-15 \\\"v15\\\") (define lit-16 \\\"v16\\\") (define lit-17 \\\"v17\\\") (define lit-18 \\\"v18\\\") (define lit-19 \\\"v19\\\") (define lit-20 \\\"v20\\\") (define lit-21 \\\"v21\\\") (define lit-22 \\\"v22\\\") (define lit-23 \\\"v23\\\") (define lit-24 \\\"v24\\\") (define lit-25 \\\"v25\\\") (define lit-26 \\\"v26\\\") (define lit-27 \\\"v27\\\") (define lit-28 \\\"v28\\\") (define lit-29 \\\"v29\\\") (define lit-30 \\\"v30\\\") (define lit-31 \\\"v31\\\") (define lit-32 \\\"v32\\\") (define lit-33 \\\"v33\\\") (define lit-34 \\\"v34\\\") (define lit-35 \\\"v35\\\") (define lit-36 \\\"v36\\\") (define lit-37 \\\"v37\\\") (define lit-38 \\\"v38\\\") (define lit-39 \\\"v39\\\") (define lit-40 \\\"v40\\\") (define lit-41 \\\"v41\\\") (define lit-42 \\\"v42\\\") (define lit-43 \\\"v43\\\") (define lit-44 \\\"v44\\\") (define lit-45 \\\"v45\\\") (define lit-46 \\\"v46\\\") (define lit-47 \\\"v47\\\") (define body-0 (lambda () (list \\\"k0\\\" \\\"word\\\"))) (define body-1 (lambda () (list \\\"k1\\\" \\\"word\\\"))) (define body-2 (lambda () (list \\\"k2\\\" \\\"word\\\"))) (define body-3 (lambda () (list \\\"k3\\\" \\\"word\\\"))) (define body-4 (lambda () (list \\\"k4\\\" \\\"word\\\"))) (define body-5 (lambda () (list \\\"k5\\\" \\\"word\\\"))) (define body-6 (lambda () (list \\\"k6\\\" \\\"word\\\"))) (define body-7 (lambda () (list \\\"k7\\\" \\\"word\\\"))) (define body-8 (lambda () (list \\\"k8\\\" \\\"word\\\"))) (define body-9 (lambda () (list \\\"k9\\\" \\\"word\\\"))) (define body-10 (lambda () (list \\\"k10\\\" \\\"word\\\"))) (define body-11 (lambda () (list \\\"k11\\\" \\\"word\\\"))) (define body-12 (lambda () (list \\\"k12\\\" \\\"word\\\"))) (define body-13 (lambda () (list \\\"k13\\\" \\\"word\\\"))) (define body-14 (lambda () (list \\\"k14\\\" \\\"word\\\"))) (define body-15 (lambda () (list \\\"k15\\\" \\\"word\\\"))) (define body-16 (lambda () (list \\\"k16\\\" \\\"word\\\"))) (define body-17 (lambda () (list \\\"k17\\\" \\\"word\\\")))\")\n(define t0 (monotonic-ms))\n(display (mutate :replace-value 0 \"Z\" \"k\"))\n(newline)\n(display (- (monotonic-ms) t0))\n(newline)\n",
+          "pipeline": "eval",
+          "time_s": 0.009057,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.007021,
+          "stdout": "1\n0",
+          "stderr": "",
+          "time_samples": [
+            0.009057,
+            0.007157,
+            0.011699
+          ],
+          "time_min_s": 0.007157,
+          "time_max_s": 0.011699,
+          "cpu_samples": [
+            0.00739,
+            0.007021,
+            0.006849
+          ],
+          "cpu_min_s": 0.006849
+        },
+        {
+          "name": "replace_batch_six_4320",
+          "code": "(set-code \"(define lit-0 \\\"v0\\\") (define lit-1 \\\"v1\\\") (define lit-2 \\\"v2\\\") (define lit-3 \\\"v3\\\") (define lit-4 \\\"v4\\\") (define lit-5 \\\"v5\\\") (define lit-6 \\\"v6\\\") (define lit-7 \\\"v7\\\") (define lit-8 \\\"v8\\\") (define lit-9 \\\"v9\\\") (define lit-10 \\\"v10\\\") (define lit-11 \\\"v11\\\") (define lit-12 \\\"v12\\\") (define lit-13 \\\"v13\\\") (define lit-14 \\\"v14\\\") (define lit-15 \\\"v15\\\") (define lit-16 \\\"v16\\\") (define lit-17 \\\"v17\\\") (define lit-18 \\\"v18\\\") (define lit-19 \\\"v19\\\") (define lit-20 \\\"v20\\\") (define lit-21 \\\"v21\\\") (define lit-22 \\\"v22\\\") (define lit-23 \\\"v23\\\") (define lit-24 \\\"v24\\\") (define lit-25 \\\"v25\\\") (define lit-26 \\\"v26\\\") (define lit-27 \\\"v27\\\") (define lit-28 \\\"v28\\\") (define lit-29 \\\"v29\\\") (define lit-30 \\\"v30\\\") (define lit-31 \\\"v31\\\") (define lit-32 \\\"v32\\\") (define lit-33 \\\"v33\\\") (define lit-34 \\\"v34\\\") (define lit-35 \\\"v35\\\") (define lit-36 \\\"v36\\\") (define lit-37 \\\"v37\\\") (define lit-38 \\\"v38\\\") (define lit-39 \\\"v39\\\") (define lit-40 \\\"v40\\\") (define lit-41 \\\"v41\\\") (define lit-42 \\\"v42\\\") (define lit-43 \\\"v43\\\") (define lit-44 \\\"v44\\\") (define lit-45 \\\"v45\\\") (define lit-46 \\\"v46\\\") (define lit-47 \\\"v47\\\") (define body-0 (lambda () (list \\\"k0\\\" \\\"word\\\"))) (define body-1 (lambda () (list \\\"k1\\\" \\\"word\\\"))) (define body-2 (lambda () (list \\\"k2\\\" \\\"word\\\"))) (define body-3 (lambda () (list \\\"k3\\\" \\\"word\\\"))) (define body-4 (lambda () (list \\\"k4\\\" \\\"word\\\"))) (define body-5 (lambda () (list \\\"k5\\\" \\\"word\\\"))) (define body-6 (lambda () (list \\\"k6\\\" \\\"word\\\"))) (define body-7 (lambda () (list \\\"k7\\\" \\\"word\\\"))) (define body-8 (lambda () (list \\\"k8\\\" \\\"word\\\"))) (define body-9 (lambda () (list \\\"k9\\\" \\\"word\\\"))) (define body-10 (lambda () (list \\\"k10\\\" \\\"word\\\"))) (define body-11 (lambda () (list \\\"k11\\\" \\\"word\\\"))) (define body-12 (lambda () (list \\\"k12\\\" \\\"word\\\"))) (define body-13 (lambda () (list \\\"k13\\\" \\\"word\\\"))) (define body-14 (lambda () (list \\\"k14\\\" \\\"word\\\"))) (define body-15 (lambda () (list \\\"k15\\\" \\\"word\\\"))) (define body-16 (lambda () (list \\\"k16\\\" \\\"word\\\"))) (define body-17 (lambda () (list \\\"k17\\\" \\\"word\\\")))\")\n(define t0 (monotonic-ms))\n(define r (mutate :atomic-batch (list (list \"mutate:replace-value\" 0 \"a\" \"k\") (list \"mutate:replace-value\" 0 \"b\" \"k\") (list \"mutate:replace-value\" 0 \"c\" \"k\") (list \"mutate:replace-value\" 0 \"d\" \"k\") (list \"mutate:replace-value\" 0 \"e\" \"k\") (list \"mutate:replace-value\" 0 \"f\" \"k\")) \"batch\" :sync-query-index? #f))\n(display (if (equal? r #t) 1 0))\n(newline)\n(display (- (monotonic-ms) t0))\n(newline)\n",
+          "pipeline": "eval",
+          "time_s": 0.011877,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.010556,
+          "stdout": "1\n1",
+          "stderr": "",
+          "time_samples": [
+            0.011877,
+            0.010809,
+            0.012171
+          ],
+          "time_min_s": 0.010809,
+          "time_max_s": 0.012171,
+          "cpu_samples": [
+            0.010485,
+            0.010584,
+            0.010556
+          ],
+          "cpu_min_s": 0.010485
+        },
+        {
+          "name": "string_ref_walk_4320",
+          "code": "(define i 0)\n(define n 0)\n(define s \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\")\n(define t0 (monotonic-ms))\n(while (< i 2000)\n  (begin\n    (set! n (+ n (string-ref s i)))\n    (set! i (+ i 1))))\n(display n)\n(newline)\n(display (- (monotonic-ms) t0))\n(newline)\n",
+          "pipeline": "eval",
+          "time_s": 0.011101,
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "cpu_s": 0.006818,
+          "stdout": "194000\n1",
+          "stderr": "",
+          "time_samples": [
+            0.011841,
+            0.006949,
+            0.011101
+          ],
+          "time_min_s": 0.006949,
+          "time_max_s": 0.011841,
+          "cpu_samples": [
+            0.006806,
+            0.006818,
+            0.007147
+          ],
+          "cpu_min_s": 0.006806
+        }
       ],
-      "time_min_s": 0.008362,
-      "time_max_s": 0.015672,
-      "cpu_samples": [
-        0.010076,
-        0.007025,
-        0.00705
-      ],
-      "cpu_min_s": 0.007025
+      "startup_cpu_s": {
+        "eval": 0.008177,
+        "ir": 0.004232,
+        "typecheck": 0.003876
+      }
     },
-    {
-      "name": "str_literal",
-      "code": "\"hi\"",
-      "pipeline": "typecheck",
-      "time_s": 0.011226,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.006949,
-      "stdout": "type: String\nno errors",
-      "stderr": "",
-      "time_samples": [
-        0.012691,
-        0.008274,
-        0.011226
-      ],
-      "time_min_s": 0.008274,
-      "time_max_s": 0.012691,
-      "cpu_samples": [
-        0.006921,
-        0.006949,
-        0.008262
-      ],
-      "cpu_min_s": 0.006921
-    },
-    {
-      "name": "tc_add",
-      "code": "(+ 1 2)",
-      "pipeline": "typecheck",
-      "time_s": 0.008878,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007037,
-      "stdout": "type: Int\nno errors",
-      "stderr": "",
-      "time_samples": [
-        0.009713,
-        0.008632,
-        0.008878
-      ],
-      "time_min_s": 0.008632,
-      "time_max_s": 0.009713,
-      "cpu_samples": [
-        0.007635,
-        0.007037,
-        0.006866
-      ],
-      "cpu_min_s": 0.006866
-    },
-    {
-      "name": "tc_coercion",
-      "code": "(+ (string->number \"42\") 1)",
-      "pipeline": "typecheck",
-      "time_s": 0.009281,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007181,
-      "stdout": "type: Int\nno errors",
-      "stderr": "",
-      "time_samples": [
-        0.010388,
-        0.008452,
-        0.009281
-      ],
-      "time_min_s": 0.008452,
-      "time_max_s": 0.010388,
-      "cpu_samples": [
-        0.007331,
-        0.007124,
-        0.007181
-      ],
-      "cpu_min_s": 0.007124
-    },
-    {
-      "name": "tc_lambda",
-      "code": "(lambda (x) x)",
-      "pipeline": "typecheck",
-      "time_s": 0.011275,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007675,
-      "stdout": "type: (x -> x)\nno errors",
-      "stderr": "",
-      "time_samples": [
-        0.010511,
-        0.018111,
-        0.011275
-      ],
-      "time_min_s": 0.010511,
-      "time_max_s": 0.018111,
-      "cpu_samples": [
-        0.007675,
-        0.008859,
-        0.007203
-      ],
-      "cpu_min_s": 0.007203
-    },
-    {
-      "name": "tc_let",
-      "code": "(let ((x 10)) x)",
-      "pipeline": "typecheck",
-      "time_s": 0.012974,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.006839,
-      "stdout": "type: Int\nno errors",
-      "stderr": "",
-      "time_samples": [
-        0.012974,
-        0.008059,
-        0.013127
-      ],
-      "time_min_s": 0.008059,
-      "time_max_s": 0.013127,
-      "cpu_samples": [
-        0.006839,
-        0.006123,
-        0.007638
-      ],
-      "cpu_min_s": 0.006123
-    },
-    {
-      "name": "tc_literal",
-      "code": "42",
-      "pipeline": "typecheck",
-      "time_s": 0.009333,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.006896,
-      "stdout": "type: Int\nno errors",
-      "stderr": "",
-      "time_samples": [
-        0.010693,
-        0.009169,
-        0.009333
-      ],
-      "time_min_s": 0.009169,
-      "time_max_s": 0.010693,
-      "cpu_samples": [
-        0.008324,
-        0.006758,
-        0.006896
-      ],
-      "cpu_min_s": 0.006758
-    },
-    {
-      "name": "tc_occurrence",
-      "code": "(let ((x \"hello\")) (if (string? x) x \"fallback\"))",
-      "pipeline": "typecheck",
-      "time_s": 0.009322,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007088,
-      "stdout": "type: String\nno errors",
-      "stderr": "",
-      "time_samples": [
-        0.009322,
-        0.009499,
-        0.009079
-      ],
-      "time_min_s": 0.009079,
-      "time_max_s": 0.009499,
-      "cpu_samples": [
-        0.007638,
-        0.007024,
-        0.007088
-      ],
-      "cpu_min_s": 0.007024
-    },
-    {
-      "name": "tc_str",
-      "code": "\"hello\"",
-      "pipeline": "typecheck",
-      "time_s": 0.00915,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.00703,
-      "stdout": "type: String\nno errors",
-      "stderr": "",
-      "time_samples": [
-        0.009117,
-        0.009255,
-        0.00915
-      ],
-      "time_min_s": 0.009117,
-      "time_max_s": 0.009255,
-      "cpu_samples": [
-        0.007002,
-        0.00704,
-        0.00703
-      ],
-      "cpu_min_s": 0.007002
-    },
-    {
-      "name": "tc_string_append",
-      "code": "(string-append \"a\" \"b\")",
-      "pipeline": "typecheck",
-      "time_s": 0.010489,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007046,
-      "stdout": "type: String\nno errors",
-      "stderr": "",
-      "time_samples": [
-        0.010489,
-        0.012409,
-        0.009115
-      ],
-      "time_min_s": 0.009115,
-      "time_max_s": 0.012409,
-      "cpu_samples": [
-        0.006991,
-        0.007179,
-        0.007046
-      ],
-      "cpu_min_s": 0.006991
-    },
-    {
-      "name": "tc_string_length",
-      "code": "(string-length \"hello\")",
-      "pipeline": "typecheck",
-      "time_s": 0.011841,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007003,
-      "stdout": "type: Int\nno errors",
-      "stderr": "",
-      "time_samples": [
-        0.011841,
-        0.010852,
-        0.016924
-      ],
-      "time_min_s": 0.010852,
-      "time_max_s": 0.016924,
-      "cpu_samples": [
-        0.00681,
-        0.007003,
-        0.007108
-      ],
-      "cpu_min_s": 0.00681
-    },
-    {
-      "name": "tc_type_of",
-      "code": "(type-of 42)",
-      "pipeline": "typecheck",
-      "time_s": 0.01291,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007489,
-      "stdout": "type: Type\nno errors",
-      "stderr": "",
-      "time_samples": [
-        0.014922,
-        0.01291,
-        0.009193
-      ],
-      "time_min_s": 0.009193,
-      "time_max_s": 0.014922,
-      "cpu_samples": [
-        0.007489,
-        0.007494,
-        0.006842
-      ],
-      "cpu_min_s": 0.006842
-    },
-    {
-      "name": "tc_type_query",
-      "code": "(type? 42 \"Int\")",
-      "pipeline": "typecheck",
-      "time_s": 0.012355,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007914,
-      "stdout": "type: Bool\nno errors",
-      "stderr": "",
-      "time_samples": [
-        0.012355,
-        0.020944,
-        0.00983
-      ],
-      "time_min_s": 0.00983,
-      "time_max_s": 0.020944,
-      "cpu_samples": [
-        0.007106,
-        0.010704,
-        0.007914
-      ],
-      "cpu_min_s": 0.007106
-    },
-    {
-      "name": "wrong_arity",
-      "code": "(+ 1)",
-      "pipeline": "typecheck",
-      "time_s": 0.011671,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.008083,
-      "stdout": "type: Int\nno errors",
-      "stderr": "",
-      "time_samples": [
-        0.009123,
-        0.011979,
-        0.011671
-      ],
-      "time_min_s": 0.009123,
-      "time_max_s": 0.011979,
-      "cpu_samples": [
-        0.007047,
-        0.008131,
-        0.008083
-      ],
-      "cpu_min_s": 0.007047
-    },
-    {
-      "name": "ir_add",
-      "code": "(+ 1 2)",
-      "pipeline": "ir",
-      "time_s": 0.010656,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.006933,
-      "stdout": "3",
-      "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
-      "time_samples": [
-        0.008898,
-        0.010656,
-        0.015077
-      ],
-      "time_min_s": 0.008898,
-      "time_max_s": 0.015077,
-      "cpu_samples": [
-        0.006889,
-        0.008018,
-        0.006933
-      ],
-      "cpu_min_s": 0.006889
-    },
-    {
-      "name": "ir_closure",
-      "code": "(let ((f (lambda (x) (+ x 1)))) (f 41))",
-      "pipeline": "ir",
-      "time_s": 0.012576,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007294,
-      "stdout": "42",
-      "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
-      "time_samples": [
-        0.012576,
-        0.014601,
-        0.008648
-      ],
-      "time_min_s": 0.008648,
-      "time_max_s": 0.014601,
-      "cpu_samples": [
-        0.007417,
-        0.007216,
-        0.007294
-      ],
-      "cpu_min_s": 0.007216
-    },
-    {
-      "name": "ir_fact",
-      "code": "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))",
-      "pipeline": "ir",
-      "time_s": 0.013047,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007217,
-      "stdout": "120",
-      "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
-      "time_samples": [
-        0.013047,
-        0.010197,
-        0.013538
-      ],
-      "time_min_s": 0.010197,
-      "time_max_s": 0.013538,
-      "cpu_samples": [
-        0.007217,
-        0.00714,
-        0.010517
-      ],
-      "cpu_min_s": 0.00714
-    },
-    {
-      "name": "ir_fib_10",
-      "code": "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 10))",
-      "pipeline": "ir",
-      "time_s": 0.009581,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007414,
-      "stdout": "55",
-      "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
-      "time_samples": [
-        0.009581,
-        0.008766,
-        0.011698
-      ],
-      "time_min_s": 0.008766,
-      "time_max_s": 0.011698,
-      "cpu_samples": [
-        0.007817,
-        0.007414,
-        0.007314
-      ],
-      "cpu_min_s": 0.007314
-    },
-    {
-      "name": "ir_if",
-      "code": "(if (< 3 5) 100 200)",
-      "pipeline": "ir",
-      "time_s": 0.008876,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007368,
-      "stdout": "100",
-      "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
-      "time_samples": [
-        0.01216,
-        0.008876,
-        0.008843
-      ],
-      "time_min_s": 0.008843,
-      "time_max_s": 0.01216,
-      "cpu_samples": [
-        0.007368,
-        0.007492,
-        0.007101
-      ],
-      "cpu_min_s": 0.007101
-    },
-    {
-      "name": "ir_lambda",
-      "code": "((lambda (x) (* x 2)) 5)",
-      "pipeline": "ir",
-      "time_s": 0.009491,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.00731,
-      "stdout": "10",
-      "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
-      "time_samples": [
-        0.01397,
-        0.008756,
-        0.009491
-      ],
-      "time_min_s": 0.008756,
-      "time_max_s": 0.01397,
-      "cpu_samples": [
-        0.00731,
-        0.007366,
-        0.007111
-      ],
-      "cpu_min_s": 0.007111
-    },
-    {
-      "name": "add",
-      "code": "(+ 1 2)",
-      "pipeline": "eval",
-      "time_s": 0.010817,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.008581,
-      "stdout": "3",
-      "stderr": "",
-      "time_samples": [
-        0.009958,
-        0.010913,
-        0.010817
-      ],
-      "time_min_s": 0.009958,
-      "time_max_s": 0.010913,
-      "cpu_samples": [
-        0.008581,
-        0.008932,
-        0.007508
-      ],
-      "cpu_min_s": 0.007508
-    },
-    {
-      "name": "add_many",
-      "code": "(+ (+ (+ (+ 1 2) 3) 4) 5)",
-      "pipeline": "eval",
-      "time_s": 0.012453,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007643,
-      "stdout": "15",
-      "stderr": "",
-      "time_samples": [
-        0.01109,
-        0.01343,
-        0.012453
-      ],
-      "time_min_s": 0.01109,
-      "time_max_s": 0.01343,
-      "cpu_samples": [
-        0.007454,
-        0.007643,
-        0.007944
-      ],
-      "cpu_min_s": 0.007454
-    },
-    {
-      "name": "adt_list_length",
-      "code": "(define (length lst)   (if (null? lst) 0 (+ 1 (length (cdr lst))))) (length (list 1 2 3 4 5 6 7 8 9 10))",
-      "pipeline": "eval",
-      "time_s": 0.013433,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007589,
-      "stdout": "10",
-      "stderr": "",
-      "time_samples": [
-        0.016574,
-        0.012871,
-        0.013433
-      ],
-      "time_min_s": 0.012871,
-      "time_max_s": 0.016574,
-      "cpu_samples": [
-        0.008309,
-        0.007589,
-        0.007405
-      ],
-      "cpu_min_s": 0.007405
-    },
-    {
-      "name": "closure",
-      "code": "(let ((f (lambda (x) (+ x 1)))) (f 41))",
-      "pipeline": "eval",
-      "time_s": 0.014474,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007366,
-      "stdout": "42",
-      "stderr": "",
-      "time_samples": [
-        0.013705,
-        0.014474,
-        0.017121
-      ],
-      "time_min_s": 0.013705,
-      "time_max_s": 0.017121,
-      "cpu_samples": [
-        0.007366,
-        0.007365,
-        0.008135
-      ],
-      "cpu_min_s": 0.007365
-    },
-    {
-      "name": "coerce_arith",
-      "code": "(+ 1 \"2\")",
-      "pipeline": "eval",
-      "time_s": 0.015728,
-      "output": "",
-      "error": "error: 1:2: type error: type mismatch \u2014 expected Int, got String '2' (in +, argument 2)\n   |\n  1 | (+ 1 \"2\")\n   |  ^",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 1,
-      "timed_out": false,
-      "cpu_s": 0.007471,
-      "stdout": "",
-      "stderr": "error: 1:2: type error: type mismatch \u2014 expected Int, got String '2' (in +, argument 2)\n   |\n  1 | (+ 1 \"2\")\n   |  ^",
-      "time_samples": [
-        0.016175,
-        0.009728,
-        0.015728
-      ],
-      "time_min_s": 0.009728,
-      "time_max_s": 0.016175,
-      "cpu_samples": [
-        0.007399,
-        0.007471,
-        0.007688
-      ],
-      "cpu_min_s": 0.007399
-    },
-    {
-      "name": "coerce_str_len",
-      "code": "(string-length 12345)",
-      "pipeline": "eval",
-      "time_s": 0.015078,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.00787,
-      "stdout": "0",
-      "stderr": "",
-      "time_samples": [
-        0.013626,
-        0.019537,
-        0.015078
-      ],
-      "time_min_s": 0.013626,
-      "time_max_s": 0.019537,
-      "cpu_samples": [
-        0.00787,
-        0.009224,
-        0.007497
-      ],
-      "cpu_min_s": 0.007497
-    },
-    {
-      "name": "cons_car",
-      "code": "(car (cons 1 2))",
-      "pipeline": "eval",
-      "time_s": 0.013941,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.008273,
-      "stdout": "1",
-      "stderr": "",
-      "time_samples": [
-        0.01536,
-        0.013541,
-        0.013941
-      ],
-      "time_min_s": 0.013541,
-      "time_max_s": 0.01536,
-      "cpu_samples": [
-        0.008547,
-        0.007491,
-        0.008273
-      ],
-      "cpu_min_s": 0.007491
-    },
-    {
-      "name": "cons_cdr",
-      "code": "(cdr (cons 1 2))",
-      "pipeline": "eval",
-      "time_s": 0.014526,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007619,
-      "stdout": "2",
-      "stderr": "",
-      "time_samples": [
-        0.014526,
-        0.016523,
-        0.011601
-      ],
-      "time_min_s": 0.011601,
-      "time_max_s": 0.016523,
-      "cpu_samples": [
-        0.007619,
-        0.007624,
-        0.00758
-      ],
-      "cpu_min_s": 0.00758
-    },
-    {
-      "name": "div",
-      "code": "(/ 100 5)",
-      "pipeline": "eval",
-      "time_s": 0.014915,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007513,
-      "stdout": "20",
-      "stderr": "",
-      "time_samples": [
-        0.012887,
-        0.014915,
-        0.026877
-      ],
-      "time_min_s": 0.012887,
-      "time_max_s": 0.026877,
-      "cpu_samples": [
-        0.007513,
-        0.007408,
-        0.0093
-      ],
-      "cpu_min_s": 0.007408
-    },
-    {
-      "name": "fib_20",
-      "code": "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 20))",
-      "pipeline": "eval",
-      "time_s": 0.045282,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.027818,
-      "stdout": "6765",
-      "stderr": "",
-      "time_samples": [
-        0.045282,
-        0.046179,
-        0.036826
-      ],
-      "time_min_s": 0.036826,
-      "time_max_s": 0.046179,
-      "cpu_samples": [
-        0.027602,
-        0.028094,
-        0.027818
-      ],
-      "cpu_min_s": 0.027602
-    },
-    {
-      "name": "higher_order",
-      "code": "((lambda (f) (f 10)) (lambda (x) (* x x)))",
-      "pipeline": "eval",
-      "time_s": 0.009414,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007509,
-      "stdout": "100",
-      "stderr": "",
-      "time_samples": [
-        0.009414,
-        0.010957,
-        0.009213
-      ],
-      "time_min_s": 0.009213,
-      "time_max_s": 0.010957,
-      "cpu_samples": [
-        0.007509,
-        0.008354,
-        0.007143
-      ],
-      "cpu_min_s": 0.007143
-    },
-    {
-      "name": "if_compare",
-      "code": "(if (< 3 5) 100 200)",
-      "pipeline": "eval",
-      "time_s": 0.012027,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007618,
-      "stdout": "100",
-      "stderr": "",
-      "time_samples": [
-        0.012893,
-        0.012027,
-        0.009985
-      ],
-      "time_min_s": 0.009985,
-      "time_max_s": 0.012893,
-      "cpu_samples": [
-        0.007618,
-        0.009654,
-        0.007612
-      ],
-      "cpu_min_s": 0.007612
-    },
-    {
-      "name": "if_false",
-      "code": "(if #f 42 0)",
-      "pipeline": "eval",
-      "time_s": 0.012917,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.011036,
-      "stdout": "0",
-      "stderr": "",
-      "time_samples": [
-        0.012644,
-        0.020665,
-        0.012917
-      ],
-      "time_min_s": 0.012644,
-      "time_max_s": 0.020665,
-      "cpu_samples": [
-        0.011036,
-        0.011128,
-        0.010827
-      ],
-      "cpu_min_s": 0.010827
-    },
-    {
-      "name": "if_true",
-      "code": "(if 1 42 0)",
-      "pipeline": "eval",
-      "time_s": 0.01502,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.011486,
-      "stdout": "42",
-      "stderr": "",
-      "time_samples": [
-        0.014393,
-        0.01502,
-        0.018944
-      ],
-      "time_min_s": 0.014393,
-      "time_max_s": 0.018944,
-      "cpu_samples": [
-        0.011486,
-        0.012187,
-        0.011242
-      ],
-      "cpu_min_s": 0.011242
-    },
-    {
-      "name": "lambda_apply",
-      "code": "((lambda (x) (* x 2)) 5)",
-      "pipeline": "eval",
-      "time_s": 0.014107,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.009393,
-      "stdout": "10",
-      "stderr": "",
-      "time_samples": [
-        0.00994,
-        0.017353,
-        0.014107
-      ],
-      "time_min_s": 0.00994,
-      "time_max_s": 0.017353,
-      "cpu_samples": [
-        0.008006,
-        0.009393,
-        0.012729
-      ],
-      "cpu_min_s": 0.008006
-    },
-    {
-      "name": "let_add",
-      "code": "(let ((x 1) (y 2)) (+ x y))",
-      "pipeline": "eval",
-      "time_s": 0.01251,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.010456,
-      "stdout": "3",
-      "stderr": "",
-      "time_samples": [
-        0.01251,
-        0.009783,
-        0.01394
-      ],
-      "time_min_s": 0.009783,
-      "time_max_s": 0.01394,
-      "cpu_samples": [
-        0.010907,
-        0.007324,
-        0.010456
-      ],
-      "cpu_min_s": 0.007324
-    },
-    {
-      "name": "let_simple",
-      "code": "(let ((x 10)) x)",
-      "pipeline": "eval",
-      "time_s": 0.00885,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007277,
-      "stdout": "10",
-      "stderr": "",
-      "time_samples": [
-        0.0099,
-        0.00885,
-        0.008785
-      ],
-      "time_min_s": 0.008785,
-      "time_max_s": 0.0099,
-      "cpu_samples": [
-        0.007392,
-        0.007277,
-        0.00727
-      ],
-      "cpu_min_s": 0.00727
-    },
-    {
-      "name": "letrec_fact",
-      "code": "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))",
-      "pipeline": "eval",
-      "time_s": 0.011382,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007867,
-      "stdout": "3628800",
-      "stderr": "",
-      "time_samples": [
-        0.011382,
-        0.008521,
-        0.012645
-      ],
-      "time_min_s": 0.008521,
-      "time_max_s": 0.012645,
-      "cpu_samples": [
-        0.007867,
-        0.007128,
-        0.010863
-      ],
-      "cpu_min_s": 0.007128
-    },
-    {
-      "name": "literal_int",
-      "code": "42",
-      "pipeline": "eval",
-      "time_s": 0.01608,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.012038,
-      "stdout": "42",
-      "stderr": "",
-      "time_samples": [
-        0.01608,
-        0.013166,
-        0.016528
-      ],
-      "time_min_s": 0.013166,
-      "time_max_s": 0.016528,
-      "cpu_samples": [
-        0.014285,
-        0.010957,
-        0.012038
-      ],
-      "cpu_min_s": 0.010957
-    },
-    {
-      "name": "literal_neg",
-      "code": "-5",
-      "pipeline": "eval",
-      "time_s": 0.012719,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.010806,
-      "stdout": "-5",
-      "stderr": "",
-      "time_samples": [
-        0.01219,
-        0.014431,
-        0.012719
-      ],
-      "time_min_s": 0.01219,
-      "time_max_s": 0.014431,
-      "cpu_samples": [
-        0.010806,
-        0.012954,
-        0.010697
-      ],
-      "cpu_min_s": 0.010697
-    },
-    {
-      "name": "literal_string",
-      "code": "\"hello\"",
-      "pipeline": "eval",
-      "time_s": 0.010053,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007609,
-      "stdout": "\"hello\"",
-      "stderr": "",
-      "time_samples": [
-        0.010143,
-        0.010053,
-        0.009313
-      ],
-      "time_min_s": 0.009313,
-      "time_max_s": 0.010143,
-      "cpu_samples": [
-        0.007609,
-        0.007432,
-        0.007871
-      ],
-      "cpu_min_s": 0.007432
-    },
-    {
-      "name": "mul",
-      "code": "(* 6 7)",
-      "pipeline": "eval",
-      "time_s": 0.009727,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.008153,
-      "stdout": "42",
-      "stderr": "",
-      "time_samples": [
-        0.01664,
-        0.00869,
-        0.009727
-      ],
-      "time_min_s": 0.00869,
-      "time_max_s": 0.01664,
-      "cpu_samples": [
-        0.00878,
-        0.007318,
-        0.008153
-      ],
-      "cpu_min_s": 0.007318
-    },
-    {
-      "name": "multi_agent_pipeline",
-      "code": "(require \"std/orch\" all:) (define (pipeline x)   (define r1 (fiber:join (fiber:spawn (lambda () (* x 2)))))   (define r2 (fiber:join (fiber:spawn (lambda () (+ r1 1)))))   (define r3 (fiber:join (fiber:spawn (lambda () (* r2 3)))))   r3) (pipeline 10)",
-      "pipeline": "eval",
-      "time_s": 0.037158,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.023898,
-      "stdout": "63",
-      "stderr": "",
-      "time_samples": [
-        0.038406,
-        0.020711,
-        0.037158
-      ],
-      "time_min_s": 0.020711,
-      "time_max_s": 0.038406,
-      "cpu_samples": [
-        0.025528,
-        0.018418,
-        0.023898
-      ],
-      "cpu_min_s": 0.018418
-    },
-    {
-      "name": "nested_arith",
-      "code": "(+ (* 2 3) (/ 10 2))",
-      "pipeline": "eval",
-      "time_s": 0.009464,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007556,
-      "stdout": "11",
-      "stderr": "",
-      "time_samples": [
-        0.010273,
-        0.008992,
-        0.009464
-      ],
-      "time_min_s": 0.008992,
-      "time_max_s": 0.010273,
-      "cpu_samples": [
-        0.008334,
-        0.007556,
-        0.007462
-      ],
-      "cpu_min_s": 0.007462
-    },
-    {
-      "name": "par_orch_3_agents",
-      "code": "(require \"std/orch\" all:) (orch:parallel (list (lambda (x) (* x x)) (lambda (x) (* x 2)) (lambda (x) (+ x 100))) 5)",
-      "pipeline": "eval",
-      "time_s": 0.023642,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.018797,
-      "stdout": "(25 10 105)",
-      "stderr": "",
-      "time_samples": [
-        0.023642,
-        0.032647,
-        0.020849
-      ],
-      "time_min_s": 0.020849,
-      "time_max_s": 0.032647,
-      "cpu_samples": [
-        0.018797,
-        0.019403,
-        0.018223
-      ],
-      "cpu_min_s": 0.018223
-    },
-    {
-      "name": "par_orch_5_agents",
-      "code": "(require \"std/orch\" all:) (orch:parallel (list (lambda (x) (+ x 1)) (lambda (x) (+ x 2)) (lambda (x) (+ x 3)) (lambda (x) (+ x 4)) (lambda (x) (+ x 5))) 0)",
-      "pipeline": "eval",
-      "time_s": 0.027734,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.021116,
-      "stdout": "(1 2 3 4 5)",
-      "stderr": "",
-      "time_samples": [
-        0.038707,
-        0.022847,
-        0.027734
-      ],
-      "time_min_s": 0.022847,
-      "time_max_s": 0.038707,
-      "cpu_samples": [
-        0.021645,
-        0.019883,
-        0.021116
-      ],
-      "cpu_min_s": 0.019883
-    },
-    {
-      "name": "parallel_intend_small",
-      "code": "(hash-ref (parallel-intend (vector (lambda () 1) (lambda () 2)) :timeout-ms 10000) \"ok-count\")",
-      "pipeline": "eval",
-      "time_s": 0.020117,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.011833,
-      "stdout": "2",
-      "stderr": "",
-      "time_samples": [
-        0.020117,
-        0.025038,
-        0.017421
-      ],
-      "time_min_s": 0.017421,
-      "time_max_s": 0.025038,
-      "cpu_samples": [
-        0.012344,
-        0.011486,
-        0.011833
-      ],
-      "cpu_min_s": 0.011486
-    },
-    {
-      "name": "parallel_intend_with_gc",
-      "code": "(hash-ref (parallel-intend (vector (lambda () (begin (gc-heap) 1)) (lambda () 2)) :timeout-ms 10000) \"ok-count\")",
-      "pipeline": "eval",
-      "time_s": 0.020491,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.012322,
-      "stdout": "2",
-      "stderr": "",
-      "time_samples": [
-        0.021429,
-        0.020491,
-        0.013157
-      ],
-      "time_min_s": 0.013157,
-      "time_max_s": 0.021429,
-      "cpu_samples": [
-        0.012322,
-        0.014825,
-        0.010557
-      ],
-      "cpu_min_s": 0.010557
-    },
-    {
-      "name": "query_pattern_simple",
-      "code": "(set-code \"(begin (fib 1) (fib 2) (fib 3) (fib 4) (fib 5))\") (length (query :pattern \"(fib ...)\"))",
-      "pipeline": "eval",
-      "time_s": 0.011523,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007522,
-      "stdout": "5",
-      "stderr": "",
-      "time_samples": [
-        0.011029,
-        0.016531,
-        0.011523
-      ],
-      "time_min_s": 0.011029,
-      "time_max_s": 0.016531,
-      "cpu_samples": [
-        0.007157,
-        0.007568,
-        0.007522
-      ],
-      "cpu_min_s": 0.007157
-    },
-    {
-      "name": "query_pattern_with_let",
-      "code": "(set-code \"(begin (let ((x 1)) x) (let ((x 2)) x) (let ((x 3)) x))\") (length (query :pattern \"(let ((x ...)) ...)\"))",
-      "pipeline": "eval",
-      "time_s": 0.011327,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.008459,
-      "stdout": "3",
-      "stderr": "",
-      "time_samples": [
-        0.012867,
-        0.009942,
-        0.011327
-      ],
-      "time_min_s": 0.009942,
-      "time_max_s": 0.012867,
-      "cpu_samples": [
-        0.008713,
-        0.007417,
-        0.008459
-      ],
-      "cpu_min_s": 0.007417
-    },
-    {
-      "name": "str_append",
-      "code": "(string-append \"a\" \"b\")",
-      "pipeline": "eval",
-      "time_s": 0.011137,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.00843,
-      "stdout": "\"ab\"",
-      "stderr": "",
-      "time_samples": [
-        0.013288,
-        0.010166,
-        0.011137
-      ],
-      "time_min_s": 0.010166,
-      "time_max_s": 0.013288,
-      "cpu_samples": [
-        0.008462,
-        0.007563,
-        0.00843
-      ],
-      "cpu_min_s": 0.007563
-    },
-    {
-      "name": "str_length",
-      "code": "(string-length \"hello\")",
-      "pipeline": "eval",
-      "time_s": 0.009926,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007712,
-      "stdout": "5",
-      "stderr": "",
-      "time_samples": [
-        0.009926,
-        0.009756,
-        0.014513
-      ],
-      "time_min_s": 0.009756,
-      "time_max_s": 0.014513,
-      "cpu_samples": [
-        0.007712,
-        0.007554,
-        0.009818
-      ],
-      "cpu_min_s": 0.007554
-    },
-    {
-      "name": "sub",
-      "code": "(- 10 3)",
-      "pipeline": "eval",
-      "time_s": 0.011439,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007842,
-      "stdout": "7",
-      "stderr": "",
-      "time_samples": [
-        0.011806,
-        0.011439,
-        0.009796
-      ],
-      "time_min_s": 0.009796,
-      "time_max_s": 0.011806,
-      "cpu_samples": [
-        0.009201,
-        0.007842,
-        0.007641
-      ],
-      "cpu_min_s": 0.007641
-    },
-    {
-      "name": "vec_basic",
-      "code": "(vector 1 2 3)",
-      "pipeline": "eval",
-      "time_s": 0.009698,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007606,
-      "stdout": "#(1 2 3)",
-      "stderr": "",
-      "time_samples": [
-        0.009528,
-        0.009949,
-        0.009698
-      ],
-      "time_min_s": 0.009528,
-      "time_max_s": 0.009949,
-      "cpu_samples": [
-        0.007568,
-        0.007606,
-        0.007704
-      ],
-      "cpu_min_s": 0.007568
-    },
-    {
-      "name": "vec_ref",
-      "code": "(vector-ref (vector 10 20 30) 1)",
-      "pipeline": "eval",
-      "time_s": 0.013124,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.007661,
-      "stdout": "20",
-      "stderr": "",
-      "time_samples": [
-        0.009884,
-        0.015342,
-        0.013124
-      ],
-      "time_min_s": 0.009884,
-      "time_max_s": 0.015342,
-      "cpu_samples": [
-        0.007554,
-        0.009466,
-        0.007661
-      ],
-      "cpu_min_s": 0.007554
-    },
-    {
-      "name": "hot_list_map_2k",
-      "code": "(let loop ((i 0) (xs (quote ()))) (if (= i 2000) (length (map (lambda (x) (* x 2)) xs)) (loop (+ i 1) (cons i xs))))",
-      "pipeline": "eval",
-      "time_s": 0.016264,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.013823,
-      "stdout": "2000",
-      "stderr": "",
-      "time_samples": [
-        0.016264,
-        0.015586,
-        0.020516
-      ],
-      "time_min_s": 0.015586,
-      "time_max_s": 0.020516,
-      "cpu_samples": [
-        0.013823,
-        0.013467,
-        0.01741
-      ],
-      "cpu_min_s": 0.013467
-    },
-    {
-      "name": "hot_hash_set_get_2k",
-      "code": "(let ((h (hash))) (let loop ((i 0)) (if (= i 2000) (hash-ref h 1999) (begin (hash-set! h i i) (loop (+ i 1))))))",
-      "pipeline": "eval",
-      "time_s": 0.023457,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.019932,
-      "stdout": "1999",
-      "stderr": "",
-      "time_samples": [
-        0.021833,
-        0.023457,
-        0.027268
-      ],
-      "time_min_s": 0.021833,
-      "time_max_s": 0.027268,
-      "cpu_samples": [
-        0.019932,
-        0.018904,
-        0.02442
-      ],
-      "cpu_min_s": 0.018904
-    },
-    {
-      "name": "hot_fiber_spawn_join_200",
-      "code": "(let loop ((i 0) (s 0)) (if (= i 200) s (loop (+ i 1) (+ s (fiber:join (fiber:spawn (lambda () 1)))))))",
-      "pipeline": "eval",
-      "time_s": 0.020598,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.015677,
-      "stdout": "200",
-      "stderr": "",
-      "time_samples": [
-        0.01237,
-        0.033622,
-        0.020598
-      ],
-      "time_min_s": 0.01237,
-      "time_max_s": 0.033622,
-      "cpu_samples": [
-        0.010624,
-        0.015677,
-        0.016337
-      ],
-      "cpu_min_s": 0.010624
-    },
-    {
-      "name": "replace_value_one_4320",
-      "code": "(set-code \"(define letter-a \\\"a\\\")\")\n(define t0 (monotonic-ms))\n(display (mutate :replace-value 0 \"Z\" \"k\"))\n(newline)\n(display (- (monotonic-ms) t0))\n(newline)\n",
-      "pipeline": "eval",
-      "time_s": 0.016306,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.012009,
-      "stdout": "1\n1",
-      "stderr": "",
-      "time_samples": [
-        0.016306,
-        0.014514,
-        0.021297
-      ],
-      "time_min_s": 0.014514,
-      "time_max_s": 0.021297,
-      "cpu_samples": [
-        0.009426,
-        0.012804,
-        0.012009
-      ],
-      "cpu_min_s": 0.009426
-    },
-    {
-      "name": "replace_value_seed_4320",
-      "code": "(set-code \"(define lit-0 \\\"v0\\\") (define lit-1 \\\"v1\\\") (define lit-2 \\\"v2\\\") (define lit-3 \\\"v3\\\") (define lit-4 \\\"v4\\\") (define lit-5 \\\"v5\\\") (define lit-6 \\\"v6\\\") (define lit-7 \\\"v7\\\") (define lit-8 \\\"v8\\\") (define lit-9 \\\"v9\\\") (define lit-10 \\\"v10\\\") (define lit-11 \\\"v11\\\") (define lit-12 \\\"v12\\\") (define lit-13 \\\"v13\\\") (define lit-14 \\\"v14\\\") (define lit-15 \\\"v15\\\") (define lit-16 \\\"v16\\\") (define lit-17 \\\"v17\\\") (define lit-18 \\\"v18\\\") (define lit-19 \\\"v19\\\") (define lit-20 \\\"v20\\\") (define lit-21 \\\"v21\\\") (define lit-22 \\\"v22\\\") (define lit-23 \\\"v23\\\") (define lit-24 \\\"v24\\\") (define lit-25 \\\"v25\\\") (define lit-26 \\\"v26\\\") (define lit-27 \\\"v27\\\") (define lit-28 \\\"v28\\\") (define lit-29 \\\"v29\\\") (define lit-30 \\\"v30\\\") (define lit-31 \\\"v31\\\") (define lit-32 \\\"v32\\\") (define lit-33 \\\"v33\\\") (define lit-34 \\\"v34\\\") (define lit-35 \\\"v35\\\") (define lit-36 \\\"v36\\\") (define lit-37 \\\"v37\\\") (define lit-38 \\\"v38\\\") (define lit-39 \\\"v39\\\") (define lit-40 \\\"v40\\\") (define lit-41 \\\"v41\\\") (define lit-42 \\\"v42\\\") (define lit-43 \\\"v43\\\") (define lit-44 \\\"v44\\\") (define lit-45 \\\"v45\\\") (define lit-46 \\\"v46\\\") (define lit-47 \\\"v47\\\") (define body-0 (lambda () (list \\\"k0\\\" \\\"word\\\"))) (define body-1 (lambda () (list \\\"k1\\\" \\\"word\\\"))) (define body-2 (lambda () (list \\\"k2\\\" \\\"word\\\"))) (define body-3 (lambda () (list \\\"k3\\\" \\\"word\\\"))) (define body-4 (lambda () (list \\\"k4\\\" \\\"word\\\"))) (define body-5 (lambda () (list \\\"k5\\\" \\\"word\\\"))) (define body-6 (lambda () (list \\\"k6\\\" \\\"word\\\"))) (define body-7 (lambda () (list \\\"k7\\\" \\\"word\\\"))) (define body-8 (lambda () (list \\\"k8\\\" \\\"word\\\"))) (define body-9 (lambda () (list \\\"k9\\\" \\\"word\\\"))) (define body-10 (lambda () (list \\\"k10\\\" \\\"word\\\"))) (define body-11 (lambda () (list \\\"k11\\\" \\\"word\\\"))) (define body-12 (lambda () (list \\\"k12\\\" \\\"word\\\"))) (define body-13 (lambda () (list \\\"k13\\\" \\\"word\\\"))) (define body-14 (lambda () (list \\\"k14\\\" \\\"word\\\"))) (define body-15 (lambda () (list \\\"k15\\\" \\\"word\\\"))) (define body-16 (lambda () (list \\\"k16\\\" \\\"word\\\"))) (define body-17 (lambda () (list \\\"k17\\\" \\\"word\\\")))\")\n(define t0 (monotonic-ms))\n(display (mutate :replace-value 0 \"Z\" \"k\"))\n(newline)\n(display (- (monotonic-ms) t0))\n(newline)\n",
-      "pipeline": "eval",
-      "time_s": 0.01667,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.011533,
-      "stdout": "1\n1",
-      "stderr": "",
-      "time_samples": [
-        0.014768,
-        0.018993,
-        0.01667
-      ],
-      "time_min_s": 0.014768,
-      "time_max_s": 0.018993,
-      "cpu_samples": [
-        0.010407,
-        0.011533,
-        0.011748
-      ],
-      "cpu_min_s": 0.010407
-    },
-    {
-      "name": "replace_batch_six_4320",
-      "code": "(set-code \"(define lit-0 \\\"v0\\\") (define lit-1 \\\"v1\\\") (define lit-2 \\\"v2\\\") (define lit-3 \\\"v3\\\") (define lit-4 \\\"v4\\\") (define lit-5 \\\"v5\\\") (define lit-6 \\\"v6\\\") (define lit-7 \\\"v7\\\") (define lit-8 \\\"v8\\\") (define lit-9 \\\"v9\\\") (define lit-10 \\\"v10\\\") (define lit-11 \\\"v11\\\") (define lit-12 \\\"v12\\\") (define lit-13 \\\"v13\\\") (define lit-14 \\\"v14\\\") (define lit-15 \\\"v15\\\") (define lit-16 \\\"v16\\\") (define lit-17 \\\"v17\\\") (define lit-18 \\\"v18\\\") (define lit-19 \\\"v19\\\") (define lit-20 \\\"v20\\\") (define lit-21 \\\"v21\\\") (define lit-22 \\\"v22\\\") (define lit-23 \\\"v23\\\") (define lit-24 \\\"v24\\\") (define lit-25 \\\"v25\\\") (define lit-26 \\\"v26\\\") (define lit-27 \\\"v27\\\") (define lit-28 \\\"v28\\\") (define lit-29 \\\"v29\\\") (define lit-30 \\\"v30\\\") (define lit-31 \\\"v31\\\") (define lit-32 \\\"v32\\\") (define lit-33 \\\"v33\\\") (define lit-34 \\\"v34\\\") (define lit-35 \\\"v35\\\") (define lit-36 \\\"v36\\\") (define lit-37 \\\"v37\\\") (define lit-38 \\\"v38\\\") (define lit-39 \\\"v39\\\") (define lit-40 \\\"v40\\\") (define lit-41 \\\"v41\\\") (define lit-42 \\\"v42\\\") (define lit-43 \\\"v43\\\") (define lit-44 \\\"v44\\\") (define lit-45 \\\"v45\\\") (define lit-46 \\\"v46\\\") (define lit-47 \\\"v47\\\") (define body-0 (lambda () (list \\\"k0\\\" \\\"word\\\"))) (define body-1 (lambda () (list \\\"k1\\\" \\\"word\\\"))) (define body-2 (lambda () (list \\\"k2\\\" \\\"word\\\"))) (define body-3 (lambda () (list \\\"k3\\\" \\\"word\\\"))) (define body-4 (lambda () (list \\\"k4\\\" \\\"word\\\"))) (define body-5 (lambda () (list \\\"k5\\\" \\\"word\\\"))) (define body-6 (lambda () (list \\\"k6\\\" \\\"word\\\"))) (define body-7 (lambda () (list \\\"k7\\\" \\\"word\\\"))) (define body-8 (lambda () (list \\\"k8\\\" \\\"word\\\"))) (define body-9 (lambda () (list \\\"k9\\\" \\\"word\\\"))) (define body-10 (lambda () (list \\\"k10\\\" \\\"word\\\"))) (define body-11 (lambda () (list \\\"k11\\\" \\\"word\\\"))) (define body-12 (lambda () (list \\\"k12\\\" \\\"word\\\"))) (define body-13 (lambda () (list \\\"k13\\\" \\\"word\\\"))) (define body-14 (lambda () (list \\\"k14\\\" \\\"word\\\"))) (define body-15 (lambda () (list \\\"k15\\\" \\\"word\\\"))) (define body-16 (lambda () (list \\\"k16\\\" \\\"word\\\"))) (define body-17 (lambda () (list \\\"k17\\\" \\\"word\\\")))\")\n(define t0 (monotonic-ms))\n(define r (mutate :atomic-batch (list (list \"mutate:replace-value\" 0 \"a\" \"k\") (list \"mutate:replace-value\" 0 \"b\" \"k\") (list \"mutate:replace-value\" 0 \"c\" \"k\") (list \"mutate:replace-value\" 0 \"d\" \"k\") (list \"mutate:replace-value\" 0 \"e\" \"k\") (list \"mutate:replace-value\" 0 \"f\" \"k\")) \"batch\" :sync-query-index? #f))\n(display (if (equal? r #t) 1 0))\n(newline)\n(display (- (monotonic-ms) t0))\n(newline)\n",
-      "pipeline": "eval",
-      "time_s": 0.018126,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.015093,
-      "stdout": "1\n2",
-      "stderr": "",
-      "time_samples": [
-        0.016655,
-        0.020406,
-        0.018126
-      ],
-      "time_min_s": 0.016655,
-      "time_max_s": 0.020406,
-      "cpu_samples": [
-        0.013945,
-        0.015093,
-        0.016543
-      ],
-      "cpu_min_s": 0.013945
-    },
-    {
-      "name": "string_ref_walk_4320",
-      "code": "(define i 0)\n(define n 0)\n(define s \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\")\n(define t0 (monotonic-ms))\n(while (< i 2000)\n  (begin\n    (set! n (+ n (string-ref s i)))\n    (set! i (+ i 1))))\n(display n)\n(newline)\n(display (- (monotonic-ms) t0))\n(newline)\n",
-      "pipeline": "eval",
-      "time_s": 0.012761,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "cpu_s": 0.009732,
-      "stdout": "194000\n1",
-      "stderr": "",
-      "time_samples": [
-        0.017297,
-        0.011173,
-        0.012761
-      ],
-      "time_min_s": 0.011173,
-      "time_max_s": 0.017297,
-      "cpu_samples": [
-        0.009787,
-        0.009732,
-        0.009578
-      ],
-      "cpu_min_s": 0.009578
+    "linux-x86_64": {
+      "timestamp": "2026-11-11T11:10:00+08:00",
+      "total_cases": 62,
+      "passed": 62,
+      "failed": 0,
+      "total_time_s": 1.492,
+      "cases": [
+        {
+          "name": "occurrence",
+          "code": "",
+          "pipeline": "typecheck",
+          "time_s": 0.022,
+          "time_min_s": 0.022,
+          "time_samples": [
+            0.022
+          ],
+          "cpu_s": 0.0205,
+          "cpu_min_s": 0.0205,
+          "cpu_samples": [
+            0.0205
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "str_literal",
+          "code": "",
+          "pipeline": "typecheck",
+          "time_s": 0.0189,
+          "time_min_s": 0.0189,
+          "time_samples": [
+            0.0189
+          ],
+          "cpu_s": 0.0181,
+          "cpu_min_s": 0.0181,
+          "cpu_samples": [
+            0.0181
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "tc_add",
+          "code": "",
+          "pipeline": "typecheck",
+          "time_s": 0.0184,
+          "time_min_s": 0.0184,
+          "time_samples": [
+            0.0184
+          ],
+          "cpu_s": 0.0181,
+          "cpu_min_s": 0.0181,
+          "cpu_samples": [
+            0.0181
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "tc_coercion",
+          "code": "",
+          "pipeline": "typecheck",
+          "time_s": 0.0179,
+          "time_min_s": 0.0179,
+          "time_samples": [
+            0.0179
+          ],
+          "cpu_s": 0.0178,
+          "cpu_min_s": 0.0178,
+          "cpu_samples": [
+            0.0178
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "tc_lambda",
+          "code": "",
+          "pipeline": "typecheck",
+          "time_s": 0.0179,
+          "time_min_s": 0.0179,
+          "time_samples": [
+            0.0179
+          ],
+          "cpu_s": 0.0177,
+          "cpu_min_s": 0.0177,
+          "cpu_samples": [
+            0.0177
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "tc_let",
+          "code": "",
+          "pipeline": "typecheck",
+          "time_s": 0.0179,
+          "time_min_s": 0.0179,
+          "time_samples": [
+            0.0179
+          ],
+          "cpu_s": 0.0177,
+          "cpu_min_s": 0.0177,
+          "cpu_samples": [
+            0.0177
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "tc_literal",
+          "code": "",
+          "pipeline": "typecheck",
+          "time_s": 0.0181,
+          "time_min_s": 0.0181,
+          "time_samples": [
+            0.0181
+          ],
+          "cpu_s": 0.0179,
+          "cpu_min_s": 0.0179,
+          "cpu_samples": [
+            0.0179
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "tc_occurrence",
+          "code": "",
+          "pipeline": "typecheck",
+          "time_s": 0.0184,
+          "time_min_s": 0.0184,
+          "time_samples": [
+            0.0184
+          ],
+          "cpu_s": 0.0179,
+          "cpu_min_s": 0.0179,
+          "cpu_samples": [
+            0.0179
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "tc_str",
+          "code": "",
+          "pipeline": "typecheck",
+          "time_s": 0.0181,
+          "time_min_s": 0.0181,
+          "time_samples": [
+            0.0181
+          ],
+          "cpu_s": 0.0179,
+          "cpu_min_s": 0.0179,
+          "cpu_samples": [
+            0.0179
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "tc_string_append",
+          "code": "",
+          "pipeline": "typecheck",
+          "time_s": 0.018,
+          "time_min_s": 0.018,
+          "time_samples": [
+            0.018
+          ],
+          "cpu_s": 0.0178,
+          "cpu_min_s": 0.0178,
+          "cpu_samples": [
+            0.0178
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "tc_string_length",
+          "code": "",
+          "pipeline": "typecheck",
+          "time_s": 0.018,
+          "time_min_s": 0.018,
+          "time_samples": [
+            0.018
+          ],
+          "cpu_s": 0.0176,
+          "cpu_min_s": 0.0176,
+          "cpu_samples": [
+            0.0176
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "tc_type_of",
+          "code": "",
+          "pipeline": "typecheck",
+          "time_s": 0.0179,
+          "time_min_s": 0.0179,
+          "time_samples": [
+            0.0179
+          ],
+          "cpu_s": 0.0177,
+          "cpu_min_s": 0.0177,
+          "cpu_samples": [
+            0.0177
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "tc_type_query",
+          "code": "",
+          "pipeline": "typecheck",
+          "time_s": 0.0197,
+          "time_min_s": 0.0197,
+          "time_samples": [
+            0.0197
+          ],
+          "cpu_s": 0.0188,
+          "cpu_min_s": 0.0188,
+          "cpu_samples": [
+            0.0188
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "wrong_arity",
+          "code": "",
+          "pipeline": "typecheck",
+          "time_s": 0.0182,
+          "time_min_s": 0.0182,
+          "time_samples": [
+            0.0182
+          ],
+          "cpu_s": 0.0178,
+          "cpu_min_s": 0.0178,
+          "cpu_samples": [
+            0.0178
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "ir_add",
+          "code": "",
+          "pipeline": "ir",
+          "time_s": 0.0181,
+          "time_min_s": 0.0181,
+          "time_samples": [
+            0.0181
+          ],
+          "cpu_s": 0.0178,
+          "cpu_min_s": 0.0178,
+          "cpu_samples": [
+            0.0178
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "ir_closure",
+          "code": "",
+          "pipeline": "ir",
+          "time_s": 0.0184,
+          "time_min_s": 0.0184,
+          "time_samples": [
+            0.0184
+          ],
+          "cpu_s": 0.0181,
+          "cpu_min_s": 0.0181,
+          "cpu_samples": [
+            0.0181
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "ir_fact",
+          "code": "",
+          "pipeline": "ir",
+          "time_s": 0.0182,
+          "time_min_s": 0.0182,
+          "time_samples": [
+            0.0182
+          ],
+          "cpu_s": 0.018,
+          "cpu_min_s": 0.018,
+          "cpu_samples": [
+            0.018
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "ir_fib_10",
+          "code": "",
+          "pipeline": "ir",
+          "time_s": 0.0184,
+          "time_min_s": 0.0184,
+          "time_samples": [
+            0.0184
+          ],
+          "cpu_s": 0.0181,
+          "cpu_min_s": 0.0181,
+          "cpu_samples": [
+            0.0181
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "ir_if",
+          "code": "",
+          "pipeline": "ir",
+          "time_s": 0.018,
+          "time_min_s": 0.018,
+          "time_samples": [
+            0.018
+          ],
+          "cpu_s": 0.0178,
+          "cpu_min_s": 0.0178,
+          "cpu_samples": [
+            0.0178
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "ir_lambda",
+          "code": "",
+          "pipeline": "ir",
+          "time_s": 0.0181,
+          "time_min_s": 0.0181,
+          "time_samples": [
+            0.0181
+          ],
+          "cpu_s": 0.0179,
+          "cpu_min_s": 0.0179,
+          "cpu_samples": [
+            0.0179
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "add",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0183,
+          "time_min_s": 0.0183,
+          "time_samples": [
+            0.0183
+          ],
+          "cpu_s": 0.0181,
+          "cpu_min_s": 0.0181,
+          "cpu_samples": [
+            0.0181
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "add_many",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0185,
+          "time_min_s": 0.0185,
+          "time_samples": [
+            0.0185
+          ],
+          "cpu_s": 0.018,
+          "cpu_min_s": 0.018,
+          "cpu_samples": [
+            0.018
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "adt_list_length",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0181,
+          "time_min_s": 0.0181,
+          "time_samples": [
+            0.0181
+          ],
+          "cpu_s": 0.0178,
+          "cpu_min_s": 0.0178,
+          "cpu_samples": [
+            0.0178
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "closure",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0185,
+          "time_min_s": 0.0185,
+          "time_samples": [
+            0.0185
+          ],
+          "cpu_s": 0.0183,
+          "cpu_min_s": 0.0183,
+          "cpu_samples": [
+            0.0183
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "coerce_arith",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0187,
+          "time_min_s": 0.0187,
+          "time_samples": [
+            0.0187
+          ],
+          "cpu_s": 0.0184,
+          "cpu_min_s": 0.0184,
+          "cpu_samples": [
+            0.0184
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "coerce_str_len",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0188,
+          "time_min_s": 0.0188,
+          "time_samples": [
+            0.0188
+          ],
+          "cpu_s": 0.0185,
+          "cpu_min_s": 0.0185,
+          "cpu_samples": [
+            0.0185
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "cons_car",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0185,
+          "time_min_s": 0.0185,
+          "time_samples": [
+            0.0185
+          ],
+          "cpu_s": 0.0183,
+          "cpu_min_s": 0.0183,
+          "cpu_samples": [
+            0.0183
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "cons_cdr",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0185,
+          "time_min_s": 0.0185,
+          "time_samples": [
+            0.0185
+          ],
+          "cpu_s": 0.0184,
+          "cpu_min_s": 0.0184,
+          "cpu_samples": [
+            0.0184
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "div",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0183,
+          "time_min_s": 0.0183,
+          "time_samples": [
+            0.0183
+          ],
+          "cpu_s": 0.0181,
+          "cpu_min_s": 0.0181,
+          "cpu_samples": [
+            0.0181
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "fib_20",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0678,
+          "time_min_s": 0.0678,
+          "time_samples": [
+            0.0678
+          ],
+          "cpu_s": 0.0673,
+          "cpu_min_s": 0.0673,
+          "cpu_samples": [
+            0.0673
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "higher_order",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0176,
+          "time_min_s": 0.0176,
+          "time_samples": [
+            0.0176
+          ],
+          "cpu_s": 0.0174,
+          "cpu_min_s": 0.0174,
+          "cpu_samples": [
+            0.0174
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "if_compare",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0181,
+          "time_min_s": 0.0181,
+          "time_samples": [
+            0.0181
+          ],
+          "cpu_s": 0.0179,
+          "cpu_min_s": 0.0179,
+          "cpu_samples": [
+            0.0179
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "if_false",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0234,
+          "time_min_s": 0.0234,
+          "time_samples": [
+            0.0234
+          ],
+          "cpu_s": 0.023,
+          "cpu_min_s": 0.023,
+          "cpu_samples": [
+            0.023
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "if_true",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0234,
+          "time_min_s": 0.0234,
+          "time_samples": [
+            0.0234
+          ],
+          "cpu_s": 0.0229,
+          "cpu_min_s": 0.0229,
+          "cpu_samples": [
+            0.0229
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "lambda_apply",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0182,
+          "time_min_s": 0.0182,
+          "time_samples": [
+            0.0182
+          ],
+          "cpu_s": 0.0177,
+          "cpu_min_s": 0.0177,
+          "cpu_samples": [
+            0.0177
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "let_add",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0179,
+          "time_min_s": 0.0179,
+          "time_samples": [
+            0.0179
+          ],
+          "cpu_s": 0.0177,
+          "cpu_min_s": 0.0177,
+          "cpu_samples": [
+            0.0177
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "let_simple",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0181,
+          "time_min_s": 0.0181,
+          "time_samples": [
+            0.0181
+          ],
+          "cpu_s": 0.0177,
+          "cpu_min_s": 0.0177,
+          "cpu_samples": [
+            0.0177
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "letrec_fact",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0178,
+          "time_min_s": 0.0178,
+          "time_samples": [
+            0.0178
+          ],
+          "cpu_s": 0.0177,
+          "cpu_min_s": 0.0177,
+          "cpu_samples": [
+            0.0177
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "literal_int",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0233,
+          "time_min_s": 0.0233,
+          "time_samples": [
+            0.0233
+          ],
+          "cpu_s": 0.0231,
+          "cpu_min_s": 0.0231,
+          "cpu_samples": [
+            0.0231
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "literal_neg",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0232,
+          "time_min_s": 0.0232,
+          "time_samples": [
+            0.0232
+          ],
+          "cpu_s": 0.023,
+          "cpu_min_s": 0.023,
+          "cpu_samples": [
+            0.023
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "literal_string",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0187,
+          "time_min_s": 0.0187,
+          "time_samples": [
+            0.0187
+          ],
+          "cpu_s": 0.0183,
+          "cpu_min_s": 0.0183,
+          "cpu_samples": [
+            0.0183
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "mul",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0184,
+          "time_min_s": 0.0184,
+          "time_samples": [
+            0.0184
+          ],
+          "cpu_s": 0.0182,
+          "cpu_min_s": 0.0182,
+          "cpu_samples": [
+            0.0182
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "multi_agent_pipeline",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0655,
+          "time_min_s": 0.0655,
+          "time_samples": [
+            0.0655
+          ],
+          "cpu_s": 0.0648,
+          "cpu_min_s": 0.0648,
+          "cpu_samples": [
+            0.0648
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "nested_arith",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0187,
+          "time_min_s": 0.0187,
+          "time_samples": [
+            0.0187
+          ],
+          "cpu_s": 0.0184,
+          "cpu_min_s": 0.0184,
+          "cpu_samples": [
+            0.0184
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "par_orch_3_agents",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0653,
+          "time_min_s": 0.0653,
+          "time_samples": [
+            0.0653
+          ],
+          "cpu_s": 0.0652,
+          "cpu_min_s": 0.0652,
+          "cpu_samples": [
+            0.0652
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "par_orch_5_agents",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0647,
+          "time_min_s": 0.0647,
+          "time_samples": [
+            0.0647
+          ],
+          "cpu_s": 0.0656,
+          "cpu_min_s": 0.0656,
+          "cpu_samples": [
+            0.0656
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "parallel_intend_small",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0351,
+          "time_min_s": 0.0351,
+          "time_samples": [
+            0.0351
+          ],
+          "cpu_s": 0.0352,
+          "cpu_min_s": 0.0352,
+          "cpu_samples": [
+            0.0352
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "parallel_intend_with_gc",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0346,
+          "time_min_s": 0.0346,
+          "time_samples": [
+            0.0346
+          ],
+          "cpu_s": 0.0347,
+          "cpu_min_s": 0.0347,
+          "cpu_samples": [
+            0.0347
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "query_pattern_simple",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0181,
+          "time_min_s": 0.0181,
+          "time_samples": [
+            0.0181
+          ],
+          "cpu_s": 0.0178,
+          "cpu_min_s": 0.0178,
+          "cpu_samples": [
+            0.0178
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "query_pattern_with_let",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0182,
+          "time_min_s": 0.0182,
+          "time_samples": [
+            0.0182
+          ],
+          "cpu_s": 0.0179,
+          "cpu_min_s": 0.0179,
+          "cpu_samples": [
+            0.0179
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "str_append",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0185,
+          "time_min_s": 0.0185,
+          "time_samples": [
+            0.0185
+          ],
+          "cpu_s": 0.0181,
+          "cpu_min_s": 0.0181,
+          "cpu_samples": [
+            0.0181
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "str_length",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0183,
+          "time_min_s": 0.0183,
+          "time_samples": [
+            0.0183
+          ],
+          "cpu_s": 0.0181,
+          "cpu_min_s": 0.0181,
+          "cpu_samples": [
+            0.0181
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "sub",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0183,
+          "time_min_s": 0.0183,
+          "time_samples": [
+            0.0183
+          ],
+          "cpu_s": 0.0181,
+          "cpu_min_s": 0.0181,
+          "cpu_samples": [
+            0.0181
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "vec_basic",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0181,
+          "time_min_s": 0.0181,
+          "time_samples": [
+            0.0181
+          ],
+          "cpu_s": 0.0179,
+          "cpu_min_s": 0.0179,
+          "cpu_samples": [
+            0.0179
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "vec_ref",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0182,
+          "time_min_s": 0.0182,
+          "time_samples": [
+            0.0182
+          ],
+          "cpu_s": 0.018,
+          "cpu_min_s": 0.018,
+          "cpu_samples": [
+            0.018
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "hot_list_map_2k",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0337,
+          "time_min_s": 0.0337,
+          "time_samples": [
+            0.0337
+          ],
+          "cpu_s": 0.0334,
+          "cpu_min_s": 0.0334,
+          "cpu_samples": [
+            0.0334
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "hot_hash_set_get_2k",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0499,
+          "time_min_s": 0.0499,
+          "time_samples": [
+            0.0499
+          ],
+          "cpu_s": 0.0496,
+          "cpu_min_s": 0.0496,
+          "cpu_samples": [
+            0.0496
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "hot_fiber_spawn_join_200",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0318,
+          "time_min_s": 0.0318,
+          "time_samples": [
+            0.0318
+          ],
+          "cpu_s": 0.0339,
+          "cpu_min_s": 0.0339,
+          "cpu_samples": [
+            0.0339
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "replace_value_one_4320",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.026,
+          "time_min_s": 0.026,
+          "time_samples": [
+            0.026
+          ],
+          "cpu_s": 0.0254,
+          "cpu_min_s": 0.0254,
+          "cpu_samples": [
+            0.0254
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "replace_value_seed_4320",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0275,
+          "time_min_s": 0.0275,
+          "time_samples": [
+            0.0275
+          ],
+          "cpu_s": 0.0272,
+          "cpu_min_s": 0.0272,
+          "cpu_samples": [
+            0.0272
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "replace_batch_six_4320",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0434,
+          "time_min_s": 0.0434,
+          "time_samples": [
+            0.0434
+          ],
+          "cpu_s": 0.0431,
+          "cpu_min_s": 0.0431,
+          "cpu_samples": [
+            0.0431
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "name": "string_ref_walk_4320",
+          "code": "",
+          "pipeline": "eval",
+          "time_s": 0.0271,
+          "time_min_s": 0.0271,
+          "time_samples": [
+            0.0271
+          ],
+          "cpu_s": 0.0266,
+          "cpu_min_s": 0.0266,
+          "cpu_samples": [
+            0.0266
+          ],
+          "output": "",
+          "error": "",
+          "passed": true,
+          "memory_stats": {},
+          "returncode": 0,
+          "timed_out": false,
+          "stdout": "",
+          "stderr": ""
+        }
+      ],
+      "startup_cpu_s": {
+        "eval": 0.0174,
+        "ir": 0.0178,
+        "typecheck": 0.0176
+      }
     }
-  ]
+  }
 }

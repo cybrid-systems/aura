@@ -243,6 +243,39 @@ class BenchmarkGate1936(unittest.TestCase):
         self.assertTrue(hit.catastrophic)
         self.assertEqual(hit.metric, "cpu")
 
+    def test_platform_baseline_roundtrip(self) -> None:
+        # CPU-seconds differ 2.9x between the arm64 dev image and the x86 CI
+        # runner, so each platform keeps its own slot in the baseline file.
+        m = self.m
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "baseline.json"
+            old_file, old_tag = m.BASELINE_FILE, m.platform_tag
+            m.BASELINE_FILE = path
+            m.platform_tag = lambda: "linux-x86_64"
+            try:
+                suite = self._suite([{"name": "x", "time_s": 0.02, "time_min_s": 0.02, "cpu_min_s": 0.018}])
+                m.save_baseline(suite)
+                back = m.load_baseline()
+                self.assertEqual(len(back.cases), 1)
+                self.assertAlmostEqual(back.cases[0]["cpu_min_s"], 0.018)
+                m.platform_tag = lambda: "linux-aarch64"
+                self.assertEqual(m.load_baseline().cases, [], "other platform must not borrow numbers")
+                self.assertIn("linux-x86_64", m.baseline_platforms())
+            finally:
+                m.BASELINE_FILE, m.platform_tag = old_file, old_tag
+
+    def test_missing_platform_baseline_fails_strict(self) -> None:
+        m = self.m
+        original = m.load_baseline
+        m.load_baseline = lambda: m.BenchSuiteResult()  # type: ignore[method-assign]
+        try:
+            rc = m.check_regression(self._suite([{"name": "x", "time_s": 0.01}]), strict=True)
+            self.assertFalse(rc, "strict mode must not pass without a baseline for this class")
+        finally:
+            m.load_baseline = original  # type: ignore[method-assign]
+
     def test_gate_falls_back_to_wall_without_cpu_column(self) -> None:
         # Pre-CPU baselines keep the old behaviour instead of silently passing.
         base = self._suite([{"name": "x", "time_s": 0.0112, "time_min_s": 0.0112}])
