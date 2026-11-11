@@ -74,8 +74,12 @@ class ForkEvoLog(unittest.TestCase):
             self.assertNotIn("scope", live[0])
             broken = next(x for x in rebinds if x["decision"] == "ROLLBACK")
             self.assertEqual(broken["scope"], "fork")
-            # The later live KEEP parents the previous live KEEP, not the fork.
-            self.assertEqual(live[1]["parent"], live[0]["id"])
+            # Issue #5139: a mutate:rebind KEEP is not a worldline tip, so
+            # the later live rebind does not chain off the earlier rebind
+            # or the fork. Both live rows share the record tip, which this
+            # program never writes.
+            self.assertEqual(live[0]["parent"], "")
+            self.assertEqual(live[1]["parent"], "")
             self.assertNotEqual(live[1]["parent"], forks[0]["id"])
 
 

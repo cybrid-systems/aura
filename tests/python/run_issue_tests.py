@@ -435,6 +435,11 @@ def _eff_timeout(bin_name: str, timeout: int) -> int:
     # *4 (240s) killed the suite while later members were still passing.
     if bin_name == "test_orch_agent_batch":
         return timeout * 10  # 600s
+    # Idle run is ~246s and still passing when *4 (240s) fires, both in
+    # the loaded shard (during #4350/#4474) and alone (exits 0 just past
+    # the cap, 283 passed). *10 matches the other very-heavy bins.
+    if bin_name == "test_pmr_alloc_fiber_safe":
+        return timeout * 10  # 600s
     # #4791 added 20 simultaneous-spawn rounds x 200k churn mints on top of
     # the 10 sibling rounds; at jobs=4 on a loaded runner even the serial
     # re-run blew the 240s cap (0 lines printed before the kill).

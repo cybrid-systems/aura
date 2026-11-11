@@ -1269,14 +1269,10 @@ void RegSplitParts::register_ast_introspection_primitives(PrimRegistrar add, Eva
 // orchestrator; the phases themselves live in the ast_restore_* helpers.
 void RegSplitParts::register_ast_restore_primitive(PrimRegistrar add_in, Evaluator& ev,
                                                    std::function<void()> destroy_defuse_index) {
-    // Issue #4936: this function rebinds the registrar around ast:restore
-    // (#4910) and then restores it. std::function_ref assignment from a
-    // lambda is deleted, and a rebound reference would not own the wrapper.
-    // `add` is therefore an owning std::function for this body only. It
-    // type-erases a copy of add_in; that copy is used before this function
-    // returns and is not stored on Evaluator. The caller's registrar still
-    // owns the original callback.
-    std::function<void(std::string, PrimFn)> add(add_in);
+    // The body is installed with add_hidden, not through add_in. The
+    // registrar stays the caller's (#4936: do not rebind a function_ref
+    // onto itself).
+    (void)add_in;
 
     // (mutate :restore id)
     //   → true on success
@@ -1294,19 +1290,15 @@ void RegSplitParts::register_ast_restore_primitive(PrimRegistrar add_in, Evaluat
     // We try the direct path first; on failure (e.g. workspace
     // pool/flat is null, which shouldn't happen but be defensive)
     // we fall through to the source path.
-    // Issue #4910: temporarily route `add` through the evolution-log wrap so the
-    // registration stays a literal ev.primitives().add_hidden("mw:restore", …)
-    // so the surface scanners can see that the body is dispatch-only (#5142).
-    // #4936 follow-up: this must be an OWNING copy. PrimRegistrar is a
-    // std::function_ref; copying it would point back at `add`, and after the
-    // reassignment below that reference resolves to the wrapper itself —
-    // infinite recursion at startup (mutate :restore registration).
-    const std::function<void(std::string, PrimFn)> add_plain_4910 = add;
-    add = [add_plain_4910](std::string n, PrimFn f) {
-        add_plain_4910(std::move(n), PrimFn(evo_wrap_restore_4910(std::move(f))));
-    };
+    // Issue #4910: the evolution-log wrap has to be the function add_hidden
+    // installs. Rebinding `add` and then calling add_hidden directly skipped
+    // the wrap, so (mutate :restore) never appended mw:restore. The call
+    // stays a literal add_hidden("mw:restore" for the dispatch-only scanners
+    // (#5142). Do not route this through a function_ref that aliases itself
+    // (#4936: that recurses at startup).
     ev.primitives().add_hidden(
-        "mw:restore", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
+        "mw:restore", PrimFn(evo_wrap_restore_4910([&ev, destroy_defuse_index](
+                                                       std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_int(a[0]))
                 return make_bool(false);
             auto id = static_cast<std::size_t>(as_int(a[0]));
@@ -1403,8 +1395,7 @@ void RegSplitParts::register_ast_restore_primitive(PrimRegistrar add_in, Evaluat
             // unique_lock inside set-code; we must not be holding ours
             // (we released above by scope).
             return RegSplitParts::ast_restore_source_fallback(ev, state.id);
-        });
-    add = add_plain_4910; // Issue #4910: restore the plain registrar
+        })));
 }
 
 // Issue #5032: ast:diff (workspace source vs snapshot, #2918).

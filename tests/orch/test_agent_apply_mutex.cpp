@@ -380,10 +380,11 @@ int run_test_agent_apply_mutex() {
         // Self-calibrated concurrency proof. A fixed wall gate cannot tell a
         // parallel pair from a serialized one when interpreter speed varies
         // across runners: one 4M-iteration body is already >1.8 s on an idle
-        // box, so the old 1800 ms / 2000 ms join constants failed on any
-        // slower or loaded runner even though the pair really overlapped.
-        // Measure one body here, then require the pair to finish in well
-        // under two serialized bodies.
+        // box (about 50 s through orch:spawn-agent here), so a fixed join
+        // timeout expires inside a parallel pair and the join reports not-ok.
+        // Measure one body here. Each pair join waits 1.5x that long, the
+        // same bound as the wall check: a parallel pair finishes, a
+        // serialized pair (about 2x) still fails the wall check.
         const auto solo_t0 = std::chrono::steady_clock::now();
         auto solo = cs.eval(R"(
             (begin
@@ -397,19 +398,21 @@ int run_test_agent_apply_mutex() {
                                  std::chrono::steady_clock::now() - solo_t0)
                                  .count();
         CHECK(solo && is_int(*solo) && as_int(*solo) == 1, "3728 AC1: solo agent baseline");
+        std::println("  3728 AC1 solo={}ms", solo_ms);
+        const auto join_ms = std::max<std::int64_t>(solo_ms * 3 / 2, 1000);
         const auto t0 = std::chrono::steady_clock::now();
-        auto sp = cs.eval(R"(
-            (begin
-              (orch:spawn-agent "a-3728-sp"
-                (lambda () (let loop ((i 0)) (if (< i 4000000) (loop (+ i 1)) i)))
-                :region-key 31)
-              (orch:spawn-agent "b-3728-sp"
-                (lambda () (let loop ((i 0)) (if (< i 4000000) (loop (+ i 1)) i)))
-                :region-key 32)
-              (let ((ja (orch:agent-join "a-3728-sp" :timeout-ms 30000))
-                    (jb (orch:agent-join "b-3728-sp" :timeout-ms 30000)))
-                (if (and (hash-ref ja "ok") (hash-ref jb "ok")) 1 0)))
-        )");
+        auto sp = cs.eval(
+            std::format("(begin"
+                        " (orch:spawn-agent \"a-3728-sp\""
+                        "  (lambda () (let loop ((i 0)) (if (< i 4000000) (loop (+ i 1)) i)))"
+                        "  :region-key 31)"
+                        " (orch:spawn-agent \"b-3728-sp\""
+                        "  (lambda () (let loop ((i 0)) (if (< i 4000000) (loop (+ i 1)) i)))"
+                        "  :region-key 32)"
+                        " (let ((ja (orch:agent-join \"a-3728-sp\" :timeout-ms {}))"
+                        "       (jb (orch:agent-join \"b-3728-sp\" :timeout-ms {})))"
+                        "   (if (and (hash-ref ja \"ok\") (hash-ref jb \"ok\")) 1 0)))",
+                        join_ms, join_ms));
         const auto wall_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::steady_clock::now() - t0)
                                  .count();
