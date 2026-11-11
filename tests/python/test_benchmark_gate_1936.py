@@ -194,7 +194,7 @@ class BenchmarkGate1936(unittest.TestCase):
         original = m.run_aura
 
         def stub(code, args=None, env=None):
-            return ("42", "", 0.001, 1, False)
+            return ("42", "", 0.001, 1, False, 0.0008)
 
         m.run_aura = stub  # type: ignore[method-assign]
         try:
@@ -209,6 +209,49 @@ class BenchmarkGate1936(unittest.TestCase):
                 self.assertFalse(m.check_eval_result(bench, result))
         finally:
             m.run_aura = original  # type: ignore[method-assign]
+
+    # ── #1936 follow-up: gate on child CPU, not contended wall time ──
+
+    def _suite(self, cases: list[dict]) -> object:
+        return self.m.BenchSuiteResult(
+            timestamp="t",
+            total_cases=len(cases),
+            passed=len(cases),
+            failed=0,
+            total_time_s=0.0,
+            cases=cases,
+        )
+
+    def test_gate_ignores_wall_inflation_when_cpu_is_flat(self) -> None:
+        # Shared runner: 11.2 ms case reads 35.1 ms wall but did the same work.
+        base = self._suite([{"name": "x", "time_s": 0.0112, "time_min_s": 0.0112, "cpu_min_s": 0.0082}])
+        cur = self._suite([{"name": "x", "time_s": 0.0351, "time_min_s": 0.0351, "cpu_min_s": 0.0084}])
+        regressions, _ = self.m.collect_regressions(
+            cur, base, tolerance_percent=20.0, min_delta_s=0.020, use_meta=False
+        )
+        self.assertEqual(regressions, [], "wall 3x with flat CPU must not fail the SLO gate")
+
+    def test_gate_still_fails_on_cpu_regression(self) -> None:
+        # Same wall time, 4x the CPU: the body really got slower.
+        base = self._suite([{"name": "x", "time_s": 0.0112, "time_min_s": 0.0112, "cpu_min_s": 0.0082}])
+        cur = self._suite([{"name": "x", "time_s": 0.0114, "time_min_s": 0.0114, "cpu_min_s": 0.0401}])
+        regressions, _ = self.m.collect_regressions(
+            cur, base, tolerance_percent=20.0, min_delta_s=0.020, use_meta=False
+        )
+        self.assertEqual(len(regressions), 1)
+        hit = regressions[0]
+        self.assertTrue(hit.catastrophic)
+        self.assertEqual(hit.metric, "cpu")
+
+    def test_gate_falls_back_to_wall_without_cpu_column(self) -> None:
+        # Pre-CPU baselines keep the old behaviour instead of silently passing.
+        base = self._suite([{"name": "x", "time_s": 0.0112, "time_min_s": 0.0112}])
+        cur = self._suite([{"name": "x", "time_s": 0.0351, "time_min_s": 0.0351}])
+        regressions, _ = self.m.collect_regressions(
+            cur, base, tolerance_percent=20.0, min_delta_s=0.020, use_meta=False
+        )
+        self.assertEqual(len(regressions), 1)
+        self.assertEqual(regressions[0].metric, "wall")
 
 
 if __name__ == "__main__":
