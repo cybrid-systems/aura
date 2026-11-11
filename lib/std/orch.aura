@@ -66,6 +66,20 @@
 
 (define (orch:registry-epoch) *orch-epoch*)
 
+; ── Failure contract (Issue #5134) ───────────────────────────────
+; Two different answers, deliberately distinguishable:
+;   absence    — an unknown name answers #f from orch:status, orch:handle,
+;                orch:stop, orch:join and orch:send. The question was about a
+;                name this process never registered; nothing failed.
+;   failure    — an operation that could not be performed answers a record
+;                with a status and an error key: orch:ask on an unknown target
+;                is {status:"send-failed", error:"unknown-agent", name:…}, and
+;                on a stopped one {status:"agent-stopped", error:"agent-stopped",
+;                name:…}. A caller reads (hash-ref r "error" #f) rather than
+;                testing truthiness.
+; Anything else here keeps the value it computed; no public form answers #f to
+; mean "it broke".
+
 ; ── orch:metrics — scheduler metrics (Issue #32, migrated by #5131) ──
 ; The counters belong to the scheduler, so the values still come from the
 ; stats surface; this is the Aura home for the name. Outside serve-async
@@ -234,14 +248,16 @@
       #f)))
 
 ; ── orch:ask — send one task, wait for its result ──
-; A stopped local agent is refused with ("agent-stopped" name) (#3960).
+; A stopped local agent is refused with a record: {status:"agent-stopped",
+; error:"agent-stopped", name:…} (#3960, shape per #5134).
 (define (orch:ask target input . timeout-args)
   (let ((h (orch:handle-of target)))
     (cond
       ((and (hash? h) (orch-channel? (hash-ref h "inbox" #f)))
        (if (let ((st (orch:status target)))
              (and (string? st) (string=? st "stopped")))
-         (list "agent-stopped" target)
+         ; Issue #5134: a failure is a queryable record, not a bare value.
+         (hash "status" "agent-stopped" "error" "agent-stopped" "name" target)
          (begin
            (orch:send target input)
            (orch:recv target))))
@@ -256,7 +272,7 @@
                                               "s waiting for " target))
                (let ((reply (try (recv 1) (catch (e) #f))))
                  (if reply reply (loop (+ elapsed 1))))))
-           (list "send-failed" target))))
+           (hash "status" "send-failed" "error" "unknown-agent" "name" target))))
       (else (list "unknown-agent" target)))))
 
 ;; ═══════════════════════════════════════════════════════════════
