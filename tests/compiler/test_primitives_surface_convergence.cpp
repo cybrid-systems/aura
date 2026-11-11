@@ -78,7 +78,7 @@ void ac2_dispatch_bumps_counter() {
         return;
 
     // mutate:rebind is still a public deprecated alias (not in #2628 list).
-    auto r = cs.eval("(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"t\")");
+    auto r = cs.eval("(mutate :rebind \"f\" \"(lambda (x) (* x 2))\" \"t\")");
     CHECK(r.has_value(), "mutate:rebind still executes");
 
     const auto after = ev.deprecated_prim_dispatch_total();

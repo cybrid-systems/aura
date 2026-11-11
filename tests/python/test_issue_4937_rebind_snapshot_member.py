@@ -33,9 +33,9 @@ from _aura_harness import AURA_BIN  # noqa: E402
 # The issue's program. `nope` is not in the workspace; its body calls member.
 REPRO = r"""
 (set-code "(define (params) (list 1 2))\n")
-(mutate:rebind "nope" "(lambda (xs r) (member r xs))" "x")
+(mutate :rebind "nope" "(lambda (xs r) (member r xs))" "x")
 (define snap (mutate :snapshot "s1"))
-(mutate:rebind "params" "(lambda () (list 3 4))" "step")
+(mutate :rebind "params" "(lambda () (list 3 4))" "step")
 (mutate :restore snap)
 (eval-current)
 (display (params))
@@ -45,10 +45,10 @@ REPRO = r"""
 # Add path: missing name returns #t, the define runs, and restore keeps it.
 ADD = r"""
 (set-code "(define (params) (list 1 2))\n")
-(display (list "add" (mutate:rebind "nope" "(lambda (xs r) (member r xs))" "x")))
+(display (list "add" (mutate :rebind "nope" "(lambda (xs r) (member r xs))" "x")))
 (newline)
 (define snap (mutate :snapshot "s1"))
-(mutate:rebind "params" "(lambda () (list 3 4))" "step")
+(mutate :rebind "params" "(lambda () (list 3 4))" "step")
 (display (list "restore" (mutate :restore snap)))
 (newline)
 (eval-current)
@@ -61,9 +61,9 @@ ADD = r"""
 # Existing name, body calls member. Same snapshot/restore shape.
 EXISTING = r"""
 (set-code "(define (params) (list 1 2))\n(define (has? xs r) (car xs))\n")
-(mutate:rebind "has?" "(lambda (xs r) (member r xs))" "x")
+(mutate :rebind "has?" "(lambda (xs r) (member r xs))" "x")
 (define snap (mutate :snapshot "s1"))
-(mutate:rebind "params" "(lambda () (list 3 4))" "step")
+(mutate :rebind "params" "(lambda () (list 3 4))" "step")
 (mutate :restore snap)
 (eval-current)
 (display (params))
@@ -78,7 +78,7 @@ EXISTING = r"""
 ROLLBACK = r"""
 (set-code "(define (params) (list 1 2))\n")
 (eval-current)
-(display (mutate:rebind "params" "(+ 1 \"x\")" "x"))
+(display (mutate :rebind "params" "(+ 1 \"x\")" "x"))
 (newline)
 (eval-current)
 (display (params))

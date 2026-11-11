@@ -25,13 +25,13 @@ from _aura_harness import AURA_BIN  # noqa: E402
 PROG = """
 (set-code "(define (score x) (* x 2))")
 (eval-current)
-(mutate:rebind "score" "(lambda (x) (* x 3))" "live")
+(mutate :rebind "score" "(lambda (x) (* x 3))" "live")
 (define child (workspace :create "trial"))
 (workspace :switch child)
-(mutate:rebind "score" "(lambda (x) (* x 9))" "fork")
-(mutate:rebind "score" "(lambda (x)" "broken-fork")
+(mutate :rebind "score" "(lambda (x) (* x 9))" "fork")
+(mutate :rebind "score" "(lambda (x)" "broken-fork")
 (workspace :switch 0)
-(mutate:rebind "score" "(lambda (x) (* x 4))" "live-again")
+(mutate :rebind "score" "(lambda (x) (* x 4))" "live-again")
 (display "done")
 (newline)
 """

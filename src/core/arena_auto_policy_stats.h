@@ -193,7 +193,7 @@ enum class AutoCompactMode : std::uint8_t {
 };
 inline std::atomic<std::uint8_t> g_auto_compact_mode{
     static_cast<std::uint8_t>(AutoCompactMode::Balanced)};
-// Pending AI multi-round mutation pressure (mutate:rebind / atomic-batch).
+// Pending AI multi-round mutation pressure (mutate :rebind / atomic-batch).
 inline std::atomic<bool> mutation_pressure_pending{false};
 inline std::atomic<std::uint64_t> mutation_pressure_signal_total{0};
 // JIT deopt pressure (recent compact-linked or general deopt storms).

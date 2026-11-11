@@ -84,7 +84,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC4: mutate bumps defuse epoch ---");
     const auto stats4a = defuse_version_stats(cs);
     const auto ver4a = ev.current_defuse_version();
-    (void)cs.eval("(mutate:rebind \"base\" \"99\")");
+    (void)cs.eval("(mutate :rebind \"base\" \"99\")");
     const auto ver4b = ev.current_defuse_version();
     const auto stats4b = defuse_version_stats(cs);
     std::println("  defuse version: {} -> {}", ver4a, ver4b);
@@ -101,7 +101,7 @@ static void run_matrix(CompilerService& cs) {
     const auto stats6a = defuse_version_stats(cs);
     const auto ver6a = ev.current_defuse_version();
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
+        (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats6b = defuse_version_stats(cs);

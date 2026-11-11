@@ -207,7 +207,7 @@ static void run_610_post_mutate_validation_runtime() {
     {
         std::println("\n--- AC4: post-mutate revalidate on linear mutate → stats grow ---");
         const auto stats4a = linear_mutation_stats(cs);
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 88))) (display x)))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda () (let ((x (Linear 88))) (display x)))\" "
                       "\"issue-610-leak\")");
         auto* ws = cs.evaluator().workspace_flat();
         auto* ws_pool = cs.evaluator().workspace_pool();
@@ -250,7 +250,7 @@ static void run_610_post_mutate_validation_runtime() {
         for (int round = 0; round < 3; ++round) {
             const std::string body =
                 "(lambda () (let ((x (Linear " + std::to_string(round + 10) + "))) (move x)))";
-            (void)cs.eval("(mutate:rebind \"f\" \"" + body + "\" \"r" + std::to_string(round) +
+            (void)cs.eval("(mutate :rebind \"f\" \"" + body + "\" \"r" + std::to_string(round) +
                           "\")");
             auto r = cs.eval("(f)");
             CHECK(r.has_value(), "f eval ok round " + std::to_string(round));
@@ -263,7 +263,7 @@ static void run_610_post_mutate_validation_runtime() {
     // AC8: gc-heap + linear mutation integration
     {
         std::println("\n--- AC8: gc-heap + linear mutation integration ---");
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 7))) (move x)))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda () (let ((x (Linear 7))) (move x)))\" "
                       "\"issue-610-gc\")");
         auto gc = cs.eval("(gc-heap)");
         CHECK(gc.has_value(), "(gc-heap) callable after linear mutate");
@@ -305,7 +305,7 @@ static void run_638_guardshape_post_mutate() {
     {
         std::println("\n--- AC4: mutate + eval linear → safety stats monotonic ---");
         const auto stats4a = linear_safety_stats(cs);
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 88))) (display x)))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda () (let ((x (Linear 88))) (display x)))\" "
                       "\"issue-638-leak\")");
         auto* ws = cs.evaluator().workspace_flat();
         auto* ws_pool = cs.evaluator().workspace_pool();
@@ -340,7 +340,7 @@ static void run_638_guardshape_post_mutate() {
         for (int round = 0; round < 3; ++round) {
             const std::string body =
                 "(lambda () (let ((x (Linear " + std::to_string(round + 10) + "))) (move x)))";
-            (void)cs.eval("(mutate:rebind \"f\" \"" + body + "\" \"r" + std::to_string(round) +
+            (void)cs.eval("(mutate :rebind \"f\" \"" + body + "\" \"r" + std::to_string(round) +
                           "\")");
             auto r = cs.eval("(f)");
             CHECK(r.has_value(), "f eval ok round " + std::to_string(round));
@@ -396,7 +396,7 @@ static void run_598_runtime_enforcement_post_mutate() {
             m ? m->linear_deopt_on_invalidate_total.load(std::memory_order_relaxed) : 0;
         const auto enforce0 =
             m ? m->linear_post_mutate_enforcements_total.load(std::memory_order_relaxed) : 0;
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 99))) (move x)))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda () (let ((x (Linear 99))) (move x)))\" "
                       "\"issue-598-invalidate\")");
         const auto deopt1 =
             m ? m->linear_deopt_on_invalidate_total.load(std::memory_order_relaxed) : 0;
@@ -417,7 +417,7 @@ static void run_598_runtime_enforcement_post_mutate() {
     // AC5: gc-heap + linear mutate integration
     {
         std::println("\n--- AC5: gc-heap + linear mutate integration ---");
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 7))) (move x)))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda () (let ((x (Linear 7))) (move x)))\" "
                       "\"issue-598-gc\")");
         auto gc = cs.eval("(gc-heap)");
         CHECK(gc.has_value(), "(gc-heap) callable after linear mutate");
@@ -430,7 +430,7 @@ static void run_598_runtime_enforcement_post_mutate() {
         for (int round = 0; round < 3; ++round) {
             const std::string body =
                 "(lambda () (let ((x (Linear " + std::to_string(round + 20) + "))) (move x)))";
-            (void)cs.eval("(mutate:rebind \"f\" \"" + body + "\" \"r" + std::to_string(round) +
+            (void)cs.eval("(mutate :rebind \"f\" \"" + body + "\" \"r" + std::to_string(round) +
                           "\")");
             auto r = cs.eval("(f)");
             CHECK(r.has_value(), "f eval ok round " + std::to_string(round));
@@ -487,7 +487,7 @@ static void run_575_incremental_post_mutate() {
     {
         std::println("\n--- AC4: linear mutate → stats monotonic ---");
         const auto stats4a = linear_incremental_stats(cs);
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 88))) (display x)))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda () (let ((x (Linear 88))) (display x)))\" "
                       "\"issue-575-leak\")");
         auto* ws = cs.evaluator().workspace_flat();
         auto* ws_pool = cs.evaluator().workspace_pool();
@@ -509,7 +509,7 @@ static void run_575_incremental_post_mutate() {
     {
         std::println("\n--- AC5: per_defuse_index counters after mutate ---");
         auto* ws = cs.evaluator().workspace_flat();
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 55))) (move x)))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda () (let ((x (Linear 55))) (move x)))\" "
                       "\"issue-575-pdu\")");
         if (ws && !ws->all_mutations().empty())
             (void)cs.incremental_infer(ws->all_mutations().back());
@@ -549,7 +549,7 @@ static void run_575_incremental_post_mutate() {
         for (int round = 0; round < 3; ++round) {
             const std::string body =
                 "(lambda () (let ((x (Linear " + std::to_string(round + 15) + "))) (move x)))";
-            (void)cs.eval("(mutate:rebind \"f\" \"" + body + "\" \"r" + std::to_string(round) +
+            (void)cs.eval("(mutate :rebind \"f\" \"" + body + "\" \"r" + std::to_string(round) +
                           "\")");
             auto r = cs.eval("(f)");
             CHECK(r.has_value(), "f eval ok round " + std::to_string(round));
@@ -915,7 +915,7 @@ static void run_1659_mutation_safety() {
             if ((i % 7) == 0)
                 (void)make_linear_closure(ev, (i % 2) == 0 ? kMoved : kOwned);
             (void)cs.eval(std::format(
-                "(mutate:rebind \"f\" \"(lambda (x) (+ x {}))\" \"issue1659\")", i % 5));
+                "(mutate :rebind \"f\" \"(lambda (x) (+ x {}))\" \"issue1659\")", i % 5));
             (void)cs.eval("(eval-current)");
             if ((i % 11) == 0) {
                 (void)ev.enforce_linear_boundary_consistency(
@@ -1007,7 +1007,7 @@ static void run_1458_linear_ownership_post_mutate_smoke() {
     const auto prev = m->linear_ownership_violation_prevented.load(std::memory_order_relaxed);
     CHECK(cs.eval("(set-code \"(define (id x) x)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
-    (void)cs.eval("(mutate:rebind \"id\" \"(lambda (x) x)\" \"#1458\")");
+    (void)cs.eval("(mutate :rebind \"id\" \"(lambda (x) x)\" \"#1458\")");
     CHECK(m->linear_ownership_violation_prevented.load(std::memory_order_relaxed) >= prev,
           "violation_prevented non-decreasing");
     auto r = cs.eval("(id 7)");
@@ -1025,7 +1025,7 @@ static void run_1535_linear_dual_epoch_fence_smoke() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
     auto r = cs.eval("(mv 3)");
     CHECK(r && is_int(*r) && as_int(*r) == 3, "(mv 3)==3");
-    (void)cs.eval("(mutate:rebind \"mv\" \"(lambda (x) (+ x 1))\" \"#1535\")");
+    (void)cs.eval("(mutate :rebind \"mv\" \"(lambda (x) (+ x 1))\" \"#1535\")");
     auto r2 = cs.eval("(mv 3)");
     CHECK(r2 && is_int(*r2), "(mv 3) still int after rebind");
     CHECK(m->jit_epoch_stale_check_total.load(std::memory_order_relaxed) >= stale0,

@@ -79,7 +79,7 @@ static void run_matrix(CompilerService& cs) {
     const auto impact0 = bridge_hash(cs, "impact-blocks-on-bridge");
     const auto quote0 = bridge_hash(cs, "quote-lambda-stale-prevented");
     const auto impact_calls0 = cs.evaluator().get_impact_scope_calls();
-    (void)cs.eval("(mutate:rebind \"mk-adder\""
+    (void)cs.eval("(mutate :rebind \"mk-adder\""
                   " \"(lambda (n) (lambda (x) (+ x n)))\""
                   "\"issue741\")");
     (void)cs.eval("(eval-current)");
@@ -118,7 +118,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC4: env-version-resync on mutate path ---");
     const auto env0 = bridge_hash(cs, "env-version-resync");
-    (void)cs.eval("(mutate:rebind \"qbody\" \"(quote (+ 2 3))\" \"issue741-q\")");
+    (void)cs.eval("(mutate :rebind \"qbody\" \"(quote (+ 2 3))\" \"issue741-q\")");
     (void)cs.eval("(eval-current)");
     const auto env1 = bridge_hash(cs, "env-version-resync");
     std::println("  env-version-resync: {} -> {}", env0, env1);
@@ -126,7 +126,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC5: quote-lambda-stale-prevented on second mutate ---");
     const auto quote_before = bridge_hash(cs, "quote-lambda-stale-prevented");
-    (void)cs.eval("(mutate:rebind \"mk-adder\""
+    (void)cs.eval("(mutate :rebind \"mk-adder\""
                   " \"(lambda (n) (lambda (x) (* x n)))\""
                   "\"issue741-v2\")");
     (void)cs.eval("(eval-current)");
@@ -136,7 +136,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: multi-round mutate stats monotonic ---");
     const auto stats6a = stats_sum(cs);
     for (int round = 0; round < 2; ++round) {
-        (void)cs.eval("(mutate:rebind \"mk-adder\""
+        (void)cs.eval("(mutate :rebind \"mk-adder\""
                       " \"(lambda (n) (lambda (x) (+ x n)))\""
                       "\"issue741-round\")");
         (void)cs.eval("(eval-current)");

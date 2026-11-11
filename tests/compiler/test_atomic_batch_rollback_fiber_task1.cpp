@@ -5,16 +5,16 @@
 //
 // Non-duplicative refinement of #529 focused on Task1 EDSL
 // primitives + Guard/fiber paths. This binary exercises the
-// existing (mutate:atomic-batch) primitive + the
+// existing (mutate :atomic-batch) primitive + the
 // atomic_batch_commits_/rollbacks_/bumps_saved_
 // observability + the full matrix the Task 1 review flagged:
 //
 //   - AC1: query:mutation-log-stats returns integer sum of
 //          4 atomic-batch + mutation-log counters
 //   - AC2: query:atomic-batch-stats regression (#459)
-//   - AC3: (mutate:atomic-batch) happy path — commits bumps
+//   - AC3: (mutate :atomic-batch) happy path — commits bumps
 //          generation_ exactly once (single-bump optimization)
-//   - AC4: (mutate:atomic-batch) rollback path — bumps_saved
+//   - AC4: (mutate :atomic-batch) rollback path — bumps_saved
 //          + rollbacks grow
 //   - AC5: 100-iter atomic batch stress — commits grow
 //          monotonically
@@ -82,9 +82,9 @@ bool test_query_atomic_batch_stats_regression() {
     return true;
 }
 
-// ── AC3: (mutate:atomic-batch) happy path — single bump
+// ── AC3: (mutate :atomic-batch) happy path — single bump
 bool test_atomic_batch_happy_path_single_bump() {
-    std::println("\n--- AC3: (mutate:atomic-batch) happy path — single bump ---");
+    std::println("\n--- AC3: (mutate :atomic-batch) happy path — single bump ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
@@ -102,10 +102,10 @@ bool test_atomic_batch_happy_path_single_bump() {
     const auto batch_count0 = cs.evaluator().atomic_batch_count();
     const auto bumps_saved0 = cs.evaluator().atomic_batch_bumps_saved_total();
     const auto g0 = ws->generation();
-    auto r = cs.eval("(mutate:atomic-batch "
+    auto r = cs.eval("(mutate :atomic-batch "
                      "(list) "
                      "\"test happy path\")");
-    CHECK(r.has_value(), "(mutate:atomic-batch) returns");
+    CHECK(r.has_value(), "(mutate :atomic-batch) returns");
     const auto batch_count1 = cs.evaluator().atomic_batch_count();
     const auto bumps_saved1 = cs.evaluator().atomic_batch_bumps_saved_total();
     const auto g1 = ws->generation();
@@ -116,10 +116,10 @@ bool test_atomic_batch_happy_path_single_bump() {
     return true;
 }
 
-// ── AC4: (mutate:atomic-batch) rollback path
+// ── AC4: (mutate :atomic-batch) rollback path
 //         — bumps_saved + rollbacks grow
 bool test_atomic_batch_rollback_path() {
-    std::println("\n--- AC4: (mutate:atomic-batch) rollback path ---");
+    std::println("\n--- AC4: (mutate :atomic-batch) rollback path ---");
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
@@ -133,12 +133,12 @@ bool test_atomic_batch_rollback_path() {
     // argument. The first mutate fails, the whole batch
     // rolls back. Even if the exact failure path differs,
     // we expect atomic_batch_rollbacks to be reachable.
-    auto r = cs.eval("(mutate:atomic-batch "
+    auto r = cs.eval("(mutate :atomic-batch "
                      "(list "
-                     "(mutate:replace-value 999 \"bad node id\") "
+                     "(mutate :replace-value 999 \"bad node id\") "
                      ") "
                      "\"test rollback path\")");
-    CHECK(r.has_value() || !r.has_value(), "(mutate:atomic-batch) returns (success or error)");
+    CHECK(r.has_value() || !r.has_value(), "(mutate :atomic-batch) returns (success or error)");
     const auto rollbacks1 = cs.evaluator().atomic_batch_rollbacks();
     std::println("  rollbacks: {} -> {}", rollbacks0, rollbacks1);
     CHECK(rollbacks1 >= rollbacks0, "atomic_batch_rollbacks observable + monotonic");
@@ -160,7 +160,7 @@ bool test_atomic_batch_stress() {
     const auto g0 = ws->generation();
     for (int i = 0; i < k_stress_iters(); ++i) {
         // Minimal atomic batch: empty op list (vacuous success).
-        std::string code = std::string("(mutate:atomic-batch "
+        std::string code = std::string("(mutate :atomic-batch "
                                        "(list) \"stress iter ") +
                            std::to_string(i) + "\")";
         (void)cs.eval(code);
@@ -191,7 +191,7 @@ bool test_concurrent_atomic_batches() {
             // Vacuous atomic batch — no actual mutations,
             // just exercises the Aura primitive path under
             // concurrent load.
-            std::string code = std::string("(mutate:atomic-batch "
+            std::string code = std::string("(mutate :atomic-batch "
                                            "(list) \"concurrent ") +
                                std::to_string(tid * 100 + i) + "\")";
             (void)cs.eval(code);
@@ -219,8 +219,8 @@ bool test_gc_heap_with_atomic_batch() {
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
-    (void)cs.eval("(mutate:atomic-batch "
-                  "(list (mutate:replace-value (define a 99) "
+    (void)cs.eval("(mutate :atomic-batch "
+                  "(list (mutate :replace-value (define a 99) "
                   "(define a 99))) \"gc test\")");
     auto r = cs.eval("(gc-heap)");
     CHECK(r.has_value(), "(gc-heap) callable after atomic batch");
@@ -235,14 +235,14 @@ bool test_mutation_log_stats_accessibility() {
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
     // Run a batch + read stats + run another batch + read again.
-    (void)cs.eval("(mutate:atomic-batch "
-                  "(list (mutate:replace-value (define a 50) "
+    (void)cs.eval("(mutate :atomic-batch "
+                  "(list (mutate :replace-value (define a 50) "
                   "(define a 50))) \"first batch\")");
     auto r1 = cs.eval("(engine:metrics \"query:mutation-log-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "query:mutation-log-stats after first batch");
-    (void)cs.eval("(mutate:atomic-batch "
-                  "(list (mutate:replace-value (define a 100) "
+    (void)cs.eval("(mutate :atomic-batch "
+                  "(list (mutate :replace-value (define a 100) "
                   "(define a 100))) \"second batch\")");
     auto r2 = cs.eval("(engine:metrics \"query:mutation-log-stats\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
@@ -288,7 +288,7 @@ int run_tests() {
     std::println("Layer 1: query:mutation-log-stats + atomic-batch-stats regression");
     test_query_mutation_log_stats();
     test_query_atomic_batch_stats_regression();
-    std::println("\nLayer 2: (mutate:atomic-batch) happy + rollback paths");
+    std::println("\nLayer 2: (mutate :atomic-batch) happy + rollback paths");
     test_atomic_batch_happy_path_single_bump();
     test_atomic_batch_rollback_path();
     test_atomic_batch_stress();

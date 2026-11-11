@@ -121,7 +121,7 @@ bool test_eight_thread_mutate() {
             std::scoped_lock<std::mutex> lk(s.eval_mtx);
             int name_idx = (tid * 7 + i) % K_NAME_POOL;
             int v = tid * 100 + i;
-            std::string code = "(mutate:replace-value (define q" + std::to_string(name_idx) + " " +
+            std::string code = "(mutate :replace-value (define q" + std::to_string(name_idx) + " " +
                                std::to_string(v) + ") (define q" + std::to_string(name_idx) + " " +
                                std::to_string(v) + "))";
             (void)s.cs->eval(code);
@@ -217,8 +217,9 @@ bool test_gc_during_mutation() {
     auto worker = [&](int tid) {
         for (int j = 0; j < k_iters && !stop_workers.load(); ++j) {
             std::scoped_lock<std::mutex> lk(cs_eval_mutex());
-            std::string code = "(mutate:replace-value (define x " + std::to_string(tid * 1000 + j) +
-                               ") (define x " + std::to_string(tid * 1000 + j) + "))";
+            std::string code = "(mutate :replace-value (define x " +
+                               std::to_string(tid * 1000 + j) + ") (define x " +
+                               std::to_string(tid * 1000 + j) + "))";
             (void)cs.eval(code);
             completed.fetch_add(1);
         }
@@ -270,7 +271,7 @@ bool test_fuzz_long_running() {
     for (int i = 0; i < k_iters_fuzz(); ++i) {
         std::string name = (name_dist(rng) ? "a" : "b");
         int v = val_dist(rng);
-        std::string code = std::string("(mutate:replace-value (define ") + name + " " +
+        std::string code = std::string("(mutate :replace-value (define ") + name + " " +
                            std::to_string(v) + ") (define " + name + " " + std::to_string(v) + "))";
         auto r = cs.eval(code);
         if (!r)

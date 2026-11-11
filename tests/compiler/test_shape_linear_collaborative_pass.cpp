@@ -178,7 +178,7 @@ static void ac6_mutate_stress() {
 
     for (int i = 0; i < 80; ++i) {
         (void)cs.eval(
-            std::format("(mutate:rebind \"f\" \"(lambda (x) (+ x {}))\" \"#1661\")", i % 9));
+            std::format("(mutate :rebind \"f\" \"(lambda (x) (+ x {}))\" \"#1661\")", i % 9));
         (void)cs.eval("(eval-current)");
         if ((i % 11) == 0)
             (void)cs.eval("(query:pattern '(define _ _))");

@@ -22,7 +22,7 @@
 (let loop ((i 1))
   (if (<= i 40)
       (begin
-        (mutate:rebind "f" body-a "m")
+        (mutate :rebind "f" body-a "m")
         (loop (+ i 1)))))
 (define n1 (stats:get "ast:node-count"))
 ;; One extra body, not one body per rebind (40 * ~9 nodes would be +360).
@@ -39,7 +39,7 @@
 (let loop ((i 1))
   (if (<= i 8)
       (begin
-        (mutate:rebind "f" body-k "m")
+        (mutate :rebind "f" body-k "m")
         (loop (+ i 1)))))
 (define n3 (stats:get "ast:node-count"))
 (check "wide node bound" (<= n3 (+ n2 160)) #t)

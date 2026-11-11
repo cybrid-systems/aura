@@ -26,7 +26,7 @@
 (check (eq? #f (rollback 999999)) "rollback: unknown mid -> #f")
 (check (integer? (rollback-since 1)) "rollback-since")
 
-(mutate:rebind "f" "(lambda (x) 2)" "5033b rebind") (eval-current)
+(mutate :rebind "f" "(lambda (x) 2)" "5033b rebind") (eval-current)
 (check (> (engine:metrics "mutation-count") 0) "mutation-count after rebind")
 (check (> (hash-ref (query :mutation-log-summary) "total") 0) "summary total after rebind")
 (check (pair? (query :mutation-log-diff 0 -1)) "diff after rebind")
@@ -59,7 +59,7 @@
 ;; ── sync-from / conflicts-with / merge / discard / delete ────────────
 (define child (workspace :create "child5033b"))
 (workspace :switch child) (eval-current)
-(mutate:rebind "f" "(lambda (x) 5)" "5033b child") (eval-current)
+(mutate :rebind "f" "(lambda (x) 5)" "5033b child") (eval-current)
 (workspace :switch 0) (eval-current)
 (check (pair? (query :conflicts-with child)) "qr:conflicts-with")
 (check (boolean? (mutate :sync-from child "f")) "mw:sync-from")

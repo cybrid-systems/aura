@@ -115,7 +115,7 @@ int run_test_cascade_bfs_invalidate_after_guard() {
         CHECK(m != nullptr, "AC2: metrics");
         const auto p0 = m->cascade_bfs_invalidate_pending_total.load(std::memory_order_relaxed);
         const auto d0 = m->cascade_bfs_invalidate_total.load(std::memory_order_relaxed);
-        auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (* x 3))\" \"#2812\")");
+        auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (* x 3))\" \"#2812\")");
         CHECK(mut.has_value(), "AC2: set-body f");
         const auto p1 = m->cascade_bfs_invalidate_pending_total.load(std::memory_order_relaxed);
         const auto d1 = m->cascade_bfs_invalidate_total.load(std::memory_order_relaxed);
@@ -147,7 +147,7 @@ int run_test_cascade_bfs_invalidate_after_guard() {
               "AC3: set-code f+g");
         auto r0 = cs.eval("(eval-current)");
         CHECK(r0 && is_int(*r0) && as_int(*r0) == 2, "AC3: g 1 → 2 (f doubles)");
-        auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (* x 3))\" \"#2812-g\")");
+        auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (* x 3))\" \"#2812-g\")");
         CHECK(mut.has_value(), "AC3: rebind f body to triple");
         // Without post-Guard BFS, g's IR may still close over old f.
         auto r1 = cs.eval("(eval-current)");
@@ -170,7 +170,7 @@ int run_test_cascade_bfs_invalidate_after_guard() {
         CHECK(cs.eval("(eval-current)").has_value(), "AC4: eval");
         auto* m = metrics_of(cs);
         const auto d0 = m->cascade_bfs_invalidate_total.load(std::memory_order_relaxed);
-        auto mut = cs.eval("(mutate:rebind \"h\" \"(define (h x) (+ x 1))\" \"#2812-rebind\")");
+        auto mut = cs.eval("(mutate :rebind \"h\" \"(define (h x) (+ x 1))\" \"#2812-rebind\")");
         CHECK(mut.has_value(), "AC4: rebind returned");
         const auto d1 = m->cascade_bfs_invalidate_total.load(std::memory_order_relaxed);
         // rebind may finalize soft-only on its path AND cascade; accept drain

@@ -9,7 +9,7 @@
 //         MutationBoundaryGuard exclusive hold instead of re-locking.
 //
 // AC1: pin_workspace_flat under outermost MutationBoundaryGuard does not throw
-// AC2: (eval-current) after (set-code) + (mutate:rebind) completes (no deadlock)
+// AC2: (eval-current) after (set-code) + (mutate :rebind) completes (no deadlock)
 // AC3: under Guard, (workspace-state) / (workspace:mutation-count) via engine
 //      metrics path do not throw (pin adopt)
 // AC4: source markers for Wave1 helpers present
@@ -81,7 +81,7 @@ int main() {
         CHECK(cs.eval("(eval-current)").has_value(), "AC2: eval-current baseline");
         // mutate holds unique workspace; must not deadlock if eval-current
         // (or nested workspace reads) re-entered locking.
-        (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+        (void)cs.eval("(mutate :rebind \"a\" \"10\")");
         auto r = cs.eval("(eval-current)");
         CHECK(r.has_value(), "AC2: eval-current after mutate:rebind (no deadlock)");
     }
@@ -92,7 +92,7 @@ int main() {
         CompilerService cs;
         (void)cs.eval("(set-code \"(define x 1)\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(mutate:rebind \"x\" \"2\")");
+        (void)cs.eval("(mutate :rebind \"x\" \"2\")");
         auto ws = cs.eval("(workspace-state)");
         CHECK(ws.has_value(), "AC3: workspace-state after mutate (pin adopt / short lock)");
     }

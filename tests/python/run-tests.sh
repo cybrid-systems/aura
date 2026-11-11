@@ -782,7 +782,7 @@ run_test "agent:query-calls" "$(printf '(set-code "(define (f x) (+ x 1)) (defin
 run_test "agent:pipe-mode" "$(printf '(display 42)')" "42"
 
 # EDSL mutate: rebind function
-run_test "agent:mutate-rebind" "$(printf '(set-code "(define (add x y) (+ x y))")(query :find \"add\")(mutate:rebind \"add\" \"(define (add x y) (* x y))\")(eval-current)(add 1 2)')" "2"
+run_test "agent:mutate-rebind" "$(printf '(set-code "(define (add x y) (+ x y))")(query :find \"add\")(mutate :rebind \"add\" \"(define (add x y) (* x y))\")(eval-current)(add 1 2)')" "2"
 
 # query:filter / query:where — combined filter queries
 run_test "edsl:filter-where" \
@@ -841,7 +841,7 @@ run_test "edsl-ir-cache:multi-define"         \
     '6'
 
 # Phase 3: cascade dirty invalidation.
-# After (mutate:rebind "f" "..."), all defines that reference f (transitively
+# After (mutate :rebind "f" "..."), all defines that reference f (transitively
 # via dep_graph_) must be marked dirty too — the IR for g embeds a closure
 # capture of f's lowered function, so a re-lower of g is needed.
 # Phase 3 cascade: set-code alone does not lower into IR v2 (entries stay
@@ -851,10 +851,10 @@ run_test "edsl-ir-cache:cascade-after-setcode"  \
     "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (f x)))\") (eval-current) (query :ir-dirty? \"g\")')" \
     '#f'
 run_test "edsl-ir-cache:cascade-after-mutate"   \
-    "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (f x)))\") (eval-current) (mutate:rebind \"f\" \"(lambda (x) (* x 3))\") (query :ir-dirty? \"g\")')" \
+    "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (f x)))\") (eval-current) (mutate :rebind \"f\" \"(lambda (x) (* x 3))\") (query :ir-dirty? \"g\")')" \
     '#t'
 run_test "edsl-ir-cache:cascade-not-on-strangers" \
-    "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (* x 2)))\") (mutate:rebind \"f\" \"(lambda (x) (* x 3))\") (query :ir-dependents \"f\")')" \
+    "$(printf '(set-code \"(define f (lambda (x) (* x 2))) (define g (lambda (x) (* x 2)))\") (mutate :rebind \"f\" \"(lambda (x) (* x 3))\") (query :ir-dependents \"f\")')" \
     ''  # no f→g edge; empty dependents is void (dirty? also flipped by arena compact)
 
 # Phase 4: (eval-current :jit) hooks into the IR pipeline.
@@ -1110,7 +1110,7 @@ _file_4357() {
 (define hot (ws-calls 3000))
 (define c2 (current-time-ms))
 (define r0 (current-time-ms))
-(mutate:rebind "ws-call" "(lambda (x) (+ x 9))")
+(mutate :rebind "ws-call" "(lambda (x) (+ x 9))")
 (define r1 (current-time-ms))
 (define a0 (current-time-ms))
 (define after (ws-calls 3000))
@@ -1225,7 +1225,7 @@ _file_4360() {
     out=$(AURA_SANDBOX=off AURA_PIPELINE_STRICT=0 timeout 15 "$AURA" -e '
 (set-code "(define (f x) (+ x 1))")
 (eval-current)
-(display (mutate:rebind "helper" "(lambda (x) (* x 9))" "ai adds helper"))
+(display (mutate :rebind "helper" "(lambda (x) (* x 9))" "ai adds helper"))
 (newline)
 (display (query:code))
 (newline)
@@ -1270,7 +1270,7 @@ _file_4361() {
 (newline)
 (display (g 1))
 (newline)
-(mutate:atomic-batch (list (list "mutate:rebind" "f" "(lambda (x) (+ x 100))" "s1") (list "mutate:rebind" "missing" "(lambda (x) x)" "s2")) "b")
+(mutate :atomic-batch (list (list "mutate:rebind" "f" "(lambda (x) (+ x 100))" "s1") (list "mutate:rebind" "missing" "(lambda (x) x)" "s2")) "b")
 (display (query:code))
 (newline)
 (display (f 1))
@@ -1279,7 +1279,7 @@ _file_4361() {
 (newline)
 (display (g 1))
 (newline)
-(display (mutate :try-mutation "(begin (mutate:rebind \"f\" \"(lambda (x) 0)\" \"t\") (car 5))"))
+(display (mutate :try-mutation "(begin (mutate :rebind \"f\" \"(lambda (x) 0)\" \"t\") (car 5))"))
 (newline)
 (display (f 1))
 (newline)
@@ -1314,13 +1314,13 @@ _file_4362() {
     src='
 (set-code "(define (hello x) (+ x 1)) (define (bye y) (hello y)) (define (greet n) (string-append \"hi \" n))")
 (eval-current)
-(display (mutate:atomic-batch (list (list "mutate:rebind" "bye" "(lambda (y) (hello y y))" "batch")) "batch"))
+(display (mutate :atomic-batch (list (list "mutate:rebind" "bye" "(lambda (y) (hello y y))" "batch")) "batch"))
 (newline)
-(display (mutate:atomic-batch (list (list "mutate:rebind" "greet" "(lambda (n) (string-append n 1))" "batch")) "batch"))
+(display (mutate :atomic-batch (list (list "mutate:rebind" "greet" "(lambda (n) (string-append n 1))" "batch")) "batch"))
 (newline)
 (display (query:code))
 (newline)
-(display (mutate:atomic-batch (list (list "mutate:rebind" "hello" "(lambda (x) (+ x 2))" "ok")) "ok"))
+(display (mutate :atomic-batch (list (list "mutate:rebind" "hello" "(lambda (x) (+ x 2))" "ok")) "ok"))
 (newline)
 (display (hello 3))
 (newline)
@@ -1361,12 +1361,12 @@ _file_4363() {
 (define (main)
   (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))\n(define pet \"cat\")")
   (eval-current)
-  (display "RB1 ") (write (mutate:rebind "hello" "(lambda (x) (+ x pet))" "w")) (newline)
+  (display "RB1 ") (write (mutate :rebind "hello" "(lambda (x) (+ x pet))" "w")) (newline)
   (display "TC1 ") (write (typecheck-incremental)) (newline)
   (display "CALL1 ") (write (try (hello 3) (catch (e) (list (quote raised) e)))) (newline)
   (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))")
   (eval-current)
-  (display "RB2 ") (write (mutate:rebind "bye" "(lambda (y) (hello y y))" "w")) (newline)
+  (display "RB2 ") (write (mutate :rebind "bye" "(lambda (y) (hello y y))" "w")) (newline)
   (display "CODE2 ") (write (query:code)) (newline)
   (display "TC2 ") (write (typecheck-incremental)) (newline))
 (main)
@@ -1414,12 +1414,12 @@ _file_4931_small_stack() {
 (define (main)
   (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))\n(define pet \"cat\")")
   (eval-current)
-  (display "RB1 ") (write (mutate:rebind "hello" "(lambda (x) (+ x pet))" "w")) (newline)
+  (display "RB1 ") (write (mutate :rebind "hello" "(lambda (x) (+ x pet))" "w")) (newline)
   (display "TC1 ") (write (typecheck-incremental)) (newline)
   (display "CALL1 ") (write (try (hello 3) (catch (e) (list (quote raised) e)))) (newline)
   (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))")
   (eval-current)
-  (display "RB2 ") (write (mutate:rebind "bye" "(lambda (y) (hello y y))" "w")) (newline)
+  (display "RB2 ") (write (mutate :rebind "bye" "(lambda (y) (hello y y))" "w")) (newline)
   (display "CODE2 ") (write (query:code)) (newline)
   (display "TC2 ") (write (typecheck-incremental)) (newline))
 (main)
@@ -1484,11 +1484,11 @@ _file_4364() {
 (define (main)
   (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))\n(hello 3)\n(bye 4)")
   (display "C0 ") (display (length (query:calls "hello"))) (newline)
-  (display "R1 ") (display (mutate:rebind "bye" "(lambda (y) (- (hello y)))")) (newline)
+  (display "R1 ") (display (mutate :rebind "bye" "(lambda (y) (- (hello y)))")) (newline)
   (display "C1 ") (display (length (query:calls "hello"))) (newline)
-  (display "R2 ") (display (mutate:rebind "bye" "(lambda (y) y)")) (newline)
+  (display "R2 ") (display (mutate :rebind "bye" "(lambda (y) y)")) (newline)
   (display "C2 ") (display (length (query:calls "hello"))) (newline)
-  (display "R3 ") (display (mutate:rebind "bye" "(lambda (y) (hello (hello y)))")) (newline)
+  (display "R3 ") (display (mutate :rebind "bye" "(lambda (y) (hello (hello y)))")) (newline)
   (display "C3 ") (display (length (query:calls "hello"))) (newline)
   (display "CODE ") (display (query:code)) (newline)
   (eval-current)
@@ -1498,11 +1498,11 @@ _file_4364() {
   (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))\n(hello 3)\n(bye 4)")
   (eval-current)
   (display "S0 ") (display (length (query:calls "hello"))) (newline)
-  (display "SB ") (display (mutate:set-body "bye" "(lambda (y) y)")) (newline)
+  (display "SB ") (display (mutate :set-body "bye" "(lambda (y) y)")) (newline)
   (display "S1 ") (display (length (query:calls "hello"))) (newline)
-  (display "BA ") (display (mutate:atomic-batch (list (list "mutate:rebind" "bye" "(lambda (y) (hello y))" "b")) "b")) (newline)
+  (display "BA ") (display (mutate :atomic-batch (list (list "mutate:rebind" "bye" "(lambda (y) (hello y))" "b")) "b")) (newline)
   (display "S2 ") (display (length (query:calls "hello"))) (newline)
-  (display "TA ") (display (typed-mutate-atomic (list "(mutate:rebind \"bye\" \"(lambda (y) (hello (hello y)))\" \"t\")"))) (newline)
+  (display "TA ") (display (typed-mutate-atomic (list "(mutate :rebind \"bye\" \"(lambda (y) (hello (hello y)))\" \"t\")"))) (newline)
   (display "S3 ") (display (length (query:calls "hello"))) (newline))
 (main)
 '
@@ -1558,12 +1558,12 @@ _file_4365() {
   (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))\n(hello 3)")
   (eval-current)
   (define s0 (mutate :snapshot "t0"))
-  (show "FP" (mutate:set-agent-fingerprint 42))
-  (show "K1" (typed-mutate-atomic (list "(mutate:rebind \\"hello\\" \\"(lambda (x) (* x 2))\\" \\"closer\\")")))
+  (show "FP" (mutate :set-agent-fingerprint 42))
+  (show "K1" (typed-mutate-atomic (list "(mutate :rebind \\"hello\\" \\"(lambda (x) (* x 2))\\" \\"closer\\")")))
   (define s1 (mutate :snapshot "t1"))
-  (show "FP2" (mutate:set-agent-fingerprint 3))
-  (show "K2" (typed-mutate-atomic (list "(mutate:rebind \\"bye\\" \\"(lambda (y) (- (hello y)))\\" \\"flip\\")")))
-  (mutate:set-agent-fingerprint 1)
+  (show "FP2" (mutate :set-agent-fingerprint 3))
+  (show "K2" (typed-mutate-atomic (list "(mutate :rebind \\"bye\\" \\"(lambda (y) (- (hello y)))\\" \\"flip\\")")))
+  (mutate :set-agent-fingerprint 1)
   (show "LOG" (query:mutations-since 0))
   (show "SER" (serialize-workspace "$book"))
   (set-code "(define (zzz) 0)")
@@ -1615,7 +1615,7 @@ _file_4366() {
     src=$(cat <<EOF
 (define (try1 tag src)
   (set-code src) (eval-current)
-  (mutate:rebind "f" "(lambda (x) (+ x 1))" "why1")
+  (mutate :rebind "f" "(lambda (x) (+ x 1))" "why1")
   (display tag) (display " EV ") (write (eval-current))
   (serialize-workspace "$book")
   (set-code "(define z 1)") (eval-current)
@@ -1666,11 +1666,11 @@ _file_4367() {
 (define (main)
   (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))\n(define (add a b) (+ a b))\n(hello 3)\n(define t (list 1))\n#t")
   (eval-current)
-  (mutate:set-agent-fingerprint 42)
-  (typed-mutate-atomic (list "(mutate:rebind \\"hello\\" \\"(lambda (x) (* x 2))\\" \\"closer\\")" "(mutate:rebind \\"bye\\" \\"(lambda (y) (- (hello y)))\\" \\"closer\\")"))
-  (mutate:set-agent-fingerprint 3)
-  (typed-mutate-atomic (list "(mutate:rebind \\"add\\" \\"(lambda (a b) (+ b a))\\" \\"flip\\")"))
-  (mutate:set-agent-fingerprint 1)
+  (mutate :set-agent-fingerprint 42)
+  (typed-mutate-atomic (list "(mutate :rebind \\"hello\\" \\"(lambda (x) (* x 2))\\" \\"closer\\")" "(mutate :rebind \\"bye\\" \\"(lambda (y) (- (hello y)))\\" \\"closer\\")"))
+  (mutate :set-agent-fingerprint 3)
+  (typed-mutate-atomic (list "(mutate :rebind \\"add\\" \\"(lambda (a b) (+ b a))\\" \\"flip\\")"))
+  (mutate :set-agent-fingerprint 1)
   (show "IDS1" (list (nid "hello") (nid "bye") (nid "add")))
   (show "PROV1" (list (prov "hello") (prov "bye") (prov "add")))
   (show "SER" (serialize-workspace "$book"))
@@ -1730,7 +1730,7 @@ _file_4368() {
   (let ((c (workspace :create "t")))
     (workspace :switch c)
     (eval-current)
-    (typed-mutate-atomic (list "(mutate:rebind \"hello\" \"(lambda (x) (* x 10))\" \"try\")"))
+    (typed-mutate-atomic (list "(mutate :rebind \"hello\" \"(lambda (x) (* x 10))\" \"try\")"))
     (show "CH" (hello 3))
     (workspace :switch 0)
     (eval-current)
@@ -1769,7 +1769,7 @@ _file_4369() {
 (define (once)
   (let ((c (workspace :create "try")))
     (workspace :switch c)
-    (typed-mutate-atomic (list "(mutate:rebind \"hello\" \"(lambda (x) (* x 10))\" \"try\")"))
+    (typed-mutate-atomic (list "(mutate :rebind \"hello\" \"(lambda (x) (* x 10))\" \"try\")"))
     (eval-current)
     (workspace :switch 0)
     (let ((s (mutate :snapshot "r")))
@@ -1794,7 +1794,7 @@ EOF
   (eval-current)
   (let ((c (workspace :create "try")))
     (show "SW1" (workspace :switch c))
-    (show "MUT" (mutate:rebind "hello" "(lambda (x) (* x 10))" "try"))
+    (show "MUT" (mutate :rebind "hello" "(lambda (x) (* x 10))" "try"))
     (show "SW0" (workspace :switch 0))
     (show "ROOT_HELLO" (hello 1))
     (show "DEL" (workspace :delete c))
@@ -1809,7 +1809,7 @@ EOF
   (eval-current)
   (let ((c (workspace :create "try")))
     (show "SW1" (workspace :switch c))
-    (show "MUT" (mutate:rebind "hello" "(lambda (x) (* x 10))" "try"))
+    (show "MUT" (mutate :rebind "hello" "(lambda (x) (* x 10))" "try"))
     (show "SW0" (workspace :switch 0))
     (show "ROOT_HELLO" (hello 1))
     (show "DISCARD" (workspace :discard c))

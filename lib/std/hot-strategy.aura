@@ -70,7 +70,7 @@
   (let ((pre (hot-strategy:snapshot! (string-append "hs-pre-" name)))
         (sum (if (string? summary) summary "hot-strategy:swap")))
     (let ((ok (try
-                (let ((rebound (mutate:rebind name body sum)))
+                (let ((rebound (mutate :rebind name body sum)))
                   ; Only exact #t is success — reject may be #f or an error
                   ; object (truthy), neither of which must promote last-good.
                   (if (equal? rebound #t)
@@ -101,7 +101,7 @@
                  (not (string=? *hs-last-good-body* "")))
             (let ((ok (try
                         (begin
-                          (mutate:rebind *hs-name* *hs-last-good-body* "hot-strategy:heal")
+                          (mutate :rebind *hs-name* *hs-last-good-body* "hot-strategy:heal")
                           (try (eval-current) (catch (e) #t))
                           #t)
                         (catch (e) #f))))

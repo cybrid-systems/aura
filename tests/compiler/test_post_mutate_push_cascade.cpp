@@ -97,7 +97,7 @@ static void ac2_cascade_metric() {
     const auto c0 = href(cs, "post_mutate_incremental_cascade_total");
     const auto d0 = href(cs, "post_mutate_incremental_defines_total");
     // String args (not symbols) — set-body / rebind under MutationBoundaryGuard.
-    auto m = cs.eval("(mutate:set-body \"id\" \"(lambda (x) (+ x 1))\" \"#2038\")");
+    auto m = cs.eval("(mutate :set-body \"id\" \"(lambda (x) (+ x 1))\" \"#2038\")");
     CHECK(m.has_value(), "set-body returned");
     const auto c1 = href(cs, "post_mutate_incremental_cascade_total");
     const auto d1 = href(cs, "post_mutate_incremental_defines_total");
@@ -112,7 +112,7 @@ static void ac3_eval_sees_update() {
     auto r0 = cs.eval("(eval-current)");
     CHECK(r0 && is_int(*r0) && as_int(*r0) == 11, "f 10 → 11");
     // Mutate body then immediate eval — cascade must have dirtied IR/cache.
-    auto m = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 2))\" \"#2038\")");
+    auto m = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 2))\" \"#2038\")");
     CHECK(m.has_value(), "mutate f body");
     auto r1 = cs.eval("(eval-current)");
     CHECK(r1 && is_int(*r1) && as_int(*r1) == 12, "f 10 → 12 after set-body");
@@ -142,7 +142,7 @@ static void ac5_scoped_not_empty_no_op() {
     CHECK(cs.eval("(set-code \"(define (g x) x) (g 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     const auto d0 = href(cs, "post_mutate_incremental_defines_total");
-    (void)cs.eval("(mutate:set-body \"g\" \"(lambda (x) (* x 2))\" \"#2038\")");
+    (void)cs.eval("(mutate :set-body \"g\" \"(lambda (x) (* x 2))\" \"#2038\")");
     const auto d1 = href(cs, "post_mutate_incremental_defines_total");
     CHECK(d1 > d0, "defines total advanced after set-body");
 }
@@ -156,7 +156,7 @@ static void ac6_latency_tracks() {
     const auto c0 = href(cs, "post_mutate_incremental_cascade_total");
     for (int i = 0; i < 3; ++i) {
         (void)cs.eval(
-            std::format("(mutate:set-body \"h\" \"(lambda (x) (+ x {}))\" \"r{}\")", i + 1, i));
+            std::format("(mutate :set-body \"h\" \"(lambda (x) (+ x {}))\" \"r{}\")", i + 1, i));
     }
     const auto s1 = href(cs, "post_mutate_incremental_latency_samples");
     const auto c1 = href(cs, "post_mutate_incremental_cascade_total");
@@ -172,7 +172,7 @@ static void ac2988_1_rebind_eval_fresh() {
     CHECK(cs.eval("(set-code \"(define (f x) (+ x 1)) (f 10)\")").has_value(), "set-code");
     auto r0 = cs.eval("(eval-current)");
     CHECK(r0 && is_int(*r0) && as_int(*r0) == 11, "f 10 → 11");
-    auto m = cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 5))\" \"#2988\")");
+    auto m = cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 5))\" \"#2988\")");
     CHECK(m.has_value(), "rebind returned");
     auto r1 = cs.eval("(eval-current)");
     CHECK(r1 && is_int(*r1) && as_int(*r1) == 15, "f 10 → 15 after rebind (no stale JIT)");
@@ -201,7 +201,7 @@ static void ac2988_3_counters_advance() {
     const auto d0 = href_inv(cs, "dirty-nodes");
     const auto j0 = href_inv(cs, "jit-invalidate-count");
     const auto b0 = href_inv(cs, "binding-gen-bumps");
-    (void)cs.eval("(mutate:set-body \"g\" \"(lambda (x) (+ x 1))\" \"#2988\")");
+    (void)cs.eval("(mutate :set-body \"g\" \"(lambda (x) (+ x 1))\" \"#2988\")");
     CHECK(href_inv(cs, "dirty-nodes") >= d0, "2988 AC3: dirty-nodes non-decreasing");
     CHECK(href_inv(cs, "jit-invalidate-count") >= j0, "2988 AC3: jit-invalidate non-decreasing");
     CHECK(href_inv(cs, "binding-gen-bumps") >= b0, "2988 AC3: binding-gen non-decreasing");
@@ -223,7 +223,7 @@ static void ac2988_5_multi_round() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     for (int i = 0; i < 16; ++i) {
         (void)cs.eval(
-            std::format("(mutate:set-body \"h\" \"(lambda (x) (+ x {}))\" \"r{}\")", i + 1, i));
+            std::format("(mutate :set-body \"h\" \"(lambda (x) (+ x {}))\" \"r{}\")", i + 1, i));
         auto r = cs.eval("(eval-current)");
         CHECK(r && is_int(*r) && as_int(*r) == (i + 1), "2988 AC5: eval matches last mutate");
     }

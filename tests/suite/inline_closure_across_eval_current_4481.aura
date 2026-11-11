@@ -8,7 +8,7 @@
 (define (attempt plant)
   (set-code "(define ka (lambda (x) (* x 2)))")
   (eval-current)
-  (mutate:rebind "ka" "(lambda (x) (* x 7))" "t")
+  (mutate :rebind "ka" "(lambda (x) (* x 7))" "t")
   (eval-current)
   (let ((a ((cadr plant) 7)) (b ((caddr plant) 7)))
     (display a) (display " ") (display b) (display " ")

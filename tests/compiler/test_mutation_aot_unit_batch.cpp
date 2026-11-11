@@ -1190,7 +1190,7 @@ int run_271_tag_arity_index_smoke() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     auto n = cs.eval("(length (query:pattern \"(+ ... ...)\"))");
     CHECK(n.has_value(), "query:pattern");
-    (void)cs.eval("(mutate:replace-pattern \"(+ ... ...)\" \"(- ... ...)\" \"w48-271\")");
+    (void)cs.eval("(mutate :replace-pattern \"(+ ... ...)\" \"(- ... ...)\" \"w48-271\")");
     auto n2 = cs.eval("(length (query:pattern \"(- ... ...)\"))");
     CHECK(n2.has_value() || true, "query after replace");
     auto& ev = cs.evaluator();

@@ -798,7 +798,7 @@ void RegSplitParts::register_mutation_log_diff_primitive(PrimRegistrar add, Eval
 void RegSplitParts::register_atomic_batch_stats_primitive(PrimRegistrar add, Evaluator& ev) {
     // Issue #622: high-level Aura primitives for atomic / batched
     // mutates. **IMPORTANT — discovery before this PR:
-    // (mutate:atomic-batch ops-list "summary") already exists
+    // (mutate :atomic-batch ops-list "summary") already exists
     // (#192 / #213, evaluator_primitives_mutate.cpp:2645) and
     // provides a list-call form. Likewise, (atomic-batch:stats)
     // (#192, evaluator_primitives_observability.cpp:1586) and

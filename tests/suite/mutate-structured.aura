@@ -10,7 +10,7 @@
   (set-code "(define (square x) (* x x))")
   (eval-current)
   (check (= (square 5) 25))
-  (check (mutate:rename-symbol "square" "double"))
+  (check (mutate :rename-symbol "square" "double"))
   (eval-current)
   (check (= (double 5) 25))
   ; Old name should still work (it's already bound in env)
@@ -30,7 +30,7 @@
   (define lam-calc (car (query :children def-calc)))
   (define body (car (query :children lam-calc)))
   (define mul-call (car (cdr (query :children body))))
-  (check (mutate:extract-function mul-call "mul3"))
+  (check (mutate :extract-function mul-call "mul3"))
   (eval-current)
   ; Original function still works
   (check (= (calc 2) 7))
@@ -48,7 +48,7 @@
   (define r (query:root))
   (define kids (query :children r))
   (define third-child (car (cdr (cdr kids))))
-  (check (mutate:move-node third-child r 0))
+  (check (mutate :move-node third-child r 0))
   ; eval-current still works (no crash)
   (eval-current)
   (check #t))  ; if we get here, no crash
@@ -64,7 +64,7 @@
   (define def-g (car (cdr (query :children r))))
   (define lam-g (car (query :children def-g)))
   (define body (car (query :children lam-g)))
-  (check (mutate:inline-call body))
+  (check (mutate :inline-call body))
   (eval-current)
   ; g should still work
   (check (= (g 5) 6))
@@ -78,7 +78,7 @@
   (eval-current)
   (check (= (f 5) 10))
   ; Replace (* x 2) with (+ x x)
-  (check (mutate:replace-pattern "(* x 2)" "(+ x x)"))
+  (check (mutate :replace-pattern "(* x 2)" "(+ x x)"))
   (eval-current)
   ; f should still return 10
   (check (= (f 5) 10))
@@ -93,7 +93,7 @@
   (check (= (f 10) 5))
   ; Replace (/ x 2) with (* x 0.5) 
   ; But we need the wildcard: (/ ... 2) → (/ x 2) matched
-  (check (mutate:replace-pattern "(/ ... 2)" "(/ ... 2)"))
+  (check (mutate :replace-pattern "(/ ... 2)" "(/ ... 2)"))
   (eval-current)
   (check (= (f 10) 5))
   ; Typecheck should pass

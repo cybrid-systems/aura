@@ -148,8 +148,8 @@ static void ac4_cascade_bumps_metric() {
     auto r = cs.eval("(eval-current)");
     CHECK(r && is_int(*r) && as_int(*r) == 1, "eval id");
     // Mutate body → mark_define_dirty cascade path.
-    CHECK(cs.eval("(mutate:set-body 'id '(lambda (x) (+ x 1)))").has_value() ||
-              cs.eval("(mutate:rebind 'id (lambda (x) (+ x 1)))").has_value() ||
+    CHECK(cs.eval("(mutate :set-body 'id '(lambda (x) (+ x 1)))").has_value() ||
+              cs.eval("(mutate :rebind 'id (lambda (x) (+ x 1)))").has_value() ||
               cs.eval("(set-code \"(define (id x) (+ x 1)) (id 1)\")").has_value(),
           "mutate or re-set");
     (void)cs.eval("(eval-current)");

@@ -119,7 +119,7 @@ int run_test_instr_impact_minimal_dirty() {
         // Local body mutates — should prefer body-only / impact, not full cascade wipe.
         for (int i = 0; i < 8; ++i) {
             auto body = std::format("(lambda (x) (define (inner y) (+ x y {})) (inner x))", i + 1);
-            auto expr = std::format("(mutate:set-body \"outer\" \"{}\")", body);
+            auto expr = std::format("(mutate :set-body \"outer\" \"{}\")", body);
             (void)cs.eval(expr);
         }
         (void)cs.eval("(eval-current)");
@@ -144,7 +144,7 @@ int run_test_instr_impact_minimal_dirty() {
         CHECK(cs.eval("(set-code \"(define (f x) (+ x 1))\")").has_value(), "set-code f");
         CHECK(cs.eval("(eval-current)").has_value(), "eval f");
         for (int i = 0; i < 4; ++i) {
-            (void)cs.eval(std::format("(mutate:set-body \"f\" \"(lambda (x) (+ x {}))\")", i + 2));
+            (void)cs.eval(std::format("(mutate :set-body \"f\" \"(lambda (x) (+ x {}))\")", i + 2));
         }
         (void)cs.eval("(eval-current)");
 
@@ -171,7 +171,7 @@ int run_test_instr_impact_minimal_dirty() {
         CHECK(cs.eval("(eval-current)").has_value(), "eval g");
         auto r0 = cs.eval("(g 3)");
         CHECK(r0 && is_int(*r0) && as_int(*r0) == 6, "g 3 = 6");
-        CHECK(cs.eval("(mutate:set-body \"g\" \"(lambda (n) (* n 3))\")").has_value(),
+        CHECK(cs.eval("(mutate :set-body \"g\" \"(lambda (n) (* n 3))\")").has_value(),
               "set-body g");
         CHECK(cs.eval("(eval-current)").has_value(), "re-eval");
         auto r1 = cs.eval("(g 3)");

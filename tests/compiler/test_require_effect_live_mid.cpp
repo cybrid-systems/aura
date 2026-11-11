@@ -1394,7 +1394,7 @@ static void ac4385_production_allow_joins_session() {
     reset_security_event_ring_for_test();
     ev.clear_boundary_audit_mid_for_test();
     const auto aud0 = ev.mutation_audit_seq();
-    auto r = cs.eval("(mutate:rebind \"n\" \"(lambda () 2)\" \"4385\")");
+    auto r = cs.eval("(mutate :rebind \"n\" \"(lambda () 2)\" \"4385\")");
     const bool allowed = r.has_value() && !rebind_denied(r);
     CHECK(allowed, allowed
                        ? "4385: production rebind allowed"
@@ -1449,7 +1449,7 @@ static void ac4385_soft_stays_on_epoch() {
     // Guard exit still records the epoch, so the allow row would split.
     aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
     ev.clear_boundary_audit_mid_for_test();
-    auto r = cs.eval("(mutate:rebind \"n\" \"(lambda () 2)\" \"4385-soft\")");
+    auto r = cs.eval("(mutate :rebind \"n\" \"(lambda () 2)\" \"4385-soft\")");
     CHECK(r.has_value() && !rebind_denied(r), "4385 soft: rebind allowed");
     CHECK(ev.has_last_completed_audit_mid(), "4385 soft: exit recorded a mid");
     const auto completed = ev.last_completed_audit_mid();
@@ -1480,7 +1480,7 @@ static void ac4385_deny_joins_session_tree_unchanged() {
     ev.grant_capability(std::string(aura::compiler::security::kCapSandbox));
     reset_security_event_ring_for_test();
     ev.clear_boundary_audit_mid_for_test();
-    auto r = cs.eval("(mutate:rebind \"n\" \"(lambda () 9)\" \"4385-deny\")");
+    auto r = cs.eval("(mutate :rebind \"n\" \"(lambda () 9)\" \"4385-deny\")");
     CHECK(rebind_denied(r), "4385 deny: non-zero tenant without a grant is denied");
     ev.set_capability_tenant_id(0);
     auto got = cs.eval("(n)");

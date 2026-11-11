@@ -224,7 +224,7 @@ static void ac7_mutate_stress() {
     const auto sc0 = href(cs, "query:soa-view-enforcement-stats", "pipeline-dirty-short-circuit");
     for (int i = 0; i < 24; ++i) {
         (void)cs.eval(
-            std::format("(mutate:rebind \"f\" \"(lambda (x) (+ x {}))\" \"i2060\")", i % 5));
+            std::format("(mutate :rebind \"f\" \"(lambda (x) (+ x {}))\" \"i2060\")", i % 5));
         (void)cs.eval("(eval-current)");
     }
     CHECK(href(cs, "query:soa-view-enforcement-stats", "schema-2060") == 2060, "schema holds");

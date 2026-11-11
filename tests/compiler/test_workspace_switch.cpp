@@ -78,7 +78,7 @@ static void ac4332_1_child_mutate_cow_isolates_parent() {
 
     // Previously-uncovered structural op (not rebind / replace-subtree):
     // the wrapper-level lazy COW must clone before the body writes.
-    auto mr = cs.typed_mutate("(mutate:rename-symbol \"B\" \"BC\" \"ac4332 child rename\")");
+    auto mr = cs.typed_mutate("(mutate :rename-symbol \"B\" \"BC\" \"ac4332 child rename\")");
     CHECK(mr.success, "4332 AC1: child-layer rename-symbol succeeds (COW cloned)");
     CHECK(!mr.success || mr.error.empty(), "4332 AC1: no mutation error string");
 
@@ -207,7 +207,7 @@ static std::string ac4632_switch_loop_script(int trips) {
 (define w (workspace :create "c1"))
 (workspace :switch w)
 (eval-current)
-(mutate:rebind "ttl" "(lambda (cat) 7)" "r")
+(mutate :rebind "ttl" "(lambda (cat) 7)" "r")
 (eval-current)
 (workspace :switch 0)
 (eval-current)
@@ -233,7 +233,7 @@ static void ac4632_switch_cost_stays_flat() {
         const auto id = as_int(*created);
         CHECK(cs.eval(std::format("(workspace :switch {})", id)).has_value(), "4632 AC7: switch");
         CHECK(cs.eval("(eval-current)").has_value(), "4632 AC7: eval-current");
-        CHECK(cs.eval("(mutate:rebind \"ttl\" \"(lambda (cat) 7)\" \"r\")").has_value(),
+        CHECK(cs.eval("(mutate :rebind \"ttl\" \"(lambda (cat) 7)\" \"r\")").has_value(),
               "4632 AC7: mutate:rebind");
         CHECK(cs.eval("(eval-current)").has_value(), "4632 AC7: eval-current after rebind");
         for (int i = 0; i < 20; ++i) {
@@ -300,7 +300,7 @@ static void ac4632_switch_cost_stays_flat() {
 (define b (workspace :create "once"))
 (workspace :switch b)
 (eval-current)
-(mutate:rebind "ttl" "(lambda (cat) 1)" "r")
+(mutate :rebind "ttl" "(lambda (cat) 1)" "r")
 (eval-current)
 (workspace :switch 0)
 (eval-current)

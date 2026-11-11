@@ -178,7 +178,7 @@ static void ac4_metrics_move() {
     }
     // Also drive a real EDSL mutate if possible
     (void)cs.eval("(set-code \"(define x 1)\")");
-    (void)cs.eval("(mutate:rebind \"x\" \"2\")");
+    (void)cs.eval("(mutate :rebind \"x\" \"2\")");
 
     const auto t1 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
     const auto r1 = m->mutation_guard_try_acquire_reject_total.load(std::memory_order_relaxed);
@@ -331,7 +331,7 @@ static void ac2986_4_exempt_policy_setters() {
 
     CompilerService cs;
     // Metadata-only add() path (no add_mutate capability gate).
-    auto fp = cs.eval("(mutate:set-agent-fingerprint 7)");
+    auto fp = cs.eval("(mutate :set-agent-fingerprint 7)");
     CHECK(fp.has_value() && is_int(*fp) && as_int(*fp) == 7, "2986 AC4: fingerprint setter works");
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     CHECK(m != nullptr, "2986 AC4: metrics");
@@ -666,7 +666,7 @@ static void ac3423_2_production_rebind_and_reject_kind() {
     CHECK(m != nullptr, "metrics");
     const auto t0 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
     const auto naked0 = m->naked_mutate_fail_closed_total.load(std::memory_order_relaxed);
-    auto r = cs.eval("(mutate:rebind \"x\" \"2\")");
+    auto r = cs.eval("(mutate :rebind \"x\" \"2\")");
     CHECK(r.has_value(), "rebind under wrapper acquire");
     const auto t1 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
     CHECK(t1 > t0, "AC2 wrapper+body acquire totals move");
@@ -687,7 +687,7 @@ static void ac3423_3_exempt_no_extra_acquire() {
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     CHECK(m != nullptr, "metrics");
     const auto t0 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
-    auto fp = cs.eval("(mutate:set-agent-fingerprint 7)");
+    auto fp = cs.eval("(mutate :set-agent-fingerprint 7)");
     CHECK(fp.has_value() && is_int(*fp) && as_int(*fp) == 7, "AC3 fingerprint setter");
     const auto t1 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
     CHECK(t1 == t0, "AC3 exempt does not acquire");

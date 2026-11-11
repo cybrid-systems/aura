@@ -535,7 +535,7 @@ void RegSplitParts::register_workspace_snapshot_primitives(PrimRegistrar add, Ev
     //   committed mutation exists. Issue #142: convenience wrapper
     //   for LLM callers that don't track mutation IDs.
     //
-    //   For subtree mutations (mutate:replace-subtree), the actual
+    //   For subtree mutations (mutate :replace-subtree), the actual
     //   re-parse and re-attach happens here, since the AST layer's
     //   rollback only marks the record as rolled back and bumps
     //   generation (it doesn't have access to the parser).
@@ -1255,7 +1255,7 @@ void RegSplitParts::register_workspace_sync_primitives(PrimRegistrar add, Evalua
         auto summary = std::string("workspace:sync-from #") + std::to_string(src_id) + " " +
                        sym_name + " (#2784)";
         auto si = ev.string_heap_.mint(summary);
-        // (mutate:rebind name code-string summary)
+        // (mutate :rebind name code-string summary)
         auto result = (*rebind_fn)({make_string(ni), make_string(ci), make_string(si)});
         if (is_bool(result) && as_bool(result)) {
             // mutate:rebind already bumped defuse via Guard dtor (#1904).

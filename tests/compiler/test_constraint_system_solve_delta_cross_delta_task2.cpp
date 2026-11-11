@@ -142,7 +142,7 @@ static void run_integration_matrix(CompilerService& cs) {
     std::println("\n--- AC4: predicate mutate → narrowing + local recheck ---");
     const auto n0 = cs.evaluator().get_narrowing_refresh_count();
     const auto sel0 = cs.evaluator().get_selective_recheck_count();
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 7) 0))\" "
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 7) 0))\" "
                   "\"issue-573-if\")");
     const auto n1 = cs.evaluator().get_narrowing_refresh_count();
     const auto sel1 = cs.evaluator().get_selective_recheck_count();
@@ -152,7 +152,7 @@ static void run_integration_matrix(CompilerService& cs) {
     CHECK(sel1 >= sel0, "selective_recheck monotonic on predicate mutate");
 
     std::println("\n--- AC5: delta_solve_time_us observable after incremental ---");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
                   "\"issue-573-solve\")");
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
@@ -162,7 +162,7 @@ static void run_integration_matrix(CompilerService& cs) {
     CHECK(snap.delta_solve_time_us >= 0, "delta_solve_time_us observable after incremental infer");
 
     std::println("\n--- AC6: occurrence-stale-count == 0 after re-narrow ---");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
                   "\"issue-573-stale\")");
     auto stale = cs.eval("(stats:get \"query:occurrence-stale-count\")");
     const auto stale_count = stale && is_int(*stale) ? as_int(*stale) : -1;
@@ -180,7 +180,7 @@ static void run_integration_matrix(CompilerService& cs) {
     for (int round = 0; round < 3; ++round) {
         const std::string f_body =
             "(lambda (x) (if (number? x) (+ x " + std::to_string(round + 11) + ") 0))";
-        (void)cs.eval("(mutate:rebind \"f\" \"" + f_body + "\" \"r" + std::to_string(round) +
+        (void)cs.eval("(mutate :rebind \"f\" \"" + f_body + "\" \"r" + std::to_string(round) +
                       "-f\")");
         auto rf = cs.eval("(f 3)");
         CHECK(rf && is_int(*rf), "f eval ok round " + std::to_string(round));

@@ -121,7 +121,7 @@ bool test_respect_hygiene_keyword(CompilerService& cs) {
 bool test_mutate_safe_on_user_nodes(CompilerService& cs) {
     std::println("\n--- AC4: mutate safe on user nodes under Guard ---");
     const auto markers_before = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
-    CHECK(cs.eval("(mutate:rebind \"base\" \"99\")").has_value(), "mutate:rebind under Guard");
+    CHECK(cs.eval("(mutate :rebind \"base\" \"99\")").has_value(), "mutate:rebind under Guard");
     (void)cs.eval("(query:pattern \"base\")");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current after mutate");
     auto user_pat = cs.eval("(query:pattern \"base\")");

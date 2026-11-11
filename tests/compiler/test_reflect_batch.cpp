@@ -151,7 +151,7 @@ static void run_454_matrix() {
     (void)cs.eval("(query:pattern \"acc\")");
     const auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
     for (int i = 0; i < 3; ++i) {
-        CHECK(cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(10 + i) + "\")").has_value(),
+        CHECK(cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(10 + i) + "\")").has_value(),
               "mutate:rebind ok");
         (void)cs.eval("(eval-current)");
     }
@@ -209,7 +209,7 @@ static void run_1611_stats_schema() {
     std::println("\n--- AC2/AC3 (#1611): reflect-postmutate-stats schema 1611 ---");
     CompilerService cs;
     CHECK(setup_macro_ws_1611(cs), "macro workspace");
-    CHECK(cs.eval("(mutate:rebind \"base\" \"42\")").has_value(), "mutate:rebind user binding");
+    CHECK(cs.eval("(mutate :rebind \"base\" \"42\")").has_value(), "mutate:rebind user binding");
     auto h = cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")");
     CHECK(h && is_hash(*h), "reflect-postmutate-stats hash");
     CHECK(href(cs, "query:reflect-postmutate-stats", "schema") == 1611, "schema 1611");
@@ -233,7 +233,7 @@ static void run_1611_mutate_hygiene() {
     std::println("\n--- AC4 (#1611): mutate on macro workspace hygiene holds ---");
     CompilerService cs;
     CHECK(setup_macro_ws_1611(cs), "macro workspace");
-    auto r = cs.eval("(mutate:rebind \"base\" \"99\")");
+    auto r = cs.eval("(mutate :rebind \"base\" \"99\")");
     CHECK(r.has_value(), "user rebind ok");
     CHECK(href(cs, "query:reflect-postmutate-stats", "schema") == 1611, "schema after mutate");
     auto ok = cs.eval("(+ 1 1)");
@@ -380,7 +380,7 @@ static void run_551_impact_snapshot_under_mutate() {
     (void)cs.eval("(eval-current)");
     const auto s0 = cs.evaluator().get_impact_snapshot_count();
     for (int i = 0; i < 5; ++i) {
-        (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i) + ") (define a " +
+        (void)cs.eval("(mutate :replace-value (define a " + std::to_string(i) + ") (define a " +
                       std::to_string(i) + "))");
     }
     const auto s1 = cs.evaluator().get_impact_snapshot_count();
@@ -397,7 +397,7 @@ static void run_551_long_running_cycle() {
     std::mt19937 rng(551u);
     std::uniform_int_distribution<int> val_dist(0, 999);
     for (int i = 0; i < k_long_iters_551(); ++i) {
-        std::string code = std::string("(mutate:replace-value (define ") + (i & 1 ? "a" : "b") +
+        std::string code = std::string("(mutate :replace-value (define ") + (i & 1 ? "a" : "b") +
                            " " + std::to_string(val_dist(rng)) + ") (define " +
                            (i & 1 ? "a" : "b") + " " + std::to_string(val_dist(rng)) + "))";
         (void)cs.eval(code);
@@ -452,7 +452,7 @@ static void run_551_eight_thread_concurrent() {
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::scoped_lock<std::mutex> lk(mtx);
-            std::string code = "(mutate:replace-value (define v" + std::to_string(tid) + " " +
+            std::string code = "(mutate :replace-value (define v" + std::to_string(tid) + " " +
                                std::to_string(i) + ") (define v" + std::to_string(tid) + " " +
                                std::to_string(i) + "))";
             (void)cs.eval(code);
@@ -479,7 +479,7 @@ static void run_551_gc_heap() {
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
-    (void)cs.eval("(mutate:replace-value (define a 99) (define a 99))");
+    (void)cs.eval("(mutate :replace-value (define a 99) (define a 99))");
     auto r = cs.eval("(gc-heap)");
     CHECK(r.has_value(), "(gc-heap) callable after reflect mutate");
 }

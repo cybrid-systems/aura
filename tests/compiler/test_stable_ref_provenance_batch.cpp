@@ -151,7 +151,7 @@ static void ac738_3_cow_propagates() {
     (void)cs.eval("(workspace :create \"child-a\")");
     (void)cs.eval("(workspace :switch 1)");
     const auto pins_child_before = cs.evaluator().cow_boundary_pins_total();
-    (void)cs.eval("(mutate:rebind \"x\" \"42\")");
+    (void)cs.eval("(mutate :rebind \"x\" \"42\")");
     const auto pins_child_after = cs.evaluator().cow_boundary_pins_total();
     const auto cow_epoch = boundary_hash(cs, "workspace-cow-epoch");
     std::println("  pins: {} -> {} cow_epoch={}", pins_child_before, pins_child_after, cow_epoch);
@@ -181,7 +181,7 @@ static void ac738_5_multi_round() {
         (void)cs.eval(std::format("(workspace :create \"child-{}\")", round));
         auto ws_id = 1 + round;
         (void)cs.eval(std::format("(workspace :switch {})", ws_id));
-        (void)cs.eval(std::format("(mutate:rebind \"y\" \"{}\")", round + 10));
+        (void)cs.eval(std::format("(mutate :rebind \"y\" \"{}\")", round + 10));
         auto valid =
             cs.eval("(let ((r (query:stable-ref 1))) (if (pair? r) (query:ref-valid? r) #f))");
         CHECK(valid.has_value(), std::format("round {} ref-valid? in child", round));
@@ -473,7 +473,7 @@ static void ac1630_5_stress() {
         if ((i % 11) == 0)
             (void)cs.eval(std::format("(query:stable-ref {})", target));
         if ((i % 17) == 0)
-            (void)cs.eval("(mutate:rebind \"h\" \"(lambda (x) (* x 3))\" \"#1630\")");
+            (void)cs.eval("(mutate :rebind \"h\" \"(lambda (x) (* x 3))\" \"#1630\")");
     }
     Evaluator::set_current_fiber(nullptr);
 
@@ -506,7 +506,7 @@ static void ac3198_export_ref_fail_closed() {
     CHECK(setup_parent(cs), "3198: workspace");
     auto* ws = cs.evaluator().workspace_flat();
     CHECK(ws != nullptr, "3198: workspace_flat");
-    (void)cs.eval("(mutate:rebind \"x\" \"42\")");
+    (void)cs.eval("(mutate :rebind \"x\" \"42\")");
     if (!ws->restamp_last_budget_exceeded()) {
         ws->bump_generation();
         ws->restamp_all_node_generations();

@@ -68,7 +68,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC2: mutate bumps soa-dirty or arena-tier ---");
     const auto soa0 = hash_int(cs, "soa-dirty-cascades");
     const auto arena0 = hash_int(cs, "arena-tier-fallbacks");
-    (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     (void)cs.eval("(eval-current)");
     const auto soa1 = hash_int(cs, "soa-dirty-cascades");
     const auto arena1 = hash_int(cs, "arena-tier-fallbacks");
@@ -91,7 +91,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: multi-round mutate monotonic ---");
     const auto stats5a = stats_sum(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"b\" \"" + std::to_string(20 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"b\" \"" + std::to_string(20 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(fact 2)");
     }

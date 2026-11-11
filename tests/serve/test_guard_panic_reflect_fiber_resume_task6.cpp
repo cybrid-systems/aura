@@ -88,7 +88,7 @@ static void run_matrix(CompilerService& cs) {
     const auto commits0 = hash_int(cs, "checkpoints-committed");
     const auto pass0 = hash_int(cs, "validation-pass");
     const auto validate0 = cs.evaluator().get_schema_validation_pass_count();
-    (void)cs.eval("(mutate:rebind \"x\" \"42\")");
+    (void)cs.eval("(mutate :rebind \"x\" \"42\")");
     (void)cs.eval("(eval-current)");
     const auto commits1 = hash_int(cs, "checkpoints-committed");
     const auto pass1 = hash_int(cs, "validation-pass");
@@ -121,7 +121,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: multi-round Guard+mutate stats monotonic ---");
     const auto stats6a = stats_sum(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"y\" \"" + std::to_string(10 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"y\" \"" + std::to_string(10 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(query:reflect-node-members 0)");
     }
@@ -193,7 +193,7 @@ static void ac2765_2_happy_path_bumps_total() {
     CHECK(m != nullptr, "AC2: metrics");
     const auto t0 = m->guard_reflect_validate_total.load(std::memory_order_relaxed);
     const auto f0 = m->guard_reflect_validate_fail_total.load(std::memory_order_relaxed);
-    (void)cs.eval("(mutate:rebind \"x\" \"99\")");
+    (void)cs.eval("(mutate :rebind \"x\" \"99\")");
     const auto t1 = m->guard_reflect_validate_total.load(std::memory_order_relaxed);
     const auto f1 = m->guard_reflect_validate_fail_total.load(std::memory_order_relaxed);
     std::println("  validate total {} -> {}, fail {} -> {}", t0, t1, f0, f1);
@@ -216,7 +216,7 @@ static void ac2765_3_flag_off_skips() {
     CHECK(!ev.get_guard_reflect_validate_enabled(), "AC3: flag disabled");
     const auto t0 = m->guard_reflect_validate_total.load(std::memory_order_relaxed);
     const auto s0 = m->guard_reflect_validate_skipped_total.load(std::memory_order_relaxed);
-    (void)cs.eval("(mutate:rebind \"x\" \"7\")");
+    (void)cs.eval("(mutate :rebind \"x\" \"7\")");
     const auto t1 = m->guard_reflect_validate_total.load(std::memory_order_relaxed);
     const auto s1 = m->guard_reflect_validate_skipped_total.load(std::memory_order_relaxed);
     std::println("  total {} -> {}, skipped {} -> {}", t0, t1, s0, s1);
@@ -245,7 +245,7 @@ static void ac2765_4_macro_provenance_integration() {
     CHECK(cs.eval("(eval-current)").has_value(), "AC4: eval");
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     const auto t0 = m->guard_reflect_validate_total.load(std::memory_order_relaxed);
-    (void)cs.eval("(mutate:replace-pattern \"(+ base 1)\" \"(+ base 2)\")");
+    (void)cs.eval("(mutate :replace-pattern \"(+ base 1)\" \"(+ base 2)\")");
     const auto t1 = m->guard_reflect_validate_total.load(std::memory_order_relaxed);
     CHECK(t1 > t0, "AC4: validate still runs after macro workspace mutate");
     // Restamp path still present in production code.
@@ -272,7 +272,7 @@ static void ac2765_5_observability() {
 
     CompilerService cs;
     CHECK(setup_workspace(cs), "AC5: workspace");
-    (void)cs.eval("(mutate:rebind \"x\" \"1\")");
+    (void)cs.eval("(mutate :rebind \"x\" \"1\")");
     CHECK(hash_int(cs, "schema-2765") == 2765, "AC5: live schema-2765");
     CHECK(hash_int(cs, "issue-2765") == 2765, "AC5: live issue-2765");
     CHECK(hash_int(cs, "schema") == 596, "AC5: live schema 596");

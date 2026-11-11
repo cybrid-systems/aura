@@ -117,7 +117,7 @@ bool test_combined_prompt6_stats_bundle() {
     std::println("\n--- AC3: Prompt6 stats bundle ---");
     CompilerService cs;
     CHECK(setup_closure_workspace(cs), "workspace for stats bundle");
-    (void)cs.eval("(mutate:rebind \"base\" \"42\")");
+    (void)cs.eval("(mutate :rebind \"base\" \"42\")");
     const char* stats[] = {
         "(stats:get \"query:prompt6-violation-count\")",
         "(stats:get \"query:prompt6-safety-score\")",
@@ -147,7 +147,7 @@ bool test_closure_invalidate_bridge_epoch() {
     }
     const auto bh0 = cs.get_bridge_epoch_hit_count();
     cs.bump_bridge_epoch_hit_count();
-    (void)cs.eval("(mutate:replace-value (define base 10) (define base 99))");
+    (void)cs.eval("(mutate :replace-value (define base 10) (define base 99))");
     const auto sr = cs.get_closure_stale_refresh_count();
     const auto v = violation_count(cs);
     std::println("  bridge_hit: {} closure_refresh: {} violations: {}", bh0, sr, v);
@@ -163,7 +163,7 @@ bool test_envframe_dualpath_under_mutate() {
     CHECK(setup_closure_workspace(cs), "workspace for EnvFrame");
     const auto d0 = eval_int(cs, "(engine:metrics \"query:envframe-dualpath-stats\")");
     for (int i = 0; i < 5; ++i) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(i) + "\")");
+        (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(i) + "\")");
     }
     const auto d1 = eval_int(cs, "(engine:metrics \"query:envframe-dualpath-stats\")");
     const auto desync = cs.evaluator().get_envframe_desync_detected();
@@ -178,8 +178,8 @@ bool test_mutate_type_matrix() {
     std::println("\n--- AC6: mutate type matrix ---");
     CompilerService cs;
     CHECK(setup_closure_workspace(cs), "workspace for mutate matrix");
-    CHECK(cs.eval("(mutate:rebind \"base\" \"100\")").has_value(), "mutate:rebind succeeds");
-    CHECK(cs.eval("(mutate:replace-value (define acc 0) (define acc 7))").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"base\" \"100\")").has_value(), "mutate:rebind succeeds");
+    CHECK(cs.eval("(mutate :replace-value (define acc 0) (define acc 7))").has_value(),
           "mutate:replace-value succeeds");
     CHECK(cs.eval("(set-code \"(define base 200) (define acc 8)\")").has_value(),
           "set-code succeeds");
@@ -194,7 +194,7 @@ bool test_gc_heap_closure_integration() {
     std::println("\n--- AC7: (gc-heap) + closure-env integration ---");
     CompilerService cs;
     CHECK(setup_closure_workspace(cs), "workspace for GC integration");
-    (void)cs.eval("(mutate:rebind \"base\" \"55\")");
+    (void)cs.eval("(mutate :rebind \"base\" \"55\")");
     (void)cs.eval("(f 1)");
     auto r = cs.eval("(gc-heap)");
     CHECK(r.has_value(), "(gc-heap) callable after closure mutate");
@@ -216,11 +216,13 @@ bool test_fuzz_mutate_query_panic() {
     for (int i = 0; i < k_fuzz_iters(); ++i) {
         switch (op_dist(rng)) {
             case 0:
-                (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(val_dist(rng)) + "\")");
+                (void)cs.eval("(mutate :rebind \"base\" \"" + std::to_string(val_dist(rng)) +
+                              "\")");
                 break;
             case 1:
-                (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(val_dist(rng)) +
-                              ") (define acc " + std::to_string(val_dist(rng)) + "))");
+                (void)cs.eval("(mutate :replace-value (define acc " +
+                              std::to_string(val_dist(rng)) + ") (define acc " +
+                              std::to_string(val_dist(rng)) + "))");
                 break;
             case 2:
                 (void)cs.eval("(query:pattern \"base\")");
@@ -233,8 +235,9 @@ bool test_fuzz_mutate_query_panic() {
                 break;
             default: {
                 (void)cs.eval("(panic-checkpoint)");
-                (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(val_dist(rng)) +
-                              ") (define acc " + std::to_string(val_dist(rng)) + "))");
+                (void)cs.eval("(mutate :replace-value (define acc " +
+                              std::to_string(val_dist(rng)) + ") (define acc " +
+                              std::to_string(val_dist(rng)) + "))");
                 auto rr = cs.eval("(panic-restore)");
                 ++panics;
                 CHECK(rr.has_value(), "panic-restore succeeds under fuzz panic injection");
@@ -265,10 +268,10 @@ bool test_eight_thread_concurrent_mutate_gc() {
             if ((i & 3) == 0) {
                 (void)cs.eval("(gc-heap)");
             } else if ((i & 3) == 1) {
-                (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(tid * 1000 + i) +
+                (void)cs.eval("(mutate :rebind \"base\" \"" + std::to_string(tid * 1000 + i) +
                               "\")");
             } else {
-                (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(i) +
+                (void)cs.eval("(mutate :replace-value (define acc " + std::to_string(i) +
                               ") (define acc " + std::to_string(tid + i) + "))");
             }
             if (!cs.eval("(stats:get \"query:prompt6-violation-count\")")) {
@@ -338,9 +341,9 @@ bool test_long_running_memory_safety_stress() {
     std::uniform_int_distribution<int> val_dist(0, 500);
     for (int i = 0; i < k_stress_iters(); ++i) {
         if ((i & 1) == 0) {
-            (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(val_dist(rng)) + "\")");
+            (void)cs.eval("(mutate :rebind \"base\" \"" + std::to_string(val_dist(rng)) + "\")");
         } else {
-            (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(val_dist(rng)) +
+            (void)cs.eval("(mutate :replace-value (define acc " + std::to_string(val_dist(rng)) +
                           ") (define acc " + std::to_string(val_dist(rng)) + "))");
         }
         if ((i & 31) == 0)

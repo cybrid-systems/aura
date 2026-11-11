@@ -164,7 +164,7 @@ int run_test_workspace_lock_unlock() {
         CHECK(lk && is_bool(*lk) && as_bool(*lk), "AC3: lock non-active #t");
         // Active root must still accept mutate (quick flag not flipped).
         // replace-pattern checks workspace_read_only_ (P6 path) before match.
-        auto mut = cs.eval("(mutate:replace-pattern \"(define x 1)\" \"(define x 2)\")");
+        auto mut = cs.eval("(mutate :replace-pattern \"(define x 1)\" \"(define x 2)\")");
         CHECK(mutate_not_read_only_denied(cs, mut),
               "AC3: mutate on active root not read-only-denied after locking non-active");
         auto cw = cs.eval("(query :can-write?)");
@@ -185,14 +185,14 @@ int run_test_workspace_lock_unlock() {
         CHECK(lk && is_bool(*lk) && as_bool(*lk), "AC4: lock active #t");
         auto cw = cs.eval("(query :can-write?)");
         CHECK(cw && is_bool(*cw) && !as_bool(*cw), "AC4: can-write? #f when active locked");
-        auto mut_denied = cs.eval("(mutate:replace-pattern \"(define y 10)\" \"(define y 11)\")");
+        auto mut_denied = cs.eval("(mutate :replace-pattern \"(define y 10)\" \"(define y 11)\")");
         CHECK(mutate_read_only_denied(cs, mut_denied),
               "AC4: mutate read-only-denied on active lock");
         auto un = cs.eval("(workspace :unlock 0)");
         CHECK(un && is_bool(*un) && as_bool(*un), "AC4: unlock active #t");
         auto cw2 = cs.eval("(query :can-write?)");
         CHECK(cw2 && is_bool(*cw2) && as_bool(*cw2), "AC4: can-write? restored #t");
-        auto mut_ok = cs.eval("(mutate:replace-pattern \"(define y 10)\" \"(define y 12)\")");
+        auto mut_ok = cs.eval("(mutate :replace-pattern \"(define y 10)\" \"(define y 12)\")");
         CHECK(mutate_not_read_only_denied(cs, mut_ok),
               "AC4: mutate not read-only-denied after unlock");
     }
@@ -213,7 +213,7 @@ int run_test_workspace_lock_unlock() {
         auto cw = cs.eval("(query :can-write?)");
         CHECK(cw && is_bool(*cw) && !as_bool(*cw),
               "AC5: active still read-only after unlocking non-active");
-        auto mut = cs.eval("(mutate:replace-pattern \"(define z 3)\" \"(define z 4)\")");
+        auto mut = cs.eval("(mutate :replace-pattern \"(define z 3)\" \"(define z 4)\")");
         CHECK(mutate_read_only_denied(cs, mut),
               "AC5: mutate still read-only-denied after unlock non-active");
         CHECK(cs.eval("(workspace :unlock 0)").has_value(), "AC5: unlock active cleanup");
@@ -229,7 +229,7 @@ int run_test_workspace_lock_unlock() {
         auto lk = cs.eval("(workspace :lock 0 #t)");
         CHECK(lk && is_bool(*lk) && as_bool(*lk), "3450 AC1: lock active");
         const auto log0 = cs.query_mutation_log().size();
-        auto rt = cs.eval("(mutate:replace-type 0 \"Int\")");
+        auto rt = cs.eval("(mutate :replace-type 0 \"Int\")");
         CHECK(mutate_read_only_denied(cs, rt), "3450 AC1: replace-type read-only");
         CHECK(cs.query_mutation_log().size() == log0, "3450 AC1: mutation_log size unchanged");
         CHECK(cs.eval("(workspace :unlock 0)").has_value(), "3450 AC1: unlock");
@@ -242,7 +242,7 @@ int run_test_workspace_lock_unlock() {
         CHECK(lk && is_bool(*lk) && as_bool(*lk), "3450 AC2: lock active");
         const auto log0 = cs.query_mutation_log().size();
         const auto batches0 = cs.evaluator().atomic_batch_count();
-        auto batch = cs.eval("(mutate:atomic-batch "
+        auto batch = cs.eval("(mutate :atomic-batch "
                              "(list (list \"mutate:rebind\" \"b3450\" \"2\")) "
                              "\"3450-locked\")");
         CHECK(mutate_read_only_denied(cs, batch), "3450 AC2: atomic-batch read-only");
@@ -254,13 +254,13 @@ int run_test_workspace_lock_unlock() {
         std::println("\n--- #3450 AC3: unlocked replace-type / batch / set-body ---");
         CompilerService cs;
         CHECK(setup_ws(cs, "(define u3450 1)"), "3450 AC3: setup");
-        auto rt = cs.eval("(mutate:replace-type 0 \"Int\")");
+        auto rt = cs.eval("(mutate :replace-type 0 \"Int\")");
         CHECK(mutate_not_read_only_denied(cs, rt), "3450 AC3: unlocked replace-type not RO");
-        auto batch = cs.eval("(mutate:atomic-batch "
+        auto batch = cs.eval("(mutate :atomic-batch "
                              "(list (list \"mutate:rebind\" \"u3450\" \"3\")) "
                              "\"3450-unlocked\")");
         CHECK(mutate_not_read_only_denied(cs, batch), "3450 AC3: unlocked atomic-batch not RO");
-        auto sb = cs.eval("(mutate:set-body \"u3450\" \"4\")");
+        auto sb = cs.eval("(mutate :set-body \"u3450\" \"4\")");
         CHECK(mutate_not_read_only_denied(cs, sb), "3450 AC3: unlocked set-body not RO");
     }
     {
@@ -269,9 +269,9 @@ int run_test_workspace_lock_unlock() {
         CHECK(setup_ws(cs, "(define e3450 1)"), "3450 AC4: setup");
         auto lk = cs.eval("(workspace :lock 0 #t)");
         CHECK(lk && is_bool(*lk) && as_bool(*lk), "3450 AC4: lock active");
-        auto fp = cs.eval("(mutate:set-agent-fingerprint 42)");
+        auto fp = cs.eval("(mutate :set-agent-fingerprint 42)");
         CHECK(fp && is_int(*fp) && as_int(*fp) == 42, "3450 AC4: fingerprint on locked ws");
-        auto pol = cs.eval("(mutate:set-stale-ref-policy \"warn\")");
+        auto pol = cs.eval("(mutate :set-stale-ref-policy \"warn\")");
         CHECK(pol.has_value(), "3450 AC4: policy setter on locked ws");
         if (pol && is_pair(*pol))
             CHECK(merr_kind(cs, *pol) != "read-only", "3450 AC4: policy not RO-denied");

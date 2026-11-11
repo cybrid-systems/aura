@@ -64,7 +64,7 @@
 ;; exercises spawn/join/concurrency gate + GC mid-batch.
 (define (mk-mutator n)
   (lambda ()
-    (mutate:set-body "stress-f" (string-append "(+ x " (number->string n) ")"))
+    (mutate :set-body "stress-f" (string-append "(+ x " (number->string n) ")"))
     (eval-current)
     (gc-heap)
     (stress-f 0)))
@@ -95,7 +95,7 @@
     (if (= (modulo i 7) 0) (gc-heap) #t)
     (if (= (modulo i 5) 0)
         (begin
-          (mutate:set-body "stress-f" (string-append "(+ x " (number->string i) ")"))
+          (mutate :set-body "stress-f" (string-append "(+ x " (number->string i) ")"))
           (eval-current)
           i)
         i)))

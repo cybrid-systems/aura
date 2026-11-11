@@ -208,7 +208,7 @@ static void ac7_service_smoke() {
     const auto h0 = m ? m->instr_level_impact_hits_total.load() : 0;
     const auto d0 = m ? m->instr_level_dirty_marks_total.load() : 0;
     // mutate body — may trigger impact scope via dirty path
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (n) (+ n 2))\")");
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (n) (+ n 2))\")");
     CHECK(cs.eval("(+ 1 1)").has_value(), "eval ok");
     CHECK(href(cs, "schema-2031") == 2031, "schema after mutate");
     if (m) {

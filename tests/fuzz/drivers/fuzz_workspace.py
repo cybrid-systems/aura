@@ -145,9 +145,9 @@ def run_session(n_cycles):
             new_val = rng.randint(1, 100)
             mut = rng.choice(
                 [
-                    f'(mutate:rebind "{fn}" "(lambda (x) (* x {new_val}))" "fuzz")',
-                    f'(mutate:tweak-literal {rng.randint(0, 3)} {rng.choice([1, -1])} "fuzz")',
-                    f'(mutate:set-body "{fn}" "(* x {new_val})")',
+                    f'(mutate :rebind "{fn}" "(lambda (x) (* x {new_val}))" "fuzz")',
+                    f'(mutate :tweak-literal {rng.randint(0, 3)} {rng.choice([1, -1])} "fuzz")',
+                    f'(mutate :set-body "{fn}" "(* x {new_val})")',
                 ]
             )
             resp = send(proc, mut)
@@ -245,7 +245,7 @@ def run_session(n_cycles):
                     new_val = rng.randint(1, 1000)
                     resp = send(
                         proc,
-                        f"(mutate:replace-value (define {fn} {new_val}) (define {fn} {new_val}))",
+                        f"(mutate :replace-value (define {fn} {new_val}) (define {fn} {new_val}))",
                     )
                     if resp is None or resp.get("status") not in ("ok", "closure"):
                         stats["error"] += 1

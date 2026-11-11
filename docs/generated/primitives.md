@@ -2,20 +2,20 @@
 
 # Primitives (generated)
 
-**474** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**443** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 473 · **stdlib-candidate** 0 · **delete** 1
+**kernel** 442 · **stdlib-candidate** 0 · **delete** 1
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 50 primitives (11%)
-- **core**: 388 primitives (82%)
-- **internal-observable**: 35 primitives (7%)
+- **mutation-safety**: 19 primitives (4%)
+- **core**: 388 primitives (88%)
+- **internal-observable**: 35 primitives (8%)
 - **convenience**: 1 primitives (0%)
 
 Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.py` (Issue #559 taxonomy: mutation-safety / internal-observable / convenience / core default). Per-primitive classification overrides via `docs/primitive_categories.yaml` were removed per Anqi 2026-07-19 directive (aura philosophy, no per-issue plan docs).
@@ -57,40 +57,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `query:stable-ref-provenance` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query.cpp`
 - `query:type-feedback` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_tail.cpp`
 - `query:where` *[internal-observable]* `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
-
-## Mutate: (31)
-
-- `mutate:atomic-batch` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:check` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
-- `mutate:check-stable-ref` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:extract-function` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:from-verification-feedback` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:inline-call` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:insert-child` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:move-node` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:query-and-replace` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:query-and-replace-batch` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:rebind` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:record-patch` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:refactor/extract` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:remove-node` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:rename-symbol` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-pattern` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-subtree` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-type` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-value` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:request-gc-safepoint` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:restore-hygiene-checkpoint` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:rollback-macro-introduced` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:save-hygiene-checkpoint` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:set-agent-fingerprint` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:set-body` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:set-pattern-index-policy` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:set-stale-ref-policy` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:splice` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:tweak-literal` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:validate-reflected` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_query_tail.cpp`
-- `mutate:wrap` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
 
 ## Fiber: (4)
 
@@ -577,7 +543,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (50)
+### Mutation safety (must remain primitive) (19)
 
 - `c-alloc` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-free` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
@@ -591,37 +557,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-size` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `compile:relower-strategy` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:snapshot` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `mutate:atomic-batch` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:check` `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
-- `mutate:check-stable-ref` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:extract-function` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:from-verification-feedback` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:inline-call` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:insert-child` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:move-node` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:query-and-replace` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:query-and-replace-batch` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:rebind` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:record-patch` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:refactor/extract` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:remove-node` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:rename-symbol` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-pattern` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-subtree` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-type` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-value` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:request-gc-safepoint` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:restore-hygiene-checkpoint` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:rollback-macro-introduced` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:save-hygiene-checkpoint` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:set-agent-fingerprint` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:set-body` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:set-pattern-index-policy` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:set-stale-ref-policy` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:splice` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:tweak-literal` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:validate-reflected` `kernel` — `src/compiler/evaluator_primitives_query_tail.cpp`
-- `mutate:wrap` `kernel` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `panic-auto-rollback?` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `panic-checkpoint` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `panic-restore` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
@@ -1067,7 +1002,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (473)
+### kernel (442)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1291,37 +1226,6 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `modulo` *[K-NUMDIV]* — `src/compiler/evaluator_primitives_math.cpp`
 - `monotonic-ms` *[K-CLOCK]* — `src/compiler/evaluator_primitives_builtins.cpp`
 - `mutate` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:atomic-batch` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:check` *[K-WS]* — `src/compiler/evaluator_primitives_eval.cpp`
-- `mutate:check-stable-ref` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:extract-function` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:from-verification-feedback` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:inline-call` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:insert-child` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:move-node` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:query-and-replace` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:query-and-replace-batch` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:rebind` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:record-patch` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:refactor/extract` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:remove-node` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:rename-symbol` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-pattern` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-subtree` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-type` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:replace-value` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:request-gc-safepoint` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:restore-hygiene-checkpoint` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:rollback-macro-introduced` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:save-hygiene-checkpoint` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:set-agent-fingerprint` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:set-body` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:set-pattern-index-policy` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:set-stale-ref-policy` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:splice` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:tweak-literal` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
-- `mutate:validate-reflected` *[K-WS]* — `src/compiler/evaluator_primitives_query_tail.cpp`
-- `mutate:wrap` *[K-WS]* — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutation-lightweight-commit` *[K-WS]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `mutation-lightweight-rollback` *[K-WS]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `mutation-log-compact` *[K-WS]* — `src/compiler/evaluator_primitives_mutation.cpp`

@@ -145,7 +145,7 @@ static void ac5_rebind_dirty_observability() {
         "(hash-ref (engine:metrics \"query:jit-stats-hash\") \"hotswap-invalidate-total\")");
     const auto inv0 = (inv0r && is_int(*inv0r)) ? as_int(*inv0r) : 0;
 
-    CHECK(eval_ok(cs, "(mutate:rebind \"sum-kernel\" "
+    CHECK(eval_ok(cs, "(mutate :rebind \"sum-kernel\" "
                       "\"(lambda (n) (/ (* n (- n 1)) 2))\" \"spec\")"),
           "rebind closed-form");
 

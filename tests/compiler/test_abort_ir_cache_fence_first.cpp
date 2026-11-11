@@ -624,7 +624,7 @@ static void ac3760_1_abort_empty_map_peel_tracks_g() {
     CHECK(after && after->source_to_ir_map.empty(), "3760 abort: map cleared");
     CHECK(cs.public_precompute_callee_cascade_for_test("f") == kUnknownCalleeConeBlocks,
           "3760 abort: empty map is unknown cone, not 0");
-    auto mut = cs.eval("(mutate:set-body \"g\" \"(lambda (x) (+ x 1))\" \"#3760\")");
+    auto mut = cs.eval("(mutate :set-body \"g\" \"(lambda (x) (+ x 1))\" \"#3760\")");
     CHECK(mut.has_value(), "3760 abort: set-body g");
     CHECK(cs.eval("(eval-current)").has_value(), "3760 abort: peel this sweep");
     const auto dirty = read_file("src/compiler/service_dirty.cpp");

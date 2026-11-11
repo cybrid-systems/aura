@@ -136,7 +136,7 @@ static void run_1615_typecheck_path() {
     CHECK(cs.eval("(set-code \"(define x 1) (define y (+ x 2))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     const auto n0 = load_u64(metrics_of(cs)->linear_coercion_reval_count);
-    CHECK(cs.eval("(mutate:rebind \"x\" \"10\")").has_value(), "mutate");
+    CHECK(cs.eval("(mutate :rebind \"x\" \"10\")").has_value(), "mutate");
     (void)cs.eval("(eval-current)");
     auto* flat = cs.workspace_flat();
     auto* pool = cs.evaluator().workspace_pool();
@@ -179,7 +179,7 @@ static void run_1615_post_mutation() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define x 1) (define y (+ x 2))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    CHECK(cs.eval("(mutate:rebind \"y\" \"3\")").has_value(), "mutate y");
+    CHECK(cs.eval("(mutate :rebind \"y\" \"3\")").has_value(), "mutate y");
     CHECK(href_typed(cs, "query:jit-typed-mutation-stats", "linear_coercion_reval_count") >= 0 ||
               href_typed(cs, "query:jit-typed-mutation-stats", "linear-coercion-reval-count") >= 0,
           "reval key readable after mutate");
@@ -198,7 +198,7 @@ static void run_1615_stress() {
     for (int i = 0; i < 50; ++i) {
         (void)revalidate_linear_after_coercion(*flat, *pool, reg, empty, nullptr, metrics_of(cs));
         if ((i % 10) == 0)
-            (void)cs.eval(std::format("(mutate:rebind \"x\" \"{}\")", i));
+            (void)cs.eval(std::format("(mutate :rebind \"x\" \"{}\")", i));
     }
     CHECK(load_u64(metrics_of(cs)->linear_coercion_reval_count) >= n0 + 50, "50 revals");
     auto r = cs.eval("(+ 1 1)");

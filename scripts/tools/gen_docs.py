@@ -49,8 +49,10 @@ class Primitive:
 # Issue #2628 purged the #1435 query aliases, workspace aliases, and
 # mutate:validate-against-schema (private dispatch / engine:metrics only).
 # Remaining deprecated mutate:* aliases still prefer (mutate :op).
-# Issue #5095: the add_mutate names are the public write surface, not
-# #1436 aliases waiting to be deleted. (mutate :op) dispatches to them.
+# Issue #5095 / #5144: the add_mutate names were the public write surface,
+# not #1436 aliases waiting to be deleted; #5144 made them dispatch-only, so
+# they no longer appear in this catalog. (mutate :op) still dispatches to
+# them through the primitive table.
 _DEPRECATED_CORE_ALIASES: frozenset[str] = frozenset()
 
 # #1434 top-20 stats (scripts/find_top_stats.py PINNED_TOP20)

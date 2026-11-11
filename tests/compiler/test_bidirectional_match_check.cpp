@@ -1098,7 +1098,7 @@ static void ac3698_let_define_annotation() {
         CHECK(cs.eval("(eval-current)").has_value(), "3698 soak: eval matching");
         apply_production_audit_defaults();
         auto mut = cs.eval(
-            R"lisp((mutate:set-body "t3698" "(lambda () (check (letrec ((x (check \"hi\" : Int))) x) : Int))"))lisp");
+            R"lisp((mutate :set-body "t3698" "(lambda () (check (letrec ((x (check \"hi\" : Int))) x) : Int))"))lisp");
         CHECK(mut.has_value(), "3698 soak: mutate returns");
         CHECK(!(mut && is_bool(*mut) && as_bool(*mut)), "3698 soak: production mutate is not #t");
         CHECK(!cs.evaluator().type_export_authoritative(),
@@ -1249,7 +1249,7 @@ static void ac3700_quote_walk_children() {
         CHECK(cs.eval("(eval-current)").has_value(), "3700 soak: eval matching quote");
         apply_production_audit_defaults();
         auto mut = cs.eval(
-            R"lisp((mutate:set-body "t3700" "(lambda () (quote ((lambda ((x : Int)) x) \"hi\")))"))lisp");
+            R"lisp((mutate :set-body "t3700" "(lambda () (quote ((lambda ((x : Int)) x) \"hi\")))"))lisp");
         CHECK(mut.has_value(), "3700 soak: mutate returns");
         CHECK(!(mut && is_bool(*mut) && as_bool(*mut)), "3700 AC1: Guard fail, not #t");
         CHECK(!cs.evaluator().last_type_solve_solved(), "3700 soak: not last_type_solve_solved");

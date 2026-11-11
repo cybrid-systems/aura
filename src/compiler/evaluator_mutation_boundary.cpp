@@ -2167,7 +2167,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // Issue #4109: ride still-valid capture frames up to the new defuse
         // in the same critical section as the bump. The boundary's own
         // mutation-log window decides invalidation: frames binding a name the
-        // boundary re-defined (mutate:rebind / set-code replaced the Define —
+        // boundary re-defined (mutate :rebind / set-code replaced the Define —
         // module captures, #2579, are NOT re-defined by unrelated mutates)
         // stay behind; materialize_call_env then returns the empty Env
         // instead of copying pre-mutate bindings into the next call.

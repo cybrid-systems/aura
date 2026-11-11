@@ -153,7 +153,7 @@ int run_test_capture_audit_event_forced_enforcement_link() {
         CHECK(cs.eval("(eval-current)").has_value(), "AC3: eval");
         const auto ran0 = ta::g_typed_mutation_audit_counters.audit_enforcement_ran_total.load();
         const auto gap0 = ta::g_typed_mutation_audit_counters.audit_enforcement_gap_total.load();
-        auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 1))\" \"#2814\")");
+        auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 1))\" \"#2814\")");
         CHECK(mut.has_value(), "AC3: set-body");
         // Full strategy should run invariant suite on mutate.
         const auto ran1 = ta::g_typed_mutation_audit_counters.audit_enforcement_ran_total.load();

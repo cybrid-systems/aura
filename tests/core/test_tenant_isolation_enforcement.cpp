@@ -4250,7 +4250,7 @@ int main() {
         CHECK(!ev.require_effect_for_node_id(kEffectMutate, "mutate:replace-type", id),
               "ac3415_1_occupancy_denies");
         CHECK(ws->subtree_bump_count() == before_bumps, "ac3415_1_no_write");
-        auto edsl = cs.eval(std::format("(mutate:replace-type {} \"Int\")", id));
+        auto edsl = cs.eval(std::format("(mutate :replace-type {} \"Int\")", id));
         CHECK(edsl.has_value(), "ac3415_1_edsl_returns");
         CHECK(edsl && is_error(*edsl), "ac3415_1_edsl_isolation_deny");
         CHECK(ws->subtree_bump_count() == before_bumps, "ac3415_1_edsl_no_write");

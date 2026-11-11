@@ -41,15 +41,15 @@ bool test_mutation_log_diff() {
     // dynamically discover the rebind count via mutation-count
     // before each diff call.
     auto n_before = run_int(cs, "(stats:get \"mutation-count\")");
-    if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 2))\" \"bump-1\")")) {
+    if (!cs.eval("(mutate :rebind \"f\" \"(define (f x) (+ x 2))\" \"bump-1\")")) {
         ++g_failed;
         return false;
     }
-    if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 3))\" \"bump-2\")")) {
+    if (!cs.eval("(mutate :rebind \"f\" \"(define (f x) (+ x 3))\" \"bump-2\")")) {
         ++g_failed;
         return false;
     }
-    if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 4))\" \"bump-3\")")) {
+    if (!cs.eval("(mutate :rebind \"f\" \"(define (f x) (+ x 4))\" \"bump-3\")")) {
         ++g_failed;
         return false;
     }
@@ -83,7 +83,7 @@ bool test_dirty_summary() {
         return false;
     }
     // Force a mutation to make something dirty
-    if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 2))\" \"bump\")")) {
+    if (!cs.eval("(mutate :rebind \"f\" \"(define (f x) (+ x 2))\" \"bump\")")) {
         ++g_failed;
         return false;
     }
@@ -166,7 +166,7 @@ bool test_backward_compat() {
         ++g_failed;
         return false;
     }
-    if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 2))\" \"bump\")")) {
+    if (!cs.eval("(mutate :rebind \"f\" \"(define (f x) (+ x 2))\" \"bump\")")) {
         ++g_failed;
         return false;
     }
@@ -240,11 +240,11 @@ bool test_hash_to_alist() {
         ++g_failed;
         return false;
     }
-    if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 2))\" \"bump-1\")")) {
+    if (!cs.eval("(mutate :rebind \"f\" \"(define (f x) (+ x 2))\" \"bump-1\")")) {
         ++g_failed;
         return false;
     }
-    if (!cs.eval("(mutate:rebind \"f\" \"(define (f x) (+ x 3))\" \"bump-2\")")) {
+    if (!cs.eval("(mutate :rebind \"f\" \"(define (f x) (+ x 3))\" \"bump-2\")")) {
         ++g_failed;
         return false;
     }

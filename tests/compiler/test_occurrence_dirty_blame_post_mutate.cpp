@@ -63,7 +63,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC2: if-predicate mutate → narrow eval correct ---");
     const auto stats2a = occurrence_stats(cs);
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 9) 0))\" "
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 9) 0))\" "
                   "\"issue-467-if\")");
     const auto stats2b = occurrence_stats(cs);
     std::println("  occurrence-stats: {} -> {}", stats2a, stats2b);
@@ -74,7 +74,7 @@ static void run_matrix(CompilerService& cs) {
         CHECK(as_int(*r2) == 13, "narrow-dependent (+ x 9) correct");
 
     std::println("\n--- AC3: occurrence-stale-count == 0 after re-narrow ---");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 5) 0))\" "
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 5) 0))\" "
                   "\"issue-467-stale\")");
     auto stale = cs.eval("(stats:get \"query:occurrence-stale-count\")");
     const auto stale_count = stale && is_int(*stale) ? as_int(*stale) : -1;
@@ -83,7 +83,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC4: narrowing_dirty_recovery bumps ---");
     const auto snap4a = cs.snapshot();
-    (void)cs.eval("(mutate:rebind \"g\" \"(lambda (y) (+ y 25))\" \"issue-467-dirty\")");
+    (void)cs.eval("(mutate :rebind \"g\" \"(lambda (y) (+ y 25))\" \"issue-467-dirty\")");
     const auto snap4b = cs.snapshot();
     std::println("  narrowing_dirty_recovery: {} -> {}", snap4a.narrowing_dirty_recovery_total,
                  snap4b.narrowing_dirty_recovery_total);
@@ -91,7 +91,7 @@ static void run_matrix(CompilerService& cs) {
           "narrowing_dirty_recovery monotonic on mutate");
 
     std::println("\n--- AC5: query:provenance-of present after mutate ---");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 2) 0))\" "
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 2) 0))\" "
                   "\"issue-467-prov\")");
     auto prov = cs.eval("(query:provenance-of \"x\")");
     CHECK(prov.has_value(), "query:provenance-of after predicate mutate");
@@ -99,7 +99,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: predicate swap → blame path observable ---");
     const auto snap6a = cs.snapshot();
     cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (string? x) x 0))\" "
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (string? x) x 0))\" "
                   "\"issue-467-blame\")");
     (void)cs.eval("(typecheck-current)");
     const auto snap6b = cs.snapshot();
@@ -123,7 +123,7 @@ static void run_matrix(CompilerService& cs) {
     for (int round = 0; round < 3; ++round) {
         const std::string f_body =
             "(lambda (x) (if (number? x) (+ x " + std::to_string(round + 13) + ") 0))";
-        (void)cs.eval("(mutate:rebind \"f\" \"" + f_body + "\" \"r" + std::to_string(round) +
+        (void)cs.eval("(mutate :rebind \"f\" \"" + f_body + "\" \"r" + std::to_string(round) +
                       "-f\")");
         auto rf = cs.eval("(f 2)");
         CHECK(rf && is_int(*rf), "f eval ok round " + std::to_string(round));

@@ -87,7 +87,7 @@ static void ac2_orch_freevar_survive_rebind() {
     CHECK(orch_fail == 0, "AC2: orch:parallel stable across repeats");
     CHECK(eval_ok(cs, "(set-code \"(define (f x) (+ x 1))\")"), "set-code f");
     CHECK(eval_ok(cs, "(eval-current)"), "eval f");
-    CHECK(eval_ok(cs, "(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"t\")"), "rebind f");
+    CHECK(eval_ok(cs, "(mutate :rebind \"f\" \"(lambda (x) (* x 2))\" \"t\")"), "rebind f");
     CHECK(eval_ok(cs, "(eval-current)"), "eval after rebind");
     CHECK(eval_int_eq(cs, "(f 5)", 10), "f after rebind");
     auto post = cs.eval("(orch:parallel (list (lambda (y) (* y 2))) 5)");
@@ -104,7 +104,7 @@ static void ac3_rebind_body_uses_orch() {
     CHECK(eval_ok(cs, "(require \"std/mutate\" all:)"), "require mutate");
     CHECK(eval_ok(cs, "(set-code \"(define (g x) (+ x 1))\")"), "set-code g");
     CHECK(eval_ok(cs, "(eval-current)"), "eval g");
-    CHECK(eval_ok(cs, "(mutate:rebind \"g\" "
+    CHECK(eval_ok(cs, "(mutate :rebind \"g\" "
                       "\"(lambda (x) (orch:parallel (list (lambda (y) (* y 2))) x))\" "
                       "\"orch\")"),
           "rebind g → orch");
@@ -122,7 +122,7 @@ static void ac4_multibind_let() {
     CHECK(eval_ok(cs, "(eval-current)"), "eval t");
     auto r1 = cs.eval("(t)");
     CHECK(r1.has_value() && is_pair(*r1), "multi-let result");
-    CHECK(eval_ok(cs, "(mutate:rebind \"t\" "
+    CHECK(eval_ok(cs, "(mutate :rebind \"t\" "
                       "\"(lambda () (let ((x 10) (y 20) (z 30)) (list x y z)))\" \"m\")"),
           "rebind multi-let");
     CHECK(eval_ok(cs, "(eval-current)"), "eval after multi rebind");

@@ -64,7 +64,9 @@ REQUIRED: tuple[tuple[str, str, str], ...] = (
     ),
     (
         TEST,
-        r"mutate:atomic-batch.*:allow-macro\?",
+        # #5144: the call may be spelled (mutate :atomic-batch …) — whitespace
+        # between the verb and the keyword is now the canonical form.
+        r"mutate\s*:atomic-batch.*:allow-macro\?",
         "3601 AC4: test reaches the lockless deny via batch-level opt-out",
     ),
     (

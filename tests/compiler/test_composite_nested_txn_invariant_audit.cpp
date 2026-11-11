@@ -146,7 +146,7 @@ static void ac3_composite_forces_audit() {
     CompilerService cs;
     seed(cs);
     const auto inv0 = load_u64(g_typed_mutation_audit_counters.invariant_audits);
-    CHECK(cs.eval("(mutate:rebind \"x\" \"10\")").has_value(), "mutate rebind");
+    CHECK(cs.eval("(mutate :rebind \"x\" \"10\")").has_value(), "mutate rebind");
     CHECK(load_u64(g_typed_mutation_audit_counters.invariant_audits) >= inv0,
           "invariant suite non-decreasing");
 }
@@ -228,8 +228,8 @@ static void ac7_service_smoke() {
     set_strategy(AuditStrategy::Full);
     CompilerService cs;
     seed(cs);
-    CHECK(cs.eval("(mutate:rebind \"x\" \"100\")").has_value(), "mutate 1");
-    CHECK(cs.eval("(mutate:rebind \"y\" \"200\")").has_value(), "mutate 2");
+    CHECK(cs.eval("(mutate :rebind \"x\" \"100\")").has_value(), "mutate 1");
+    CHECK(cs.eval("(mutate :rebind \"y\" \"200\")").has_value(), "mutate 2");
     CHECK(cs.eval("(+ 1 2)").has_value(), "eval ok");
     CHECK(trail_href(cs, "schema-2027") == 2027, "schema-2027 after mutates");
     CHECK(trail_href(cs, "composite-partial-recover-wired") == 1, "wired after mutates");

@@ -65,7 +65,7 @@ static bool load_if_f(CompilerService& cs) {
 }
 
 static void rebind_f_add(CompilerService& cs, int n, std::string_view tag) {
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x " + std::to_string(n) +
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x " + std::to_string(n) +
                   ") 0))\" \"" + std::string(tag) + "\")");
 }
 
@@ -350,7 +350,7 @@ static void ac9_task1() {
     (void)cs.eval("(set-code \"(define r1 10) (define r2 20)\")");
     (void)cs.eval("(eval-current)");
     for (int i = 0; i < 10; ++i) {
-        (void)cs.eval("(mutate:rebind \"r1\" \"" + std::to_string(i) + "\" \"t1ac9\")");
+        (void)cs.eval("(mutate :rebind \"r1\" \"" + std::to_string(i) + "\" \"t1ac9\")");
     }
     auto r = cs.eval("(+ r1 r2)");
     CHECK(r.has_value() && aura::compiler::types::is_int(*r), "(+ r1 r2) callable");

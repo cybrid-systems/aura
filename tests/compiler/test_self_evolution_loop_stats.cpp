@@ -83,7 +83,7 @@ void ac3_loop_monotonic(CompilerService& cs) {
     (void)cs.eval("(set-code \"(define x 1)\")");
     (void)cs.eval("(eval-current)");
     for (int i = 0; i < 5; ++i) {
-        (void)cs.eval(std::format("(mutate:rebind \"x\" \"{}\")", 10 + i));
+        (void)cs.eval(std::format("(mutate :rebind \"x\" \"{}\")", 10 + i));
         (void)cs.eval("(eval-current)");
     }
     const auto t1 = href(cs, "query:self-evolution-loop-stats", "total");

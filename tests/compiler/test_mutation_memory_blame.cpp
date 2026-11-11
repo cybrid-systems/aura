@@ -90,7 +90,7 @@ static void ac1_single_query_surface() {
     std::println("\n--- AC1: single query:mutation-memory surface ---");
     CompilerService cs;
     CHECK(setup_ws(cs), "setup workspace");
-    auto mr = cs.typed_mutate("(mutate:rebind \"x\" \"10\")");
+    auto mr = cs.typed_mutate("(mutate :rebind \"x\" \"10\")");
 #ifdef AURA_ISSUE_BATCH_MEMBER
     if (!require_mutate(mr.success, "AC1"))
         return;
@@ -124,9 +124,9 @@ static void ac2_composite_txn_links() {
     CompilerService cs;
     CHECK(setup_ws(cs), "setup");
     std::array<std::string_view, 3> mutations = {
-        "(mutate:rebind \"x\" \"11\")",
-        "(mutate:rebind \"y\" \"22\")",
-        "(mutate:rebind \"z\" \"33\")",
+        "(mutate :rebind \"x\" \"11\")",
+        "(mutate :rebind \"y\" \"22\")",
+        "(mutate :rebind \"z\" \"33\")",
     };
     auto result = cs.typed_mutate_atomic(mutations);
 #ifdef AURA_ISSUE_BATCH_MEMBER
@@ -208,7 +208,7 @@ static void ac3_rollback_no_live_effects() {
     CHECK(setup_ws(cs), "setup");
 
     // 1) Direct rollback leaves status=RolledBack in the audit log.
-    auto mr = cs.typed_mutate("(mutate:rebind \"x\" \"55\")");
+    auto mr = cs.typed_mutate("(mutate :rebind \"x\" \"55\")");
 #ifdef AURA_ISSUE_BATCH_MEMBER
     if (!require_mutate(mr.success, "AC3"))
         return;
@@ -238,9 +238,9 @@ static void ac3_rollback_no_live_effects() {
     // 2) Failed Guard (atomic abort) does not grow committed count.
     const std::size_t committed_before = ws->committed_mutation_count();
     std::array<std::string_view, 3> mutations = {
-        "(mutate:rebind \"x\" \"100\")",
-        "(mutate:rebind \"y\" \"200\")",
-        "(mutate:rebind \"z\"   ", // parse fail → RAII rollback
+        "(mutate :rebind \"x\" \"100\")",
+        "(mutate :rebind \"y\" \"200\")",
+        "(mutate :rebind \"z\"   ", // parse fail → RAII rollback
     };
     auto result = cs.typed_mutate_atomic(mutations);
     CHECK(!result.success, "atomic abort expected");
@@ -253,7 +253,7 @@ static void ac4_schema_metrics() {
     std::println("\n--- AC4: schema + metrics + catalog ---");
     CompilerService cs;
     CHECK(setup_ws(cs), "setup");
-    (void)cs.typed_mutate("(mutate:rebind \"x\" \"7\")");
+    (void)cs.typed_mutate("(mutate :rebind \"x\" \"7\")");
 
     CHECK(href(cs, "schema-2196") == 2196, "schema-2196");
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
@@ -292,9 +292,9 @@ static void ac5_agent_closed_loop() {
     CHECK(setup_ws(cs), "setup");
 
     std::array<std::string_view, 3> mutations = {
-        "(mutate:rebind \"x\" \"41\")",
-        "(mutate:rebind \"y\" \"42\")",
-        "(mutate:rebind \"z\" \"43\")",
+        "(mutate :rebind \"x\" \"41\")",
+        "(mutate :rebind \"y\" \"42\")",
+        "(mutate :rebind \"z\" \"43\")",
     };
     auto result = cs.typed_mutate_atomic(mutations);
 #ifdef AURA_ISSUE_BATCH_MEMBER

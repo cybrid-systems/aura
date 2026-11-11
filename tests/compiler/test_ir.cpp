@@ -3207,7 +3207,7 @@ int main() {
             // then-branch synthesizes to exactly dynamic_type(); the
             // else-branch is the Int literal 1.
             constexpr std::string_view kDynamicIfSrc =
-                "(let ((d (mutate:rebind \"a\" \"b\"))) (if #t d 1))";
+                "(let ((d (mutate :rebind \"a\" \"b\"))) (if #t d 1))";
 
             // AC1: production — gate TypeError, Void, demoted authority,
             // if node still dirty, error-stamped, never cached.
@@ -5309,7 +5309,7 @@ int main() {
         {
             // First use eval to run the mutation (workspace path)
             auto mr =
-                cs34.typed_mutate(R"cs((mutate:rebind "f" "(lambda (x) (* x 2))" "double-it"))cs");
+                cs34.typed_mutate(R"cs((mutate :rebind "f" "(lambda (x) (* x 2))" "double-it"))cs");
             if (mr.success) {
                 std::println("CS34 OK: typed_mutate rebind accepted");
                 ++cs34_passed;

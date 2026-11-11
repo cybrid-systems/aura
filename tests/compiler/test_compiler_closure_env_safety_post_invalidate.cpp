@@ -174,7 +174,7 @@ bool test_recursive_closure_invalidate() {
         (void)cs.eval("(f 42)");
     }
     // Mutate to trigger another invalidate_function.
-    (void)cs.eval("(mutate:replace-value (define a 99) (define a 99))");
+    (void)cs.eval("(mutate :replace-value (define a 99) (define a 99))");
     const auto sr = cs.get_closure_stale_refresh_count();
     std::println("  closure_stale_refresh after closure + invalidate: {}", sr);
     CHECK(sr >= 0, "closure_stale_refresh_count observable post-invalidate");
@@ -216,7 +216,7 @@ bool test_gc_heap_with_closure_safety() {
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
-    (void)cs.eval("(mutate:replace-value (define a 99) (define a 99))");
+    (void)cs.eval("(mutate :replace-value (define a 99) (define a 99))");
     auto r = cs.eval("(gc-heap)");
     CHECK(r.has_value(), "(gc-heap) callable after mutate (closure safe)");
     const auto sr = cs.get_closure_stale_refresh_count();

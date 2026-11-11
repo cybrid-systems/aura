@@ -165,7 +165,7 @@ static void ac5_mutate_apply() {
     const auto env0 = load_u64(m->compiler_closure_envframe_stale_total);
     const auto live0 = load_u64(m->compiler_live_closure_stale_prevented_total);
 
-    (void)cs.eval("(mutate:rebind \"h\" \"(lambda (x) (+ x 99))\" \"#1660\")");
+    (void)cs.eval("(mutate :rebind \"h\" \"(lambda (x) (+ x 99))\" \"#1660\")");
     cs.public_mark_define_dirty("h");
     cs.evaluator().bump_defuse_version_for_test();
 

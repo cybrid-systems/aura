@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regression for #4912: capability presets, --grant/--deny, a caps banner and --quiet.
 
-Before: a self-evolving program (mutate:rebind + write-file) needed
+Before: a self-evolving program (mutate :rebind + write-file) needed
 `aura soft --allow write` or AURA_SANDBOX=off, and nothing said which
 capabilities a run had. Now `--preset dev|ci|prod` (or AURA_PRESET, or
 `preset = "dev"` in aura.toml) picks a named set, --grant/--deny adjust it,
@@ -24,7 +24,7 @@ from _aura_harness import AURA_BIN  # noqa: E402
 
 EVO = (
     '(set-code "(define params (quote ((fast . 2))))")\n(eval-current)\n'
-    '(display (list "rb" (mutate:rebind "params" "(quote ((fast . 3)))" "x"))) (newline)\n'
+    '(display (list "rb" (mutate :rebind "params" "(quote ((fast . 3)))" "x"))) (newline)\n'
     '(eval-current)\n(display (list "v" params)) (newline)\n'
     '(display (list "w" (write-file "out.txt" "hi"))) (newline)\n'
 )

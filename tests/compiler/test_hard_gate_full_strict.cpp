@@ -99,7 +99,7 @@ static void ac1_full_inject_rollback() {
     const auto viol0 =
         load_u64(g_typed_mutation_audit_counters.typed_mutation_violations_caught_total);
 
-    auto reb = cs.eval("(mutate:rebind \"x\" \"99\" \"issue-2145-uam\")");
+    auto reb = cs.eval("(mutate :rebind \"x\" \"99\" \"issue-2145-uam\")");
     // Hard gate should deny: error result or false bool.
     const bool denied = !reb.has_value() || is_error(*reb) ||
                         (is_bool(*reb) && !aura::compiler::types::as_bool(*reb)) ||
@@ -135,7 +135,7 @@ static void ac2_strict_error_hold() {
     const auto hold0 = load_u64(g_typed_mutation_audit_counters.hard_gate_strict_hold_total);
     const auto err0 = load_u64(g_typed_mutation_audit_counters.errors);
 
-    (void)cs.eval("(mutate:rebind \"y\" \"42\" \"issue-2145-strict\")");
+    (void)cs.eval("(mutate :rebind \"y\" \"42\" \"issue-2145-strict\")");
     CHECK(cs.evaluator().strict_mutate_hold() ||
               cs.evaluator().last_mutate_error().find("invariant-denied") != std::string::npos ||
               load_u64(g_typed_mutation_audit_counters.hard_gate_strict_hold_total) > hold0 ||
@@ -171,7 +171,7 @@ static void ac3_sampled_skip_and_contextual() {
     CompilerService cs;
     seed(cs);
     const auto skip0 = load_u64(g_typed_mutation_audit_counters.hard_gate_sampled_skip_total);
-    auto reb = cs.eval("(mutate:rebind \"z\" \"7\" \"issue-2145-sampled\")");
+    auto reb = cs.eval("(mutate :rebind \"z\" \"7\" \"issue-2145-sampled\")");
     // Clean rebind under Sampled should succeed (no inject).
     CHECK(reb.has_value(), "sampled clean rebind returns");
     CHECK(load_u64(g_typed_mutation_audit_counters.hard_gate_sampled_skip_total) >= skip0,
@@ -192,7 +192,7 @@ static void ac4_off_unchanged() {
 
     CompilerService cs;
     seed(cs);
-    auto reb = cs.eval("(mutate:rebind \"x\" \"2\" \"issue-2145-off\")");
+    auto reb = cs.eval("(mutate :rebind \"x\" \"2\" \"issue-2145-off\")");
     CHECK(reb.has_value(), "Off strategy mutate still works");
 }
 
@@ -278,7 +278,7 @@ static void ac3217_deny_restore_then_stamp() {
     cs.evaluator().inject_cross_batch_linear_escape_for_test();
     const auto rb0 = load_u64(g_typed_mutation_audit_counters.rollbacks);
     const auto err0 = load_u64(g_typed_mutation_audit_counters.errors);
-    (void)cs.eval("(mutate:rebind \"x\" \"99\" \"issue-3217-deny\")");
+    (void)cs.eval("(mutate :rebind \"x\" \"99\" \"issue-3217-deny\")");
     auto after = cs.eval("x");
     if (after.has_value() && is_int(*after))
         CHECK(as_int(*after) == 1, "ac3217_2: workspace matches enter checkpoint after deny");

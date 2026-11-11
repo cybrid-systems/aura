@@ -16,12 +16,12 @@
 (let loop ((i 2))
   (if (< i 7)
       (begin
-        (mutate:rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
+        (mutate :rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
         (check! (= (both (string-append "rebind " (number->string i))) (+ 5 i 55))
                 (string-append "value after rebind " (number->string i)))
         (loop (+ i 1)))))
 ;; caller rebind (signature unchanged)
-(mutate:rebind "c0" "(lambda (x) (* 2 (f x)))" "t")
+(mutate :rebind "c0" "(lambda (x) (* 2 (f x)))" "t")
 (check! (= (both "caller rebind") (+ (* 2 11) 55)) "caller rebind value")
 ;; refused tail shape: let in the tail -> tree-walker, still equal
 (set-code "(define g (lambda (x) (* x 3)))\n(let ((y 4)) (g y))")

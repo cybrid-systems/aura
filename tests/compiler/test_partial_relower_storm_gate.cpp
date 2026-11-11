@@ -600,7 +600,7 @@ int run_test_partial_relower_storm_gate() {
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
         trip_global_storm();
         CHECK((aura_hot_update_current_storm_level() & kStormLevelGlobal) != 0, "Global live");
-        CHECK(cs.eval("(mutate:set-body \"g\" \"(lambda (n) (+ n 2))\")").has_value(),
+        CHECK(cs.eval("(mutate :set-body \"g\" \"(lambda (n) (+ n 2))\")").has_value(),
               "set-body under Global");
         CHECK(cs.eval("(eval-current)").has_value(), "re-eval under Global");
         auto r = cs.eval("(g 10)");

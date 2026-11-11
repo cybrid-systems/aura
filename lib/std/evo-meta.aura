@@ -842,7 +842,7 @@
       ((procedure? apply-fn)
        (try (apply-fn m node) (catch (e) #f)))
       ((string? target)
-       (try (eq? (mutate:rebind target
+       (try (eq? (mutate :rebind target
                                 (meta:policy->source policy (meta-opt m "live-name" "meta-policy"))
                                 (string-append "meta:" id))
                  #t)

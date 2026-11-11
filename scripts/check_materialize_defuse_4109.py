@@ -16,7 +16,7 @@
 #      the new defuse (restamp_live_capture_frames): frames whose captured
 #      cell still matches the live workspace binding for that name (module
 #      captures, #2579) plus frame-local captures. Frames whose captured
-#      cell was replaced by the boundary (mutate:rebind / set-code new
+#      cell was replaced by the boundary (mutate :rebind / set-code new
 #      cell) stay behind — the next materialize returns the empty Env
 #      instead of copying pre-mutate bindings.
 #

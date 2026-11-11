@@ -97,7 +97,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC3: Top2 Guard + reflect post-mutate ---");
     const auto impact0 = cs.evaluator().get_mutation_impact_count();
-    (void)cs.eval("(mutate:rebind \"user-val\" \"42\")");
+    (void)cs.eval("(mutate :rebind \"user-val\" \"42\")");
     const auto impact1 = cs.evaluator().get_mutation_impact_count();
     const auto snap = cs.evaluator().get_impact_snapshot_count();
     std::println("  mutation_impact: {} -> {} impact_snapshot={}", impact0, impact1, snap);
@@ -122,7 +122,7 @@ static void run_matrix(CompilerService& cs) {
     const auto stats7a = prod_stats(cs);
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(query:pattern \"user-val\")");
-        (void)cs.eval("(mutate:rebind \"user-val\" \"" + std::to_string(200 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"user-val\" \"" + std::to_string(200 + round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats7b = prod_stats(cs);
@@ -205,7 +205,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC3: P0 #623 gc-safepoint pillar ---");
     const auto gc0 = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     CHECK(gc0 && is_int(*gc0), "query:gc-safepoint-stats returns int");
-    (void)cs.eval("(mutate:request-gc-safepoint 50)");
+    (void)cs.eval("(mutate :request-gc-safepoint 50)");
     const auto gc1 = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     CHECK(gc1 && is_int(*gc1), "gc-safepoint-stats after request");
     CHECK(as_int(*gc1) > as_int(*gc0),
@@ -231,9 +231,9 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC7: multi-round mutate cycle ---");
     const auto stats7a = commercial_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"x\" \"" + std::to_string(10 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"x\" \"" + std::to_string(10 + round) + "\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(mutate:request-gc-safepoint 10)");
+        (void)cs.eval("(mutate :request-gc-safepoint 10)");
     }
     const auto stats7b = commercial_stats(cs);
     std::println("  commercial stats: {} -> {}", stats7a, stats7b);
@@ -312,7 +312,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC3: P0 #439 gc-safepoint pillar ---");
     const auto gc0 = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     CHECK(gc0 && is_int(*gc0), "query:gc-safepoint-stats returns int");
-    (void)cs.eval("(mutate:request-gc-safepoint 50)");
+    (void)cs.eval("(mutate :request-gc-safepoint 50)");
     const auto gc1 = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     CHECK(gc1 && is_int(*gc1), "gc-safepoint-stats after request");
     CHECK(as_int(*gc1) > as_int(*gc0),
@@ -323,7 +323,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(cs.eval("(eval-current)").has_value(), "workspace eval");
     const auto impact0 = cs.evaluator().get_mutation_impact_count();
     (void)cs.eval("(query:pattern \"acc\")");
-    CHECK(cs.eval("(mutate:rebind \"acc\" \"42\")").has_value(), "mutate:rebind under Guard");
+    CHECK(cs.eval("(mutate :rebind \"acc\" \"42\")").has_value(), "mutate:rebind under Guard");
     const auto impact1 = cs.evaluator().get_mutation_impact_count();
     CHECK(impact1 > impact0, "mutation_impact bumped after Guard mutate");
     auto eds = cs.eval("(engine:metrics \"query:edsl-stability-stats\")");
@@ -340,9 +340,9 @@ static void run_matrix(CompilerService& cs) {
     const auto stats6a = prod_stats(cs);
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(query:pattern \"acc\")");
-        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(100 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(100 + round) + "\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(mutate:request-gc-safepoint 10)");
+        (void)cs.eval("(mutate :request-gc-safepoint 10)");
     }
     const auto stats6b = prod_stats(cs);
     std::println("  consolidated stats: {} -> {}", stats6a, stats6b);

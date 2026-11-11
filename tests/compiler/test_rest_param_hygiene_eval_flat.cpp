@@ -252,7 +252,7 @@ static void ac3753_empty_rest_reexpand_stamped() {
     CHECK(spine != aura::ast::NULL_NODE, "3753 AC1: rest spine allocated");
     CHECK(ws->is_macro_introduced(spine), "3753 AC1: empty rest spine is MacroIntroduced");
     auto rv = cs.eval(
-        std::format("(mutate:replace-value {} 99 \"3753-deny\")", static_cast<unsigned>(spine)));
+        std::format("(mutate :replace-value {} 99 \"3753-deny\")", static_cast<unsigned>(spine)));
     CHECK(rv.has_value() && merr_kind_3753(cs, *rv) == "hygiene-protected",
           "3753 AC1: replace-value on spine is hygiene-protected");
 }

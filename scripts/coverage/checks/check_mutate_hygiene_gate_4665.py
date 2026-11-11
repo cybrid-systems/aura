@@ -57,9 +57,14 @@ HYG_HELPERS = (
 # The inventory row shape:
 #   {"mutate:<name>", MutateHygienePolicy::Required|Exempt, "<reason>"}
 ROW_RE = re.compile(r'\{\s*"(mutate:[^"]+)"\s*,\s*MutateHygienePolicy::(Required|Exempt)\s*,\s*"([^"]*)"\s*\}')
-# mutate:* registrations (the wrapper and the raw metadata add).
+# mutate:* registrations (the wrapper, the raw metadata add, and the
+# dispatch-only add_hidden face these became in #5144).
 ADD_MUTATE_RE = re.compile(r'add_mutate\(\s*"(mutate:[^"]+)"')
 RAW_ADD_RE = re.compile(r'(?<![A-Za-z0-9_])add\(\s*"(mutate:[^"]+)"')
+# Issue #5144: ev.primitives().add_hidden("mutate:…") is still a mutate:*
+# registration for the hygiene inventory — the body runs, so it must carry a
+# Required/Exempt policy row even though the name has no public slot.
+ADD_HIDDEN_RE = re.compile(r'add_hidden\(\s*"(mutate:[^"]+)"')
 # The registration point itself.
 ADD_MUTATE_DEF_RE = re.compile(r"auto\s+add_mutate\s*=")
 # Adjacent string literals (clang-format may split a long literal) -> merge.
@@ -344,7 +349,7 @@ def check_text(text: str, *, repo_scope: bool, extra_reg_text: str = "") -> list
 
     regs: dict[str, str] = {}
     order: list[str] = []
-    for regex in (ADD_MUTATE_RE, RAW_ADD_RE):
+    for regex in (ADD_MUTATE_RE, RAW_ADD_RE, ADD_HIDDEN_RE):
         for m in regex.finditer(masked):
             name = m.group(1)
             if name not in regs:
@@ -358,7 +363,7 @@ def check_text(text: str, *, repo_scope: bool, extra_reg_text: str = "") -> list
         # Only RESOLVE rows here (AC2 direction). AC1 (a registration without
         # a row) stays scoped to this file: sibling partitions carry their own
         # reviewed rows and are not this inventory's completeness target.
-        for regex in (ADD_MUTATE_RE, RAW_ADD_RE):
+        for regex in (ADD_MUTATE_RE, RAW_ADD_RE, ADD_HIDDEN_RE):
             for m in regex.finditer(extra):
                 name = m.group(1)
                 if name not in regs:

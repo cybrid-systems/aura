@@ -78,7 +78,7 @@ int main() {
 
     // AC6: :mutation-log
     {
-        CHECK(eval_ok(cs, "(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"t\")"), "mutate");
+        CHECK(eval_ok(cs, "(mutate :rebind \"f\" \"(lambda (x) (* x 2))\" \"t\")"), "mutate");
         CHECK(eval_ok(cs, "(query :mutation-log)"), "query :mutation-log");
     }
 

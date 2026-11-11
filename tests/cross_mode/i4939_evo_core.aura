@@ -41,7 +41,7 @@
 ; worldline isolation: the child mutation is invisible to the live define
 (define fp0 (evo:source-fingerprint))
 (define t (evo:trial (evo:candidate "(lambda (x) (* x 7))" (hash "target" "score"))
-                     (hash "apply" (lambda (c) (eq? (mutate:rebind "score"
+                     (hash "apply" (lambda (c) (eq? (mutate :rebind "score"
                                                                   (evo:candidate-genome c)
                                                                   "cross-mode") #t))
                            "evaluate" (lambda (c) (hash "objectives" (hash "v" (score 5))

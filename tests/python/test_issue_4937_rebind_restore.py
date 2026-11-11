@@ -29,9 +29,9 @@ from _aura_harness import AURA_BIN  # noqa: E402
 
 PROG = r"""
 (set-code "(define (params) (list 1 2))\n")
-(mutate:rebind "nope" "(lambda (xs r) (member r xs))" "x")
+(mutate :rebind "nope" "(lambda (xs r) (member r xs))" "x")
 (define snap (mutate :snapshot "s1"))
-(mutate:rebind "params" "(lambda () (list 3 4))" "step")
+(mutate :rebind "params" "(lambda () (list 3 4))" "step")
 (mutate :restore snap)
 (eval-current)
 (display (params))
@@ -40,7 +40,7 @@ PROG = r"""
 
 PROG_ADD = r"""
 (set-code "(define (f x) (+ x 1))")
-(display (mutate:rebind "nonexistent" "(lambda (y) y)" "add"))
+(display (mutate :rebind "nonexistent" "(lambda (y) y)" "add"))
 (newline)
 (eval-current)
 (display (nonexistent 7))

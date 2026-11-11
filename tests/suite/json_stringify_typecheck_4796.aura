@@ -16,7 +16,7 @@
         (newline))))
 
 (define (rebind name body label)
-  (try (mutate:rebind name body label) (catch (e) (list "raised" e))))
+  (try (mutate :rebind name body label) (catch (e) (list "raised" e))))
 (define (string-has? s sub)
   (let loop ((i 0))
     (cond ((> (+ i (string-length sub)) (string-length s)) #f)

@@ -70,7 +70,7 @@ static void run_matrix(CompilerService& cs) {
     const auto hotpath0 = contract_hash(cs, "hotpath-invariant-hits");
     (void)cs.eval("(fact 4)");
     (void)cs.eval("(+ a b)");
-    (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     (void)cs.eval("(eval-current)");
     const auto hotpath1 = contract_hash(cs, "hotpath-invariant-hits");
     std::println("  hotpath-invariant-hits: {} -> {}", hotpath0, hotpath1);
@@ -90,7 +90,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: multi-round mutate hotpath monotonic ---");
     const auto stats5a = stats_sum(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"b\" \"" + std::to_string(20 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"b\" \"" + std::to_string(20 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(fact 2)");
     }

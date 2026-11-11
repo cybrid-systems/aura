@@ -13,13 +13,13 @@
   },
   {
     "name": "incr-caller-chain",
-    "code": "(begin (set-code \"(define (f x) (+ x 1))(define (g x) (f x))(define (h x) (g x))\")(typecheck-current)(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"op\")(typecheck-current)(display (eval-current))(display (h 5)))",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))(define (g x) (f x))(define (h x) (g x))\")(typecheck-current)(mutate :rebind \"f\" \"(lambda (x) (* x 2))\" \"op\")(typecheck-current)(display (eval-current))(display (h 5)))",
     "expect_out": "10",
     "expect_err": ""
   },
   {
     "name": "incr-caller-dirty",
-    "code": "(begin (set-code \"(define (add x y) (+ x y))(define (caller z) (add z 1))(define (other z) (* z 2))\")(typecheck-current)(mutate:rebind \"add\" \"(lambda (a b) (* a b))\" \"mul\")(typecheck-current)(display (eval-current))(display (caller 5))(display (other 5)))",
+    "code": "(begin (set-code \"(define (add x y) (+ x y))(define (caller z) (add z 1))(define (other z) (* z 2))\")(typecheck-current)(mutate :rebind \"add\" \"(lambda (a b) (* a b))\" \"mul\")(typecheck-current)(display (eval-current))(display (caller 5))(display (other 5)))",
     "expect_out": "10",
     "expect_err": ""
   },
@@ -31,13 +31,13 @@
   },
   {
     "name": "incr-multi-mutate",
-    "code": "(begin (set-code \"(define (f x) (+ x 1))(define (g x) (f x))\")(typecheck-current)(mutate:rebind \"f\" \"(lambda (x) (* x 2))\" \"op\")(typecheck-current)(mutate:rebind \"g\" \"(lambda (x) (f x))\" \"chain\")(typecheck-current)(display \"ok\"))",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))(define (g x) (f x))\")(typecheck-current)(mutate :rebind \"f\" \"(lambda (x) (* x 2))\" \"op\")(typecheck-current)(mutate :rebind \"g\" \"(lambda (x) (f x))\" \"chain\")(typecheck-current)(display \"ok\"))",
     "expect_out": "ok",
     "expect_err": ""
   },
   {
     "name": "incr-mutate",
-    "code": "(begin (set-code \"(define (add x y) (+ x y))\")(typecheck-current)(mutate:rebind \"add\" \"(lambda (a b) (* a b))\" \"test\")(typecheck-current)(display \"ok\"))",
+    "code": "(begin (set-code \"(define (add x y) (+ x y))\")(typecheck-current)(mutate :rebind \"add\" \"(lambda (a b) (* a b))\" \"test\")(typecheck-current)(display \"ok\"))",
     "expect_out": "ok",
     "expect_err": ""
   },
@@ -49,7 +49,7 @@
   },
   {
     "name": "edsl-err-inline-call",
-    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (mutate:inline-call 999)))",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (mutate :inline-call 999)))",
     "expect_out": "#t",
     "expect_err": ""
   },
@@ -79,19 +79,19 @@
   },
   {
     "name": "edsl-err-rebind",
-    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (mutate:rebind)))",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (mutate :rebind)))",
     "expect_out": "#t",
     "expect_err": ""
   },
   {
     "name": "edsl-err-remove-node",
-    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (mutate:remove-node 999)))",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (mutate :remove-node 999)))",
     "expect_out": "#t",
     "expect_err": ""
   },
   {
     "name": "edsl-err-tweak-literal",
-    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (mutate:tweak-literal 999 1)))",
+    "code": "(begin (set-code \"(define (f x) (+ x 1))\")(pair? (mutate :tweak-literal 999 1)))",
     "expect_out": "#t",
     "expect_err": ""
   }

@@ -164,7 +164,7 @@ static void ac3583_1_dual_eval_callee_mutate_not_stale() {
         for (int i = 2; i <= 8; ++i) {
             const auto body = std::format("(lambda () {})", i);
             const auto mut =
-                cs.eval(std::format("(mutate:set-body \"f\" \"{}\" \"#3583-{}\")", body, i));
+                cs.eval(std::format("(mutate :set-body \"f\" \"{}\" \"#3583-{}\")", body, i));
             CHECK(mut.has_value() && !is_error(*mut), std::string(tag) + " set-body f");
             CHECK(cs.eval("(eval-current)").has_value(), std::string(tag) + " re-eval");
             auto fi = cs.eval("(f)");
@@ -252,7 +252,7 @@ static void ac3583_3_soft_zero_cost() {
     auto sc = cs.eval("(set-code \"(define f (lambda () 1)) (define g (lambda () (f)))\")");
     CHECK(sc.has_value(), "3583 AC3: Soft set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3583 AC3: Soft eval");
-    auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () 9)\" \"#3583-soft\")");
+    auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda () 9)\" \"#3583-soft\")");
     CHECK(mut.has_value() && !is_error(*mut), "3583 AC3: Soft set-body");
     CHECK(cs.eval("(eval-current)").has_value(), "3583 AC3: Soft re-eval");
     auto f = cs.eval("(f)");

@@ -127,11 +127,11 @@ int run_test_relower_fallback_reason() {
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
         const auto thr0 = href(cs, "relower-fallback-threshold-count");
         // Mutate a heavily / invalidate chain — cascade may take full.
-        CHECK(cs.eval("(mutate:set-body \"a\" \"(lambda () 2)\")").has_value(), "set-body a");
+        CHECK(cs.eval("(mutate :set-body \"a\" \"(lambda () 2)\")").has_value(), "set-body a");
         CHECK(cs.eval("(eval-current)").has_value(), "re-eval");
         // Force large dirty surface via low thr + repeated mutates.
         for (int i = 0; i < 5; ++i) {
-            CHECK(cs.eval(std::format("(mutate:set-body \"a\" \"(lambda () {})\")", i + 3))
+            CHECK(cs.eval(std::format("(mutate :set-body \"a\" \"(lambda () {})\")", i + 3))
                       .has_value(),
                   "mutate a loop");
             (void)cs.eval("(eval-current)");
@@ -190,7 +190,7 @@ int run_test_relower_fallback_reason() {
         CHECK(cs.eval("(set-code \"(define p (lambda (x) (+ x 1)))\")").has_value(), "set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
         const auto ok0 = href(cs, "relower-fallback-ok-count");
-        CHECK(cs.eval("(mutate:set-body \"p\" \"(lambda (x) (+ x 2))\")").has_value(), "set-body");
+        CHECK(cs.eval("(mutate :set-body \"p\" \"(lambda (x) (+ x 2))\")").has_value(), "set-body");
         CHECK(cs.eval("(eval-current)").has_value(), "re-eval");
         auto r = cs.eval("(p 10)");
         CHECK(r && is_int(*r) && as_int(*r) == 12, "p 10 = 12");

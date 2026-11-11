@@ -8095,7 +8095,7 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> mutation_boundary_linear_revalidations{0}; // #1252
     std::atomic<std::uint64_t> mutation_boundary_steal_recoveries{0};     // #1252
     // ── Issue #1907: reflect/EDSL bridge counters backing the
-    // (engine:metrics "query:reflect-schema") + (mutate:validate-reflected)
+    // (engine:metrics "query:reflect-schema") + (mutate :validate-reflected)
     // primitives + the post-mutation auto_validate + hygiene gate hook.
     //   - reflect_post_mutation_validate_total: every bridge-hook call
     //     from flush_mutation_boundary outermost exit (Step 1 of #1907).
@@ -8107,7 +8107,7 @@ struct CompilerMetrics {
     //   - reflect_schema_query_total: every (query:reflect-schema) call
     //     (Step 2 of #1907).
     //   - reflect_validate_reflected_query_total: every
-    //     (mutate:validate-reflected) call (Step 2 of #1907).
+    //     (mutate :validate-reflected) call (Step 2 of #1907).
     //   - reflect_dirty_macro_nodes_total: cumulative sum of
     //     dirty_macro_nodes reported by the bridge hook (trending
     //     metric for self-evolution hygiene regression detection).

@@ -28,7 +28,7 @@
     (try
      (begin
        (workspace :switch w)
-       (mutate:rebind "f" (string-append "(lambda (x) " (number->string (+ 100 i)) ")") "fiber")
+       (mutate :rebind "f" (string-append "(lambda (x) " (number->string (+ 100 i)) ")") "fiber")
        (eval-current)
        (fiber:yield)
        (vector-set! res i (try (f 0) (catch (e) -2)))
@@ -86,7 +86,7 @@
 ;; host drives normally after the joins
 (define h (workspace :create "host"))
 (assert! (eq? (workspace :switch h) #t) "host switch after joins")
-(mutate:rebind "f" "(lambda (x) 7)" "host")
+(mutate :rebind "f" "(lambda (x) 7)" "host")
 (eval-current)
 (assert! (= (f 0) 7) "host child worldline")
 (workspace :switch 0)

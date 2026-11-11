@@ -191,7 +191,7 @@ int main() {
         CHECK(!caps.empty(), "closures");
 
         for (int round = 0; round < 20; ++round) {
-            (void)cs.eval(std::format("(mutate:rebind \"g\" \"(lambda (x) (+ x {}))\" \"r{}\")",
+            (void)cs.eval(std::format("(mutate :rebind \"g\" \"(lambda (x) (+ x {}))\" \"r{}\")",
                                       round + 1, round));
             (void)cs.eval("(eval-current)");
             for (auto cid : caps) {
@@ -247,7 +247,7 @@ int main() {
             try {
                 for (int i = 0; i < 25; ++i) {
                     (void)cs.eval(std::format(
-                        "(mutate:rebind \"p\" \"(lambda (x) (+ x {}))\" \"t{}\")", i, i));
+                        "(mutate :rebind \"p\" \"(lambda (x) (+ x {}))\" \"t{}\")", i, i));
                     (void)cs.eval("(eval-current)");
                     ops.fetch_add(1, std::memory_order_relaxed);
                 }

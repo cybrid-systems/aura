@@ -15,9 +15,9 @@
 (eval-current)
 
 (define (rejects src msg)
-  (let ((r (mutate:check "f" src))) (check! (type-error? r) msg r)))
+  (let ((r (mutate :check "f" src))) (check! (type-error? r) msg r)))
 (define (accepts src msg)
-  (let ((r (mutate:check "f" src))) (check! (equal? r #t) msg r)))
+  (let ((r (mutate :check "f" src))) (check! (equal? r #t) msg r)))
 
 (rejects "(define (f x) (+ x \"a\"))" "(+ x \"a\") is a type error")
 (rejects "(define (f x) (and (> x \"0.17\") #t))" "(> x \"0.17\") is a type error")

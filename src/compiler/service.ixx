@@ -14253,7 +14253,7 @@ public:
     //
     // A body that reads the define's top_env cell resolves a closure id and
     // only THEN enters dispatch_ir_define_closure, which takes
-    // ir_cache_gate_. The parent's (mutate:rebind ...) + (eval-current) holds
+    // ir_cache_gate_. The parent's (mutate :rebind ...) + (eval-current) holds
     // that gate across the whole lowering window, so the body resolves the
     // pre-publication id and is parked behind the gate while one or more
     // new publications take over - two per (eval-current) (the whole-
@@ -14371,7 +14371,7 @@ public:
             const bool has_ir = it != ir_cache_v2_.end() && !it->second.irs.empty();
             const std::size_t dirty_n = has_ir ? it->second.dirty_block_count() : 0;
             // Prefer partial whenever dirty bitmasks fire — including when
-            // source_hash changed (mutate:set-body). dirty_n>0 is required so
+            // source_hash changed (mutate :set-body). dirty_n>0 is required so
             // we never take the clean-bitmask early-return with stale IR.
             bool try_partial = has_ir && dirty_n > 0;
             // Issue #4422: production must consult impact before a per-fn
@@ -16514,7 +16514,7 @@ public:
             // For every MutationRecord we just processed, walk
             // its affected subtree and re-expand any macro call
             // sites. This fixes the bug where EDSL mutations
-            // (mutate:rebind, mutate:set-body) leave stale macro
+            // (mutate :rebind, mutate:set-body) leave stale macro
             // expansions — the macro's gensym'd bindings may not
             // be re-generated, and the call site may pick up
             // caller's bindings that should have been hygiene-
@@ -16625,7 +16625,7 @@ public:
 
     // Query mutation log for a specific node (or all nodes if NULL_NODE).
     //
-    // Issue #147 follow-up: mutation primitives (mutate:rebind,
+    // Issue #147 follow-up: mutation primitives (mutate :rebind,
     // mutate:replace-type, ...) append MutationRecord entries to
     // workspace_flat_ — NOT current_ast_. The pre-#147 implementation
     // read from current_ast_, so callers saw an empty log even after
@@ -16708,7 +16708,7 @@ public:
     aura::ast::StringPool* current_pool() const { return current_pool_; }
 
     // Issue #147: accessor for the evaluator's workspace FlatAST.
-    // The workspace is where mutation primitives (mutate:rebind,
+    // The workspace is where mutation primitives (mutate :rebind,
     // mutate:replace-type, ...) append MutationRecords. Note that
     // the workspace pointer can be replaced by lazy COW during
     // eval, so callers should re-query this after each mutation.
@@ -19260,7 +19260,7 @@ public:
 
     // Issue #401: public test hook for invalidate_function. Lets tests
     // drive the BFS traversal directly without going through the Aura
-    // (mutate:rebind) EDSL surface, which would also rebuild the function
+    // (mutate :rebind) EDSL surface, which would also rebuild the function
     // body (mixing the traversal test with the rebind path).
     void public_invalidate_function(const std::string& name) { invalidate_function(name); }
     // Issue #4570: optimized LLVM IR of a JIT-compiled function (empty if

@@ -10,10 +10,10 @@
       (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
 
 (set-code "(define (params) (list 1 2))\n")
-(assert! (eq? (mutate:rebind "nope" "(lambda (xs r) (member r xs))" "add") #t)
+(assert! (eq? (mutate :rebind "nope" "(lambda (xs r) (member r xs))" "add") #t)
          "rebind of a missing name returns #t and adds the define")
 (define snap (mutate :snapshot "s1"))
-(assert! (mutate:rebind "params" "(lambda () (list 3 4))" "step") "rebind params")
+(assert! (mutate :rebind "params" "(lambda () (list 3 4))" "step") "rebind params")
 (assert! (eq? (mutate :restore snap) #t) "restore")
 (eval-current)
 (assert! (equal? (params) (list 1 2)) "restored params is (1 2)")

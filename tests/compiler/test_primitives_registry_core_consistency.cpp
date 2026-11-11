@@ -73,7 +73,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC4: mutate + eval agent activity ---");
     const auto stats4a = primitives_stats(cs);
     const auto mut0 = cs.evaluator().total_mutations();
-    (void)cs.eval("(mutate:rebind \"acc\" \"42\")");
+    (void)cs.eval("(mutate :rebind \"acc\" \"42\")");
     (void)cs.eval("(eval-current)");
     const auto mut1 = cs.evaluator().total_mutations();
     const auto stats4b = primitives_stats(cs);
@@ -92,7 +92,7 @@ static void run_matrix(CompilerService& cs) {
     const auto stats6a = primitives_stats(cs);
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(query:pattern \"acc\")");
-        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
+        (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(+ 1 2)");
     }

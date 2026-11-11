@@ -455,7 +455,7 @@ static void ac2764_3_multi_eval_no_marker_loss() {
     CHECK(macro_n > 0 || cs.macro_ir_attr_cache_size() > 0,
           "AC3: MacroIntroduced survives multi-eval");
     // Structural rebind of a user form (not macro wipe).
-    auto mut = cs.eval("(mutate:replace-pattern \"(+ x base)\" \"(+ x base)\")");
+    auto mut = cs.eval("(mutate :replace-pattern \"(+ x base)\" \"(+ x base)\")");
     (void)mut;
     for (int i = 0; i < 4; ++i)
         (void)cs.eval("(eval-current)");

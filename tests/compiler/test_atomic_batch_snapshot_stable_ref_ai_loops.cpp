@@ -9,7 +9,7 @@
 // matrix), #622 (atomic-batch-stats-hash).
 //
 //   - AC1: workspace:snapshot + workspace:rollback-to primitives
-//   - AC2: (mutate:atomic-batch ... :snapshot? #t) happy path
+//   - AC2: (mutate :atomic-batch ... :snapshot? #t) happy path
 //   - AC3: failed batch restores pre-batch snapshot
 //   - AC4: pinned-refs + snapshot metrics observable
 //   - AC5: multi-round query → batch mutate → eval loop
@@ -70,7 +70,7 @@ int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run() {
         CHECK(snap && aura::compiler::types::is_int(*snap) &&
                   aura::compiler::types::as_int(*snap) >= 0,
               "workspace:snapshot returns non-negative id");
-        (void)cs.eval("(mutate:rebind \"x\" \"99\")");
+        (void)cs.eval("(mutate :rebind \"x\" \"99\")");
         auto restored = cs.eval("(mutate :rollback-to \"pre-edit\")");
         CHECK(restored && aura::compiler::types::is_bool(*restored) &&
                   aura::compiler::types::as_bool(*restored),
@@ -89,7 +89,7 @@ int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run() {
     // AC2: happy path with :snapshot?
     {
         std::println("\n--- AC2: mutate:atomic-batch :snapshot? happy path ---");
-        auto ok = cs.eval("(mutate:atomic-batch "
+        auto ok = cs.eval("(mutate :atomic-batch "
                           "(list (list \"mutate:rebind\" \"x\" \"10\") "
                           "       (list \"mutate:rebind\" \"y\" \"20\")) "
                           ":snapshot? #t \"737-happy\")");
@@ -104,9 +104,9 @@ int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run() {
     // AC3: failed batch restores snapshot
     {
         std::println("\n--- AC3: failed batch restores pre-batch snapshot ---");
-        (void)cs.eval("(mutate:rebind \"x\" \"55\")");
+        (void)cs.eval("(mutate :rebind \"x\" \"55\")");
         const auto roll_before = cs.evaluator().atomic_batch_snapshot_rollbacks();
-        (void)cs.eval("(mutate:atomic-batch "
+        (void)cs.eval("(mutate :atomic-batch "
                       "(list (list \"mutate:replace-value\" 999 \"bad\")) "
                       ":snapshot? #t \"737-fail\")");
         const auto roll_after = cs.evaluator().atomic_batch_snapshot_rollbacks();
@@ -147,7 +147,7 @@ int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run() {
                 cs.eval("(let ((r (query:stable-ref (car (query:defines-by-marker \"Define\"))))) "
                         "(if (pair? r) (query:ref-valid? r) #f))");
             CHECK(ref_ok.has_value(), std::format("round {} stable-ref query", round));
-            auto batch = cs.eval("(mutate:atomic-batch "
+            auto batch = cs.eval("(mutate :atomic-batch "
                                  "(list (list \"mutate:rebind\" \"acc\" \"" +
                                  std::to_string(round + 1) +
                                  "\")) "

@@ -113,15 +113,15 @@ def build_mutation(fns, mut_type, serve_script):
     if mut_type == "mutate:rebind":
         op = pick_op()
         val = pick_val()
-        return [f'(mutate:rebind "{fn}" "(lambda (x) ({op} x {val}))")']
+        return [f'(mutate :rebind "{fn}" "(lambda (x) ({op} x {val}))")']
     elif mut_type == "mutate:set-body":
-        return [f'(mutate:set-body "{fn}" "(display 42)")']
+        return [f'(mutate :set-body "{fn}" "(display 42)")']
     elif mut_type == "mutate:wrap":
-        return ['(mutate:wrap 0 "display")']
+        return ['(mutate :wrap 0 "display")']
     elif mut_type == "mutate:splice":
-        return ["(mutate:splice 1 1)"]
+        return ["(mutate :splice 1 1)"]
     elif mut_type == "mutate:tweak-literal":
-        return [f"(mutate:tweak-literal 0 {pick_val()})"]
+        return [f"(mutate :tweak-literal 0 {pick_val()})"]
     elif mut_type == "mutate:extract-function":
         # Query for Define nodes, then try extract-function on the first one.
         # The node pointed to by query:find is the Define node ID.
@@ -130,15 +130,15 @@ def build_mutation(fns, mut_type, serve_script):
         # We store query results for the next iteration to use.
         return [
             f'(query :find "{fn}")',
-            f'(mutate:extract-function 2 "extracted_{rng.randint(100, 999)}")',
+            f'(mutate :extract-function 2 "extracted_{rng.randint(100, 999)}")',
         ]
     elif mut_type == "mutate:inline-call":
         # Query and try inline-call. Use query first to check if node exists.
         return [
             '(query:node-type "Call")',
-            "(mutate:inline-call 3)",
+            "(mutate :inline-call 3)",
         ]
-    return [f'(mutate:rebind "{fn}" "(lambda (x) (+ x 1))")']
+    return [f'(mutate :rebind "{fn}" "(lambda (x) (+ x 1))")']
 
 
 def parse_serve_response(raw):

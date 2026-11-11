@@ -2017,7 +2017,7 @@ static void ac3724_1_query_root_deny_does_not_occupy() {
     const auto nid = static_cast<std::uint32_t>(aura::compiler::types::as_int(*root));
     CHECK(aura::core::provenance::existing_stamp_for_node(nid) != 7,
           "3724 AC1: not occupied by A before mutate");
-    auto r = cs.eval(std::string("(mutate:replace-type ") +
+    auto r = cs.eval(std::string("(mutate :replace-type ") +
                      std::to_string(aura::compiler::types::as_int(*root)) + " \"Int\")");
     CHECK(r.has_value() && aura::compiler::types::is_error(*r), "3724 AC1: bare-int mutate denied");
     CHECK(aura::core::provenance::existing_stamp_for_node(nid) != 7,
@@ -2060,7 +2060,8 @@ static void ac3724_2_owner_not_isolation_denied_after_a_deny() {
     CHECK(aura::core::provenance::existing_stamp_for_node(static_cast<std::uint32_t>(nid)) == 99,
           "3724 AC2: occupancy is B after export");
     ev.set_capability_tenant_id(7);
-    auto denied = cs.eval(std::string("(mutate:replace-type ") + std::to_string(nid) + " \"Int\")");
+    auto denied =
+        cs.eval(std::string("(mutate :replace-type ") + std::to_string(nid) + " \"Int\")");
     CHECK(denied.has_value() && aura::compiler::types::is_error(*denied),
           "3724 AC2: A bare-int mutate denied");
     CHECK(aura::core::provenance::existing_stamp_for_node(static_cast<std::uint32_t>(nid)) == 99,
@@ -2855,7 +2856,7 @@ static void ac4051_1_torn_read_denies_before_stamp() {
     const auto after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
                            .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
     CHECK(after >= prev + 1, "4051 AC1: nodeid_only_entry_prevented bumped");
-    const auto edsl = cs.eval(std::format("(mutate:replace-type {} \"Int\")", live));
+    const auto edsl = cs.eval(std::format("(mutate :replace-type {} \"Int\")", live));
     CHECK(edsl.has_value() && is_error(*edsl), "4051 AC1: EDSL mutate is_error (fail-closed)");
     CHECK(ws->subtree_bump_count() == bumps_before, "4051 AC1: zero workspace write");
     // The occupant is still A — the deny wrote no caller stamp.

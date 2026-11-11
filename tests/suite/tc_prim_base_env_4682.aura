@@ -10,7 +10,7 @@
   (if (not ok)
       (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
 (define (rebind name body label)
-  (try (mutate:rebind name body label) (catch (e) (list "raised" e))))
+  (try (mutate :rebind name body label) (catch (e) (list "raised" e))))
 (define (rejected? r) (and (pair? r) (equal? (car r) "mutation-failed")))
 (set-code (string-append
   "(define abs (lambda (x) (* x 10)))\n"            ; shadows a primitive

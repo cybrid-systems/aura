@@ -79,7 +79,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC5: mutate + eval fragmentation path ---");
     const auto stats5a = column_compaction_stats(cs);
-    (void)cs.eval("(mutate:rebind \"base\" \"42\")");
+    (void)cs.eval("(mutate :rebind \"base\" \"42\")");
     CHECK(cs.eval("(eval-current)").has_value(), "eval after mutate");
     const auto stats5b = column_compaction_stats(cs);
     std::println("  column compaction stats: {} -> {}", stats5a, stats5b);
@@ -90,7 +90,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(ws != nullptr, "workspace flat available for compaction counters");
     const auto cum6a = ws->node_recycle_total() + ws->node_compact_total();
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
+        (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(mutate :recycle-nodes)");
         (void)cs.eval("(mutate :compact-nodes)");

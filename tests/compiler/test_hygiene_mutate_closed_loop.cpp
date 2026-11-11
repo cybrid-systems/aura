@@ -225,7 +225,7 @@ static void ac2_default_fail_closed() {
         CHECK(true, "soft-skip: no parented MacroIntroduced for replace-subtree");
         return;
     }
-    auto r = cs.eval(std::format("(mutate:replace-subtree {} \"99\")", target));
+    auto r = cs.eval(std::format("(mutate :replace-subtree {} \"99\")", target));
     // Should fail hygiene (replace-subtree always rejects MacroIntroduced).
     CHECK(r.has_value(), "returns value (error or bool)");
     // Not a bare #t success.
@@ -245,11 +245,11 @@ static void ac3_allowed_propagate() {
     const auto prop0 = href(cs, "hygiene-mutate-marker-propagate-total");
     const auto hits0 = href(cs, "macro-hygiene-provenance-hits");
     // Include MacroIntroduced and allow mutate.
-    auto r = cs.eval("(mutate:replace-pattern \"(* 3 2)\" \"(+ 3 3)\" "
+    auto r = cs.eval("(mutate :replace-pattern \"(* 3 2)\" \"(+ 3 3)\" "
                      ":include-macro-introduced #t :allow-macro? #t)");
     // Pattern may or may not match expanded form; try a broader pattern.
     if (!r || (is_bool(*r) && !as_bool(*r))) {
-        r = cs.eval("(mutate:replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
+        r = cs.eval("(mutate :replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
                     ":include-macro-introduced #t :allow-macro? #t)");
     }
     CHECK(r.has_value(), "replace-pattern ran");
@@ -273,12 +273,12 @@ static void ac4_closed_loop() {
     auto n0 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(n0 && is_int(*n0) && as_int(*n0) >= 1, "macro-introduced ≥1 before");
     // Soft mutate on user (non-macro) node — hygiene must hold for macros.
-    auto mut = cs.eval("(mutate:replace-pattern \"(+ base 1)\" \"(+ base 2)\")");
+    auto mut = cs.eval("(mutate :replace-pattern \"(+ base 1)\" \"(+ base 2)\")");
     CHECK(mut.has_value(), "user-node replace-pattern");
     auto n1 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(n1 && is_int(*n1) && as_int(*n1) >= 1, "macro-introduced still ≥1 after user mutate");
     // With allow + include, mutate a macro form and re-query.
-    (void)cs.eval("(mutate:replace-pattern \"(* ... ...)\" \"(* ... ...)\" "
+    (void)cs.eval("(mutate :replace-pattern \"(* ... ...)\" \"(* ... ...)\" "
                   ":include-macro-introduced #t :allow-macro? #t)");
     auto n2 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(n2 && is_int(*n2), "macro-introduced query after allowed mutate");
@@ -361,7 +361,7 @@ static void ac2762_2_closed_loop_expand_mutate_reexpand() {
     auto n0 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(n0 && is_int(*n0) && as_int(*n0) >= 1, "macro-introduced ≥1 after expand");
     // Structural mutate on a user node still under Guard cascade.
-    auto mut = cs.eval("(mutate:replace-pattern \"(+ base 1)\" \"(+ base 2)\")");
+    auto mut = cs.eval("(mutate :replace-pattern \"(+ base 1)\" \"(+ base 2)\")");
     CHECK(mut.has_value(), "user-node mutate under Guard");
     // Re-query: MacroIntroduced still present; cascade must not wipe hygiene.
     auto n1 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
@@ -477,7 +477,7 @@ static void ac2858_2_cascade_descendants() {
     const auto nodes0 = cm ? cm->macro_mutate_auto_restamp_nodes.load() : 0;
 
     // Allowed mutate on macro form (replace-pattern with :allow-macro? + include).
-    auto r = cs.eval("(mutate:replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
+    auto r = cs.eval("(mutate :replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
                      ":include-macro-introduced #t :allow-macro? #t)");
     CHECK(r.has_value(), "AC2: allowed mutate ran");
 
@@ -521,7 +521,7 @@ static void ac2858_3_default_rejects() {
     }
     auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
     const auto restamp0 = cm ? cm->macro_mutate_auto_restamp_total.load() : 0;
-    auto r = cs.eval(std::format("(mutate:replace-subtree {} \"99\")", target));
+    auto r = cs.eval(std::format("(mutate :replace-subtree {} \"99\")", target));
     CHECK(r.has_value(), "AC3: default replace-subtree returns value");
     const auto restamp1 = cm ? cm->macro_mutate_auto_restamp_total.load() : 0;
     // Default reject must NOT trigger auto-restamp cascade.
@@ -539,7 +539,7 @@ static void ac2858_4_opt_out() {
     const auto restamp0 = cm ? cm->macro_mutate_auto_restamp_total.load() : 0;
     const auto nodes0 = cm ? cm->macro_mutate_auto_restamp_nodes.load() : 0;
     // Allowed mutate WITH opt-out: no cascade, no counter bumps.
-    auto r = cs.eval("(mutate:replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
+    auto r = cs.eval("(mutate :replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
                      ":include-macro-introduced #t :allow-macro? #t "
                      ":no-auto-restamp? #t)");
     CHECK(r.has_value(), "AC4: opt-out mutate ran");
@@ -580,12 +580,12 @@ static void ac2858_6_multi_round() {
     auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
     const auto restamp0 = cm ? cm->macro_mutate_auto_restamp_total.load() : 0;
     // Round 1: allowed mutate.
-    (void)cs.eval("(mutate:replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
+    (void)cs.eval("(mutate :replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
                   ":include-macro-introduced #t :allow-macro? #t)");
     auto n1 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(n1 && is_int(*n1) && as_int(*n1) >= 1, "AC6: macro-introduced ≥1 after round 1");
     // Round 2: another allowed mutate. Marker must still propagate (cascade).
-    (void)cs.eval("(mutate:replace-pattern \"(+ ... ...)\" \"(- ... ...)\" "
+    (void)cs.eval("(mutate :replace-pattern \"(+ ... ...)\" \"(- ... ...)\" "
                   ":include-macro-introduced #t :allow-macro? #t)");
     auto n2 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(n2 && is_int(*n2) && as_int(*n2) >= 1, "AC6: macro-introduced ≥1 after round 2");
@@ -769,7 +769,7 @@ static void ac2961_2_include_without_allow_rejects() {
     CHECK(ws != nullptr, "workspace");
     const auto rej0 = ws->replace_pattern_hygiene_reject_total();
     // Matcher includes MacroIntroduced but mutate must still fail closed.
-    auto r = cs.eval("(mutate:replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
+    auto r = cs.eval("(mutate :replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
                      ":include-macro-introduced #t)");
     CHECK(r.has_value(), "AC2: returns value");
     // Expect hygiene error (not bare #t success) when macro matches exist.
@@ -800,7 +800,7 @@ static void ac2961_3_rename_user_symbol_restamps() {
     auto held = cs.evaluator().make_stamped_ref(live);
     const auto gen0 = held.gen;
     const auto wrap0 = held.wrap_epoch;
-    auto r = cs.eval("(mutate:rename-symbol \"f\" \"g\")");
+    auto r = cs.eval("(mutate :rename-symbol \"f\" \"g\")");
     CHECK(r.has_value(), "rename ran");
     // After restamp_all_node_generations, pre-rename capture is stale.
     CHECK(!held.is_valid_in(*ws), "AC3: pre-rename StableNodeRef invalidated after restamp");
@@ -913,7 +913,7 @@ static void ac3000_1_production_reject_or_post_mutate() {
     // Budget constrains the mutate restamp, not workspace load (eval-current
     // under production + budget=1 can fail-close the workspace pointer).
     set_restamp_budget_nodes_for_process(1);
-    auto renamed = cs.eval("(mutate:rename-symbol \"f\" \"ff\")");
+    auto renamed = cs.eval("(mutate :rename-symbol \"f\" \"ff\")");
     CHECK(renamed.has_value(), "AC1: mutate ran");
     if (!ws->restamp_last_budget_exceeded()) {
         ws->bump_generation();
@@ -1143,7 +1143,7 @@ static void ac3027_1_default_reject_all_prims() {
                   "3027 AC1: stamp f MacroIntroduced");
     }
 
-    auto sb = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 2))\")");
+    auto sb = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 2))\")");
     CHECK(sb.has_value() && merr_kind_3027(cs, *sb) == "hygiene-protected",
           "3027 AC1: set-body hygiene");
 
@@ -1151,7 +1151,7 @@ static void ac3027_1_default_reject_all_prims() {
     CHECK(parented != aura::ast::NULL_NODE, "3027 AC1: parented node");
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", parented)).has_value(),
           "3027 AC1: stamp parented");
-    auto rm = cs.eval(std::format("(mutate:remove-node {})", parented));
+    auto rm = cs.eval(std::format("(mutate :remove-node {})", parented));
     CHECK(rm.has_value() && merr_kind_3027(cs, *rm) == "hygiene-protected",
           "3027 AC1: remove-node hygiene");
 
@@ -1159,10 +1159,10 @@ static void ac3027_1_default_reject_all_prims() {
     if (lam != aura::ast::NULL_NODE) {
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", lam)).has_value(),
               "3027 AC1: stamp lambda");
-        auto ins = cs.eval(std::format("(mutate:insert-child {} 0 \"0\")", lam));
+        auto ins = cs.eval(std::format("(mutate :insert-child {} 0 \"0\")", lam));
         CHECK(ins.has_value() && merr_kind_3027(cs, *ins) == "hygiene-protected",
               "3027 AC1: insert-child hygiene");
-        auto spl = cs.eval(std::format("(mutate:splice {} 0 \"1\")", lam));
+        auto spl = cs.eval(std::format("(mutate :splice {} 0 \"1\")", lam));
         CHECK(spl.has_value() && merr_kind_3027(cs, *spl) == "hygiene-protected",
               "3027 AC1: splice hygiene");
     }
@@ -1171,10 +1171,10 @@ static void ac3027_1_default_reject_all_prims() {
     if (wrap_tgt != aura::ast::NULL_NODE) {
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", wrap_tgt)).has_value(),
               "3027 AC1: stamp wrap target");
-        auto wr = cs.eval(std::format("(mutate:wrap {} \"(begin _)\")", wrap_tgt));
+        auto wr = cs.eval(std::format("(mutate :wrap {} \"(begin _)\")", wrap_tgt));
         CHECK(wr.has_value() && merr_kind_3027(cs, *wr) == "hygiene-protected",
               "3027 AC1: wrap hygiene");
-        auto ex = cs.eval(std::format("(mutate:extract-function {} \"h3027\")", wrap_tgt));
+        auto ex = cs.eval(std::format("(mutate :extract-function {} \"h3027\")", wrap_tgt));
         CHECK(ex.has_value() && merr_kind_3027(cs, *ex) == "hygiene-protected",
               "3027 AC1: extract-function hygiene");
     }
@@ -1183,7 +1183,7 @@ static void ac3027_1_default_reject_all_prims() {
     if (call != aura::ast::NULL_NODE) {
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", call)).has_value(),
               "3027 AC1: stamp call");
-        auto inl = cs.eval(std::format("(mutate:inline-call {})", call));
+        auto inl = cs.eval(std::format("(mutate :inline-call {})", call));
         CHECK(inl.has_value() && merr_kind_3027(cs, *inl) == "hygiene-protected",
               "3027 AC1: inline-call hygiene");
     }
@@ -1199,10 +1199,10 @@ static void ac3027_2_allow_macro_permits() {
     CHECK(find_f && is_int(*find_f), "3027 AC2: find f");
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", as_int(*find_f))).has_value(),
           "3027 AC2: stamp f");
-    auto denied = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\")");
+    auto denied = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 9))\")");
     CHECK(denied.has_value() && merr_kind_3027(cs, *denied) == "hygiene-protected",
           "3027 AC2: denied without allow");
-    auto allowed = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
+    auto allowed = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
     CHECK(allowed.has_value() && merr_kind_3027(cs, *allowed) != "hygiene",
           "3027 AC2: :allow-macro? #t permits set-body");
 }
@@ -1228,7 +1228,7 @@ static void ac3027_3_extract_no_stamp_without_allow() {
         body = first_parented(ws);
     CHECK(body != aura::ast::NULL_NODE, "3027 AC3: extract target");
     CHECK(!ws->is_macro_introduced(body), "3027 AC3: target not already macro");
-    auto r = cs.eval(std::format("(mutate:extract-function {} \"ext3027\")", body));
+    auto r = cs.eval(std::format("(mutate :extract-function {} \"ext3027\")", body));
     CHECK(r.has_value() && merr_kind_3027(cs, *r) != "hygiene",
           "3027 AC3: extract non-macro succeeds");
     auto* ws2 = cs.evaluator().workspace_flat();
@@ -1247,7 +1247,7 @@ static void ac3027_4_soft_non_macro_unchanged() {
     CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(),
           "3027 AC4: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3027 AC4: eval");
-    auto r = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 3))\")");
+    auto r = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 3))\")");
     CHECK(r.has_value() && merr_kind_3027(cs, *r) != "hygiene", "3027 AC4: non-macro set-body ok");
     if (r && is_bool(*r))
         CHECK(as_bool(*r), "3027 AC4: set-body success bool");
@@ -1322,7 +1322,7 @@ static void ac3121_1_production_structured_lag() {
         aura::core::provenance::reset_provenance_enforcement_for_test();
         return;
     }
-    auto renamed = cs.eval("(mutate:rename-symbol \"f\" \"ff\")");
+    auto renamed = cs.eval("(mutate :rename-symbol \"f\" \"ff\")");
     CHECK(renamed.has_value(), "3121 AC1: mutate ran");
     if (!ws->restamp_last_budget_exceeded()) {
         ws->bump_generation();
@@ -1805,10 +1805,10 @@ static void ac3115_1_default_reject() {
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", lit)).has_value(),
           "3115 AC1: stamp MacroIntroduced");
     CHECK(ws->is_macro_introduced(lit), "3115 AC1: marker set");
-    auto rt = cs.eval(std::format("(mutate:replace-type {} \"Int\")", lit));
+    auto rt = cs.eval(std::format("(mutate :replace-type {} \"Int\")", lit));
     CHECK(rt.has_value() && merr_kind_3027(cs, *rt) == "hygiene-protected",
           "3115 AC1: replace-type hygiene");
-    auto rv = cs.eval(std::format("(mutate:replace-value {} 99 \"3115-deny\")", lit));
+    auto rv = cs.eval(std::format("(mutate :replace-value {} 99 \"3115-deny\")", lit));
     CHECK(rv.has_value() && merr_kind_3027(cs, *rv) == "hygiene-protected",
           "3115 AC1: replace-value hygiene");
 }
@@ -1823,15 +1823,15 @@ static void ac3115_2_allow_macro_permits() {
     auto lit = first_lit_int(ws);
     CHECK(lit != aura::ast::NULL_NODE, "3115 AC2: LiteralInt");
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", lit)).has_value(), "3115 AC2: stamp");
-    auto denied = cs.eval(std::format("(mutate:replace-value {} 11 \"3115-pre\")", lit));
+    auto denied = cs.eval(std::format("(mutate :replace-value {} 11 \"3115-pre\")", lit));
     CHECK(denied.has_value() && merr_kind_3027(cs, *denied) == "hygiene-protected",
           "3115 AC2: denied without allow");
     auto okv =
-        cs.eval(std::format("(mutate:replace-value {} 42 \"3115-allow\" :allow-macro? #t)", lit));
+        cs.eval(std::format("(mutate :replace-value {} 42 \"3115-allow\" :allow-macro? #t)", lit));
     CHECK(okv.has_value() && merr_kind_3027(cs, *okv) != "hygiene",
           "3115 AC2: :allow-macro? #t permits replace-value");
     CHECK(ws->is_macro_introduced(lit), "3115 AC2: marker preserved after replace-value");
-    auto okt = cs.eval(std::format("(mutate:replace-type {} \"Int\" :allow-macro? #t)", lit));
+    auto okt = cs.eval(std::format("(mutate :replace-type {} \"Int\" :allow-macro? #t)", lit));
     CHECK(okt.has_value() && merr_kind_3027(cs, *okt) != "hygiene",
           "3115 AC2: :allow-macro? #t permits replace-type");
     CHECK(ws->is_macro_introduced(lit), "3115 AC2: marker preserved after replace-type");
@@ -1849,7 +1849,7 @@ static void ac3115_3_atomic_batch_respects() {
     const auto old_val = ws->get(lit).int_value;
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", lit)).has_value(), "3115 AC5: stamp");
     auto r = cs.eval(std::format(
-        "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3115-batch\")) "
+        "(mutate :atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3115-batch\")) "
         "\"3115-batch\")",
         lit));
     CHECK(r.has_value(), "3115 AC5: batch returns");
@@ -1868,10 +1868,10 @@ static void ac3115_4_soft_non_macro() {
     auto lit = first_lit_int(ws);
     CHECK(lit != aura::ast::NULL_NODE, "3115 AC6: LiteralInt");
     CHECK(!ws->is_macro_introduced(lit), "3115 AC6: not MacroIntroduced");
-    auto rv = cs.eval(std::format("(mutate:replace-value {} 7 \"3115-soft\")", lit));
+    auto rv = cs.eval(std::format("(mutate :replace-value {} 7 \"3115-soft\")", lit));
     CHECK(rv.has_value() && merr_kind_3027(cs, *rv) != "hygiene",
           "3115 AC6: non-macro replace-value ok");
-    auto rt = cs.eval(std::format("(mutate:replace-type {} \"Int\")", lit));
+    auto rt = cs.eval(std::format("(mutate :replace-type {} \"Int\")", lit));
     CHECK(rt.has_value() && merr_kind_3027(cs, *rt) != "hygiene",
           "3115 AC6: non-macro replace-type ok");
 }
@@ -1918,9 +1918,10 @@ static void ac3191_1_default_reject() {
           "3191 AC1: stamp MacroIntroduced");
     CHECK(ws->is_macro_introduced(lit), "3191 AC1: marker set");
     // tweak-literal via lockless batch table — must reject (no mutation log entry).
-    auto r = cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 1)) "
-                                 "\"3191-batch-deny\")",
-                                 lit));
+    auto r =
+        cs.eval(std::format("(mutate :atomic-batch (list (list \"mutate:tweak-literal\" {} 1)) "
+                            "\"3191-batch-deny\")",
+                            lit));
     CHECK(r.has_value(), "3191 AC1: batch returns");
     CHECK(ws->get(lit).int_value == old_val, "3191 AC1: value unchanged after reject");
     CHECK(cs.evaluator().get_hygiene_violation_attempts() >= 1,
@@ -1952,9 +1953,10 @@ static void ac3191_3_global_allow_unlocks() {
     // Flip the global allow flag (issue #3076 mechanism).
     cs.eval("(mutate :set-allow-macro-mutate #t)");
     // tweak-literal now commits.
-    auto r = cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 1)) "
-                                 "\"3191-batch-allow\")",
-                                 lit));
+    auto r =
+        cs.eval(std::format("(mutate :atomic-batch (list (list \"mutate:tweak-literal\" {} 1)) "
+                            "\"3191-batch-allow\")",
+                            lit));
     CHECK(r.has_value(), "3191 AC3: batch returns");
     CHECK(ws->get(lit).int_value == old_val + 1, "3191 AC3: value committed under global allow");
     // Reset for downstream tests.
@@ -1973,9 +1975,10 @@ static void ac3191_4_soft_non_macro_zero_cost() {
     CHECK(!ws->is_macro_introduced(lit), "3191 AC4: not MacroIntroduced");
     // tweak-literal on non-macro must commit (Soft / Off no extra cost).
     const auto old_val = ws->get(lit).int_value;
-    auto r = cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 5)) "
-                                 "\"3194-soft\")",
-                                 lit));
+    auto r =
+        cs.eval(std::format("(mutate :atomic-batch (list (list \"mutate:tweak-literal\" {} 5)) "
+                            "\"3194-soft\")",
+                            lit));
     CHECK(r.has_value(), "3191 AC4: batch returns");
     CHECK(ws->get(lit).int_value == old_val + 5, "3191 AC4: non-macro tweak-literal commits");
 }
@@ -1991,10 +1994,10 @@ static void ac3191_5_existing_surfaces_preserved() {
     auto lit = first_lit_int(ws);
     CHECK(lit != aura::ast::NULL_NODE, "3191 AC5: LiteralInt");
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", lit)).has_value(), "3191 AC5: stamp");
-    auto rt = cs.eval(std::format("(mutate:replace-type {} \"Int\")", lit));
+    auto rt = cs.eval(std::format("(mutate :replace-type {} \"Int\")", lit));
     CHECK(rt.has_value() && merr_kind_3027(cs, *rt) == "hygiene-protected",
           "3191 AC5: #3115 replace-type still rejects");
-    auto rv = cs.eval(std::format("(mutate:replace-value {} 99 \"3191-p\")", lit));
+    auto rv = cs.eval(std::format("(mutate :replace-value {} 99 \"3191-p\")", lit));
     CHECK(rv.has_value() && merr_kind_3027(cs, *rv) == "hygiene-protected",
           "3191 AC5: #3115 replace-value still rejects");
     // #3027 / #3115 / #3131 lineage keys are additive when present on
@@ -2122,7 +2125,7 @@ static void ac3344_4_soft_non_macro_unchanged() {
     auto lit = first_lit_int(ws);
     CHECK(lit != aura::ast::NULL_NODE, "3344 AC4: LiteralInt");
     CHECK(!ws->is_macro_introduced(lit), "3344 AC4: not MacroIntroduced");
-    auto rv = cs.eval(std::format("(mutate:replace-value {} 7 \"3344-soft\")", lit));
+    auto rv = cs.eval(std::format("(mutate :replace-value {} 7 \"3344-soft\")", lit));
     CHECK(rv.has_value(), "3344 AC4: non-macro replace-value commits");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     CHECK(mut.find("!flat.is_macro_introduced(id)") != std::string::npos,
@@ -2225,7 +2228,7 @@ static void ac3213_2_per_op_opt_in_no_global() {
     CHECK(!cs.evaluator().get_allow_macro_mutate(), "3213 AC2: global still false");
     const auto old_b = ws->get(b).int_value;
     auto r = cs.eval(
-        std::format("(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 42 \"3213-opt\" "
+        std::format("(mutate :atomic-batch (list (list \"mutate:replace-value\" {} 42 \"3213-opt\" "
                     ":allow-macro? #t)) \"3213-opt\")",
                     a));
     CHECK(r.has_value(), "3213 AC2: batch returns");
@@ -2247,7 +2250,7 @@ static void ac3213_3_default_deny() {
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", a)).has_value(), "3213 AC3: stamp");
     CHECK(!cs.evaluator().get_allow_macro_mutate(), "3213 AC3: global false");
     auto r = cs.eval(std::format(
-        "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3213-deny\")) "
+        "(mutate :atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3213-deny\")) "
         "\"3213-deny\")",
         a));
     CHECK(r.has_value(), "3213 AC3: batch returns");
@@ -2275,7 +2278,7 @@ static void ac3213_4_surgical_sibling_denied() {
     // back the opted-in write so both values stay at pre-batch. Proves
     // per-op parse (not batch-wide) + default-deny on the sibling.
     auto r =
-        cs.eval(std::format("(mutate:atomic-batch (list "
+        cs.eval(std::format("(mutate :atomic-batch (list "
                             "(list \"mutate:replace-value\" {} 42 \"3213-opt\" :allow-macro? #t) "
                             "(list \"mutate:replace-value\" {} 99 \"3213-deny\")) \"3213-mixed\")",
                             a, b));
@@ -2295,7 +2298,7 @@ static void ac3213_5_soft_non_macro_zero_extra() {
     CHECK(a != aura::ast::NULL_NODE, "3213 AC5: LiteralInt");
     CHECK(!ws->is_macro_introduced(a), "3213 AC5: not MacroIntroduced");
     auto r = cs.eval(std::format(
-        "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 7 \"3213-soft\")) "
+        "(mutate :atomic-batch (list (list \"mutate:replace-value\" {} 7 \"3213-soft\")) "
         "\"3213-soft\")",
         a));
     CHECK(r.has_value(), "3213 AC5: batch returns");
@@ -2408,7 +2411,7 @@ static void ac3301_1_batch_level_deny_production() {
     aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
                                                                        std::memory_order_relaxed);
     auto r = cs.eval(std::format(
-        "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3301-deny\")) "
+        "(mutate :atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3301-deny\")) "
         "\"3301-deny\")",
         a));
     CHECK(r.has_value(), "3301 AC1: batch returns");
@@ -2443,7 +2446,7 @@ static void ac3301_2_batch_form_allow_macro() {
     // lockless gate (replace-value) still requires per-sub-op :allow-macro?
     // (#3213 dual-track). Both together permit the commit.
     auto r = cs.eval(std::format(
-        "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3301-allow\" "
+        "(mutate :atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3301-allow\" "
         ":allow-macro? #t)) \"3301-allow\" :allow-macro? #t)",
         a));
     CHECK(r.has_value(), "3301 AC2: batch returns");
@@ -2463,7 +2466,7 @@ static void ac3301_3_per_op_allow_still_respected() {
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", a)).has_value(), "3301 AC3: stamp");
     grant_3301_production_mutate(cs);
     auto r = cs.eval(
-        std::format("(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3301-op\" "
+        std::format("(mutate :atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3301-op\" "
                     ":allow-macro? #t)) \"3301-op\")",
                     a));
     CHECK(r.has_value(), "3301 AC3: batch returns");
@@ -2488,7 +2491,7 @@ static void ac3301_4_soft_off_contract() {
         const auto old_a = ws->get(a).int_value;
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", a)).has_value(), "3301 AC4: stamp");
         auto r = cs.eval(std::format(
-            "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3301-soft\")) "
+            "(mutate :atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3301-soft\")) "
             "\"3301-soft\")",
             a));
         CHECK(r.has_value(), "3301 AC4: batch returns");
@@ -2507,7 +2510,7 @@ static void ac3301_4_soft_off_contract() {
         auto a2 = nth_lit_int(ws, 0);
         CHECK(a2 != aura::ast::NULL_NODE, "3301 AC4: LiteralInt2");
         auto r2 = cs.eval(std::format(
-            "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 7 \"3301-nm\")) "
+            "(mutate :atomic-batch (list (list \"mutate:replace-value\" {} 7 \"3301-nm\")) "
             "\"3301-nm\")",
             a2));
         CHECK(r2.has_value(), "3301 AC4: non-macro batch returns");
@@ -2528,13 +2531,13 @@ static void ac3301_5_lockless_rebind_gate() {
     CHECK(ws->is_macro_introduced(def), "3301 AC5: define marked");
     const auto body0 = ws->get(def).child(0);
     auto r =
-        cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:rebind\" \"a\" \"(+ a 1)\" "
+        cs.eval(std::format("(mutate :atomic-batch (list (list \"mutate:rebind\" \"a\" \"(+ a 1)\" "
                             "\"3301-rebind\")) \"3301-rebind\")"));
     CHECK(r.has_value(), "3301 AC5: batch returns");
     CHECK(merr_kind_3027(cs, *r) != "", "3301 AC5: rebind MacroIntroduced define denied");
     CHECK(ws->get(def).child(0) == body0, "3301 AC5: define body unchanged");
     auto r2 =
-        cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:rebind\" \"a\" \"(+ a 1)\" "
+        cs.eval(std::format("(mutate :atomic-batch (list (list \"mutate:rebind\" \"a\" \"(+ a 1)\" "
                             "\"3301-rebind-ok\" :allow-macro? #t)) \"3301-rebind-ok\")"));
     CHECK(r2.has_value(), "3301 AC5: allowed rebind returns");
 }
@@ -3783,7 +3786,7 @@ static void ac3198_1_production_export_uniform() {
     CHECK(setup_dense_ws(cs), "3198 AC1: dense workspace");
     auto* ws = cs.evaluator().workspace_flat();
     CHECK(ws != nullptr, "3198 AC1: workspace");
-    auto renamed = cs.eval("(mutate:rename-symbol \"f\" \"ff\")");
+    auto renamed = cs.eval("(mutate :rename-symbol \"f\" \"ff\")");
     CHECK(renamed.has_value(), "3198 AC1: mutate ran");
     if (!ws->restamp_last_budget_exceeded()) {
         ws->bump_generation();
@@ -4553,7 +4556,7 @@ static void ac3215_macro_introduced_reason_string() {
     CHECK(ws->is_macro_introduced(lit), "3215: marker set");
     aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
                                                                        std::memory_order_relaxed);
-    auto r = cs.eval(std::format("(mutate:replace-value {} 99 \"3215-deny\")", lit));
+    auto r = cs.eval(std::format("(mutate :replace-value {} 99 \"3215-deny\")", lit));
     CHECK(r.has_value(), "3215: returns value");
     const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
     const auto atom = aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.load(
@@ -4649,14 +4652,14 @@ static void ac3468_rest_remaining_not_hygiene_blocked() {
     // the Agent string face is fiber-preferring now, so a process-only
     // store(0) would let this fiber's sticky residue decide the sample.
     aura_test_reset_macro_hygiene_last_limit_reason_full();
-    auto spine = cs.eval(std::format("(mutate:replace-value {} 99 \"3468-spine\")", list_var));
+    auto spine = cs.eval(std::format("(mutate :replace-value {} 99 \"3468-spine\")", list_var));
     CHECK(spine.has_value(), "3468: replace-value spine returns");
     CHECK(merr_kind_3027(cs, *spine) == "hygiene-protected", "3468: spine kind hygiene");
     const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
     CHECK(rs != nullptr && std::string(rs) == "hygiene-macro-introduced",
           "3468: mutate list spine still hygiene-macro-introduced");
     aura_test_reset_macro_hygiene_last_limit_reason_full();
-    auto ok = cs.eval(std::format("(mutate:replace-value {} 99 \"3468-remain\")", lit));
+    auto ok = cs.eval(std::format("(mutate :replace-value {} 99 \"3468-remain\")", lit));
     CHECK(ok.has_value(), "3468: replace-value remaining returns");
     const auto* rs_ok = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
     CHECK(rs_ok == nullptr || std::string(rs_ok) != "hygiene-macro-introduced",
@@ -4694,7 +4697,7 @@ static void ac3509_batch_default_deny() {
     ws->set_marker(lit, aura::ast::SyntaxMarker::MacroIntroduced);
     aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
                                                                        std::memory_order_relaxed);
-    auto denied = cs.eval("(mutate:query-and-replace-batch "
+    auto denied = cs.eval("(mutate :query-and-replace-batch "
                           "(query:where :marker \"MacroIntroduced\") \"99\")");
     CHECK(denied.has_value(), "3509 AC1: batch returns");
     CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected" ||
@@ -4707,7 +4710,7 @@ static void ac3509_batch_default_deny() {
           "3509 AC1: no set_child");
     aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
                                                                        std::memory_order_relaxed);
-    auto allowed = cs.eval("(mutate:query-and-replace-batch "
+    auto allowed = cs.eval("(mutate :query-and-replace-batch "
                            "(query:where :marker \"MacroIntroduced\") \"99\" "
                            ":allow-macro? #t)");
     CHECK(allowed.has_value(), "3509 AC2: :allow-macro? #t returns");
@@ -4761,7 +4764,7 @@ static void ac3542_wildcard_allow_macro_denied() {
     aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
                                                            "tenant-admin");
     const auto deny0 = g_capability_effect_metrics().macro_mutate_capability_deny_total.load();
-    auto allowed = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
+    auto allowed = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
     CHECK(allowed.has_value(), "3542 AC1: returns");
     CHECK(merr_kind_3027(cs, *allowed) == "hygiene-protected", "3542 AC1: capability fence kind");
     CHECK(g_capability_effect_metrics().macro_mutate_capability_deny_total.load() > deny0,
@@ -4790,7 +4793,7 @@ static void ac3542_mse_grant_allow_macro_ok() {
     const auto tenant = cs.evaluator().capability_tenant_id();
     g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{},
                                                  aura_test_grant_prov(), tenant);
-    auto allowed = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
+    auto allowed = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
     CHECK(allowed.has_value() && merr_kind_3027(cs, *allowed) != "hygiene-protected" &&
               merr_kind_3027(cs, *allowed) != "hygiene",
           "3542 AC2: parser opt-out still works with MacroSelfEvo");
@@ -4811,7 +4814,7 @@ static void ac3542_soft_opt_out_unchanged() {
     CHECK(find_f && is_int(*find_f), "3542 AC3: find f");
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", as_int(*find_f))).has_value(),
           "3542 AC3: stamp");
-    auto allowed = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
+    auto allowed = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
     CHECK(allowed.has_value() && merr_kind_3027(cs, *allowed) != "hygiene",
           "3542 AC3: Soft opt-out still permits");
 }
@@ -4875,9 +4878,10 @@ static void ac3652_1_batch_allow_denied_without_mse() {
                                                            "tenant-admin");
     // (a) batch-level :allow-macro? #t — pre-audit MSE arm denies the whole
     // batch before any sub-op (target_arg=0 walk member).
-    auto d1 = cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 42 "
-                                  "\"3652-a\")) \"s\" :allow-macro? #t)",
-                                  as_int(*find_f)));
+    auto d1 =
+        cs.eval(std::format("(mutate :atomic-batch (list (list \"mutate:replace-value\" {} 42 "
+                            "\"3652-a\")) \"s\" :allow-macro? #t)",
+                            as_int(*find_f)));
     CHECK(d1.has_value(), "3652 AC1a: returns");
     CHECK(merr_kind_3027(cs, *d1) == "hygiene-protected", "3652 AC1a: batch hygiene merr");
     CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3652 AC1a: SE reason");
@@ -4894,9 +4898,10 @@ static void ac3652_1_batch_allow_denied_without_mse() {
     // Issue #4149: retire AFTER the re-arm too — the arm/revoke sequence
     // must not leave the 7 refuse-arm armed when this eval runs.
     aura_test_reset_macro_hygiene_last_limit_reason_for_test();
-    auto d2 = cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 42 "
-                                  "\"3652-b\" :allow-macro? #t)) \"s\")",
-                                  as_int(*find_f)));
+    auto d2 =
+        cs.eval(std::format("(mutate :atomic-batch (list (list \"mutate:replace-value\" {} 42 "
+                            "\"3652-b\" :allow-macro? #t)) \"s\")",
+                            as_int(*find_f)));
     CHECK(d2.has_value() && merr_kind_3027(cs, *d2) == "hygiene-protected",
           "3652 AC1b: per-op kwarg denied");
     CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3652 AC1b: SE reason");
@@ -4912,9 +4917,9 @@ static void ac3652_1_batch_allow_denied_without_mse() {
                                                            "tenant-admin");
     reset_security_event_ring_for_test();
     aura_test_reset_macro_hygiene_last_limit_reason_for_test();
-    auto d3 =
-        cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x 2))\" "
-                ":allow-macro? #t)) \"s\")");
+    auto d3 = cs.eval(
+        "(mutate :atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x 2))\" "
+        ":allow-macro? #t)) \"s\")");
     CHECK(d3.has_value() && merr_kind_3027(cs, *d3) == "hygiene-protected",
           "3652 AC1c: rebind sub-op denied");
     CHECK(ring_has_reason_3542("macro-mutate-needs-macro-self-evo"), "3652 AC1c: SE reason");
@@ -4946,7 +4951,7 @@ static void ac3652_2_public_prim_still_denied() {
     grant_3301_production_mutate(cs);
     aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
                                                            "tenant-admin");
-    auto denied = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
+    auto denied = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
     CHECK(denied.has_value(), "3652 AC2: returns");
     CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected", "3652 AC2: #3542 face kept");
     reset_capability_effects_for_test();
@@ -4971,9 +4976,9 @@ static void ac3652_3_mse_grant_batch_allow_ok() {
     const auto tenant = cs.evaluator().capability_tenant_id();
     aura::core::capability::g_capability_registry().grant_macro_self_evo(
         tenant, MacroSelfEvoPolicy{}, aura_test_grant_prov(), tenant);
-    auto ok =
-        cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x 9))\" "
-                ":allow-macro? #t)) \"s\")");
+    auto ok = cs.eval(
+        "(mutate :atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x 9))\" "
+        ":allow-macro? #t)) \"s\")");
     CHECK(ok.has_value() && is_bool(*ok) && as_bool(*ok),
           "3652 AC3: MSE + allow-macro batch writes");
     CHECK(cs.eval("(eval-current)").has_value(), "3652 AC3: re-expanded AST evals");
@@ -4995,9 +5000,9 @@ static void ac3652_4_soft_off_unchanged() {
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", as_int(*find_f))).has_value(),
           "3652 AC4: stamp");
     // No grants at all — Soft/Off must not consult MacroSelfEvo.
-    auto ok =
-        cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x 7))\" "
-                ":allow-macro? #t)) \"s\")");
+    auto ok = cs.eval(
+        "(mutate :atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x 7))\" "
+        ":allow-macro? #t)) \"s\")");
     CHECK(ok.has_value() && is_bool(*ok) && as_bool(*ok),
           "3652 AC4: Soft allow-macro batch writes without capability");
     reset_capability_effects_for_test();
@@ -5161,7 +5166,7 @@ static void ac3755_1_public_rename_allow_denied_without_mse() {
     aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
                                                            "tenant-admin");
     const auto deny0 = g_capability_effect_metrics().macro_mutate_capability_deny_total.load();
-    auto denied = cs.eval("(mutate:rename-symbol \"f\" \"g\" \"3755-deny\" :allow-macro? #t)");
+    auto denied = cs.eval("(mutate :rename-symbol \"f\" \"g\" \"3755-deny\" :allow-macro? #t)");
     CHECK(denied.has_value(), "3755 AC1: returns");
     CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected", "3755 AC1: MSE deny kind");
     CHECK(g_capability_effect_metrics().macro_mutate_capability_deny_total.load() > deny0,
@@ -5194,7 +5199,7 @@ static void ac3755_2_mse_grant_rename_ok() {
     const auto tenant = cs.evaluator().capability_tenant_id();
     aura::core::capability::g_capability_registry().grant_macro_self_evo(
         tenant, MacroSelfEvoPolicy{}, aura_test_grant_prov(), tenant);
-    auto ok = cs.eval("(mutate:rename-symbol \"f\" \"g\" \"3755-ok\" :allow-macro? #t)");
+    auto ok = cs.eval("(mutate :rename-symbol \"f\" \"g\" \"3755-ok\" :allow-macro? #t)");
     CHECK(ok.has_value() && is_bool(*ok) && as_bool(*ok), "3755 AC2: rename commits");
     auto g = cs.eval("(car (query :find \"g\"))");
     CHECK(g && is_int(*g), "3755 AC2: g bound");
@@ -5224,7 +5229,7 @@ static void ac3755_3_lockless_twin_unchanged() {
     grant_3301_production_mutate(cs);
     aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
                                                            "tenant-admin");
-    auto d = cs.eval("(mutate:atomic-batch (list (list \"mutate:rename-symbol\" \"f\" \"g\" "
+    auto d = cs.eval("(mutate :atomic-batch (list (list \"mutate:rename-symbol\" \"f\" \"g\" "
                      "\"3755-batch\" :allow-macro? #t)) \"s\")");
     CHECK(d.has_value() && merr_kind_3027(cs, *d) == "hygiene-protected",
           "3755 AC3: batch rename-symbol still MSE denied");
@@ -5248,7 +5253,7 @@ static void ac3755_4_soft_allow_without_mse() {
     CHECK(find_f && is_int(*find_f), "3755 AC4: find f");
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", as_int(*find_f))).has_value(),
           "3755 AC4: stamp");
-    auto ok = cs.eval("(mutate:rename-symbol \"f\" \"g\" \"3755-soft\" :allow-macro? #t)");
+    auto ok = cs.eval("(mutate :rename-symbol \"f\" \"g\" \"3755-soft\" :allow-macro? #t)");
     CHECK(ok.has_value() && is_bool(*ok) && as_bool(*ok),
           "3755 AC4: Soft allow-macro rename without MSE");
     auto g = cs.eval("(car (query :find \"g\"))");
@@ -5590,7 +5595,7 @@ static void ac3889_revival_hygiene_gate() {
     CHECK(ws && ws->size() > 0, "3889 AC1: workspace");
     const auto nid = static_cast<std::int64_t>(ws->size() - 1);
     auto r = cs.eval(
-        std::format("(mutate:from-verification-feedback \"weaken-property\" {} \"reset\")", nid));
+        std::format("(mutate :from-verification-feedback \"weaken-property\" {} \"reset\")", nid));
     CHECK(r && is_bool(*r) && !as_bool(*r), "3889 AC1: dormant strategy still #f");
     CHECK(read_file("tests/compiler/test_issue_3889.cpp").empty(),
           "3889 AC: no test_issue_3889.cpp");
@@ -5867,7 +5872,7 @@ static void ac3640_packed_gate_spine() {
     const auto lit4 = first_lit_int(ws4);
     CHECK(lit4 != aura::ast::NULL_NODE, "3640 AC4: LiteralInt");
     auto rt4 =
-        cs4.eval(std::format("(mutate:replace-type (list {} 0) \"Float\")", (long long)lit4));
+        cs4.eval(std::format("(mutate :replace-type (list {} 0) \"Float\")", (long long)lit4));
     const auto kind4 = rt4.has_value() ? merr_kind_3027(cs4, *rt4) : std::string("ok");
     CHECK(kind4 != "tenant-isolation-denied" && kind4.find("bare") == std::string::npos,
           "3640 AC4: Soft v1 (id . gen) accepted (no #3395 reject, no isolation deny)");
@@ -5895,7 +5900,7 @@ static void ac3650_1_rollback_denied_without_mse() {
     aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
                                                            "tenant-admin");
     const auto deny0 = g_capability_effect_metrics().macro_mutate_capability_deny_total.load();
-    auto denied = cs.eval(std::format("(mutate:rollback-macro-introduced {})", as_int(*find_f)));
+    auto denied = cs.eval(std::format("(mutate :rollback-macro-introduced {})", as_int(*find_f)));
     CHECK(denied.has_value(), "3650 AC1: returns");
     CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected", "3650 AC1: capability fence kind");
     CHECK(g_capability_effect_metrics().macro_mutate_capability_deny_total.load() > deny0,
@@ -5961,7 +5966,7 @@ static void ac3650_3_rollback_with_mse_unstamps() {
     const auto tenant = cs.evaluator().capability_tenant_id();
     g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{},
                                                  aura_test_grant_prov(), tenant);
-    auto rolled = cs.eval(std::format("(mutate:rollback-macro-introduced {})", as_int(*find_f)));
+    auto rolled = cs.eval(std::format("(mutate :rollback-macro-introduced {})", as_int(*find_f)));
     CHECK(rolled.has_value() && is_int(*rolled) && as_int(*rolled) >= 1,
           "3650 AC3: rollback unstamps with MSE");
     auto& ws = *cs.evaluator().workspace_flat();
@@ -5984,7 +5989,7 @@ static void ac3650_4_soft_rollback_unchanged() {
     const auto id = static_cast<aura::ast::NodeId>(as_int(*find_f));
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", as_int(*find_f))).has_value(),
           "3650 AC4: stamp allowed under Soft");
-    auto rolled = cs.eval(std::format("(mutate:rollback-macro-introduced {})", as_int(*find_f)));
+    auto rolled = cs.eval(std::format("(mutate :rollback-macro-introduced {})", as_int(*find_f)));
     CHECK(rolled.has_value() && is_int(*rolled) && as_int(*rolled) >= 1,
           "3650 AC4: Soft rollback unstamps without MSE");
     auto& ws = *cs.evaluator().workspace_flat();
@@ -6145,7 +6150,7 @@ static void ac3752_1_propagate_clear_denied_without_mse() {
           "3752 AC1: root MI propagate 0 denied");
     CHECK(ws.is_macro_introduced(id), "3752 AC1: root marker unchanged");
     auto rs =
-        cs.eval(std::format("(mutate:replace-subtree {} \"99\")", static_cast<unsigned>(child)));
+        cs.eval(std::format("(mutate :replace-subtree {} \"99\")", static_cast<unsigned>(child)));
     CHECK(rs.has_value() && merr_kind_3027(cs, *rs) == "hygiene-protected",
           "3752 AC1: subsequent replace-subtree still hygiene-protected");
     reset_capability_effects_for_test();
@@ -6259,7 +6264,7 @@ static void ac3858_1_restore_demote_denied_without_mse() {
     CHECK(find_f && is_int(*find_f), "3858 AC1: find f");
     const auto id = static_cast<aura::ast::NodeId>(as_int(*find_f));
     // Checkpoint while the marker is still User, then stamp MacroIntroduced.
-    auto saved = cs.eval("(mutate:save-hygiene-checkpoint)");
+    auto saved = cs.eval("(mutate :save-hygiene-checkpoint)");
     CHECK(saved && is_int(*saved) && as_int(*saved) > 0, "3858 AC1: checkpoint saved");
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", as_int(*find_f))).has_value(),
           "3858 AC1: stamp MacroIntroduced");
@@ -6269,7 +6274,7 @@ static void ac3858_1_restore_demote_denied_without_mse() {
     aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
                                                            "tenant-admin");
     const auto deny0 = g_capability_effect_metrics().macro_mutate_capability_deny_total.load();
-    auto denied = cs.eval(std::format("(mutate:restore-hygiene-checkpoint {})", as_int(*saved)));
+    auto denied = cs.eval(std::format("(mutate :restore-hygiene-checkpoint {})", as_int(*saved)));
     CHECK(denied.has_value(), "3858 AC1: returns");
     CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected", "3858 AC1: capability fence kind");
     CHECK(g_capability_effect_metrics().macro_mutate_capability_deny_total.load() > deny0,
@@ -6295,7 +6300,7 @@ static void ac3858_2_restore_with_mse_demotes() {
     auto find_f = cs.eval("(car (query :find \"f\"))");
     CHECK(find_f && is_int(*find_f), "3858 AC2: find f");
     const auto id = static_cast<aura::ast::NodeId>(as_int(*find_f));
-    auto saved = cs.eval("(mutate:save-hygiene-checkpoint)");
+    auto saved = cs.eval("(mutate :save-hygiene-checkpoint)");
     CHECK(saved && is_int(*saved) && as_int(*saved) > 0, "3858 AC2: checkpoint saved");
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", as_int(*find_f))).has_value(),
           "3858 AC2: stamp MacroIntroduced");
@@ -6303,7 +6308,7 @@ static void ac3858_2_restore_with_mse_demotes() {
     const auto tenant = cs.evaluator().capability_tenant_id();
     g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{},
                                                  aura_test_grant_prov(), tenant);
-    auto ok = cs.eval(std::format("(mutate:restore-hygiene-checkpoint {})", as_int(*saved)));
+    auto ok = cs.eval(std::format("(mutate :restore-hygiene-checkpoint {})", as_int(*saved)));
     CHECK(ok.has_value() && is_bool(*ok) && as_bool(*ok), "3858 AC2: restore ok with MSE");
     auto& ws = *cs.evaluator().workspace_flat();
     CHECK(!ws.is_macro_introduced(id), "3858 AC2: MI demoted to checkpointed User");
@@ -6323,12 +6328,12 @@ static void ac3858_3_soft_restore_unchanged() {
     auto find_f = cs.eval("(car (query :find \"f\"))");
     CHECK(find_f && is_int(*find_f), "3858 AC3: find f");
     const auto id = static_cast<aura::ast::NodeId>(as_int(*find_f));
-    auto saved = cs.eval("(mutate:save-hygiene-checkpoint)");
+    auto saved = cs.eval("(mutate :save-hygiene-checkpoint)");
     CHECK(saved && is_int(*saved) && as_int(*saved) > 0, "3858 AC3: checkpoint saved");
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", as_int(*find_f))).has_value(),
           "3858 AC3: stamp MacroIntroduced");
     const auto deny0 = g_capability_effect_metrics().macro_mutate_capability_deny_total.load();
-    auto ok = cs.eval(std::format("(mutate:restore-hygiene-checkpoint {})", as_int(*saved)));
+    auto ok = cs.eval(std::format("(mutate :restore-hygiene-checkpoint {})", as_int(*saved)));
     CHECK(ok.has_value() && is_bool(*ok) && as_bool(*ok), "3858 AC3: Soft restore proceeds");
     CHECK(g_capability_effect_metrics().macro_mutate_capability_deny_total.load() == deny0,
           "3858 AC3: no deny telemetry");
@@ -6354,12 +6359,12 @@ static void ac3858_4_no_demote_restore_allowed() {
     // Stamp MacroIntroduced BEFORE the checkpoint: saved == live MI, no demote.
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", as_int(*find_f))).has_value(),
           "3858 AC4: stamp MacroIntroduced");
-    auto saved = cs.eval("(mutate:save-hygiene-checkpoint)");
+    auto saved = cs.eval("(mutate :save-hygiene-checkpoint)");
     CHECK(saved && is_int(*saved) && as_int(*saved) > 0, "3858 AC4: checkpoint saved");
     grant_3301_production_mutate(cs);
     aura::core::capability::g_capability_registry().revoke(cs.evaluator().capability_tenant_id(),
                                                            "tenant-admin");
-    auto ok = cs.eval(std::format("(mutate:restore-hygiene-checkpoint {})", as_int(*saved)));
+    auto ok = cs.eval(std::format("(mutate :restore-hygiene-checkpoint {})", as_int(*saved)));
     CHECK(ok.has_value() && is_bool(*ok) && as_bool(*ok), "3858 AC4: non-demote restore allowed");
     auto& ws = *cs.evaluator().workspace_flat();
     CHECK(ws.is_macro_introduced(id), "3858 AC4: marker stays MacroIntroduced");
@@ -6529,7 +6534,7 @@ static void ac4076_production_abort_restores_marker() {
     // Same outermost Guard fails closed after the body writes marker_
     // (density pre-exit deny, production/Full only).
     g_density_gate_reject_pending.store(1, std::memory_order_release);
-    auto rolled = cs.eval("(mutate:rollback-macro-introduced r4076)");
+    auto rolled = cs.eval("(mutate :rollback-macro-introduced r4076)");
     reset_density_gate_reject_pending_for_test();
     const auto rolled_kind = rolled ? merr_kind_3027(cs, *rolled) : std::string("novalue");
     CHECK(rolled.has_value(), "4076 AC1: returns");
@@ -6547,7 +6552,7 @@ static void ac4076_production_abort_restores_marker() {
                                                                        std::memory_order_relaxed);
     // Abort restamp invalidates the pre-fail ref. Re-bind, then default-deny.
     CHECK(bind_lit_ref_4076(cs, lit, "q4076b", "r4076b"), "4076 AC1: rebound ref");
-    auto denied = cs.eval("(mutate:replace-subtree r4076b \"99\")");
+    auto denied = cs.eval("(mutate :replace-subtree r4076b \"99\")");
     CHECK(denied.has_value(), "4076 AC1: replace-subtree returns");
     const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
     const auto denied_kind = denied ? merr_kind_3027(cs, *denied) : std::string("novalue");
@@ -6602,7 +6607,7 @@ static void ac4076_success_unstamp_stays_user() {
     CHECK(aura::compiler::typed_audit::production_hard_face_active(), "4076 AC3: hard face");
     CHECK(cs.evaluator().effect_sandbox_mode() == 0, "4076 AC3: effect sandbox off");
     CHECK(bind_lit_ref_4076(cs, lit, "q4076c", "r4076c"), "4076 AC3: packed ref");
-    auto rolled = cs.eval("(mutate:rollback-macro-introduced r4076c)");
+    auto rolled = cs.eval("(mutate :rollback-macro-introduced r4076c)");
     const auto rolled_kind = rolled ? merr_kind_3027(cs, *rolled) : std::string("novalue");
     CHECK(rolled.has_value() && is_int(*rolled) && as_int(*rolled) >= 1,
           "4076 AC3: commit path returns the unstamp count");
@@ -6771,7 +6776,7 @@ static void ac4087_1_agent_body_write_query_schema2() {
     // Guard is the type-authority outermost (gap never survives the write).
     // #3395: production mutate rejects bare-int node args — route the target
     // through query:stable-ref (schema-2 hash operand, #3424).
-    auto w = cs.eval(std::format("(mutate:replace-subtree (query:stable-ref {}) \"99\")",
+    auto w = cs.eval(std::format("(mutate :replace-subtree (query:stable-ref {}) \"99\")",
                                  static_cast<unsigned>(target)));
     // Success is #t or a captured-vars pair (#2797 AC2b shape) — never a
     // hygiene / parse reject for a user node under production.
@@ -6870,7 +6875,7 @@ static void ac4106_read_trio() {
     // Recycle realism: after a mutate advances the workspace the same int
     // still refuses — the bare-int reject is face-complete (occupancy, not
     // identity).
-    CHECK(cs.eval("(mutate:rename-symbol \"f\" \"ff4106\")").has_value(), "4106: mutate ran");
+    CHECK(cs.eval("(mutate :rename-symbol \"f\" \"ff4106\")").has_value(), "4106: mutate ran");
     auto re2 = cs.eval(std::format("(query:reaches {})", live4106));
     CHECK(re2.has_value() && merr_kind_3027(cs, *re2) == "stale-ref",
           "4106: reaches still stale-ref after recycle");
@@ -6990,7 +6995,7 @@ static void ac4127_1_replace_subtree_commit_marker() {
     aura::compiler::reset_mutation_concurrency_health_admit_for_test();
     aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test({});
     auto r = cs.eval(std::format(
-        "(mutate:atomic-batch (list (list \"mutate:replace-subtree\" {} \"(+ 1 2)\" \"4127-rs\" "
+        "(mutate :atomic-batch (list (list \"mutate:replace-subtree\" {} \"(+ 1 2)\" \"4127-rs\" "
         ":allow-macro? #t)) \"4127-AC1\" :allow-macro? #t)",
         lit));
     CHECK(r.has_value(), "4127 AC1: batch returns");
@@ -7022,7 +7027,7 @@ static void ac4127_1_replace_subtree_commit_marker() {
     g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{},
                                                  aura_test_grant_prov(), tenant);
     auto follow = cs.eval(std::format(
-        "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 99 \"4127-follow\")) "
+        "(mutate :atomic-batch (list (list \"mutate:replace-value\" {} 99 \"4127-follow\")) "
         "\"4127-follow\")",
         new_root));
     CHECK(follow.has_value(), "4127 AC1: follow-up returns");
@@ -7084,7 +7089,7 @@ static void ac4127_2_allow_denied_without_mse() {
                                                            "tenant-admin");
     const auto deny0 = g_capability_effect_metrics().macro_mutate_capability_deny_total.load();
     auto r = cs.eval(std::format(
-        "(mutate:atomic-batch (list (list \"mutate:replace-subtree\" {} \"(+ 1 2)\" \"4127-nse\" "
+        "(mutate :atomic-batch (list (list \"mutate:replace-subtree\" {} \"(+ 1 2)\" \"4127-nse\" "
         ":allow-macro? #t)) \"4127-AC3a\")",
         lit));
     CHECK(r.has_value(), "4127 AC3a: batch returns");
@@ -7129,7 +7134,7 @@ static void ac4127_3_default_deny_unchanged() {
     CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", lit)).has_value(),
           "4127 AC3b: stamp MacroIntroduced");
     const auto hv0 = cs.evaluator().get_hygiene_violation_attempts();
-    auto r = cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:replace-subtree\" {} "
+    auto r = cs.eval(std::format("(mutate :atomic-batch (list (list \"mutate:replace-subtree\" {} "
                                  "\"(+ 1 2)\" \"4127-deny\")) "
                                  "\"4127-AC3b\")",
                                  lit));
@@ -7157,7 +7162,7 @@ static void ac4127_4_soft_paths_unchanged() {
         const auto parent = ws->parent_of(a);
         CHECK(parent != aura::ast::NULL_NODE, "4127 AC4a: parented");
         auto r = cs.eval(std::format(
-            "(mutate:atomic-batch (list (list \"mutate:replace-subtree\" {} \"(+ 1 2)\" "
+            "(mutate :atomic-batch (list (list \"mutate:replace-subtree\" {} \"(+ 1 2)\" "
             "\"4127-soft-nm\")) \"4127-AC4a\")",
             a));
         CHECK(r.has_value(), "4127 AC4a: batch returns");
@@ -7195,7 +7200,7 @@ static void ac4127_4_soft_paths_unchanged() {
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", lit)).has_value(),
               "4127 AC4b: stamp MacroIntroduced");
         auto r = cs.eval(std::format(
-            "(mutate:atomic-batch (list (list \"mutate:replace-subtree\" {} \"(+ 1 2)\" "
+            "(mutate :atomic-batch (list (list \"mutate:replace-subtree\" {} \"(+ 1 2)\" "
             "\"4127-soft-mi\" :allow-macro? #t)) \"4127-AC4b\")",
             lit));
         CHECK(r.has_value(), "4127 AC4b: batch returns");
@@ -7315,7 +7320,7 @@ static void ac4149_1_public_allow_arm_capability_deny() {
     // fallback, not a peer AC's fiber residue. The _full alias binds the
     // strong reset (the legacy C-bridge name binds a weak stub here).
     aura_test_reset_macro_hygiene_last_limit_reason_full();
-    auto denied = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
+    auto denied = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
     CHECK(denied.has_value(), "4149 AC1: returns");
     CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected", "4149 AC1: deny kind");
     const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
@@ -7366,7 +7371,7 @@ static void ac4149_2_lockless_batch_subops_capability_deny() {
     // Full reset (global + fiber): a 7 stamp arms the #4078 eval refuse.
     aura_test_reset_macro_hygiene_last_limit_reason_full();
     auto d1 = cs.eval(std::format(
-        "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 42 \"4149-a\")) \"s\" "
+        "(mutate :atomic-batch (list (list \"mutate:replace-value\" {} 42 \"4149-a\")) \"s\" "
         ":allow-macro? #t)",
         as_int(*find_f)));
     CHECK(d1.has_value() && merr_kind_3027(cs, *d1) == "hygiene-protected",
@@ -7385,7 +7390,7 @@ static void ac4149_2_lockless_batch_subops_capability_deny() {
     // unified capability-deny face, not the structural 4. Full reset AFTER
     // the re-arm so no 7 refuse-arm survives into this eval (#4078).
     aura_test_reset_macro_hygiene_last_limit_reason_full();
-    auto d2 = cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"g\" "
+    auto d2 = cs.eval("(mutate :atomic-batch (list (list \"mutate:rebind\" \"f\" \"g\" "
                       ":allow-macro? #t)) \"s\")");
     CHECK(d2.has_value() && merr_kind_3027(cs, *d2) == "hygiene-protected",
           "4149 AC2b: batch surfaces the lockless deny");
@@ -7415,7 +7420,7 @@ static void ac4149_3_soft_off_allow_one_load() {
           "4149 AC3: stamp MacroIntroduced");
     aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
                                                                        std::memory_order_relaxed);
-    auto allowed = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
+    auto allowed = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 9))\" :allow-macro? #t)");
     CHECK(allowed.has_value() && merr_kind_3027(cs, *allowed) != "hygiene-protected" &&
               merr_kind_3027(cs, *allowed) != "hygiene",
           "4149 AC3: Soft opt-out permits");
@@ -7438,7 +7443,7 @@ static void ac4149_4_naked_default_deny_stays_4() {
           "4149 AC4: stamp MacroIntroduced");
     aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
                                                                        std::memory_order_relaxed);
-    auto denied = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\")");
+    auto denied = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 9))\")");
     CHECK(denied.has_value() && merr_kind_3027(cs, *denied) == "hygiene-protected",
           "4149 AC4: naked default-deny kind");
     const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
@@ -7775,17 +7780,17 @@ static void ac4406_displaced_child_default_reject() {
         CHECK(ring_hygiene_epoch_4406(epoch_before), label);
         aura_test_reset_macro_hygiene_last_limit_reason_for_test();
     };
-    deny("(mutate:set-body \"f\" \"(+ x 2)\")", "4406: public set-body");
-    deny("(mutate:rebind \"f\" \"(lambda (x) (+ x 2))\")", "4406: public rebind");
-    deny("(mutate:atomic-batch (list (list \"mutate:set-body\" \"f\" \"(+ x 2)\")) \"4406\")",
+    deny("(mutate :set-body \"f\" \"(+ x 2)\")", "4406: public set-body");
+    deny("(mutate :rebind \"f\" \"(lambda (x) (+ x 2))\")", "4406: public rebind");
+    deny("(mutate :atomic-batch (list (list \"mutate:set-body\" \"f\" \"(+ x 2)\")) \"4406\")",
          "4406: lockless set-body");
-    deny("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x 2))\")) "
+    deny("(mutate :atomic-batch (list (list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x 2))\")) "
          "\"4406\")",
          "4406: lockless rebind");
 
     grant_3301_production_mutate(cs);
     aura_test_reset_macro_hygiene_last_limit_reason_for_test();
-    auto gok = cs.eval("(mutate:set-body \"g\" \"(+ x 3)\")");
+    auto gok = cs.eval("(mutate :set-body \"g\" \"(+ x 3)\")");
     CHECK(gok.has_value() && is_bool(*gok) && as_bool(*gok), "4406: user set-body still writes");
     {
         auto* live = cs.evaluator().workspace_flat();
@@ -7795,7 +7800,7 @@ static void ac4406_displaced_child_default_reject() {
         CHECK(body_still_4406(cs.evaluator(), def, lam, body), "4406: f unchanged after g");
     }
     grant_3301_production_mutate(cs);
-    auto bok = cs.eval("(mutate:rebind \"base\" \"11\")");
+    auto bok = cs.eval("(mutate :rebind \"base\" \"11\")");
     CHECK(bok.has_value() && is_bool(*bok) && as_bool(*bok),
           "4406: user literal rebind still writes");
     {
@@ -7898,33 +7903,33 @@ static void ac4434_unlink_macro_child_default_reject() {
     };
     {
         auto expr =
-            std::format("(mutate:replace-subtree {} \"(+ x 2)\")", static_cast<unsigned>(def));
+            std::format("(mutate :replace-subtree {} \"(+ x 2)\")", static_cast<unsigned>(def));
         deny(expr.c_str(), "4434: public replace-subtree define");
     }
     {
         auto expr =
-            std::format("(mutate:replace-subtree {} \"(+ x 2)\")", static_cast<unsigned>(lam));
+            std::format("(mutate :replace-subtree {} \"(+ x 2)\")", static_cast<unsigned>(lam));
         deny(expr.c_str(), "4434: public replace-subtree lambda");
     }
     {
-        auto expr = std::format("(mutate:remove-node {})", static_cast<unsigned>(def));
+        auto expr = std::format("(mutate :remove-node {})", static_cast<unsigned>(def));
         deny(expr.c_str(), "4434: public remove-node");
     }
-    deny("(mutate:replace-pattern \"(lambda (x) ...)\" \"(+ x 2)\")",
+    deny("(mutate :replace-pattern \"(lambda (x) ...)\" \"(+ x 2)\")",
          "4434: public replace-pattern");
     {
-        auto expr = std::format("(mutate:atomic-batch (list (list \"mutate:replace-subtree\" {} "
+        auto expr = std::format("(mutate :atomic-batch (list (list \"mutate:replace-subtree\" {} "
                                 "\"(+ x 2)\" \"4434\")) \"4434\")",
                                 static_cast<unsigned>(def));
         deny(expr.c_str(), "4434: lockless replace-subtree");
     }
     {
         auto expr =
-            std::format("(mutate:atomic-batch (list (list \"mutate:remove-node\" {})) \"4434\")",
+            std::format("(mutate :atomic-batch (list (list \"mutate:remove-node\" {})) \"4434\")",
                         static_cast<unsigned>(lam));
         deny(expr.c_str(), "4434: lockless remove-node");
     }
-    deny("(mutate:atomic-batch (list (list \"mutate:replace-pattern\" \"(lambda (x) ...)\" "
+    deny("(mutate :atomic-batch (list (list \"mutate:replace-pattern\" \"(lambda (x) ...)\" "
          "\"(+ x 2)\")) \"4434\")",
          "4434: lockless replace-pattern");
 
@@ -7938,7 +7943,7 @@ static void ac4434_unlink_macro_child_default_reject() {
     }
 
     grant_3301_production_mutate(cs);
-    auto gok = cs.eval(std::format("(mutate:replace-subtree {} \"(lambda (x) (+ x 3))\")",
+    auto gok = cs.eval(std::format("(mutate :replace-subtree {} \"(lambda (x) (+ x 3))\")",
                                    static_cast<unsigned>(glam)));
     CHECK(gok.has_value(), "4434: user sibling replace-subtree returns");
     if (gok)
@@ -7953,7 +7958,7 @@ static void ac4434_unlink_macro_child_default_reject() {
     }
     grant_3301_production_mutate(cs);
     auto bok =
-        cs.eval(std::format("(mutate:replace-subtree {} \"12\")", static_cast<unsigned>(bdef)));
+        cs.eval(std::format("(mutate :replace-subtree {} \"12\")", static_cast<unsigned>(bdef)));
     CHECK(bok.has_value(), "4434: user define replace-subtree returns");
     if (bok)
         CHECK(merr_kind_3027(cs, *bok) != "hygiene-protected",
@@ -8069,7 +8074,7 @@ static void ac4435_rollback_restores_macro_marker() {
         g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{},
                                                      aura_test_grant_prov(), tenant);
         auto rep =
-            cs.eval(std::format("(mutate:replace-subtree {} \"(define a 11)\" :allow-macro? #t)",
+            cs.eval(std::format("(mutate :replace-subtree {} \"(define a 11)\" :allow-macro? #t)",
                                 static_cast<unsigned>(adef)));
         CHECK(rep.has_value(), "4435: allowed replace returns");
         if (rep)
@@ -8093,7 +8098,7 @@ static void ac4435_rollback_restores_macro_marker() {
         grant_3301_production_mutate(cs);
         CHECK(cs.evaluator().effect_sandbox_mode() != 0, "4435: rename sandbox stays on");
         aura_test_reset_macro_hygiene_last_limit_reason_for_test();
-        auto ren = cs.eval("(mutate:rename-symbol \"a\" \"zz\")");
+        auto ren = cs.eval("(mutate :rename-symbol \"a\" \"zz\")");
         CHECK(ren.has_value(), "4435: rename returns");
         if (ren)
             CHECK(merr_kind_3027(cs, *ren) == "hygiene-protected", "4435: rename denied");
@@ -8117,7 +8122,7 @@ static void ac4435_rollback_restores_macro_marker() {
         CHECK(bdef != aura::ast::NULL_NODE, "4435: define b");
         CHECK(!cs.evaluator().workspace_flat()->is_macro_introduced(bdef), "4435: b user");
         grant_3301_production_mutate(cs);
-        auto rep = cs.eval(std::format("(mutate:replace-subtree {} \"(define b 21)\")",
+        auto rep = cs.eval(std::format("(mutate :replace-subtree {} \"(define b 21)\")",
                                        static_cast<unsigned>(bdef)));
         CHECK(rep.has_value(), "4435: user replace returns");
         if (rep)
@@ -8133,7 +8138,7 @@ static void ac4435_rollback_restores_macro_marker() {
         set_prod(false);
         grant_3301_production_mutate(cs);
         CHECK(cs.evaluator().effect_sandbox_mode() != 0, "4435: user rename sandbox stays on");
-        auto ren = cs.eval("(mutate:rename-symbol \"b\" \"bb\")");
+        auto ren = cs.eval("(mutate :rename-symbol \"b\" \"bb\")");
         CHECK(ren.has_value(), "4435: user rename returns");
         if (ren) {
             CHECK(merr_kind_3027(cs, *ren) != "hygiene-protected", "4435: user rename lands");
@@ -8159,7 +8164,7 @@ static void ac4435_rollback_restores_macro_marker() {
                   .has_value(),
               "4435: soft stamp");
         auto rep =
-            cs.eval(std::format("(mutate:replace-subtree {} \"(define a 11)\" :allow-macro? #t)",
+            cs.eval(std::format("(mutate :replace-subtree {} \"(define a 11)\" :allow-macro? #t)",
                                 static_cast<unsigned>(adef)));
         CHECK(rep.has_value(), "4435: soft replace returns");
         if (rep)
@@ -8260,7 +8265,7 @@ static void ac4652_1_rejected_parse_frees_orphans() {
     auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
     const auto restores_before =
         cm ? cm->topology_dual_restore_total.load(std::memory_order_relaxed) : 0;
-    auto r = cs.eval("(mutate:query-and-replace (query:where :callee \"f\") \"1)\")");
+    auto r = cs.eval("(mutate :query-and-replace (query:where :callee \"f\") \"1)\")");
     CHECK(r.has_value(), "4652 AC1: the rejected edit returns a value");
     const auto kind = r ? merr_kind_3027(cs, *r) : std::string("novalue");
     CHECK(kind == "parse-failure", std::format("4652 AC1: parse-failure (got {})", kind));
@@ -8316,7 +8321,7 @@ static void ac4652_2_production_boundary_aborts() {
     auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
     const auto restores_before =
         cm ? cm->topology_dual_restore_total.load(std::memory_order_relaxed) : 0;
-    auto r = cs.eval("(mutate:query-and-replace (query:where :callee \"f\") \"1)\")");
+    auto r = cs.eval("(mutate :query-and-replace (query:where :callee \"f\") \"1)\")");
     CHECK(r.has_value(), "4652 AC2: the rejected edit returns a value");
     const auto kind = r ? merr_kind_3027(cs, *r) : std::string("novalue");
     // The nested Guard failed, so the outermost boundary aborts - the tree is
@@ -8356,7 +8361,7 @@ static void ac4652_3_bad_template_fails_boundary() {
         auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
         const auto restores_before =
             cm ? cm->topology_dual_restore_total.load(std::memory_order_relaxed) : 0;
-        auto r = cs.eval("(mutate:query-and-replace (query:where :callee \"f\"))");
+        auto r = cs.eval("(mutate :query-and-replace (query:where :callee \"f\"))");
         CHECK(r.has_value(), "4652 AC3: the rejected call returns a value");
         const auto kind = r ? merr_kind_3027(cs, *r) : std::string("novalue");
         CHECK(kind == "bad-arg", std::format("4652 AC3: bad-arg (got {})", kind));
@@ -8373,7 +8378,7 @@ static void ac4652_3_bad_template_fails_boundary() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define (f x) (f x))\")").has_value(), "4652 AC3: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "4652 AC3: eval-current");
-        auto r = cs.eval("(mutate:query-and-replace (query:where :callee \"f\"))");
+        auto r = cs.eval("(mutate :query-and-replace (query:where :callee \"f\"))");
         CHECK(r.has_value(), "4652 AC3: the rejected call returns a value");
         const auto kind = r ? merr_kind_3027(cs, *r) : std::string("novalue");
         CHECK(kind == "persist-reject",
@@ -8579,7 +8584,7 @@ static void ac4665_3_closed_point_fixes_stay_green() {
                   "4665 AC3: stamp Define MacroIntroduced");
     }
     // #4406: set-body must still default-refuse a MacroIntroduced parent.
-    auto sb = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 2))\")");
+    auto sb = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 2))\")");
     CHECK(sb.has_value() && merr_kind_3027(cs, *sb) == "hygiene-protected",
           "4665 AC3: set-body still default-refuses (hygiene-protected)");
     // A structural prim from the closed set still default-refuses.
@@ -8587,12 +8592,12 @@ static void ac4665_3_closed_point_fixes_stay_green() {
     if (parented != aura::ast::NULL_NODE) {
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", parented)).has_value(),
               "4665 AC3: stamp parented");
-        auto rm = cs.eval(std::format("(mutate:remove-node {})", parented));
+        auto rm = cs.eval(std::format("(mutate :remove-node {})", parented));
         CHECK(rm.has_value() && merr_kind_3027(cs, *rm) == "hygiene-protected",
               "4665 AC3: remove-node still default-refuses (hygiene-protected)");
     }
     // The exempt metadata prim still works (the inventory did not gate it).
-    auto fp = cs.eval("(mutate:set-agent-fingerprint 0)");
+    auto fp = cs.eval("(mutate :set-agent-fingerprint 0)");
     CHECK(fp.has_value() && !is_error(*fp), "4665 AC3: the exempt metadata prim still works");
     // The closed point fixes' prims stay Required in the single inventory.
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");

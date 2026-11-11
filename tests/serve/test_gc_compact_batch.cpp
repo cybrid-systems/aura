@@ -360,7 +360,7 @@ static void run_1362_aura_primitives() {
     auto c0 = cs.eval("(stats:get \"mutation-count\")");
     CHECK(c0 && is_int(*c0), "mutation-count works");
 
-    (void)cs.eval("(mutate:tweak-literal 0 1)");
+    (void)cs.eval("(mutate :tweak-literal 0 1)");
     auto d = cs.eval("(mutation-log-compact 1000)");
     CHECK(d && is_int(*d), "mutation-log-compact returns int");
 
@@ -552,7 +552,7 @@ static void run_324_dual_path_consistency() {
     (void)cs.eval("(set-code \"(define a 1) (define b 2) (define c 3)\")");
     (void)cs.eval("(eval-current)");
     for (int i = 0; i < 5; ++i) {
-        std::string code = "(mutate:replace-value (define a " + std::to_string(100 + i * 11) +
+        std::string code = "(mutate :replace-value (define a " + std::to_string(100 + i * 11) +
                            ") (define a " + std::to_string(100 + i * 11) + "))";
         auto r = cs.eval(code);
         CHECK(r.has_value(), std::string("mutate #") + std::to_string(i) + " succeeds");
@@ -950,7 +950,7 @@ static void run_322_dual_path_soa_envid() {
         (void)cs.eval("(set-code \"(define a 1) (define b 2) (define c 3)\")");
         (void)cs.eval("(eval-current)");
         for (int i = 0; i < 5; ++i) {
-            std::string code = "(mutate:replace-value (define a ";
+            std::string code = "(mutate :replace-value (define a ";
             code += std::to_string(100 + i * 11);
             code += ") (define a ";
             code += std::to_string(100 + i * 11);
@@ -1207,7 +1207,7 @@ static void run_464_arena_auto_compaction() {
         auto before_n = (before && aura::compiler::types::is_int(*before))
                             ? aura::compiler::types::as_int(*before)
                             : 0;
-        cs.eval(R"((mutate:rebind 'foo 42))");
+        cs.eval(R"((mutate :rebind 'foo 42))");
         auto after = cs.eval("(hash-ref (engine:metrics \"query:arena-auto-stats\") "
                              "'auto-compact-guard-call-count)");
         auto after_n = (after && aura::compiler::types::is_int(*after))
@@ -1253,7 +1253,7 @@ static void run_464_arena_auto_compaction() {
                             ? aura::compiler::types::as_int(*before)
                             : 0;
         for (int i = 0; i < 5; ++i)
-            cs3.eval(std::format(R"((mutate:rebind 'foo_{} {}))", i, i * 10));
+            cs3.eval(std::format(R"((mutate :rebind 'foo_{} {}))", i, i * 10));
         auto after = cs3.eval("(hash-ref (engine:metrics \"query:arena-auto-stats\") "
                               "'auto-compact-guard-call-count)");
         auto after_n = (after && aura::compiler::types::is_int(*after))
@@ -1352,7 +1352,7 @@ static void run_604_arena_auto_compact_defrag_fiber_safepoint() {
         (void)cs.eval("(mutate :arena-request-defrag)");
         for (int i = 0; i < 40; ++i)
             (void)cs.eval("(fib 6)");
-        cs.eval("(mutate:rebind \"fib\" "
+        cs.eval("(mutate :rebind \"fib\" "
                 "\"(lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))\" "
                 "\"issue-604\")");
         cs.eval("(eval-current)");
@@ -1372,7 +1372,7 @@ static void run_604_arena_auto_compact_defrag_fiber_safepoint() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::scoped_lock<std::mutex> lk(eval_mtx);
-                (void)cs.eval("(mutate:request-gc-safepoint)");
+                (void)cs.eval("(mutate :request-gc-safepoint)");
                 auto r = cs.eval("(fib 6)");
                 if (r && aura::compiler::types::is_int(*r) &&
                     aura::compiler::types::as_int(*r) == 8)
@@ -1533,7 +1533,7 @@ static void run_685_arena_auto_compact_defrag_shape_synergy() {
         (void)cs.eval("(mutate :arena-request-defrag)");
         for (int i = 0; i < 30; ++i)
             (void)cs.eval("(fact 3)");
-        cs.eval("(mutate:rebind \"fact\" "
+        cs.eval("(mutate :rebind \"fact\" "
                 "\"(lambda (n) (if (= n 0) 1 (* n (fact (- n 1)))))\" "
                 "\"issue-685\")");
         cs.eval("(eval-current)");
@@ -1554,7 +1554,7 @@ static void run_685_arena_auto_compact_defrag_shape_synergy() {
         auto worker = [&] {
             for (int i = 0; i < k_iters; ++i) {
                 std::scoped_lock<std::mutex> lk(eval_mtx);
-                (void)cs.eval("(mutate:request-gc-safepoint)");
+                (void)cs.eval("(mutate :request-gc-safepoint)");
                 auto r = cs.eval("(fact 3)");
                 if (r && aura::compiler::types::is_int(*r) &&
                     aura::compiler::types::as_int(*r) == 6)
@@ -2784,7 +2784,7 @@ static void run_1519_cxx26_contracts_hotpath() {
         CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
         const auto hits0 = load_u64(aura::core::cpp26::hotpath_invariant_hits_total);
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\" \"#1519\")");
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 1))\" \"#1519\")");
         CHECK(load_u64(aura::core::cpp26::hotpath_invariant_hits_total) >= hits0,
               "hits non-decreasing after rebind");
         aura::ast::ASTArena arena;
@@ -2950,7 +2950,7 @@ static void run_1534_guard_shape_epoch_fence_smoke() {
     auto r = cs.eval("(g 21)");
     CHECK(r && is_int(*r) && as_int(*r) == 42, "(g 21)==42");
     // Rebind / recompile path exercises epoch bumps when JIT present.
-    (void)cs.eval("(mutate:rebind \"g\" \"(lambda (x) (* x 3))\" \"#1534\")");
+    (void)cs.eval("(mutate :rebind \"g\" \"(lambda (x) (* x 3))\" \"#1534\")");
     auto r2 = cs.eval("(g 7)");
     CHECK(r2 && is_int(*r2), "(g 7) still int after rebind");
     CHECK(m->jit_epoch_stale_check_total.load(std::memory_order_relaxed) >= stale0,

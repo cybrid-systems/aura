@@ -48,7 +48,7 @@ class SourcePage(unittest.TestCase):
     def test_src_reads_live_source_not_a_file(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             r = run_repl(
-                '(set-code "(define (guess) 0)")\n(mutate:rebind "guess" "(lambda () 7)" "test")\n:src guess\n(quit)\n',
+                '(set-code "(define (guess) 0)")\n(mutate :rebind "guess" "(lambda () 7)" "test")\n:src guess\n(quit)\n',
                 cwd=d,
             )
         self.assertIn("(define guess (lambda () 7))", r.stdout, r.stdout + r.stderr)

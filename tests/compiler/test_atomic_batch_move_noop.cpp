@@ -136,9 +136,9 @@ int run_test_atomic_batch_move_noop() {
         const auto rollbacks_before = cs.evaluator().atomic_batch_rollbacks();
         const auto kids_before = ws->children(loc.parent).size();
 
-        auto batch =
-            cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:move-node\" {} {} {})))",
-                                loc.node, loc.parent, loc.index));
+        auto batch = cs.eval(
+            std::format("(mutate :atomic-batch (list (list \"mutate:move-node\" {} {} {})))",
+                        loc.node, loc.parent, loc.index));
         CHECK(batch.has_value(), "AC3: batch returns");
         CHECK(is_bool(*batch) && as_bool(*batch), "AC3: batch commits #t (not batch-failed)");
         CHECK(cs.evaluator().atomic_batch_rollbacks() == rollbacks_before,
@@ -164,7 +164,7 @@ int run_test_atomic_batch_move_noop() {
         auto loc = find_first_child(*ws);
         CHECK(loc.node != NULL_NODE, "AC3b: child");
         auto r =
-            cs.eval(std::format("(mutate:move-node {} {} {})", loc.node, loc.parent, loc.index));
+            cs.eval(std::format("(mutate :move-node {} {} {})", loc.node, loc.parent, loc.index));
         CHECK(r && is_bool(*r) && as_bool(*r), "AC3b: standalone no-op returns #t");
         CHECK(ws->parent_of(loc.node) == loc.parent, "AC3b: parent unchanged");
     }
@@ -175,7 +175,7 @@ int run_test_atomic_batch_move_noop() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define f (lambda () 1))\")").has_value(), "AC4: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "AC4: eval");
-        auto batch = cs.eval("(mutate:atomic-batch "
+        auto batch = cs.eval("(mutate :atomic-batch "
                              "(list (list \"mutate:rebind\" \"f\" \"(lambda () 99)\") "
                              "      (list \"mutate:rebind\" \"no-such-2794\" \"(lambda () 0)\")))");
         CHECK(batch.has_value(), "AC4: returns value");

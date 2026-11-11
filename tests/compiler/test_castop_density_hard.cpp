@@ -869,7 +869,7 @@ static void ac3699_identity_must_deopt_and_streak_reject() {
         note_hot_residual_fail_close(1, true, 1);
         note_hot_residual_fail_close(1, true, 1);
         CHECK(density_gate_reject_pending(), "3699 soak: pending armed");
-        auto mut = cs.eval(R"lisp((mutate:set-body "t3699" "(lambda () 2)"))lisp");
+        auto mut = cs.eval(R"lisp((mutate :set-body "t3699" "(lambda () 2)"))lisp");
         CHECK(mut.has_value(), "3699 soak: mutate returns");
         CHECK(!(mut && is_bool(*mut) && as_bool(*mut)), "3699 soak: Guard not success");
         CHECK(!cs.evaluator().type_export_authoritative(),

@@ -84,7 +84,7 @@ static void ac_existing_primitives_registered() {
     // is registered and reachable.
     // Direct calls: eval-no-side-effects is not how prims are probed
     // on current main. Any result (incl. pair error) means registered.
-    auto h1 = cs.eval("(mutate:rollback-macro-introduced)");
+    auto h1 = cs.eval("(mutate :rollback-macro-introduced)");
     CHECK(h1, "AC1: mutate:rollback-macro-introduced is a registered primitive name");
     auto h2 = cs.eval("(query:by-marker)");
     CHECK(h2, "AC1: query:by-marker is a registered primitive name");
@@ -317,7 +317,7 @@ static void ac4664_rollback_row_carries_tenant_and_mid() {
     ev.set_effect_sandbox_mode(0); // Soft/Off: no MacroSelfEvo gate (#3650)
     const auto id = stamp_macro_introduced_4664(cs);
     CHECK(id >= 0, "4664 AC1: MacroIntroduced subtree staged");
-    const auto rb = cs.eval(std::format("(mutate:rollback-macro-introduced {})", id));
+    const auto rb = cs.eval(std::format("(mutate :rollback-macro-introduced {})", id));
     CHECK(rb.has_value(), "4664 AC1: rollback returns");
     const auto* row = find_rollback_row_4664();
     CHECK(row != nullptr, "4664 AC1: MacroHygieneRollbackOnStrict row present");
@@ -363,7 +363,7 @@ static void ac4664_row_stays_permissive_with_same_shape() {
     CHECK(id >= 0, "4664 AC2: MacroIntroduced subtree staged");
     const auto strict_before =
         static_cast<std::int64_t>(aura_rollback_strict_audited_total_v_read());
-    const auto rb = cs.eval(std::format("(mutate:rollback-macro-introduced {})", id));
+    const auto rb = cs.eval(std::format("(mutate :rollback-macro-introduced {})", id));
     CHECK(rb.has_value(), "4664 AC2: rollback returns");
     const auto strict_after =
         static_cast<std::int64_t>(aura_rollback_strict_audited_total_v_read());
@@ -397,7 +397,7 @@ static void ac4664_soft_off_has_no_audit_arm() {
     CHECK(id >= 0, "4664 AC3: MacroIntroduced subtree staged");
     const auto strict_before =
         static_cast<std::int64_t>(aura_rollback_strict_audited_total_v_read());
-    const auto rb = cs.eval(std::format("(mutate:rollback-macro-introduced {})", id));
+    const auto rb = cs.eval(std::format("(mutate :rollback-macro-introduced {})", id));
     CHECK(rb.has_value(), "4664 AC3: rollback returns");
     const auto strict_after =
         static_cast<std::int64_t>(aura_rollback_strict_audited_total_v_read());
@@ -422,7 +422,7 @@ static void ac4664_refuse_row_stays_distinguishable() {
     ev.set_effect_sandbox_mode(0);
     const auto id = stamp_macro_introduced_4664(cs);
     CHECK(id >= 0, "4664 AC4: MacroIntroduced subtree staged");
-    const auto rb = cs.eval(std::format("(mutate:rollback-macro-introduced {})", id));
+    const auto rb = cs.eval(std::format("(mutate :rollback-macro-introduced {})", id));
     CHECK(rb.has_value(), "4664 AC4: rollback returns");
     const auto* row = find_rollback_row_4664();
     CHECK(row != nullptr, "4664 AC4: MacroHygieneRollbackOnStrict row present");

@@ -15,7 +15,7 @@
 (set-code "(define (f x) x)")
 (eval-current)
 (assert! (= (f -4) -4) "pre identity")
-(assert! (mutate:atomic-batch
+(assert! (mutate :atomic-batch
            (list (list "mutate:rebind" "f"
                        "(lambda (x) (if (< x 0) (* x -1) x))" "abs"))
            "abs")

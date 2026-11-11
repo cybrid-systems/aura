@@ -20,20 +20,20 @@
 (assert! (= (mutate :snapshot "s0-4797") -1) "snapshot without workspace -> -1")
 (assert! (eq? (query :snapshot-fail-reason) :no-workspace) "fail reason :no-workspace")
 
-(let ((r (mutate:rebind "judge-policy" "(lambda () (list 1 2))" "evo-1")))
+(let ((r (mutate :rebind "judge-policy" "(lambda () (list 1 2))" "evo-1")))
   (if (not (equal? (kind r) "no-workspace")) (begin (display "    got: ") (write r) (newline)))
   (assert! (equal? (kind r) "no-workspace") "rebind without workspace -> no-workspace (not bad-arg)"))
 (assert! (equal? (judge-policy) (list 0.6 0.8)) "top-level binding unchanged")
 
 ; real argument errors still report bad-arg usage
-(assert! (equal? (kind (mutate:rebind 1 2)) "bad-arg") "non-string args -> bad-arg")
+(assert! (equal? (kind (mutate :rebind 1 2)) "bad-arg") "non-string args -> bad-arg")
 
 ; set-code path: snapshot -> rebind -> restore
 (set-code "(define judge-policy (lambda () (list 0.6 0.8)))")
 (eval-current)
 (define sid (mutate :snapshot "s1-4797"))
 (assert! (and (integer? sid) (>= sid 0)) "snapshot after set-code succeeds")
-(assert! (eq? (mutate:rebind "judge-policy" "(lambda () (list 1 2))" "evo-1") #t) "rebind after set-code")
+(assert! (eq? (mutate :rebind "judge-policy" "(lambda () (list 1 2))" "evo-1") #t) "rebind after set-code")
 (assert! (equal? (judge-policy) (list 1 2)) "rebind took effect")
 (mutate :restore sid)
 (eval-current)

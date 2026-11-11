@@ -42,8 +42,8 @@
 
 ;; ── mutate:check dry-run gate ──
 (define ws-before (current-source :workspace))
-(check (eq? (mutate:check "f" "(define (f x) (* x 2))") #t) "mutate:check clean")
-(check (pair? (mutate:check "f" "(define (f x")) "mutate:check parse error")
+(check (eq? (mutate :check "f" "(define (f x) (* x 2))") #t) "mutate:check clean")
+(check (pair? (mutate :check "f" "(define (f x")) "mutate:check parse error")
 (check (equal? ws-before (current-source :workspace)) "mutate:check wrote nothing")
 
 ;; ── datum I/O group ──

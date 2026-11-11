@@ -30,7 +30,7 @@
 ; "accepted" = mutate:rebind returned #t; rejections come back as a
 ; ("mutation-failed" msg . pos) triple (or raise).
 (define (rebind name body label)
-  (try (mutate:rebind name body label) (catch (e) (list "raised" e))))
+  (try (mutate :rebind name body label) (catch (e) (list "raised" e))))
 (define (rejected? r) (not (eq? r #t)))
 (define (typecheck-reject? r)
   (and (pair? r) (equal? (car r) "mutation-failed")))

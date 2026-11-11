@@ -227,7 +227,7 @@ static void ac8_stress() {
     const auto match0 = load_u64(g_edsl_matcher_soa_hits);
     for (int i = 0; i < 25; ++i) {
         (void)cs.eval(
-            std::format("(mutate:rebind \"f\" \"(lambda (x) (+ x {}))\" \"i1918\")", i % 5));
+            std::format("(mutate :rebind \"f\" \"(lambda (x) (+ x {}))\" \"i1918\")", i % 5));
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(query:pattern '(define _ _))");
         // Direct apply_closure path (same dual-path as eval call sites).

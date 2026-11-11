@@ -354,7 +354,7 @@ namespace aura_issue_544_detail {
         std::uint64_t jc0 = s0.jit_compilations;
         // Trigger some compiles via mutation.
         for (int i = 0; i < 10; ++i) {
-            (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i + 100) +
+            (void)cs.eval("(mutate :replace-value (define a " + std::to_string(i + 100) +
                           ") (define a " + std::to_string(i + 100) + "))");
         }
         auto s1 = cs.snapshot();
@@ -399,7 +399,7 @@ namespace aura_issue_544_detail {
         auto worker = [&](int tid) {
             for (int i = 0; i < K_ITERS; ++i) {
                 std::scoped_lock<std::mutex> lk(mtx);
-                std::string code = "(mutate:replace-value (define a ";
+                std::string code = "(mutate :replace-value (define a ";
                 code += std::to_string(tid * 1000 + i);
                 code += ") (define a ";
                 code += std::to_string(tid * 1000 + i);
@@ -440,7 +440,7 @@ namespace aura_issue_544_detail {
         (void)cs.eval("(set-code \"(define a 1)\")");
         (void)cs.eval("(eval-current)");
         for (int i = 0; i < 50; ++i) {
-            (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i) + ") (define a " +
+            (void)cs.eval("(mutate :replace-value (define a " + std::to_string(i) + ") (define a " +
                           std::to_string(i) + "))");
         }
         std::uint64_t after = aura_jit_fallback_count_v_read();

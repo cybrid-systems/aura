@@ -1331,7 +1331,7 @@ namespace aura_mutation_guard_typed_detail {
             CHECK(g.has_value(), "consume budget");
         }
 
-        auto mr = cs.public_typed_mutate("(mutate:rebind \"f\" \"(lambda () 2)\" \"#1547\")");
+        auto mr = cs.public_typed_mutate("(mutate :rebind \"f\" \"(lambda () 2)\" \"#1547\")");
         CHECK(!mr.success, "typed_mutate fails when quota exhausted");
         CHECK(mr.error.find("mutation quota exceeded") != std::string::npos || !mr.error.empty(),
               "typed_mutate surfaces quota error message");
@@ -1643,7 +1643,7 @@ int run_285_mutation_boundary_flush() {
     // enter via mutate path
     CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\" \"#285\")");
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 1))\" \"#285\")");
     CHECK(Evaluator::mutation_boundary_depth() == 0, "depth 0 after mutate");
     // flush is idempotent when idle
     ev.flush_mutation_boundary();
@@ -1736,9 +1736,9 @@ int run_1408_typed_mutate_atomic_edsl() {
         const auto before = flat ? flat->committed_mutation_count() : 0;
         const char* expr = R"aura(
 (typed-mutate-atomic
-  (list "(mutate:rebind \"x\" \"10\")"
-        "(mutate:rebind \"y\" \"20\")"
-        "(mutate:rebind \"z\" \"30\")"))
+  (list "(mutate :rebind \"x\" \"10\")"
+        "(mutate :rebind \"y\" \"20\")"
+        "(mutate :rebind \"z\" \"30\")"))
 )aura";
         CHECK(is_true(cs, expr), "typed-mutate-atomic #t on success");
         CHECK(cs.eval("(eval-current)").has_value(), "eval-current after atomic");
@@ -1756,9 +1756,9 @@ int run_1408_typed_mutate_atomic_edsl() {
         const auto before = flat ? flat->committed_mutation_count() : 0;
         const char* expr = R"aura(
 (typed-mutate-atomic
-  (list "(mutate:rebind \"x\" \"100\")"
-        "(mutate:rebind \"y\" \"200\")"
-        "(mutate:rebind \"z\"   "))
+  (list "(mutate :rebind \"x\" \"100\")"
+        "(mutate :rebind \"y\" \"200\")"
+        "(mutate :rebind \"z\"   "))
 )aura";
         CHECK(is_false(cs, expr), "typed-mutate-atomic #f on abort");
         if (flat)
@@ -1831,7 +1831,7 @@ int run_281_predicate_memo_smoke() {
     // mutation invalidates / reuses reflattened path
     CHECK(cs.eval("(set-code \"(define (f x) (if (string? x) 1 0))\")").has_value(), "set-code f");
     CHECK(cs.eval("(f \"hi\")").has_value(), "f before mutate");
-    CHECK(cs.eval("(mutate:rebind \"f\" \"(define (f x) (if (string? x) 99 0))\" \"bump\")")
+    CHECK(cs.eval("(mutate :rebind \"f\" \"(define (f x) (if (string? x) 99 0))\" \"bump\")")
               .has_value(),
           "mutate rebind f");
     CHECK(cs.eval("(f \"hi\")").has_value(), "f after mutate");
@@ -1888,7 +1888,7 @@ int run_459_atomic_batch_metrics_smoke() {
         CHECK(static_cast<std::uint64_t>(as_int(*r)) == ev.get_atomic_batch_steal_violation(),
               "stats == steal_violation");
     CHECK(cs.eval("(set-code \"(define f x)\")").has_value(), "set-code");
-    auto ab = cs.eval(R"aur((mutate:atomic-batch
+    auto ab = cs.eval(R"aur((mutate :atomic-batch
                  (list (list "mutate:rebind" "f" "42" "test"))
                  "smoke"))aur");
     CHECK(ab.has_value(), "mutate:atomic-batch callable");
@@ -1925,7 +1925,7 @@ int run_1457_type_prop_dce_smoke() {
     CHECK(cs.get_type_propagation_runs() > runs0, "type_propagation_runs grew");
     auto dce = cs.eval("(engine:metrics \"query:dead-coercion-stats\")");
     CHECK(dce.has_value(), "dead-coercion-stats reachable");
-    CHECK(cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 10) 0))\" "
+    CHECK(cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 10) 0))\" "
                   "\"issue-1457\")")
               .has_value(),
           "rebind f");
@@ -1995,7 +1995,7 @@ int run_350_match_exhaustiveness_notes_smoke() {
           "stats name query:match-exhaustiveness-notes registered");
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
-    CHECK(cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\" \"#350\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 1))\" \"#350\")").has_value(),
           "mutate:rebind");
     auto r = cs.eval("(f 1)");
     CHECK(r.has_value(), "post-mutate eval ok");
@@ -2038,12 +2038,12 @@ int run_1524_typed_mutate_dual_epoch_smoke() {
     CHECK(cs.eval("(set-code \"(define x 1) (define y 2)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
     const auto be0 = cs.bridge_epoch();
-    auto r = cs.eval("(mutate:rebind \"x\" \"10\" \"#1524\")");
+    auto r = cs.eval("(mutate :rebind \"x\" \"10\" \"#1524\")");
     CHECK(r.has_value(), "typed_mutate rebind");
     CHECK(cs.bridge_epoch() > be0, "bridge_epoch advanced");
     // second mutate
     const auto be1 = cs.bridge_epoch();
-    CHECK(cs.eval("(mutate:rebind \"y\" \"20\" \"#1524b\")").has_value(), "rebind y");
+    CHECK(cs.eval("(mutate :rebind \"y\" \"20\" \"#1524b\")").has_value(), "rebind y");
     CHECK(cs.bridge_epoch() > be1, "bridge_epoch advanced again");
     return g_failed ? 1 : 0;
 }
@@ -2094,7 +2094,7 @@ int run_357_mutate_rebind_commit_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define f 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
-    CHECK(cs.eval("(mutate:rebind \"f\" \"(define f 2)\")").has_value(), "rebind commit");
+    CHECK(cs.eval("(mutate :rebind \"f\" \"(define f 2)\")").has_value(), "rebind commit");
     // post-commit eval path still works
     auto r = cs.eval("f");
     CHECK(r.has_value(), "f evaluates after rebind");
@@ -2134,7 +2134,7 @@ int run_1486_linear_post_mutate_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define f (lambda () 1))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
-    CHECK(cs.eval("(mutate:rebind \"f\" \"(lambda () 2)\" \"#1486\")").has_value(), "rebind");
+    CHECK(cs.eval("(mutate :rebind \"f\" \"(lambda () 2)\" \"#1486\")").has_value(), "rebind");
     CHECK(Evaluator::mutation_boundary_depth() == 0, "depth 0 after mutate");
     auto m = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
     CHECK(m.has_value(), "linear-ownership-stats reachable");
@@ -2244,7 +2244,7 @@ int run_1494_live_closure_scan_metrics_smoke() {
     CHECK(cs.eval("(set-code \"(define f (lambda () 1))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
     // invalidate path may run live-closure scan (#1494 lineage)
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda () 2)\" \"#1494\")");
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda () 2)\" \"#1494\")");
     auto m2 = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
     CHECK(m2.has_value(), "stats still reachable post rebind");
     return g_failed ? 1 : 0;
@@ -2406,7 +2406,7 @@ int run_328_self_evo_mutation_loop_smoke() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
     for (int i = 0; i < 5; ++i) {
         (void)cs.eval("(query:pattern \"a\")");
-        (void)cs.eval("(mutate:rebind \"a\" \"" + std::to_string(i + 1) + "\")");
+        (void)cs.eval("(mutate :rebind \"a\" \"" + std::to_string(i + 1) + "\")");
         CHECK(cs.eval("(eval-current)").has_value(), "eval after mutate");
     }
     auto m = cs.eval("(stats:get \"syntax-marker-counts\")");
@@ -2447,7 +2447,7 @@ int run_346_mutation_log_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define m 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"m\" \"2\")");
+    (void)cs.eval("(mutate :rebind \"m\" \"2\")");
     auto log = cs.eval("(query :mutation-log)");
     CHECK(log.has_value(), "query:mutation-log reachable");
     auto since = cs.eval("(query:mutations-since 0)");
@@ -2465,7 +2465,7 @@ int run_349_last_mutation_blame_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define b 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"b\" \"3\" \"#349-blame\")");
+    (void)cs.eval("(mutate :rebind \"b\" \"3\" \"#349-blame\")");
     // Primitive may return void/empty when no invariant blame was recorded.
     auto r = cs.eval("(query:last-mutation-blame)");
     CHECK(true, "query:last-mutation-blame invoked");
@@ -2488,9 +2488,9 @@ int run_348_occurrence_dirty_rebind_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define (f x) (if (string? x) 1 0))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    CHECK(
-        cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) 2 0))\" \"#348\")").has_value(),
-        "rebind with if");
+    CHECK(cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) 2 0))\" \"#348\")")
+              .has_value(),
+          "rebind with if");
     auto dn = cs.eval("(query:dirty-nodes)");
     CHECK(dn.has_value(), "query:dirty-nodes reachable");
     auto dr = cs.eval("(engine:metrics \"compile:dirty-reason-counts\")");
@@ -2572,7 +2572,7 @@ int run_329_stable_ref_query_smoke() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     auto ch = cs.eval("(query :children 0)");
     CHECK(ch.has_value(), "query:children reachable");
-    (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     auto st = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(st.has_value(), "stable-ref-stats");
     return g_failed ? 1 : 0;
@@ -2590,9 +2590,9 @@ int run_391_stale_ref_policy_smoke() {
     auto p0 = cs.eval("(query:stale-ref-policy)");
     (void)p0;
     CHECK(true, "query:stale-ref-policy invoked");
-    (void)cs.eval("(mutate:set-stale-ref-policy \"warn\")");
+    (void)cs.eval("(mutate :set-stale-ref-policy \"warn\")");
     CHECK(true, "mutate:set-stale-ref-policy warn invoked");
-    (void)cs.eval("(mutate:set-stale-ref-policy \"disabled\")");
+    (void)cs.eval("(mutate :set-stale-ref-policy \"disabled\")");
     auto st = cs.eval("(engine:metrics \"query:stale-ref-stats\")");
     CHECK(st.has_value(), "query:stale-ref-stats");
     return g_failed ? 1 : 0;
@@ -2611,7 +2611,7 @@ int run_371_tag_arity_index_smoke() {
     (void)cs.eval("(query:pattern \"*\")");
     auto idx = cs.eval("(engine:metrics \"query:pattern-index-stats\")");
     CHECK(idx.has_value(), "query:pattern-index-stats");
-    (void)cs.eval("(mutate:rebind \"x\" \"3\")");
+    (void)cs.eval("(mutate :rebind \"x\" \"3\")");
     (void)cs.eval("(query:pattern \"*\")");
     CHECK(true, "mutate + re-query ok");
     return g_failed ? 1 : 0;
@@ -2686,7 +2686,7 @@ int run_487_dirty_impact_stats_smoke() {
     CHECK(r.has_value(), "compile:dirty-impact-stats reachable");
     CHECK(cs.eval("(set-code \"(define d 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"d\" \"2\")");
+    (void)cs.eval("(mutate :rebind \"d\" \"2\")");
     auto r2 = cs.eval("(engine:metrics \"compile:dirty-impact-stats\")");
     CHECK(r2.has_value(), "dirty-impact after mutate");
     return g_failed ? 1 : 0;
@@ -2704,7 +2704,7 @@ int run_434_occurrence_dirty_stats_smoke() {
     CHECK(r.has_value(), "compile:occurrence-dirty-stats reachable");
     CHECK(cs.eval("(set-code \"(define (f x) (if (string? x) 1 0))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) 2 0))\")");
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) 2 0))\")");
     auto r2 = cs.eval("(engine:metrics \"compile:occurrence-dirty-stats\")");
     CHECK(r2.has_value(), "occurrence-dirty after rebind");
     return g_failed ? 1 : 0;
@@ -2722,7 +2722,7 @@ int run_413_mutation_log_invalidation_stats_smoke() {
     CHECK(r.has_value(), "mutation-log-invalidation-stats reachable");
     CHECK(cs.eval("(set-code \"(define t 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"t\" \"9\")");
+    (void)cs.eval("(mutate :rebind \"t\" \"9\")");
     auto r2 = cs.eval("(engine:metrics \"compile:mutation-log-invalidation-stats\")");
     CHECK(r2.has_value(), "stats after rebind");
     return g_failed ? 1 : 0;
@@ -2783,7 +2783,7 @@ int run_396_atomic_batch_stats_smoke() {
     CHECK(st.has_value(), "atomic-batch:stats reachable");
     CHECK(cs.eval("(set-code \"(define ab 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"ab\" \"2\")");
+    (void)cs.eval("(mutate :rebind \"ab\" \"2\")");
     auto st2 = cs.eval("(stats:get \"atomic-batch:stats\")");
     CHECK(st2.has_value(), "stats after mutate");
     return g_failed ? 1 : 0;
@@ -2822,7 +2822,7 @@ int run_410_per_symbol_dirty_stats_smoke() {
     CHECK(r.has_value(), "per-symbol-dirty-stats reachable");
     CHECK(cs.eval("(set-code \"(define (f x) (+ x 1))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 2))\")");
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 2))\")");
     auto r2 = cs.eval("(engine:metrics \"compile:per-symbol-dirty-stats\")");
     CHECK(r2.has_value(), "stats after rebind");
     return g_failed ? 1 : 0;
@@ -2849,7 +2849,7 @@ int run_1408_rebind_rollback_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    CHECK(cs.eval("(mutate:rebind \"x\" \"100\")").has_value(), "rebind");
+    CHECK(cs.eval("(mutate :rebind \"x\" \"100\")").has_value(), "rebind");
     CHECK(cs.eval("x").has_value(), "x evaluates");
     CHECK(cs.eval("(query :mutation-log)").has_value(), "mutation-log");
     return g_failed ? 1 : 0;
@@ -2866,7 +2866,7 @@ int run_1456_affected_subtree_smoke() {
     CHECK(cs.eval("(set-code \"(define a 1) (define b (+ a 2)) (define c (* b 3))\")").has_value(),
           "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     CHECK(cs.eval("(engine:metrics \"compile:dirty-impact-stats\")").has_value(), "dirty-impact");
     CHECK(cs.eval("(engine:metrics \"compile:per-symbol-dirty-stats\")").has_value(),
           "per-symbol-dirty");
@@ -2883,7 +2883,7 @@ int run_1455_occurrence_stale_prop_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define (f x) (if (string? x) 1 0))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) 2 0))\")");
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) 2 0))\")");
     CHECK(cs.eval("(engine:metrics \"compile:occurrence-dirty-stats\")").has_value(),
           "occurrence-dirty-stats");
     return g_failed ? 1 : 0;
@@ -2899,7 +2899,7 @@ int run_1900_atomic_batch_ops_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define z 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"z\" \"2\")");
+    (void)cs.eval("(mutate :rebind \"z\" \"2\")");
     CHECK(cs.eval("(stats:get \"atomic-batch:stats\")").has_value(), "atomic-batch:stats");
     return g_failed ? 1 : 0;
 }
@@ -2916,7 +2916,7 @@ int run_1904_mutation_guard_coverage_smoke() {
           "mutation-guard-coverage");
     CHECK(cs.eval("(set-code \"(define g 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"g\" \"2\")");
+    (void)cs.eval("(mutate :rebind \"g\" \"2\")");
     CHECK(cs.eval("(engine:metrics \"query:mutation-guard-coverage\")").has_value(),
           "coverage after rebind");
     return g_failed ? 1 : 0;
@@ -2933,7 +2933,7 @@ int run_1502_batch_rollback_smoke() {
     CHECK(cs.eval("(set-code \"(define a 1) (define b 2)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     CHECK(cs.eval("(length (query:defines))").has_value(), "defines count");
-    (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     CHECK(cs.eval("(query :mutation-log)").has_value(), "mutation-log");
     return g_failed ? 1 : 0;
 }
@@ -3059,7 +3059,7 @@ int run_1419_mutation_provenance_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define p 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"p\" \"2\" \"#1419\")");
+    (void)cs.eval("(mutate :rebind \"p\" \"2\" \"#1419\")");
     auto mp = cs.eval("(query:mutation-provenance)");
     CHECK(mp.has_value() || true, "query:mutation-provenance surface");
     CHECK(cs.eval("(query :mutation-log)").has_value(), "mutation-log");
@@ -3076,7 +3076,7 @@ int run_1503_append_only_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define q 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"q\" \"2\")");
+    (void)cs.eval("(mutate :rebind \"q\" \"2\")");
     CHECK(cs.eval("(engine:metrics \"query:compiler-incremental-stats\")").has_value(),
           "incremental-stats");
     return g_failed ? 1 : 0;
@@ -3142,7 +3142,7 @@ int run_1538_post_mutation_invariant_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define i 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"i\" \"2\")");
+    (void)cs.eval("(mutate :rebind \"i\" \"2\")");
     CHECK(cs.eval("(query:last-mutation-blame)").has_value() || true, "last-mutation-blame");
     CHECK(cs.eval("(engine:metrics \"query:mutation-guard-coverage\")").has_value(),
           "mutation-guard-coverage");
@@ -3414,7 +3414,7 @@ int run_319_sv_closed_loop_smoke() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     auto n0 = cs.eval("(length (query:defines))");
     CHECK(n0.has_value(), "defines count");
-    (void)cs.eval("(mutate:rebind \"constraint-1\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"constraint-1\" \"10\")");
     auto n1 = cs.eval("(length (query:defines))");
     CHECK(n1.has_value(), "defines after rebind");
     CHECK(cs.eval("(engine:metrics \"query:verify-dirty-stats\")").has_value() || true,
@@ -3460,7 +3460,7 @@ int run_484_replace_pattern_smoke() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     auto before = cs.eval("(length (query:pattern \"(+ ... ...)\"))");
     CHECK(before.has_value(), "query:pattern before");
-    (void)cs.eval("(mutate:replace-pattern \"(+ ... ...)\" \"(* ... ...)\" \"w48\")");
+    (void)cs.eval("(mutate :replace-pattern \"(+ ... ...)\" \"(* ... ...)\" \"w48\")");
     auto after = cs.eval("(length (query:pattern \"(* ... ...)\"))");
     CHECK(after.has_value() || true, "query:pattern after replace surface");
     return g_failed ? 1 : 0;
@@ -3492,7 +3492,7 @@ int run_270_stable_ref_replace_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(begin (+ 1 2) (+ 3 4))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:replace-pattern \"(+ ... ...)\" \"(- ... ...)\" \"w48-270\")");
+    (void)cs.eval("(mutate :replace-pattern \"(+ ... ...)\" \"(- ... ...)\" \"w48-270\")");
     auto sr = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(sr.has_value(), "stable-ref-stats");
     return g_failed ? 1 : 0;
@@ -3563,7 +3563,7 @@ int run_276_workspace_stable_ref_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define x 1) (define y 2)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"x\" \"9\" \"w48-276\")");
+    (void)cs.eval("(mutate :rebind \"x\" \"9\" \"w48-276\")");
     auto sr = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(sr.has_value(), "stable-ref-stats");
     auto rs = cs.eval("(query :resolve-stable-ref 0 0)");
@@ -3598,7 +3598,7 @@ int run_502_reflect_postmutate_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define a 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     CHECK(cs.eval("(engine:metrics \"query:reflect-postmutate-stats\")").has_value(),
           "reflect-postmutate-stats");
     CHECK(cs.eval("(engine:metrics \"query:mutation-impact-snapshot\")").has_value(),
@@ -3616,7 +3616,7 @@ int run_504_boundary_log_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define a 1) (define b 2)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     CHECK(cs.eval("(engine:metrics \"query:mutation-boundary-log\")").has_value(),
           "mutation-boundary-log");
     return g_failed ? 1 : 0;
@@ -3632,7 +3632,7 @@ int run_505_closure_env_safety_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\")");
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 1))\")");
     CHECK(cs.eval("(engine:metrics \"query:closure-env-safety-stats\")").has_value(),
           "closure-env-safety-stats");
     return g_failed ? 1 : 0;
@@ -3667,7 +3667,7 @@ int run_488_impact_snapshot_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define a 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"a\" \"2\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"2\")");
     CHECK(cs.eval("(engine:metrics \"query:mutation-impact-snapshot\")").has_value(),
           "mutation-impact-snapshot");
     return g_failed ? 1 : 0;
@@ -3729,7 +3729,7 @@ int run_227_occurrence_rebind_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\" \"w51\")");
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 1))\" \"w51\")");
     CHECK(cs.eval("(typecheck-current)").has_value() || true, "typecheck after rebind");
     return g_failed ? 1 : 0;
 }
@@ -3774,7 +3774,7 @@ int run_177_mutate_primitives_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define n 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"n\" \"2\" \"w51-177\")");
+    (void)cs.eval("(mutate :rebind \"n\" \"2\" \"w51-177\")");
     CHECK(cs.eval("(eval-current)").has_value(), "eval after rebind");
     return g_failed ? 1 : 0;
 }
@@ -3792,7 +3792,7 @@ int run_250_atomic_batch_smoke() {
     CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     (void)cs.eval(
-        "(mutate:atomic-batch (list (list \"mutate:rebind\" \"x\" \"2\" \"a\")) \"w52\")");
+        "(mutate :atomic-batch (list (list \"mutate:rebind\" \"x\" \"2\" \"a\")) \"w52\")");
     CHECK(cs.eval("(engine:metrics \"query:atomic-batch-stats-hash\")").has_value() || true,
           "atomic-batch-stats surface");
     return g_failed ? 1 : 0;
@@ -3916,7 +3916,7 @@ int run_471_dirty_propagation_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define d 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"d\" \"2\")");
+    (void)cs.eval("(mutate :rebind \"d\" \"2\")");
     CHECK(cs.eval("(engine:metrics \"query:dirty-propagation-stats\")").has_value(),
           "dirty-propagation-stats");
     return g_failed ? 1 : 0;
@@ -4090,7 +4090,7 @@ int run_482_smoke() {
     CHECK(cs.eval("(set-code \"(begin (+ 1 2) (+ 3 4))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     CHECK(cs.eval("(length (query:pattern \"(+ ... ...)\"))").has_value(), "query:pattern");
-    (void)cs.eval("(mutate:replace-pattern \"(+ ... ...)\" \"(* ... ...)\" \"w54\")");
+    (void)cs.eval("(mutate :replace-pattern \"(+ ... ...)\" \"(* ... ...)\" \"w54\")");
     CHECK(true, "replace-pattern surface");
     return g_failed ? 1 : 0;
 }
@@ -4105,7 +4105,7 @@ int run_184_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define g 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"g\" \"2\")");
+    (void)cs.eval("(mutate :rebind \"g\" \"2\")");
     CHECK(cs.eval("(engine:metrics \"query:mutation-boundary-log\")").has_value() || true,
           "mutation-boundary-log surface");
     return g_failed ? 1 : 0;
@@ -4197,7 +4197,7 @@ int run_192_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define a 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"a\" \"2\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"2\")");
     auto r = cs.eval("(query:replace-and-validate)");
     CHECK(r.has_value() || true, "replace-and-validate surface");
     return g_failed ? 1 : 0;
@@ -4307,7 +4307,7 @@ int run_196_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\")");
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 1))\")");
     CHECK(cs.eval("(engine:metrics \"query:compiler-incremental-stats\")").has_value() || true,
           "incremental-stats surface");
     return g_failed ? 1 : 0;
@@ -4352,7 +4352,7 @@ int run_240_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define d 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"d\" \"2\")");
+    (void)cs.eval("(mutate :rebind \"d\" \"2\")");
     CHECK(cs.eval("(engine:metrics \"query:dirty-propagation-stats\")").has_value() || true,
           "dirty-propagation-stats");
     return g_failed ? 1 : 0;
@@ -4446,7 +4446,7 @@ int run_401_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define (a x) x) (define (b x) (a x))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"a\" \"(lambda (x) (+ x 1))\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"(lambda (x) (+ x 1))\")");
     CHECK(cs.eval("(engine:metrics \"query:compiler-incremental-stats\")").has_value() || true,
           "incremental-stats after invalidate");
     return g_failed ? 1 : 0;
@@ -4463,7 +4463,7 @@ int run_159b_smoke() {
     CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval cold");
     CHECK(cs.eval("(eval-current)").has_value(), "eval warm");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\")");
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 1))\")");
     CHECK(cs.eval("(eval-current)").has_value(), "eval after mutate");
     CHECK(cs.eval("(engine:metrics \"query:compiler-incremental-stats\")").has_value() || true,
           "incremental-stats");
@@ -4549,7 +4549,7 @@ int run_1473_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define (h x) x)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"h\" \"(lambda (x) (+ x 1))\")");
+    (void)cs.eval("(mutate :rebind \"h\" \"(lambda (x) (+ x 1))\")");
     CHECK(cs.eval("(eval-current)").has_value(), "eval after rebind");
     CHECK(cs.eval("(engine:metrics \"query:compiler-incremental-stats\")").has_value() || true,
           "stats after restamp path");
@@ -4566,7 +4566,7 @@ int run_1474_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define (p x) (if (> x 0) x 0))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"p\" \"(lambda (x) (+ x 1))\")");
+    (void)cs.eval("(mutate :rebind \"p\" \"(lambda (x) (+ x 1))\")");
     CHECK(cs.eval("(p 3)").has_value(), "call after dirty cascade");
     return g_failed ? 1 : 0;
 }
@@ -4597,7 +4597,7 @@ int run_1476_smoke() {
     CHECK(cs.eval("(set-code \"(define (r x) x)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     const auto e0 = cs.bridge_epoch();
-    (void)cs.eval("(mutate:rebind \"r\" \"(lambda (x) (* x 2))\")");
+    (void)cs.eval("(mutate :rebind \"r\" \"(lambda (x) (* x 2))\")");
     (void)e0;
     CHECK(cs.eval("(r 4)").has_value(), "call after epoch bump path");
     return g_failed ? 1 : 0;
@@ -4613,7 +4613,7 @@ int run_1651_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define (s x) (+ x 1))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"s\" \"(lambda (x) (+ x 2))\")");
+    (void)cs.eval("(mutate :rebind \"s\" \"(lambda (x) (+ x 2))\")");
     CHECK(cs.eval("(s 1)").has_value(), "post dirty cascade");
     CHECK(cs.eval("(engine:metrics \"query:compiler-incremental-stats\")").has_value() || true,
           "incremental-stats");

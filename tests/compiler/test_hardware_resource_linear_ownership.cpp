@@ -150,7 +150,7 @@ bool test_long_running_cycle() {
     const auto wire0 = cs.get_hw_resource_wire_borrows();
     const auto reg0 = cs.get_hw_resource_reg_writes();
     for (int i = 0; i < k_long_iters(); ++i) {
-        std::string code = std::string("(mutate:replace-value (define ") + (i & 1 ? "a" : "b") +
+        std::string code = std::string("(mutate :replace-value (define ") + (i & 1 ? "a" : "b") +
                            " " + std::to_string(i) + ") (define " + (i & 1 ? "a" : "b") + " " +
                            std::to_string(i) + "))";
         (void)cs.eval(code);
@@ -176,8 +176,9 @@ bool test_eight_thread_concurrent() {
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::scoped_lock<std::mutex> lk(mtx);
-            std::string code = "(mutate:replace-value (define a " + std::to_string(tid * 1000 + i) +
-                               ") (define a " + std::to_string(tid * 1000 + i) + "))";
+            std::string code = "(mutate :replace-value (define a " +
+                               std::to_string(tid * 1000 + i) + ") (define a " +
+                               std::to_string(tid * 1000 + i) + "))";
             (void)cs.eval(code);
             completed.fetch_add(1);
         }
@@ -203,7 +204,7 @@ bool test_gc_heap_with_linear_ownership() {
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
-    (void)cs.eval("(mutate:replace-value (define a 99) (define a 99))");
+    (void)cs.eval("(mutate :replace-value (define a 99) (define a 99))");
     auto r = cs.eval("(gc-heap)");
     CHECK(r.has_value(), "(gc-heap) callable after mutate");
     auto r2 = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");

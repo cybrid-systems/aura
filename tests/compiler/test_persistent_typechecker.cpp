@@ -95,7 +95,7 @@ int run_test_persistent_typechecker() {
         CHECK(ev.persistent_typechecker() == nullptr, "no TC before first typecheck");
 
         // First rebind → create
-        CHECK(cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 10))\" \"r0\")").has_value(),
+        CHECK(cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 10))\" \"r0\")").has_value(),
               "rebind0");
         void* p0 = ev.persistent_typechecker();
         CHECK(p0 != nullptr, "AC1: TC created after first post-mutate");
@@ -105,7 +105,7 @@ int run_test_persistent_typechecker() {
 
         // More rebinds → same pointer + reuse grows
         for (int i = 1; i <= 8; ++i) {
-            CHECK(cs.eval(std::format("(mutate:rebind \"f\" \"(lambda (x) (+ x {}))\" \"r{}\")",
+            CHECK(cs.eval(std::format("(mutate :rebind \"f\" \"(lambda (x) (+ x {}))\" \"r{}\")",
                                       10 + i, i))
                       .has_value(),
                   std::format("rebind{}", i));
@@ -136,7 +136,7 @@ int run_test_persistent_typechecker() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define a 1)\")").has_value(), "seed");
         CHECK(cs.eval("(eval-current)").has_value(), "eval seed");
-        CHECK(cs.eval("(mutate:rebind \"a\" \"2\" \"s\")").has_value(), "rebind a");
+        CHECK(cs.eval("(mutate :rebind \"a\" \"2\" \"s\")").has_value(), "rebind a");
         auto& ev = cs.evaluator();
         void* before = ev.persistent_typechecker();
         CHECK(before != nullptr, "TC after rebind");
@@ -145,7 +145,7 @@ int run_test_persistent_typechecker() {
         // Invalidated immediately on set-code
         CHECK(ev.persistent_typechecker() == nullptr, "AC3: TC cleared after set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "eval b");
-        CHECK(cs.eval("(mutate:rebind \"b\" \"4\" \"s2\")").has_value(), "rebind b");
+        CHECK(cs.eval("(mutate :rebind \"b\" \"4\" \"s2\")").has_value(), "rebind b");
         void* after = ev.persistent_typechecker();
         CHECK(after != nullptr, "AC3: new TC after set-code + mutate");
         CHECK(after != before, "AC3: new TC instance (not stale pointer)");
@@ -164,7 +164,7 @@ int run_test_persistent_typechecker() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define x 1) (define y (+ x 1))\")").has_value(), "set");
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
-        CHECK(cs.eval("(mutate:rebind \"x\" \"10\" \"c\")").has_value(), "rebind x");
+        CHECK(cs.eval("(mutate :rebind \"x\" \"10\" \"c\")").has_value(), "rebind x");
         // After rebind, commit CS may be live for composite path
         CHECK(cs.evaluator().commit_cs_live() || cs.evaluator().persistent_typechecker() != nullptr,
               "AC4: commit CS live or persistent TC present");
@@ -181,7 +181,7 @@ int run_test_persistent_typechecker() {
         // Drive a rebind so reuse/create counters are visible
         CHECK(cs.eval("(set-code \"(define z 0)\")").has_value(), "z");
         CHECK(cs.eval("(eval-current)").has_value(), "eval z");
-        CHECK(cs.eval("(mutate:rebind \"z\" \"1\" \"q\")").has_value(), "rebind z");
+        CHECK(cs.eval("(mutate :rebind \"z\" \"1\" \"q\")").has_value(), "rebind z");
         CHECK(href(cs, "typecheck-persistent-create-total") >= 0, "create key");
         CHECK(href(cs, "typecheck-persistent-reuse-total") >= 0, "reuse key");
     }

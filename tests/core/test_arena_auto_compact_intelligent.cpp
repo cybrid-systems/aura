@@ -226,7 +226,7 @@ static void ac7_mutate_stress() {
     const auto mut0 = href(cs, "query:arena-auto-policy-stats", "mutation-pressure-signals");
     for (int i = 0; i < 30; ++i) {
         (void)cs.eval(
-            std::format("(mutate:rebind \"f\" \"(lambda (x) (+ x {}))\" \"i1919\")", i % 7));
+            std::format("(mutate :rebind \"f\" \"(lambda (x) (+ x {}))\" \"i1919\")", i % 7));
         (void)cs.eval("(eval-current)");
     }
     CHECK(href(cs, "query:arena-auto-policy-stats", "mutation-pressure-signals") > mut0,

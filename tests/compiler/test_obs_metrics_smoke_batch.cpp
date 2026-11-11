@@ -677,7 +677,7 @@ int run_1514_metrics_smoke() {
     CHECK(inc.has_value(), "query:compiler-incremental-stats reachable");
     auto cache = cs.eval("(engine:metrics \"query:compiler-cache-stats\")");
     CHECK(cache.has_value(), "query:compiler-cache-stats reachable");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 2))\" \"#1514\")");
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 2))\" \"#1514\")");
     auto inc2 = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
     CHECK(inc2.has_value(), "incremental stats post-rebind");
     return g_failed ? 1 : 0;
@@ -692,7 +692,7 @@ int run_1496_metrics_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\" \"#1496\")");
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 1))\" \"#1496\")");
     auto inc = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
     CHECK(inc.has_value(), "incremental-stats reachable");
     auto lin = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
@@ -709,7 +709,7 @@ int run_1506_metrics_smoke() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     auto r = cs.eval("(g 4)");
     CHECK(r.has_value(), "(g 4)");
-    (void)cs.eval("(mutate:rebind \"g\" \"(lambda (x) (+ x 2))\" \"#1506\")");
+    (void)cs.eval("(mutate :rebind \"g\" \"(lambda (x) (+ x 2))\" \"#1506\")");
     auto r2 = cs.eval("(g 4)");
     CHECK(r2.has_value(), "(g 4) after rebind");
     auto inc = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
@@ -728,7 +728,7 @@ int run_1497_metrics_smoke() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     auto s = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(s.has_value(), "query:stable-ref-stats reachable");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 2))\" \"#1497\")");
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 2))\" \"#1497\")");
     auto s2 = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(s2.has_value(), "stable-ref-stats post mutate");
     return g_failed ? 1 : 0;
@@ -779,7 +779,7 @@ int run_1528_metrics_smoke() {
               .has_value(),
           "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"a\" \"(lambda (x) (+ x 1))\" \"#1528\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"(lambda (x) (+ x 1))\" \"#1528\")");
     auto inc = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
     CHECK(inc.has_value(), "incremental-stats");
     auto tdg = cs.eval("(engine:metrics \"compile:type-dep-graph-stats\")");
@@ -881,7 +881,7 @@ int run_1495_metrics_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define (f x) (+ x 1))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 2))\" \"#1495\")");
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 2))\" \"#1495\")");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current after rebind");
     auto inc = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
     CHECK(inc.has_value(), "incremental-stats");
@@ -896,7 +896,7 @@ int run_1460_metrics_smoke() {
     auto m = cs.eval("(engine:metrics \"query:agent-decision-metrics\")");
     auto m2 = cs.eval("(agent:decision-metrics)");
     CHECK(m.has_value() || m2.has_value() || true, "agent decision metrics surface");
-    auto ab = cs.eval("(mutate:atomic-batch)");
+    auto ab = cs.eval("(mutate :atomic-batch)");
     (void)ab;
     CHECK(true, "atomic-batch surface invoked");
     return g_failed ? 1 : 0;
@@ -1003,7 +1003,7 @@ int run_1505_metrics_smoke() {
     CHECK(cs.eval("(set-code \"(define (outer x) (lambda (y) (+ x y)))\")").has_value(),
           "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"outer\" \"(lambda (x) (lambda (y) (* x y)))\" \"#1505\")");
+    (void)cs.eval("(mutate :rebind \"outer\" \"(lambda (x) (lambda (y) (* x y)))\" \"#1505\")");
     auto inc = cs.eval("(engine:metrics \"query:compiler-incremental-stats\")");
     CHECK(inc.has_value(), "incremental-stats");
     return g_failed ? 1 : 0;
@@ -1034,7 +1034,7 @@ int run_1509_metrics_smoke() {
     CHECK(cs.eval("(set-code \"(define (k x) x)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     cs.bump_bridge_epoch();
-    (void)cs.eval("(mutate:rebind \"k\" \"(lambda (x) (+ x 1))\")");
+    (void)cs.eval("(mutate :rebind \"k\" \"(lambda (x) (+ x 1))\")");
     auto lin = cs.eval("(engine:metrics \"query:linear-ownership-stats\")");
     CHECK(lin.has_value(), "linear-ownership-stats");
     CHECK(cs.evaluator().get_stale_closure_prevented() >= 0, "stale_closure_prevented");
@@ -1068,7 +1068,7 @@ int run_411f1_metrics_smoke() {
           "per-symbol-reinfer-stats");
     CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\")");
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 1))\")");
     (void)cs.eval("(typecheck-current)");
     CHECK(cs.eval("(engine:metrics \"compile:per-symbol-reinfer-stats\")").has_value(),
           "stats after rebind");
@@ -1110,7 +1110,7 @@ int run_512_metrics_smoke() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     auto s = cs.eval("(engine:metrics \"query:runtime-orchestration-stats\")");
     CHECK(s.has_value(), "runtime-orchestration-stats");
-    (void)cs.eval("(mutate:request-gc-safepoint 25)");
+    (void)cs.eval("(mutate :request-gc-safepoint 25)");
     CHECK(true, "request-gc-safepoint surface");
     return g_failed ? 1 : 0;
 }

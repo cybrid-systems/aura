@@ -259,7 +259,7 @@ int run_test_workspace_delete_subtree() {
         // Real mutate round → mark_define_dirty → expire_stale_live_closures_
         // walk. Pre-fix this walked a freed flat (asan UAF); post-fix the
         // doomed-flat closures were expired at delete time.
-        CHECK(cs.eval("(mutate:set-body \"keep\" \"(lambda (x) (+ x 41))\")").has_value(),
+        CHECK(cs.eval("(mutate :set-body \"keep\" \"(lambda (x) (+ x 41))\")").has_value(),
               "reg: mutate after child delete");
         auto r = cs.eval("(keep 1)");
         CHECK(r.has_value() && is_int(*r) && as_int(*r) == 42,
@@ -276,7 +276,7 @@ int run_test_workspace_delete_subtree() {
         CHECK(cs.eval("(eval-current)").has_value(), "reg: eval discard child");
         auto dis = cs.eval(std::format("(mutate :discard {})", child2));
         CHECK(dis && is_bool(*dis) && as_bool(*dis), "reg: discard child");
-        CHECK(cs.eval("(mutate:set-body \"keep\" \"(lambda (x) (+ x 41))\")").has_value(),
+        CHECK(cs.eval("(mutate :set-body \"keep\" \"(lambda (x) (+ x 41))\")").has_value(),
               "reg: mutate after discard");
     }
 

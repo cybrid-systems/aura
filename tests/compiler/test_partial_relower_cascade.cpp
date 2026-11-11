@@ -279,7 +279,7 @@ void ac8_underestimate_forces_full() {
     // persist drains the pending_full_solve residual + re-stamps green
     // (#3190/#3983). Same-body set-body is a no-op (no solve → no drain)
     // and was the earlier experiment's flaw.
-    CHECK(cs.eval("(mutate:set-body \"b\" \"(lambda (x) (+ x 100))\")").has_value(),
+    CHECK(cs.eval("(mutate :set-body \"b\" \"(lambda (x) (+ x 100))\")").has_value(),
           "mutate:set-body b (boundary-wrapped, real body change)");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current after invalidate");
     const auto forced1 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
@@ -380,7 +380,7 @@ void ac9_concurrent_rearm_soak() {
     // one boundary-wrapped mutate with a REAL body change drives the
     // #3190 drain + green stamp so the final typed entry is allowed
     // (#3983). Same-body mutate is a no-op (no solve → no drain).
-    CHECK(cs.eval("(mutate:set-body \"a\" \"(lambda (x) (+ (b x) 1))\")").has_value(),
+    CHECK(cs.eval("(mutate :set-body \"a\" \"(lambda (x) (+ (b x) 1))\")").has_value(),
           "final boundary-wrapped mutate (real change, drain + green stamp)");
     // No stale IR: a must eval to its new body (correctness invariant —
     // silent under-relower of caller body would surface as wrong result).
@@ -530,7 +530,7 @@ static void ac3584_1_hub_partial_peel() {
     const auto yes0 = m->should_partial_relower_yes_total.load(std::memory_order_relaxed);
     const auto full0 = m->incremental_full_fallback_total.load(std::memory_order_relaxed);
     const auto impact0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
-    auto mut = cs.eval("(mutate:set-body \"hub\" \"(lambda () (+ (c0) 1))\" \"#3584\")");
+    auto mut = cs.eval("(mutate :set-body \"hub\" \"(lambda () (+ (c0) 1))\" \"#3584\")");
     CHECK(mut.has_value() && !is_error(*mut), "3584 AC1: set-body hub");
     cs.public_invalidate_function("hub");
     CHECK(cs.eval("(eval-current)").has_value(), "3584 AC1: re-eval");
@@ -561,7 +561,7 @@ static void ac3584_1_hub_partial_peel() {
     chain.public_record_dependency("h", "g");
     auto* mc = static_cast<CompilerMetrics*>(chain.evaluator().compiler_metrics());
     const auto p0 = mc->incremental_partial_relower_total.load(std::memory_order_relaxed);
-    auto mutf = chain.eval("(mutate:set-body \"f\" \"(lambda () 2)\" \"#3584-chain\")");
+    auto mutf = chain.eval("(mutate :set-body \"f\" \"(lambda () 2)\" \"#3584-chain\")");
     CHECK(mutf.has_value() && !is_error(*mutf), "3584 AC1: set-body f");
     CHECK(chain.eval("(eval-current)").has_value(), "3584 AC1: chain re-eval");
     auto hv2 = chain.eval("(h)");
@@ -586,7 +586,7 @@ static void ac3584_2_soundness_oracle() {
     for (int i = 0; i < 8; ++i)
         cs.public_record_dependency("hub", std::format("c{}", i));
     const auto mm0 = incremental_soundness_mismatch_atomic().load(std::memory_order_relaxed);
-    auto mut = cs.eval("(mutate:set-body \"hub\" \"(lambda () (+ (c0) 1))\" \"#3584-snd\")");
+    auto mut = cs.eval("(mutate :set-body \"hub\" \"(lambda () (+ (c0) 1))\" \"#3584-snd\")");
     CHECK(mut.has_value() && !is_error(*mut), "3584 AC2: set-body");
     cs.public_invalidate_function("hub");
     CHECK(cs.eval("(eval-current)").has_value(), "3584 AC2: re-eval");
@@ -618,7 +618,7 @@ static void ac3584_3_soft_no_invent() {
         g_partial_relower_callee_cascade_precompute_total.load(std::memory_order_relaxed);
     const auto obs0 =
         g_partial_relower_callee_cascade_precompute_observe_total.load(std::memory_order_relaxed);
-    auto mut = cs.eval("(mutate:set-body \"hub\" \"(lambda () (+ (c0) 1))\" \"#3584-soft\")");
+    auto mut = cs.eval("(mutate :set-body \"hub\" \"(lambda () (+ (c0) 1))\" \"#3584-soft\")");
     CHECK(mut.has_value() && !is_error(*mut), "3584 AC3: Soft set-body");
     CHECK(cs.eval("(eval-current)").has_value(), "3584 AC3: Soft re-eval");
     auto hv = cs.eval("(hub)");
@@ -670,7 +670,7 @@ static void ac3656_1_empty_calls_node_fn_forces_full() {
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     CHECK(m != nullptr, "3656 AC1: metrics");
     const auto impact0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
-    auto mut = cs.eval("(mutate:set-body \"g\" \"(lambda (x) (+ x 1))\" \"#3656\")");
+    auto mut = cs.eval("(mutate :set-body \"g\" \"(lambda (x) (+ x 1))\" \"#3656\")");
     CHECK(mut.has_value() && !is_error(*mut), "3656 AC1: set-body g");
     cs.public_invalidate_function("f");
     CHECK(cs.eval("(eval-current)").has_value(), "3656 AC1: re-eval");
@@ -784,7 +784,7 @@ static void ac3760_1_empty_map_unknown_full() {
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     CHECK(m != nullptr, "3760 AC1: metrics");
     const auto impact0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
-    auto mut = cs.eval("(mutate:set-body \"g\" \"(lambda (x) (+ x 1))\" \"#3760\")");
+    auto mut = cs.eval("(mutate :set-body \"g\" \"(lambda (x) (+ x 1))\" \"#3760\")");
     CHECK(mut.has_value() && !is_error(*mut), "3760 AC1: set-body g");
     cs.public_invalidate_function("f");
     CHECK(cs.eval("(eval-current)").has_value(), "3760 AC1: re-eval this sweep");

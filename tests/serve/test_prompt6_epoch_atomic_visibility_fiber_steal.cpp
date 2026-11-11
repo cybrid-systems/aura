@@ -96,7 +96,7 @@ static void run_matrix(CompilerService& cs) {
                  refresh_after, invalidate_before, invalidate_after);
     CHECK(refresh_after > refresh_before,
           "closure_stale_refresh grew (release epoch bump visible)");
-    CHECK(cs.eval("(mutate:rebind \"mk-adder\" \"(lambda (n) (lambda (x) (+ x n)))\" "
+    CHECK(cs.eval("(mutate :rebind \"mk-adder\" \"(lambda (n) (lambda (x) (+ x n)))\" "
                   "\"issue739\")")
               .has_value(),
           "mutate:rebind mk-adder under Guard after invalidate");

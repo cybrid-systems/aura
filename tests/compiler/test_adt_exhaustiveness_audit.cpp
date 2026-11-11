@@ -120,7 +120,7 @@ int run_test_adt_exhaustiveness_audit() {
             cs.evaluator().clear_last_mutate_error();
             // Drop Bool clause → non-exhaustive match after mutate.
             auto r = cs.eval(
-                "(mutate:rebind \"m\" \"(lambda (t) (match t ((Num) 11) ((Str) 21)))\" \"x\")");
+                "(mutate :rebind \"m\" \"(lambda (t) (match t ((Num) 11) ((Str) 21)))\" \"x\")");
             // Under Full hard-gate, mutate may reject or leave last_mutate_error.
             const bool rejected = !r.has_value() || !cs.evaluator().last_mutate_error().empty();
             // Direct audit after (or regardless of) rebind.

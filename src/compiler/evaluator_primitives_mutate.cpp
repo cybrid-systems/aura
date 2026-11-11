@@ -1281,7 +1281,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_fingerprint_primitiv
     auto& add = cx.add_ref;
     auto& mev = cx.mev_ref;
     Evaluator& ev = cx.ev_ref;
-    // Issue #1419: (mutate:set-agent-fingerprint <int>)
+    // Issue #1419: (mutate :set-agent-fingerprint <int>)
     // Declares the current AI agent identity for MutationRecord
     // author_fingerprint stamping. 0 = system. Does not require a
     // MutationBoundaryGuard (metadata only — not an AST mutate).
@@ -1309,23 +1309,26 @@ template <typename Ctx> void RegSplitParts::register_mutate_fingerprint_primitiv
     // (not a structural write).
     constexpr auto kSetAgentFingerprintKind = aura::compiler::MutateRegKind::MetadataGuardExempt;
     (void)kSetAgentFingerprintKind; // GUARD_EXEMPT: raw-add metadata face (#3452/#4037)
-    add("mutate:set-agent-fingerprint", [&ev, mev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
-            return mev("bad-arg", "usage: (mutate:set-agent-fingerprint <int>)");
-        const auto fp = static_cast<std::uint64_t>(as_int(a[0]));
-        // Issue #4037: non-zero store = identity write → TenantAdmin; the 0
-        // clear stays ungated (a denied process must not pin a forged label).
-        // Variable op (same shape as the add_mutate no-target fallback): the
-        // require is NodeId-less metadata — no for_node_id/on_ref branch.
-        using aura::compiler::security::kEffectTenantAdmin;
-        const char* op4037 = "mutate:set-agent-fingerprint";
-        if (fp != 0 && ev.effect_sandbox_mode() != 0 &&
-            !ev.require_effect(kEffectTenantAdmin, op4037))
-            return mev("capability-effect-deny",
-                       "(mutate:set-agent-fingerprint) non-zero store requires TenantAdmin");
-        ev.set_current_agent_fingerprint(fp);
-        return make_int(static_cast<std::int64_t>(fp));
-    });
+    // Issue #5144: dispatch-only body — (mutate :set-agent-fingerprint …)
+    // resolves it through the primitive table; the name has no public slot.
+    ev.primitives().add_hidden(
+        "mutate:set-agent-fingerprint", [&ev, mev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]))
+                return mev("bad-arg", "usage: (mutate :set-agent-fingerprint <int>)");
+            const auto fp = static_cast<std::uint64_t>(as_int(a[0]));
+            // Issue #4037: non-zero store = identity write → TenantAdmin; the 0
+            // clear stays ungated (a denied process must not pin a forged label).
+            // Variable op (same shape as the add_mutate no-target fallback): the
+            // require is NodeId-less metadata — no for_node_id/on_ref branch.
+            using aura::compiler::security::kEffectTenantAdmin;
+            const char* op4037 = "mutate:set-agent-fingerprint";
+            if (fp != 0 && ev.effect_sandbox_mode() != 0 &&
+                !ev.require_effect(kEffectTenantAdmin, op4037))
+                return mev("capability-effect-deny",
+                           "(mutate :set-agent-fingerprint) non-zero store requires TenantAdmin");
+            ev.set_current_agent_fingerprint(fp);
+            return make_int(static_cast<std::int64_t>(fp));
+        });
 }
 
 template <typename Ctx> void RegSplitParts::register_mutate_pin_primitives(Ctx& cx) {
@@ -1568,7 +1571,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_replace_value_primit
     auto& add_mutate = cx.add_mutate_ref;
     auto& resolve_mutate_node_arg = cx.resolve_mutate_node_arg_ref;
     Evaluator& ev = cx.ev_ref;
-    // (mutate:replace-type node-id new-type-str)
+    // (mutate :replace-type node-id new-type-str)
     // NOTE (refactor Step 0.2): local merr lambda removed; now uses the
     // centralized Evaluator::make_merr (added in 0.1).
     // Issue #213 Cycle 2: migrate mutate:replace-type to use
@@ -1593,7 +1596,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_replace_value_primit
                    if (a.size() < 2 || !is_string(a[1])) {
                        ok = false;
                        return ev.make_merr(
-                           "bad-arg", "usage: (mutate:replace-type node-id|stable-ref new-type)");
+                           "bad-arg", "usage: (mutate :replace-type node-id|stable-ref new-type)");
                    }
                    if (!ev.workspace_flat_) {
                        ok = false;
@@ -1696,7 +1699,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_replace_value_primit
                 : (void)0; // safe point before mutation
             if (a.size() < 3 || !is_string(a[2])) {
                 ok = false;
-                return ev.make_merr("bad-arg", "usage: (mutate:replace-value node-id|stable-ref "
+                return ev.make_merr("bad-arg", "usage: (mutate :replace-value node-id|stable-ref "
                                                "new-value summary [ppa-hint])");
             }
             if (!ev.workspace_flat_) {
@@ -1880,7 +1883,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_record_patch_primiti
             if (a.size() < 3 || !is_string(a[1]) || !is_string(a[2])) {
                 ok = false;
                 return ev.make_merr("bad-arg",
-                                    "usage: (mutate:record-patch node-id op-name summary)");
+                                    "usage: (mutate :record-patch node-id op-name summary)");
             }
             aura::ast::NodeId node = aura::ast::NULL_NODE;
             if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a, "mutate:record-patch",
@@ -2291,7 +2294,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_query_replace_primit
                 ok = false;
                 return mev(
                     "bad-arg",
-                    "usage: (mutate:query-and-replace <predicates...> <template> [summary])");
+                    "usage: (mutate :query-and-replace <predicates...> <template> [summary])");
             }
             if (!ev.workspace_flat_ || !ev.workspace_pool_) {
                 ok = false;
@@ -2629,7 +2632,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_query_replace_batch_
     // rollback_atomic_batch.
     //
     // Usage:
-    //   (mutate:query-and-replace-batch
+    //   (mutate :query-and-replace-batch
     //     <predicates...>                  ; pattern (same as query-and-replace)
     //     <template>                       ; replacement template string
     //     [:validate <type>]               ; optional post-batch validate
@@ -2673,7 +2676,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_query_replace_batch_
             if (a.empty()) {
                 ok = false;
                 return mev("bad-arg",
-                           "usage: (mutate:query-and-replace-batch <predicates...> <template> "
+                           "usage: (mutate :query-and-replace-batch <predicates...> <template> "
                            "[:validate <type>] [:hygiene-keep :all|:macro-introduced-only|:none] "
                            "[summary])");
             }
@@ -2901,7 +2904,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_stable_ref_policy_pr
     auto& resolve_mutate_node_arg = cx.resolve_mutate_node_arg_ref;
     auto& unpack_stable_ref_arg = cx.unpack_stable_ref_arg_ref;
     Evaluator& ev = cx.ev_ref;
-    // Issue #235: (mutate:check-stable-ref stable-ref) — Verify
+    // Issue #235: (mutate :check-stable-ref stable-ref) — Verify
     // a stable-ref is still valid. Issue #3400: validity is the
     // StableNodeRef's own node gen (node_gen_[id]) via is_valid_in() +
     // get_safe(), NOT the workspace FlatAST generation counter — the two
@@ -2920,7 +2923,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_stable_ref_policy_pr
             // Wave1 B-09: pin adopts outer Guard exclusive — no nested shared.
             auto pin = ev.pin_workspace_flat();
             if (!is_pair(a[0]))
-                return mev("bad-arg", "usage: (mutate:check-stable-ref (id . gen))");
+                return mev("bad-arg", "usage: (mutate :check-stable-ref (id . gen))");
             if (!pin)
                 return mev("no-workspace", "no workspace AST loaded");
             auto& flat = *pin;
@@ -2963,7 +2966,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_stable_ref_policy_pr
         },
         /*guard_exempt=*/true);
 
-    // Issue #391: (mutate:set-stale-ref-policy "warn"|"strict"|"disabled")
+    // Issue #391: (mutate :set-stale-ref-policy "warn"|"strict"|"disabled")
     // — set the global StaleRefPolicy for automatic
     // staleness checks in core mutate primitives.
     // P0: 3 policies. Disabled = no checks; Warn =
@@ -2995,7 +2998,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_stable_ref_policy_pr
         },
         /*guard_exempt=*/true);
 
-    // Issue #2176: (mutate:rollback-macro-introduced root-id [:keep-provenance? #f])
+    // Issue #2176: (mutate :rollback-macro-introduced root-id [:keep-provenance? #f])
     // — primary Agent-facing primitive for experimental self-evolution
     // rollback. Selectively clears MacroIntroduced marker (resets to User)
     // on the subtree rooted at root-id; optionally zeroes provenance +
@@ -3026,7 +3029,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_stable_ref_policy_pr
                 ok = false;
                 return mev(
                     "bad-arg",
-                    "usage: (mutate:rollback-macro-introduced root-id [:keep-provenance? #f])");
+                    "usage: (mutate :rollback-macro-introduced root-id [:keep-provenance? #f])");
             }
             aura::ast::NodeId root = aura::ast::NULL_NODE;
             if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a,
@@ -3155,7 +3158,7 @@ void RegSplitParts::register_mutate_pattern_index_policy_primitives(Ctx& cx) {
                                                       ev.get_stale_ref_warned_count()));
         });
 
-    // Issue #490: (mutate:set-pattern-index-policy "lazy"|"eager-after-mutate"|"eager-after-cow")
+    // Issue #490: (mutate :set-pattern-index-policy "lazy"|"eager-after-mutate"|"eager-after-cow")
     // GUARD_EXEMPT: policy setter — no AST write (#2986). PrimMeta.guard_exempt.
     add_mutate(
         "mutate:set-pattern-index-policy",
@@ -3358,7 +3361,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_as_stable_ref_primit
         return make_void();
     });
 
-    // Issue #439: (mutate:request-gc-safepoint
+    // Issue #439: (mutate :request-gc-safepoint
     // [timeout-ms-int]) — request a GC safepoint.
     // Returns 0 if the safepoint can proceed
     // immediately (no outermost MutationBoundary
@@ -4158,7 +4161,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_rebind_primitive(Ctx
     auto& safe_str = cx.safe_str_ref;
     auto& add_mutate = cx.add_mutate_ref;
     Evaluator& ev = cx.ev_ref;
-    // (mutate:rebind name new-code-string "summary") — Replace function definition by name
+    // (mutate :rebind name new-code-string "summary") — Replace function definition by name
     // Unlike mutate:replace-value, this works by function name (no node ID needed).
     // Parses new code INTO the existing workspace FlatAST, then redirects the old
     // Define's value reference to the newly parsed nodes. All pre-existing mutations
@@ -4280,7 +4283,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_rebind_primitive(Ctx
             ok = false;
             return mev(
                 "bad-arg",
-                "usage: (mutate:rebind name new-code-string [summary] [validate: type-name])");
+                "usage: (mutate :rebind name new-code-string [summary] [validate: type-name])");
         }
         // Issue #4797: a missing workspace is not a usage error. Top-level
         // defines from a file / -e / --load never populate the live
@@ -4511,14 +4514,14 @@ std::optional<EvalValue> RegSplitParts::set_body_rewrite_define(
     //   the Define's lambda child entirely so the
     //   function gains the new params/body. This is
     //   what test_issue_166 expects: after
-    //   (mutate:set-body "g" "(lambda (x) (+ x 100))")
+    //   (mutate :set-body "g" "(lambda (x) (+ x 100))")
     //   calling (g 10) returns 110.
     //
     // - If the new code is a body expression (e.g.
     //   `(+ x 2)`, `(* x y)`, `(* x 2)`), replace just
     //   the existing lambda's body slot. This is what
     //   test_regression expects: after
-    //   (mutate:set-body "f" "(+ x 2)") the typecheck
+    //   (mutate :set-body "f" "(+ x 2)") the typecheck
     //   status is ok and the function body is now
     //   `(+ x 2)` (with the original params).
     //
@@ -4678,7 +4681,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_set_body_primitive(C
     auto& safe_str = cx.safe_str_ref;
     auto& add_mutate = cx.add_mutate_ref;
     Evaluator& ev = cx.ev_ref;
-    // (mutate:set-body name-str new-body-code-str) — Replace function body by name
+    // (mutate :set-body name-str new-body-code-str) — Replace function body by name
     // Finds (define (name params) ...) and replaces the Lambda body.
     // Parses new body INTO the workspace FlatAST so all node IDs are valid.
     // Issue #213 follow-up: migrate mutate:set-body to the
@@ -4710,7 +4713,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_set_body_primitive(C
             !ev.workspace_pool_) {
             ok = false;
             return mev("bad-arg",
-                       "usage: (mutate:set-body name new-body-code [:allow-macro? #t] [summary])");
+                       "usage: (mutate :set-body name new-body-code [:allow-macro? #t] [summary])");
         }
         auto name_idx = as_string_idx(a[0]);
         auto code_idx = as_string_idx(a[1]);
@@ -4827,7 +4830,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_node_surface_primiti
     auto& add_mutate = cx.add_mutate_ref;
     auto& resolve_mutate_node_arg = cx.resolve_mutate_node_arg_ref;
     Evaluator& ev = cx.ev_ref;
-    // (mutate:remove-node node-id) — Detach target from ALL parents (DAG).
+    // (mutate :remove-node node-id) — Detach target from ALL parents (DAG).
     // FlatAST is a DAG (#1475 / #1688): a node may be referenced by multiple
     // parents. Success means every incoming child edge is removed; the node
     // entry may remain in the flat but is unreachable via children walks.
@@ -4852,7 +4855,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_node_surface_primiti
             }
             if (a.empty() || !ev.workspace_flat_) {
                 ok = false;
-                return mev("bad-arg", "usage: (mutate:remove-node node-id [:allow-macro? #t])");
+                return mev("bad-arg", "usage: (mutate :remove-node node-id [:allow-macro? #t])");
             }
             aura::ast::NodeId target = aura::ast::NULL_NODE;
             if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a, "mutate:remove-node",
@@ -4924,7 +4927,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_node_surface_primiti
             return make_bool(true);
         });
 
-    // (mutate:insert-child parent-id position code-string "summary")
+    // (mutate :insert-child parent-id position code-string "summary")
     // Insert a child node into a parent's children list at the given position.
     // Position 0 = first child, child_count = append at end.
     // Parses code-string INTO workspace, preserving all existing nodes/IDs.
@@ -4962,7 +4965,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_node_surface_primiti
             if (a.size() < 3 || !is_int(a[1]) || !is_string(a[2]) || !ev.workspace_flat_ ||
                 !ev.workspace_pool_) {
                 ok = false;
-                return mev("bad-arg", "usage: (mutate:insert-child parent-id position code-string "
+                return mev("bad-arg", "usage: (mutate :insert-child parent-id position code-string "
                                       "[:allow-macro? #t] [summary])");
             }
             aura::ast::NodeId parent = aura::ast::NULL_NODE;
@@ -5138,7 +5141,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_tweak_literal_primit
                 ok = false;
                 return mev(
                     "bad-arg",
-                    "usage: (mutate:tweak-literal node-id|stable-ref delta|factor [summary])");
+                    "usage: (mutate :tweak-literal node-id|stable-ref delta|factor [summary])");
             }
             auto delta = is_int(a[1]) ? as_int(a[1]) : 0;
             auto& flat = *ev.workspace_flat_;
@@ -5307,7 +5310,7 @@ std::optional<EvalValue> RegSplitParts::replace_pattern_parse_options(Evaluator&
             summary = safe_str(a[ai]);
         } else {
             ok = false;
-            return mev("bad-arg", "usage: (mutate:replace-pattern pattern replacement"
+            return mev("bad-arg", "usage: (mutate :replace-pattern pattern replacement"
                                   " [:nested-arity [#t|#f]] [:strict-arity [#t]]"
                                   " [:allow-macro? [#t]]"
                                   " [:include-macro-introduced [#t]]"
@@ -5598,7 +5601,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_replace_pattern_prim
     auto& safe_str = cx.safe_str_ref;
     auto& add_mutate = cx.add_mutate_ref;
     Evaluator& ev = cx.ev_ref;
-    // (mutate:replace-pattern pattern replacement [summary])
+    // (mutate :replace-pattern pattern replacement [summary])
     //   → #t/#f
     //   Finds all nodes matching a structural pattern and replaces them
     //   with the replacement template.
@@ -5612,9 +5615,9 @@ template <typename Ctx> void RegSplitParts::register_mutate_replace_pattern_prim
     //   source-code string of the captured subtree.
     //
     //   Example:
-    //     (mutate:replace-pattern "(* 2 x)" "(+ x x)")
+    //     (mutate :replace-pattern "(* 2 x)" "(+ x x)")
     //       → replaces (* 2 x) with (+ x x) everywhere
-    //     (mutate:replace-pattern "(... (+ ... ...))" "...")
+    //     (mutate :replace-pattern "(... (+ ... ...))" "...")
     //       → strips outer call, keeps only the first child
     // Issue #213 Cycle 2: migrate mutate:replace-pattern to
     // use the MutationBoundaryGuard. The primitive mutates
@@ -5642,7 +5645,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_replace_pattern_prim
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
             !ev.workspace_pool_) {
             ok = false;
-            return mev("bad-arg", "usage: (mutate:replace-pattern pattern replacement)");
+            return mev("bad-arg", "usage: (mutate :replace-pattern pattern replacement)");
         }
         auto pattern_idx = as_string_idx(a[0]);
         auto repl_idx = as_string_idx(a[1]);
@@ -5857,7 +5860,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_replace_pattern_prim
 
         // Issue #4935: eval-current specializes a define from
         // function_sources_, not from the flat, so publish the owning define of
-        // every dirty parent and mark it dirty (mutate:rebind does the same).
+        // every dirty parent and mark it dirty (mutate :rebind does the same).
         // Without this the replacement shows up in query:code while the
         // already-materialized closure keeps running the old body.
         for (auto pid : dirty_parents) {
@@ -5894,7 +5897,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_replace_subtree_prim
     auto& add_mutate = cx.add_mutate_ref;
     auto& resolve_mutate_node_arg = cx.resolve_mutate_node_arg_ref;
     Evaluator& ev = cx.ev_ref;
-    // (mutate:replace-subtree <node-id> <new-code-string> [summary])
+    // (mutate :replace-subtree <node-id> <new-code-string> [summary])
     //   → #t on success, or a structured result containing captured vars
     //     (Issue #142 AC: capture detection).
     //   Replaces the subtree rooted at <node-id> with the parsed form of
@@ -5953,7 +5956,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_replace_subtree_prim
             using namespace aura::ast;
             if (a.size() < 2 || !is_string(a[1]) || !ev.workspace_flat_ || !ev.workspace_pool_) {
                 ok = false;
-                return mev("bad-arg", "usage: (mutate:replace-subtree node-id new-code [summary] "
+                return mev("bad-arg", "usage: (mutate :replace-subtree node-id new-code [summary] "
                                       "[:allow-macro? #t])");
             }
             aura::ast::NodeId target = aura::ast::NULL_NODE;
@@ -7143,7 +7146,7 @@ std::optional<EvalValue> RegSplitParts::mutate_atomic_batch_parse_args(Evaluator
     // BEFORE acquiring MutationBoundaryGuard (mutate :snapshot
     // also takes workspace_mtx_; nested acquire deadlocks).
     if (a.size() < 1) {
-        return mev("bad-arg", "usage: (mutate:atomic-batch (list ...) [\"summary\"] "
+        return mev("bad-arg", "usage: (mutate :atomic-batch (list ...) [\"summary\"] "
                               "[:snapshot? #t] [:tenant-target N] "
                               "[:sync-query-index? #t|#f] [:allow-macro? #t|#f])");
     }
@@ -7707,15 +7710,15 @@ void RegSplitParts::mutate_atomic_batch_commit(Evaluator& ev, bool sync_query_in
 }
 
 
-// (mutate:atomic-batch) — Issue #192 (P0) / #1900 / #1878 / #1899:
+// (mutate :atomic-batch) — Issue #192 (P0) / #1900 / #1878 / #1899:
 // apply a list of mutate operations atomically (all-or-nothing).
 // The list is a sequence of sub-lists, each (op-name arg1 arg2 ...)
-// — same shape as the individual (mutate:rebind ...) primitives.
+// — same shape as the individual (mutate :rebind ...) primitives.
 // On any failure mid-batch, all mutations since the batch started
 // are rolled back via FlatAST::rollback_since.
 //
 // Example:
-//   (mutate:atomic-batch
+//   (mutate :atomic-batch
 //      (list
 //         (list "mutate:rebind" "f" "(lambda (x) (* x 2))" "test")
 //         (list "mutate:rebind" "g" "(lambda (x) (* x 3))" "test"))
@@ -8015,8 +8018,8 @@ template <typename Ctx> void RegSplitParts::register_mutate_structural_insert_pr
     // Each list element is a mutation sexpr string (same form as
     // typed_mutate / --serve typed-mutate), e.g.:
     //   (typed-mutate-atomic
-    //     (list "(mutate:rebind \"x\" \"10\")"
-    //           "(mutate:rebind \"y\" \"20\")"))
+    //     (list "(mutate :rebind \"x\" \"10\")"
+    //           "(mutate :rebind \"y\" \"20\")"))
     // Returns #t if every sub-mutation succeeds (all applied);
     // #f on empty list or atomic abort (0 applied — RAII rollback).
     add("typed-mutate-atomic", [&ev, mev](std::span<const EvalValue> a) -> EvalValue {
@@ -8058,7 +8061,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_structural_insert_pr
             for (const auto& v : a) {
                 if (!push_str(v))
                     return mev("bad-arg",
-                               "usage: (typed-mutate-atomic (list \"(mutate:rebind …)\" …)) "
+                               "usage: (typed-mutate-atomic (list \"(mutate :rebind …)\" …)) "
                                "or (typed-mutate-atomic \"…\" \"…\")");
             }
         }
@@ -8082,7 +8085,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_structural_insert_pr
         return make_bool(result.success);
     });
 
-    // (mutate:splice parent-id position code-strings... "summary")
+    // (mutate :splice parent-id position code-strings... "summary")
     //   → list of inserted node IDs
     //   Parses and inserts multiple child expressions at the given position.
     //   code-strings can be multiple arguments (variadic).
@@ -8107,7 +8110,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_structural_insert_pr
             }
             if (a.size() < 3 || !is_int(a[1]) || !ev.workspace_flat_ || !ev.workspace_pool_) {
                 ok = false;
-                return ev.make_merr("bad-arg", "usage: (mutate:splice parent-id position "
+                return ev.make_merr("bad-arg", "usage: (mutate :splice parent-id position "
                                                "code-strings... [:allow-macro? #t] [summary])");
             }
             aura::ast::NodeId parent = aura::ast::NULL_NODE;
@@ -8232,15 +8235,15 @@ template <typename Ctx> void RegSplitParts::register_mutate_wrap_primitive(Ctx& 
     auto& add_mutate = cx.add_mutate_ref;
     auto& resolve_mutate_node_arg = cx.resolve_mutate_node_arg_ref;
     Evaluator& ev = cx.ev_ref;
-    // (mutate:wrap node-id wrapper-template "summary")
+    // (mutate :wrap node-id wrapper-template "summary")
     //   → node ID of the wrapper call (or #f on failure)
     //   Wraps the target node in an expression. The wrapper-template is a
     //   code string with a single `_` placeholder where the target node
     //   will be inserted.
     //   Examples:
-    //     (mutate:wrap 5 "(display _)" "wrap in display")
+    //     (mutate :wrap 5 "(display _)" "wrap in display")
     //       → replaces node 5 with (display <original-node-5>)
-    //     (mutate:wrap 3 "(let ((x _)) x)" "bind x")
+    //     (mutate :wrap 3 "(let ((x _)) x)" "bind x")
     //       → wraps in let binding
     // Issue #213 Cycle 2: migrate mutate:wrap to use the
     // MutationBoundaryGuard. Mutates children_ (SoA column
@@ -8265,7 +8268,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_wrap_primitive(Ctx& 
                 ok = false;
                 return ev.make_merr(
                     "bad-arg",
-                    "usage: (mutate:wrap node-id wrapper-template [:allow-macro? #t] [summary])");
+                    "usage: (mutate :wrap node-id wrapper-template [:allow-macro? #t] [summary])");
             }
             aura::ast::NodeId node = aura::ast::NULL_NODE;
             if (auto err =
@@ -8430,7 +8433,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_refactor_extract_pri
     auto& add_mutate = cx.add_mutate_ref;
     auto& resolve_mutate_node_arg = cx.resolve_mutate_node_arg_ref;
     Evaluator& ev = cx.ev_ref;
-    // (mutate:refactor/extract node-id new-name "summary")
+    // (mutate :refactor/extract node-id new-name "summary")
     //   → (define-node-id . call-node-id)
     //   Extracts the subtree rooted at node-id into a new top-level define,
     //   replacing the original node with a call to the new function.
@@ -8458,7 +8461,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_refactor_extract_pri
             if (a.size() < 2 || !is_string(a[1]) || !ev.workspace_flat_ || !ev.workspace_pool_) {
                 ok = false;
                 return ev.make_merr("bad-arg",
-                                    "usage: (mutate:refactor/extract node-id new-name [summary])");
+                                    "usage: (mutate :refactor/extract node-id new-name [summary])");
             }
             aura::ast::NodeId node = aura::ast::NULL_NODE;
             if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a,
@@ -8643,7 +8646,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_rename_symbol_primit
     auto& add_mutate = cx.add_mutate_ref;
     Evaluator& ev = cx.ev_ref;
     // ── mutate:rename-symbol ────────────────────────────────────
-    // (mutate:rename-symbol old-name new-name "summary" [:allow-macro? #t])
+    // (mutate :rename-symbol old-name new-name "summary" [:allow-macro? #t])
     //   → #t/#f
     //   Renames all definitions and references of old-name to new-name.
     //   Uses def-use index for finding all references.
@@ -8675,7 +8678,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_rename_symbol_primit
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
             !ev.workspace_pool_) {
             ok = false;
-            return ev.make_merr("bad-arg", "usage: (mutate:rename-symbol old-name new-name "
+            return ev.make_merr("bad-arg", "usage: (mutate :rename-symbol old-name new-name "
                                            "[:allow-macro? #t] [summary])");
         }
         auto old_name_idx = as_string_idx(a[0]);
@@ -8830,7 +8833,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_move_node_primitive(
     auto& resolve_mutate_node_arg = cx.resolve_mutate_node_arg_ref;
     Evaluator& ev = cx.ev_ref;
     // ── mutate:move-node ────────────────────────────────────────
-    // (mutate:move-node node-id new-parent-id new-position "summary")
+    // (mutate :move-node node-id new-parent-id new-position "summary")
     //   → #t/#f
     //   Moves a node (and its subtree) from its current position to
     //   a new parent at the specified child index.
@@ -8864,8 +8867,8 @@ template <typename Ctx> void RegSplitParts::register_mutate_move_node_primitive(
             }
             if (a.size() < 3 || !is_int(a[2]) || !ev.workspace_flat_) {
                 ok = false;
-                return ev.make_merr("bad-arg",
-                                    "usage: (mutate:move-node node parent pos [:allow-macro? #t])");
+                return ev.make_merr(
+                    "bad-arg", "usage: (mutate :move-node node parent pos [:allow-macro? #t])");
             }
             aura::ast::NodeId node = aura::ast::NULL_NODE;
             if (auto err =
@@ -8999,7 +9002,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_extract_function_pri
     auto& resolve_mutate_node_arg = cx.resolve_mutate_node_arg_ref;
     Evaluator& ev = cx.ev_ref;
     // ── Fix: mutate:refactor/extract 重写 ──────────────────────
-    // (mutate:extract-function node-id new-name "summary")
+    // (mutate :extract-function node-id new-name "summary")
     //   → (define-node-id . call-node-id)
     //   Extracts a subtree into a new top-level function definition.
     //   Analyzes free variables in the subtree and makes them parameters.
@@ -9018,7 +9021,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_extract_function_pri
                 return ev.make_merr("read-only", "workspace is read-only");
             if (a.size() < 2 || !is_string(a[1]) || !ev.workspace_flat_ || !ev.workspace_pool_)
                 return ev.make_merr(
-                    "bad-arg", "usage: (mutate:extract-function node-id name [:allow-macro? #t])");
+                    "bad-arg", "usage: (mutate :extract-function node-id name [:allow-macro? #t])");
             aura::ast::NodeId node = aura::ast::NULL_NODE;
             if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a,
                                                    "mutate:extract-function", &ok, node);
@@ -9349,7 +9352,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_inline_call_primitiv
     auto& resolve_mutate_node_arg = cx.resolve_mutate_node_arg_ref;
     Evaluator& ev = cx.ev_ref;
     // ── mutate:inline-call ──────────────────────────────────────
-    // (mutate:inline-call call-node-id "summary")
+    // (mutate :inline-call call-node-id "summary")
     //   → #t/#f
     //   Inlines a function call. Simplest approach: replace the call node
     //   with the body of the called function, substituting arguments for
@@ -9376,7 +9379,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_inline_call_primitiv
             if (a.empty() || !ev.workspace_flat_ || !ev.workspace_pool_) {
                 ok = false;
                 return ev.make_merr("bad-arg",
-                                    "usage: (mutate:inline-call call-node-id [:allow-macro? #t])");
+                                    "usage: (mutate :inline-call call-node-id [:allow-macro? #t])");
             }
             aura::ast::NodeId call_id = aura::ast::NULL_NODE;
             if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a, "mutate:inline-call",
@@ -9574,7 +9577,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_hygiene_checkpoint_p
     auto& add_mutate = cx.add_mutate_ref;
     auto& resolve_mutate_node_arg = cx.resolve_mutate_node_arg_ref;
     Evaluator& ev = cx.ev_ref;
-    // Issue #3828 / #802: (mutate:from-verification-feedback strategy node payload)
+    // Issue #3828 / #802: (mutate :from-verification-feedback strategy node payload)
     // — strategy-driven structured SV mutate under add_mutate SSOT.
     // Formerly registered via raw add() in evaluator_primitives_compile.cpp
     // (missed #3697 persist-reject / RO fence / naked belt / #3395 packed-ref).
@@ -9672,8 +9675,8 @@ template <typename Ctx> void RegSplitParts::register_mutate_hygiene_checkpoint_p
 
     // ── Issue #2099: HygieneCheckpoint save / restore primitives ───
     // Lightweight Agent-visible primitives for what-if / self-evo
-    // rollback semantics. (mutate:save-hygiene-checkpoint) returns
-    // an opaque int handle; (mutate:restore-hygiene-checkpoint)
+    // rollback semantics. (mutate :save-hygiene-checkpoint) returns
+    // an opaque int handle; (mutate :restore-hygiene-checkpoint)
     // takes the handle + returns bool. The handle indirection lets
     // the Aura script layer thread the checkpoint through boundary
     // crossings without copying 4 std::pmr::vector columns.
@@ -9702,7 +9705,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_hygiene_checkpoint_p
     add_mutate("mutate:restore-hygiene-checkpoint", [&ev, mev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0])) {
             return mev("bad-arg",
-                       "usage: (mutate:restore-hygiene-checkpoint handle) — handle is the int "
+                       "usage: (mutate :restore-hygiene-checkpoint handle) — handle is the int "
                        "returned by save-hygiene-checkpoint");
         }
         const auto handle = static_cast<std::uint64_t>(as_int(a[0]));
@@ -9932,7 +9935,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_dispatch_primitive(C
 
     // Issue #5095: mutate:rebind / replace-* / move-node / extract-function /
     // atomic-batch are the write surface the dispatcher calls, not a second
-    // deprecated spelling. (mutate :rebind) and (mutate:rebind) are one verb.
+    // deprecated spelling. (mutate :rebind) and (mutate :rebind) are one verb.
     {
         const auto slot = ev.primitives_.slot_for_name("mutate");
         if (slot < ev.primitives_.slot_count()) {
@@ -11716,17 +11719,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                    .version = version});
             return r;
         };
-        // Issue #4910: `ade` = add + evolution-log wrap: every mutate:* lands
-        // in AURA_EVO_LOG when set (one acquire load when it is not). Same
-        // width as `add` so the body below keeps its indentation.
-        auto ade = [&add, &ev, op_name, evo_call_4910](std::string n, auto body) {
-            add(std::move(n),
-                [&ev, op_name, evo_call_4910,
-                 body = std::move(body)](std::span<const EvalValue> a) -> EvalValue {
-                    if (!aura::evo::log_enabled()) [[likely]]
-                        return body(a);
-                    return evo_call_4910(ev, *op_name, a, [&] { return body(a); });
-                });
+        // Issue #5144: `ade` = dispatch-only registration + evolution-log
+        // wrap. Every mutate:* lands in AURA_EVO_LOG when set (one acquire
+        // load when it is not). add_hidden keeps the body reachable from
+        // (mutate :op) through the primitive table without giving the name a
+        // slot, PrimMeta, api-reference entry or tier row (#5141).
+        auto ade = [&ev, op_name, evo_call_4910](std::string n, auto body) {
+            ev.primitives().add_hidden(std::move(n),
+                                       [&ev, op_name, evo_call_4910, body = std::move(body)](
+                                           std::span<const EvalValue> a) -> EvalValue {
+                                           if (!aura::evo::log_enabled()) [[likely]]
+                                               return body(a);
+                                           return evo_call_4910(ev, *op_name, a,
+                                                                [&] { return body(a); });
+                                       });
         };
         ade(*op_name,
             [&ev, mev, fn, op_name, guard_exempt](std::span<const EvalValue> a) -> EvalValue {
@@ -11734,6 +11740,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             });
         // Issue #2057: declare Effect contract on PrimMeta (body already
         // enforces — effect_enforced_in_body avoids double require_effect).
+        // Issue #5144: the registration is dispatch-only, so this stamp is
+        // an intentional no-op — a hidden name has no slot to hold a
+        // PrimMeta. The wrapper above still enforces effect + Guard.
         ::aura::compiler::PrimMeta meta{};
         meta.pure = false;
         meta.required_effects = ::aura::compiler::security::kEffectMutate;

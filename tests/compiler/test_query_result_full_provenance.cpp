@@ -668,7 +668,7 @@ void test_3395_ac2_production_mutate_bare_int_rejected() {
                            "  (car (car qr)))");
     expect_true("3395 AC2: extracted bare NodeId from Soft list", node_id && is_int(*node_id));
     // mutate:replace-subtree with bare int — must reject under production.
-    auto mut = cs.eval("(mutate:replace-subtree 1 (lambda (x) 2))");
+    auto mut = cs.eval("(mutate :replace-subtree 1 (lambda (x) 2))");
     expect_true("3395 AC2: mutate with bare int returns (must be error-tagged)", mut.has_value());
     // Linter check_query_default_stamped_3395.py enforces the production
     // raw-id reject semantics via source-cite gate (mutate.cpp must contain
@@ -711,7 +711,7 @@ void test_3395_ac3_soft_unchanged() {
     // Result may succeed or return an error like out-of-range (workspace empty)
     // or stale-ref (no auto-refresh target), but NEVER the production raw-id
     // rejection. The call itself must return a value (no crash).
-    auto soft_mut = cs.eval("(mutate:replace-value 1 (lambda (x) 2))");
+    auto soft_mut = cs.eval("(mutate :replace-value 1 (lambda (x) 2))");
     expect_true("3395 AC3: Soft mutate with bare int returns", soft_mut.has_value());
 }
 
@@ -805,13 +805,13 @@ void test_3424_ac2_production_hash_to_mutate() {
     expect_true("3424 AC2: qr is QueryResult hash", qr && is_hash(*qr));
     auto parent = cs.eval("(query :parent qr)");
     expect_true("3424 AC2: query:parent accepts hash", parent.has_value());
-    auto mut = cs.eval("(mutate:replace-subtree qr \"(lambda (x) 99)\")");
+    auto mut = cs.eval("(mutate :replace-subtree qr \"(lambda (x) 99)\")");
     expect_true("3424 AC2: mutate:replace-subtree accepts hash", mut.has_value());
     expect_true("3424 AC2: poison wrap-epoch (per-match freshness, #3660)",
                 cs.eval("(hash-set! qr \"wrap-epoch\" 999)").has_value());
     expect_true(
         "3424 AC2: bind poisoned mutate",
-        cs.eval("(define r3424 (mutate:replace-subtree qr \"(lambda (x) 3)\"))").has_value());
+        cs.eval("(define r3424 (mutate :replace-subtree qr \"(lambda (x) 3)\"))").has_value());
     auto eq = cs.eval("(equal? (car r3424) \"stale-ref\")");
     expect_true("3424 AC2: wrap-epoch-mismatched hash is stale-ref",
                 eq && is_bool(*eq) && as_bool(*eq));
@@ -846,7 +846,7 @@ void test_3449_ac1_production_default_find_hash_to_mutate() {
     expect_true("3449 AC1: query-result-tag present", tag && is_int(*tag) && as_int(*tag) == 1);
     expect_true("3449 AC1: bind default find hash",
                 cs.eval("(define qr3449 (query :find \"t3449\"))").has_value());
-    auto mut = cs.eval("(mutate:replace-subtree qr3449 \"(lambda (x) 2)\")");
+    auto mut = cs.eval("(mutate :replace-subtree qr3449 \"(lambda (x) 2)\")");
     expect_true("3449 AC1: resolve_mutate_node_arg accepts default find hash", mut.has_value());
     apply_dev_audit_defaults();
 }
@@ -960,7 +960,7 @@ void test_3424_ac3_soft_unchanged() {
     auto soft_qr = cs.eval("(query :find \"s3424\")");
     expect_true("3424 AC3: Soft find returns", soft_qr.has_value());
     expect_true("3424 AC3: Soft find is NOT a hash", soft_qr && !is_hash(*soft_qr));
-    auto soft_mut = cs.eval("(mutate:replace-value 1 (lambda (x) 2) \"t\")");
+    auto soft_mut = cs.eval("(mutate :replace-value 1 (lambda (x) 2) \"t\")");
     expect_true("3424 AC3: Soft bare-int mutate returns", soft_mut.has_value());
 }
 
@@ -982,12 +982,12 @@ void test_ac3660_1_unrelated_mutate_keeps_unmodified_match() {
     expect_true("3660 AC1: A is schema-2 hash", ha && is_hash(*ha));
     expect_true("3660 AC1: B is schema-2 hash", hb && is_hash(*hb));
     expect_true("3660 AC1: bind mutate B",
-                cs.eval("(define rB (mutate:replace-subtree qrB \"(lambda () 3)\"))").has_value());
+                cs.eval("(define rB (mutate :replace-subtree qrB \"(lambda () 3)\"))").has_value());
     auto stale_b = cs.eval("(and (pair? rB) (equal? (car rB) \"stale-ref\"))");
     expect_true("3660 AC1: first mutate B is not stale-ref",
                 stale_b && is_bool(*stale_b) && !as_bool(*stale_b));
     expect_true("3660 AC1: bind mutate A",
-                cs.eval("(define rA (mutate:replace-subtree qrA \"(lambda () 9)\"))").has_value());
+                cs.eval("(define rA (mutate :replace-subtree qrA \"(lambda () 9)\"))").has_value());
     auto stale_a = cs.eval("(and (pair? rA) (equal? (car rA) \"stale-ref\"))");
     expect_true("3660 AC1: unmodified A is not stale-ref",
                 stale_a && is_bool(*stale_a) && !as_bool(*stale_a));
@@ -1131,8 +1131,9 @@ void test_ac3695_1_children_stable_index_mutate() {
     auto ref_car = cs.eval("(car ref3695)");
     expect_true("3695 AC1: :index 1 packs v2 StableNodeRef (car is NodeId)",
                 ref_car && is_int(*ref_car));
-    expect_true("3695 AC1: bind mutate hash :index 1",
-                cs.eval("(define r3695m (mutate:replace-subtree qc \"21\" :index 1))").has_value());
+    expect_true(
+        "3695 AC1: bind mutate hash :index 1",
+        cs.eval("(define r3695m (mutate :replace-subtree qc \"21\" :index 1))").has_value());
     auto mut_stale = cs.eval("(and (pair? r3695m) (equal? (car r3695m) \"stale-ref\"))");
     auto mut_bad = cs.eval("(and (pair? r3695m) (equal? (car r3695m) \"bad-arg\"))");
     expect_true("3695 AC1: mutate :index 1 is not stale-ref",
@@ -1213,7 +1214,7 @@ void test_ac3695_4_singleton_find_still_resolves() {
     expect_true("3695 AC4: singleton match_count", n && is_int(*n) && as_int(*n) == 1);
     expect_true(
         "3695 AC4: bind singleton mutate",
-        cs.eval("(define r3695s (mutate:replace-subtree qr3695 \"(lambda () 9)\"))").has_value());
+        cs.eval("(define r3695s (mutate :replace-subtree qr3695 \"(lambda () 9)\"))").has_value());
     auto stale = cs.eval("(and (pair? r3695s) (equal? (car r3695s) \"stale-ref\"))");
     expect_true("3695 AC4: singleton hash resolves without :index",
                 stale && is_bool(*stale) && !as_bool(*stale));
@@ -1854,7 +1855,7 @@ void test_ac3991_1_hash_foreign_tenant_denied_before_write() {
     auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
     const auto iso0 = m ? m->mutate_force_isolation_denied_total.load() : 0;
     expect_true("3991 AC1: bind add_mutate hash",
-                cs.eval("(define r3991 (mutate:replace-type qr3991 \"Int\"))").has_value());
+                cs.eval("(define r3991 (mutate :replace-type qr3991 \"Int\"))").has_value());
     auto eq = cs.eval("(equal? (car r3991) \"tenant-isolation-denied\")");
     expect_true("3991 AC1: hash face is tenant-isolation-denied",
                 eq && is_bool(*eq) && as_bool(*eq));
@@ -1879,7 +1880,7 @@ void test_ac3991_2_soft_no_extra_consult() {
     expect_true("3991 AC2: stamp foreign tenant",
                 cs.eval("(hash-set! qr3991s \"tenant-id\" 99)").has_value());
     expect_true("3991 AC2: Soft mutate hash returns",
-                cs.eval("(define r3991s (mutate:replace-type qr3991s \"Int\"))").has_value());
+                cs.eval("(define r3991s (mutate :replace-type qr3991s \"Int\"))").has_value());
     auto eq = cs.eval("(equal? (car r3991s) \"tenant-isolation-denied\")");
     expect_true("3991 AC2: Soft does not isolation-deny hash tenant",
                 !(eq && is_bool(*eq) && as_bool(*eq)));
@@ -1975,7 +1976,7 @@ void test_ac3993_1_packed_stamped_allows_when_cap_ok() {
     // checked against that row, not a mid the body never sees.
     ev.note_boundary_audit_mid_for_test(aura::core::current_mutation_epoch());
     expect_true("3993 AC1: bind add_mutate packed",
-                cs.eval("(define r3993 (mutate:replace-type sr3993 \"Int\"))").has_value());
+                cs.eval("(define r3993 (mutate :replace-type sr3993 \"Int\"))").has_value());
     auto eq_ok = cs.eval(
         "(equal? (if (and (pair? r3993) (string? (car r3993))) (car r3993) \"ok\") \"ok\")");
     expect_true("3993 AC1: packed same-tenant mutate Allows",
@@ -2041,7 +2042,7 @@ void test_ac3993_2_incomplete_gen_still_denies() {
     const auto log0 = ws ? ws->mutation_log_size() : 0;
     ev.set_effect_sandbox_mode(1);
     expect_true("3993 AC2: bind incomplete mutate",
-                cs.eval("(define r3993b (mutate:replace-type bad3993 \"Int\"))").has_value());
+                cs.eval("(define r3993b (mutate :replace-type bad3993 \"Int\"))").has_value());
     auto eq_ok = cs.eval(
         "(equal? (if (and (pair? r3993b) (string? (car r3993b))) (car r3993b) \"ok\") \"ok\")");
     expect_true("3993 AC2: incomplete gen still denies",
@@ -2063,7 +2064,7 @@ void test_ac3993_3_soft_unchanged() {
                 cs.eval("(define id3993s (car (query :find \"s3993\")))").has_value());
     expect_true(
         "3993 AC3: Soft list packed mutate returns",
-        cs.eval("(define r3993s (mutate:replace-type (list id3993s 0) \"Int\"))").has_value());
+        cs.eval("(define r3993s (mutate :replace-type (list id3993s 0) \"Int\"))").has_value());
     auto eq_iso =
         cs.eval("(equal? (if (and (pair? r3993s) (string? (car r3993s))) (car r3993s) \"ok\") "
                 "\"tenant-isolation-denied\")");
@@ -3730,7 +3731,7 @@ void test_ac4314_1_prod_captured_zero_is_stale_after_advance() {
     {
         // Same face as the cow half: the mutate wrapper may replace the
         // body's stale-ref with persist-reject after the boundary aborts.
-        auto mu = cs.eval("(mutate:replace-subtree held4314 \"(lambda () 2)\")");
+        auto mu = cs.eval("(mutate :replace-subtree held4314 \"(lambda () 2)\")");
         const bool refused = is_stale_ref_pair(mu, cs.evaluator()) || [&] {
             using aura::compiler::types::as_pair_idx;
             using aura::compiler::types::as_string_idx;
@@ -3823,7 +3824,7 @@ void test_ac4314_1_prod_captured_zero_is_stale_after_advance() {
     // The mutate wrapper turns an aborted outermost boundary into
     // persist-reject after the body has already refused the stale handle.
     // Either kind means the replacement did not commit.
-    auto mu = cs2.eval("(mutate:replace-subtree held4314c \"(lambda () 4)\")");
+    auto mu = cs2.eval("(mutate :replace-subtree held4314c \"(lambda () 4)\")");
     const auto mu_kind = error_kind(mu, cs2.evaluator());
     expect_true("4314 AC1: cow mutate refuses stale handle",
                 mu_kind == "stale-ref" || mu_kind == "persist-reject");
@@ -3966,7 +3967,7 @@ void test_ac4315_1_set_code_rebirth_stales_prior_install() {
     expect_true("4315 AC1: packed children is stale-ref", is_stale(ch));
     auto as_old = cs.eval(std::string("(query:as-stable-ref qr4315a") + idx + ")");
     expect_true("4315 AC1: prior hash as-stable-ref is stale-ref", is_stale(as_old));
-    auto mu = cs.eval("(mutate:replace-subtree held4315 \"(lambda () 9)\")");
+    auto mu = cs.eval("(mutate :replace-subtree held4315 \"(lambda () 9)\")");
     const auto mu_kind = kind_of(mu);
     expect_true("4315 AC1: mutate refuses the previous install",
                 mu_kind == "stale-ref" || mu_kind == "persist-reject");
@@ -4163,7 +4164,7 @@ void test_ac4392_lockless_batch_rejects_bare_nodeid() {
     // mid before each mutate so peek stays on the grant, not the epoch.
     auto renote = [&] { ev.note_boundary_audit_mid_for_test(session_mid); };
     expect_true("4392: bind bare batch",
-                cs.eval("(define r4392 (mutate:atomic-batch (list (list "
+                cs.eval("(define r4392 (mutate :atomic-batch (list (list "
                         "\"mutate:replace-value\" lit4392 99 \"repro\")) \"repro\"))")
                     .has_value());
     expect_true("4392: bare batch is stale-ref", ac4392_merr_kind(cs, "r4392", "stale-ref"));
@@ -4176,7 +4177,7 @@ void test_ac4392_lockless_batch_rejects_bare_nodeid() {
                 ws && ws->get(lit_id).int_value == 1 && ws->mutation_log_size() == log_bare);
     renote();
     expect_true("4392: bind public replace-value",
-                cs.eval("(define p4392 (mutate:replace-value lit4392 99 \"repro\"))").has_value());
+                cs.eval("(define p4392 (mutate :replace-value lit4392 99 \"repro\"))").has_value());
     expect_true("4392: public replace-value still stale-ref",
                 ac4392_merr_kind(cs, "p4392", "stale-ref"));
     expect_true("4392: public replace-value did not write", ws && ws->get(lit_id).int_value == 1);
@@ -4197,7 +4198,7 @@ void test_ac4392_lockless_batch_rejects_bare_nodeid() {
     renote();
     expect_true(
         "4392: bind allow batch",
-        cs.eval("(define ok4392 (mutate:atomic-batch (list (list \"mutate:remove-node\" qra) "
+        cs.eval("(define ok4392 (mutate :atomic-batch (list (list \"mutate:remove-node\" qra) "
                 "(list \"mutate:remove-node\" srb)) \"repro\"))")
             .has_value());
     auto ok = cs.eval("ok4392");
@@ -4303,10 +4304,11 @@ void test_ac4392_lockless_batch_rejects_bare_nodeid() {
         expect_true("4392: schema-2 tenant-id is 99", stamped);
     }
     renote();
-    expect_true("4392: bind foreign hash batch",
-                cs.eval("(define rfc (mutate:atomic-batch (list (list \"mutate:remove-node\" qrc)) "
-                        "\"repro\"))")
-                    .has_value());
+    expect_true(
+        "4392: bind foreign hash batch",
+        cs.eval("(define rfc (mutate :atomic-batch (list (list \"mutate:remove-node\" qrc)) "
+                "\"repro\"))")
+            .has_value());
     expect_true("4392: foreign hash is tenant-isolation-denied",
                 ac4392_merr_kind(cs, "rfc", "tenant-isolation-denied"));
     expect_true("4392: foreign hash wrote nothing", ws && ws->mutation_log_size() == log_fx);
@@ -4328,7 +4330,7 @@ void test_ac4392_lockless_batch_rejects_bare_nodeid() {
     renote();
     expect_true(
         "4392: bind occupancy batch",
-        cs.eval("(define roc (mutate:atomic-batch (list (list \"mutate:remove-node\" src0)) "
+        cs.eval("(define roc (mutate :atomic-batch (list (list \"mutate:remove-node\" src0)) "
                 "\"repro\"))")
             .has_value());
     expect_true("4392: foreign occupancy is tenant-isolation-denied",
@@ -4360,7 +4362,7 @@ void test_ac4392_lockless_batch_rejects_bare_nodeid() {
     auto* sws = soft.evaluator().workspace_flat();
     const auto sid = slit && is_int(*slit) ? static_cast<aura::ast::NodeId>(as_int(*slit))
                                            : aura::ast::NULL_NODE;
-    auto sbatch = soft.eval("(mutate:atomic-batch (list (list \"mutate:replace-value\" lits 99 "
+    auto sbatch = soft.eval("(mutate :atomic-batch (list (list \"mutate:replace-value\" lits 99 "
                             "\"repro\")) \"repro\")");
     expect_true("4392 soft: bare int batch returns #t",
                 sbatch && is_bool(*sbatch) && as_bool(*sbatch));
@@ -4566,7 +4568,7 @@ void test_ac4425_captured_cow_zero_later_layer() {
     expect_true("4425: shared child still reads 1",
                 shared.has_value() && !is_stale_ref_pair(shared, cs.evaluator()) &&
                     list_value(shared, cs.evaluator()) == 1);
-    auto mu = cs.eval("(mutate:replace-value lit4425c 2 \"t\")");
+    auto mu = cs.eval("(mutate :replace-value lit4425c 2 \"t\")");
     const auto mu_kind = error_kind(mu, cs.evaluator());
     expect_true("4425: replace-value refuses the birth hash",
                 mu_kind == "stale-ref" || mu_kind == "persist-reject");
@@ -4739,7 +4741,7 @@ void test_ac4654_2_prod_node_zero_query_mutate_loop_goes_stale() {
     // The write through the node-0 hash is the FIRST mutate: the match is
     // still fresh, so it lands.
     const auto gen_before = flat->generation();
-    auto mut = cs.eval("(mutate:tweak-literal lit4654 1)");
+    auto mut = cs.eval("(mutate :tweak-literal lit4654 1)");
     expect_true("4654 AC2: first mutate returns", mut.has_value());
     expect_true("4654 AC2: first mutate is not stale-ref", !is_stale_ref_pair(mut, cs.evaluator()));
     expect_eq_i64("4654 AC2: first mutate wrote slot 0", 2,
@@ -4761,7 +4763,7 @@ void test_ac4654_2_prod_node_zero_query_mutate_loop_goes_stale() {
                 is_stale_ref_pair(sref, cs.evaluator()));
     // A second mutate through the same (now stale) hash must be refused
     // and must not write again.
-    auto mut2 = cs.eval("(mutate:tweak-literal lit4654 1)");
+    auto mut2 = cs.eval("(mutate :tweak-literal lit4654 1)");
     expect_true("4654 AC2: second mutate is stale-ref", is_stale_ref_pair(mut2, cs.evaluator()));
     expect_eq_i64("4654 AC2: refused second mutate did not write", 2,
                   static_cast<std::int64_t>(flat->get(0).int_value));

@@ -186,7 +186,7 @@ static void ac3_composite_reuse_idempotent() {
     const auto imp0 = TypeChecker::partial_cs_import_total();
     const auto reuse0 =
         load_u64(g_typed_mutation_audit_counters.composite_commit_solve_reuse_hit_total);
-    (void)svc.eval("(mutate:rebind \"y\" \"3\" \"i2262\")");
+    (void)svc.eval("(mutate :rebind \"y\" \"3\" \"i2262\")");
     // import may have run via post-mutate typecheck.
     CHECK(TypeChecker::partial_cs_import_total() >= imp0, "import monotonic after mutate");
 

@@ -55,7 +55,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC2: mutate:atomic-batch happy path ---");
     const auto commits0 = cs.evaluator().atomic_batch_count();
     const auto stats2a = rollback_stats(cs);
-    auto ok = cs.eval("(mutate:atomic-batch (list "
+    auto ok = cs.eval("(mutate :atomic-batch (list "
                       "(list \"mutate:rebind\" \"a\" \"10\") "
                       "(list \"mutate:rebind\" \"b\" \"20\")) "
                       "\"529-happy\")");
@@ -69,7 +69,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC3: failed batch rollback path ---");
     const auto roll0 = cs.evaluator().atomic_batch_rollbacks();
     const auto stats3a = rollback_stats(cs);
-    (void)cs.eval("(mutate:atomic-batch (list "
+    (void)cs.eval("(mutate :atomic-batch (list "
                   "(list \"mutate:replace-value\" 999 \"bad\")) "
                   "\"529-fail\")");
     const auto roll1 = cs.evaluator().atomic_batch_rollbacks();
@@ -80,7 +80,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC4: Guard mutate bumps guard_success ---");
     const auto impact0 = cs.evaluator().get_mutation_impact_count();
-    (void)cs.eval("(mutate:rebind \"acc\" \"42\")");
+    (void)cs.eval("(mutate :rebind \"acc\" \"42\")");
     const auto impact1 = cs.evaluator().get_mutation_impact_count();
     std::println("  mutation_impact: {} -> {}", impact0, impact1);
     CHECK(impact1 > impact0, "Guard success bumps mutation_impact");
@@ -88,7 +88,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: multi-round batch matrix monotonic ---");
     const auto stats5a = rollback_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:atomic-batch (list) \"529-round-" + std::to_string(round) + "\")");
+        (void)cs.eval("(mutate :atomic-batch (list) \"529-round-" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats5b = rollback_stats(cs);

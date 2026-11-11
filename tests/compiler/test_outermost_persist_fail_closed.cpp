@@ -777,7 +777,7 @@ static void ac4540_render_rebind_type_error() {
     const auto cs_n0 = tc0->constraint_system().constraints_size();
     const auto lw0 = ws->lightweight_rollback_total();
     ev.enter_render_hotpath();
-    auto r = cs.eval("(mutate:rebind \"g\" \"(lambda (x) (+ x \\\"a\\\"))\" \"issue-4540\")");
+    auto r = cs.eval("(mutate :rebind \"g\" \"(lambda (x) (+ x \\\"a\\\"))\" \"issue-4540\")");
     ev.exit_render_hotpath();
     const bool rejected = !r.has_value() || is_error(*r) || (is_bool(*r) && !as_bool(*r)) ||
                           !ev.last_mutate_error().empty();
@@ -845,7 +845,7 @@ static void ac4540_overhead_probe() {
     const auto t0 = std::chrono::steady_clock::now();
     int ok_n = 0;
     for (int i = 0; i < kIters; ++i) {
-        auto r = cs.eval(std::format("(mutate:rebind \"h7\" \"(lambda (x) (+ x {}))\" \"p\")", i));
+        auto r = cs.eval(std::format("(mutate :rebind \"h7\" \"(lambda (x) (+ x {}))\" \"p\")", i));
         if (r.has_value())
             ++ok_n;
     }
@@ -2423,7 +2423,7 @@ int run_test_outermost_persist_fail_closed() {
         g_ev_arm_pending_3697 = &cs.evaluator();
         auto* prev_yield = aura::messaging::g_fiber_yield_mutation_boundary;
         aura::messaging::g_fiber_yield_mutation_boundary = &arm_linear_pending_3697;
-        auto r3697 = cs.eval("(mutate:tweak-literal qc3697 7 :index 0)");
+        auto r3697 = cs.eval("(mutate :tweak-literal qc3697 7 :index 0)");
         aura::messaging::g_fiber_yield_mutation_boundary = prev_yield;
         g_ev_arm_pending_3697 = nullptr;
         CHECK(r3697.has_value(), "3697 AC1: mutate returns");
@@ -2450,7 +2450,7 @@ int run_test_outermost_persist_fail_closed() {
         CHECK(cs_soft.eval("(set-code \"(define s3697 (lambda () 1))\")").has_value(),
               "3697 AC3/AC4: Soft set-code");
         CHECK(cs_soft.eval("(eval-current)").has_value(), "3697 AC3/AC4: Soft eval");
-        CHECK(cs_soft.eval("(define r3697s (mutate:set-body \"s3697\" \"(lambda () 9)\"))")
+        CHECK(cs_soft.eval("(define r3697s (mutate :set-body \"s3697\" \"(lambda () 9)\"))")
                   .has_value(),
               "3697 AC3: Soft mutate returns");
         auto soft_rej =

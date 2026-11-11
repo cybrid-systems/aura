@@ -394,12 +394,12 @@ void run_issue_4575() {
                   "4575: root workspace allows");
             ev.set_workspace_tree(nullptr);
         }
-        auto reb = cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 2))\" \"4575\")");
+        auto reb = cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 2))\" \"4575\")");
         CHECK(reb && is_bool(*reb) && as_bool(*reb), "4575: rebind");
         CHECK(cs.eval("(eval-current)").has_value(), "4575: eval after rebind");
         f2 = cs.eval("(f 2)");
         CHECK(f2 && is_int(*f2) && as_int(*f2) == 4, "4575: f(2) is 4");
-        auto batch = cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" "
+        auto batch = cs.eval("(mutate :atomic-batch (list (list \"mutate:rebind\" \"f\" "
                              "\"(lambda (x) (+ x 3))\")) \"4575\")");
         CHECK(batch && is_bool(*batch) && as_bool(*batch), "4575: atomic-batch");
         CHECK(cs.eval("(eval-current)").has_value(), "4575: eval after batch");
@@ -500,10 +500,10 @@ void run_issue_4575() {
                 "(set-code \"(define (f x) (+ x 1))\")\n"
                 "(eval-current)\n"
                 "(display \"SET-OK \") (display (f 2)) (newline)\n"
-                "(mutate:rebind \"f\" \"(lambda (x) (+ x 2))\" \"s\")\n"
+                "(mutate :rebind \"f\" \"(lambda (x) (+ x 2))\" \"s\")\n"
                 "(eval-current)\n"
                 "(display \"REBIND-OK \") (display (f 2)) (newline)\n"
-                "(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" "
+                "(mutate :atomic-batch (list (list \"mutate:rebind\" \"f\" "
                 "\"(lambda (x) (+ x 3))\")) \"s\")\n"
                 "(eval-current)\n"
                 "(display \"BATCH-OK \") (display (f 2)) (newline)\n"
@@ -711,7 +711,7 @@ int run_test_mutate_capability_force() {
         const auto denied0 = href(cs, "mutate-force-denied");
         const auto audit0 = ev.mutation_audit_total();
 
-        auto r = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 2))\" \"deny-me\")");
+        auto r = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 2))\" \"deny-me\")");
         // make_merr returns a pair (kind . msg), not RefError — treat pair as deny.
         const bool denied = !r || is_error(*r) || is_pair(*r) || (is_bool(*r) && !as_bool(*r)) ||
                             (is_int(*r) && as_int(*r) == 0);
@@ -759,7 +759,7 @@ int run_test_mutate_capability_force() {
         CHECK(cs.eval("(eval-current)").has_value(), "eval g");
         ev.grant_capability(kCapWildcard);
         ev.set_effect_sandbox_mode(2);
-        auto r = cs.eval("(mutate:set-body \"g\" \"(lambda (x) (* x 3))\" \"ok\")");
+        auto r = cs.eval("(mutate :set-body \"g\" \"(lambda (x) (* x 3))\" \"ok\")");
         CHECK(r.has_value(), "set-body under grant returns");
         // Prefer success
         const bool ok =
@@ -801,7 +801,7 @@ int run_test_mutate_capability_force() {
         CHECK(cs.eval("(eval-current)").has_value(), "eval h");
 
         const auto iso0 = m ? m->mutate_force_isolation_denied_total.load() : 0;
-        auto r = cs.eval("(mutate:set-body \"h\" \"(lambda (x) (+ x 1))\" \"x-tenant\")");
+        auto r = cs.eval("(mutate :set-body \"h\" \"(lambda (x) (+ x 1))\" \"x-tenant\")");
         // Under foreign hygiene + Strict, isolation should deny
         const bool iso_denied = !r || is_error(*r) ||
                                 (m && m->mutate_force_isolation_denied_total.load() > iso0) ||
@@ -828,8 +828,8 @@ int run_test_mutate_capability_force() {
         ev.set_effect_sandbox_mode(2);
         // No grant — any structural mutate entry must hit force check + deny
         const auto c0 = m ? m->mutate_force_effect_check_total.load() : 0;
-        (void)cs.eval("(mutate:query-and-replace (list) \"(+ 1 1)\")");
-        (void)cs.eval("(mutate:extract-function 1 \"f\")");
+        (void)cs.eval("(mutate :query-and-replace (list) \"(+ 1 1)\")");
+        (void)cs.eval("(mutate :extract-function 1 \"f\")");
         if (m) {
             CHECK(m->mutate_force_effect_check_total.load() >= c0,
                   "force checks entered for query-and-replace/extract");
@@ -846,7 +846,7 @@ int run_test_mutate_capability_force() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define (k x) (+ x 1))\")").has_value(), "set-code k");
         CHECK(cs.eval("(eval-current)").has_value(), "eval k");
-        auto r = cs.eval("(mutate:set-body \"k\" \"(lambda (x) (+ x 5))\" \"off\")");
+        auto r = cs.eval("(mutate :set-body \"k\" \"(lambda (x) (+ x 5))\" \"off\")");
         CHECK(r.has_value(), "set-body under Off");
         auto v = cs.eval("(k 1)");
         if (v && is_int(*v))
@@ -867,10 +867,10 @@ int run_test_mutate_capability_force() {
         CHECK(ev.effect_sandbox_mode() == 1, "4322 Restricted");
         CHECK(ev.capability_tenant_id() == 0, "4322 tenant 0");
         CHECK(!ev.has_capability("sandbox"), "4322 no kCapSandbox grant");
-        auto batch = cs.eval("(mutate:atomic-batch "
+        auto batch = cs.eval("(mutate :atomic-batch "
                              "(list (list \"mutate:rebind\" \"live\" \"\\\"d\\\"\")) \"4322\")");
         CHECK(batch && is_bool(*batch) && as_bool(*batch), "4322 batch returns #t");
-        auto rebind = cs.eval("(mutate:rebind \"live\" \"\\\"e\\\"\" \"4322\")");
+        auto rebind = cs.eval("(mutate :rebind \"live\" \"\\\"e\\\"\" \"4322\")");
         CHECK(rebind && is_bool(*rebind) && as_bool(*rebind), "4322 rebind returns #t");
         // #2385 direct probe is unchanged: unset principal + Mutate bits deny.
         CHECK(!ev.check_workspace_isolation(0, 0, kEffectMutate, "4322-probe"),
@@ -881,7 +881,7 @@ int run_test_mutate_capability_force() {
               "4322 other set-code");
         cs_other.evaluator().set_tenant_principal(7, "bob");
         cs_other.evaluator().set_effect_sandbox_mode(1);
-        auto other = cs_other.eval("(mutate:rebind \"live\" \"\\\"z\\\"\" \"4322-other\")");
+        auto other = cs_other.eval("(mutate :rebind \"live\" \"\\\"z\\\"\" \"4322-other\")");
         CHECK(!other || !is_bool(*other) || !as_bool(*other),
               "4322: tenant 7 without a Mutate grant denies");
 
@@ -889,7 +889,7 @@ int run_test_mutate_capability_force() {
         CHECK(cs_strict.eval("(set-code \"(define live \\\"c\\\")\")").has_value(),
               "4322 strict set-code");
         cs_strict.evaluator().set_effect_sandbox_mode(2);
-        auto strict = cs_strict.eval("(mutate:rebind \"live\" \"\\\"z\\\"\" \"4322-strict\")");
+        auto strict = cs_strict.eval("(mutate :rebind \"live\" \"\\\"z\\\"\" \"4322-strict\")");
         CHECK(!strict || !is_bool(*strict) || !as_bool(*strict),
               "4322: Strict tenant 0 still denies");
     }
@@ -935,7 +935,7 @@ int run_test_mutate_capability_force() {
         auto lit = cs.eval("(car (query :children (query :find \"live\")))");
         CHECK(lit && is_int(*lit), "4322 prod locator is a node id");
         auto batch = cs.eval("(let ((lit (car (query :children (query :find \"live\")))))"
-                             "  (mutate:atomic-batch"
+                             "  (mutate :atomic-batch"
                              "    (list (list \"mutate:replace-value\" lit \"d\" \"repro\"))"
                              "    \"repro\"))");
         CHECK(batch && is_pair(*batch), "4322 prod batch is stale-ref merr");
@@ -969,7 +969,7 @@ int run_test_mutate_capability_force() {
                       cs.evaluator().string_heap()[si] == "c",
                   "4322 prod live stays c");
         }
-        auto rebind = cs.eval("(mutate:rebind \"live\" \"\\\"d\\\"\" \"repro\")");
+        auto rebind = cs.eval("(mutate :rebind \"live\" \"\\\"d\\\"\" \"repro\")");
         CHECK(rebind && is_bool(*rebind) && as_bool(*rebind), "4322 prod rebind #t");
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         set_mode(SandboxMode::Off);
@@ -988,7 +988,7 @@ int run_test_mutate_capability_force() {
               "4323 set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "4323 eval");
         auto batch = cs.eval("(let ((lit (car (query :children (car (query :find \"live\"))))))"
-                             "  (mutate:atomic-batch"
+                             "  (mutate :atomic-batch"
                              "    (list (list \"mutate:replace-value\" lit \"d\" \"4323\"))"
                              "    \"4323\" :sync-query-index? #f))");
         CHECK(batch && is_bool(*batch) && as_bool(*batch), "4323 string batch #t");
@@ -1001,7 +1001,7 @@ int run_test_mutate_capability_force() {
                   "4323 live cell is d");
         }
         auto ibatch = cs.eval("(let ((lit (car (query :children (car (query :find \"n\"))))))"
-                              "  (mutate:replace-value lit 7 \"4323\"))");
+                              "  (mutate :replace-value lit 7 \"4323\"))");
         CHECK(ibatch && is_int(*ibatch), "4323 int replace returns a mutation id");
         auto n = cs.eval("n");
         CHECK(n && is_int(*n) && as_int(*n) == 7, "4323 n cell is 7");

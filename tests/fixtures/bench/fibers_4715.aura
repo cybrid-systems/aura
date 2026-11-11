@@ -25,7 +25,7 @@
     (fiber:spawn (lambda () (spin-sum)))
     (fiber:spawn (lambda () (spin-sum)))
     (fiber:spawn (lambda () (spin-sum)))))
-(mutate:rebind "hot" "(lambda (x) (+ x 9))" "overlap")
+(mutate :rebind "hot" "(lambda (x) (+ x 9))" "overlap")
 (eval-current)
 (define sum 0)
 (define rest fs)

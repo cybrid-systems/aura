@@ -6,7 +6,7 @@ Three separate defects, all visible only through the REPL's soft face:
   * (if (and …)) / (if (or …)) reported "call return type mismatch:
     expected Bool, got Any".  and/or yield their last value, not a Bool,
     and an if condition is a truthiness position (only #f is false).
-  * (mutate:rebind name (format …) summary) reported "argument 1:
+  * (mutate :rebind name (format …) summary) reported "argument 1:
     expected String, got Any" — format had no checker signature and
     mutate:rebind's signature stopped at two parameters.
   * Every warning printed twice: check_before_lowering runs infer_flat
@@ -78,7 +78,7 @@ class SoftReplTypeWarnings(unittest.TestCase):
             [
                 '(set-code "(define (guess) 0)")',
                 "(eval-current)",
-                '(define (h) (mutate:rebind "guess" (format "(define (guess) ~a)" 7) "evolve"))',
+                '(define (h) (mutate :rebind "guess" (format "(define (guess) ~a)" 7) "evolve"))',
             ]
         )
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -94,7 +94,7 @@ class SoftReplTypeWarnings(unittest.TestCase):
                 '(set-code "(define (params) (list 0 0))")',
                 "(eval-current)",
                 '(define (params->src c) (format "(define (params) ~a)" c))',
-                '(define (evolve! c) (mutate:rebind "params" (params->src c) "evolve"))',
+                '(define (evolve! c) (mutate :rebind "params" (params->src c) "evolve"))',
             ]
         )
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

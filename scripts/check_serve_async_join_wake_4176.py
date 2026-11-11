@@ -2,7 +2,7 @@
 """Issue #4176 source-cite gate: serve-async spawn+join wake protocol + fd budget.
 
 Soft --serve-async stalled the unix sock permanently after a long sequence of
-sequential oneshot (fiber:join (fiber:spawn (lambda () (begin (mutate:rebind
+sequential oneshot (fiber:join (fiber:spawn (lambda () (begin (mutate :rebind
 ...) (eval-current) ...)))) calls: the host timed out on the sock request, the
 process stayed alive in ep_poll with near-zero CPU. Two root causes:
 

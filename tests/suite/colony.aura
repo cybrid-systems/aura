@@ -11,7 +11,7 @@
 
 (test-suite "colony:tweak-literal"
   (set-code "(display (+ 1 42))")
-  (mutate:tweak-literal 3 1 "")
+  (mutate :tweak-literal 3 1 "")
   (check (integer? 1)))
 
 ; ── Issue #4738: colony:search budget + restore + literal scoping ──

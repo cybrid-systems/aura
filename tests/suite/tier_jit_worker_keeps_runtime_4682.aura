@@ -11,7 +11,7 @@
 (eval-current)
 (define (offset) (try (pol-0) (catch (e) 0)))
 (define (tick t)
-  (mutate:rebind "pol-0" (string-append "(lambda () " (number->string t) ")") "rb")
+  (mutate :rebind "pol-0" (string-append "(lambda () " (number->string t) ")") "rb")
   (eval-current)
   (offset))
 (define lost -1)

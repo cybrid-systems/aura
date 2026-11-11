@@ -6,7 +6,7 @@
 //   MacroIntroduced hygiene → provenance stamp + FailOnStale under sandbox
 //   Strict (no silent restamp in multi-tenant AI self-modify).
 //   Structural mutates that can touch MacroIntroduced nodes
-//   (mutate:replace-pattern, mutate:query-and-replace, replace-subtree, …)
+//   (mutate :replace-pattern, mutate:query-and-replace, replace-subtree, …)
 //   MUST either:
 //     (a) fail closed under hygiene-protected (default; no :allow-macro?), OR
 //     (b) when allowed, stamp provenance via record_macro_hygiene_provenance

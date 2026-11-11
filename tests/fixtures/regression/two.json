@@ -79,7 +79,7 @@
   },
   {
     "name": "ast-viz-dot-mutation",
-    "code": "(begin (set-code \"(define (add x y) (+ x y))\")(require \"std/ast-viz\" all:)(mutate:rebind \"add\" \"(lambda (a b) (* a b))\" \"m\")(string-contains? (ast:to-dot) \"*\"))",
+    "code": "(begin (set-code \"(define (add x y) (+ x y))\")(require \"std/ast-viz\" all:)(mutate :rebind \"add\" \"(lambda (a b) (* a b))\" \"m\")(string-contains? (ast:to-dot) \"*\"))",
     "expect_out": "#t",
     "expect_err": ""
   }

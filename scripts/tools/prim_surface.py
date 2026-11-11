@@ -4,8 +4,10 @@
 Aura registers primitives through two independent channels, and both are part
 of the public catalog:
 
-1. add("name", ...) / register_prim(add, ev, "name", ...) / add_mutate("name", ...)
-   in src/**/*.cpp (the #1552 / #2915 scan, plus #5095).
+1. add("name", ...) / register_prim(add, ev, "name", ...) in src/**/*.cpp
+   (the #1552 / #2915 scan). add_mutate("mutate:…") and add_hidden(...) are
+   dispatch-only (#5141 / #5144): the bodies stay in the primitive table for
+   (mutate :op) but are deliberately NOT in this catalog.
 2. The Evaluator ctor hot table table_["name"] = ... (plus set_meta) in
    src/compiler/evaluator_primitives_builtins.cpp.  + - * / < <= = > >= not
    and or eq? live *only* there — a name-level inventory that misses this
@@ -32,14 +34,14 @@ STD = ROOT / "lib" / "std"
 # Channel 2: the ctor hot table (Issue #5008).
 HOT_TABLE_TU = "src/compiler/evaluator_primitives_builtins.cpp"
 
-# Channel 1: historical registrar forms.
+# Channel 1: historical registrar forms. add_mutate("mutate:…") is not one of
+# them: since #5144 the wrapper registers through ev.primitives().add_hidden(),
+# so its names are dispatch-only (reachable from (mutate :op), with no slot,
+# PrimMeta or tier row). Counting them here would re-open the surface in the
+# docs/tier gate while the engine says otherwise.
 PRIMITIVE_RE = re.compile(r'primitives_\.add\s*\(\s*"([^"]+)"')
 FFI_ADD_RE = re.compile(r'^\s+add\s*\(\s*"([^"]+)"', re.MULTILINE)
 REGISTER_PRIM_RE = re.compile(r'register_prim\s*\(\s*add\s*,\s*\w+\s*,\s*"([^"]+)"', re.MULTILINE)
-# Issue #5095: add_mutate("mutate:rebind", ...) registers a public primitive.
-# The name is a string literal at the call; the wrapper forwards it to add().
-ADD_MUTATE_RE = re.compile(r'add_mutate\(\s*"([^"]+)"', re.MULTILINE)
-
 # Channel 2: table_["name"] = ... plus the set_meta("name", ...) that gives it
 # a PrimMeta. Names are deduped, so double counting is harmless.
 TABLE_RE = re.compile(r'table_\["([^"]+)"\]\s*=')
@@ -94,11 +96,6 @@ def scan_registrations() -> list[Registration]:
             found += [
                 Registration(m.group(1), rel, "register_prim")
                 for m in REGISTER_PRIM_RE.finditer(text)
-                if not _dead_registration(text, m.start())
-            ]
-            found += [
-                Registration(m.group(1), rel, "add_mutate")
-                for m in ADD_MUTATE_RE.finditer(text)
                 if not _dead_registration(text, m.start())
             ]
         else:

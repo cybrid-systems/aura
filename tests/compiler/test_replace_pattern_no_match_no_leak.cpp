@@ -100,7 +100,7 @@ int run_test_replace_pattern_no_match_no_leak() {
         const auto freed0 = ws->ghost_orphan_nodes_freed();
 
         // Pattern matches lambda form; replacement is unparseable → parse fail skip.
-        auto r = cs.eval("(mutate:replace-pattern \"(lambda () 1)\" \"(((\")");
+        auto r = cs.eval("(mutate :replace-pattern \"(lambda () 1)\" \"(((\")");
         CHECK(r.has_value(), "AC2: returns");
         CHECK(!(is_bool(*r) && as_bool(*r)), "AC2: not success #t");
 
@@ -117,7 +117,7 @@ int run_test_replace_pattern_no_match_no_leak() {
         auto* ws = cs.evaluator().workspace_flat();
         const auto live0 = live_node_count(*ws);
         for (int i = 0; i < 50; ++i) {
-            auto r = cs.eval("(mutate:replace-pattern \"(lambda () 1)\" \"(((\")");
+            auto r = cs.eval("(mutate :replace-pattern \"(lambda () 1)\" \"(((\")");
             CHECK(r.has_value(), "AC3: each returns");
         }
         CHECK(live_node_count(*ws) == live0, "AC3: live count stable after 50 fails");
@@ -131,7 +131,7 @@ int run_test_replace_pattern_no_match_no_leak() {
         CHECK(cs.eval("(eval-current)").has_value(), "AC4: eval");
         auto* ws = cs.evaluator().workspace_flat();
         const auto live0 = live_node_count(*ws);
-        auto r = cs.eval("(mutate:replace-pattern \"(no-such-pattern-xyz)\" \"x\")");
+        auto r = cs.eval("(mutate :replace-pattern \"(no-such-pattern-xyz)\" \"x\")");
         CHECK(r.has_value(), "AC4: returns");
         CHECK(!(is_bool(*r) && as_bool(*r)), "AC4: not success");
         CHECK(live_node_count(*ws) == live0, "AC4: live count unchanged on no-match");
@@ -143,7 +143,7 @@ int run_test_replace_pattern_no_match_no_leak() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define f (lambda () 1))\")").has_value(), "AC4b: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "AC4b: eval");
-        auto r = cs.eval("(mutate:replace-pattern \"(lambda () 1)\" \"(lambda () 2)\")");
+        auto r = cs.eval("(mutate :replace-pattern \"(lambda () 1)\" \"(lambda () 2)\")");
         CHECK(r.has_value(), "AC4b: returns");
         // May be #t if match applied.
         if (is_bool(*r) && as_bool(*r)) {

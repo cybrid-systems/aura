@@ -155,8 +155,8 @@ namespace {
         const auto prop0 = href(cs, "query:ir-hygiene-stats", "lowering-marker-propagated");
         for (int i = 0; i < 32; ++i) {
             if ((i % 4) == 0) {
-                CHECK(cs.eval("(mutate:rebind \"base\" \"42\")").has_value() ||
-                          cs.eval("(mutate:rebind \"base\" \"10\")").has_value(),
+                CHECK(cs.eval("(mutate :rebind \"base\" \"42\")").has_value() ||
+                          cs.eval("(mutate :rebind \"base\" \"10\")").has_value(),
                       "mutate:rebind");
             }
             (void)cs.eval("(eval-current)");
@@ -320,7 +320,7 @@ namespace {
         CompilerService cs;
         CHECK(setup_macro_ws(cs), "macro workspace");
         const auto stamped0 = href(cs, "query:ir-hygiene-stats", "ir-hygiene-stamped-count");
-        CHECK(cs.eval("(mutate:rebind \"base\" \"99\")").has_value(), "mutate:rebind");
+        CHECK(cs.eval("(mutate :rebind \"base\" \"99\")").has_value(), "mutate:rebind");
         CHECK(cs.eval("(eval-current)").has_value(), "eval-current after mutate");
         (void)cs.eval("(query:pattern \"*\")");
         auto h = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
@@ -472,7 +472,7 @@ namespace {
         std::println("\n--- AC6: macro workspace + mutate lineage ---");
         CompilerService cs;
         CHECK(setup_macro_ws(cs), "macro workspace");
-        CHECK(cs.eval("(mutate:rebind \"base\" \"20\")").has_value(), "mutate:rebind user");
+        CHECK(cs.eval("(mutate :rebind \"base\" \"20\")").has_value(), "mutate:rebind user");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(query:pattern \"*\")");
         // Lineage counters from #1610 still present.
@@ -680,7 +680,7 @@ namespace aura_422_detail {
     }
 
     static bool is_hygiene_protected_error(CompilerService& cs) {
-        auto r = cs.eval("(let ((r (mutate:rebind \"myvar\" \"99\"))) "
+        auto r = cs.eval("(let ((r (mutate :rebind \"myvar\" \"99\"))) "
                          "(if (and (pair? r) (string? (car r)) "
                          "         (string=? (car r) \"hygiene-protected\")) 1 0))");
         return r && is_int(*r) && as_int(*r) == 1;
@@ -821,7 +821,7 @@ namespace aura_595_detail {
         std::println("\n--- AC3: Guard mutate bumps dirty + epoch ---");
         const auto dirty0 = cs.evaluator().get_dirty_propagation_count();
         const auto epoch0 = cs.evaluator().get_guard_dirty_epoch_count();
-        CHECK(cs.eval("(mutate:rebind \"user-val\" \"42\")").has_value(),
+        CHECK(cs.eval("(mutate :rebind \"user-val\" \"42\")").has_value(),
               "mutate:rebind under Guard");
         const auto dirty1 = cs.evaluator().get_dirty_propagation_count();
         const auto epoch1 = cs.evaluator().get_guard_dirty_epoch_count();
@@ -845,7 +845,7 @@ namespace aura_595_detail {
         const auto stats6a = loop_stats(cs);
         for (int round = 0; round < 3; ++round) {
             (void)cs.eval("(query:pattern \"user-val\")");
-            (void)cs.eval("(mutate:rebind \"user-val\" \"" + std::to_string(200 + round) + "\")");
+            (void)cs.eval("(mutate :rebind \"user-val\" \"" + std::to_string(200 + round) + "\")");
             (void)cs.eval("(eval-current)");
         }
         const auto stats6b = loop_stats(cs);
@@ -1125,7 +1125,7 @@ int run_364_nested_macro_mutate_smoke() {
               .has_value(),
           "set-code macro");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
-    (void)cs.eval("(mutate:rebind \"v\" \"5\")");
+    (void)cs.eval("(mutate :rebind \"v\" \"5\")");
     auto r = cs.eval("(eval-current)");
     CHECK(r.has_value(), "eval after rebind");
     return g_failed ? 1 : 0;
@@ -1227,7 +1227,7 @@ int run_1907_reflect_schema_smoke() {
     CompilerService cs;
     auto rs = cs.eval("(engine:metrics \"query:reflect-schema\")");
     CHECK(rs.has_value(), "query:reflect-schema reachable");
-    auto vr = cs.eval("(mutate:validate-reflected)");
+    auto vr = cs.eval("(mutate :validate-reflected)");
     CHECK(vr.has_value() || true, "mutate:validate-reflected optional");
     CHECK(cs.eval("(define r 1)").has_value(), "define smoke");
     return g_failed ? 1 : 0;
@@ -1308,7 +1308,7 @@ int run_178_reflect_surface_smoke() {
     CompilerService cs;
     auto rs = cs.eval("(engine:metrics \"query:reflect-schema\")");
     CHECK(rs.has_value(), "query:reflect-schema reachable");
-    auto vr = cs.eval("(mutate:validate-reflected)");
+    auto vr = cs.eval("(mutate :validate-reflected)");
     CHECK(vr.has_value() || true, "mutate:validate-reflected");
     CHECK(cs.eval("(define rf 1)").has_value(), "define smoke");
     return g_failed ? 1 : 0;
@@ -1519,7 +1519,7 @@ int run_165_macro_rebind_hygiene_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define a 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    (void)cs.eval("(mutate:rebind \"a\" \"2\" \"w52-165\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"2\" \"w52-165\")");
     CHECK(cs.eval("(engine:metrics \"query:macro-hygiene-stats\")").has_value(),
           "macro-hygiene-stats");
     return g_failed ? 1 : 0;

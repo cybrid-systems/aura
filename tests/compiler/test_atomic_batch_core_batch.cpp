@@ -174,7 +174,7 @@ static void ac1899_3_multi_op_batch() {
     auto& ev = cs.evaluator();
     const auto strong0 = ev.atomic_batch_strong_atomicity_commits_total();
     const auto weak0 = ev.atomic_batch_weak_atomicity_used_total();
-    auto r = cs.eval("(mutate:atomic-batch "
+    auto r = cs.eval("(mutate :atomic-batch "
                      "(list "
                      "(list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x 10))\" \"batch-1899-a\") "
                      "(list \"mutate:rebind\" \"g\" \"(lambda (y) (* y 3))\" \"batch-1899-b\")) "
@@ -191,7 +191,7 @@ static void ac1899_4_unsupported_aborts() {
     std::println("\n--- #1899 AC4: unsupported op aborts batch ---");
     CompilerService cs;
     seed_dispatch(cs);
-    auto r = cs.eval("(mutate:atomic-batch "
+    auto r = cs.eval("(mutate :atomic-batch "
                      "(list "
                      "(list \"mutate:rebind\" \"f\" \"(lambda (x) 1)\" \"ok\") "
                      "(list \"mutate:not-a-real-op\" 0) "
@@ -221,7 +221,7 @@ static void ac1899_6_stress() {
     const auto strong0 = ev.atomic_batch_strong_atomicity_commits_total();
     for (int i = 0; i < 8; ++i) {
         auto expr =
-            std::format("(mutate:atomic-batch "
+            std::format("(mutate :atomic-batch "
                         "(list (list \"mutate:rebind\" \"f\" \"(lambda (x) (+ x {}))\" \"round\")) "
                         "\"r{}\")",
                         i + 1, i);
@@ -267,7 +267,7 @@ static void ac1893_2_capture_on_begin() {
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "macro workspace");
     const auto cap0 = href(cs, "metadata-captured-total");
-    auto ok = cs.eval("(mutate:atomic-batch "
+    auto ok = cs.eval("(mutate :atomic-batch "
                       "(list (list \"mutate:rebind\" \"base\" \"11\")))");
     CHECK(ok.has_value(), "successful batch");
     const auto cap1 = href(cs, "metadata-captured-total");
@@ -282,7 +282,7 @@ static void ac1893_3_rollback_preserves_macro() {
     CHECK(setup_macro_ws(cs), "macro workspace");
     const auto markers0 = href(cs, "metadata-restored-total");
     const auto rest0 = markers0 < 0 ? 0 : markers0;
-    auto bad = cs.eval("(mutate:atomic-batch "
+    auto bad = cs.eval("(mutate :atomic-batch "
                        "(list (list \"mutate:not-a-real-op\" \"x\")))");
     (void)bad;
     const auto rest1 = href(cs, "metadata-restored-total");
@@ -316,10 +316,10 @@ static void ac1893_5_stress() {
     const auto rest0 = std::max<std::int64_t>(0, href(cs, "metadata-restored-total"));
     const auto cap0 = std::max<std::int64_t>(0, href(cs, "metadata-captured-total"));
     for (int i = 0; i < 64; ++i) {
-        (void)cs.eval("(mutate:atomic-batch "
+        (void)cs.eval("(mutate :atomic-batch "
                       "(list (list \"mutate:not-a-real-op\" \"x\")))");
         if ((i % 8) == 0) {
-            (void)cs.eval("(mutate:atomic-batch "
+            (void)cs.eval("(mutate :atomic-batch "
                           "(list (list \"mutate:rebind\" \"base\" \"20\")))");
             (void)cs.eval("(eval-current)");
         }
@@ -335,7 +335,7 @@ static void ac1893_6_commit_discards() {
     CHECK(setup_macro_ws(cs), "macro workspace");
     const auto rest0 = std::max<std::int64_t>(0, href(cs, "metadata-restored-total"));
     const auto cap0 = std::max<std::int64_t>(0, href(cs, "metadata-captured-total"));
-    auto ok = cs.eval("(mutate:atomic-batch "
+    auto ok = cs.eval("(mutate :atomic-batch "
                       "(list (list \"mutate:rebind\" \"base\" \"30\")))");
     CHECK(ok.has_value(), "commit batch");
     CHECK(href(cs, "metadata-captured-total") > cap0, "captured on begin");
@@ -421,7 +421,7 @@ static void ac1913_3_commit_sync_counters() {
     const auto full0 = ev.get_atomic_batch_index_full_rebuilds();
 
     auto batch =
-        cs.eval("(mutate:atomic-batch "
+        cs.eval("(mutate :atomic-batch "
                 "(list (list \"mutate:rebind\" \"f0\" \"(lambda (x) (+ x 100))\" \"t1913\")) "
                 "\"1913-ac3\")");
     CHECK(batch.has_value(), "atomic-batch ok");
@@ -448,7 +448,7 @@ static void ac1913_4_pattern_latency() {
     warm_index(ev);
 
     const auto samples0 = load_u64(metrics_of(cs)->pattern_query_after_batch_samples);
-    auto batch = cs.eval("(mutate:atomic-batch "
+    auto batch = cs.eval("(mutate :atomic-batch "
                          "(list (list \"mutate:rebind\" \"f0\" \"(lambda (x) (* x 2))\" \"t\")) "
                          "\"1913-ac4\")");
     CHECK(batch.has_value(), "batch");
@@ -473,7 +473,7 @@ static void ac1913_5_sparse_dirty_incremental() {
     const auto skip0 = ev.get_atomic_batch_index_rebuild_skipped();
     for (int i = 0; i < 5; ++i) {
         auto b = cs.eval(
-            std::format("(mutate:atomic-batch "
+            std::format("(mutate :atomic-batch "
                         "(list (list \"mutate:rebind\" \"f{}\" \"(lambda (x) (+ x {}))\" \"t\")) "
                         "\"1913-ac5-{}\")",
                         i % 10, i, i));
@@ -493,7 +493,7 @@ static void ac1913_6_opt_out_sync() {
     auto& ev = cs.evaluator();
     warm_index(ev);
     const auto calls0 = ev.get_atomic_batch_index_sync_calls();
-    auto b = cs.eval("(mutate:atomic-batch "
+    auto b = cs.eval("(mutate :atomic-batch "
                      "(list (list \"mutate:rebind\" \"f0\" \"(lambda (x) 1)\" \"t\")) "
                      "\"1913-ac6\" "
                      ":sync-query-index? #f)");
@@ -512,7 +512,7 @@ static void ac1913_7_multi_round_stress() {
     constexpr int kRounds = 30;
     for (int i = 0; i < kRounds; ++i) {
         auto b = cs.eval(
-            std::format("(mutate:atomic-batch "
+            std::format("(mutate :atomic-batch "
                         "(list (list \"mutate:rebind\" \"f{}\" \"(lambda (x) (+ x {}))\" \"t\")) "
                         "\"r{}\")",
                         i % 20, i, i));

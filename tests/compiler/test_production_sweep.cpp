@@ -449,7 +449,7 @@ static void ac_1256_1260() {
     {
         (void)cs.eval("(set-code \"(define x 1)\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(mutate:rebind \"x\" \"2\")");
+        (void)cs.eval("(mutate :rebind \"x\" \"2\")");
         auto enforced = href(cs, "query:production-sweep-1256-1260-stats", "mutate-guard-enforced");
         CHECK(enforced >= 1, "mutate-guard-enforced after rebind");
     }
@@ -512,7 +512,7 @@ static void ac_1261_1265() {
     {
         (void)cs.eval("(set-code \"(define (f x) (+ x 1))\")");
         (void)cs.eval("(eval-current)");
-        auto r = cs.eval("(mutate:query-and-replace :tag Define \"(define (g x) x)\")");
+        auto r = cs.eval("(mutate :query-and-replace :tag Define \"(define (g x) x)\")");
         (void)r;
         CHECK(href(cs, "query:production-sweep-1261-1265-stats", "schema") == 1625 ||
                   href(cs, "query:production-sweep-1261-1265-stats", "schema") == 1261,
@@ -580,7 +580,7 @@ static void ac_1266_1270() {
     {
         (void)cs.eval("(set-code \"(define (g x) (+ x 1))\")");
         (void)cs.eval("(eval-current)");
-        auto m = cs.eval("(mutate:set-body \"g\" \"(define (g x) (* x 2))\")");
+        auto m = cs.eval("(mutate :set-body \"g\" \"(define (g x) (* x 2))\")");
         (void)m;
         auto extracted =
             href(cs, "query:production-sweep-1266-1270-stats", "set-body-define-value-extracted");
@@ -635,7 +635,7 @@ static void ac_1271_1275() {
     {
         (void)cs.eval("(set-code \"(define (h x) (+ x 1))\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(mutate:rebind \"h\" \"(lambda (x) (* x 2))\")");
+        (void)cs.eval("(mutate :rebind \"h\" \"(lambda (x) (* x 2))\")");
         auto dirty = href(cs, "query:production-sweep-1271-1275-stats", "dirty-propagation-to-ir");
         CHECK(dirty >= 0, "dirty-propagation-to-ir readable");
     }
@@ -755,7 +755,7 @@ static void ac_1281_1285() {
     {
         (void)cs.eval("(set-code \"(define (f x) (+ x 1))\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (* x 2))\")");
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (* x 2))\")");
         auto cap =
             href(cs, "query:production-sweep-1281-1285-stats", "provenance-boundary-capture-count");
         CHECK(cap >= 0, "provenance-boundary-capture-count readable");
@@ -817,7 +817,7 @@ static void ac_1286_1290() {
     {
         (void)cs.eval("(set-code \"(define (g x) (+ x 1))\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(mutate:rebind \"g\" \"(lambda (x) (* x 2))\")");
+        (void)cs.eval("(mutate :rebind \"g\" \"(lambda (x) (* x 2))\")");
         auto n =
             href(cs, "query:production-sweep-1286-1290-stats", "invalidate-per-block-dirty-total");
         CHECK(n >= 0, "invalidate-per-block-dirty-total readable");
@@ -907,7 +907,7 @@ static void ac_1291_1295() {
             wid = as_int(*created);
         if (wid > 0) {
             (void)cs2.eval(std::format("(workspace :switch {})", wid));
-            (void)cs2.eval("(mutate:rebind \"f\" \"(lambda (x) (* x 2))\")");
+            (void)cs2.eval("(mutate :rebind \"f\" \"(lambda (x) (* x 2))\")");
             auto del = cs2.eval(std::format("(mutate :workspace-delete {})", wid));
             CHECK(del.has_value(), "workspace:delete active");
             auto a = cs2.eval("(+ 2 2)");
@@ -1124,7 +1124,7 @@ static void ac_1301_1305() {
         (void)cs2.eval("(set-code \"(define (f x) (+ x 1))\")");
         (void)cs2.eval("(eval-current)");
         // Bad rebind may fail but still exercise Guard rollback + compact
-        (void)cs2.eval("(mutate:rebind \"missing-fn\" \"(lambda () 1)\")");
+        (void)cs2.eval("(mutate :rebind \"missing-fn\" \"(lambda () 1)\")");
         auto compact_ops =
             href(cs2, "query:production-sweep-1301-1305-stats", "mutation-log-compact-ops");
         // May be 0 if no workspace log entries; still readable via flat if set

@@ -175,7 +175,7 @@ bool test_stats_grow_under_mutate_eval() {
     for (int i = 0; i < 15; ++i) {
         (void)cs.eval("(add1 " + std::to_string(i) + ")");
         const auto mr =
-            cs.typed_mutate("(mutate:rebind \"base\" \"" + std::to_string(50 + i) + "\")");
+            cs.typed_mutate("(mutate :rebind \"base\" \"" + std::to_string(50 + i) + "\")");
         CHECK(mr.success, "typed_mutate rebind succeeds");
         (void)cs.eval("(eval-current)");
     }
@@ -192,7 +192,7 @@ bool test_service_invalidate_shape_deopt() {
     std::println("\n--- AC7: CompilerService typed_mutate path ---");
     CompilerService cs;
     CHECK(setup_shape_workspace(cs), "workspace for typed_mutate");
-    const auto mr = cs.typed_mutate("(mutate:rebind \"base\" \"42\")");
+    const auto mr = cs.typed_mutate("(mutate :rebind \"base\" \"42\")");
     CHECK(mr.success, "typed_mutate succeeds (invalidate_all wired)");
     cs.invalidate_shape("add1");
     CHECK(!cs.is_shape_stable("add1"), "invalidate_shape clears stability");
@@ -211,7 +211,7 @@ bool test_fuzz_shape_stability_sequences() {
         const int v = val_dist(rng);
         (void)cs.eval("(dbl " + std::to_string(v & 15) + ")");
         if ((i & 3) == 0) {
-            (void)cs.typed_mutate("(mutate:rebind \"acc\" \"" + std::to_string(v) + "\")");
+            (void)cs.typed_mutate("(mutate :rebind \"acc\" \"" + std::to_string(v) + "\")");
         }
         if ((i & 7) == 0)
             (void)cs.eval("(eval-current)");
@@ -238,7 +238,7 @@ bool test_eight_thread_concurrent_shape() {
             {
                 std::scoped_lock lock(eval_mu);
                 (void)cs.eval("(wrap " + std::to_string(v & 7) + ")");
-                (void)cs.typed_mutate("(mutate:rebind \"acc\" \"" + std::to_string(v) + "\")");
+                (void)cs.typed_mutate("(mutate :rebind \"acc\" \"" + std::to_string(v) + "\")");
             }
         }
         done.fetch_add(1, std::memory_order_relaxed);
@@ -302,9 +302,9 @@ bool test_long_running_shape_stress() {
         const int v = val_dist(rng);
         (void)cs.eval("(dbl " + std::to_string(v & 31) + ")");
         if ((i & 1) == 0) {
-            (void)cs.typed_mutate("(mutate:rebind \"base\" \"" + std::to_string(v) + "\")");
+            (void)cs.typed_mutate("(mutate :rebind \"base\" \"" + std::to_string(v) + "\")");
         } else {
-            (void)cs.typed_mutate("(mutate:replace-value (define acc " + std::to_string(v) +
+            (void)cs.typed_mutate("(mutate :replace-value (define acc " + std::to_string(v) +
                                   ") (define acc " + std::to_string(v) + "))");
         }
         if ((i & 15) == 0)

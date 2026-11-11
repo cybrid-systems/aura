@@ -66,7 +66,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC3: mutate:rebind bumps epoch counters ---");
     const auto stats3a = dualpath_stale_stats(cs);
-    (void)cs.eval("(mutate:rebind \"base\" \"99\")");
+    (void)cs.eval("(mutate :rebind \"base\" \"99\")");
     const auto stats3b = dualpath_stale_stats(cs);
     std::println("  dualpath stale stats: {} -> {}", stats3a, stats3b);
     CHECK(stats3b > stats3a, "mutate bumps dualpath stale stats");
@@ -89,7 +89,7 @@ static void run_matrix(CompilerService& cs) {
     const auto stats6a = dualpath_stale_stats(cs);
     const auto desync6a = cs.evaluator().get_envframe_desync_detected();
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
+        (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("((lambda (n) (+ n 1)) " + std::to_string(round) + ")");
     }

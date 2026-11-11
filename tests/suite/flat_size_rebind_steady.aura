@@ -13,7 +13,7 @@
 (define (run n start)
   (let loop ((i 0))
     (if (< i n)
-        (begin (mutate:rebind "f" (body (+ start i)) "t") (eval-current) (loop (+ i 1))))))
+        (begin (mutate :rebind "f" (body (+ start i)) "t") (eval-current) (loop (+ i 1))))))
 (define (slots) (stats:get "ast:node-count"))
 (run 10 0)
 (define s0 (slots))
@@ -24,7 +24,7 @@
 (check "slots steady" (<= s1 (+ s0 4)))
 (check "c0 value" (= (c0 1) 310))
 ;; Literal (childless) rebinds stay restorable: rollback of the last one.
-(mutate:rebind "k" "2" "t") (eval-current)
+(mutate :rebind "k" "2" "t") (eval-current)
 (check "k rebound" (= k 2))
 (if (= fails 0)
     (display "OK flat size steady over rebinds\n")

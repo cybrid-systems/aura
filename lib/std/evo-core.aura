@@ -425,12 +425,12 @@
 (define (evo:default-apply s c)
   ; Apply a text genome to its target define in the live workspace.
   ; Contract: an apply fn returns #t only when the candidate is now live;
-  ; #f, an error value or a diagnostic pair is a refusal (mutate:rebind
+  ; #f, an error value or a diagnostic pair is a refusal (mutate :rebind
   ; returns a (parse-error … . 0) pair, not an exception).
   (let ((t (evo-opt c "target" #f))
         (g (evo-opt c "genome" #f)))
     (if (and (string? t) (string? g))
-        (eq? (mutate:rebind t g (string-append "evo:" (evo-opt c "id" ""))) #t)
+        (eq? (mutate :rebind t g (string-append "evo:" (evo-opt c "id" ""))) #t)
         #f)))
 
 (define (evo:search opts)

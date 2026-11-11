@@ -34,7 +34,7 @@ RECURSIVE = "(define (mystery s) (let loop ((i 0) (acc 0)) (if (= i (string-leng
 PROGRAM = f"""
 (set-code "(define (mystery s) 0)")
 (eval-current)
-(display (mutate:rebind "mystery" "{RECURSIVE}" "5052"))
+(display (mutate :rebind "mystery" "{RECURSIVE}" "5052"))
 (newline)
 (display (mystery "abcd"))
 (newline)
@@ -80,7 +80,7 @@ class RecursiveRebind(unittest.TestCase):
             """
 (set-code "(define (mystery s) 0)")
 (eval-current)
-(display (mutate:rebind "mystery" "(define (mystery s) (list 1 2 3))" "5052b"))
+(display (mutate :rebind "mystery" "(define (mystery s) (list 1 2 3))" "5052b"))
 (newline)
 """
         )

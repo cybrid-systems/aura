@@ -340,7 +340,7 @@ namespace _417_detail {
 
         std::println("\n--- AC2: mutate:rebind bumps epoch counters ---");
         const auto stats2a = boundary_invariant_stats(cs);
-        (void)cs.eval("(mutate:rebind \"base\" \"99\")");
+        (void)cs.eval("(mutate :rebind \"base\" \"99\")");
         const auto stats2b = boundary_invariant_stats(cs);
         std::println("  boundary invariant stats: {} -> {}", stats2a, stats2b);
         CHECK(stats2b > stats2a, "mutate bumps boundary invariant stats");
@@ -369,7 +369,7 @@ namespace _417_detail {
         std::println("\n--- AC6: multi-round mutate matrix ---");
         const auto stats6a = boundary_invariant_stats(cs);
         for (int round = 0; round < 3; ++round) {
-            (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
+            (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(round) + "\")");
             (void)cs.eval("(eval-current)");
         }
         const auto stats6b = boundary_invariant_stats(cs);
@@ -423,7 +423,7 @@ namespace _548_detail {
             (void)cs.eval("(eval-current)");
             for (int i = 0; i < 3; ++i) {
                 (void)cs.eval("(panic-checkpoint)");
-                (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i) +
+                (void)cs.eval("(mutate :replace-value (define a " + std::to_string(i) +
                               ") (define a " + std::to_string(i) + "))");
             }
             auto r = cs.eval("(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")");
@@ -480,7 +480,7 @@ namespace _548_detail {
             const auto r0 = cs.evaluator().get_panic_checkpoint_restore_count();
             const auto rs0 = cs.evaluator().get_rollback_success_on_panic();
             (void)cs.eval("(panic-checkpoint)");
-            (void)cs.eval("(mutate:replace-value (define x 99) (define x 99))");
+            (void)cs.eval("(mutate :replace-value (define x 99) (define x 99))");
             auto rr = cs.eval("(panic-restore)");
             CHECK(rr.has_value() && is_bool(*rr), "(panic-restore) returned");
             const auto s1 = cs.evaluator().get_panic_checkpoint_save_count();
@@ -553,7 +553,7 @@ namespace _548_detail {
                 (void)cs.eval(code);
                 if (i == next_panic) {
                     (void)cs.eval("(panic-checkpoint)");
-                    (void)cs.eval("(mutate:replace-value (define a 9999) (define a 9999))");
+                    (void)cs.eval("(mutate :replace-value (define a 9999) (define a 9999))");
                     (void)cs.eval("(panic-restore)");
                     ++panics;
                     next_panic = i + panic_every(rng);

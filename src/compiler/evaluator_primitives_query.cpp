@@ -1499,8 +1499,8 @@ void register_query_hygiene_parts(PrimRegistrar add, std::pmr::vector<Pair>& pai
         });
 
     // Issue #2099: query:hygiene-checkpoint-stats — observability
-    // dashboard for (mutate:save-hygiene-checkpoint) /
-    // (mutate:restore-hygiene-checkpoint) primitives. Returns a
+    // dashboard for (mutate :save-hygiene-checkpoint) /
+    // (mutate :restore-hygiene-checkpoint) primitives. Returns a
     // hash with the 4 lifetime counters + pending slot count +
     // schema/issue markers. Agent uses this to monitor
     // what-if / self-evo rollback frequency + cross-fiber

@@ -186,7 +186,7 @@ static void ac2904_5_query_and_atomics() {
     if (cs.eval("(set-code \"(define x 1)\")").has_value()) {
         (void)cs.eval("(eval-current)");
         // Trigger dirty via rebind if available.
-        (void)cs.eval("(mutate:rebind \"x\" \"2\")");
+        (void)cs.eval("(mutate :rebind \"x\" \"2\")");
         const auto schema = href(cs, "schema-2904");
         if (schema >= 0)
             CHECK(schema == 2904, "AC5: live schema-2904");

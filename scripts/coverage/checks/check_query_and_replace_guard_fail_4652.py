@@ -216,7 +216,7 @@ def _rows():
             )
         )
 
-    # AC3: the reference shape (mutate:replace-pattern) is untouched.
+    # AC3: the reference shape (mutate :replace-pattern) is untouched.
     rp_anchor = '"mutate:replace-pattern"'
     rp_start = mut.find(rp_anchor)
     rp_body = ""
@@ -226,7 +226,7 @@ def _rows():
     rows.append(
         (
             "4652 AC3: mutate:replace-pattern keeps the reference shape",
-            "The in-repo reference primitive (mutate:replace-pattern) must keep "
+            "The in-repo reference primitive (mutate :replace-pattern) must keep "
             "freeing the parse appends and setting ok = false on its zero-replace "
             "abort.",
             bool(rp_body) and "free_orphan_nodes_from" in rp_body and "ok = false" in rp_body,

@@ -29,7 +29,7 @@
     (let loop ((i 1))
       (if (<= i 4)
           (begin
-            (mutate:rebind "k" (number->string i) "b")
+            (mutate :rebind "k" (number->string i) "b")
             (check! (equal? (eval-current) (expect i))
                     (string-append tag " after rebind " (number->string i)))
             (loop (+ i 1)))))))

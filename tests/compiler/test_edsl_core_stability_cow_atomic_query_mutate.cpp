@@ -87,7 +87,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC4: mutate-invalidate-precision on rebind ---");
     const auto inv0 = hash_int(cs, "mutate-invalidate-precision");
-    (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     (void)cs.eval("(eval-current)");
     const auto inv1 = hash_int(cs, "mutate-invalidate-precision");
     std::println("  mutate-invalidate-precision: {} -> {}", inv0, inv1);
@@ -96,7 +96,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: multi-round query/mutate monotonic ---");
     const auto stats5a = stats_sum(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"b\" \"" + std::to_string(20 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"b\" \"" + std::to_string(20 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(query:pattern \"define\")");
     }

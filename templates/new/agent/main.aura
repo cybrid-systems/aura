@@ -36,6 +36,6 @@
   (car (filter (lambda (row) (and (equal? (caddr row) "check")
                                   (string-index (list-ref row 3) "KEEP")))
                rows)))
-(mutate:rebind "double" (cadr kept) "keep")
+(mutate :rebind "double" (cadr kept) "keep")
 (eval-current)
 (display (format "live     ~a\n" (current-source :workspace :define-fn-sugar)))

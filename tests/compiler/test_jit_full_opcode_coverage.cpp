@@ -131,7 +131,7 @@ static void ac7_mutate_stress() {
     const auto v0 = href(cs, "query:jit-consistency-stats", "consistency-violations");
     for (int i = 0; i < 50; ++i) {
         (void)cs.eval(
-            std::format("(mutate:rebind \"h\" \"(lambda (x) (+ x {}))\" \"issue1658\")", i % 7));
+            std::format("(mutate :rebind \"h\" \"(lambda (x) (+ x {}))\" \"issue1658\")", i % 7));
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(query:pattern '(define _ _))");
     }

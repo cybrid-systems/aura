@@ -58,7 +58,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC2: mutate:rebind bumps propagation ---");
     const auto stats2a = dirty_cost_stats(cs);
-    (void)cs.eval("(mutate:rebind \"base\" \"99\")");
+    (void)cs.eval("(mutate :rebind \"base\" \"99\")");
     const auto stats2b = dirty_cost_stats(cs);
     std::println("  dirty cost stats: {} -> {}", stats2a, stats2b);
     CHECK(stats2b > stats2a, "mutate bumps dirty propagation cost stats");
@@ -73,7 +73,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC4: multi-round mutate matrix ---");
     const auto stats4a = dirty_cost_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
+        (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats4b = dirty_cost_stats(cs);

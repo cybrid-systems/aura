@@ -95,7 +95,7 @@ static void run_597() {
         auto epoch0 = cs.eval("(engine:metrics \"query:epoch-stats\")");
         CHECK(epoch0.has_value() && aura::compiler::types::is_int(*epoch0),
               "query:epoch-stats observable pre-mutate");
-        auto r = cs.eval("(mutate:replace-value (define user-val 1) "
+        auto r = cs.eval("(mutate :replace-value (define user-val 1) "
                          "(define user-val 99))");
         CHECK(r.has_value(), "mutate under Guard on user code succeeds");
         auto re = cs.eval("(eval-current)");
@@ -118,7 +118,7 @@ static void run_597() {
         CHECK(s0 >= 0, "combined stats starts >= 0");
         for (int i = 0; i < 5; ++i) {
             (void)cs.eval("(query:pattern \"user-val\")");
-            (void)cs.eval("(mutate:replace-value (define user-val " + std::to_string(100 + i) +
+            (void)cs.eval("(mutate :replace-value (define user-val " + std::to_string(100 + i) +
                           ") (define user-val " + std::to_string(100 + i) + "))");
             (void)cs.eval("(eval-current)");
         }
@@ -132,7 +132,7 @@ static void run_597() {
         std::println("\n--- AC3: hygiene/epoch/guard/reflect stats bundle ---");
         CompilerService cs;
         CHECK(setup_macro_workspace(cs), "macro workspace for stats bundle");
-        (void)cs.eval("(mutate:replace-value (define user-val 1) "
+        (void)cs.eval("(mutate :replace-value (define user-val 1) "
                       "(define user-val 42))");
         const char* stats[] = {
             "(engine:metrics \"query:hygiene-stats\")",
@@ -161,7 +161,7 @@ static void run_597() {
         auto m0 = cs.eval("(stats:get \"syntax-marker-counts\")");
         CHECK(m0.has_value(), "(stats:get \"syntax-marker-counts\") callable pre-mutate");
         for (int i = 0; i < 3; ++i) {
-            (void)cs.eval("(mutate:replace-value (define user-val " + std::to_string(i) +
+            (void)cs.eval("(mutate :replace-value (define user-val " + std::to_string(i) +
                           ") (define user-val " + std::to_string(50 + i) + "))");
             (void)cs.eval("(eval-current)");
         }
@@ -193,7 +193,7 @@ static void run_597() {
         const auto epoch0 = cs.evaluator().get_defuse_version();
         const auto snap0 = cs.evaluator().get_impact_snapshot_count();
         const auto dirty0 = eval_int(cs, "(query:dirty-impact)");
-        (void)cs.eval("(mutate:rebind \"user-val\" \"77\")");
+        (void)cs.eval("(mutate :rebind \"user-val\" \"77\")");
         const auto epoch1 = cs.evaluator().get_defuse_version();
         const auto snap1 = cs.evaluator().get_impact_snapshot_count();
         const auto dirty1 = eval_int(cs, "(query:dirty-impact)");
@@ -215,7 +215,7 @@ static void run_597() {
         const auto snap0 = cs.evaluator().get_impact_snapshot_count();
         const auto commit0 = cs.evaluator().get_panic_checkpoint_commit_count();
         for (int i = 0; i < 5; ++i) {
-            (void)cs.eval("(mutate:replace-value (define user-val " + std::to_string(i) +
+            (void)cs.eval("(mutate :replace-value (define user-val " + std::to_string(i) +
                           ") (define user-val " + std::to_string(10 + i) + "))");
         }
         const auto snap1 = cs.evaluator().get_impact_snapshot_count();
@@ -243,7 +243,7 @@ static void run_597() {
                     (void)cs.eval("(query:pattern \"user-val\")");
                     break;
                 case 1:
-                    (void)cs.eval("(mutate:replace-value (define user-val " +
+                    (void)cs.eval("(mutate :replace-value (define user-val " +
                                   std::to_string(val_dist(rng)) + ") (define user-val " +
                                   std::to_string(val_dist(rng)) + "))");
                     break;
@@ -255,7 +255,7 @@ static void run_597() {
                     break;
                 default:
                     (void)cs.eval("(panic-checkpoint)");
-                    (void)cs.eval("(mutate:replace-value (define user-val " +
+                    (void)cs.eval("(mutate :replace-value (define user-val " +
                                   std::to_string(val_dist(rng)) + ") (define user-val " +
                                   std::to_string(val_dist(rng)) + "))");
                     (void)cs.eval("(panic-restore)");
@@ -287,7 +287,7 @@ static void run_597() {
             for (int i = 0; i < n_iters; ++i) {
                 std::scoped_lock<std::mutex> lk(mtx);
                 (void)cs.eval("(query:pattern \"user-val\")");
-                std::string code = "(mutate:replace-value (define user-val " +
+                std::string code = "(mutate :replace-value (define user-val " +
                                    std::to_string(tid * 1000 + i) + ") (define user-val " +
                                    std::to_string(tid * 1000 + i) + "))";
                 if (!cs.eval(code))
@@ -358,7 +358,7 @@ static void run_597() {
         std::uniform_int_distribution<int> val_dist(0, 500);
         for (int i = 0; i < k_stress_iters(); ++i) {
             (void)cs.eval("(query:pattern \"user-val\")");
-            (void)cs.eval("(mutate:replace-value (define user-val " +
+            (void)cs.eval("(mutate :replace-value (define user-val " +
                           std::to_string(val_dist(rng)) + ") (define user-val " +
                           std::to_string(val_dist(rng)) + "))");
         }
@@ -436,7 +436,7 @@ static void run_619() {
         std::println("\n--- AC3: mutate under Guard on user code ---");
         auto qr = cs.eval("(query:pattern \"user-val\")");
         CHECK(qr.has_value(), "query:pattern finds user-val");
-        auto mr = cs.eval("(mutate:rebind \"user-val\" \"42\")");
+        auto mr = cs.eval("(mutate :rebind \"user-val\" \"42\")");
         CHECK(mr.has_value(), "mutate:rebind on user binding succeeds");
     }
 
@@ -444,7 +444,7 @@ static void run_619() {
     {
         std::println("\n--- AC4: Guard reflect / transform counters ---");
         const auto impact0 = cs.evaluator().get_mutation_impact_count();
-        (void)cs.eval("(mutate:rebind \"user-val\" \"99\")");
+        (void)cs.eval("(mutate :rebind \"user-val\" \"99\")");
         const auto impact1 = cs.evaluator().get_mutation_impact_count();
         const auto schema = cs.evaluator().get_schema_validation_pass_count();
         std::println("  mutation_impact: {} -> {} schema_pass={}", impact0, impact1, schema);
@@ -485,7 +485,7 @@ static void run_619() {
         const auto stats8a = followup_stats(cs);
         for (int round = 0; round < 3; ++round) {
             (void)cs.eval("(query:pattern \"user-val\")");
-            (void)cs.eval("(mutate:rebind \"user-val\" \"" + std::to_string(100 + round) + "\")");
+            (void)cs.eval("(mutate :rebind \"user-val\" \"" + std::to_string(100 + round) + "\")");
             (void)cs.eval("(eval-current)");
         }
         const auto stats8b = followup_stats(cs);
@@ -537,7 +537,7 @@ static void run_635() {
         std::println("\n--- AC3: mutate under Guard bumps counters ---");
         const auto stats3a = commercial_stats(cs);
         (void)cs.eval("(query:pattern \"user-val\")");
-        (void)cs.eval("(mutate:rebind \"user-val\" \"42\")");
+        (void)cs.eval("(mutate :rebind \"user-val\" \"42\")");
         (void)cs.eval("(eval-current)");
         const auto stats3b = commercial_stats(cs);
         std::println("  commercial-stats: {} -> {}", stats3a, stats3b);
@@ -557,7 +557,7 @@ static void run_635() {
         const auto stats5a = commercial_stats(cs);
         for (int round = 0; round < 3; ++round) {
             (void)cs.eval("(query:pattern \"user-val\")");
-            (void)cs.eval("(mutate:rebind \"user-val\" \"" + std::to_string(100 + round) + "\")");
+            (void)cs.eval("(mutate :rebind \"user-val\" \"" + std::to_string(100 + round) + "\")");
             (void)cs.eval("(eval-current)");
         }
         const auto stats5b = commercial_stats(cs);

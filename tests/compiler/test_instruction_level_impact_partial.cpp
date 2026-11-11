@@ -123,7 +123,7 @@ static void ac2_partial_instr_skip_metrics() {
     // Many single-line body mutates — should exercise partial paths.
     for (int i = 0; i < 32; ++i) {
         auto body = std::format("(lambda (n) (+ n {}))", i + 2);
-        auto expr = std::format("(mutate:set-body \"f\" \"{}\")", body);
+        auto expr = std::format("(mutate :set-body \"f\" \"{}\")", body);
         (void)cs.eval(expr);
     }
     (void)cs.eval("(eval-current)");
@@ -157,7 +157,7 @@ static void ac3_should_partial_consulted() {
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     const auto c0 = m ? load_u64(m->should_partial_relower_consult_total) : 0;
     for (int i = 0; i < 4; ++i)
-        (void)cs.eval(std::format("(mutate:set-body \"g\" \"(lambda () {})\")", i));
+        (void)cs.eval(std::format("(mutate :set-body \"g\" \"(lambda () {})\")", i));
     (void)cs.eval("(eval-current)");
     if (m)
         CHECK(load_u64(m->should_partial_relower_consult_total) >= c0, "consult counter advanced");

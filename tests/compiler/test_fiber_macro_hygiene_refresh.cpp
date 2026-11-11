@@ -142,7 +142,7 @@ static void ac4_stress() {
     });
     threads.emplace_back([&] {
         for (int i = 0; i < 100; ++i) {
-            (void)cs.eval("(mutate:rebind \"base\" \"42\")");
+            (void)cs.eval("(mutate :rebind \"base\" \"42\")");
             (void)cs.eval("(eval-current)");
         }
     });

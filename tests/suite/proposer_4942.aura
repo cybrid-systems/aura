@@ -541,7 +541,7 @@
 (define (apply-all ps ok)
   (if (null? ps)
       ok
-      (let ((r (mutate:rebind "score" (hash-ref (car ps) "genome") "proposer-4942")))
+      (let ((r (mutate :rebind "score" (hash-ref (car ps) "genome") "proposer-4942")))
         (apply-all (cdr ps) (and ok (eq? r #t))))))
 (assert! (apply-all props100 #t) "all 100 proposals apply to the live define")
 (assert! (= 101 (score 1)) "the last proposal is the live body")

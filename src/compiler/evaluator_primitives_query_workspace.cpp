@@ -989,7 +989,7 @@ void register_workspace_query_tree_parts(WorkspaceQueryPrims& P, PrimRegistrar a
     // this instead of (query :children ...) when the result is
     // stored in a variable that may be used after a mutate call.
     // The captured generation lets validate the ref later (via
-    // (mutate:check-stable-ref) or pass it back to a mutate
+    // (mutate :check-stable-ref) or pass it back to a mutate
     // primitive that supports stable-ref inputs.
     // Issue #2186: parent handle goes through ensure_valid_or_refresh.
     // Issue #2404 soft path: for_each_stable_child captures at live gen

@@ -109,9 +109,10 @@ bool test_eight_thread_concurrent_mutate_query() {
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::scoped_lock<std::mutex> lk(mtx);
-            std::string code = std::string("(mutate:replace-value (define ") + (i & 1 ? "a" : "b") +
-                               " " + std::to_string(tid * 1000 + i) + ") (define " +
-                               (i & 1 ? "a" : "b") + " " + std::to_string(tid * 1000 + i) + "))";
+            std::string code = std::string("(mutate :replace-value (define ") +
+                               (i & 1 ? "a" : "b") + " " + std::to_string(tid * 1000 + i) +
+                               ") (define " + (i & 1 ? "a" : "b") + " " +
+                               std::to_string(tid * 1000 + i) + "))";
             auto r = cs.eval(code);
             if (!r)
                 errors.fetch_add(1);
@@ -208,7 +209,7 @@ bool test_long_running_concurrent_stress() {
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::scoped_lock<std::mutex> lk(mtx);
-            std::string code = std::string("(mutate:replace-value (define v") +
+            std::string code = std::string("(mutate :replace-value (define v") +
                                std::to_string(tid) + " " + std::to_string(i) + ") (define v" +
                                std::to_string(tid) + " " + std::to_string(i) + "))";
             (void)cs.eval(code);
@@ -241,7 +242,7 @@ bool test_gc_heap_with_concurrency() {
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
-    (void)cs.eval("(mutate:replace-value (define a 99) (define a 99))");
+    (void)cs.eval("(mutate :replace-value (define a 99) (define a 99))");
     auto r = cs.eval("(gc-heap)");
     CHECK(r.has_value(), "(gc-heap) callable after concurrent mutate");
     auto r2 = cs.eval("(engine:metrics \"query:edsl-concurrency-stats\")");

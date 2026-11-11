@@ -44,7 +44,7 @@
         (begin
           (try (polsum 16) (catch (e) (note-err! "call")))
           (if (= (modulo t 4) 0)
-              (try (begin (mutate:rebind (pol-name w) (pol-src (+ t 1)) (string-append "rb" (number->string t)))
+              (try (begin (mutate :rebind (pol-name w) (pol-src (+ t 1)) (string-append "rb" (number->string t)))
                           (eval-current))
                    (catch (e) (note-err! "rebind"))))
           (fiber:yield)

@@ -79,9 +79,9 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: multi-round mutate matrix monotonic ---");
     const auto stats6a = consolidated_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"x\" \"" + std::to_string(10 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"x\" \"" + std::to_string(10 + round) + "\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(mutate:request-gc-safepoint 10)");
+        (void)cs.eval("(mutate :request-gc-safepoint 10)");
     }
     const auto stats6b = consolidated_stats(cs);
     std::println("  consolidated stats: {} -> {}", stats6a, stats6b);

@@ -288,7 +288,7 @@ int run_test_tweak_literal_audit_consistency() {
         const auto old_val = ws->get(lit).int_value;
 
         auto batch =
-            cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 7) "
+            cs.eval(std::format("(mutate :atomic-batch (list (list \"mutate:tweak-literal\" {} 7) "
                                 "(list \"mutate:rebind\" \"no-such-2799\" \"(lambda () 0)\")))",
                                 lit));
         CHECK(batch.has_value(), "AC3: batch returns");
@@ -356,7 +356,7 @@ int run_test_tweak_literal_audit_consistency() {
         // Batch-level :allow-macro? #t skips the #3301 pre-walk, so the deny
         // is produced by the lockless sub-op itself (the #3601 stamp site).
         auto batch = cs.eval(std::format(
-            "(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 7)) :allow-macro? #t)",
+            "(mutate :atomic-batch (list (list \"mutate:tweak-literal\" {} 7)) :allow-macro? #t)",
             lit));
         CHECK(batch.has_value(), "#3601 AC1: batch returns");
         CHECK(!(is_bool(*batch) && as_bool(*batch)), "#3601 AC1: batch denied");
@@ -423,7 +423,7 @@ int run_test_tweak_literal_audit_consistency() {
         const auto seq0 = max_audit_seq();
 
         auto batch = cs.eval(
-            std::format("(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 7)))", lit));
+            std::format("(mutate :atomic-batch (list (list \"mutate:tweak-literal\" {} 7)))", lit));
         CHECK(batch.has_value() && !(is_bool(*batch) && as_bool(*batch)),
               "#3601 AC3: batch still denied");
         CHECK(is_pair(*batch) && merr_kind(cs, *batch) == "hygiene-protected",
@@ -449,7 +449,7 @@ int run_test_tweak_literal_audit_consistency() {
         arm_mutate_face(cs, aura::core::sandbox::SandboxMode::Restricted);
         const auto se0 = g_hygiene_violation_se_emit_total.load();
 
-        auto r = cs.eval(std::format("(mutate:tweak-literal {} 5)", lit));
+        auto r = cs.eval(std::format("(mutate :tweak-literal {} 5)", lit));
         CHECK(r.has_value() && !(is_bool(*r) && as_bool(*r)), "#3601 AC4: public tweak denied");
         std::println(
             "#3601 AC4 probe: kind='{}' is_pair={} is_bool={} sandbox_active={} se_delta={}",
@@ -480,10 +480,10 @@ int run_test_tweak_literal_audit_consistency() {
         const auto seq0 = max_audit_seq();
         arm_mutate_face(cs, aura::core::sandbox::SandboxMode::Restricted);
 
-        auto batch =
-            cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:remove-node\" {}) (list "
-                                "\"mutate:tweak-literal\" {} 7)) :allow-macro? #t)",
-                                lit, lit));
+        auto batch = cs.eval(
+            std::format("(mutate :atomic-batch (list (list \"mutate:remove-node\" {}) (list "
+                        "\"mutate:tweak-literal\" {} 7)) :allow-macro? #t)",
+                        lit, lit));
         CHECK(batch.has_value() && !(is_bool(*batch) && as_bool(*batch)),
               "#3601 AC5: batch denied");
         std::println("#3601 AC5 probe: kind='{}' sandbox_active={} msg='{}'", merr_kind(cs, *batch),

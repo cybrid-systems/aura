@@ -5,7 +5,7 @@
 ;; gradual-typing + let-polymorphism + mutation chain.
 ;;
 ;; Invariant under test: after AST mutation
-;; (mutate:rebind / mutate:set-body) on polymorphic code, the
+;; (mutate :rebind / mutate:set-body) on polymorphic code, the
 ;; re-typecheck should still produce a sound program. Verifies:
 ;;   - polymorphic instantiation still works
 ;;   - cross-type coercion (Int↔String↔Bool) still coercible
@@ -54,14 +54,14 @@
 (set-code "
 (define (id x) x)
 ")
-(eval "(mutate:rebind \"id\" \"(lambda (x) (* x 2))\" \"times-two\")")
+(eval "(mutate :rebind \"id\" \"(lambda (x) (* x 2))\" \"times-two\")")
 (report "poly-rebind-mono" #t)
 
 ;; ── 3. Re-rebind to a body that produces coercion. New id is
 ;; (lambda (x) (number->string x)) — Int → String via primitive
 ;; coercion (Int ↔ String, see #100). This exercises the
 ;; coercion path under mutation.
-(eval "(mutate:rebind \"id\" \"(lambda (x) (number->string x))\" \"to-str\")")
+(eval "(mutate :rebind \"id\" \"(lambda (x) (number->string x))\" \"to-str\")")
 (report "poly-rebind-coerce" #t)
 
 ;; ── 4. set-code reset. Re-load from scratch, polymorphic id is
@@ -80,11 +80,11 @@
 (set-code "
 (define (f x) x)
 ")
-(eval "(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\" \"to-inc\")")
+(eval "(mutate :rebind \"f\" \"(lambda (x) (+ x 1))\" \"to-inc\")")
 (report "poly-chain-1" #t)
-(eval "(mutate:rebind \"f\" \"(lambda (x) (string-append \\\"v=\\\" (number->string x)))\" \"to-str\")")
+(eval "(mutate :rebind \"f\" \"(lambda (x) (string-append \\\"v=\\\" (number->string x)))\" \"to-str\")")
 (report "poly-chain-2" #t)
-(eval "(mutate:rebind \"f\" \"(lambda (x) x)\" \"back-to-poly\")")
+(eval "(mutate :rebind \"f\" \"(lambda (x) x)\" \"back-to-poly\")")
 (report "poly-chain-3" #t)
 
 ;; ── 6. Dynamic ↔ Any under mutation. After many mutations,
@@ -93,7 +93,7 @@
 (set-code "
 (define (g x) x)
 ")
-(eval "(mutate:rebind \"g\" \"(lambda (x) (if (> x 0) x (- 0 x)))\" \"abs\")")
+(eval "(mutate :rebind \"g\" \"(lambda (x) (if (> x 0) x (- 0 x)))\" \"abs\")")
 (report "poly-dyn-boundary" #t)
 
 ;; ── 7. mutate:set-body — set the body of an existing function
@@ -102,7 +102,7 @@
 (set-code "
 (define (h x) (+ x 1))
 ")
-(eval "(mutate:set-body \"h\" \"(* x 2)\")")
+(eval "(mutate :set-body \"h\" \"(* x 2)\")")
 (report "poly-set-body" #t)
 
 ;; ── Summary ──────────────────────────────────────────────

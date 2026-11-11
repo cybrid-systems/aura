@@ -5,7 +5,7 @@
 //   A. A two-op batch + ast:restore + eval-current inside ONE top-level form
 //      made the file runner re-run the whole file from the first form,
 //      silently, rc=0 (every earlier side effect doubled).
-//   B. (define x (mutate:atomic-batch ...)) applied the batch but left x
+//   B. (define x (mutate :atomic-batch ...)) applied the batch but left x
 //      unbound — the lockless batch rebind's env refresh re-keyed top_env()
 //      onto the workspace pool and never restored it, so the caller-frame
 //      bind_symid mirrored through the wrong pool and the next re-key
@@ -97,7 +97,7 @@ void ac4476_cli_batch_restore_once() {
         f << "(eval-current)\n";
         f << "(define s0 (mutate :snapshot \"p\"))\n";
         f << "(define (go)\n";
-        f << "  (mutate:atomic-batch (list (list \"mutate:rebind\" \"k\" "
+        f << "  (mutate :atomic-batch (list (list \"mutate:rebind\" \"k\" "
              "\"(lambda (n) (+ n 10))\" \"a\")\n";
         f << "                             (list \"mutate:rebind\" \"f\" "
              "\"(lambda (a0) (k a0))\" \"b\")))\n";
@@ -142,7 +142,7 @@ void ac4476_cli_define_rhs_batch_bound() {
         f << "(set-code \"(define (f x) (+ x 1))\")\n";
         f << "(eval-current)\n";
         f << "(define before 1)\n";
-        f << "(define r2 (mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" "
+        f << "(define r2 (mutate :atomic-batch (list (list \"mutate:rebind\" \"f\" "
              "\"(lambda (x) (+ x 2))\" \"b\"))))\n";
         f << "(define after 3)\n";
         f << "(display (list before after (f 1))) (newline)\n";

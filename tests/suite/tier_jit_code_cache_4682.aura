@@ -18,7 +18,7 @@
 (let loop ((i 0))
   (if (< i 12)
       (let ((b (modulo i 3)))
-        (mutate:rebind "fib" (body b) "t")
+        (mutate :rebind "fib" (body b) "t")
         (check! (= (eval-current) (ref 18 b)) (string-append "toggle " (number->string i) " first"))
         (check! (= (eval-current) (ref 18 b)) (string-append "toggle " (number->string i) " hot"))
         (loop (+ i 1)))))

@@ -222,7 +222,7 @@ int run_test_move_node_partial_failure_no_dangling() {
 
         const auto dang0 = ws->move_node_partial_failure_dangling_prevented_total();
         ws->set_test_inject_insert_child_fail_once(true);
-        auto r = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
+        auto r = cs.eval(std::format("(mutate :move-node {} {} 0)", loc.node, dest));
         CHECK(r.has_value(), "AC4: returns");
         CHECK(!(is_bool(*r) && as_bool(*r)), "AC4: not success #t");
         auto kind = merr_kind(cs, *r);
@@ -249,7 +249,7 @@ int run_test_move_node_partial_failure_no_dangling() {
         auto loc = find_first_child(*ws);
         auto dest = find_alt_parent(*ws, loc.parent, loc.node);
         if (loc.node != NULL_NODE && dest != NULL_NODE) {
-            auto r = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
+            auto r = cs.eval(std::format("(mutate :move-node {} {} 0)", loc.node, dest));
             CHECK(r.has_value(), "AC4b: returns");
             if (is_bool(*r) && as_bool(*r)) {
                 CHECK(ws->parent_of(loc.node) == dest, "AC4b: parent updated");

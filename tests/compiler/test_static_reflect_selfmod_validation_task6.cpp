@@ -59,7 +59,7 @@ static void run_matrix(CompilerService& cs) {
     const auto snap0 = cs.evaluator().get_impact_snapshot_count();
     const auto impact0 = cs.evaluator().get_mutation_impact_count();
     const auto stats2a = selfmod_stats(cs);
-    (void)cs.eval("(mutate:rebind \"x\" \"42\")");
+    (void)cs.eval("(mutate :rebind \"x\" \"42\")");
     (void)cs.eval("(eval-current)");
     const auto snap1 = cs.evaluator().get_impact_snapshot_count();
     const auto impact1 = cs.evaluator().get_mutation_impact_count();
@@ -91,7 +91,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: multi-round self-mod cycle monotonic ---");
     const auto stats5a = selfmod_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"y\" \"" + std::to_string(10 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"y\" \"" + std::to_string(10 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(query:reflect-node-members 0)");
     }

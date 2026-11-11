@@ -550,7 +550,7 @@ def test_jit():
     # ── Mutation type soundness (#25): basic mutation + typecheck ──
     r = subprocess.run(
         [AURA],
-        input='(begin (define (f x) (+ x 1)) (mutate:rebind "f" "(lambda (x) (* x 2))") (stats:get "typecheck-status"))',
+        input='(begin (define (f x) (+ x 1)) (mutate :rebind "f" "(lambda (x) (* x 2))") (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -562,7 +562,7 @@ def test_jit():
 
     r = subprocess.run(
         [AURA],
-        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (mutate:rebind "a" "(lambda (x) (* x 2))") (stats:get "typecheck-status"))',
+        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (mutate :rebind "a" "(lambda (x) (* x 2))") (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -574,7 +574,7 @@ def test_jit():
 
     r = subprocess.run(
         [AURA],
-        input='(begin (define (f x) (+ x 1)) (mutate:set-body "f" "(* x 2)") (stats:get "typecheck-status"))',
+        input='(begin (define (f x) (+ x 1)) (mutate :set-body "f" "(* x 2)") (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -591,7 +591,7 @@ def test_mutation_sequences():
     # ── Rebind chain: a→b→c, rebind a, typecheck all ───────────
     r = subprocess.run(
         [AURA],
-        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (define (c x) (b x)) (mutate:rebind "a" "(lambda (x) (* x 2))") (stats:get "typecheck-status"))',
+        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (define (c x) (b x)) (mutate :rebind "a" "(lambda (x) (* x 2))") (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -604,7 +604,7 @@ def test_mutation_sequences():
     # ── Rebind → set-body chain ────────────────────────────────
     r = subprocess.run(
         [AURA],
-        input='(begin (define (f x) (+ x 1)) (mutate:rebind "f" "(lambda (x) (* x 2))") (mutate:set-body "f" "(- x 1)") (stats:get "typecheck-status"))',
+        input='(begin (define (f x) (+ x 1)) (mutate :rebind "f" "(lambda (x) (* x 2))") (mutate :set-body "f" "(- x 1)") (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -617,7 +617,7 @@ def test_mutation_sequences():
     # ── Rollback verification ──────────────────────────────────
     r = subprocess.run(
         [AURA],
-        input='(begin (define (f x) (+ x 1)) (mutate:rebind "f" "(lambda (x) (* x 2))") (define mid (mutation-count)) (rollback (- mid 1)) (stats:get "typecheck-status"))',
+        input='(begin (define (f x) (+ x 1)) (mutate :rebind "f" "(lambda (x) (* x 2))") (define mid (mutation-count)) (rollback (- mid 1)) (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -630,7 +630,7 @@ def test_mutation_sequences():
     # ── DefUseIndex incremental: query:def-use works after rebind ──
     r = subprocess.run(
         [AURA],
-        input='(begin (define (f x) (+ x 1)) (define (g x) (f x)) (query :def-use "f") (mutate:rebind "f" "(lambda (x) (* x 2))") (query :def-use "f") (stats:get "typecheck-status"))',
+        input='(begin (define (f x) (+ x 1)) (define (g x) (f x)) (query :def-use "f") (mutate :rebind "f" "(lambda (x) (* x 2))") (query :def-use "f") (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -643,7 +643,7 @@ def test_mutation_sequences():
     # ── DefUseIndex: chain query works after rebind ─────────────────
     r = subprocess.run(
         [AURA],
-        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (query:reaches 0) (mutate:rebind "a" "(lambda (x) (* x 2))") (query:reaches 0) (stats:get "typecheck-status"))',
+        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (query:reaches 0) (mutate :rebind "a" "(lambda (x) (* x 2))") (query:reaches 0) (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -1908,7 +1908,7 @@ def test_type_feedback_4568():
 (eval-current)
 (id 9)
 (keep 4)
-(mutate:rebind "id" "(lambda (x) x)" "t")
+(mutate :rebind "id" "(lambda (x) x)" "t")
 (display "===IDRESET===\n")
 (display (query:type-feedback "id"))
 (display "===KEEP2===\n")
@@ -2877,15 +2877,15 @@ def test_rebind_cascade_linear_4615():
 (set-code "(define f (lambda (x) (+ x 1))) (define g (lambda (x) (* x 2))) (define caller (lambda () (list {calls})))")
 (eval-current)
 (define pre (caller))
-(mutate:rebind "f" "(lambda (x) (+ x 2))" "r")
+(mutate :rebind "f" "(lambda (x) (+ x 2))" "r")
 (define post (caller))
-(mutate:rebind "g" "(lambda (x) (* x 3))" "r")
+(mutate :rebind "g" "(lambda (x) (* x 3))" "r")
 (define (time-it reps thunk)
   (let ((t0 (current-time-ms)))
     (let loop ((r 0)) (if (< r reps) (begin (thunk) (loop (+ r 1))) #f))
     (quotient (- (current-time-ms) t0) reps)))
 (display (list "R" (car post) (car (reverse post)) (car pre) (g 5)
-               (time-it 3 (lambda () (mutate:rebind "f" "(lambda (x) (+ x 2))" "r")))))
+               (time-it 3 (lambda () (mutate :rebind "f" "(lambda (x) (+ x 2))" "r")))))
 (newline)
 """
         r = subprocess.run([AURA], input=prog, capture_output=True, text=True, timeout=300)
@@ -2959,7 +2959,7 @@ def test_tc_infer_flat_in_rebind_count_4682():
 (set-code (string-append "(define f " (body 0) ")\n(define c0 (lambda (x) (f x)))\n" (fill W "")))
 (eval-current)
 (define (tci) (hash-ref (engine:metrics "query:incremental-relower-stats") "phase-tc-infer-ns"))
-(define (run n) (let loop ((i 0)) (if (< i n) (begin (mutate:rebind "f" (body i) "t") (eval-current) (loop (+ i 1))))))
+(define (run n) (let loop ((i 0)) (if (< i n) (begin (mutate :rebind "f" (body i) "t") (eval-current) (loop (+ i 1))))))
 (run 20)
 (define a0 (tci)) (run 60) (define a1 (tci))
 (run 400)
@@ -3115,7 +3115,7 @@ def test_workspace_set_global_4618():
         "ws-global-rebind-4618",
         '(set-code "(define wsv 0) (define g (lambda () 0))")\n'
         "(eval-current)\n"
-        '(mutate:rebind "g" "(lambda () (set! wsv (+ wsv 100)) wsv)" "r")\n'
+        '(mutate :rebind "g" "(lambda () (set! wsv (+ wsv 100)) wsv)" "r")\n'
         "(eval-current)\n"
         "(display (g)) (newline)\n"
         "(display (g)) (newline)\n"
@@ -3641,7 +3641,7 @@ def test_workspace_rest_params_4621():
         "ws-rest-rebind-4621",
         '(set-code "(define wb (lambda () 0))")\n'
         "(eval-current)\n"
-        '(mutate:rebind "wb" "(lambda (a . r) r)" "4621")\n'
+        '(mutate :rebind "wb" "(lambda (a . r) r)" "4621")\n'
         "(eval-current)\n"
         "(display (wb 1 2)) (newline)\n"
         "(display (wb 1 2 3)) (newline)\n"
@@ -4393,7 +4393,7 @@ def test_workspace_inline_callback_4626():
 
     rebind = r"""(set-code "(define rb-two-maps (lambda () (list (map (lambda (a) 1) (list 0 0)) (map (lambda (b) 2) (list 0 0)))))")
 (eval-current)
-(mutate:rebind "rb-two-maps" "(lambda () (list (map (lambda (a) 1) (list 0 0)) (map (lambda (b) 2) (list 0 0))))" "r")
+(mutate :rebind "rb-two-maps" "(lambda () (list (map (lambda (a) 1) (list 0 0)) (map (lambda (b) 2) (list 0 0))))" "r")
 (eval-current)
 (display (list "ws-rebind" (rb-two-maps))) (newline)"""
     r2 = run(rebind)
@@ -5203,7 +5203,7 @@ def test_fiber_hash_key_survives_rebind_4709():
 
     Reported on main 572beb276 / 7d0a4e9f3 (JIT off and on): in the
     aura-harness swarm (4 worker fibers, each periodically running
-    (mutate:rebind "pol-<w>" ...) + (eval-current)) a 9-char key of a
+    (mutate :rebind "pol-<w>" ...) + (eval-current)) a 9-char key of a
     global stats hash ("join-void") read back with length 0, 3 or 8, or
     vanished. It needed >=2 fibers and a rebind, and a (display) near the
     insert hid it -- i.e. a reclaim frees the string slot under a live
@@ -5243,7 +5243,7 @@ def test_fiber_hash_key_survives_rebind_4709():
     (if (< i 30)
         (begin
           (hash-set! stats (string-append "join-void") (+ 1 (hash-ref stats "join-void" 0)))
-          (mutate:rebind (string-append "pol-" (number->string w)) "(lambda (x) (+ x 1))" "p")
+          (mutate :rebind (string-append "pol-" (number->string w)) "(lambda (x) (+ x 1))" "p")
           (eval-current)
           (loop (+ i 1)))
         w)))
@@ -5551,7 +5551,7 @@ def test_fiber_sibling_dispatch_across_rebind_4715_regression():
 
     This is the class-2 pre-push bench agent-fibers-8
     (tests/fixtures/bench/fibers_4715.aura): eight fiber bodies call a sibling
-    `pure` define while the parent runs (mutate:rebind "hot" ...) +
+    `pure` define while the parent runs (mutate :rebind "hot" ...) +
     (eval-current). The parent's (eval-current) re-specialises every
     workspace lambda twice, and bind_function_define_via_ir minted a fresh
     IR closure id per publication and erased the superseded id BEFORE the
@@ -6187,7 +6187,7 @@ def test_fiber_cow_overlay_rebind_eval_current_4715():
   #t)
 (display
  (let* ((open (mutate :overlay-begin))
-        (m (try (mutate:rebind "cow-target" "(lambda (x) (* x 7))" "cow") (catch (e) #f)))
+        (m (try (mutate :rebind "cow-target" "(lambda (x) (* x 7))" "cow") (catch (e) #f)))
         (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
         (own (cow-target 7))
         (sib (fiber:join (fiber:spawn (lambda () (cow-target 7)))))
@@ -6222,7 +6222,7 @@ def test_fiber_cow_overlay_rebind_eval_current_4715():
 def test_fiber_cow_overlay_scalar_rebind_private_4715():
     """Issue #4715 AC2: a scalar rebind is PRIVATE until the commit.
 
-    Same literal shape (mutate:rebind + eval-current) on a scalar workspace
+    Same literal shape (mutate :rebind + eval-current) on a scalar workspace
     define. This is the row that proves the env-path interception: the body
     reads its own 9 while a sibling fiber still reads the committed 5, and the
     commit publishes 9. Before AC2 the rebind overwrote the shared cell
@@ -6235,7 +6235,7 @@ def test_fiber_cow_overlay_scalar_rebind_private_4715():
   #t)
 (display
  (let* ((open (mutate :overlay-begin))
-        (m (try (mutate:rebind "cow-n" "9" "cow") (catch (e) #f)))
+        (m (try (mutate :rebind "cow-n" "9" "cow") (catch (e) #f)))
         (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
         (own cow-n)
         (sib (fiber:join (fiber:spawn (lambda () cow-n))))
@@ -6272,7 +6272,7 @@ def test_fiber_cow_overlay_rebind_conflict_4715():
   #t)
 (display
  (let* ((open (mutate :overlay-begin))
-        (m (try (mutate:rebind "cow-n" "9" "cow") (catch (e) #f)))
+        (m (try (mutate :rebind "cow-n" "9" "cow") (catch (e) #f)))
         (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
         (own cow-n)
         (sib (fiber:join

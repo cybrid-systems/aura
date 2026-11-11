@@ -895,12 +895,12 @@ namespace {
 (parallel-intend
   (vector
     (lambda ()
-      (mutate:set-body "sf" "(+ x 2)")
+      (mutate :set-body "sf" "(+ x 2)")
       (eval-current)
       (gc-heap)
       (sf 0))
     (lambda ()
-      (mutate:set-body "sf" "(+ x 3)")
+      (mutate :set-body "sf" "(+ x 3)")
       (eval-current)
       (gc-heap)
       (sf 0))
@@ -925,7 +925,7 @@ namespace {
   (parallel-intend
     (vector
       (lambda () (begin (gc-heap) 1))
-      (lambda () (begin (mutate:set-body "sf" "(+ x 1)") (eval-current) (sf 0))))
+      (lambda () (begin (mutate :set-body "sf" "(+ x 1)") (eval-current) (sf 0))))
     :timeout-ms 15000)
   "status")
 )AURA";

@@ -111,7 +111,7 @@ static void ac4_self_modify_loop() {
     std::int64_t health_max = 0;
     for (int i = 0; i < 30; ++i) {
         (void)cs.eval("(query:pattern \"*\")");
-        (void)cs.eval(std::format("(mutate:rebind \"base\" \"{}\")", 10 + i));
+        (void)cs.eval(std::format("(mutate :rebind \"base\" \"{}\")", 10 + i));
         (void)cs.eval("(eval-current)");
         const auto h = href(cs, "query:macro-hygiene-stats", "health-score");
         if (h >= 0) {

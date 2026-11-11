@@ -301,7 +301,7 @@ static void run_1365_bridge_epoch_strict() {
         auto v0 = cs.eval("(add1 10)");
         CHECK(v0 && is_int(*v0) && as_int(*v0) == 11, "add1 10 == 11 before rebind");
 
-        auto re = cs.eval("(mutate:rebind \"add1\" \"(lambda (x) (+ x 2))\" \"#1365\")");
+        auto re = cs.eval("(mutate :rebind \"add1\" \"(lambda (x) (+ x 2))\" \"#1365\")");
         if (re && is_bool(*re) && as_bool(*re)) {
             (void)cs.eval("(eval-current)");
             auto v1 = cs.eval("(add1 10)");

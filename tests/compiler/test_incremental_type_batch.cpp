@@ -65,7 +65,7 @@ static void run_526() {
         cs.eval("(set-code \"(define x 1) (define y 2)\")");
         cs.eval("(eval-current)");
 
-        CHECK(cs.eval("(mutate:rebind \"x\" \"42\" \"526\")").has_value(),
+        CHECK(cs.eval("(mutate :rebind \"x\" \"42\" \"526\")").has_value(),
               "mutate:rebind succeeds");
 
         auto* ws = cs.evaluator().workspace_flat();
@@ -84,7 +84,7 @@ static void run_526() {
         cs.eval("(set-code \"(define a 0)\")");
         cs.eval("(eval-current)");
         const auto dv0 = cs.evaluator().defuse_version_for_test();
-        cs.eval("(mutate:rebind \"a\" \"99\" \"epoch\")");
+        cs.eval("(mutate :rebind \"a\" \"99\" \"epoch\")");
         const auto dv1 = cs.evaluator().defuse_version_for_test();
         CHECK(dv1 > dv0, "defuse_version bumps on mutate");
     }
@@ -235,7 +235,7 @@ static void run_536() {
         std::println("\n--- AC3: predicate mutate → narrowing + stats grow ---");
         const auto n0 = cs.evaluator().get_narrowing_refresh_count();
         const auto stats0 = typed_mutation_stats_536(cs);
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 6) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 6) 0))\" "
                       "\"issue-536-if\")");
         const auto n1 = cs.evaluator().get_narrowing_refresh_count();
         const auto stats1 = typed_mutation_stats_536(cs);
@@ -248,7 +248,7 @@ static void run_536() {
     // AC4: occurrence-stale-count == 0 after re-narrow
     {
         std::println("\n--- AC4: occurrence-stale-count == 0 after re-narrow ---");
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
                       "\"issue-536-stale\")");
         auto stale = cs.eval("(stats:get \"query:occurrence-stale-count\")");
         const auto stale_count = stale && is_int(*stale) ? as_int(*stale) : -1;
@@ -261,7 +261,7 @@ static void run_536() {
         std::println("\n--- AC5: passes_skipped monotonic under mutate ---");
         const auto ps0 = cs.evaluator().get_passes_skipped_type_dirty();
         for (int i = 0; i < 3; ++i) {
-            (void)cs.eval("(mutate:rebind \"g\" \"(lambda (y) (+ y " + std::to_string(20 + i) +
+            (void)cs.eval("(mutate :rebind \"g\" \"(lambda (y) (+ y " + std::to_string(20 + i) +
                           "))\" \"issue-536-ps-" + std::to_string(i) + "\")");
             (void)cs.eval("(eval-current)");
         }
@@ -277,7 +277,7 @@ static void run_536() {
         for (int round = 0; round < 3; ++round) {
             const std::string f_body =
                 "(lambda (x) (if (number? x) (+ x " + std::to_string(round + 9) + ") 0))";
-            (void)cs.eval("(mutate:rebind \"f\" \"" + f_body + "\" \"r" + std::to_string(round) +
+            (void)cs.eval("(mutate :rebind \"f\" \"" + f_body + "\" \"r" + std::to_string(round) +
                           "-f\")");
             auto rf = cs.eval("(f 3)");
             CHECK(rf && is_int(*rf), "f eval ok round " + std::to_string(round));
@@ -293,7 +293,7 @@ static void run_536() {
     // AC7: touched_roots_size after incremental infer
     {
         std::println("\n--- AC7: touched_roots_size after incremental infer ---");
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
                       "\"issue-536-tr\")");
         auto* ws = cs.workspace_flat();
         CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
@@ -309,7 +309,7 @@ static void run_536() {
         std::println("\n--- AC8: sequential query/eval stress ---");
         std::int64_t stress_sum = 0;
         for (int i = 0; i < 8; ++i) {
-            (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
+            (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
                           std::to_string(i) + ") 0))\" \"stress-" + std::to_string(i) + "\")");
             auto qs = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
             CHECK(qs && is_int(*qs), "typed-mutation-stats during stress");
@@ -457,12 +457,12 @@ static void run_466() {
               "load workspace");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(typecheck-current)");
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 2) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 2) 0))\" "
                       "\"issue-466-a\")");
         auto* ws = cs.workspace_flat();
         CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
         (void)cs.incremental_infer(ws->all_mutations().back());
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 3) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 3) 0))\" "
                       "\"issue-466-b\")");
         (void)cs.incremental_infer(ws->all_mutations().back());
         auto r = cs.eval("(f 4)");

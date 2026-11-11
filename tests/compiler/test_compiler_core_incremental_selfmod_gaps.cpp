@@ -70,7 +70,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC2: mutate:rebind bumps impact-blocks ---");
     const auto impact0 = hash_int(cs, "impact-blocks");
-    (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     (void)cs.eval("(eval-current)");
     const auto impact1 = hash_int(cs, "impact-blocks");
     std::println("  impact-blocks: {} -> {}", impact0, impact1);
@@ -87,7 +87,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC4: rebind bumps partial-relower or full-fallbacks ---");
     const auto partial0 = hash_int(cs, "partial-relower-hits");
     const auto full0 = hash_int(cs, "full-fallbacks");
-    (void)cs.eval("(mutate:rebind \"b\" \"20\")");
+    (void)cs.eval("(mutate :rebind \"b\" \"20\")");
     (void)cs.eval("(eval-current)");
     const auto partial1 = hash_int(cs, "partial-relower-hits");
     const auto full1 = hash_int(cs, "full-fallbacks");
@@ -99,7 +99,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: multi-round query/mutate monotonic ---");
     const auto stats5a = stats_sum(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"a\" \"" + std::to_string(30 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"a\" \"" + std::to_string(30 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(fact 2)");
     }

@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT / "tests" / "python"))
 
 from _aura_harness import AURA_BIN  # noqa: E402
 
-EVO = '(set-code "(define p 1)")\n(eval-current)\n(display (mutate:rebind "p" "2" "x"))\n(newline)\n'
+EVO = '(set-code "(define p 1)")\n(eval-current)\n(display (mutate :rebind "p" "2" "x"))\n(newline)\n'
 
 
 class PerUserWalDir(unittest.TestCase):

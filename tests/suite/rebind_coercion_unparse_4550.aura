@@ -35,7 +35,7 @@
 (eval-current)
 (define (build4550) (safe (lambda () (rk-block-build ""))))
 (define (rb4550 name body)
-  (let ((r (mutate:atomic-batch (list (list "mutate:rebind" name body "t4550")))))
+  (let ((r (mutate :atomic-batch (list (list "mutate:rebind" name body "t4550")))))
     (eval-current)
     r))
 (check "start: rk-block-build" (build4550) "000000")

@@ -205,7 +205,7 @@ int run_test_cache_stamp_restamp_contract() {
         if (m)
             CHECK(m->cache_stamp_restamp_total.load() >= r0, "restamp non-dec after store");
         // Mutate + eval exercises relower → restamp path.
-        (void)cs.eval("(mutate:set-body \"g\" \"(lambda (n) (+ n 1))\")");
+        (void)cs.eval("(mutate :set-body \"g\" \"(lambda (n) (+ n 1))\")");
         (void)cs.eval("(eval-current)");
         if (m)
             CHECK(m->cache_stamp_restamp_total.load() >= r0, "restamp after mutate");

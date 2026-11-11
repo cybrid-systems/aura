@@ -87,7 +87,7 @@ PROG_MUT = r"""
 (define (src-of i) (string-append "(lambda () (quote (" (string-join (map (lambda (x) (format "~a" x)) (list i (+ i 1))) " ") ")))"))
 (define (step! i)
   (let* ((snap (mutate :snapshot (format "s-~a" i)))
-         (ok (mutate:rebind "sp" (src-of i) "t")))
+         (ok (mutate :rebind "sp" (src-of i) "t")))
     (eval-current)
     (let ((r (list ok (map (lambda (x) (+ x 1)) (sp)) (string-join (map (lambda (x) (format "~a" x)) (sp)) " "))))
       (if (even? i) (begin (mutate :restore snap) (eval-current)) #f)

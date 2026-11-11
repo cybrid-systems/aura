@@ -171,7 +171,7 @@ int run_test_move_node_hygiene() {
 
         const auto rej0 = ws->move_node_hygiene_reject_total();
         // Move to dest at position 0 (different parent).
-        auto r = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
+        auto r = cs.eval(std::format("(mutate :move-node {} {} 0)", loc.node, dest));
         CHECK(r.has_value(), "AC2: returns");
         CHECK(!(is_bool(*r) && as_bool(*r)), "AC2: not success #t");
         auto kind = merr_kind(cs, *r);
@@ -202,7 +202,7 @@ int run_test_move_node_hygiene() {
         const auto rej0 = ws->move_node_hygiene_reject_total();
         const auto parent0 = ws->parent_of(loc.node);
 
-        auto r = cs.eval(std::format("(mutate:atomic-batch "
+        auto r = cs.eval(std::format("(mutate :atomic-batch "
                                      "(list (list \"mutate:move-node\" {} {} 0)))",
                                      loc.node, dest));
         CHECK(r.has_value(), "AC3: batch returns");
@@ -231,12 +231,12 @@ int run_test_move_node_hygiene() {
         CHECK(!ws->is_macro_introduced(loc.node), "AC4: not MacroIntroduced");
         // Same-position no-op still #t (#2794).
         auto noop =
-            cs.eval(std::format("(mutate:move-node {} {} {})", loc.node, loc.parent, loc.index));
+            cs.eval(std::format("(mutate :move-node {} {} {})", loc.node, loc.parent, loc.index));
         CHECK(noop.has_value() && is_bool(*noop) && as_bool(*noop), "AC4: same-pos no-op #t");
 
         auto dest = find_alt_parent(*ws, loc.parent, loc.node);
         if (dest != NULL_NODE) {
-            auto r = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
+            auto r = cs.eval(std::format("(mutate :move-node {} {} 0)", loc.node, dest));
             CHECK(r.has_value(), "AC4: move returns");
             if (is_bool(*r) && as_bool(*r)) {
                 CHECK(ws->parent_of(loc.node) == dest, "AC4: parent updated after move");
@@ -265,13 +265,13 @@ int run_test_move_node_hygiene() {
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", loc.node)).has_value(),
               "3061 AC1: stamp");
         const auto rej0 = ws->move_node_hygiene_reject_total();
-        auto denied = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
+        auto denied = cs.eval(std::format("(mutate :move-node {} {} 0)", loc.node, dest));
         CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene-protected",
               "3061 AC1: default still hygiene");
         CHECK(ws->move_node_hygiene_reject_total() > rej0, "3061 AC1: deny metric");
         CHECK(ws->parent_of(loc.node) == loc.parent, "3061 AC1: parent unchanged");
         auto allowed =
-            cs.eval(std::format("(mutate:move-node {} {} 0 :allow-macro? #t)", loc.node, dest));
+            cs.eval(std::format("(mutate :move-node {} {} 0 :allow-macro? #t)", loc.node, dest));
         CHECK(allowed.has_value(), "3061 AC1: allow returns");
         CHECK(merr_kind(cs, *allowed) != "hygiene", "3061 AC1: not hygiene");
         if (is_bool(*allowed) && as_bool(*allowed)) {
@@ -296,7 +296,7 @@ int run_test_move_node_hygiene() {
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", loc.node)).has_value(),
               "3061 AC2: stamp");
         CHECK(cs.eval("(mutate :set-allow-macro-mutate #t)").has_value(), "3061 AC2: global on");
-        auto r = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
+        auto r = cs.eval(std::format("(mutate :move-node {} {} 0)", loc.node, dest));
         CHECK(r.has_value() && merr_kind(cs, *r) != "hygiene", "3061 AC2: global unlocks");
         if (is_bool(*r) && as_bool(*r))
             CHECK(ws->is_macro_introduced(loc.node), "3061 AC2: marker preserved");
@@ -317,7 +317,7 @@ int run_test_move_node_hygiene() {
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", loc.node)).has_value(),
               "3061 AC3: stamp");
         CHECK(cs.eval("(mutate :set-allow-macro-mutate #t)").has_value(), "3061 AC3: global on");
-        auto r = cs.eval(std::format("(mutate:atomic-batch "
+        auto r = cs.eval(std::format("(mutate :atomic-batch "
                                      "(list (list \"mutate:move-node\" {} {} 0)))",
                                      loc.node, dest));
         CHECK(r.has_value() && merr_kind(cs, *r) != "hygiene",
@@ -359,7 +359,7 @@ int run_test_move_node_hygiene() {
               "3815 AC1: stamp dest MacroIntroduced");
         CHECK(ws->is_macro_introduced(dest), "3815 AC1: dest MacroIntroduced");
         const auto parent0 = ws->parent_of(loc.node);
-        auto r = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
+        auto r = cs.eval(std::format("(mutate :move-node {} {} 0)", loc.node, dest));
         CHECK(r.has_value(), "3815 AC1: returns");
         CHECK(!(is_bool(*r) && as_bool(*r)), "3815 AC1: not success #t");
         CHECK(merr_kind(cs, *r) == "hygiene-protected",
@@ -381,7 +381,7 @@ int run_test_move_node_hygiene() {
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", loc.node)).has_value(),
               "3815 AC2: stamp moved node");
         const auto rej0 = ws->move_node_hygiene_reject_total();
-        auto r = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
+        auto r = cs.eval(std::format("(mutate :move-node {} {} 0)", loc.node, dest));
         CHECK(r.has_value() && merr_kind(cs, *r) == "hygiene-protected",
               "3815 AC2: moved MacroIntroduced still hygiene");
         CHECK(ws->move_node_hygiene_reject_total() > rej0, "3815 AC2: metric bump");
@@ -402,7 +402,7 @@ int run_test_move_node_hygiene() {
         CHECK(!ws->is_macro_introduced(loc.parent), "3815 AC3: parent not MacroIntroduced");
         // Same-pos no-op proves gate open with zero MacroIntroduced traffic.
         auto noop =
-            cs.eval(std::format("(mutate:move-node {} {} {})", loc.node, loc.parent, loc.index));
+            cs.eval(std::format("(mutate :move-node {} {} {})", loc.node, loc.parent, loc.index));
         CHECK(noop.has_value() && is_bool(*noop) && as_bool(*noop),
               "3815 AC3: non-macro same-pos no-op #t");
         CHECK(merr_kind(cs, *noop) != "hygiene-protected", "3815 AC3: not hygiene");
@@ -423,7 +423,7 @@ int run_test_move_node_hygiene() {
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", dest)).has_value(),
               "3815 AC4: stamp dest");
         const auto parent0 = ws->parent_of(loc.node);
-        auto r = cs.eval(std::format("(mutate:atomic-batch "
+        auto r = cs.eval(std::format("(mutate :atomic-batch "
                                      "(list (list \"mutate:move-node\" {} {} 0)))",
                                      loc.node, dest));
         CHECK(r.has_value(), "3815 AC4: batch returns");

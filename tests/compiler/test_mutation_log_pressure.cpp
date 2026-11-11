@@ -173,7 +173,7 @@ static void ac2_high_volume_compact() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     // Force many mutates so log grows.
     for (int i = 0; i < 40; ++i) {
-        (void)cs.typed_mutate(std::format("(mutate:rebind \"a\" \"{}\")", i));
+        (void)cs.typed_mutate(std::format("(mutate :rebind \"a\" \"{}\")", i));
     }
     const auto sz0 = href(cs, "query:mutation-log-pressure", "log-size");
 #ifdef AURA_ISSUE_BATCH_MEMBER
@@ -250,7 +250,7 @@ static void ac5_guard_before_compact() {
     CHECK(cs.eval("(set-code \"(define a 0)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     for (int i = 0; i < 24; ++i)
-        (void)cs.typed_mutate(std::format("(mutate:rebind \"a\" \"{}\")", i));
+        (void)cs.typed_mutate(std::format("(mutate :rebind \"a\" \"{}\")", i));
     auto* flat = ev.workspace_flat();
     CHECK(flat != nullptr, "workspace flat");
     if (!flat)

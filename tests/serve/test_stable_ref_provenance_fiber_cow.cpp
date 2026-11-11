@@ -227,7 +227,7 @@ static void ac8_orig() {
     CompilerService cs;
     (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
     (void)cs.eval("(eval-current)");
-    (void)cs.eval("(mutate:replace-value (define a 99) (define a 99))");
+    (void)cs.eval("(mutate :replace-value (define a 99) (define a 99))");
     auto* ws = cs.evaluator().workspace_flat();
     if (ws) {
         (void)cs.evaluator().validate_stable_ref(0, ws->generation() - 1);
@@ -775,7 +775,7 @@ static void ac3425_2_production_int_reject_v2_and_hash() {
     auto again_ok = cs.eval("(integer? (car p3425b))");
     CHECK(again_ok && is_bool(*again_ok) && as_bool(*again_ok),
           "3425 AC2: production + live v2 → v2 pair");
-    CHECK(cs.eval("(mutate:replace-subtree qr3425 \"(lambda (x) 99)\")").has_value(),
+    CHECK(cs.eval("(mutate :replace-subtree qr3425 \"(lambda (x) 99)\")").has_value(),
           "3425 AC2: mutate identity");
     CHECK(cs.eval("(define r3425s (query:as-stable-ref p3425))").has_value(),
           "3425 AC2: bind stale");
@@ -1010,7 +1010,7 @@ static void test_ac3661_1_expired_gen_stale_ref() {
     auto& ev = cs.evaluator();
     CHECK(!ev.ensure_valid_or_refresh(poisoned, /*auto_refresh=*/false).has_value(),
           "3661 AC1: mutate ensure auto_refresh=false rejects expired gen");
-    CHECK(cs.eval("(define rChk3661 (mutate:check-stable-ref pA3661))").has_value(),
+    CHECK(cs.eval("(define rChk3661 (mutate :check-stable-ref pA3661))").has_value(),
           "3661 AC1: bind check-stable-ref");
     auto chk_t = cs.eval("(eq? rChk3661 #t)");
     CHECK(chk_t && is_bool(*chk_t) && !as_bool(*chk_t),
@@ -1066,7 +1066,7 @@ static void test_ac3661_3_soft_auto_refresh() {
     auto soft = cs.eval("(query:as-stable-ref 1)");
     CHECK(soft && is_pair(*soft), "3661 AC3: Soft int → v1 pair");
     CHECK(cs.eval("(define pS3661 (query:as-stable-ref 1))").has_value(), "3661 AC3: bind packed");
-    CHECK(cs.eval("(mutate:rebind \"T3661\" \"9\")").has_value(), "3661 AC3: rebind T");
+    CHECK(cs.eval("(mutate :rebind \"T3661\" \"9\")").has_value(), "3661 AC3: rebind T");
     CHECK(cs.eval("(define rS3661 (query :children pS3661))").has_value(),
           "3661 AC3: bind children after mutate");
     auto stale = cs.eval("(and (pair? rS3661) (equal? (car rS3661) \"stale-ref\"))");
@@ -2271,7 +2271,7 @@ static void ac4438_fiberless_cross_agent_query_stale() {
         CHECK(litq && is_hash(*litq), "4438: A literal pattern is a schema-2 hash");
         CHECK(cs.eval("(define plit4438 (query:as-stable-ref lit4438 :index 0))").has_value(),
               "4438: A packs the literal");
-        auto mu_a = cs.eval("(mutate:tweak-literal plit4438 0)");
+        auto mu_a = cs.eval("(mutate :tweak-literal plit4438 0)");
         const auto ka = mu_a ? kind4106(cs, *mu_a) : std::string("missing");
         CHECK(
             mu_a && is_int(*mu_a) && as_int(*mu_a) == 443801,
@@ -2299,7 +2299,7 @@ static void ac4438_fiberless_cross_agent_query_stale() {
         auto cstab = cs.eval("(query :children-stable q4438 :index 0)");
         CHECK(cstab && kind4106(cs, *cstab) == "stale-ref",
               "4438: B query:children-stable is stale-ref");
-        auto mu_b = cs.eval("(mutate:tweak-literal plit4438 0)");
+        auto mu_b = cs.eval("(mutate :tweak-literal plit4438 0)");
         const auto kmb = mu_b ? kind4106(cs, *mu_b) : std::string("missing");
         CHECK(mu_b && kmb == "stale-ref",
               std::format("4438: B mutate of A's packed v2 is stale-ref (got {})", kmb));

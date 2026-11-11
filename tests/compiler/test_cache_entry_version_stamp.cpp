@@ -162,7 +162,7 @@ static void ac7_service_stamp() {
     CHECK(cs.eval("(set-code \"(define g (lambda (n) (+ n 1)))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     // Mutate forces re-lower path which re-stamps
-    (void)cs.eval("(mutate:rebind \"g\" \"(lambda (n) (+ n 2))\")");
+    (void)cs.eval("(mutate :rebind \"g\" \"(lambda (n) (+ n 2))\")");
     (void)cs.eval("(eval-current)");
     if (m) {
         CHECK(m->cache_entry_version_stamp_total.load() >= s0, "stamps non-decreasing");

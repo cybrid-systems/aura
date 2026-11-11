@@ -24,12 +24,12 @@ PROG = """
 (require "std/evo-core" all:)
 (set-code "(define (score x) (* x 2))")
 (eval-current)
-(define root-rb (mutate:rebind "score" "(lambda (x) (* x 3))" "root"))
+(define root-rb (mutate :rebind "score" "(lambda (x) (* x 3))" "root"))
 (eval-current)
 (define c (evo:candidate "(lambda (x) (* x 9))" (hash "target" "score")))
 (define t (evo:trial c
                      (hash "apply" (lambda (cand)
-                                     (eq? (mutate:rebind "score"
+                                     (eq? (mutate :rebind "score"
                                                          (evo:candidate-genome cand)
                                                          "child") #t))
                            "evaluate" (lambda (cand)

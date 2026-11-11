@@ -16,7 +16,7 @@
 (define (run n start)
   (let loop ((i 0))
     (if (< i n)
-        (begin (mutate:rebind "f" (body (+ start i)) "t") (eval-current) (loop (+ i 1))))))
+        (begin (mutate :rebind "f" (body (+ start i)) "t") (eval-current) (loop (+ i 1))))))
 (define (live) (engine:metrics "query:tc-constraints-live"))
 (run 20 0)
 (define s0 (live))
