@@ -146,9 +146,6 @@
     (list "pipeline"
       (list "Synthesize pipeline names (v2 implementation detail of std/synthesize; not a parallel surface)"
             "(require \"std/synthesize\" all:)(synthesize:run-tests code tests)"))
-    (list "orchestrator"
-      (list "One-release forwarder to std/orch (#5004); import std/orch in new code"
-            "(require \"std/orch\" all:)(orch:pipeline steps input)"))
     ; ── Collection + data ──
     (list "list"
       (list "SRFI-1 list utilities (foldl/foldr, any/every, cons*, append-map, filter-map) [perf-tier:hot #923/#928]"

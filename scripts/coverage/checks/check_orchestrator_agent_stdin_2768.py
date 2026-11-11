@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Issue #2768: std/orchestrator agent surface usable on stdin denseness host.
+"""Issue #2768: std/orch agent surface usable on stdin denseness host.
 
 Root cause #2766 (require-before-export free-vars). This issue tracks the
 stdlib multi-agent acceptance: agent:spawn/ask/list/status/stop/restart +
 orch:registry-epoch + optional orch:parallel-with-yield.
 
 Contract:
-  AC1 orchestrator.aura export before require + #2768/#2766 notes
+  AC1 std/orch.aura export before require + #2768/#2766 notes
   AC2 ac2768_* spawn/ask/list/epoch + lifecycle tests present
   AC3 host fix cited (#2766) in eval_flat / module loader
   AC4 this linter wired in build.py; no docs/design/2768-*
@@ -36,7 +36,7 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
-    orch = _read("lib/std/orchestrator.aura")
+    orch = _read("lib/std/orch.aura")
     t = _read("tests/compiler/test_module_require_freevar.cpp")
     efl = _read("src/compiler/evaluator_eval_flat.cpp")
     loader = _read("src/compiler/evaluator_module_loader.cpp")
@@ -45,8 +45,10 @@ def main() -> int:
     # AC1 — export-first stdlib form + notes.
     must("#2768", "AC1", orch)
     must("#2766", "AC1", orch)
-    must("agent:spawn", "AC1", orch)
-    must("agent:ask", "AC1", orch)
+    # Issue #5132: the pre-#5004 agent:* aliases went with std/orchestrator;
+    # the live surface is the orch:* pair below.
+    must("orch:spawn", "AC1", orch)
+    must("orch:ask", "AC1", orch)
     must("orch:registry-epoch", "AC1", orch)
 
     # Skip comment lines when locating top-level forms (docs mention require).
@@ -64,7 +66,7 @@ def main() -> int:
     exp = first_toplevel("(export ")
     req = first_toplevel("(require ")
     if exp < 0 or req < 0 or exp > req:
-        fails.append(f"AC1: export must appear before first require in orchestrator.aura (exp={exp}, req={req})")
+        fails.append(f"AC1: export must appear before first require in std/orch.aura (exp={exp}, req={req})")
 
     # AC2 — tests.
     must("ac2768_1_orchestrator_export_first", "AC2", t)
@@ -73,7 +75,7 @@ def main() -> int:
     must("ac2768_4_parallel_with_yield_smoke", "AC2", t)
     must("ac2768_5_linter", "AC2", t)
     must("agent:status", "AC2", t)
-    must("agent:restart", "AC2", t)
+    must("orch:restart", "AC2", t)
     must("orch:registry-epoch", "AC2", t)
 
     # AC3 — host fix still present (#2766).
@@ -93,7 +95,7 @@ def main() -> int:
             print(f"FAIL: {f}", file=sys.stderr)
         print(f"\n{len(fails)} contract row(s) failed", file=sys.stderr)
         return 1
-    print("OK: Issue #2768 std/orchestrator agent stdin denseness surface — all AC rows satisfied")
+    print("OK: Issue #2768 std/orch agent stdin denseness surface — all AC rows satisfied")
     return 0
 
 

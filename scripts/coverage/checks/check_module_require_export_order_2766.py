@@ -76,7 +76,7 @@ def main() -> int:
     must("ac2766_4_source_cite", "AC4", t)
     must("ac2766_5_linter", "AC4", t)
     must("bad-order", "AC4", t)
-    must("agent:spawn", "AC4", t)
+    must("orch:spawn", "AC4", t)
 
     # AC5 — linter wire + no docs.
     must("check_module_require_export_order_2766", "AC5", build)

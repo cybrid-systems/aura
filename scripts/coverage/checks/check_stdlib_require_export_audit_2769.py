@@ -2,14 +2,14 @@
 """Issue #2769: stdlib-wide require-before-export audit + regression net.
 
 #2766 fixed host free-var capture when (require …) preceded (export …).
-#2768 fixed std/orchestrator acceptance. This issue audits *all* of
+#2768 fixed std/orch acceptance. This issue audits *all* of
 lib/std so latent denseness landmines (llm / net / hot-* / mutate
 consumers) stay green and form-order policy is enforced.
 
 Contract (one row per AC):
   AC1 inventory: every lib/std/*.aura classified order + module-cell?
   AC2 denseness smoke paths green (llm / hot-strategy / agent /
-      orchestrator / mutate / query) — static + optional live aura
+      orch / mutate / query) — static + optional live aura
   AC3 host #2766 canary still present (shared free-var residual)
   AC4 form-order lint: no require-before-export left in lib/std
       (canonical export-first; --fix can reorder)
@@ -39,9 +39,9 @@ STD = ROOT / "lib" / "std"
 DENSENESS_SMOKES: list[tuple[str, str, str]] = [
     # (module, label, aura expression → must not print "unbound variable")
     (
-        "std/orchestrator",
-        "agent:spawn/ask",
-        '(require "std/orchestrator" all:)'
+        "std/orch",
+        "orch:spawn/ask",
+        '(require "std/orch" all:)'
         "(display (orch:registry-epoch)) (newline)"
         '(agent:spawn "ac2769" (lambda (x) (+ x 1)))'
         '(display (agent:ask "ac2769" 41)) (newline)',
@@ -248,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     # Inventory must cover denseness modules explicitly.
     by_rel = {r.rel: r for r in rows}
     for key in (
-        "lib/std/orchestrator.aura",
+        "lib/std/orch.aura",
         "lib/std/agent.aura",
         "lib/std/llm.aura",
         "lib/std/net.aura",
@@ -271,7 +271,7 @@ def main(argv: list[str] | None = None) -> int:
     must("*llm-rate-limit*", "AC2", _read("lib/std/llm.aura"))
     must("hot-strategy:version", "AC2", _read("lib/std/hot-strategy.aura"))
     must("*hs-version*", "AC2", _read("lib/std/hot-strategy.aura"))
-    must("agent:spawn", "AC2", _read("lib/std/orchestrator.aura"))
+    must("orch:spawn", "AC2", _read("lib/std/orch.aura"))
     must("agent:loop-stats", "AC2", _read("lib/std/agent.aura"))
     must("mutate:boundary-safe?", "AC2", _read("lib/std/mutate.aura"))
     must("query:list-categories", "AC2", _read("lib/std/query.aura"))
@@ -307,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
         "lib/std/net.aura",
         "lib/std/io.aura",
         "lib/std/agent.aura",
-        "lib/std/orchestrator.aura",
+        "lib/std/orch.aura",
         "lib/std/ast-viz.aura",
     ):
         info = by_rel.get(key)

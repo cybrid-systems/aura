@@ -889,7 +889,7 @@
     },
     {
       "name": "multi_agent_pipeline",
-      "code": "(require \"std/orchestrator\" all:) (define (pipeline x)   (define r1 (fiber:join (fiber:spawn (lambda () (* x 2)))))   (define r2 (fiber:join (fiber:spawn (lambda () (+ r1 1)))))   (define r3 (fiber:join (fiber:spawn (lambda () (* r2 3)))))   r3) (pipeline 10)",
+      "code": "(require \"std/orch\" all:) (define (pipeline x)   (define r1 (fiber:join (fiber:spawn (lambda () (* x 2)))))   (define r2 (fiber:join (fiber:spawn (lambda () (+ r1 1)))))   (define r3 (fiber:join (fiber:spawn (lambda () (* r2 3)))))   r3) (pipeline 10)",
       "pipeline": "eval",
       "time_s": 0.066158,
       "output": "",
@@ -931,7 +931,7 @@
     },
     {
       "name": "par_orch_3_agents",
-      "code": "(require \"std/orchestrator\" all:) (orch:parallel (list (lambda (x) (* x x)) (lambda (x) (* x 2)) (lambda (x) (+ x 100))) 5)",
+      "code": "(require \"std/orch\" all:) (orch:parallel (list (lambda (x) (* x x)) (lambda (x) (* x 2)) (lambda (x) (+ x 100))) 5)",
       "pipeline": "eval",
       "time_s": 0.06644,
       "output": "",
@@ -952,7 +952,7 @@
     },
     {
       "name": "par_orch_5_agents",
-      "code": "(require \"std/orchestrator\" all:) (orch:parallel (list (lambda (x) (+ x 1)) (lambda (x) (+ x 2)) (lambda (x) (+ x 3)) (lambda (x) (+ x 4)) (lambda (x) (+ x 5))) 0)",
+      "code": "(require \"std/orch\" all:) (orch:parallel (list (lambda (x) (+ x 1)) (lambda (x) (+ x 2)) (lambda (x) (+ x 3)) (lambda (x) (+ x 4)) (lambda (x) (+ x 5))) 0)",
       "pipeline": "eval",
       "time_s": 0.068954,
       "output": "",

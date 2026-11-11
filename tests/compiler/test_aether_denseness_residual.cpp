@@ -53,7 +53,7 @@ static bool eval_int_eq(CompilerService& cs, std::string_view e, std::int64_t n)
 static void ac1_orch_parallel_typecheck() {
     std::println("\n--- #2578 AC1: orch:parallel 2-arg typecheck ---");
     CompilerService cs;
-    CHECK(eval_ok(cs, "(require \"std/orchestrator\" all:)"), "require orch");
+    CHECK(eval_ok(cs, "(require \"std/orch\" all:)"), "require orch");
     CHECK(eval_ok(cs, "(set-code \"(define (f x) (orch:parallel (list (lambda (y) y)) x))\")"),
           "set-code 2-arg");
     auto tc = cs.eval("(typecheck-current)");
@@ -70,7 +70,7 @@ static void ac2_orch_freevar_survive_rebind() {
     // before export filtering — two-pass letrec (lambdas then values).
     std::println("\n--- #2578 AC2: orch free-vars survive unimpacted rebind ---");
     CompilerService cs;
-    CHECK(eval_ok(cs, "(require \"std/orchestrator\" all:)"), "require orch");
+    CHECK(eval_ok(cs, "(require \"std/orch\" all:)"), "require orch");
     CHECK(eval_ok(cs, "(require \"std/mutate\" all:)"), "require mutate");
     auto pre = cs.eval("(orch:parallel (list (lambda (y) (* y 2))) 5)");
     CHECK(pre.has_value() && is_pair(*pre), "pre orch:parallel");
@@ -100,7 +100,7 @@ static void ac2_orch_freevar_survive_rebind() {
 static void ac3_rebind_body_uses_orch() {
     std::println("\n--- #2578 AC3: rebind workspace body to orch:parallel ---");
     CompilerService cs;
-    CHECK(eval_ok(cs, "(require \"std/orchestrator\" all:)"), "require orch");
+    CHECK(eval_ok(cs, "(require \"std/orch\" all:)"), "require orch");
     CHECK(eval_ok(cs, "(require \"std/mutate\" all:)"), "require mutate");
     CHECK(eval_ok(cs, "(set-code \"(define (g x) (+ x 1))\")"), "set-code g");
     CHECK(eval_ok(cs, "(eval-current)"), "eval g");

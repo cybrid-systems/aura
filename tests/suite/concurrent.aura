@@ -1,5 +1,5 @@
 (require "std/test" all:)
-(require "std/orchestrator" all:)
+(require "std/orch" all:)
 
 ;; ═══════════════════════════════════════════════════════════════
 ;; Concurrent model tests

@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**107** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**105** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -38,7 +38,6 @@
 | `std/evo-core` | `evo:help` `evo:schema` `evo:candidate` `evo:candidate?` `evo:child` `evo:candidate-id` `evo:candidate-genome` `evo:candidate-parents` … (+38) | lib/std/evo-core.aura — Issue #4939 (v0.2 P0): the shared base every |
 | `std/evo-meta` | `meta:help` `meta:schema` `meta:loop` `meta:loop?` `meta:refused?` `meta:loop-report` `meta:step!` `meta:approve!` … (+43) | lib/std/evo-meta.aura — Issue #4944 (v0.2 P5): the meta layer of the |
 | `std/evo` | `evo:records` `evo:worldline` `evo:parse-line` `evo:parse-log` `evo:record-count` `evo:keep?` `evo:arm-of` `evo:arm-stats` … (+19) | lib/std/evo.aura — experience layer over the evo:record! worldline (#5004) |
-| `std/evolve` | `evolve-strategy` | evolve.aura -- Strategy evolution from intend analytics |
 | `std/exception` | `with-exception-handler` `raise-continuable` `error-object?` `error-object-message` `error-object-irritants` `guard` `raise` | lib/std/exception.aura — R7RS (scheme base) exception surface (Issue #5005) |
 | `std/extract` | `extract-code` `trim-str` `find-in-str` | lib/std/extract.aura — Code extraction from LLM responses |
 | `std/ffi` | `c-load` `c-func` `c-alloc` `c-free` `c-opaque` `c-opaque?` `c-opaque->int` `c-struct-size` … (+14) | ffi.aura — C FFI host prims (Issue #3176) |
@@ -69,8 +68,7 @@
 | `std/mutate` | `mutate:summary` `mutate:by-operator` `mutate:last-info` `mutate:operator-count` `mutate:rolled-back?` `mutate:rollback-rate` `mutate:boundary-depth` `mutate:boundary-safe?` … (+4) | — |
 | `std/mutation-atomic` | `typed-mutate-atomic-all` | lib/std/mutation-atomic.aura — Issue #1442 convenience over (typed-mutate-atomic) |
 | `std/net` | `http-get-json` `http-post-json` `url-encode` `url-decode` `url-join` `fetch-try` | lib/std/net.aura — Network client library |
-| `std/orch` | `orch:spawn` `orch:handle` `orch:list` `orch:status` `orch:stop` `orch:restart` `orch:local?` `orch:registry-epoch` … (+37) | lib/std/orch.aura — multi-agent orchestration on the five primitives (#5004) |
-| `std/orchestrator` | `orch:define-role` `orch:step` `orch:pipeline` `orch:conduct` `orch:parallel` `orch:parallel-with-yield` `orch:supervise` `orch:run` … (+11) | lib/std/orchestrator.aura — one release of forwarding to std/orch (#5004) |
+| `std/orch` | `orch:spawn` `orch:handle` `orch:list` `orch:status` `orch:stop` `orch:restart` `orch:local?` `orch:registry-epoch` … (+50) | lib/std/orch.aura — multi-agent orchestration on the five primitives (#5004) |
 | `std/parameter` | `make-parameter` `parameterize` `parameter?` `parameter-set!` | lib/std/parameter.aura — R7RS parameters (Issue #5005) |
 | `std/pareto` | `pareto:archive` `pareto:archive?` `pareto:insert!` `pareto:entries` `pareto:front` `pareto:size` `pareto:dominates?` `pareto:cd-dominates?` … (+17) | lib/std/pareto.aura — Issue #4940 (v0.2 P1): algorithm-independent Pareto |
 | `std/persist` | `persist:save` `persist:load` `persist:info` `persist:version` `persist:format-version` `persist:round-trip?` | lib/std/persist.aura — Issue #1381 |

@@ -1,5 +1,5 @@
 (require "std/test" all:)
-(require "std/orchestrator" all:)
+(require "std/orch" all:)
 
 ; ── orch:define-role ──
 (test-suite "orch:define-role-basic"
@@ -36,10 +36,10 @@
 
 ; ── agent:spawn (in stdin mode: should return structured error) ──
 (test-suite "orch:agent-spawn-stdin"
-  (check (pair? (agent:spawn "test-agent"))))
+  (check (pair? (orch:spawn "test-agent"))))
 
 (test-suite "orch:agent-list-stdin"
-  (check (null? (agent:list))))
+  (check (null? (orch:list))))
 
 ; ── orch:parallel ──
 (test-suite "orch:parallel-basic"
@@ -61,56 +61,56 @@
 ;; ═══════════════════════════════════════════════════════════════
 
 (test-suite "orch:agent-spawn-with-handler"
-  (check (string=? (agent:spawn "adder" (lambda (x) (+ x 1))) "adder")
+  (check (string=? (orch:spawn "adder" (lambda (x) (+ x 1))) "adder")
     "agent:spawn returns agent name"))
 
 (test-suite "orch:agent-ask-local"
-  (agent:spawn "double" (lambda (x) (* x 2)))
-  (check (= (agent:ask "double" 21) 42)
+  (orch:spawn "double" (lambda (x) (* x 2)))
+  (check (= (orch:ask "double" 21) 42)
     "agent:ask invokes handler and returns result"))
 
 (test-suite "orch:agent-ask-multiple"
-  (agent:spawn "triple" (lambda (x) (* x 3)))
-  (check (and (= (agent:ask "triple" 5) 15) (= (agent:ask "triple" 10) 30))
+  (orch:spawn "triple" (lambda (x) (* x 3)))
+  (check (and (= (orch:ask "triple" 5) 15) (= (orch:ask "triple" 10) 30))
     "agent:ask can be called multiple times"))
 
 (test-suite "orch:agent-status-basic"
-  (agent:spawn "status-test" (lambda (x) x))
-  (check (string=? (agent:status "status-test") "running")
+  (orch:spawn "status-test" (lambda (x) x))
+  (check (string=? (orch:status "status-test") "running")
     "agent:status returns 'running' for active agent"))
 
 (test-suite "orch:agent-stop-and-status"
-  (agent:spawn "stopper" (lambda (x) x))
-  (agent:stop "stopper")
-  (check (string=? (agent:status "stopper") "stopped")
+  (orch:spawn "stopper" (lambda (x) x))
+  (orch:stop "stopper")
+  (check (string=? (orch:status "stopper") "stopped")
     "agent:stop changes status to 'stopped'"))
 
 (test-suite "orch:agent-restart-replaces-handler"
-  (agent:spawn "replacer" (lambda (x) (+ x 1)))
-  (agent:restart "replacer" (lambda (x) (* x 2)))
-  (check (= (agent:ask "replacer" 5) 10)
+  (orch:spawn "replacer" (lambda (x) (+ x 1)))
+  (orch:restart "replacer" (lambda (x) (* x 2)))
+  (check (= (orch:ask "replacer" 5) 10)
     "agent:restart replaces handler"))
 
 (test-suite "orch:agent-list-after-spawn"
-  (agent:spawn "agent-a" (lambda (x) x))
-  (agent:spawn "agent-b" (lambda (x) x))
-  (define names (agent:list))
+  (orch:spawn "agent-a" (lambda (x) x))
+  (orch:spawn "agent-b" (lambda (x) x))
+  (define names (orch:list))
   (check (and (pair? names) (member "agent-a" names) (member "agent-b" names))
     "agent:list includes all spawned agents"))
 
 (test-suite "orch:agent-ask-unknown-agent"
   ;; agent:ask on non-existent agent falls through to send (returns error pair)
-  (check (pair? (agent:ask "ghost" 42))
+  (check (pair? (orch:ask "ghost" 42))
     "agent:ask on unknown agent returns error pair"))
 
 (test-suite "orch:agent-stop-unknown"
-  (check (eq? (agent:stop "nonexistent") #f)
+  (check (eq? (orch:stop "nonexistent") #f)
     "agent:stop on unknown returns #f"))
 
 (test-suite "orch:agent-restart-creates-if-missing"
   ;; restart on non-existent agent creates it
-  (agent:restart "newbie" (lambda (x) (* x x)))
-  (check (= (agent:ask "newbie" 6) 36)
+  (orch:restart "newbie" (lambda (x) (* x x)))
+  (check (= (orch:ask "newbie" 6) 36)
     "agent:restart creates new agent if name not found"))
 
 ;; ═══════════════════════════════════════════════════════════════
