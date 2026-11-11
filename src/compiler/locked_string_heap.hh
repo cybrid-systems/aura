@@ -711,7 +711,10 @@ public:
             unindex_slot_locked(idx);
             index_slot_locked(idx);
         } catch (const std::bad_alloc&) {
-            // The slot stays unindexed. The next intern misses and mints.
+            // [SILENCE-PRIM-#5146] OOM re-indexing after a content write: the
+            // slot stays unindexed, which is the degraded-but-correct face -
+            // the next intern misses and mints a fresh slot instead of
+            // hitting a stale index entry.
         }
     }
 
@@ -1113,7 +1116,9 @@ private:
             slot_hash_[idx] = h;
             slot_indexed_[idx] = 1;
         } catch (const std::bad_alloc&) {
-            // Leave the slot unindexed. The next intern misses and mints.
+            // [SILENCE-PRIM-#5146] OOM growing the index tables: leave the
+            // slot unindexed rather than poisoning the heap. A miss costs one
+            // mint; a half-written index would hand out a wrong slot.
         }
     }
 
