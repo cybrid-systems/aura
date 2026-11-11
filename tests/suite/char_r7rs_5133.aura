@@ -1,0 +1,34 @@
+; #5133: pin the R7RS (scheme char) surface. Characters are code points stored
+; as integers, so the case mappers answer an integer and the comparisons are
+; integer comparisons — that is the model std/char documents.
+(require "std/char" all:)
+
+(define (check)
+  (and
+   ; case-insensitive comparison folds both sides
+   (eq? (char-ci=? 97 65) #t)
+   (eq? (char-ci=? 97 98) #f)
+   ; the mappers answer the upper/lower case code point
+   (= (char-upcase 97) 65)
+   (= (char-downcase 65) 97)
+   (= (char-upcase 65) 65)
+   (= (char-downcase 97) 97)
+   (= (char-foldcase 65) 97)
+   ; predicates
+   (eq? (char-alphabetic? 120) #t)
+   (eq? (char-alphabetic? 55) #f)
+   (eq? (char-numeric? 55) #t)
+   (eq? (char-numeric? 120) #f)
+   (eq? (char-whitespace? 32) #t)
+   (eq? (char-whitespace? 120) #f)
+   ; the R7RS case predicates built on top
+   (eq? (char-upper-case? 65) #t)
+   (eq? (char-lower-case? 97) #t)))
+
+(define host (if (check) 1 0))
+(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+
+(if (and (= host 1) (= guest 1))
+    (begin (display "OK-5133-char") (newline))
+    (begin (display "FAIL-5133-char host=") (display host)
+           (display " guest=") (display guest) (newline) (exit 1)))
