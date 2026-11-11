@@ -25,6 +25,12 @@
 
 ; foldr: right fold via reverse + foldl (iterative stack; #1549)
 ; foldr f init (a b c) ≡ f(a, f(b, f(c, init)))
+;
+; Issue #5133: the accumulator comes first in both folds, i.e. these are the
+; R7RS fold-left / fold-right shapes. SRFI-1 spells the same walks with the
+; element first — (fold kons knil lis) calls (kons elem acc) — so an SRFI-1
+; call site has to swap its lambda arguments. The modules that link here
+; (INDEX, std/list) describe the folds as R7RS-shaped for that reason.
 (define (foldr f init lst)
   (foldl (lambda (acc x) (f x acc)) init (reverse lst)))
 
