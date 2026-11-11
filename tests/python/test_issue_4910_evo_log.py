@@ -148,6 +148,55 @@ class EvoLog(unittest.TestCase):
             self.assertIn("holdout 0.71 &gt;= 0.70", page)
             self.assertNotIn("http://", page.replace("http://www.w3.org", ""))
 
+    def test_restore_appends_rollback_under_preset_dev(self) -> None:
+        # Issue #5150: preset dev (restricted) must still append the
+        # mw:restore ROLLBACK row, and `aura evo log` counts it.
+        prog = (
+            '(set-code "(define (f x) (* x 2))")\n'
+            "(eval-current)\n"
+            '(define snap (mutate :snapshot "s"))\n'
+            '(mutate :rebind "f" "(define (f x) (+ x 100))" "candidate")\n'
+            "(mutate :restore snap)\n"
+            '(display "rolled back\\n")\n'
+        )
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "p.aura").write_text(prog)
+            log = Path(d) / "evo.jsonl"
+            env = dict(os.environ)
+            env["AURA_EVO_LOG"] = str(log)
+            env["AURA_RUNTIME_DIR"] = str(ROOT)
+            env.pop("AURA_SANDBOX", None)
+            env.pop("AURA_EVO_RUN", None)
+            r = aura(["--preset", "dev", "p.aura"], d, env)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            recs = [json.loads(line) for line in log.read_text().splitlines()]
+            kinds = [(x["kind"], x["decision"]) for x in recs]
+            self.assertIn(("mutate:rebind", "KEEP"), kinds)
+            self.assertIn(("mw:restore", "ROLLBACK"), kinds)
+            shown = aura(["evo", "log", "--log", str(log)], d, env_for(None))
+            self.assertEqual(shown.returncode, 0, shown.stderr)
+            self.assertIn("1 KEEP, 1 ROLLBACK", shown.stdout)
+            self.assertIn("mw:restore", shown.stdout)
+
+        # Issue #5139: the rollback row is not the worldline tip. The
+        # record has to be in the same process — the tip is in-memory.
+        tipped = prog + '(display (evo:record! "after" "keep" "after rollback"))\n(newline)\n'
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "p.aura").write_text(tipped)
+            log = Path(d) / "evo.jsonl"
+            env = dict(os.environ)
+            env["AURA_EVO_LOG"] = str(log)
+            env["AURA_RUNTIME_DIR"] = str(ROOT)
+            env.pop("AURA_SANDBOX", None)
+            env.pop("AURA_EVO_RUN", None)
+            r = aura(["--preset", "dev", "p.aura"], d, env)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            recs = [json.loads(line) for line in log.read_text().splitlines()]
+            restore = next(x for x in recs if x["kind"] == "mw:restore")
+            after = next(x for x in recs if x["kind"] == "record")
+            self.assertEqual(after["parent"], "")
+            self.assertNotEqual(after["parent"], restore["id"])
+
     # ── Issue #4939: schema v=2 (evo-core) ──────────────────────────
     V2_PROG = (
         '(require "std/evo-core" all:)\n'
