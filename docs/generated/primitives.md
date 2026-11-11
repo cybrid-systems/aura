@@ -2,20 +2,20 @@
 
 # Primitives (generated)
 
-**547** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**504** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 546 · **stdlib-candidate** 0 · **delete** 1
+**kernel** 503 · **stdlib-candidate** 0 · **delete** 1
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 51 primitives (9%)
-- **core**: 460 primitives (84%)
-- **internal-observable**: 35 primitives (6%)
+- **mutation-safety**: 51 primitives (10%)
+- **core**: 417 primitives (83%)
+- **internal-observable**: 35 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
 Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.py` (Issue #559 taxonomy: mutation-safety / internal-observable / convenience / core default). Per-primitive classification overrides via `docs/primitive_categories.yaml` were removed per Anqi 2026-07-19 directive (aura philosophy, no per-issue plan docs).
@@ -475,52 +475,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `ffi:pin-buffer` *[core]* `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `ffi:unpin-buffer` *[core]* `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 
-## Mw: (43)
-
-- `mw:arena-compact` *[core]* `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:arena-compact-with-policy` *[core]* `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:arena-request-defrag` *[core]* `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:auto-rollback-on-panic` *[core]* `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
-- `mw:closure-free` *[core]* `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:compact-env-frames` *[core]* `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `mw:compact-nodes` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `mw:define-strategy` *[core]* `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `mw:define-struct` *[core]* `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `mw:discard` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:exception-fibers-clear` *[core]* `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `mw:hot-swap-fn` *[core]* `kernel` — `src/compiler/evaluator_primitives_types.cpp`
-- `mw:merge-3way` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:overlay-begin` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-commit` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-conflict` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-define` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-get` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-has` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-pending` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-report` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-rollback` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-set!` *[core]* `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:propagate-marker` *[core]* `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `mw:recycle-nodes` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `mw:restore` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `mw:rollback-latest` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:rollback-to` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:scheduler-pin` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `mw:self-heal-on-drift` *[core]* `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `mw:session-create` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `mw:set-allow-macro-mutate` *[core]* `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `mw:set-auto-compact-threshold` *[core]* `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:set-concurrent-mutation-policy` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:set-marker` *[core]* `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `mw:set-memory-limit` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:set-provenance` *[core]* `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `mw:snapshot` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `mw:string-pool-compact` *[core]* `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:sync-from` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:try-mutation` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:tune-gc-frequency` *[core]* `kernel` — `src/compiler/evaluator_primitives_query.cpp`
-- `mw:workspace-delete` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-
 ## Offload: (5)
 
 - `offload:await` *[core]* `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
@@ -707,7 +661,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace-persist-info` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-state` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 
-### Core builtins (must remain primitive) (460)
+### Core builtins (must remain primitive) (417)
 
 - `%base64-decode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -921,49 +875,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `mutation-lightweight-commit` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
 - `mutation-lightweight-rollback` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
 - `mutation-log-compact` `kernel` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `mw:arena-compact` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:arena-compact-with-policy` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:arena-request-defrag` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:auto-rollback-on-panic` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
-- `mw:closure-free` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:compact-env-frames` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `mw:compact-nodes` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `mw:define-strategy` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
-- `mw:define-struct` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `mw:discard` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:exception-fibers-clear` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `mw:hot-swap-fn` `kernel` — `src/compiler/evaluator_primitives_types.cpp`
-- `mw:merge-3way` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:overlay-begin` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-commit` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-conflict` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-define` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-get` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-has` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-pending` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-report` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-rollback` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-set!` `kernel` — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:propagate-marker` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `mw:recycle-nodes` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `mw:restore` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `mw:rollback-latest` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:rollback-to` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:scheduler-pin` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `mw:self-heal-on-drift` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `mw:session-create` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `mw:set-allow-macro-mutate` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `mw:set-auto-compact-threshold` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:set-concurrent-mutation-policy` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:set-marker` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `mw:set-memory-limit` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:set-provenance` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `mw:snapshot` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `mw:string-pool-compact` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:sync-from` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:try-mutation` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:tune-gc-frequency` `kernel` — `src/compiler/evaluator_primitives_query.cpp`
-- `mw:workspace-delete` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `my-id` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `newline` `kernel` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `not` `kernel` — `src/compiler/evaluator_primitives_builtins.cpp`
@@ -1216,7 +1127,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (546)
+### kernel (503)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1474,49 +1385,6 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `mutation-lightweight-commit` *[K-WS]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `mutation-lightweight-rollback` *[K-WS]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `mutation-log-compact` *[K-WS]* — `src/compiler/evaluator_primitives_mutation.cpp`
-- `mw:arena-compact` *[K-WS]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:arena-compact-with-policy` *[K-WS]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:arena-request-defrag` *[K-WS]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:auto-rollback-on-panic` *[K-WS]* — `src/compiler/evaluator_primitives_obs_eval.cpp`
-- `mw:closure-free` *[K-WS]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:compact-env-frames` *[K-WS]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `mw:compact-nodes` *[K-WS]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `mw:define-strategy` *[K-WS]* — `src/compiler/evaluator_primitives_agent.cpp`
-- `mw:define-struct` *[K-WS]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `mw:discard` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:exception-fibers-clear` *[K-WS]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `mw:hot-swap-fn` *[K-WS]* — `src/compiler/evaluator_primitives_types.cpp`
-- `mw:merge-3way` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:overlay-begin` *[K-WS]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-commit` *[K-WS]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-conflict` *[K-WS]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-define` *[K-WS]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-get` *[K-WS]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-has` *[K-WS]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-pending` *[K-WS]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-report` *[K-WS]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-rollback` *[K-WS]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:overlay-set!` *[K-WS]* — `src/compiler/evaluator_primitives_fiber_cow.cpp`
-- `mw:propagate-marker` *[K-WS]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `mw:recycle-nodes` *[K-WS]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `mw:restore` *[K-WS]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `mw:rollback-latest` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:rollback-to` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:scheduler-pin` *[K-WS]* — `src/compiler/evaluator_primitives_messaging.cpp`
-- `mw:self-heal-on-drift` *[K-WS]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `mw:session-create` *[K-WS]* — `src/compiler/evaluator_primitives_messaging.cpp`
-- `mw:set-allow-macro-mutate` *[K-WS]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `mw:set-auto-compact-threshold` *[K-WS]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:set-concurrent-mutation-policy` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:set-marker` *[K-WS]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `mw:set-memory-limit` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:set-provenance` *[K-WS]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `mw:snapshot` *[K-WS]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `mw:string-pool-compact` *[K-WS]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `mw:sync-from` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:try-mutation` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `mw:tune-gc-frequency` *[K-WS]* — `src/compiler/evaluator_primitives_query.cpp`
-- `mw:workspace-delete` *[K-WS]* — `src/compiler/evaluator_primitives_workspace.cpp`
 - `my-id` *[K-FIBER]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `newline` *[K-CTRL]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `not` *[K-HOT]* — `src/compiler/evaluator_primitives_builtins.cpp`

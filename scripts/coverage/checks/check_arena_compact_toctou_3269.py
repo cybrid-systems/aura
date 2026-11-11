@@ -50,7 +50,7 @@ def main() -> int:
     must("with_arena_compact_idle", "AC1 helper", mem)
     must("WorkspaceUniqueIfNeeded compact_hold", "AC1 unique", mem)
     for name in (
-        'add("mw:arena-compact"',
+        '"mw:arena-compact"',
         'sink_arena_prim("arena:defrag"',
         'sink_arena_prim("arena:defrag-now"',
         'sink_arena_prim("arena:live-compact"',

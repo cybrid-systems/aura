@@ -4173,7 +4173,7 @@ void CompilePrims::register_compile_p42(PrimRegistrar add, Evaluator& ev) {
     // tooling to correct marker drift after a manual mutation
     // sequence. The primitive does NOT propagate the marker to
     // children — use syntax:propagate-marker for that.
-    add("mw:set-marker", [&ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("mw:set-marker", [&ev](const auto& a) -> EvalValue {
         // Issue #1002: removed dead `bool ok` (error paths return merr
         // immediately; ok was never read).
         if (a.size() < 2 || !is_int(a[1])) {
@@ -4234,7 +4234,7 @@ void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
     // Issue #1782: FlatAST children can form cycles (DAG / self-
     // mutate). Dense seen[] + kMaxVisit abort (parity #1679 /
     // #1682) prevents unbounded stack growth on cycles.
-    add("mw:propagate-marker", [&ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("mw:propagate-marker", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[1])) {
             return make_int(0);
         }
@@ -4306,7 +4306,7 @@ void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
     // mutation_id) lives in a side-table that the host can
     // populate out-of-band; this primitive only stores the
     // index. 0 = no provenance recorded.
-    add("mw:set-provenance", [&ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("mw:set-provenance", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[1]))
             return make_bool(false);
         const auto narg = parse_compile_node_arg(ev, a[0]);
@@ -5613,7 +5613,7 @@ void CompilePrims::register_compile_p58(PrimRegistrar add, Evaluator& ev) {
     add("qr:allow-macro-mutate?",
         [&ev](const auto&) -> EvalValue { return make_bool(ev.get_allow_macro_mutate()); });
 
-    add("mw:set-allow-macro-mutate", [&ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("mw:set-allow-macro-mutate", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_bool(a[0])) {
             return ev.make_merr("bad-arg", "usage: (mutate :set-allow-macro-mutate bool)");
         }
@@ -5905,7 +5905,7 @@ void CompilePrims::register_compile_p63(PrimRegistrar add, Evaluator& ev) {
     // internal to panic restore, not a free primitive — still Guard-
     // wrapped when free-standing via #1927).
     // #1897: try_acquire (typed quota reject) via shared helper.
-    add("mw:compact-env-frames", [&ev](const auto&) -> EvalValue {
+    ev.primitives().add_hidden("mw:compact-env-frames", [&ev](const auto&) -> EvalValue {
         return run_under_mutation_guard(
             ev,
             [&]() -> EvalValue {

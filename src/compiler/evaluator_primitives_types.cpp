@@ -519,7 +519,7 @@ void register_hot_swap_primitives(PrimRegistrar add, Evaluator& ev) {
     // Replaces the body of an existing function while keeping its id.
     // Closures referencing the function will use the new code on next call.
     // Requires the CompilerService to have set a hot-swap callback.
-    add("mw:hot-swap-fn", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.primitives().add_hidden("mw:hot-swap-fn", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() != 2 || !is_string(a[0]) || !is_string(a[1]))
             return make_bool(false);
         auto ni = as_string_idx(a[0]);

@@ -411,218 +411,233 @@ void RegSplitParts::register_fiber_overlay_primitives(
                                     ev.primitive_error_counter_ptr());
     };
 
-    add("mw:overlay-begin", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
-        if (auto denied = deny(ev, "fiber"))
-            return *denied;
-        // Snapshot the workspace COW mutation epoch: equal at commit time
-        // means the shared env did not move => fast-forward path.
-        const std::uint64_t epoch = aura::core::current_mutation_epoch();
-        const std::uint64_t base = reg.begin(owner, fiber_cow_overlay_key(), epoch);
-        // #4715 AC2: arm the env-path fast path for this body.
-        overlay_sync_tls(owner);
-        return make_int(static_cast<std::int64_t>(base));
-    });
+    ev.primitives().add_hidden(
+        "mw:overlay-begin", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
+            if (auto denied = deny(ev, "fiber"))
+                return *denied;
+            // Snapshot the workspace COW mutation epoch: equal at commit time
+            // means the shared env did not move => fast-forward path.
+            const std::uint64_t epoch = aura::core::current_mutation_epoch();
+            const std::uint64_t base = reg.begin(owner, fiber_cow_overlay_key(), epoch);
+            // #4715 AC2: arm the env-path fast path for this body.
+            overlay_sync_tls(owner);
+            return make_int(static_cast<std::int64_t>(base));
+        });
 
     // (mutate :overlay-define name value) — private define; nothing reaches the
     // shared env until fiber:overlay-commit.
-    add("mw:overlay-define", [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
-        if (auto denied = deny(ev, "fiber"))
-            return *denied;
-        if (a.size() < 2)
-            return make_bool(false);
-        const std::string name = overlay_arg_name(ev.string_heap_, a[0]);
-        if (name.empty())
-            return make_bool(false);
-        reg.write(owner, fiber_cow_overlay_key(), name, a[1], aura::core::current_mutation_epoch());
-        overlay_sync_tls(owner); // #4715 AC2: write() auto-begins
-        return make_bool(true);
-    });
+    ev.primitives().add_hidden("mw:overlay-define",
+                               [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
+                                   if (auto denied = deny(ev, "fiber"))
+                                       return *denied;
+                                   if (a.size() < 2)
+                                       return make_bool(false);
+                                   const std::string name = overlay_arg_name(ev.string_heap_, a[0]);
+                                   if (name.empty())
+                                       return make_bool(false);
+                                   reg.write(owner, fiber_cow_overlay_key(), name, a[1],
+                                             aura::core::current_mutation_epoch());
+                                   overlay_sync_tls(owner); // #4715 AC2: write() auto-begins
+                                   return make_bool(true);
+                               });
 
     // (mutate :overlay-set! name value) — private rebind of a base binding.
-    add("mw:overlay-set!", [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
-        if (auto denied = deny(ev, "fiber"))
-            return *denied;
-        if (a.size() < 2)
-            return make_bool(false);
-        const std::string name = overlay_arg_name(ev.string_heap_, a[0]);
-        if (name.empty())
-            return make_bool(false);
-        // Issue #4845: set! is a private rebind of an EXISTING binding. With
-        // no open overlay it used to auto-begin one (hiding the mistake) and
-        // with an unknown name it silently wrote a new private binding. Both
-        // are misuse: fail loudly instead of bypassing COW isolation.
-        const std::uint64_t key = fiber_cow_overlay_key();
-        if (!reg.active(owner, key))
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
-                "fiber:overlay-set!: no open overlay (call fiber:overlay-begin first)",
-                ev.primitive_error_counter_ptr());
-        EvalValue probe = make_void();
-        if (!reg.peek(owner, key, name, probe) && !ev.top_env().lookup(name)) {
-            std::string msg = "fiber:overlay-set!: unbound binding " + name +
-                              " (use fiber:overlay-define for a new binding)";
-            return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
-                                        ev.primitive_error_counter_ptr());
-        }
-        reg.write(owner, key, name, a[1], aura::core::current_mutation_epoch());
-        overlay_sync_tls(owner);
-        return make_bool(true);
-    });
+    ev.primitives().add_hidden(
+        "mw:overlay-set!", [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
+            if (auto denied = deny(ev, "fiber"))
+                return *denied;
+            if (a.size() < 2)
+                return make_bool(false);
+            const std::string name = overlay_arg_name(ev.string_heap_, a[0]);
+            if (name.empty())
+                return make_bool(false);
+            // Issue #4845: set! is a private rebind of an EXISTING binding. With
+            // no open overlay it used to auto-begin one (hiding the mistake) and
+            // with an unknown name it silently wrote a new private binding. Both
+            // are misuse: fail loudly instead of bypassing COW isolation.
+            const std::uint64_t key = fiber_cow_overlay_key();
+            if (!reg.active(owner, key))
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "fiber:overlay-set!: no open overlay (call fiber:overlay-begin first)",
+                    ev.primitive_error_counter_ptr());
+            EvalValue probe = make_void();
+            if (!reg.peek(owner, key, name, probe) && !ev.top_env().lookup(name)) {
+                std::string msg = "fiber:overlay-set!: unbound binding " + name +
+                                  " (use fiber:overlay-define for a new binding)";
+                return make_primitive_error(ev.string_heap_, ev.error_values_, msg,
+                                            ev.primitive_error_counter_ptr());
+            }
+            reg.write(owner, key, name, a[1], aura::core::current_mutation_epoch());
+            overlay_sync_tls(owner);
+            return make_bool(true);
+        });
 
     // (mutate :overlay-get name default) — overlay value, else the committed
     // env value, else default. The read copies one EvalValue: a concurrent
     // commit/rebind can only be observed before or after, never torn.
-    add("mw:overlay-get", [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
-        if (auto denied = deny(ev, "fiber"))
-            return *denied;
-        if (a.empty())
-            return make_bool(false);
-        const std::string name = overlay_arg_name(ev.string_heap_, a[0]);
-        if (name.empty())
-            return a.size() > 1 ? a[1] : make_bool(false);
-        EvalValue local = make_void();
-        if (reg.read(owner, fiber_cow_overlay_key(), name, local))
-            return local;
-        if (auto committed = ev.top_env().lookup(name)) {
-            // Top-level defines bind a cell (Env::bind(make_cell(ci))); resolve
-            // it so the caller sees the value the evaluator would see.
-            if (is_cell(*committed)) {
-                const auto ci = as_cell_id(*committed);
-                if (ci < ev.cells_.size())
-                    return ev.cells_[ci];
-            }
-            return *committed;
-        }
-        return a.size() > 1 ? a[1] : make_bool(false);
-    });
+    ev.primitives().add_hidden("mw:overlay-get",
+                               [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
+                                   if (auto denied = deny(ev, "fiber"))
+                                       return *denied;
+                                   if (a.empty())
+                                       return make_bool(false);
+                                   const std::string name = overlay_arg_name(ev.string_heap_, a[0]);
+                                   if (name.empty())
+                                       return a.size() > 1 ? a[1] : make_bool(false);
+                                   EvalValue local = make_void();
+                                   if (reg.read(owner, fiber_cow_overlay_key(), name, local))
+                                       return local;
+                                   if (auto committed = ev.top_env().lookup(name)) {
+                                       // Top-level defines bind a cell (Env::bind(make_cell(ci)));
+                                       // resolve it so the caller sees the value the evaluator
+                                       // would see.
+                                       if (is_cell(*committed)) {
+                                           const auto ci = as_cell_id(*committed);
+                                           if (ci < ev.cells_.size())
+                                               return ev.cells_[ci];
+                                       }
+                                       return *committed;
+                                   }
+                                   return a.size() > 1 ? a[1] : make_bool(false);
+                               });
 
     // (mutate :overlay-has name) — overlay-local membership only.
-    add("mw:overlay-has", [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
-        if (auto denied = deny(ev, "fiber"))
-            return *denied;
-        if (a.empty())
-            return make_bool(false);
-        const std::string name = overlay_arg_name(ev.string_heap_, a[0]);
-        if (name.empty())
-            return make_bool(false);
-        EvalValue local = make_void();
-        // Membership probe only: peek() keeps it out of the read set.
-        return make_bool(reg.peek(owner, fiber_cow_overlay_key(), name, local));
-    });
+    ev.primitives().add_hidden(
+        "mw:overlay-has", [&ev, &reg, owner, deny](std::span<const EvalValue> a) -> EvalValue {
+            if (auto denied = deny(ev, "fiber"))
+                return *denied;
+            if (a.empty())
+                return make_bool(false);
+            const std::string name = overlay_arg_name(ev.string_heap_, a[0]);
+            if (name.empty())
+                return make_bool(false);
+            EvalValue local = make_void();
+            // Membership probe only: peek() keeps it out of the read set.
+            return make_bool(reg.peek(owner, fiber_cow_overlay_key(), name, local));
+        });
 
     // (mutate :overlay-commit) — merge the overlay into the shared env.
     // #t: every binding applied (fast-forward or per-binding merge).
     // error object: write-write conflict; nothing applied, overlay dropped.
-    add("mw:overlay-commit", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
-        if (auto denied = deny(ev, "fiber"))
-            return *denied;
-        // Issue #4845: commit with no open overlay is not a successful
-        // no-op; report it the same way overlay-rollback reports nothing to
-        // drop (#f) so callers cannot mistake it for a real commit.
-        if (!reg.active(owner, fiber_cow_overlay_key()))
-            return make_bool(false);
-        const std::uint64_t epoch = aura::core::current_mutation_epoch();
-        // #4715 AC2: the env read path holds the top-env bindings lock while it
-        // consults the registry, so publish in the same order here (bindings ->
-        // registry). Env::BindingsGuard is per-thread re-entrant, so the bind()
-        // below does not re-take it.
-        auto bind_guard = ev.top_env().lock_bindings_exclusive();
-        cow::CommitResult r = reg.commit(
-            owner, fiber_cow_overlay_key(), epoch,
-            [&ev](const std::string& name, const EvalValue& value, std::uint64_t private_cell) {
-                // Applies under the registry lock: commits are
-                // serialized, so the top-binding append cannot
-                // interleave with a sibling commit of the same env.
-                // Bind a CELL, matching the evaluator top-level define
-                // shape (define binds make_cell(ci) then fills
-                // cells_[ci]); a raw value binding would read as an
-                // unboxed value to set!/lookup_cell_index.
-                //
-                // #4715 AC2: a define / set! captured by the
-                // interception already owns a private cell - publish
-                // that exact cell so a reader sees the old cell or
-                // this one, never a half-written payload.
-                //
-                // #4757: when the name is already bound to a top-level
-                // cell, write the committed value INTO that cell instead
-                // of rebinding the name to the private one. set! sites,
-                // closures and compiled code resolve a global to its cell
-                // once; rebinding orphaned that cell, so every later
-                // (set! x ...) from a procedure body wrote a cell no
-                // reader looked at. The in-place store is the same
-                // single-cell write a plain set! does (under the cells
-                // storage lock), so readers still see old or new.
-                if (auto existing = ev.top_env().lookup_binding(name);
-                    existing && is_cell(*existing)) {
-                    const auto old_ci = as_cell_id(*existing);
-                    std::scoped_lock<std::recursive_mutex> lk(ev.cells_storage_mutex());
-                    if (old_ci < ev.cells().size()) {
-                        ev.cells()[static_cast<std::size_t>(old_ci)] = value;
-                        return;
+    ev.primitives().add_hidden(
+        "mw:overlay-commit", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
+            if (auto denied = deny(ev, "fiber"))
+                return *denied;
+            // Issue #4845: commit with no open overlay is not a successful
+            // no-op; report it the same way overlay-rollback reports nothing to
+            // drop (#f) so callers cannot mistake it for a real commit.
+            if (!reg.active(owner, fiber_cow_overlay_key()))
+                return make_bool(false);
+            const std::uint64_t epoch = aura::core::current_mutation_epoch();
+            // #4715 AC2: the env read path holds the top-env bindings lock while it
+            // consults the registry, so publish in the same order here (bindings ->
+            // registry). Env::BindingsGuard is per-thread re-entrant, so the bind()
+            // below does not re-take it.
+            auto bind_guard = ev.top_env().lock_bindings_exclusive();
+            cow::CommitResult r = reg.commit(
+                owner, fiber_cow_overlay_key(), epoch,
+                [&ev](const std::string& name, const EvalValue& value, std::uint64_t private_cell) {
+                    // Applies under the registry lock: commits are
+                    // serialized, so the top-binding append cannot
+                    // interleave with a sibling commit of the same env.
+                    // Bind a CELL, matching the evaluator top-level define
+                    // shape (define binds make_cell(ci) then fills
+                    // cells_[ci]); a raw value binding would read as an
+                    // unboxed value to set!/lookup_cell_index.
+                    //
+                    // #4715 AC2: a define / set! captured by the
+                    // interception already owns a private cell - publish
+                    // that exact cell so a reader sees the old cell or
+                    // this one, never a half-written payload.
+                    //
+                    // #4757: when the name is already bound to a top-level
+                    // cell, write the committed value INTO that cell instead
+                    // of rebinding the name to the private one. set! sites,
+                    // closures and compiled code resolve a global to its cell
+                    // once; rebinding orphaned that cell, so every later
+                    // (set! x ...) from a procedure body wrote a cell no
+                    // reader looked at. The in-place store is the same
+                    // single-cell write a plain set! does (under the cells
+                    // storage lock), so readers still see old or new.
+                    if (auto existing = ev.top_env().lookup_binding(name);
+                        existing && is_cell(*existing)) {
+                        const auto old_ci = as_cell_id(*existing);
+                        std::scoped_lock<std::recursive_mutex> lk(ev.cells_storage_mutex());
+                        if (old_ci < ev.cells().size()) {
+                            ev.cells()[static_cast<std::size_t>(old_ci)] = value;
+                            return;
+                        }
                     }
-                }
-                const auto ci = private_cell != 0 && private_cell < ev.cells().size()
-                                    ? private_cell
-                                    : static_cast<std::uint64_t>(ev.alloc_cell(value));
-                ev.top_env().bind(name, make_cell(ci));
-            },
-            // #4715 follow-up: provenance record, appended under the registry
-            // lock so the audit trail lands in commit order.
-            [&ev, epoch](const cow::CommitResult& res) { record_overlay_commit(ev, epoch, res); });
-        overlay_sync_tls(owner); // #4715 AC2: disarmed after commit (0 on success)
-        if (!r.conflict.empty()) {
-            // The condition object is the structured form of the same
-            // verdict; the historical "fiber:cow-conflict: <name>" prefix is
-            // preserved at the head of the error string.
-            cow::ConflictInfo ci = r.conflict_info;
-            if (!ci.valid())
-                ci.binding = r.conflict;
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        overlay_conflict_message(ci),
-                                        ev.primitive_error_counter_ptr());
-        }
-        return make_bool(r.ok);
-    });
+                    const auto ci = private_cell != 0 && private_cell < ev.cells().size()
+                                        ? private_cell
+                                        : static_cast<std::uint64_t>(ev.alloc_cell(value));
+                    ev.top_env().bind(name, make_cell(ci));
+                },
+                // #4715 follow-up: provenance record, appended under the registry
+                // lock so the audit trail lands in commit order.
+                [&ev, epoch](const cow::CommitResult& res) {
+                    record_overlay_commit(ev, epoch, res);
+                });
+            overlay_sync_tls(owner); // #4715 AC2: disarmed after commit (0 on success)
+            if (!r.conflict.empty()) {
+                // The condition object is the structured form of the same
+                // verdict; the historical "fiber:cow-conflict: <name>" prefix is
+                // preserved at the head of the error string.
+                cow::ConflictInfo ci = r.conflict_info;
+                if (!ci.valid())
+                    ci.binding = r.conflict;
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            overlay_conflict_message(ci),
+                                            ev.primitive_error_counter_ptr());
+            }
+            return make_bool(r.ok);
+        });
 
     // (mutate :overlay-conflict) — Issue #4715 follow-up: the structured
     // condition of the last rejected commit by the calling fiber, as a hash
     // (binding / winner-fiber / our-epoch / committed-epoch / our-seq /
     // winner-seq / kind / read-only / schema), or #f when there is none.
-    add("mw:overlay-conflict", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
-        if (auto denied = deny(ev, "fiber"))
-            return *denied;
-        const auto ci = reg.last_conflict(owner, fiber_cow_overlay_key());
-        if (!ci)
-            return make_bool(false);
-        return overlay_conflict_condition(ev, *ci);
-    });
+    ev.primitives().add_hidden(
+        "mw:overlay-conflict", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
+            if (auto denied = deny(ev, "fiber"))
+                return *denied;
+            const auto ci = reg.last_conflict(owner, fiber_cow_overlay_key());
+            if (!ci)
+                return make_bool(false);
+            return overlay_conflict_condition(ev, *ci);
+        });
 
     // (mutate :overlay-rollback) — failure / cancel path: drop the overlay.
-    add("mw:overlay-rollback", [&reg, owner](std::span<const EvalValue>) -> EvalValue {
-        const bool dropped = reg.rollback(owner, fiber_cow_overlay_key());
-        overlay_sync_tls(owner); // #4715 AC2: disarmed after rollback
-        return make_bool(dropped);
-    });
+    ev.primitives().add_hidden(
+        "mw:overlay-rollback", [&reg, owner](std::span<const EvalValue>) -> EvalValue {
+            const bool dropped = reg.rollback(owner, fiber_cow_overlay_key());
+            overlay_sync_tls(owner); // #4715 AC2: disarmed after rollback
+            return make_bool(dropped);
+        });
 
     // (mutate :overlay-pending) — number of bindings held privately right now.
-    add("mw:overlay-pending", [&reg, owner](std::span<const EvalValue>) -> EvalValue {
-        return make_int(static_cast<std::int64_t>(reg.pending(owner, fiber_cow_overlay_key())));
-    });
+    ev.primitives().add_hidden(
+        "mw:overlay-pending", [&reg, owner](std::span<const EvalValue>) -> EvalValue {
+            return make_int(static_cast<std::int64_t>(reg.pending(owner, fiber_cow_overlay_key())));
+        });
 
     // (mutate :overlay-report) — deterministic observability string; the test
     // rows pin the counters so a vacuous pass (no overlay ever opened)
     // cannot go green.
-    add("mw:overlay-report", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
-        const cow::OverlayStats s = reg.stats(owner);
-        // #4715 follow-up appends the read-set subset; every pre-follow-up
-        // field keeps its name and position so existing pins stay valid.
-        std::string out = std::format(
-            "begins={} commits={} fast-forward={} merged={} conflicts={} rollbacks={} writes={} "
-            "active={} read-conflicts={}",
-            s.begins, s.commits, s.fast_forward, s.merged, s.conflicts, s.rollbacks, s.writes,
-            s.active, s.read_conflicts);
-        return make_string(ev.string_heap_.mint(out));
-    });
+    ev.primitives().add_hidden(
+        "mw:overlay-report", [&ev, &reg, owner, deny](std::span<const EvalValue>) -> EvalValue {
+            const cow::OverlayStats s = reg.stats(owner);
+            // #4715 follow-up appends the read-set subset; every pre-follow-up
+            // field keeps its name and position so existing pins stay valid.
+            std::string out =
+                std::format("begins={} commits={} fast-forward={} merged={} conflicts={} "
+                            "rollbacks={} writes={} "
+                            "active={} read-conflicts={}",
+                            s.begins, s.commits, s.fast_forward, s.merged, s.conflicts, s.rollbacks,
+                            s.writes, s.active, s.read_conflicts);
+            return make_string(ev.string_heap_.mint(out));
+        });
 }
 
 void RegSplitParts::register_fiber_atomic_primitives(

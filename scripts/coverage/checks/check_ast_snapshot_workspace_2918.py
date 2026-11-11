@@ -41,7 +41,9 @@ def main() -> int:
     # Allow lookup("current-source") but not (*)({}) empty call for source.
     bare_call = re.compile(r"\(\*src_fn\)\s*\(\s*\{\s*\}\s*\)")
     # Restrict to lines near snapshot/diff by scanning after labels.
-    for label in ('add("mw:snapshot"', 'add("qr:diff"'):
+    # #5142/#5143: the registration may be line-wrapped and may now be
+    # add_hidden(), so anchor on the name literal, not the call shape.
+    for label in ('"mw:snapshot"', '"qr:diff"'):
         if label not in ast:
             fails.append(f"missing {label}")
             continue

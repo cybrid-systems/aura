@@ -56,7 +56,7 @@ def main() -> int:
 
     # AC2
     # Prefer the PrimFn registration site (not the dispatcher call_named).
-    del_pos = ws.find('add("mw:workspace-delete"')
+    del_pos = ws.find('add_hidden("mw:workspace-delete"')
     if del_pos < 0:
         del_pos = ws.find("mw:workspace-delete")
     if del_pos < 0:

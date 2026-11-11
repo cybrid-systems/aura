@@ -53,7 +53,9 @@ def _read(rel: str) -> str:
 def _prim_body(text: str, name: str) -> str:
     # Issue #3172: fine-grained compile: dirty writers are sink_compile_prim
     # (not public add()). Prefer add() then the sunk registrar.
-    needles = (f'add("{name}"', f'sink_compile_prim("{name}"')
+    # #5142: alias bodies register with add_hidden (dispatch-only); the
+    # window starts at the same body either way.
+    needles = (f'add_hidden("{name}"', f'add("{name}"', f'sink_compile_prim("{name}"')
     start = -1
     for needle in needles:
         start = text.find(needle)

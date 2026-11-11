@@ -28,6 +28,7 @@ from query_prims_sources import read_query_prims
 ROOT = Path(__file__).resolve().parents[3]
 
 ADD_RE = re.compile(r'add\(\s*"([^"]+)"')
+HIDDEN_RE = re.compile(r'add_hidden\(\s*"([^"]+)"')
 SUNK = (
     "arena:adaptive-compact",
     "arena:auto-compact-threshold",
@@ -71,9 +72,14 @@ def main() -> int:
     if public:
         fails.append(f"AC1: arena: prefix is unbound; still registered: {public}")
     registered = set(ADD_RE.findall(mem))
+    hidden = set(HIDDEN_RE.findall(mem))
     for k in KEEP:
-        if k not in registered:
-            fails.append(f"AC1: missing {k}")
+        # #5142: the arena knobs are dispatch-only bodies now; the verb
+        # (mutate :arena-compact ...) still reaches them through lookup().
+        if k not in hidden:
+            fails.append(f"AC1: missing hidden body {k}")
+        if k in registered:
+            fails.append(f"AC1: {k} is still a public add()")
 
     must("sink_arena_prim", "AC2 helper", mem)
     must("Issue #3173", "AC2 cite", mem)

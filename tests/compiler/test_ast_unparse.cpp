@@ -94,7 +94,7 @@ int run_test_ast_unparse() {
         // Snapshot must not re-enter current-source for workspace unparse.
         auto pos = snap.find("workspace_source_string");
         CHECK(pos != std::string::npos, "AC1: workspace_source_string defined");
-        auto body_end = snap.find("add(\"mw:snapshot\"", pos);
+        auto body_end = snap.find("add_hidden(\"mw:snapshot\"", pos);
         if (body_end == std::string::npos)
             body_end = pos + 800;
         auto body = snap.substr(pos, body_end - pos);
