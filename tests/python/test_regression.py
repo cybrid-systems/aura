@@ -1879,7 +1879,12 @@ def test_jit_self_call_4601():
 
 
 def test_type_feedback_4568():
-    """Issue #4568: query:type-feedback lattice, polymorphic calls, rebind reset."""
+    """Issue #4568: query:type-feedback lattice, polymorphic calls, rebind reset.
+
+    The reset probe rebinds ``id`` to ``(lambda (y) y)``. A same-body
+    rebind (define sugar vs ``(lambda (x) x)``) is the #5147 short-circuit:
+    it does not dirty, so the old profile stays.
+    """
     code = r"""
 (define (id x) x)
 (id 1)
@@ -1908,7 +1913,7 @@ def test_type_feedback_4568():
 (eval-current)
 (id 9)
 (keep 4)
-(mutate :rebind "id" "(lambda (x) x)" "t")
+(mutate :rebind "id" "(lambda (y) y)" "t")
 (display "===IDRESET===\n")
 (display (query :type-feedback "id"))
 (display "===KEEP2===\n")
