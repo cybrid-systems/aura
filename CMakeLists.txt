@@ -1739,6 +1739,10 @@ aura_add_issue_test(test_prim_add_hidden)
 # Issue #5147: same-body rebind must not walk every JIT closure.
 aura_add_issue_test(test_rebind_same_body)
 aura_issue_test_link_light(test_rebind_same_body)
+# Issue #5148: restore of a forward reference must not invert Mutate
+# under the Workspace lock, and AUDIT=soft must stay soft.
+aura_add_issue_test(test_restore_forward_ref)
+aura_issue_test_link_light(test_restore_forward_ref)
 target_include_directories(test_opcode_reflect PRIVATE src)
 target_compile_options(test_opcode_reflect PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
@@ -2639,6 +2643,8 @@ add_custom_target(all_test_issue_targets ALL)
 # Issue #5147: the same-body rebind suite is created above, before this
 # aggregate exists. Attach it here.
 add_dependencies(all_test_issue_targets test_rebind_same_body)
+# Issue #5148: created above, before this aggregate exists.
+add_dependencies(all_test_issue_targets test_restore_forward_ref)
 # Issue #3374 (was previously above — moved here so the add_dependencies
 # target exists when called).
 add_dependencies(all_test_issue_targets test_atomic_batch_rebind_hygiene_lockless)

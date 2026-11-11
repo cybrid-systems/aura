@@ -297,6 +297,11 @@ struct AstRestoreState {
     std::uint64_t rolled_first = 0;
     std::uint64_t rolled_last = 0;
     std::uint64_t rolled_count = 0;
+    // Issue #5148: the !small_diff IR re-population takes Mutate
+    // (invalidate_function). Publish still runs under the restore
+    // guard's Workspace lock, so the populate is deferred to
+    // ast_restore_finalize, which runs after that guard releases.
+    bool defer_ir_precache = false;
 };
 
 struct AstRestoreCapture {
@@ -733,11 +738,14 @@ void RegSplitParts::ast_restore_publish(Evaluator& ev, AstRestoreState& state,
         aura::compiler::MarkAllClearsIrOwners clear_ir_owners;
         if (ev.mark_all_defines_dirty_fn_)
             ev.mark_all_defines_dirty_fn_();
-        if (ev.pre_cache_workspace_defines_fn_) {
-            ev.pre_cache_workspace_defines_fn_();
-            ++ev.ast_restore_dep_graph_full_total_;
-            dep_graph_synced_post = true;
-        }
+        // Issue #5148: pre_cache → populate_ir_cache_v2 → cache_define →
+        // invalidate_function acquires Mutate. The restore guard still
+        // holds Workspace here (rank Mutate < Workspace), and the hard
+        // canary aborts. mark_all above does not take Mutate. The
+        // populate runs in ast_restore_finalize, after the guard drops
+        // Workspace, so the two locks are never nested in this order.
+        if (ev.pre_cache_workspace_defines_fn_)
+            state.defer_ir_precache = true;
     } else {
         // Empty diff: the graph stays as in sync as before.
         dep_graph_synced_post = dep_graph_synced_pre;
@@ -751,6 +759,14 @@ void RegSplitParts::ast_restore_publish(Evaluator& ev, AstRestoreState& state,
 // Issue #5032: post-guard finalize phase of ast:restore (#4782 epoch, #4729
 // rollback entry, dep-graph advance, #2920 text restamp).
 void RegSplitParts::ast_restore_finalize(Evaluator& ev, AstRestoreState& state) {
+    // Issue #5148: Workspace was released with the restore guard. Populate
+    // now so invalidate_function can take Mutate without inverting.
+    if (state.defer_ir_precache && ev.pre_cache_workspace_defines_fn_) {
+        ev.pre_cache_workspace_defines_fn_();
+        ++ev.ast_restore_dep_graph_full_total_;
+        state.dep_graph_synced_post = true;
+        state.defer_ir_precache = false;
+    }
     const std::size_t id = state.id;
     const std::uint64_t pre_next_mutation_id = state.pre_next_mutation_id;
     const std::uint64_t rolled_first = state.rolled_first;
