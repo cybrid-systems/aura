@@ -36,6 +36,7 @@ using aura::compiler::CompilerService;
 using aura::compiler::types::as_bool;
 using aura::compiler::types::as_float;
 using aura::compiler::types::as_int;
+using aura::compiler::types::fits_fixnum;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_error;
 using aura::compiler::types::is_float;
@@ -268,9 +269,10 @@ static void ac4456_vector_ref_index() {
 //     out-of-range clamp, and the copy is independent of its source.
 // AC2 vector-fill! is native: every slot takes the value and the vector
 //     itself is returned (the contract the interpreted stdlib loop had).
-// AC3 string-hash is native and pins the contract: FNV-1a 64 over the
-//     string's UTF-8 bytes (the same hash the hash table uses for string
-//     keys). Equal strings hash equal, different strings differ.
+// AC3 string-hash is native and pins the contract: an in-range FNV-1a 64
+//     code is returned bit-identical ("abc"). Equal strings hash equal,
+//     different strings differ. A code outside the fixnum range is folded
+//     (#5145); the hash table keeps the raw uint64.
 // AC4 hash-set / hash-remove are copy-on-write: they return a NEW hash and
 //     leave the argument untouched. hash-copy clones a table natively.
 // AC5 the 64-slot vector-copy timing: at least 20x faster than the
@@ -366,14 +368,75 @@ static void ac4614_string_hash() {
     CHECK(prefix && is_bool(*prefix) && !as_bool(*prefix), "4614 AC3: a prefix differs");
     auto empty = cs.eval("(= (string-hash \"\") (string-hash \"abc\"))");
     CHECK(empty && is_bool(*empty) && !as_bool(*empty), "4614 AC3: the empty string differs");
-    // The contract: FNV-1a 64 over the UTF-8 bytes -- the same hash the hash
-    // table uses for string keys (hash_meta.h fnv1a_bytes).
+    // The contract: an in-range FNV-1a 64 code comes back unchanged. "abc"
+    // fits, so this is still the raw hash_meta.h digest.
     auto v = cs.eval("(string-hash \"abc\")");
-    const auto expected = static_cast<std::int64_t>(::aura::compiler::hash::fnv1a_bytes("abc"));
-    CHECK(v && is_int(*v) && as_int(*v) == expected, "4614 AC3: FNV-1a 64 contract");
+    const auto raw = static_cast<std::int64_t>(::aura::compiler::hash::fnv1a_bytes("abc"));
+    CHECK(fits_fixnum(raw), "4614 AC3: \"abc\" is an in-range code");
+    CHECK(v && is_int(*v) && as_int(*v) == raw, "4614 AC3: FNV-1a 64 contract");
     // A hash key is stable across calls (the memoisation use case).
     auto again = cs.eval("(string-hash \"abc\")");
-    CHECK(again && is_int(*again) && as_int(*again) == expected, "4614 AC3: stable across calls");
+    CHECK(again && is_int(*again) && as_int(*again) == raw, "4614 AC3: stable across calls");
+}
+
+// Issue #5145: string-hash used to SIGABRT when the FNV-1a code did not fit
+// a fixnum. These inputs are that class. The fold flips bit 62, so the
+// returned int is deterministic, equal strings match (including a minted
+// copy), and the former crash inputs differ from each other and from "abc".
+static std::int64_t fixnum_digest(std::string_view bytes) {
+    auto code = static_cast<std::int64_t>(::aura::compiler::hash::fnv1a_bytes(bytes));
+    if (!fits_fixnum(code))
+        code ^= (std::int64_t{1} << 62);
+    return code;
+}
+
+static void ac5145_string_hash_fixnum() {
+    std::println("");
+    std::println("--- #5145: string-hash stays inside the fixnum range ---");
+    CompilerService cs;
+    struct Sample {
+        const char* aura;
+        std::string_view bytes;
+    };
+    const Sample samples[] = {
+        {"\"a\"", "a"},
+        {"\"1\"", "1"},
+        {"\"x\\r\\n\"", "x\r\n"},
+        {"\"012345678\"", "012345678"},
+    };
+    std::int64_t seen[4] = {};
+    for (std::size_t i = 0; i < 4; ++i) {
+        const auto& sample = samples[i];
+        const auto raw =
+            static_cast<std::int64_t>(::aura::compiler::hash::fnv1a_bytes(sample.bytes));
+        CHECK(!fits_fixnum(raw), std::string("5145: raw code is out of range for ") + sample.aura);
+        const auto want = fixnum_digest(sample.bytes);
+        CHECK(fits_fixnum(want), std::string("5145: folded code fits for ") + sample.aura);
+        auto got = cs.eval(std::string("(string-hash ") + sample.aura + ")");
+        CHECK(got && is_int(*got) && as_int(*got) == want,
+              std::string("5145: string-hash ") + sample.aura);
+        auto repeat = cs.eval(std::string("(= (string-hash ") + sample.aura + ") (string-hash " +
+                              sample.aura + "))");
+        CHECK(repeat && is_bool(*repeat) && as_bool(*repeat),
+              std::string("5145: stable for ") + sample.aura);
+        auto diff =
+            cs.eval(std::string("(= (string-hash ") + sample.aura + ") (string-hash \"abc\"))");
+        CHECK(diff && is_bool(*diff) && !as_bool(*diff),
+              std::string("5145: differs from abc for ") + sample.aura);
+        seen[i] = want;
+    }
+    for (std::size_t i = 0; i < 4; ++i) {
+        for (std::size_t j = i + 1; j < 4; ++j) {
+            CHECK(seen[i] != seen[j], "5145: former crash inputs differ from each other");
+        }
+    }
+    // substring always mints, so this is a different slot with the same bytes.
+    auto minted = cs.eval("(= (string-hash \"a\") (string-hash (substring \"za\" 1 2)))");
+    CHECK(minted && is_bool(*minted) && as_bool(*minted), "5145: a minted copy hashes equal");
+    auto minted_cr =
+        cs.eval("(= (string-hash \"x\\r\\n\") (string-hash (string-append \"x\" \"\\r\\n\")))");
+    CHECK(minted_cr && is_bool(*minted_cr) && as_bool(*minted_cr),
+          "5145: an appended copy hashes equal");
 }
 
 static void ac4614_hash_cow() {
@@ -523,6 +586,7 @@ int run_test_hash_table_grow() {
     ac4614_vector_copy();
     ac4614_vector_fill();
     ac4614_string_hash();
+    ac5145_string_hash_fixnum();
     ac4614_hash_cow();
     ac4614_vector_copy_timing();
     ac4_source();
