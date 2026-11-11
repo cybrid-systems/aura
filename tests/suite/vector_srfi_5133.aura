@@ -1,0 +1,31 @@
+; #5133: pin the SRFI-133 / R7RS vector surface that INDEX claims.
+(require "std/vector" all:)
+
+(define v (vector 1 2 3))
+(define (check)
+  (and
+   (= (vector-length v) 3)
+   (= (vector-ref v 1) 2)
+   (equal? (vector->list v) (list 1 2 3))
+   (equal? (list->vector (list 4 5)) (vector 4 5))
+   ; vector-copy honours start and optional end
+   (equal? (vector-copy v 0 2) (vector 1 2))
+   (equal? (vector-copy v 1) (vector 2 3))
+   ; vector-map returns a new vector and stops at the shortest input
+   (equal? (vector-map (lambda (x) (* x 2)) v) (vector 2 4 6))
+   (equal? (vector-map + (vector 1 2 3) (vector 10 20)) (vector 11 22))
+   ; vector-fill! mutates in place
+   (let ((w (vector 0 0 0))) (vector-fill! w 7) (equal? w (vector 7 7 7)))
+   ; SRFI-133 vector-append is not R7RS but is claimed by the module
+   (let ((a (vector-append (vector 1) (vector 2)))) (equal? a (vector 1 2)))
+   ; out-of-range reads raise a catchable error rather than aborting
+   (eq? (try (vector-ref v 9) (catch (e) 'raised)) 'raised)
+   (eq? (try (vector-ref (vector) 0) (catch (e) 'raised)) 'raised)))
+
+(define host (if (check) 1 0))
+(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+
+(if (and (= host 1) (= guest 1))
+    (begin (display "OK-5133-vector") (newline))
+    (begin (display "FAIL-5133-vector host=") (display host)
+           (display " guest=") (display guest) (newline) (exit 1)))
