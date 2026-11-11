@@ -1736,6 +1736,8 @@ aura_add_issue_test(test_primfn_arith_overlay)
 aura_add_issue_test(test_pin_lock_evo_log)
 # Issue #5141: add_hidden is dispatch-only (the #5138 Batch 0 seam).
 aura_add_issue_test(test_prim_add_hidden)
+# Issue #5147: same-body rebind must not walk every JIT closure.
+aura_add_issue_test(test_rebind_same_body)
 target_include_directories(test_opcode_reflect PRIVATE src)
 target_compile_options(test_opcode_reflect PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)

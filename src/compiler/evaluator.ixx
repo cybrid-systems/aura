@@ -4199,8 +4199,28 @@ public:
         c.rebind_light_path = false;
         c.rebind_light_cascaded = false;
         c.rebind_light_stamped = false;
+        c.rebind_precise_deopt = false;
+        // Failure disarm runs before the outermost commit, so a refused
+        // rebind still publishes the #1728 bump. Success sets keep and the
+        // commit consumes the flag first.
+        c.rebind_skip_bridge_bump = false;
         c.rebind_light_focus.clear();
     }
+    // Issue #5147: armed for a real body change, after the same-body
+    // short-circuit has already returned. Cleared with the light disarm
+    // so the outermost drain still sees it, and the next mutate does not.
+    void arm_rebind_precise_deopt() noexcept { eval_ctx().rebind_precise_deopt = true; }
+    [[nodiscard]] bool rebind_precise_deopt() const noexcept {
+        return eval_ctx().rebind_precise_deopt;
+    }
+    // Issue #5147: set before the rebind body returns. The outermost
+    // commit_panic_checkpoint consumes it. disarm does not — the body's
+    // failure disarm runs before that commit.
+    void arm_rebind_skip_bridge_bump() noexcept { eval_ctx().rebind_skip_bridge_bump = true; }
+    [[nodiscard]] bool rebind_skip_bridge_bump() const noexcept {
+        return eval_ctx().rebind_skip_bridge_bump;
+    }
+    void clear_rebind_skip_bridge_bump() noexcept { eval_ctx().rebind_skip_bridge_bump = false; }
     void note_rebind_light_focus(std::string name) {
         eval_ctx().rebind_light_focus = std::move(name);
     }
@@ -4633,8 +4653,15 @@ public:
         // closure freshness checks (is_bridge_stale / aura_closure_call)
         // observe the committed workspace transition. Same hook used by
         // compact_env_frames (#1510). No-op when service not bound.
-        if (bridge_epoch_bump_fn_ && compiler_service_)
+        // Issue #5147: a mutate:rebind already accounted for the changed
+        // define (same-body is a no-op; a real body drops only its cone).
+        // This commit must not advance the process bridge or the AOT table
+        // epoch, or every other JIT closure leaves native.
+        if (rebind_skip_bridge_bump()) {
+            clear_rebind_skip_bridge_bump();
+        } else if (bridge_epoch_bump_fn_ && compiler_service_) {
             bridge_epoch_bump_fn_(compiler_service_);
+        }
         // Issue #548: bump panic_checkpoint_commit_count_
         // so (query:panic-checkpoint-lifecycle-stats) can
         // report the lifetime commit count.

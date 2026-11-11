@@ -24,6 +24,7 @@ module;
 #include "core/arena_auto_policy_stats.h"            // in_render_hotpath
 #include "core/transparent_string_hash.hh"           // TransparentStringHash for ir_cache_index
 #include "compiler/jit_assumptions.hh"               // #4569 DefineVersion bump
+#include "compiler/type_feedback.h"                  // #5147: reset one define's feedback
 #include <algorithm>
 #include <chrono>
 #include <deque>
@@ -450,13 +451,56 @@ void CompilerService::mark_define_dirty(const std::string& name) {
         }
     }
 
+    // Issue #5147: a rebind must not bump the process bridge epoch.
+    // atomic_bump_epochs_and_stamp_bridge walks every captured JIT
+    // function (walk_active_closures) and drops its compile cache, so
+    // one define made the rest of the module 40-60% slower — including
+    // a rebind whose new body was byte-identical. Drop native code for
+    // this name and its called_by cone. Unrelated captured epochs stay.
+    // The same-body short-circuit never reaches here.
+    auto rebind_precise_drop_cone = [&](const std::string& root) {
+        if (root.empty())
+            return;
+        std::vector<std::string> cone;
+        cone.push_back(root);
+        {
+            std::shared_lock dep_read(dep_graph_mtx_);
+            std::deque<std::string> bfs;
+            std::unordered_set<std::string> seen;
+            bfs.push_back(root);
+            seen.insert(root);
+            while (!bfs.empty()) {
+                auto current = std::move(bfs.front());
+                bfs.pop_front();
+                auto it = dep_graph_.find(current);
+                if (it == dep_graph_.end())
+                    continue;
+                for (const auto& caller : it->second.called_by) {
+                    if (caller.empty() || !seen.insert(caller).second)
+                        continue;
+                    cone.push_back(caller);
+                    bfs.push_back(caller);
+                }
+            }
+        }
+        for (const auto& n : cone) {
+            aura::compiler::feedback::reset_name(n);
+            aura::compiler::jit_assume::DefineVersions::instance().bump(n);
+            aura_aot_mark_peer_jit_name_soft_stale(n.c_str());
+            aura_aot_mark_peer_ir_name_soft_stale(n.c_str());
+            std::unique_lock cache_write(jit_cache_mtx_);
+            jit_cache_.erase(n);
+            jit_.invalidate_prefix(n.c_str());
+        }
+    };
+
     // Issue #4357: a one-line Soft rebind calls this several times (body,
-    // nested cascade, outer cascade, drain restamp). One epoch bump rides
-    // every frame; later calls only stamp IR dirty bits on this name and
-    // its direct callers. Production returns above and is unchanged.
+    // nested cascade, outer cascade, drain restamp). The first call drops
+    // the cone; later calls only stamp IR dirty bits on this name and its
+    // direct callers. Production returns above and is unchanged.
     if (evaluator_.rebind_light_path()) {
         if (!evaluator_.rebind_light_stamped()) {
-            atomic_bump_epochs_and_stamp_bridge(name);
+            rebind_precise_drop_cone(name);
             evaluator_.note_rebind_light_stamped();
         }
         auto stamp_body = [&](const std::string& n) {
@@ -503,7 +547,16 @@ void CompilerService::mark_define_dirty(const std::string& name) {
     }
 
     // Issue #1261 / #1476 / #1627: bump both epochs via unified helper.
-    atomic_bump_epochs_and_stamp_bridge(name);
+    // Issue #5147: a mutate:rebind already dropped its cone. A second
+    // process-wide bump here is what made unmodified defines leave native.
+    if (evaluator_.rebind_precise_deopt()) {
+        if (!evaluator_.rebind_light_stamped()) {
+            rebind_precise_drop_cone(name);
+            evaluator_.note_rebind_light_stamped();
+        }
+    } else {
+        atomic_bump_epochs_and_stamp_bridge(name);
+    }
 
     // Issue #2050: under deopt throttle, clear deopt_pending + re-stamp JIT
     // epoch so previous native draw/present keeps serving frames.
@@ -1006,7 +1059,9 @@ void CompilerService::invalidate_function(const std::string& name) {
     // invalidate_function (callers are re-stamped by the drain). Skip the
     // impact parse and the second partial re-lower; the interpreter bind
     // after the guard installs the new body. set-body does not arm this.
-    if (evaluator_.rebind_light_path()) {
+    // Issue #5147: a larger rebind takes the same name-precise return.
+    // The hard path below bumps the process bridge epoch.
+    if (evaluator_.rebind_light_path() || evaluator_.rebind_precise_deopt()) {
         metrics_.invalidate_function_calls.fetch_add(1, std::memory_order_relaxed);
         if (auto vit = ir_cache_v2_.find(name); vit != ir_cache_v2_.end()) {
             (void)vit->second.mark_body_only_dirty();
