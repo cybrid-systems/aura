@@ -1,0 +1,54 @@
+; #5133: pin the R7RS-small surfaces the INDEX claims beyond lists/vectors:
+; records (SRFI-9), exceptions, parameters, lazy, case-lambda, bytevectors and
+; time. Bytevectors are the tagged-vector model the module documents.
+(require "std/record" all:)
+(require "std/exception" all:)
+(require "std/parameter" all:)
+(require "std/lazy" all:)
+(require "std/case-lambda" all:)
+(require "std/bytevector" all:)
+(require "std/time" all:)
+
+(define-record-type point (make-point x y) point? (x point-x) (y point-y set-point-y!))
+(define p (make-point 1 2))
+(set-point-y! p 9)
+
+(define prm (make-parameter 1))
+(define two (case-lambda ((a) (list 'one a)) ((a b) (list 'two a b))))
+(define bv (bytevector 1 2 3))
+
+(define (check)
+  (and
+   ; SRFI-9 records: constructor, predicate, accessors, mutator
+   (eq? (point? p) #t)
+   (= (point-x p) 1)
+   (= (point-y p) 9)
+   (eq? (point? (list 1 2)) #f)
+   ; exceptions: raise is catchable, guard selects a clause
+   (eq? (try (raise 'boom) (catch (e) 'caught)) 'caught)
+   (eq? (guard (e (#t 'handled)) (raise 'x)) 'handled)
+   ; parameters: parameterize rebinds for the dynamic extent only
+   (= (prm) 1)
+   (= (parameterize ((prm 2)) (prm)) 2)
+   (= (prm) 1)
+   ; lazy: force of a delay computes the value
+   (= (force (delay (+ 1 2))) 3)
+   ; case-lambda: the right clause per arity
+   (equal? (two 1) (list 'one 1))
+   (equal? (two 1 2) (list 'two 1 2))
+   ; bytevectors: constructor, length, u8 ref, list round-trip
+   (eq? (bytevector? bv) #t)
+   (= (bytevector-length bv) 3)
+   (= (bytevector-u8-ref bv 1) 2)
+   (equal? (bytevector->list (bytevector 5 6)) (list 5 6))
+   (= (bytevector-length (make-bytevector 4 0)) 4)
+   ; time: a real number of seconds
+   (number? (current-second))))
+
+(define host (if (check) 1 0))
+(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+
+(if (and (= host 1) (= guest 1))
+    (begin (display "OK-5133-r7rs") (newline))
+    (begin (display "FAIL-5133-r7rs host=") (display host)
+           (display " guest=") (display guest) (newline) (exit 1)))
