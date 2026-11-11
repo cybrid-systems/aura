@@ -302,6 +302,11 @@ struct AstRestoreState {
     // guard's Workspace lock, so the populate is deferred to
     // ast_restore_finalize, which runs after that guard releases.
     bool defer_ir_precache = false;
+    // Issue #5149: defines whose body differed from the snapshot. The
+    // live env closure still names the post-snapshot body, and that
+    // node id may be a recycled slot the image puts back, so the call
+    // returns the old operand instead of raising stale-workspace.
+    std::vector<std::string> rebind_names;
 };
 
 struct AstRestoreCapture {
@@ -590,6 +595,10 @@ void RegSplitParts::ast_restore_publish(Evaluator& ev, AstRestoreState& state,
                 removed.push_back(nm);
         }
     }
+    // Issue #5149: re-bind after the guard releases (finalize). Eval
+    // under this Workspace lock would take Mutate inside invalidate.
+    state.rebind_names.insert(state.rebind_names.end(), changed.begin(), changed.end());
+    state.rebind_names.insert(state.rebind_names.end(), added.begin(), added.end());
     // Issue #4598 phase 3: stamp-mode source lookup — lazily
     // unparse a define ONCE from the frozen capture (node ids
     // align with the stamp roots), memoized on the shared
@@ -808,6 +817,51 @@ void RegSplitParts::ast_restore_finalize(Evaluator& ev, AstRestoreState& state) 
             ev.invalidate_workspace_source_text();
         else
             ev.note_workspace_source_text(ev.snapshot_sources_[id]);
+    }
+    // Issue #5149: Workspace is released. Install the restored bodies
+    // into the live cells before the caller runs them. A free function
+    // cannot see Evaluator members; this stays inside the member.
+    if (!state.rebind_names.empty() && ev.workspace_flat_ && ev.workspace_pool_) {
+        auto& flat = *ev.workspace_flat_;
+        auto& pool = *ev.workspace_pool_;
+        std::unordered_map<std::string, aura::ast::NodeId> by_name;
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            if (flat.is_free_slot(id))
+                continue;
+            auto v = flat.get(id);
+            if (v.tag != aura::ast::NodeTag::Define || v.sym_id == aura::ast::INVALID_SYM)
+                continue;
+            by_name.emplace(std::string(pool.resolve(v.sym_id)), id);
+        }
+        // eval_flat of a Define re-keys top_ onto the workspace pool.
+        // Put the caller's pool back (same shape as eval-current).
+        struct RestoreTopPool {
+            Env& top;
+            const aura::ast::StringPool* saved;
+            explicit RestoreTopPool(Env& t)
+                : top(t)
+                , saved(t.pool()) {}
+            RestoreTopPool(const RestoreTopPool&) = delete;
+            RestoreTopPool& operator=(const RestoreTopPool&) = delete;
+            RestoreTopPool(RestoreTopPool&&) = delete;
+            RestoreTopPool& operator=(RestoreTopPool&&) = delete;
+            ~RestoreTopPool() {
+                if (saved && saved != top.pool())
+                    top.set_pool(saved);
+            }
+        } restore_top_pool(ev.top_env());
+        for (const auto& name : state.rebind_names) {
+            auto it = by_name.find(name);
+            if (it == by_name.end())
+                continue;
+            try {
+                flat.force_align_subtree_gen(it->second);
+                (void)ev.eval_flat(flat, pool, it->second, ev.top_env());
+            } catch (...) {
+                // [SILENCE-PRIM-#615] one define failing to re-bind must not
+                // fail the restore; the tree is already the snapshot.
+            }
+        }
     }
 }
 

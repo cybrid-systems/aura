@@ -728,11 +728,10 @@ static void ac_wiring() {
 
 } // namespace
 
-// ── Issue #4349: ast:restore over a post-rebind snapshot leaves env
-// closures holding dead node ids — the stale call must surface the
-// documented recoverable StaleWorkspace error (never InternalError),
-// eval-current re-binds, and the bare (query :generation) metric is
-// callable from Soft (was stats-face only). ──
+// ── Issue #4349: ast:restore over a post-rebind snapshot. The live
+// call must answer with the restored body (#5149 re-binds the define),
+// never a shifted value, and eval-current keeps that answer. The bare
+// (query :generation) metric is callable from Soft (was stats-face only). ──
 static void ac4349_restore_over_rebind() {
     std::println("\n--- #4349: restore over rebind + bare ast:generation ---");
     CompilerService cs;
@@ -751,12 +750,12 @@ static void ac4349_restore_over_rebind() {
     CHECK(post && is_int(*post) && as_int(*post) == 8, "4349: (g 4) = 8 post-rebind");
     auto st = cs.eval(std::format("(mutate :restore {})", as_int(*sid)));
     CHECK(st && is_bool(*st) && as_bool(*st), "4349: restore to pre-rebind snapshot");
-    // The stale compiled call must not silently succeed: on the
-    // CompilerService face the StaleWorkspace diagnostic surfaces as a
-    // valueless result (the engine face carries the message); either way
-    // the caller cannot observe a stale answer.
-    auto stale_val = cs.eval("(g4349 4)");
-    CHECK(!(stale_val && is_int(*stale_val)), "4349: stale call never returns a stale int");
+    // Issue #5149: restore re-binds the defines the snapshot brought
+    // back, so the caller sees the restored body. A shifted or stale
+    // answer (the old post-rebind 8) is still forbidden.
+    auto restored_val = cs.eval("(g4349 4)");
+    CHECK(restored_val && is_int(*restored_val) && as_int(*restored_val) == 4,
+          "4349: restore rebinds f, (g 4) = 4");
     CHECK(cs.eval("(eval-current)").has_value(), "4349: eval-current re-binds");
     // ast:restore republishes function_sources_ from the restored
     // defines before pre_cache. Without that, eval-current relowers
@@ -2256,6 +2255,78 @@ static void ac4772_structural_sharing() {
     CHECK(v2 && is_int(*v2) && as_int(*v2) == 21, "4772s AC6: evicted id restores right content");
 }
 
+// Issue #5149: rebind → snapshot → rebind → restore used to leave the
+// live closure on a recycled node id. The restored source was the
+// snapshot body, and the call returned the original body's second
+// operand. The live value must be the restored body.
+static void ac5149_restore_rebinds_live_value() {
+    std::println("\n--- #5149: restore rebinds the live closure ---");
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (f x) (* x 2))(define (g y) (+ y 1))\")").has_value(),
+              "5149: set-code f/g");
+        CHECK(cs.eval("(eval-current)").has_value(), "5149: eval-current");
+        CHECK(cs.eval("(mutate :rebind \"f\" \"(define (f x) (+ x 100))\" \"r1\")").has_value(),
+              "5149: rebind to (+ x 100)");
+        auto before = cs.eval("(f 3)");
+        CHECK(before && is_int(*before) && as_int(*before) == 103, "5149: (f 3) = 103 before snap");
+        auto sid = cs.eval("(mutate :snapshot \"s\")");
+        CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "5149: snapshot");
+        CHECK(cs.eval("(mutate :rebind \"f\" \"(define (f x) (* x 7))\" \"r2\")").has_value(),
+              "5149: rebind to (* x 7)");
+        auto mid = cs.eval("(f 3)");
+        CHECK(mid && is_int(*mid) && as_int(*mid) == 21, "5149: (f 3) = 21 after second rebind");
+        auto st = cs.eval(std::format("(mutate :restore {})", as_int(*sid)));
+        CHECK(st && is_bool(*st) && as_bool(*st), "5149: restore");
+        auto f3 = cs.eval("(f 3)");
+        const auto got = (f3 && is_int(*f3)) ? std::to_string(as_int(*f3)) : std::string("non-int");
+        CHECK(f3 && is_int(*f3) && as_int(*f3) == 103,
+              "5149: (f 3) = 103 after restore (got " + got + ")");
+        auto g = cs.eval("(g 3)");
+        CHECK(g && is_int(*g) && as_int(*g) == 4, "5149: untouched g stays 4");
+        CHECK(cs.eval("(eval-current)").has_value(), "5149: eval-current after restore");
+        auto again = cs.eval("(f 3)");
+        CHECK(again && is_int(*again) && as_int(*again) == 103,
+              "5149: eval-current keeps the restored value");
+    }
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (f x y) (+ x y))\")").has_value(),
+              "5149: set-code two-arg");
+        CHECK(cs.eval("(eval-current)").has_value(), "5149: eval-current two-arg");
+        CHECK(cs.eval("(mutate :rebind \"f\" \"(define (f x y) (* x y))\" \"r1\")").has_value(),
+              "5149: rebind two-arg to product");
+        auto sid = cs.eval("(mutate :snapshot \"s2\")");
+        CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "5149: snapshot two-arg");
+        CHECK(cs.eval("(mutate :rebind \"f\" \"(define (f x y) (- x y))\" \"r2\")").has_value(),
+              "5149: rebind two-arg to difference");
+        auto st = cs.eval(std::format("(mutate :restore {})", as_int(*sid)));
+        CHECK(st && is_bool(*st) && as_bool(*st), "5149: restore two-arg");
+        auto v = cs.eval("(f 3 4)");
+        const auto got = (v && is_int(*v)) ? std::to_string(as_int(*v)) : std::string("non-int");
+        CHECK(v && is_int(*v) && as_int(*v) == 12,
+              "5149: (f 3 4) = 12 after restore (got " + got + ")");
+    }
+    {
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (h x) (+ x 1))(define (f x) (* x 2))\")").has_value(),
+              "5149: set-code call body");
+        CHECK(cs.eval("(eval-current)").has_value(), "5149: eval-current call body");
+        CHECK(cs.eval("(mutate :rebind \"f\" \"(define (f x) (h x))\" \"r1\")").has_value(),
+              "5149: rebind f to a call");
+        auto sid = cs.eval("(mutate :snapshot \"s3\")");
+        CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "5149: snapshot call body");
+        CHECK(cs.eval("(mutate :rebind \"f\" \"(define (f x) (- x 4))\" \"r2\")").has_value(),
+              "5149: rebind call body away");
+        auto st = cs.eval(std::format("(mutate :restore {})", as_int(*sid)));
+        CHECK(st && is_bool(*st) && as_bool(*st), "5149: restore call body");
+        auto v = cs.eval("(f 3)");
+        const auto got = (v && is_int(*v)) ? std::to_string(as_int(*v)) : std::string("non-int");
+        CHECK(v && is_int(*v) && as_int(*v) == 4,
+              "5149: (f 3) = 4 (call body) after restore (got " + got + ")");
+    }
+}
+
 int run_test_current_source_roundtrip() {
     std::println("=== Issue #2921: current-source / snapshot roundtrip matrix ===");
     // Before any set-code in this process: the epoch must still be 0 so the
@@ -2275,6 +2346,7 @@ int run_test_current_source_roundtrip() {
     ac_null_workspace();
     ac_wiring();
     ac4349_restore_over_rebind();
+    ac5149_restore_rebinds_live_value();
     ac4349_snapshot_keeps_caller();
     ac4598_transitive_rebind_and_restore();
     ac4598_phase3_snapshot_share_and_stamp_restore();
