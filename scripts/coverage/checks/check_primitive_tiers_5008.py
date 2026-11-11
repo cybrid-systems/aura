@@ -237,6 +237,45 @@ def report(tiers: dict, catalog: list[str]) -> int:
     return 0
 
 
+# Issue #5136: names this cycle moved into the stdlib or deleted. A later
+# registration of the same name would silently reopen the surface that #5131
+# and #5137 closed, so the gate refuses it.
+RETIRED_022 = frozenset(
+    {
+        # moved to std/char (#5137)
+        "char-alphabetic?",
+        "char-numeric?",
+        "char-whitespace?",
+        "char-upcase",
+        "char-downcase",
+        # moved to std/orch / deleted alias (#5131)
+        "orch:metrics",
+        "orch:parallel-intend",
+    }
+)
+
+# The one-cycle K-EXC-5118 bucket is settled: its names are kernel-resident
+# under K-ORCH-STATE, so the rule id must not come back.
+FORBIDDEN_RULES_022 = frozenset({"K-EXC-5118"})
+
+
+def check_retired_022(tiers: dict, catalog: set[str]) -> list[str]:
+    errors: list[str] = []
+    for name in sorted(RETIRED_022):
+        if name in catalog:
+            errors.append(
+                f"{name} was retired in v0.2.2 (#5131/#5137) but is registered again — "
+                "move the caller to the stdlib home instead of re-adding the primitive"
+            )
+        entry = tiers["primitives"].get(name)
+        if entry is not None:
+            errors.append(f"{name} was retired in v0.2.2 but still has a tier entry")
+    for name, entry in sorted(tiers["primitives"].items()):
+        if entry.get("rule") in FORBIDDEN_RULES_022:
+            errors.append(f"{name} still uses the settled rule {entry.get('rule')}")
+    return errors
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -263,6 +302,7 @@ def main() -> int:
     errors = check_tiers(tiers, catalog)
     errors += check_growth(tiers, catalog)
     errors += check_retirement(tiers, catalog)
+    errors += check_retired_022(tiers, catalog)
 
     if errors:
         print(f"FAIL: primitive tier contract (Issue #5008) — {len(errors)} problem(s)", file=sys.stderr)
