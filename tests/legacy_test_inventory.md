@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 920 | Preferred destination suites |
-| **Total scanned** | **920** | |
+| `tests/core/test_*.cpp` | 921 | Preferred destination suites |
+| **Total scanned** | **921** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 61 | 61 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 133 | 133 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 134 | 134 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 67 | 67 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -867,6 +867,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_rebind_new_body_hygiene.cpp`
 - `tests/compiler/test_rebind_parse_failure_no_leak.cpp`
 - `tests/compiler/test_rebind_rollback_nodeid_validity.cpp`
+- `tests/compiler/test_rebind_same_body.cpp`
 - `tests/compiler/test_reemit_defer_batch.cpp`
 - `tests/compiler/test_reemit_mutation_boundary_handshake.cpp`
 - `tests/compiler/test_reemit_production_default_defer.cpp`
@@ -1922,13 +1923,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (133)
+### `observability` — Observability / metrics / query:*-stats (134)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (133)
+#### domain/ (134)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_exhaustiveness_production_hard.cpp` (—) [domain_suite, theme_compiler] — test_adt_exhaustiveness_production_hard.cpp -- source-cite AC for Issue #3559
@@ -2025,6 +2026,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_production_sweep.cpp` (—) [large, domain_suite, theme_compiler] — test_production_sweep.cpp — Merged #1123-#1343 (#1978).
 - `tests/compiler/test_query_dispatch.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1435 (query :op) unified dispatcher
 - `tests/core/test_raw_pointer_safety.cpp` (—) [domain_suite, theme_core] — Issue #1898 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_rebind_same_body.cpp` (—) [domain_suite, theme_compiler] — AC1: same source, whitespace, and define-vs-lambda form leave the
 - `tests/compiler/test_refinement_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #432/#467/#495/#509/#574 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_regex_redos_timeout.cpp` (—) [domain_suite, theme_compiler] — AC1: well-formed regex succeeds within budget
 - `tests/compiler/test_remount_force_deopt.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2894 — remount fail reason code (EnvGen / DensifyCell /
