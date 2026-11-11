@@ -18,13 +18,15 @@
 // Readers must accept v=1 and v=2 in the same file: the JSONL shape is
 // additive and "aura evo log --json" echoes each line verbatim.
 // decision: KEEP | ROLLBACK | FORK | user string. The worldline tip advances
-// on KEEP only. FORK (#5088) is a mutate:* that succeeded inside a child
-// workspace: the rewrite is discarded with that workspace (and with a trial
-// subprocess), so it must not be counted as a live KEEP. Those lines are
-// schema v=2 and carry "scope":"fork" after dur_ms. A ROLLBACK in the same
-// child workspace keeps decision ROLLBACK and the same scope field.
-// A candidate's parent is the tip when it was recorded (or the explicit
-// parent evo:record! names), so `aura evo log` can draw the tree.
+// on a kind == "record" KEEP only (#5139: an automatic mutate:rebind /
+// mw:restore reuses "KEEP" but is not a candidate record). FORK (#5088) is a mutate:* that
+// succeeded inside a child workspace: the rewrite is discarded with that workspace (and with a
+// trial subprocess), so it must not be counted as a live KEEP. Those lines are schema v=2 and carry
+// "scope":"fork" after dur_ms. A ROLLBACK in the same child workspace keeps decision ROLLBACK and
+// the same scope field. A candidate record's parent is the tip when it was recorded (or the
+// explicit parent evo:record! names), so `aura evo log` can draw the tree.
+// The tip is the previous RECORD's id: an automatic mutate:rebind / mw:restore
+// row never becomes the parent a later record inherits (#5139).
 //
 // The path is operator configuration (env), never program-chosen: the log is
 // an audit trail like the security WAL, not a program file write.
@@ -215,7 +217,12 @@ inline std::string log_append(const Entry& e)
         s.last_error = "short write to " + s.path;
         return {};
     }
-    if (e.decision == "KEEP")
+    // Issue #5139: only an audited candidate record is a worldline tip. An
+    // auto-logged mutate:rebind / mw:restore reuses the candidate's decision
+    // string ("KEEP"), but it is not a record: letting it advance the tip
+    // made the next record name a rebind row as its parent, which the lineage
+    // resolver (record ids or candidate names) rejects.
+    if (e.decision == "KEEP" && e.kind == "record")
         s.tip = id;
     return id;
 }

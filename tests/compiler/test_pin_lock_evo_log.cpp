@@ -5,7 +5,7 @@
 //   AC1: pin, generation check, shard move, and move-construction take the lock
 //   AC2: a mismatched generation does not drop the pinned address
 //   AC3: the log escapes a control character and formats dur_ms without a C buffer
-//   AC4: KEEP advances the tip; a later line keeps that parent
+//   AC4: a record KEEP advances the tip; a later line keeps that parent
 
 #include "compiler/evo_log_4910.hh"
 #include "core/lifetime_pin.hh"
@@ -99,7 +99,8 @@ int main() {
     ::setenv("AURA_EVO_LOG", path.c_str(), 1);
     aura::evo::log_reset_for_test();
     aura::evo::Entry first;
-    first.kind = "mutate:rebind";
+    // Issue #5139: only a record KEEP advances the worldline tip.
+    first.kind = "record";
     first.target = "f";
     first.decision = "KEEP";
     first.reason = "ok";
