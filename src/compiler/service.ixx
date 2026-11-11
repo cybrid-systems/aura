@@ -674,12 +674,12 @@ static std::int64_t convert_str_for_eval(std::int64_t val,
         if (eidx < eval_heap.size() && eval_heap[eidx] == content)
             return aura::compiler::types::make_string_raw_v2(static_cast<std::uint64_t>(eidx));
     }
-    // Content intern: reuse existing eval-heap slot with same text.
-    for (std::size_t i = 0; i < eval_heap.size(); ++i) {
-        if (eval_heap[i] == content) {
-            g_jit_idx_to_eval_idx[idx] = i;
-            return aura::compiler::types::make_string_raw_v2(static_cast<std::uint64_t>(i));
-        }
+    // Content intern: reuse an existing eval-heap slot with the same text.
+    // Issue #5146: lookup, not a walk of the high-water mark. npos is
+    // size_t(-1); this module does not name LockedStringHeap.
+    if (const auto hit = eval_heap.find_content(content); hit != static_cast<std::size_t>(-1)) {
+        g_jit_idx_to_eval_idx[idx] = hit;
+        return aura::compiler::types::make_string_raw_v2(static_cast<std::uint64_t>(hit));
     }
     auto new_idx = eval_heap.mint(content);
     g_jit_idx_to_eval_idx[idx] = new_idx;
