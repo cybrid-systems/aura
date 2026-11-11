@@ -401,6 +401,10 @@ _VERY_HEAVY = frozenset(
         "test_string_heap_corruption_guard",
         "test_mutation_aot_unit_batch",
         "test_hygiene_mutate_closed_loop",
+        # Spawns aura CLI children and samples their /proc TIDs: its own dead-
+        # lines (15s exec wait + a 60s start gate + sampling windows) already
+        # exceed the 60s default, so a healthy run was being killed as rc=124.
+        "test_fiber_spawn_cli",
     }
 )
 # late1 has exceeded 6 min under parallel load (rc=124 at *4). Keep *10.
