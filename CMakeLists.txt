@@ -1738,6 +1738,7 @@ aura_add_issue_test(test_pin_lock_evo_log)
 aura_add_issue_test(test_prim_add_hidden)
 # Issue #5147: same-body rebind must not walk every JIT closure.
 aura_add_issue_test(test_rebind_same_body)
+aura_issue_test_link_light(test_rebind_same_body)
 target_include_directories(test_opcode_reflect PRIVATE src)
 target_compile_options(test_opcode_reflect PRIVATE ${AURA_REFLECTION_FLAG} -Wall
                        -Wno-sign-compare -Wno-unused-local-typedefs)
@@ -2635,6 +2636,9 @@ aura_add_issue_bundle(light_late)
 
 # Default issue-suite build: the 12 profile bundles (not 200+ standalones).
 add_custom_target(all_test_issue_targets ALL)
+# Issue #5147: the same-body rebind suite is created above, before this
+# aggregate exists. Attach it here.
+add_dependencies(all_test_issue_targets test_rebind_same_body)
 # Issue #3374 (was previously above — moved here so the add_dependencies
 # target exists when called).
 add_dependencies(all_test_issue_targets test_atomic_batch_rebind_hygiene_lockless)
