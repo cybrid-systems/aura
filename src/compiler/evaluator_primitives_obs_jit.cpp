@@ -6059,7 +6059,7 @@ using types::make_void;
 void ObservabilityPrims::register_jit_p32(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #790: query:mutate-batch-atomic-stats —
-    // P0 first-class (mutate:atomic-batch body-expr
+    // P0 first-class (mutate :atomic-batch body-expr
     // :snapshot? #t) primitive with pinned
     // StableNodeRef snapshot + per-boundary
     // observability + cross-fiber safety
@@ -6076,7 +6076,7 @@ void ObservabilityPrims::register_jit_p32(PrimRegistrar add, Evaluator& ev) {
     // capture + mutation-impact batch flag* specifically
     // — was a steal detected during a suppressed batch?
     // was a hygiene violation caught inside a batch?
-    // is the (mutate:atomic-batch) primitive actually
+    // is the (mutate :atomic-batch) primitive actually
     // exposed to AI? is the snapshot capture wired? is
     // the cross-fiber re-stamp active? — as separate
     // per-decision-point signals the Agent consumes to
@@ -6116,9 +6116,9 @@ void ObservabilityPrims::register_jit_p32(PrimRegistrar add, Evaluator& ev) {
     //       batches)
     //   - atomic-batch-primitive-active
     //       hardcoded 0 (Phase 2+ to actually expose
-    //       (mutate:atomic-batch [body] :snapshot? #t)
+    //       (mutate :atomic-batch [body] :snapshot? #t)
     //       primitive per body "Implement
-    //       (mutate:atomic-batch [body] :snapshot? #t)
+    //       (mutate :atomic-batch [body] :snapshot? #t)
     //       that acquires outer StructuralMutationGuard
     //       + sets suppressed_, executes body (sequence
     //       of mutate:*), on success: single bump +

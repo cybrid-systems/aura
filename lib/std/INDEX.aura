@@ -209,7 +209,7 @@
     ; ── Hot strategy / hot-update ──
     ; Issue #2582: pure-Aura strategy rebind (denseness) vs AOT .so reload.
     (list "hot-strategy"
-      (list "Pure-Aura hot strategy swap + snapshot heal (mutate:rebind; not AOT)"
+      (list "Pure-Aura hot strategy swap + snapshot heal (mutate :rebind; not AOT)"
             "(require \"std/hot-strategy\" all:)(hot-strategy:swap! \"strat\" \"(lambda (x) x)\" \"v2\")"))
     ; ── AOT hot-update (Issue #1370): replacement steps behind std/agent ──
     ; #5004: these four are no longer separate public surfaces. The agent

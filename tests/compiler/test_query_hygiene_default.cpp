@@ -210,7 +210,7 @@ static void ac2989_concurrent_mutate() {
     }
     threads.emplace_back([&]() {
         for (int j = 0; j < 15; ++j) {
-            if (cs.eval("(mutate:rebind \"base\" \"12\")"))
+            if (cs.eval("(mutate :rebind \"base\" \"12\")"))
                 ok.fetch_add(1);
         }
         done.fetch_add(1);

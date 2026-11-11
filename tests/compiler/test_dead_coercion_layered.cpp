@@ -121,8 +121,8 @@ namespace _2282_detail {
             const auto baseline = query_layered_total(cs);
             std::println("  baseline layered-total={}", baseline);
             CHECK(baseline >= 0, "AC3: lower path returns non-negative baseline");
-            // Post-mutate: drive a (mutate:rebind) + (eval-current) round.
-            (void)cs.eval("(mutate:rebind \"_x\" \"42\")");
+            // Post-mutate: drive a (mutate :rebind) + (eval-current) round.
+            (void)cs.eval("(mutate :rebind \"_x\" \"42\")");
             (void)cs.eval("(eval-current)");
             const auto after = query_layered_total(cs);
             std::println("  post-mutate layered-total={}", after);

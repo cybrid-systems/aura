@@ -26,7 +26,7 @@ drivers use.
 
 ### `mutate:rebind` when the name is not in the workspace
 
-`(mutate:rebind name code [summary])` replaces the value of a live top-level
+`(mutate :rebind name code [summary])` replaces the value of a live top-level
 define. If the workspace has no define with that name, the call still returns
 `#t`: it parses `code`, adds a new top-level define, and links that define onto
 the workspace root (the same success value as a replacement). The new define is

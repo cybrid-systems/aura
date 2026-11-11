@@ -73,7 +73,7 @@ static void run_matrix(CompilerService& cs) {
     const auto safe0 = loc_hash(cs, "predicate-branch-linear-safe");
     const auto stats2a = stats_sum(cs);
     (void)cs.eval("(f 3)");
-    auto reb = cs.eval("(mutate:rebind \"f\" "
+    auto reb = cs.eval("(mutate :rebind \"f\" "
                        "\"(lambda (x) (if (number? x) "
                        "(let ((l (Linear (+ x 1)))) (move l)) 0))\" "
                        "\"issue-747\")");
@@ -111,7 +111,7 @@ static void run_matrix(CompilerService& cs) {
                 esc.push_back('\\');
             esc.push_back(c);
         }
-        (void)cs.eval(std::format("(mutate:rebind \"f\" \"{}\" \"r{}-747\")", esc, round));
+        (void)cs.eval(std::format("(mutate :rebind \"f\" \"{}\" \"r{}-747\")", esc, round));
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(f 2)");
     }

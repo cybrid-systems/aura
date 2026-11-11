@@ -77,7 +77,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC3: match site mutate → stats grow + eval ---");
     const auto stats3a = adt_exhaustiveness_stats(cs);
-    (void)cs.eval("(mutate:rebind \"m\" \"(lambda (t) (match t ((Num) 11) ((Str) 21) "
+    (void)cs.eval("(mutate :rebind \"m\" \"(lambda (t) (match t ((Num) 11) ((Str) 21) "
                   "((Bool) 31)))\" \"issue-577-match\")");
     const auto stats3b = adt_exhaustiveness_stats(cs);
     std::println("  adt-exhaustiveness-stats: {} -> {}", stats3a, stats3b);
@@ -88,7 +88,7 @@ static void run_matrix(CompilerService& cs) {
         CHECK(as_int(*r3) == 11, "Num arm returns 11 after mutate");
 
     std::println("\n--- AC4: incremental_infer → exhaust rechecks observable ---");
-    (void)cs.eval("(mutate:rebind \"m\" \"(lambda (t) (match t ((Num) 12) ((Str) 22) "
+    (void)cs.eval("(mutate :rebind \"m\" \"(lambda (t) (match t ((Num) 12) ((Str) 22) "
                   "((Bool) 32)))\" \"issue-577-infer\")");
     auto* ws = cs.workspace_flat();
     CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
@@ -110,7 +110,7 @@ static void run_matrix(CompilerService& cs) {
         const std::string m_body = "(lambda (t) (match t ((Num) " + std::to_string(round + 40) +
                                    ") ((Str) " + std::to_string(round + 50) + ") ((Bool) " +
                                    std::to_string(round + 60) + ")))";
-        (void)cs.eval("(mutate:rebind \"m\" \"" + m_body + "\" \"r" + std::to_string(round) +
+        (void)cs.eval("(mutate :rebind \"m\" \"" + m_body + "\" \"r" + std::to_string(round) +
                       "-m\")");
         auto rn = cs.eval("(m Num)");
         auto rs = cs.eval("(m Str)");
@@ -132,7 +132,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(mns.has_value(), "compile:match-narrowing-stats returns value");
 
     std::println("\n--- AC8: if-narrowed match subject counters ---");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (m Num) (m Str)))\" "
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (m Num) (m Str)))\" "
                   "\"issue-577-narrow\")");
     (void)cs.eval("(typecheck-current)");
     const auto snap8 = cs.snapshot();

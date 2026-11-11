@@ -122,7 +122,7 @@ int run_test_atomic_batch_replace_pattern_sibling() {
         const auto iso0 = ws->replace_pattern_temp_arena_corruption_prevented_total();
 
         auto r =
-            cs.eval("(mutate:atomic-batch "
+            cs.eval("(mutate :atomic-batch "
                     "(list "
                     "  (list \"mutate:replace-pattern\" \"(lambda () 1)\" \"(lambda () 10)\") "
                     "  (list \"mutate:replace-pattern\" \"(lambda () 10)\" \"(lambda () 20)\")))");
@@ -151,8 +151,8 @@ int run_test_atomic_batch_replace_pattern_sibling() {
         auto* ws = cs.evaluator().workspace_flat();
         const auto iso0 = ws->replace_pattern_temp_arena_corruption_prevented_total();
 
-        auto r1 = cs.eval("(mutate:replace-pattern \"(lambda () 3)\" \"(lambda () 30)\")");
-        auto r2 = cs.eval("(mutate:replace-pattern \"(lambda () 4)\" \"(lambda () 40)\")");
+        auto r1 = cs.eval("(mutate :replace-pattern \"(lambda () 3)\" \"(lambda () 30)\")");
+        auto r2 = cs.eval("(mutate :replace-pattern \"(lambda () 4)\" \"(lambda () 40)\")");
         CHECK(r1.has_value() && is_bool(*r1) && as_bool(*r1), "AC3: first #t");
         CHECK(r2.has_value() && is_bool(*r2) && as_bool(*r2), "AC3: second #t");
         CHECK(ws->replace_pattern_temp_arena_corruption_prevented_total() >= iso0 + 2,
@@ -176,7 +176,7 @@ int run_test_atomic_batch_replace_pattern_sibling() {
                   "AC4: reset code");
             CHECK(cs.eval("(eval-current)").has_value(), "AC4: re-eval");
             auto r = cs.eval(
-                "(mutate:atomic-batch "
+                "(mutate :atomic-batch "
                 "(list "
                 "  (list \"mutate:replace-pattern\" \"(lambda () 5)\" \"(lambda () 50)\") "
                 "  (list \"mutate:replace-pattern\" \"(lambda () 50)\" \"(lambda () 60)\")))");
@@ -238,7 +238,7 @@ int run_test_atomic_batch_replace_pattern_sibling() {
             CHECK(cs.eval("(set-code \"(define f (lambda () (+ 1 2)))\")").has_value(),
                   "3664 AC4: set-code wildcard");
             CHECK(cs.eval("(eval-current)").has_value(), "3664 AC4: eval wildcard");
-            auto r = cs.eval("(mutate:atomic-batch "
+            auto r = cs.eval("(mutate :atomic-batch "
                              "(list "
                              "  (list \"mutate:replace-pattern\" \"(+ ... ...)\" \"(* 3 4)\")))");
             CHECK(r.has_value() && is_bool(*r) && as_bool(*r), "3664 AC4: wildcard batch #t");
@@ -252,7 +252,7 @@ int run_test_atomic_batch_replace_pattern_sibling() {
                   "3664 AC4: set-code nested");
             CHECK(cs.eval("(eval-current)").has_value(), "3664 AC4: eval nested");
             auto r = cs.eval(
-                "(mutate:atomic-batch "
+                "(mutate :atomic-batch "
                 "(list "
                 "  (list \"mutate:replace-pattern\" \"(lambda () ...)\" \"(lambda () 9)\")))");
             CHECK(r.has_value() && is_bool(*r) && as_bool(*r), "3664 AC4: nested batch #t");

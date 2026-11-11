@@ -349,7 +349,7 @@ static void ac4037_1_deny_no_grant() {
     ev.clear_boundary_audit_mid_for_test();
     ev.note_boundary_audit_mid_for_test(live_mid);
     CHECK(ev.current_agent_fingerprint() == 0, "4037 AC1: store starts 0");
-    auto r = cs.eval("(mutate:set-agent-fingerprint 4242)");
+    auto r = cs.eval("(mutate :set-agent-fingerprint 4242)");
     CHECK(r && ac4037_merr_kind(cs, *r) == "capability-effect-deny",
           "4037 AC1: non-zero set denies with empty grants");
     CHECK(ev.current_agent_fingerprint() == 0, "4037 AC1: store unchanged after deny");
@@ -391,7 +391,7 @@ static void ac4037_1b_batch_blame_stays_zero() {
     ev.set_capability_tenant_id(4037);
     ev.clear_boundary_audit_mid_for_test();
     ev.note_boundary_audit_mid_for_test(live_mid);
-    auto r = cs.eval("(mutate:set-agent-fingerprint 4242)");
+    auto r = cs.eval("(mutate :set-agent-fingerprint 4242)");
     CHECK(r && ac4037_merr_kind(cs, *r) == "capability-effect-deny",
           "4037 AC1b: non-zero set denied under Restricted (no TenantAdmin)");
     CHECK(ev.current_agent_fingerprint() == 0, "4037 AC1b: store still 0 after deny");
@@ -403,7 +403,7 @@ static void ac4037_1b_batch_blame_stays_zero() {
     ev.set_effect_sandbox_mode(0);
     CHECK(cs.eval("(set-code \"(define x4037 1)\")").has_value(), "4037 AC1b: set-code target");
     CHECK(cs.eval("(eval-current)").has_value(), "4037 AC1b: eval-current");
-    const std::array<std::string_view, 1> mutations = {"(mutate:rebind \"x4037\" \"7\")"};
+    const std::array<std::string_view, 1> mutations = {"(mutate :rebind \"x4037\" \"7\")"};
     auto batch = cs.typed_mutate_atomic(mutations);
     CHECK(batch.success, "4037 AC1b: atomic batch commits");
     set_mode(SandboxMode::Off);
@@ -432,7 +432,7 @@ static void ac4037_2_ta_allow_batch_blame() {
     ev.set_capability_tenant_id(4037);
     ev.clear_boundary_audit_mid_for_test();
     ev.note_boundary_audit_mid_for_test(live_mid);
-    auto r = cs.eval("(mutate:set-agent-fingerprint 4242)");
+    auto r = cs.eval("(mutate :set-agent-fingerprint 4242)");
     CHECK(r && !is_error(*r) && is_int(*r) && as_int(*r) == 4242,
           "4037 AC2: explicit TA set lands");
     CHECK(ev.current_agent_fingerprint() == 4242, "4037 AC2: store = 4242");
@@ -448,7 +448,7 @@ static void ac4037_2_ta_allow_batch_blame() {
     CHECK(allow_tenant_ok, "4037 AC2: EffectAllow row carries caller tenant 4037");
     CHECK(cs.eval("(set-code \"(define x4037 1)\")").has_value(), "4037 AC2: set-code target");
     CHECK(cs.eval("(eval-current)").has_value(), "4037 AC2: eval-current");
-    const std::array<std::string_view, 1> mutations = {"(mutate:rebind \"x4037\" \"7\")"};
+    const std::array<std::string_view, 1> mutations = {"(mutate :rebind \"x4037\" \"7\")"};
     // Disarm for the batch (same rationale as AC1b): the blame stamping is
     // face-independent; AC2 pins that the ALLOWED set's label propagates into
     // the committed records. (Workspace Guard mid minting vs epoch-bound
@@ -486,7 +486,7 @@ static void ac4037_3_wildcard_insufficient() {
     ev.set_capability_tenant_id(4037);
     ev.clear_boundary_audit_mid_for_test();
     ev.note_boundary_audit_mid_for_test(live_mid);
-    auto r = cs.eval("(mutate:set-agent-fingerprint 4242)");
+    auto r = cs.eval("(mutate :set-agent-fingerprint 4242)");
     CHECK(r && ac4037_merr_kind(cs, *r) == "capability-effect-deny",
           "4037 AC3: wildcard-only denies");
     CHECK(ev.current_agent_fingerprint() == 0, "4037 AC3: store unchanged");
@@ -500,17 +500,17 @@ static void ac4037_4_clear_zero_ungated() {
     auto& ev = cs.evaluator();
     ev.set_effect_sandbox_mode(0);
     set_mode(SandboxMode::Off);
-    auto r5 = cs.eval("(mutate:set-agent-fingerprint 5)");
+    auto r5 = cs.eval("(mutate :set-agent-fingerprint 5)");
     CHECK(r5 && is_int(*r5) && as_int(*r5) == 5, "4037 AC4: Off-face store = 5");
     CHECK(ev.current_agent_fingerprint() == 5, "4037 AC4: store holds 5");
     ev.set_effect_sandbox_mode(1);
     set_mode(SandboxMode::Restricted);
     ev.set_capability_tenant_id(4037);
-    auto r0 = cs.eval("(mutate:set-agent-fingerprint 0)");
+    auto r0 = cs.eval("(mutate :set-agent-fingerprint 0)");
     CHECK(r0 && !is_error(*r0) && is_int(*r0) && as_int(*r0) == 0,
           "4037 AC4: clear to 0 allowed without TA");
     CHECK(ev.current_agent_fingerprint() == 0, "4037 AC4: store restored 0");
-    auto rn = cs.eval("(mutate:set-agent-fingerprint 9)");
+    auto rn = cs.eval("(mutate :set-agent-fingerprint 9)");
     CHECK(rn && ac4037_merr_kind(cs, *rn) == "capability-effect-deny",
           "4037 AC4: non-zero direction still gated");
     set_mode(SandboxMode::Off);
@@ -524,7 +524,7 @@ static void ac4037_5_off_ungated() {
     ev.set_effect_sandbox_mode(0);
     set_mode(SandboxMode::Off);
     ev.set_capability_tenant_id(4037);
-    auto r = cs.eval("(mutate:set-agent-fingerprint 777)");
+    auto r = cs.eval("(mutate :set-agent-fingerprint 777)");
     CHECK(r && is_int(*r) && as_int(*r) == 777, "4037 AC5: Off store ungated");
     CHECK(ev.current_agent_fingerprint() == 777, "4037 AC5: store = 777");
 }

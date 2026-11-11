@@ -17,13 +17,13 @@
 (let loop ((i 2))
   (if (< i 6)
       (begin
-        (mutate:rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
+        (mutate :rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
         (eval-current)
         (check! (= (c1 10) (+ 10 i)) (string-append "transitive caller after rebind " (number->string i)))
         (check! (= (w1 3) 6) "unrelated define intact")
         (loop (+ i 1)))))
 ;; a body that itself mutates (Evolution region) still lowers and runs
-(mutate:rebind "w1" "(lambda (x) (if (> x 100) (eval-current) (* x 3)))" "t")
+(mutate :rebind "w1" "(lambda (x) (if (> x 100) (eval-current) (* x 3)))" "t")
 (eval-current)
 (check! (= (w1 3) 9) "mutating-call body rebinds")
 (define h (stats))

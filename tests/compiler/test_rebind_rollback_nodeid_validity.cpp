@@ -181,7 +181,7 @@ int run_test_rebind_rollback_nodeid_validity() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define f (lambda () 1))\")").has_value(), "AC3b: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "AC3b: eval");
-        auto r = cs.eval("(mutate:rebind \"f\" \"(lambda () 7)\")");
+        auto r = cs.eval("(mutate :rebind \"f\" \"(lambda () 7)\")");
         CHECK(r && is_bool(*r) && as_bool(*r), "AC3b: rebind #t");
         auto f = cs.eval("(begin (eval-current) (f))");
         CHECK(f && is_int(*f) && as_int(*f) == 7, "AC3b: f is 7");

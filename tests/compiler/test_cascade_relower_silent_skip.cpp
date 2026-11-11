@@ -161,7 +161,7 @@ int run_test_cascade_relower_silent_skip() {
         CHECK(m != nullptr, "AC2: metrics");
         const auto r0 = m->cascade_relower_ran_total.load(std::memory_order_relaxed);
         const auto s0 = m->cascade_relower_skipped_total.load(std::memory_order_relaxed);
-        auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 1))\" \"#2813\")");
+        auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 1))\" \"#2813\")");
         CHECK(mut.has_value(), "AC2: set-body");
         const auto r1 = m->cascade_relower_ran_total.load(std::memory_order_relaxed);
         const auto s1 = m->cascade_relower_skipped_total.load(std::memory_order_relaxed);
@@ -186,7 +186,7 @@ int run_test_cascade_relower_silent_skip() {
         auto* m = metrics_of(cs);
         const auto s0 = m->cascade_relower_skipped_total.load(std::memory_order_relaxed);
         const auto r0 = m->cascade_relower_ran_total.load(std::memory_order_relaxed);
-        auto mut = cs.eval("(mutate:set-body \"g\" \"(lambda (x) (* x 2))\" \"#2813-skip\")");
+        auto mut = cs.eval("(mutate :set-body \"g\" \"(lambda (x) (* x 2))\" \"#2813-skip\")");
         CHECK(mut.has_value(), "AC3: set-body under null relower");
         const auto s1 = m->cascade_relower_skipped_total.load(std::memory_order_relaxed);
         const auto r1 = m->cascade_relower_ran_total.load(std::memory_order_relaxed);
@@ -333,7 +333,7 @@ int run_test_cascade_relower_silent_skip() {
         const auto defuse0 = cs.get_define_v2("g")->version_stamp_.defuse_version;
         auto* m = metrics_of(cs);
         const auto impact0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
-        auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () \\\"x\\\")\" \"#3484\")");
+        auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda () \\\"x\\\")\" \"#3484\")");
         CHECK(mut.has_value(), "3484 AC5: set-body type change");
         (void)cs.public_relower_dirty_defines_from_workspace();
         const auto* g1 = cs.get_define_v2("g");
@@ -370,7 +370,7 @@ int run_test_cascade_relower_silent_skip() {
         const auto defuse0 = cs.get_define_v2("g")->version_stamp_.defuse_version;
         auto* m = metrics_of(cs);
         const auto impact0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
-        auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () \\\"x\\\")\" \"#3986\")");
+        auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda () \\\"x\\\")\" \"#3986\")");
         CHECK(mut.has_value(), "3986 AC4: set-body type change");
         (void)cs.public_relower_dirty_defines_from_workspace();
         const auto* g1 = cs.get_define_v2("g");
@@ -789,7 +789,7 @@ int run_test_cascade_relower_silent_skip() {
                 const auto full0 = m->relower_full_called_count.load(std::memory_order_relaxed);
                 const auto ran0 = m->cascade_relower_ran_total.load(std::memory_order_relaxed);
                 auto setb = cs.eval(
-                    R"ev((mutate:set-body "fat4311" "(let ((z (+ x 41))) (lambda (y) (+ (+ (+ (+ (+ (+ (+ (+ y 1) 2) 3) 4) 5) 6) 7) z)))" "#4311"))ev");
+                    R"ev((mutate :set-body "fat4311" "(let ((z (+ x 41))) (lambda (y) (+ (+ (+ (+ (+ (+ (+ (+ y 1) 2) 3) 4) 5) 6) 7) z)))" "#4311"))ev");
                 CHECK(setb && aura::compiler::types::is_bool(*setb) &&
                           aura::compiler::types::as_bool(*setb),
                       "4311 body-expression set-body");
@@ -887,7 +887,7 @@ int run_test_cascade_relower_silent_skip() {
         CHECK(cs.get_define_v2("f") != nullptr, "4436: f cached");
         CHECK(cs.get_define_v2("g") != nullptr, "4436: g cached");
         cs.public_record_dependency("g", "f");
-        auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () 2)\" \"#4436\")");
+        auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda () 2)\" \"#4436\")");
         CHECK(mut && aura::compiler::types::is_bool(*mut) && aura::compiler::types::as_bool(*mut),
               "4436: set-body");
         cs.public_mark_define_dirty("f");
@@ -990,7 +990,7 @@ int run_test_cascade_relower_silent_skip() {
         // boundary — dual-topology restore + force_ir_cache_dirty_after_abort.
         auto& ev4513 = cs.evaluator();
         ev4513.enter_mutation_boundary();
-        auto mut4513 = cs.eval("(mutate:set-body \"b4513\" \"(lambda () 2)\" \"#4513\")");
+        auto mut4513 = cs.eval("(mutate :set-body \"b4513\" \"(lambda () 2)\" \"#4513\")");
         CHECK(mut4513.has_value(), "4513: set-body inside boundary");
         ev4513.exit_mutation_boundary(false);
 
@@ -1126,7 +1126,7 @@ int run_test_cascade_relower_silent_skip() {
         CHECK(cs.has_cached_function("e4513"), "4513 AC6: v1 present pre-abort");
         auto& ev_s = cs.evaluator();
         ev_s.enter_mutation_boundary();
-        (void)cs.eval("(mutate:set-body \"e4513\" \"(lambda () 2)\" \"#4513\")");
+        (void)cs.eval("(mutate :set-body \"e4513\" \"(lambda () 2)\" \"#4513\")");
         ev_s.exit_mutation_boundary(false);
         CHECK(cs.get_define_v2("e4513") != nullptr && cs.get_define_v2("e4513")->abort_map_invalid,
               "4513 AC6: v2 latch still set under Soft");

@@ -514,7 +514,7 @@ int run_test_mutate_type_gate() {
         CHECK(cs.eval("(eval-current)").has_value(), "eval m");
         const auto skip0 = snapshot().soft_type_skip_total;
         auto soft = cs.eval(
-            "(mutate:rebind \"m\" \"(lambda (t) (match t ((Num) 11) ((Str) 21)))\" \"soft\")");
+            "(mutate :rebind \"m\" \"(lambda (t) (match t ((Num) 11) ((Str) 21)))\" \"soft\")");
         // Leftover: production Hard / match-exhaustiveness may still reject
         // incomplete Soft rebind; gate mode + skip counter stay the contract.
         if (soft.has_value() && cs.evaluator().last_mutate_error().empty())
@@ -536,19 +536,19 @@ int run_test_mutate_type_gate() {
         CHECK(cs.eval("(eval-current)").has_value(), "f eval");
         // Soft: type-clash body soft-passes
         auto soft = cs.eval(
-            "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 1) \\\"str\\\"))\" \"s\")");
+            "(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 1) \\\"str\\\"))\" \"s\")");
         CHECK(soft.has_value() && cs.evaluator().last_mutate_error().empty(),
               "AC2 Soft TypeError soft-passes");
 
         // Restore a clean body then Hard
-        CHECK(cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\" \"r\")").has_value(),
+        CHECK(cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 1))\" \"r\")").has_value(),
               "restore f");
         set_mode(MutateTypeGate::Hard);
         const auto hard_te0 = snapshot().hard_type_error_reject_total;
         const auto check0 = snapshot().gate_check_total;
         cs.evaluator().clear_last_mutate_error();
         auto hard = cs.eval(
-            "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 1) \\\"str\\\"))\" \"h\")");
+            "(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 1) \\\"str\\\"))\" \"h\")");
         const bool rejected = !hard.has_value() || !cs.evaluator().last_mutate_error().empty();
         std::println("  Hard rejected={} err='{}' te={} checks={}", rejected,
                      cs.evaluator().last_mutate_error(), snapshot().hard_type_error_reject_total,
@@ -583,7 +583,7 @@ int run_test_mutate_type_gate() {
             CHECK(cs.eval("(eval-current)").has_value(), "eval");
             cs.evaluator().clear_last_mutate_error();
             auto r = cs.eval(
-                "(mutate:rebind \"f\" \"(lambda (x) (undefined-free-var-2219 x))\" \"ub\")");
+                "(mutate :rebind \"f\" \"(lambda (x) (undefined-free-var-2219 x))\" \"ub\")");
             CHECK(
                 !r.has_value() || !cs.evaluator().last_mutate_error().empty(),
                 std::format("Unbound rejects {}", gate == MutateTypeGate::Hard ? "Hard" : "Soft"));
@@ -818,24 +818,24 @@ int run_test_mutate_type_gate() {
             CHECK(cs.eval(std::string("(set-code \"") + forms + "\")").has_value(),
                   std::string(tag) + " set-code");
             CHECK(cs.eval("(eval-current)").has_value(), std::string(tag) + " eval");
+            rebind_true(
+                cs, "(mutate :rebind \"f\" \"(lambda (x) (try (car x) (catch (e) e)))\" \"id\")",
+                std::string(tag) + " try");
+            rebind_true(
+                cs, "(mutate :rebind \"f\" \"(lambda (x) (try (car x) (catch e 0)))\" \"bare\")",
+                std::string(tag) + " catch bare var");
             rebind_true(cs,
-                        "(mutate:rebind \"f\" \"(lambda (x) (try (car x) (catch (e) e)))\" \"id\")",
-                        std::string(tag) + " try");
-            rebind_true(cs,
-                        "(mutate:rebind \"f\" \"(lambda (x) (try (car x) (catch e 0)))\" \"bare\")",
-                        std::string(tag) + " catch bare var");
-            rebind_true(cs,
-                        "(mutate:rebind \"g\" \"(lambda (n) (let ((i 0)) "
+                        "(mutate :rebind \"g\" \"(lambda (n) (let ((i 0)) "
                         "(while (lambda () (< i n)) (lambda () (set! i (+ i 1)))) i))\" \"id\")",
                         std::string(tag) + " while thunk");
-            rebind_true(cs, "(mutate:rebind \"h\" \"(lambda (xs) (apply + xs))\" \"id\")",
+            rebind_true(cs, "(mutate :rebind \"h\" \"(lambda (xs) (apply + xs))\" \"id\")",
                         std::string(tag) + " apply");
             rebind_true(cs,
-                        "(mutate:rebind \"k\" \"(lambda (n) (let ((i 0)) "
+                        "(mutate :rebind \"k\" \"(lambda (n) (let ((i 0)) "
                         "(while (< i n) (set! i (+ i 1))) i))\" \"id\")",
                         std::string(tag) + " while statement");
             rebind_true(cs,
-                        "(mutate:rebind \"p\" \"(lambda (n) (let ((i 0)) (current-time-ms) "
+                        "(mutate :rebind \"p\" \"(lambda (n) (let ((i 0)) (current-time-ms) "
                         "(workspace) (mutate :restore) (engine:metrics) (query:defines) "
                         "(query:code) i))\" \"id\")",
                         std::string(tag) + " primitive fallback");
@@ -852,7 +852,7 @@ int run_test_mutate_type_gate() {
               "bad set-code");
         CHECK(bad.eval("(eval-current)").has_value(), "bad eval");
         auto refused =
-            bad.eval("(mutate:rebind \"m\" \"(lambda (xs) (not-a-real-name xs))\" \"free\")");
+            bad.eval("(mutate :rebind \"m\" \"(lambda (xs) (not-a-real-name xs))\" \"free\")");
         CHECK(refused.has_value(), "bad rebind eval");
         CHECK(!(refused && is_bool(*refused) && as_bool(*refused)), "free name is not #t");
         const auto& err = bad.evaluator().last_mutate_error();
@@ -924,25 +924,25 @@ int run_test_mutate_type_gate() {
                   std::string(tag) + " set-code");
             CHECK(cs.eval("(eval-current)").has_value(), std::string(tag) + " eval");
             rebind_true(cs,
-                        "(mutate:rebind \"greet\" \"(lambda (a b) (string-append \\\"hi \\\" a "
+                        "(mutate :rebind \"greet\" \"(lambda (a b) (string-append \\\"hi \\\" a "
                         "\\\" and \\\" b))\" \"id\")",
                         std::string(tag) + " string-append 4");
-            rebind_true(cs, "(mutate:rebind \"one\" \"(lambda (a) (string-append a))\" \"id\")",
+            rebind_true(cs, "(mutate :rebind \"one\" \"(lambda (a) (string-append a))\" \"id\")",
                         std::string(tag) + " string-append 1");
             rebind_true(cs,
-                        "(mutate:rebind \"greet2\" \"(lambda (a b) (let ((s \\\" and \\\")) "
+                        "(mutate :rebind \"greet2\" \"(lambda (a b) (let ((s \\\" and \\\")) "
                         "(string-append \\\"hi \\\" a s b)))\" \"id\")",
                         std::string(tag) + " string-append let");
             rebind_true(cs,
-                        "(mutate:rebind \"ap\" \"(lambda (xs ys zs) (append xs ys zs))\" \"id\")",
+                        "(mutate :rebind \"ap\" \"(lambda (xs ys zs) (append xs ys zs))\" \"id\")",
                         std::string(tag) + " append 3");
-            rebind_true(cs, "(mutate:rebind \"mm\" \"(lambda (x y z) (min x y z))\" \"id\")",
+            rebind_true(cs, "(mutate :rebind \"mm\" \"(lambda (x y z) (min x y z))\" \"id\")",
                         std::string(tag) + " min 3");
-            rebind_true(cs, "(mutate:rebind \"mx\" \"(lambda (x y z) (max x y z))\" \"id\")",
+            rebind_true(cs, "(mutate :rebind \"mx\" \"(lambda (x y z) (max x y z))\" \"id\")",
                         std::string(tag) + " max 3");
-            rebind_true(cs, "(mutate:rebind \"e0\" \"(lambda () (error))\" \"id\")",
+            rebind_true(cs, "(mutate :rebind \"e0\" \"(lambda () (error))\" \"id\")",
                         std::string(tag) + " error 0");
-            rebind_true(cs, "(mutate:rebind \"e2\" \"(lambda (a b) (error a b))\" \"id\")",
+            rebind_true(cs, "(mutate :rebind \"e2\" \"(lambda (a b) (error a b))\" \"id\")",
                         std::string(tag) + " error 2");
         };
         drive(MutateTypeGate::Hard, "hard");
@@ -957,7 +957,7 @@ int run_test_mutate_type_gate() {
                   .has_value(),
               "4398 bad set-code");
         CHECK(bad.eval("(eval-current)").has_value(), "4398 bad eval");
-        auto refused = bad.eval("(mutate:rebind \"bad\" \"(lambda (a) (cons a a a))\" \"cons\")");
+        auto refused = bad.eval("(mutate :rebind \"bad\" \"(lambda (a) (cons a a a))\" \"cons\")");
         CHECK(refused.has_value(), "4398 bad rebind eval");
         CHECK(!(refused && is_bool(*refused) && as_bool(*refused)), "cons 3 is not #t");
         const auto& err = bad.evaluator().last_mutate_error();
@@ -1032,36 +1032,36 @@ int run_test_mutate_type_gate() {
                   std::string(tag) + " set-code");
             CHECK(cs.eval("(eval-current)").has_value(), std::string(tag) + " eval");
             const std::string t(tag);
-            rebind_true(cs, "(mutate:rebind \"kw\" \"(lambda (x) (list :switch x x))\" \"kw\")",
+            rebind_true(cs, "(mutate :rebind \"kw\" \"(lambda (x) (list :switch x x))\" \"kw\")",
                         t + " keyword call arg");
             rebind_true(cs,
-                        "(mutate:rebind \"kwl\" \"(lambda (x) (let ((k :create)) "
+                        "(mutate :rebind \"kwl\" \"(lambda (x) (let ((k :create)) "
                         "(list k :list x)))\" \"id\")",
                         t + " keyword in let");
             rebind_true(cs,
-                        "(mutate:rebind \"kwq\" \"(lambda (x) (let ((c (eq? x :current))) "
+                        "(mutate :rebind \"kwq\" \"(lambda (x) (let ((c (eq? x :current))) "
                         "(if c :def-use x)))\" \"id\")",
                         t + " keyword in eq?/if");
-            rebind_true(cs, "(mutate:rebind \"ws\" \"(lambda (n) (workspace :switch n))\" \"id\")",
+            rebind_true(cs, "(mutate :rebind \"ws\" \"(lambda (n) (workspace :switch n))\" \"id\")",
                         t + " keyword workspace op");
             rebind_true(cs,
-                        "(mutate:rebind \"hr\" \"(lambda (h) (hash-ref h \\\"a\\\" 0))\" \"id\")",
+                        "(mutate :rebind \"hr\" \"(lambda (h) (hash-ref h \\\"a\\\" 0))\" \"id\")",
                         t + " hash-ref 3 top");
             rebind_true(cs,
-                        "(mutate:rebind \"hr2\" \"(lambda (h) (let ((e (hash-ref h \\\"a\\\"))) "
+                        "(mutate :rebind \"hr2\" \"(lambda (h) (let ((e (hash-ref h \\\"a\\\"))) "
                         "e))\" \"id\")",
                         t + " hash-ref 2 in let");
             rebind_true(cs,
-                        "(mutate:rebind \"hr3\" \"(lambda (h) (let ((e (hash-ref h \\\"a\\\" "
+                        "(mutate :rebind \"hr3\" \"(lambda (h) (let ((e (hash-ref h \\\"a\\\" "
                         "#f))) e))\" \"id\")",
                         t + " hash-ref 3 in let");
-            rebind_true(cs, "(mutate:rebind \"tr\" \"(lambda (s) (tcp-recv s 4096))\" \"id\")",
+            rebind_true(cs, "(mutate :rebind \"tr\" \"(lambda (s) (tcp-recv s 4096))\" \"id\")",
                         t + " tcp-recv 2 top");
             rebind_true(
-                cs, "(mutate:rebind \"tr1\" \"(lambda (s) (let ((m (tcp-recv s))) m))\" \"id\")",
+                cs, "(mutate :rebind \"tr1\" \"(lambda (s) (let ((m (tcp-recv s))) m))\" \"id\")",
                 t + " tcp-recv 1 in let");
             rebind_true(cs,
-                        "(mutate:rebind \"tr2\" \"(lambda (s) (let ((m (tcp-recv s 4096))) m))\" "
+                        "(mutate :rebind \"tr2\" \"(lambda (s) (let ((m (tcp-recv s 4096))) m))\" "
                         "\"id\")",
                         t + " tcp-recv 2 in let");
             // The rebound default still reaches the runtime.
@@ -1091,18 +1091,18 @@ int run_test_mutate_type_gate() {
             CHECK(err.find("unbound variable: :") == std::string::npos, label + ": " + err);
         };
         refuse("(define (b4 h) (let ((e (hash-ref h 1 2 3))) e))",
-               "(mutate:rebind \"b4\" \"(lambda (h) (let ((e (hash-ref h 1 2 3))) e))\" \"x\")",
+               "(mutate :rebind \"b4\" \"(lambda (h) (let ((e (hash-ref h 1 2 3))) e))\" \"x\")",
                "call 'hash-ref': expected 2 to 3 arguments, got 4", "hash-ref 4");
         refuse("(define (b1 h) (let ((e (hash-ref h))) e))",
-               "(mutate:rebind \"b1\" \"(lambda (h) (let ((e (hash-ref h))) e))\" \"x\")",
+               "(mutate :rebind \"b1\" \"(lambda (h) (let ((e (hash-ref h))) e))\" \"x\")",
                "call 'hash-ref': expected at least 2 arguments, got 1", "hash-ref 1");
         refuse("(define (t3 s) (let ((m (tcp-recv s 1 2))) m))",
-               "(mutate:rebind \"t3\" \"(lambda (s) (let ((m (tcp-recv s 1 2))) m))\" \"x\")",
+               "(mutate :rebind \"t3\" \"(lambda (s) (let ((m (tcp-recv s 1 2))) m))\" \"x\")",
                "call 'tcp-recv': expected 1 to 2 arguments, got 3", "tcp-recv 3");
         // The free name sits in an if arm, not past the first list arg:
         // list/vector args after the first are not synthesized (separate gap).
         refuse("(define (kf x) (let ((k :switch)) (if (eq? k :switch) not-a-real-name x)))",
-               "(mutate:rebind \"kf\" \"(lambda (x) (let ((k :switch)) "
+               "(mutate :rebind \"kf\" \"(lambda (x) (let ((k :switch)) "
                "(if (eq? k :switch) not-a-real-name x)))\" \"x\")",
                "unbound variable: not-a-real-name", "keyword + free name");
         sandbox_probe.evaluator().set_sandbox_mode(prev_sandbox);
@@ -1132,33 +1132,33 @@ int run_test_mutate_type_gate() {
             CHECK(err.find(want) != std::string::npos, label + ": " + err);
         };
         refused("(define (z81a x) x)",
-                "(mutate:rebind \"z81a\" \"(lambda (x) (list x not-a-real-name-4581))\" \"x\")",
+                "(mutate :rebind \"z81a\" \"(lambda (x) (list x not-a-real-name-4581))\" \"x\")",
                 "unbound variable: not-a-real-name-4581", "4581 free second list arg");
         refused("(define (z81b x) x)",
-                "(mutate:rebind \"z81b\" "
+                "(mutate :rebind \"z81b\" "
                 "\"(lambda (x) (list \\\"s\\\" not-a-real-name-4581 x))\" \"x\")",
                 "unbound variable: not-a-real-name-4581", "4581 free third list arg");
         refused("(define (z81c x) x)",
-                "(mutate:rebind \"z81c\" "
+                "(mutate :rebind \"z81c\" "
                 "\"(lambda (x) (vector \\\"s\\\" not-a-real-name-4581))\" \"x\")",
                 "unbound variable: not-a-real-name-4581", "4581 free second vector arg");
         refused("(define (z81d x) x)",
-                "(mutate:rebind \"z81d\" "
+                "(mutate :rebind \"z81d\" "
                 "\"(lambda (x) (+ 1 2 not-a-real-name-4581))\" \"x\")",
                 "unbound variable: not-a-real-name-4581", "4581 free third arith operand");
         // Argument 1 / operand 1 keep the pre-#4581 rejection (regression).
         refused("(define (z81e x) x)",
-                "(mutate:rebind \"z81e\" \"(lambda (x) (list not-a-real-name-4581 x))\" \"x\")",
+                "(mutate :rebind \"z81e\" \"(lambda (x) (list not-a-real-name-4581 x))\" \"x\")",
                 "unbound variable: not-a-real-name-4581",
                 "4581 free first list arg still rejected");
         // cons is fixed arity — unchanged.
         refused("(define (z81f x) x)",
-                "(mutate:rebind \"z81f\" "
+                "(mutate :rebind \"z81f\" "
                 "\"(lambda (x) (cons \\\"s\\\" not-a-real-name-4581))\" \"x\")",
                 "unbound variable: not-a-real-name-4581", "4581 cons still rejected");
         // A closed body over list/vector still commits and runs.
         setup("(define (z81g x) x)");
-        auto ok_r = cs.eval("(mutate:rebind \"z81g\" \"(lambda (x) (list :switch x x))\" \"x\")");
+        auto ok_r = cs.eval("(mutate :rebind \"z81g\" \"(lambda (x) (list :switch x x))\" \"x\")");
         CHECK(ok_r.has_value() && is_bool(*ok_r) && as_bool(*ok_r),
               "4581 closed list body commits");
         auto zv = cs.eval("(z81g 5)");
@@ -1180,14 +1180,14 @@ int run_test_mutate_type_gate() {
             CHECK(cs.eval("(eval-current)").has_value(), "4579 eval-current");
         };
         setup("(define (f79 x) (+ x 1)) (define (g79 y) (* (f79 y) 2))");
-        auto r = cs.eval("(mutate:rebind \"f79\" \"42\" \"4579\")");
+        auto r = cs.eval("(mutate :rebind \"f79\" \"42\" \"4579\")");
         CHECK(r.has_value(), "4579 rebind eval");
         CHECK(!(r && is_bool(*r) && as_bool(*r)), "4579 literal rebind is not #t");
         // Early gate rejections return the tagged pair directly;
         // last_mutate_error_ is populated by the typecheck refusal path,
         // not by pre-typecheck gates (same as hygiene / not-found).
         const auto& ev79 = cs.evaluator();
-        auto msg = cs.eval("(cadr (mutate:rebind \"f79\" \"42\" \"4579\"))");
+        auto msg = cs.eval("(cadr (mutate :rebind \"f79\" \"42\" \"4579\"))");
         CHECK(msg && is_string(*msg), "4579: rejection message is a string");
         const auto midx = as_string_idx(*msg);
         CHECK(midx < ev79.string_heap().size() &&
@@ -1200,12 +1200,12 @@ int run_test_mutate_type_gate() {
         CHECK(gv && is_int(*gv) && as_int(*gv) == 8, "4579: caller g still callable");
         // Alias to another lambda define is a procedure value — allowed.
         setup("(define h79 (lambda (a) a)) (define (k79 y) (h79 y))");
-        auto alias = cs.eval("(mutate:rebind \"k79\" \"h79\" \"4579\")");
+        auto alias = cs.eval("(mutate :rebind \"k79\" \"h79\" \"4579\")");
         CHECK(alias.has_value() && is_bool(*alias) && as_bool(*alias),
               "4579: alias to lambda define commits");
         // Value defines can still be rebound to literals.
         setup("(define c79 1)");
-        auto val = cs.eval("(mutate:rebind \"c79\" \"42\" \"4579\")");
+        auto val = cs.eval("(mutate :rebind \"c79\" \"42\" \"4579\")");
         CHECK(val.has_value() && is_bool(*val) && as_bool(*val),
               "4579: value define to literal still commits");
     }

@@ -45,7 +45,7 @@ def main() -> int:
     md = _read("src/orch/README.md")
     build = _read("build.py")
 
-    # AC2/AC3/AC4: real mutate soak (mutate:set-body thunks, not pure lambdas)
+    # AC2/AC3/AC4: real mutate soak (mutate :set-body thunks, not pure lambdas)
     must("mutate:set-body", "AC2 mutate soak", test)
     must("kMutateZeroKeys", "AC2 zero-keys snippet", test)
     must("kMutateTwoKeys", "AC3 two-keys snippet", test)

@@ -129,7 +129,7 @@ jobs:
   (let* ((live-value (guess))
          (src (format "(define (guess) ~a)" cand))
          (snap (mutate :snapshot (format "step-~a" i)))
-         (ok (mutate:rebind "guess" src "evolve")))
+         (ok (mutate :rebind "guess" src "evolve")))
     (eval-current)
     (if (and (eq? ok #t) (keep? live-value cand))
         (display (format "~a ~a~a   live ~a\n" i (pad "KEEP" 10) (pad src 19) (live)))
@@ -357,7 +357,7 @@ jobs:
   (car (filter (lambda (row) (and (equal? (caddr row) "check")
                                   (string-index (list-ref row 3) "KEEP")))
                rows)))
-(mutate:rebind "double" (cadr kept) "keep")
+(mutate :rebind "double" (cadr kept) "keep")
 (eval-current)
 (display (format "live     ~a\n" (current-source :workspace :define-fn-sugar)))
 )AURA"},

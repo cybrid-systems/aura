@@ -84,9 +84,9 @@ FN_NAMES = [
     "main",
 ]
 MUTATIONS = [
-    lambda: f'(mutate:rebind "{rng.choice(FN_NAMES)}" "(lambda (x) (* x {rng.randint(1, 10)}))" "fuzz")',
-    lambda: f'(mutate:tweak-literal {rng.randint(0, 3)} {rng.choice([1, -1, 5])} "fuzz")',
-    lambda: f'(mutate:replace-value {rng.randint(0, 3)} {rng.randint(1, 100)} "fuzz")',
+    lambda: f'(mutate :rebind "{rng.choice(FN_NAMES)}" "(lambda (x) (* x {rng.randint(1, 10)}))" "fuzz")',
+    lambda: f'(mutate :tweak-literal {rng.randint(0, 3)} {rng.choice([1, -1, 5])} "fuzz")',
+    lambda: f'(mutate :replace-value {rng.randint(0, 3)} {rng.randint(1, 100)} "fuzz")',
 ]
 
 

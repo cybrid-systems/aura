@@ -210,7 +210,7 @@ static void ac7_service_smoke() {
     set_strategy(AuditStrategy::Full);
     CompilerService cs;
     seed(cs);
-    CHECK(cs.eval("(mutate:rebind \"x\" \"99\")").has_value(), "mutate");
+    CHECK(cs.eval("(mutate :rebind \"x\" \"99\")").has_value(), "mutate");
     CHECK(cs.eval("(+ 1 2)").has_value(), "eval ok");
     CHECK(trail_href(cs, "schema-2029") == 2029, "schema after mutate");
     CHECK(trail_href(cs, "partial-recovery-wired") == 1, "wired after mutate");

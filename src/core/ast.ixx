@@ -4491,7 +4491,7 @@ public:
     }
 
     // Issue #1266 / #2449 / #2450 / #2451: set params on an existing
-    // Lambda (mutate:inline-call clone path). Arena fill then begin,
+    // Lambda (mutate :inline-call clone path). Arena fill then begin,
     // then count last under single-threaded mutation contract.
     void set_lambda_params(NodeId id, std::span<const SymId> params,
                            std::span<const NodeId> annots = {}) {
@@ -6743,7 +6743,7 @@ public:
     }
 
     // Issue #266: capture / restore sym_id_ for fine-grained rollback
-    // of bulk rename operations (mutate:rename-symbol).
+    // of bulk rename operations (mutate :rename-symbol).
     std::pmr::vector<SymId> snapshot_sym_id() const { return sym_id_.view(); }
     void restore_sym_id(std::pmr::vector<SymId>&& snapshot) {
         sym_id_ = std::move(snapshot);
@@ -7894,7 +7894,7 @@ public:
     //     in (query:defines), (query:children), etc.) so the user
     //     can introspect the expanded body.
     //   - MacroIntroduced nodes are mutation-protected by default
-    //     (mutate:replace-subtree returns a hygiene error if you
+    //     (mutate :replace-subtree returns a hygiene error if you
     //     try to overwrite one). This is provenance tracking +
     //     hygiene, not full α-renaming at expansion time.
     [[nodiscard]] bool is_macro_introduced(NodeId id) const noexcept {

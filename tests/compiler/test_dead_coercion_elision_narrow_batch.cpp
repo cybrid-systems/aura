@@ -348,7 +348,7 @@ static void ac1925_6_mutate_stress() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     for (int i = 0; i < 40; ++i) {
         (void)cs.eval(std::format(
-            "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x {}) 0))\" \"c{}\")", i % 5,
+            "(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x {}) 0))\" \"c{}\")", i % 5,
             i));
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(compile:current)");

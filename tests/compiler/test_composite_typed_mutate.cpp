@@ -74,9 +74,9 @@ bool test_atomic_happy_path() {
         cs.evaluator().workspace_flat() ? cs.evaluator().workspace_flat()->mutation_count() : 0;
 
     std::array<std::string_view, 3> mutations = {
-        "(mutate:rebind \"x\" \"10\")",
-        "(mutate:rebind \"y\" \"20\")",
-        "(mutate:rebind \"z\" \"30\")",
+        "(mutate :rebind \"x\" \"10\")",
+        "(mutate :rebind \"y\" \"20\")",
+        "(mutate :rebind \"z\" \"30\")",
     };
     auto result = cs.typed_mutate_atomic(mutations);
     if (!result.success) {
@@ -116,9 +116,9 @@ bool test_atomic_abort_path() {
 
     // First 2 are valid; the 3rd is invalid (unbalanced parens — parse fails).
     std::array<std::string_view, 3> mutations = {
-        "(mutate:rebind \"x\" \"100\")",
-        "(mutate:rebind \"y\" \"200\")",
-        "(mutate:rebind \"z\"   ", // unbalanced — parse-time failure
+        "(mutate :rebind \"x\" \"100\")",
+        "(mutate :rebind \"y\" \"200\")",
+        "(mutate :rebind \"z\"   ", // unbalanced — parse-time failure
     };
     auto result = cs.typed_mutate_atomic(mutations);
     if (result.success) {
@@ -193,7 +193,7 @@ bool test_atomic_snapshot_semantics() {
     }
 
     // First: do an isolated single-mutation (committed outside the txn).
-    auto pre = cs.typed_mutate("(mutate:rebind \"x\" \"999\")");
+    auto pre = cs.typed_mutate("(mutate :rebind \"x\" \"999\")");
     if (!pre.success) {
         std::print("  FAIL: pre-mutation failed\n");
         return false;
@@ -204,8 +204,8 @@ bool test_atomic_snapshot_semantics() {
     // Now: a transaction that aborts — should rollback only what
     // THIS transaction applied, not the prior pre-mutation.
     std::array<std::string_view, 2> mutations = {
-        "(mutate:rebind \"y\" \"888\")",
-        "(mutate:rebind \"z\"   ", // parse fails
+        "(mutate :rebind \"y\" \"888\")",
+        "(mutate :rebind \"z\"   ", // parse fails
     };
     auto result = cs.typed_mutate_atomic(mutations);
     if (result.success) {
@@ -238,15 +238,15 @@ bool test_atomic_after_normal_mutate() {
         return false;
     }
     // Normal typed_mutate first
-    auto pre = cs.typed_mutate("(mutate:rebind \"x\" \"777\")");
+    auto pre = cs.typed_mutate("(mutate :rebind \"x\" \"777\")");
     if (!pre.success) {
         std::print("  FAIL: pre-mutation failed\n");
         return false;
     }
     // Then atomic
     std::array<std::string_view, 2> mutations = {
-        "(mutate:rebind \"y\" \"555\")",
-        "(mutate:rebind \"z\" \"333\")",
+        "(mutate :rebind \"y\" \"555\")",
+        "(mutate :rebind \"z\" \"333\")",
     };
     auto result = cs.typed_mutate_atomic(mutations);
     if (!result.success) {
@@ -259,7 +259,7 @@ bool test_atomic_after_normal_mutate() {
 
 // ── AC6: explicit force-fail — distinct from AC2's unbalanced-parens
 // (parse-time) failure, this test injects a forced failure via
-// (mutate:rebind ...) with an extra argument (rebind expects 3,
+// (mutate :rebind ...) with an extra argument (rebind expects 3,
 // gets 4 → arity error). Verifies the rollback semantics work for
 // the "force-fail" AC path explicitly (not just the natural "abort"
 // path of AC2). This is the 3rd coverage path called out in #1415
@@ -276,15 +276,15 @@ bool test_atomic_force_fail_path() {
             ? cs.evaluator().workspace_flat()->committed_mutation_count()
             : 0;
 
-    // First 2 succeed; 3rd has 4 args (mutate:rebind expects 3:
+    // First 2 succeed; 3rd has 4 args (mutate :rebind expects 3:
     // var, expr, reason). Arity mismatch → parse-time failure.
     // Distinct from AC2's unbalanced-parens failure (different
     // syntax error mode → exercises the same TypedTransactionGuard
     // rollback path from a different angle).
     std::array<std::string_view, 3> mutations = {
-        "(mutate:rebind \"x\" \"100\")",
-        "(mutate:rebind \"y\" \"200\")",
-        "(mutate:rebind \"z\" \"300\" \"reason\" \"EXTRA-ARG-FORCE-FAIL-1415\")",
+        "(mutate :rebind \"x\" \"100\")",
+        "(mutate :rebind \"y\" \"200\")",
+        "(mutate :rebind \"z\" \"300\" \"reason\" \"EXTRA-ARG-FORCE-FAIL-1415\")",
     };
     auto result = cs.typed_mutate_atomic(mutations);
     if (result.success) {

@@ -72,7 +72,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC2: mutate bumps reverify or provenance ---");
     const auto rev0 = hash_int(cs, "delta-reverify-scans");
     const auto prov0 = hash_int(cs, "narrowing-provenance-refresh");
-    (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     (void)cs.eval("(eval-current)");
     const auto rev1 = hash_int(cs, "delta-reverify-scans");
     const auto prov1 = hash_int(cs, "narrowing-provenance-refresh");
@@ -84,7 +84,7 @@ static void run_matrix(CompilerService& cs) {
     const auto dce0 = hash_int(cs, "dead-coercion-eliminated");
     const auto coer0 = hash_int(cs, "coercion-incremental-wins");
     (void)cs.eval("(f 3)");
-    (void)cs.eval("(mutate:rebind \"b\" \"20\")");
+    (void)cs.eval("(mutate :rebind \"b\" \"20\")");
     (void)cs.eval("(eval-current)");
     const auto dce1 = hash_int(cs, "dead-coercion-eliminated");
     const auto coer1 = hash_int(cs, "coercion-incremental-wins");
@@ -99,7 +99,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: multi-round mutate monotonic ---");
     const auto stats5a = stats_sum(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"a\" \"" + std::to_string(30 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"a\" \"" + std::to_string(30 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(f 2)");
     }
@@ -149,9 +149,9 @@ static void ac3655_non_rebind_persist_sdo() {
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura::compiler::CompilerService cs;
     CHECK(setup_predicate_workspace(cs), "3655 workspace");
-    auto tw = cs.eval("(mutate:tweak-literal 0 0)");
+    auto tw = cs.eval("(mutate :tweak-literal 0 0)");
     CHECK(tw.has_value(), "3655 AC1: production tweak-literal commits (SDO ran or vacuous)");
-    auto rs = cs.eval("(mutate:replace-subtree 0 \"1\")");
+    auto rs = cs.eval("(mutate :replace-subtree 0 \"1\")");
     (void)rs;
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }

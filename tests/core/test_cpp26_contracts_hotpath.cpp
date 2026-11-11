@@ -88,7 +88,7 @@ static void ac4_hotpath_hits() {
     const auto h0 = href(cs, "hotpath-invariant-hits");
     (void)cs.eval("(fact 4)");
     (void)cs.eval("(+ a b)");
-    (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     (void)cs.eval("(eval-current)");
     // Direct metric read after FlatAST get / type_id / mark_dirty paths
     const auto h1 = href(cs, "hotpath-invariant-hits");
@@ -101,7 +101,7 @@ static void ac5_stress() {
     CHECK(seed(cs), "seed");
     const auto h0 = href(cs, "hotpath-invariant-hits");
     for (int i = 0; i < 20; ++i) {
-        (void)cs.eval(std::format("(mutate:rebind \"b\" \"{}\")", 20 + i));
+        (void)cs.eval(std::format("(mutate :rebind \"b\" \"{}\")", 20 + i));
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(fact 2)");
     }
@@ -124,7 +124,7 @@ static void ac7_no_violations() {
     std::println("\n--- AC7: zero violations normal path ---");
     CompilerService cs;
     CHECK(seed(cs), "seed");
-    (void)cs.eval("(mutate:rebind \"a\" \"3\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"3\")");
     (void)cs.eval("(eval-current)");
     CHECK(href(cs, "contract-violations-caught") == 0, "no violations");
     CHECK(href(cs, "contract-violation-hotpath") == 0 || href(cs, "contract-violation-hotpath") < 0,

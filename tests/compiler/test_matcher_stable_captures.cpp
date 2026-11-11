@@ -86,7 +86,7 @@ int main() {
         }
         CHECK(cs.eval(std::string("(set-code \"") + src + "\")").has_value(), "set-code");
         // Simple non-capture replace still works (covers apply loop).
-        auto r = cs.eval("(mutate:replace-pattern \"(+ x 1)\" \"(+ 1 x)\" \"1695-ac3\")");
+        auto r = cs.eval("(mutate :replace-pattern \"(+ x 1)\" \"(+ 1 x)\" \"1695-ac3\")");
         CHECK(r && is_bool(*r) && as_bool(*r), "replace-pattern #t with StableNodeRef captures");
         auto p0 = cs.eval("(p0 7)");
         (void)cs.eval("(eval-current)");

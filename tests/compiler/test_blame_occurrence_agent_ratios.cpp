@@ -159,7 +159,7 @@ static void ac5_multi_delta() {
     CompilerService cs;
     seed(cs);
     for (int i = 0; i < 4; ++i) {
-        CHECK(cs.eval(std::format("(mutate:rebind \"x\" \"{}\")", 10 + i)).has_value(), "mutate");
+        CHECK(cs.eval(std::format("(mutate :rebind \"x\" \"{}\")", 10 + i)).has_value(), "mutate");
     }
     CHECK(cs.eval("(+ 1 2)").has_value(), "eval ok");
     CHECK(in_bp(evo(cs, "blame_completeness_ratio")), "blame after mutates");

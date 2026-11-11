@@ -90,7 +90,7 @@ int run_test_workspace_sync_from() {
         // After create, switch to child and rebind my-fn to identity (simulate wrong state).
         CHECK(cs.eval(std::format("(workspace :switch {})", child_id)).has_value(),
               "AC1: switch to child");
-        CHECK(cs.eval("(mutate:rebind \"my-fn\" \"(lambda (x) x)\" \"stub-id\")").has_value(),
+        CHECK(cs.eval("(mutate :rebind \"my-fn\" \"(lambda (x) x)\" \"stub-id\")").has_value(),
               "AC1: child temporarily identity");
         auto r_id = cs.eval("(my-fn 5)");
         // May need eval-current after rebind in some configurations.

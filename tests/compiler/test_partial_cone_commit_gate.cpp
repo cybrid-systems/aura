@@ -1077,7 +1077,7 @@ static void ac4170_1_live_recover_solved_allows() {
     // this boundary is a name rebind (no node spine). #t, not merely
     // has_value — a hard-gate merr must not look like a commit.
     {
-        auto mut = cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" "
+        auto mut = cs.eval("(mutate :atomic-batch (list (list \"mutate:rebind\" "
                            "\"ac4170_live\" \"2\")) \"4170\")");
         CHECK(mut && is_bool(*mut) && as_bool(*mut), "AC1: rebind drives commit-TC boundary");
     }
@@ -1126,7 +1126,7 @@ static void ac4170_2_override_true_conflict_still_fails_closed() {
     const auto lit2 = ws2 ? find_literal_int_3686(*ws2, 1) : aura::ast::NULL_NODE;
     CHECK(lit2 != aura::ast::NULL_NODE, "AC2: literal node found");
     {
-        auto mut = cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" "
+        auto mut = cs.eval("(mutate :atomic-batch (list (list \"mutate:rebind\" "
                            "\"ac4170_neg\" \"2\")) \"4170\")");
         CHECK(mut && is_bool(*mut) && as_bool(*mut), "AC2: rebind drives commit-TC boundary");
     }
@@ -1246,7 +1246,7 @@ static void ac3686_soak_two_defines() {
     const auto tid_b0 = ws->type_id(b_lit);
 
     auto batch =
-        cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 10) "
+        cs.eval(std::format("(mutate :atomic-batch (list (list \"mutate:tweak-literal\" {} 10) "
                             "(list \"mutate:tweak-literal\" {} 20)))",
                             static_cast<long long>(a_lit), static_cast<long long>(b_lit)));
     CHECK(batch.has_value(), "3686 AC1: batch returns");
@@ -1705,7 +1705,7 @@ static void ac2672_helper_drift_inject_sets_state() {
 // allowed (AC1 observe path) and production/hard → commit hard face
 // (AC2) require driving the full partial re-infer path with
 // truncated cone state from a unit test, which is the same scope as
-// #2621 AC1 (env caps + explicit (mutate:rebind ...)). That surface is
+// #2621 AC1 (env caps + explicit (mutate :rebind ...)). That surface is
 // already covered by the existing AC1-AC6 test functions
 // (ac1_soft_observe_allow + ac2_production_deny) which drive the
 // commit_readiness gate end-to-end. The drift-injection unit test
@@ -1943,7 +1943,7 @@ static void ac2694_6_source_and_linter() {
 //         #2622 sync) are covered by source-cite since driving the
 //         full partial re-infer path with truncated cone state from a
 //         unit test requires the same wiring as #2621 AC1 (env caps +
-//         explicit (mutate:rebind ...)). AC3 is the !truncated
+//         explicit (mutate :rebind ...)). AC3 is the !truncated
 //         regression gate. AC6 is the drift-injection unit test
 //         (verifies the helper actually sets the state).
 

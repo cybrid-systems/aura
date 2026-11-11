@@ -111,7 +111,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC6: mutate:request-gc-safepoint no-guard path ---");
     const auto g6a = gc_safepoint_adapted(cs);
-    auto immediate = cs.eval("(mutate:request-gc-safepoint)");
+    auto immediate = cs.eval("(mutate :request-gc-safepoint)");
     CHECK(immediate && is_int(*immediate), "mutate:request-gc-safepoint returns int");
     if (immediate && is_int(*immediate)) {
         const auto code = as_int(*immediate);

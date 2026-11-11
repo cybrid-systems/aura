@@ -201,7 +201,7 @@ int main() {
         const auto denials0 = ev.capability_denial_count();
         // Try a mutate primitive that goes through add_mutate wrapper.
         // Without grant + Strict → effect deny (and legacy sandbox cap deny).
-        auto r = cs.eval("(mutate:remove-node 0)");
+        auto r = cs.eval("(mutate :remove-node 0)");
         // May return error or false; key is denial path was taken.
         CHECK(ev.capability_denial_count() > denials0 || (r && is_error(*r)) ||
                   snapshot_capability_effect_stats().denied >= 1,
@@ -644,7 +644,7 @@ int main() {
         const auto strong0 = ev.atomic_batch_strong_atomicity_commits_total();
         const auto weak0 = ev.atomic_batch_weak_atomicity_used_total();
         const auto inter0 = ev.atomic_batch_interleaved_prevented_total();
-        auto r = cs.eval("(mutate:atomic-batch "
+        auto r = cs.eval("(mutate :atomic-batch "
                          "(list (list \"mutate:rebind\" \"f\" \"(lambda (x) (* x 3))\")) \"ac3\")");
         CHECK(r && is_bool(*r) && as_bool(*r), "batch succeeds");
         CHECK(ev.atomic_batch_strong_atomicity_commits_total() > strong0, "strong commits bumped");
@@ -668,7 +668,7 @@ int main() {
         // isolation still blocks foreign tenant-target.
         ev.grant_capability(kCapWildcard);
         const auto den0 = ev.atomic_batch_tenant_isolation_denials_total();
-        auto r = cs.eval("(mutate:atomic-batch "
+        auto r = cs.eval("(mutate :atomic-batch "
                          "(list (list \"mutate:rebind\" \"f\" \"(lambda (x) (* x 9))\")) "
                          "\"ac4\" :tenant-target 8)");
         // Should fail (error pair or non-#t).
@@ -680,7 +680,7 @@ int main() {
         std::println("  denials={}", ev.atomic_batch_tenant_isolation_denials_total());
 
         // Same tenant target allowed under Strict.
-        auto ok = cs.eval("(mutate:atomic-batch "
+        auto ok = cs.eval("(mutate :atomic-batch "
                           "(list (list \"mutate:rebind\" \"f\" \"(lambda (x) (* x 5))\")) "
                           "\"ac4-self\" :tenant-target 7)");
         CHECK(ok && is_bool(*ok) && as_bool(*ok), "same-tenant :tenant-target allowed");
@@ -693,7 +693,7 @@ int main() {
         CompilerService cs;
         CHECK(setup_ws(cs), "workspace");
         const auto u0 = stats_href(cs, "unsupported-op-total");
-        auto r = cs.eval("(mutate:atomic-batch "
+        auto r = cs.eval("(mutate :atomic-batch "
                          "(list (list \"mutate:not-a-real-op\" \"x\" \"1\")) \"ac5\")");
         const bool failed = !r || !is_bool(*r) || !as_bool(*r);
         CHECK(failed, "unsupported op does not succeed as #t");
@@ -711,7 +711,7 @@ int main() {
         ev.grant_capability(kCapWildcard);
         ev.set_tenant_principal(1, "solo");
         ev.set_effect_sandbox_mode(2);
-        auto r = cs.eval("(mutate:atomic-batch "
+        auto r = cs.eval("(mutate :atomic-batch "
                          "(list (list \"mutate:rebind\" \"g\" \"42\")) \"ac6\")");
         CHECK(r && is_bool(*r) && as_bool(*r), "Strict single-tenant batch succeeds");
         CHECK(ev.atomic_batch_weak_atomicity_used_total() == 0, "still strong (weak=0)");

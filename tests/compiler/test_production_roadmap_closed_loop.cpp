@@ -81,7 +81,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC6: P5 mutate cycle bumps stats ---");
     const auto stats6a = roadmap_stats(cs);
-    (void)cs.eval("(mutate:rebind \"x\" \"42\")");
+    (void)cs.eval("(mutate :rebind \"x\" \"42\")");
     (void)cs.eval("(eval-current)");
     const auto stats6b = roadmap_stats(cs);
     std::println("  roadmap stats: {} -> {}", stats6a, stats6b);
@@ -90,9 +90,9 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC7: multi-round matrix monotonic ---");
     const auto stats7a = roadmap_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"y\" \"" + std::to_string(10 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"y\" \"" + std::to_string(10 + round) + "\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(mutate:request-gc-safepoint 10)");
+        (void)cs.eval("(mutate :request-gc-safepoint 10)");
     }
     const auto stats7b = roadmap_stats(cs);
     std::println("  roadmap stats: {} -> {}", stats7a, stats7b);

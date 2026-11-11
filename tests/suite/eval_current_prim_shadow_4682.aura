@@ -20,9 +20,9 @@
 (let loop ((i 0))
   (if (< i 5)
       (begin
-        (mutate:rebind "abs" (string-append "(lambda (x) " (number->string i) ")") "t")
+        (mutate :rebind "abs" (string-append "(lambda (x) " (number->string i) ")") "t")
         (check! (equal? (eval-current) (list i (if (= i 0) 2 i) 7)) (string-append "rebind shadow " (number->string i)))
-        (mutate:rebind "helper" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
+        (mutate :rebind "helper" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
         (check! (equal? (eval-current) (list i (+ 1 i) 7)) (string-append "rebind helper " (number->string i)))
         (loop (+ i 1)))))
 (set-code "(define helper (lambda (x) (* x 3)))\n(list (abs -3) (helper 2))")

@@ -3217,7 +3217,7 @@ public:
     // into this module interface.
     void mark_outermost_mutation_failed() noexcept;
     // Issue #1907: reflect/EDSL bridge accessors backing the
-    // (engine:metrics "query:reflect-schema") + (mutate:validate-reflected)
+    // (engine:metrics "query:reflect-schema") + (mutate :validate-reflected)
     // primitives + the post-mutation auto_validate + hygiene gate hook
     // (aura_validate_reflected_post_mutation, called from
     // flush_mutation_boundary outermost exit per Step 1 of the #1907 plan).
@@ -4001,7 +4001,7 @@ public:
         update_function_source_fn_ = std::move(fn);
     }
     // Issue #680: full invalidate_function BFS for closure-heavy Define
-    // mutations (mutate:rebind / mutate:query-and-replace success path).
+    // mutations (mutate :rebind / mutate:query-and-replace success path).
     void set_invalidate_function_fn(std::function<void(const std::string&)> fn) {
         invalidate_function_fn_ = std::move(fn);
     }
@@ -4792,7 +4792,7 @@ public:
     // Issue #1419: AI agent identity for MutationRecord.author_fingerprint.
     // 0 = system (default). Non-zero = hash(agent_id). Propagated to the
     // workspace FlatAST provenance context so every add_mutation stamps
-    // the author. Used by TypedTransactionGuard + (mutate:set-agent-fingerprint).
+    // the author. Used by TypedTransactionGuard + (mutate :set-agent-fingerprint).
     // Issue #1730: atomic release/acquire — concurrent fibers race on
     // plain uint64 read/write of author identity.
     void set_current_agent_fingerprint(std::uint64_t fp) noexcept {
@@ -6455,7 +6455,7 @@ public:
     // defuse_version_ in the same critical section as the boundary bump.
     // Frames whose captured cell still matches the live workspace binding
     // for that name (module captures, #2579) are restamped; frames whose
-    // captured cell was replaced by the boundary (mutate:rebind / set-code
+    // captured cell was replaced by the boundary (mutate :rebind / set-code
     // new cell) stay behind so materialize_call_env returns the empty Env
     // instead of copying pre-mutate bindings. INVALID_VERSION never
     // restamps (#356).
@@ -7227,7 +7227,7 @@ private:
     ast::StringPool* mutate_target_pool_ = nullptr;
     ast::FlatAST* workspace_flat_ = nullptr; // EDSL persistent workspace (set via (set-code ...))
     // Issue #1419 / #1730: current AI agent fingerprint (0 = system).
-    // atomic: concurrent set/get across fibers (mutate:set-agent-fingerprint).
+    // atomic: concurrent set/get across fibers (mutate :set-agent-fingerprint).
     std::atomic<std::uint64_t> current_agent_fingerprint_{0};
     ast::StringPool* workspace_pool_ = nullptr;
     // Issue #4717: relaxed atomics (see current_flat()/current_pool()).
@@ -11305,7 +11305,7 @@ public:
     }
     // Issue #491 / #680 rebind observability: bump
     // hotswap-invalidate + invalidate_function-calls on
-    // (mutate:rebind) without running the BFS cascade (the
+    // (mutate :rebind) without running the BFS cascade (the
     // rebind path is lazy re-lower, not hard invalidate).
     // Counters are observability-only relaxed atomics; the
     // direct bump is safe alongside mark_define_dirty and
@@ -11718,7 +11718,7 @@ public:
     }
     // Issue #391: stale-ref policy + observability
     // accessors + bump helpers. Public so the
-    // (mutate:set-stale-ref-policy) / (query:stale-ref-policy)
+    // (mutate :set-stale-ref-policy) / (query:stale-ref-policy)
     // / (query:stale-ref-stats) primitives can read+write
     // them, and the core mutate primitives can check the
     // policy + bump the counters.
@@ -18400,7 +18400,7 @@ public:
         // each pre-mutation PCV.
         std::vector<aura::ast::PersistentChildVector<aura::ast::NodeId>> children_snapshot;
         // Issue #266: optional column snapshots for bulk sym/param
-        // mutations (mutate:rename-symbol). Captured only when
+        // mutations (mutate :rename-symbol). Captured only when
         // fine_rollback is enabled on the boundary.
         bool fine_rollback = false;
         std::pmr::vector<aura::ast::SymId> sym_id_snapshot;
@@ -18592,7 +18592,7 @@ public:
     // MacroIntroduced marker restore would demote to the checkpointed
     // (User) value, or NULL_NODE when the restore cannot demote (bad
     // handle, cross-generation, no live MI, or identical saved
-    // markers). The deny face (mutate:restore-hygiene-checkpoint)
+    // markers). The deny face (mutate :restore-hygiene-checkpoint)
     // blames this node; the peek never consumes the slot.
     [[nodiscard]] aura::ast::NodeId
     restore_would_demote_macro_introduced(std::uint64_t handle) const noexcept;
@@ -19624,7 +19624,7 @@ public:
         bool had_panic_checkpoint_ = false;
         bool fine_rollback_ = false;
         // Issue #459: was this guard entered under a
-        // (mutate:atomic-batch) — i.e. should the guard
+        // (mutate :atomic-batch) — i.e. should the guard
         // suppress its own generation bump? The flag is
         // set by `suppress_generation_bump(true)` before
         // construction. Nested atomic batches stack
@@ -19844,7 +19844,7 @@ public:
         [[nodiscard]] bool has_pending_checkpoint() const noexcept { return had_panic_checkpoint_; }
         // Issue #459: per-guard atomic-batch accessors.
         // `is_atomic_batch_active()` returns true when this
-        // guard was entered under a (mutate:atomic-batch)
+        // guard was entered under a (mutate :atomic-batch)
         // — the caller can use this to detect a violation
         // (e.g. a fiber steal happening while an atomic
         // guard is held).
@@ -19852,7 +19852,7 @@ public:
         // `suppress_generation_bump(true)` marks this guard
         // as a suppressed-bump guard. The ctor reads the
         // flag to decide whether to skip the defuse_version_
-        // bump on enter (the (mutate:atomic-batch) primitive
+        // bump on enter (the (mutate :atomic-batch) primitive
         // does a single bump on commit instead, saving N-1
         // bumps for N ops in a batch).
         void suppress_generation_bump(bool v) noexcept { suppress_bump_ = v; }
@@ -20163,12 +20163,12 @@ public:
     // Issue #396 Phase 2: lockless variants for the two
     // high-frequency mutate operations that previously fell
     // back to error inside atomic-batch. Used by
-    // (mutate:atomic-batch) sub-op routing; the wrapper
-    // primitives (mutate:remove-node / mutate:insert-child)
+    // (mutate :atomic-batch) sub-op routing; the wrapper
+    // primitives (mutate :remove-node / mutate:insert-child)
     // still use these internally too.
     EvalResult eval_flat_apply_mutate_remove_node(std::span<const types::EvalValue> a);
     EvalResult eval_flat_apply_mutate_insert_child(std::span<const types::EvalValue> a);
-    // Issue #1900: 10 lockless helpers extracted to expand (mutate:atomic-batch)
+    // Issue #1900: 10 lockless helpers extracted to expand (mutate :atomic-batch)
     // dispatch from 5 → 14 ops. Each helper does the inner mutation work WITHOUT
     // acquiring a nested MutationBoundaryGuard (the outer atomic-batch Guard
     // already holds workspace_mtx_ for the whole batch). Helpers also skip the

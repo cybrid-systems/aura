@@ -284,8 +284,8 @@ static void ac7_mutate_requery() {
     std::println("\n--- AC7: mutate + re-eval hygiene + native keys ---");
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "macro workspace");
-    CHECK(cs.eval("(mutate:rebind \"base\" \"42\")").has_value() ||
-              cs.eval("(mutate:rebind \"base\" \"10\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"base\" \"42\")").has_value() ||
+              cs.eval("(mutate :rebind \"base\" \"10\")").has_value(),
           "mutate:rebind");
     CHECK(cs.eval("(eval-current)").has_value(), "eval after mutate");
     (void)cs.eval("(query:pattern \"*\")");
@@ -318,7 +318,7 @@ static void ac8_unstamp_macro_introduced_2176() {
 
     // Step 2: unstamp via the new primitive. Root id 0 is the workspace
     // root (covers the whole tree). Default keep_provenance=#f → zero provenance.
-    auto unstamp_r = cs.eval("(mutate:rollback-macro-introduced 0)");
+    auto unstamp_r = cs.eval("(mutate :rollback-macro-introduced 0)");
     CHECK(unstamp_r && is_int(*unstamp_r), "AC8: mutate:rollback-macro-introduced returns int");
     const std::int64_t unstampped = is_int(*unstamp_r) ? as_int(*unstamp_r) : 0;
     CHECK(unstampped >= 0, "AC8: unstamp count >=0");
@@ -357,7 +357,7 @@ static void ac8_unstamp_macro_introduced_2176() {
 
     // Step 6: keep_provenance=#t variant — unstamp with provenance kept.
     // We just verify the primitive accepts the second arg without error.
-    auto kp_r = cs2.eval("(mutate:rollback-macro-introduced 0 1)");
+    auto kp_r = cs2.eval("(mutate :rollback-macro-introduced 0 1)");
     CHECK(kp_r, "AC8: keep_provenance variant accepted (any result, no error)");
 
     // Step 7: bad-arg path — non-int root.

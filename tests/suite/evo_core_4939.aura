@@ -215,13 +215,13 @@
 (display "AC6 worldline isolation\n")
 ; AC4 committed a candidate, so put the live body back (a normal live
 ; mutation - the trial below must leave *this* text alone).
-(mutate:rebind "score" "(lambda (x) (* x 2))" "restore")
+(mutate :rebind "score" "(lambda (x) (* x 2))" "restore")
 (define live0 (evo:source-fingerprint))
 (define trial-cand (evo:candidate "(lambda (x) (* x 9))" (hash "target" "score")))
 (define ok-trial
   (evo:trial trial-cand
              (hash "apply" (lambda (cand)
-                             (eq? (mutate:rebind "score" (evo:candidate-genome cand) "trial") #t))
+                             (eq? (mutate :rebind "score" (evo:candidate-genome cand) "trial") #t))
                    "evaluate" (lambda (cand)
                                 (hash "objectives" (hash "y" (score 5))
                                       "constraints" (hash "ok" 0.0)
@@ -242,7 +242,7 @@
   (evo:trial trial-cand
              (hash "apply" (lambda (s c)
                              (set! seen-target (hash-ref s "target" ""))
-                             (eq? (mutate:rebind "score" (evo:candidate-genome c) "two") #t))
+                             (eq? (mutate :rebind "score" (evo:candidate-genome c) "two") #t))
                    "evaluate" (lambda (c)
                                 (hash "objectives" (hash "y" (score 5))
                                       "constraints" (hash "ok" 0.0)
@@ -277,7 +277,7 @@
 ; a candidate the MutationBoundary refuses (parse diagnostic, not an exception)
 (define bad-trial
   (evo:trial trial-cand
-             (hash "apply" (lambda (cand) (mutate:rebind "score" "(lambda (x)" "trial"))
+             (hash "apply" (lambda (cand) (mutate :rebind "score" "(lambda (x)" "trial"))
                    "evaluate" (lambda (cand) (hash)))))
 (assert! (string=? "error" (hash-ref bad-trial "status")) "parse-error trial status")
 (assert! (not (= -1 (string-index (hash-ref bad-trial "error") "parse-error" 0)))

@@ -998,7 +998,7 @@ int run_test_unquote_splicing_hygiene() {
             CHECK(true, "3754: no expanded gensym Let in workspace (eval path skip)");
         } else {
             CHECK(ws->is_macro_introduced(gensym_let), "3754: template gensym is MacroIntroduced");
-            auto rv = cs.eval(std::format("(mutate:replace-value {} 99 \"3754-deny\")",
+            auto rv = cs.eval(std::format("(mutate :replace-value {} 99 \"3754-deny\")",
                                           static_cast<unsigned>(gensym_let)));
             std::string kind;
             if (rv && is_pair(*rv)) {

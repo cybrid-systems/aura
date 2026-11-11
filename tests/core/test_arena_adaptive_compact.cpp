@@ -241,7 +241,7 @@ static void ac7_mutate_stress() {
 
     for (int i = 0; i < 40; ++i) {
         (void)cs.eval(
-            std::format("(mutate:rebind \"f\" \"(lambda (x) (+ x {}))\" \"i2059\")", i % 7));
+            std::format("(mutate :rebind \"f\" \"(lambda (x) (+ x {}))\" \"i2059\")", i % 7));
         (void)cs.eval("(eval-current)");
         if (i % 8 == 0)
             (void)cs.eval("(mutate :arena-compact)");

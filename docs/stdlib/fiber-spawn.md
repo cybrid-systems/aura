@@ -129,10 +129,10 @@ names must not crash or leave names unbound.
 ```scheme
 ;; Concurrent dual rebind (distinct names) — both should apply or one waits
 (let* ((fa (fiber:spawn (lambda ()
-              (and (mutate:rebind "ka" "(lambda (x) (* x 3))" "a")
+              (and (mutate :rebind "ka" "(lambda (x) (* x 3))" "a")
                    (begin (eval-current) #t)))))
        (fb (fiber:spawn (lambda ()
-              (and (mutate:rebind "kb" "(lambda (x) (* x 5))" "b")
+              (and (mutate :rebind "kb" "(lambda (x) (* x 5))" "b")
                    (begin (eval-current) #t)))))
        (ra (fiber:join fa))
        (rb (fiber:join fb)))
@@ -228,7 +228,7 @@ overlay** — not only `fiber:overlay-get`. The read path (`Env::lookup` /
 `Env::lookup_cell_index`) tests one thread-local depth word and only then
 consults the registry, so a program that never opens an overlay keeps
 byte-identical semantics at the cost of a single thread-local load per env
-lookup. Defines, `set!` and `(mutate:rebind …) + (eval-current)` inside the
+lookup. Defines, `set!` and `(mutate :rebind …) + (eval-current)` inside the
 body are captured into the overlay as a private cell: the shared cell is not
 written, so a sibling body keeps reading the committed value until
 `fiber:overlay-commit` publishes the new cell in one step (old-or-new, never

@@ -13,12 +13,12 @@
 (let loop ((i 0))
   (if (< i 20)
       (begin
-        (mutate:rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
+        (mutate :rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
         (eval-current)
         (check! (= (g 1) (+ 1 i)) "g after linear-free rebind")
         (loop (+ i 1)))))
 ;; phase 2: introduce linear values via rebind; enforcement still active
-(mutate:rebind "f" "(lambda (x) (let ((v (Linear x))) (move v)))" "t")
+(mutate :rebind "f" "(lambda (x) (let ((v (Linear x))) (move v)))" "t")
 (eval-current)
 (check! (= (g 5) 5) "linear move through rebound f")
 (check! (try (let ((x (Linear 42))) (move x) (borrow x)) (catch (e) #t))
@@ -29,7 +29,7 @@
 (let loop ((i 0))
   (if (< i 5)
       (begin
-        (mutate:rebind "f" (string-append "(lambda (x) (* x " (number->string (+ i 2)) "))") "t")
+        (mutate :rebind "f" (string-append "(lambda (x) (* x " (number->string (+ i 2)) "))") "t")
         (eval-current)
         (check! (= (g 3) (* 3 (+ i 2))) "g after post-linear rebind")
         (loop (+ i 1)))))

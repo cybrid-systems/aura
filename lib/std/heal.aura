@@ -171,7 +171,7 @@
      (if (pair? tg)
        ; AST node ID available — use mutate:wrap
        (begin
-         (try (mutate:wrap (car tg) "(display _)" "wrap") (catch #f))
+         (try (mutate :wrap (car tg) "(display _)" "wrap") (catch #f))
          (set! result (try (current-source) (catch code-str))))
        ; Fallback: string level — append (display ...) at end
        (set! result code-str)))

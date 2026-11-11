@@ -330,7 +330,7 @@ namespace mutation {
             return StructuralRollbackOp::RemoveChild;
         // Issue #369: alias map for wrapper-level Aura primitives
         // that mutate the children_ column. The wrappers
-        // (mutate:remove-node, mutate:insert-child, etc.) historically
+        // (mutate :remove-node, mutate:insert-child, etc.) historically
         // called add_mutation() which records the op name but DOES NOT
         // populate field_offset / old_value / new_value, so
         // try_rollback_structural_child_op would return

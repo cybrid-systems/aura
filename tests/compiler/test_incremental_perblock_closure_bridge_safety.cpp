@@ -72,7 +72,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC2: mutate bumps blocks-relowered ---");
     const auto blocks0 = hash_int(cs, "blocks-relowered");
     const auto impact0 = cs.evaluator().get_impact_scope_calls();
-    (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     (void)cs.eval("(eval-current)");
     const auto blocks1 = hash_int(cs, "blocks-relowered");
     const auto impact1 = cs.evaluator().get_impact_scope_calls();
@@ -108,7 +108,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: multi-round mutate stats monotonic ---");
     const auto stats6a = stats_sum(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"b\" \"" + std::to_string(20 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"b\" \"" + std::to_string(20 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(fact 3)");
     }

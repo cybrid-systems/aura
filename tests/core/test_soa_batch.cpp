@@ -661,7 +661,7 @@ static void run_506_hotpath_matrix() {
 
     const auto passes0 = cs.evaluator().get_passes_skipped_type_dirty();
     const auto stats3a = adoption_stats(cs);
-    (void)cs.eval("(mutate:rebind \"base\" \"99\")");
+    (void)cs.eval("(mutate :rebind \"base\" \"99\")");
     CHECK(cs.eval("(eval-current)").has_value(), "eval after mutate");
     const auto passes1 = cs.evaluator().get_passes_skipped_type_dirty();
     const auto stats3b = adoption_stats(cs);
@@ -678,7 +678,7 @@ static void run_506_hotpath_matrix() {
     const auto stats5a = adoption_stats(cs);
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(query:pattern \"acc\")");
-        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
+        (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats5b = adoption_stats(cs);

@@ -218,7 +218,7 @@ static void ac7_agent_closed_loop() {
     const auto viol = hygiene_key(cs, "violation_count");
     CHECK(viol >= 0, "violation_count readable");
     if (viol < 1000) {
-        (void)cs.eval("(mutate:rebind \"n\" \"2\")");
+        (void)cs.eval("(mutate :rebind \"n\" \"2\")");
         (void)cs.eval("(eval-current)");
         CHECK(hygiene_key(cs, "schema") == 2020, "stats still live after mutate");
     }

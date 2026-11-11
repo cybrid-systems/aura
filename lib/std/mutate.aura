@@ -283,7 +283,7 @@
               (error (string-append "unknown mutate:atomic-batch keyword: :" name)))))))))
 
 ; (mutate:atomic-batch-safe ops [summary] [keyword value]...)
-; Guarded wrapper around engine (mutate:atomic-batch):
+; Guarded wrapper around engine (mutate :atomic-batch):
 ;   1) parse keywords; unknown keyword / stray non-keyword → error (#4324)
 ;   2) refuse when boundary not safe (depth>0 / held) → #f
 ;   3) soft yield at boundary before long batch (#1504)
@@ -321,12 +321,12 @@
               (if (null? ops)
                 #f
                 (if (= have-tenant 1)
-                  (mutate:atomic-batch ops summary
+                  (mutate :atomic-batch ops summary
                     :snapshot? snap
                     :sync-query-index? sync
                     :allow-macro? allow
                     :tenant-target tenant)
-                  (mutate:atomic-batch ops summary
+                  (mutate :atomic-batch ops summary
                     :snapshot? snap
                     :sync-query-index? sync
                     :allow-macro? allow)))

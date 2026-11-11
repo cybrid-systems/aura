@@ -8,7 +8,7 @@
 (require "std/mutate" all:)
 
 (define (fiber-rebind name body tag)
-  (let ((m (try (mutate:rebind name body tag) (catch (e) #f))))
+  (let ((m (try (mutate :rebind name body tag) (catch (e) #f))))
     (if (eq? m #t)
       (try (begin (eval-current) #t) (catch (e) #f))
       #f)))

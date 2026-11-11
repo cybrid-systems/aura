@@ -350,6 +350,47 @@ RETIRED_MW_ALIASES_022 = frozenset(
     }
 )
 
+# Issue #5144: same treatment for the mutate: write surface. Every body now
+# registers with ev.primitives().add_hidden(), so (mutate :op) still resolves
+# it through the primitive table while the name loses its slot, PrimMeta,
+# api-reference entry and tier row. Re-registering one as public would silently
+# reopen the surface this batch closed.
+RETIRED_MUTATE_ALIASES_022 = frozenset(
+    {
+        "mutate:atomic-batch",
+        "mutate:check",
+        "mutate:check-stable-ref",
+        "mutate:extract-function",
+        "mutate:from-verification-feedback",
+        "mutate:inline-call",
+        "mutate:insert-child",
+        "mutate:move-node",
+        "mutate:query-and-replace",
+        "mutate:query-and-replace-batch",
+        "mutate:rebind",
+        "mutate:record-patch",
+        "mutate:refactor/extract",
+        "mutate:remove-node",
+        "mutate:rename-symbol",
+        "mutate:replace-pattern",
+        "mutate:replace-subtree",
+        "mutate:replace-type",
+        "mutate:replace-value",
+        "mutate:request-gc-safepoint",
+        "mutate:restore-hygiene-checkpoint",
+        "mutate:rollback-macro-introduced",
+        "mutate:save-hygiene-checkpoint",
+        "mutate:set-agent-fingerprint",
+        "mutate:set-body",
+        "mutate:set-pattern-index-policy",
+        "mutate:set-stale-ref-policy",
+        "mutate:splice",
+        "mutate:tweak-literal",
+        "mutate:validate-reflected",
+        "mutate:wrap",
+    }
+)
+
 
 def check_retired_022(tiers: dict, catalog: set[str]) -> list[str]:
     errors: list[str] = []
@@ -367,6 +408,7 @@ def check_retired_022(tiers: dict, catalog: set[str]) -> list[str]:
     for retired, issue, verb in (
         (RETIRED_MW_ALIASES_022, "#5142", "(mutate :<op>)"),
         (RETIRED_QR_ALIASES_022, "#5143", "(query :<op>)"),
+        (RETIRED_MUTATE_ALIASES_022, "#5144", "(mutate :<op>)"),
     ):
         for name in sorted(retired):
             if name in catalog:

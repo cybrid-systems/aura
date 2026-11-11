@@ -135,7 +135,7 @@ int run_test_cascade_path2_define_index() {
         const auto l0 = m->cascade_path2_lookup_total.load(std::memory_order_relaxed);
         const auto n0 = m->cascade_path2_index_nodes_total.load(std::memory_order_relaxed);
         // set-body stages defuse_affected_syms_ for the define name.
-        auto mut = cs.eval("(mutate:set-body \"a\" \"(lambda (x) (+ x 1))\" \"#2816\")");
+        auto mut = cs.eval("(mutate :set-body \"a\" \"(lambda (x) (+ x 1))\" \"#2816\")");
         CHECK(mut.has_value(), "AC2: set-body a");
         const auto l1 = m->cascade_path2_lookup_total.load(std::memory_order_relaxed);
         const auto n1 = m->cascade_path2_index_nodes_total.load(std::memory_order_relaxed);

@@ -125,12 +125,12 @@ static void ac1_selective_unrelated_survive() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval multi");
     const auto sel_m0 = metrics.predicate_memo_selective_invalidate_total.load();
     const auto guard_r0 = metrics.guard_exit_occurrence_refresh_total.load();
-    CHECK(cs.eval("(mutate:rebind \"f\" "
+    CHECK(cs.eval("(mutate :rebind \"f\" "
                   "\"(lambda (x) (if (number? x) (+ x 2) 0))\" "
                   "\"issue-2144-f\")")
               .has_value(),
           "mutate f");
-    CHECK(cs.eval("(mutate:rebind \"g\" "
+    CHECK(cs.eval("(mutate :rebind \"g\" "
                   "\"(lambda (y) (if (string? y) 2 0))\" "
                   "\"issue-2144-g\")")
               .has_value(),
@@ -157,7 +157,7 @@ static void ac2_reanalyze_clears_stale() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     const auto rean0 = metrics.guard_exit_occurrence_reanalyze_total.load();
     const auto recovery0 = metrics.narrowing_dirty_recovery_total.load();
-    CHECK(cs.eval("(mutate:rebind \"f\" "
+    CHECK(cs.eval("(mutate :rebind \"f\" "
                   "\"(lambda (x) (if (number? x) (* x 3) 0))\" "
                   "\"issue-2144-rean\")")
               .has_value(),
@@ -220,7 +220,7 @@ static void ac4_happy_path_early_skip() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval plain");
     const auto skip0 = metrics.guard_exit_occurrence_early_skip_total.load();
     const auto rean0 = metrics.guard_exit_occurrence_reanalyze_total.load();
-    CHECK(cs.eval("(mutate:rebind \"a\" \"3\" \"issue-2144-plain\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"a\" \"3\" \"issue-2144-plain\")").has_value(),
           "mutate plain binding");
     // Reanalyze must not jump (no if-predicates). Early skip or selective-only.
     CHECK(metrics.guard_exit_occurrence_reanalyze_total.load() == rean0,

@@ -150,7 +150,7 @@ static void run_matrix(CompilerService& cs) {
         escaped_mutate.push_back(c);
     }
     auto reb =
-        cs.eval(std::format("(mutate:rebind \"deep-pred\" \"{}\" \"issue-745\")", escaped_mutate));
+        cs.eval(std::format("(mutate :rebind \"deep-pred\" \"{}\" \"issue-745\")", escaped_mutate));
     CHECK(reb && aura::compiler::types::is_bool(*reb) && aura::compiler::types::as_bool(*reb),
           "mutate:rebind on 52-nest predicate succeeds");
     CHECK(cs.eval("(eval-current)").has_value(), "eval after heavy mutate");
@@ -183,7 +183,7 @@ static void run_matrix(CompilerService& cs) {
                 esc.push_back('\\');
             esc.push_back(c);
         }
-        (void)cs.eval(std::format("(mutate:rebind \"deep-pred\" \"{}\" \"r{}-745\")", esc, round));
+        (void)cs.eval(std::format("(mutate :rebind \"deep-pred\" \"{}\" \"r{}-745\")", esc, round));
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(typecheck-current)");
         auto rv = cs.eval("(deep-pred 2)");

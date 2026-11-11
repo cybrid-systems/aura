@@ -94,7 +94,7 @@ static void ac3625_1_production_render_still_audits() {
                     : 0;
         cs.evaluator().enter_render_hotpath();
         // Ordinary typed mutate: non-linear, non-match set-body.
-        auto mut = cs.eval("(mutate:set-body \"f3625\" \"(lambda (x) (+ x 1))\")");
+        auto mut = cs.eval("(mutate :set-body \"f3625\" \"(lambda (x) (+ x 1))\")");
         CHECK(mut.has_value(), "3625 AC1: set-body mutate ran");
         const auto considered1 =
             g_typed_mutation_audit_counters.audits_considered.load(std::memory_order_relaxed);
@@ -122,7 +122,7 @@ static void ac3625_2_soft_render_fast_still_skips() {
     const auto skip0 =
         metrics ? metrics->render_fast_exit_skipped_audit_total.load(std::memory_order_relaxed) : 0;
     cs.evaluator().enter_render_hotpath();
-    auto mut = cs.eval("(mutate:set-body \"g3625\" \"(lambda (x) (+ x 1))\")");
+    auto mut = cs.eval("(mutate :set-body \"g3625\" \"(lambda (x) (+ x 1))\")");
     CHECK(mut.has_value(), "3625 AC2: set-body mutate ran");
     const auto rf1 = metrics ? metrics->render_fast_exit_total.load(std::memory_order_relaxed) : 0;
     const auto skip1 =

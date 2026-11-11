@@ -104,7 +104,7 @@ bool test_success_path_commit_clears_checkpoint(CompilerService& cs) {
     {
         bool ok = true;
         Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok);
-        auto r = cs.eval("(mutate:replace-value (define x 42) (define x 42))");
+        auto r = cs.eval("(mutate :replace-value (define x 42) (define x 42))");
         CHECK(r.has_value(), "mutate succeeded under Guard (commit path)");
         CHECK(ok, "Guard success flag still true");
     }
@@ -126,7 +126,7 @@ bool test_panic_path_restore_truncates_arenas(CompilerService& cs) {
     (void)cs.eval("(panic-checkpoint)");
     const auto cells_at_save = cs.evaluator().panic_safe_cells_size();
     const auto pairs_at_save = cs.evaluator().panic_safe_pairs_size();
-    (void)cs.eval("(mutate:replace-value (define x 99) (define x 99))");
+    (void)cs.eval("(mutate :replace-value (define x 99) (define x 99))");
     auto rr = cs.eval("(panic-restore)");
     CHECK(rr.has_value() && aura::compiler::types::is_bool(*rr) &&
               aura::compiler::types::as_bool(*rr),
@@ -281,7 +281,7 @@ bool test_nested_panic_fuzz_stress(CompilerService& cs) {
         (void)cs.eval(code);
         if (i == next_panic) {
             (void)cs.eval("(panic-checkpoint)");
-            (void)cs.eval("(mutate:replace-value (define a 9999) (define a 9999))");
+            (void)cs.eval("(mutate :replace-value (define a 9999) (define a 9999))");
             (void)cs.eval("(panic-restore)");
             ++panics;
             next_panic = i + panic_every(rng);

@@ -123,12 +123,12 @@ static void mutate_worker(SharedState* s, int fiber_id) {
         std::string code;
         switch (strategy) {
             case 0:
-                code = "(mutate:replace-value (define t ";
+                code = "(mutate :replace-value (define t ";
                 code += std::to_string(i * 11 + fiber_id);
                 code += ") (define t 0))";
                 break;
             case 1:
-                code = "(mutate:query-and-replace t ";
+                code = "(mutate :query-and-replace t ";
                 code += std::to_string(i + fiber_id * 100);
                 code += ")";
                 break;

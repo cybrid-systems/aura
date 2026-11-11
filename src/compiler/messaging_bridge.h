@@ -76,7 +76,7 @@ using FiberYieldMutationFn = void (*)();
 extern FiberYieldMutationFn g_fiber_yield_mutation_boundary;
 
 // Fiber SET yield reason to MutationBoundary (lightweight) —
-// called by (mutate:atomic-batch) on Guard entry so work-
+// called by (mutate :atomic-batch) on Guard entry so work-
 // stealing decisions (Fiber::is_stealable / is_steal_candidate) see this fiber
 // as being at a mutation boundary. The "lightweight" part:
 // unlike g_fiber_yield_mutation_boundary (which actually

@@ -600,7 +600,7 @@ static void ac3987_skip_vs_miss_compile_soak() {
     const auto should0 = m.should_relower_total.load(std::memory_order_relaxed);
     const auto forced0 = m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
     const auto q_partial0 = href(cs, "query:incremental-relower-stats", "partial-relowers");
-    auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () 9)\" \"#3987\")");
+    auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda () 9)\" \"#3987\")");
     CHECK(mut.has_value(), "3987 AC3: mutate");
     (void)cs.public_relower_dirty_defines_from_workspace();
     const auto* e1 = cs.get_define_v2("f");

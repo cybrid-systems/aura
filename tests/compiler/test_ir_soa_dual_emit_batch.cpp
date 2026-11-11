@@ -347,7 +347,7 @@ static void ac1920_7_mutate_stress() {
     const auto cap0 = href(cs, "query:soa-adoption-stats", "capture-dirty-marks");
     for (int i = 0; i < 20; ++i) {
         (void)cs.eval(
-            std::format("(mutate:rebind \"f\" \"(lambda (x) (+ x {}))\" \"i1920\")", i % 5));
+            std::format("(mutate :rebind \"f\" \"(lambda (x) (+ x {}))\" \"i1920\")", i % 5));
         (void)cs.eval("(eval-current)");
     }
     CHECK(href(cs, "query:soa-adoption-stats", "schema-1920") == 1920, "schema holds");

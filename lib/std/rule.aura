@@ -267,7 +267,7 @@
                       (try
                         (if (string? replacement)
                           (begin
-                            (mutate:rebind (string-append "_fix_"
+                            (mutate :rebind (string-append "_fix_"
                               (number->string node))
                               replacement "rule-fix")
                             #t)

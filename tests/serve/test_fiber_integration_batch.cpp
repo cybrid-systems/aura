@@ -78,7 +78,7 @@ static void run_226_section1_concurrent_mutate_invoke() {
                 return;
             }
             std::string src2 =
-                "(mutate:rebind \"" + fname + "\" \"(lambda (x) (* x 3))\" \"test\")";
+                "(mutate :rebind \"" + fname + "\" \"(lambda (x) (* x 3))\" \"test\")";
             cs.eval(src2);
             std::string src3 = "(begin (define (" + fname + " x) (* x 3)) (" + fname + " 5))";
             auto r3 = cs.eval(src3);
@@ -129,7 +129,7 @@ static void run_226_section3_post_mutation_invariant() {
     CHECK(r1.has_value(), "first eval succeeds");
     if (r1)
         CHECK(as_int(*r1) == 6, "(i 5) = 6");
-    auto r2 = cs.eval("(mutate:rebind \"i\" \"(lambda (x) (+ x 100))\" \"test\")");
+    auto r2 = cs.eval("(mutate :rebind \"i\" \"(lambda (x) (+ x 100))\" \"test\")");
     CHECK(r2.has_value(), "mutate:rebind succeeds");
     auto epoch_post = cs.bridge_epoch();
     CHECK(epoch_post >= epoch_before, "bridge_epoch non-decreasing after mutation");
@@ -170,7 +170,7 @@ static void run_226_section4_doomsday_stress() {
                             break;
                         }
                         case 1: {
-                            std::string src = "(mutate:rebind \"" + fname +
+                            std::string src = "(mutate :rebind \"" + fname +
                                               "\" \"(lambda (x) (* x 3))\" \"stress\")";
                             cs.eval(src);
                             break;

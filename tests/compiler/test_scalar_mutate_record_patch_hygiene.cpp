@@ -112,7 +112,7 @@ int run_test_scalar_mutate_record_patch_hygiene() {
         auto nid = static_cast<aura::ast::NodeId>(as_int(*find_r));
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", nid)).has_value(),
               "AC2: stamp MacroIntroduced");
-        auto r = cs.eval(std::format("(mutate:record-patch {} \"op-name\" \"summary\")", nid));
+        auto r = cs.eval(std::format("(mutate :record-patch {} \"op-name\" \"summary\")", nid));
         CHECK(r.has_value(), "AC2: record-patch returns");
         CHECK(is_pair(*r) && merr_kind(cs, *r) == "hygiene-protected",
               "AC2: hygiene reason on MacroIntroduced target");
@@ -129,11 +129,12 @@ int run_test_scalar_mutate_record_patch_hygiene() {
         auto nid = static_cast<aura::ast::NodeId>(as_int(*find_r));
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", nid)).has_value(),
               "AC3: stamp MacroIntroduced");
-        auto denied = cs.eval(std::format("(mutate:record-patch {} \"op-name\" \"summary\")", nid));
+        auto denied =
+            cs.eval(std::format("(mutate :record-patch {} \"op-name\" \"summary\")", nid));
         CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene-protected",
               "AC3: denied without allow");
         auto allowed = cs.eval(
-            std::format("(mutate:record-patch {} \"op-name\" \"summary\" :allow-macro? #t)", nid));
+            std::format("(mutate :record-patch {} \"op-name\" \"summary\" :allow-macro? #t)", nid));
         CHECK(allowed.has_value(), "AC3: :allow-macro? #t returns");
         CHECK(is_int(*allowed), "AC3: success mid is int");
         CHECK(as_int(*allowed) >= 0, "AC3: mid >= 0 (audit log entry created)");
@@ -151,13 +152,14 @@ int run_test_scalar_mutate_record_patch_hygiene() {
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", nid)).has_value(),
               "AC4: stamp MacroIntroduced");
         // First confirm default deny (baseline).
-        auto denied = cs.eval(std::format("(mutate:record-patch {} \"op-name\" \"summary\")", nid));
+        auto denied =
+            cs.eval(std::format("(mutate :record-patch {} \"op-name\" \"summary\")", nid));
         CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene-protected",
               "AC4: denied before global flag");
         CHECK(cs.eval("(mutate :set-allow-macro-mutate #t)").has_value(),
               "AC4: set global allow_macro_mutate_");
         auto allowed =
-            cs.eval(std::format("(mutate:record-patch {} \"op-name\" \"summary\")", nid));
+            cs.eval(std::format("(mutate :record-patch {} \"op-name\" \"summary\")", nid));
         CHECK(allowed.has_value(), "AC4: global allow returns");
         CHECK(is_int(*allowed), "AC4: success mid is int");
         CHECK(as_int(*allowed) >= 0, "AC4: mid >= 0");
@@ -180,7 +182,8 @@ int run_test_scalar_mutate_record_patch_hygiene() {
         auto nid = static_cast<aura::ast::NodeId>(as_int(*find_r));
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", nid)).has_value(),
               "AC5: stamp MacroIntroduced");
-        auto denied = cs.eval(std::format("(mutate:record-patch {} \"op-name\" \"summary\")", nid));
+        auto denied =
+            cs.eval(std::format("(mutate :record-patch {} \"op-name\" \"summary\")", nid));
         CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene-protected",
               "AC5: deny fires + reason hygiene");
         // The hash key for last_hygiene_blame_node — kebab-case mapping.

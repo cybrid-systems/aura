@@ -88,8 +88,8 @@ static void ac3_rebind_one_short_rejected() {
     const char* src = R"SRC(
 (set-code "(define (f x) (+ x 1))")
 (eval-current)
-(define rb (try (mutate:rebind "f" "(define (f x) (+ x 2)" "probe") (catch (e) e)))
-(define rb2 (try (mutate:rebind "f" "(define (f x) (+ x 4" "probe") (catch (e) e)))
+(define rb (try (mutate :rebind "f" "(define (f x) (+ x 2)" "probe") (catch (e) e)))
+(define rb2 (try (mutate :rebind "f" "(define (f x) (+ x 4" "probe") (catch (e) e)))
 (and (pair? rb) (pair? rb2) (= (f 1) 2))
 )SRC";
     auto r = cs.eval(src);

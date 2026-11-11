@@ -211,7 +211,7 @@ static void ac3691_quote_lambda_impact_uses_prod_helper() {
     CHECK(cs.eval("(set-code \"(define f (lambda () 1))\")").has_value(), "3691 soak: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3691 soak: eval");
     apply_production_audit_defaults();
-    auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () 9)\" \"#3691\")");
+    auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda () 9)\" \"#3691\")");
     CHECK(mut.has_value() && !is_error(*mut), "3691 soak: mutate lambda body");
     auto src_after_mut = cs.eval("(current-source :workspace)");
     CHECK(cs.eval("(eval-current)").has_value(), "3691 soak: re-eval");

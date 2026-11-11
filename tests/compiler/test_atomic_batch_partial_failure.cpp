@@ -114,7 +114,7 @@ int run_test_atomic_batch_partial_failure() {
         CHECK(cs.eval("(eval-current)").has_value(), "AC2: eval");
 
         // Second op: rebind unknown name → EvalResult unexpected → batch fail.
-        auto batch = cs.eval("(mutate:atomic-batch "
+        auto batch = cs.eval("(mutate :atomic-batch "
                              "(list (list \"mutate:rebind\" \"f\" \"(lambda () 99)\") "
                              "      (list \"mutate:rebind\" \"no-such-2790\" \"(lambda () 0)\")))");
         CHECK(batch.has_value(), "AC3: batch returns a value");
@@ -138,7 +138,7 @@ int run_test_atomic_batch_partial_failure() {
             cs.eval("(set-code \"(define a (lambda () 3)) (define b (lambda () 4))\")").has_value(),
             "AC2b: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "AC2b: eval");
-        auto batch = cs.eval("(mutate:atomic-batch "
+        auto batch = cs.eval("(mutate :atomic-batch "
                              "(list (list \"mutate:rebind\" \"a\" \"(lambda () 30)\") "
                              "      (list \"mutate:rebind\" \"b\" \"(lambda () 40)\")))");
         CHECK(batch && is_bool(*batch) && as_bool(*batch), "AC2b: happy #t");

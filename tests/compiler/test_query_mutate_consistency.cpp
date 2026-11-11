@@ -51,7 +51,7 @@ int main() {
         CHECK(q >= 2, "default Kleene query '(+ ...)' finds multiple + calls");
 
         // Default mutate:replace-pattern is also Kleene (#1374)
-        CHECK(run_bool(cs, "(mutate:replace-pattern \"(+ 1 2)\" \"(* 1 2)\")"),
+        CHECK(run_bool(cs, "(mutate :replace-pattern \"(+ 1 2)\" \"(* 1 2)\")"),
               "default mutate exact replace");
         auto after_plus = run_int(cs, "(length (query:pattern \"(+ 1 2)\"))");
         auto after_star = run_int(cs, "(length (query:pattern \"(* 1 2)\"))");
@@ -69,7 +69,7 @@ int main() {
         CHECK(q_strict == 2, "strict (foo ... ...) matches two 3-child foo");
 
         // Mutate with default (Kleene) — replace 3-child foos
-        CHECK(run_bool(cs, "(mutate:replace-pattern \"(foo ... ...)\" \"(baz ... ...)\" "
+        CHECK(run_bool(cs, "(mutate :replace-pattern \"(foo ... ...)\" \"(baz ... ...)\" "
                            ":strict-arity #t)"),
               "mutate :strict-arity #t");
         auto foo_left = run_int(cs, "(length (query:pattern \"(foo ... ...)\" :strict-arity #t))");
@@ -85,7 +85,7 @@ int main() {
         // Strict: (+ ...) is Call(+, one-wildcard) → only 2-child (+ 1)
         auto q = run_int(cs, "(length (query:pattern \"(+ ...)\" :strict-arity #t))");
         CHECK(q == 1, "strict query (+ ...) = 1");
-        CHECK(run_bool(cs, "(mutate:replace-pattern \"(+ ...)\" \"(- ...)\" :strict-arity #t)"),
+        CHECK(run_bool(cs, "(mutate :replace-pattern \"(+ ...)\" \"(- ...)\" :strict-arity #t)"),
               "strict mutate");
         auto plus_left = run_int(cs, "(length (query:pattern \"(+ ...)\" :strict-arity #t))");
         auto minus_n = run_int(cs, "(length (query:pattern \"(- ...)\" :strict-arity #t))");
@@ -97,7 +97,7 @@ int main() {
     {
         CompilerService cs;
         CHECK(set_source(cs, "(begin (* 1) (* 1 2))"), "set-code *");
-        CHECK(run_bool(cs, "(mutate:replace-pattern \"(* ...)\" \"(+ ...)\" :nested-arity #f)"),
+        CHECK(run_bool(cs, "(mutate :replace-pattern \"(* ...)\" \"(+ ...)\" :nested-arity #f)"),
               "mutate :nested-arity #f");
         auto star = run_int(cs, "(length (query:pattern \"(* ...)\" :strict-arity #t))");
         auto plus = run_int(cs, "(length (query:pattern \"(+ ...)\" :strict-arity #t))");
@@ -109,10 +109,10 @@ int main() {
     {
         CompilerService cs;
         CHECK(set_source(cs, "(begin (+ 1 2) (+ 3 4))"), "set-code hygiene");
-        CHECK(run_bool(cs, "(mutate:replace-pattern \"(+ 1 2)\" \"(+ 9 9)\" "
+        CHECK(run_bool(cs, "(mutate :replace-pattern \"(+ 1 2)\" \"(+ 9 9)\" "
                            ":exclude-macro-introduced #t)"),
               "exclude-macro-introduced accepted");
-        CHECK(run_bool(cs, "(mutate:replace-pattern \"(+ 3 4)\" \"(+ 8 8)\" "
+        CHECK(run_bool(cs, "(mutate :replace-pattern \"(+ 3 4)\" \"(+ 8 8)\" "
                            ":include-macro-introduced #f)"),
               "include-macro-introduced #f accepted");
         auto q = run_int(cs, "(length (query:pattern \"(+ 9 9)\"))");
@@ -125,7 +125,7 @@ int main() {
         CHECK(set_source(cs, "(begin 1 2 3 2)"), "set-code lits");
         auto n2 = run_int(cs, "(length (query:pattern \"2\"))");
         CHECK(n2 == 2, "two literal 2 nodes");
-        CHECK(run_bool(cs, "(mutate:replace-pattern \"2\" \"99\")"), "replace both 2s");
+        CHECK(run_bool(cs, "(mutate :replace-pattern \"2\" \"99\")"), "replace both 2s");
         auto n2_after = run_int(cs, "(length (query:pattern \"2\"))");
         auto n99 = run_int(cs, "(length (query:pattern \"99\"))");
         CHECK(n2_after == 0, "no 2 left");

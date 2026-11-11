@@ -98,7 +98,7 @@ static void ac2_set_body_eval() {
     const auto path0 = load_u64(m->eval_path_relower_total);
     const auto per0 = load_u64(m->relower_per_function_called_count);
 
-    CHECK(cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 10))\" \"#1623\")").has_value(),
+    CHECK(cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 10))\" \"#1623\")").has_value(),
           "set-body");
     // Eval define-style rebind path + call
     (void)cs.eval("(eval-current)");
@@ -133,14 +133,14 @@ static void ac3_ac4_ac5_stress() {
     constexpr int kRounds = 200;
     for (int i = 0; i < kRounds; ++i) {
         const auto body = std::format("(lambda (x) (+ x {}))", 1 + (i % 7));
-        CHECK(cs.eval(std::format("(mutate:set-body \"f\" \"{}\" \"r{}\")", body, i)).has_value(),
+        CHECK(cs.eval(std::format("(mutate :set-body \"f\" \"{}\" \"r{}\")", body, i)).has_value(),
               "set-body round");
         (void)cs.eval("(eval-current)");
         auto v = cs.eval(std::format("(f {})", i % 5));
         CHECK(v.has_value(), "eval f after set-body");
     }
     // Final correctness
-    CHECK(cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 100))\" \"final\")").has_value(),
+    CHECK(cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 100))\" \"final\")").has_value(),
           "final set-body");
     (void)cs.eval("(eval-current)");
     auto v = cs.eval("(f 5)");

@@ -121,7 +121,7 @@ bool test_mutate_version_bump_jit_reeval() {
     CHECK(setup_jit_shape_workspace(cs), "workspace ready");
     CHECK(jit_eval(cs), "initial JIT compile");
     const auto bumps0 = shape_version_bump_count.load();
-    const auto mr = cs.typed_mutate("(mutate:rebind \"base\" \"99\")");
+    const auto mr = cs.typed_mutate("(mutate :rebind \"base\" \"99\")");
     CHECK(mr.success, "typed_mutate rebind succeeds");
     CHECK(shape_version_bump_count.load() > bumps0, "version_bump_count grew after mutate");
     CHECK(jit_eval(cs), "re-JIT after mutate succeeds");
@@ -155,7 +155,7 @@ bool test_shape_stability_stats_includes_jit_miss() {
     CHECK(setup_jit_shape_workspace(cs), "workspace ready");
     const auto s0 = eval_int(cs, "(engine:metrics \"query:shape-stability-stats\")");
     CHECK(jit_eval(cs), "JIT compile");
-    (void)cs.typed_mutate("(mutate:rebind \"acc\" \"7\")");
+    (void)cs.typed_mutate("(mutate :rebind \"acc\" \"7\")");
     CHECK(jit_eval(cs), "re-JIT after mutate");
     const auto s1 = eval_int(cs, "(engine:metrics \"query:shape-stability-stats\")");
     const auto miss = jit_shape_miss_count.load();
@@ -173,7 +173,7 @@ bool test_multi_round_mutate_jit_semantics() {
     CHECK(setup_jit_shape_workspace(cs), "workspace ready");
     CHECK(jit_eval(cs), "initial JIT");
     for (int round = 0; round < 10; ++round) {
-        (void)cs.typed_mutate("(mutate:rebind \"base\" \"" + std::to_string(100 + round) + "\")");
+        (void)cs.typed_mutate("(mutate :rebind \"base\" \"" + std::to_string(100 + round) + "\")");
         CHECK(jit_eval(cs), "JIT eval succeeds each round");
         const int arg = 10 + round;
         const auto expected = 2 * arg;
@@ -203,7 +203,7 @@ bool test_eight_thread_concurrent_jit_mutate() {
                 std::scoped_lock lock(eval_mu);
                 (void)cs.eval("(wrap " + std::to_string(v & 7) + ")");
                 if ((i & 3) == 0) {
-                    (void)cs.typed_mutate("(mutate:rebind \"acc\" \"" + std::to_string(v) + "\")");
+                    (void)cs.typed_mutate("(mutate :rebind \"acc\" \"" + std::to_string(v) + "\")");
                 }
                 if ((i & 7) == 0)
                     (void)jit_eval(cs);
@@ -240,8 +240,8 @@ bool test_fiber_yield_jit_mutate() {
                     std::scoped_lock lock(eval_mu);
                     (void)cs.eval("(add1 " + std::to_string(f + i) + ")");
                     if ((i & 1) == 0) {
-                        (void)cs.typed_mutate("(mutate:rebind \"base\" \"" + std::to_string(f + i) +
-                                              "\")");
+                        (void)cs.typed_mutate("(mutate :rebind \"base\" \"" +
+                                              std::to_string(f + i) + "\")");
                     }
                     if ((i & 3) == 0)
                         (void)jit_eval(cs);
@@ -277,9 +277,9 @@ bool test_long_stress_mutate_jit_cycles() {
         const int v = val_dist(rng);
         (void)cs.eval("(dbl " + std::to_string(v & 31) + ")");
         if ((i & 1) == 0) {
-            (void)cs.typed_mutate("(mutate:rebind \"base\" \"" + std::to_string(v) + "\")");
+            (void)cs.typed_mutate("(mutate :rebind \"base\" \"" + std::to_string(v) + "\")");
         } else {
-            (void)cs.typed_mutate("(mutate:replace-value (define acc " + std::to_string(v) +
+            (void)cs.typed_mutate("(mutate :replace-value (define acc " + std::to_string(v) +
                                   ") (define acc " + std::to_string(v) + "))");
         }
         if ((i & 15) == 0)

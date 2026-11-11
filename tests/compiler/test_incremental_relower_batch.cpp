@@ -297,7 +297,7 @@ static void run_1601() {
         for (int i = 0; i < kRounds; ++i) {
             last_add = (i % 50) + 1;
             auto expr = std::format(
-                "(mutate:set-body \"f\" \"(lambda (x) (+ x {}))\" \"#1601-stress\")", last_add);
+                "(mutate :set-body \"f\" \"(lambda (x) (+ x {}))\" \"#1601-stress\")", last_add);
             if (cs.eval(expr))
                 ++set_ok;
             (void)cs.public_relower_dirty_defines_from_workspace();
@@ -339,7 +339,7 @@ static void run_1601() {
         std::println("\n--- AC4: query:incremental-relower-stats schema 1601 ---");
         CompilerService cs;
         seed_workspace_fn(cs, "f", "(define (f x) (+ x 1))");
-        (void)cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 3))\" \"#1601-q\")");
+        (void)cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 3))\" \"#1601-q\")");
         (void)cs.public_relower_dirty_defines_from_workspace();
         (void)cs.eval("(f 1)");
 
@@ -433,7 +433,7 @@ static void run_1605() {
 
         for (int i = 0; i < 20; ++i) {
             (void)cs.eval(
-                std::format("(mutate:set-body \"f\" \"(lambda (x) (+ x {}))\" \"#1605\")", i + 1));
+                std::format("(mutate :set-body \"f\" \"(lambda (x) (+ x {}))\" \"#1605\")", i + 1));
             cs.public_mark_define_dirty("f");
             (void)cs.public_relower_dirty_defines_from_workspace();
             (void)cs.eval("(f 1)");
@@ -453,7 +453,7 @@ static void run_1605() {
         std::println("\n--- AC3: query metrics schema 1605 ---");
         CompilerService cs;
         seed_workspace(cs, "f", "(define (f x) (+ x 1))");
-        (void)cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 2))\" \"#1605-q\")");
+        (void)cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 2))\" \"#1605-q\")");
         (void)cs.eval("(f 1)");
 
         auto h = cs.eval("(engine:metrics \"query:incremental-relower-stats\")");
@@ -493,7 +493,7 @@ static void run_1605() {
         for (int i = 0; i < kRounds; ++i) {
             last_add = (i % 50) + 1;
             auto expr = std::format(
-                "(mutate:set-body \"f\" \"(lambda (x) (+ x {}))\" \"#1605-stress\")", last_add);
+                "(mutate :set-body \"f\" \"(lambda (x) (+ x {}))\" \"#1605-stress\")", last_add);
             if (cs.eval(expr))
                 ++set_ok;
             cs.public_mark_define_dirty("f");

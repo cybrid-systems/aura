@@ -80,7 +80,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC4: mutate + invalidate metrics monotonic ---");
     const auto sum4a = jit_sum(cs);
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda () (let ((x (Linear 99))) (move x)))\" "
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda () (let ((x (Linear 99))) (move x)))\" "
                   "\"issue740\")");
     cs.public_invalidate_function("f");
     const auto sum4b = jit_sum(cs);

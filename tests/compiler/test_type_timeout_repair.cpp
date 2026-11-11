@@ -130,7 +130,7 @@ namespace _2284_detail {
             CompilerService cs;
             const auto baseline = query_field(cs, "type-timeout-repair-publish-total");
             (void)cs.eval("(engine:metrics \"type:force-next-delta-timeout-for-test\" #t)");
-            (void)cs.eval("(mutate:rebind \"x\" \"42\")");
+            (void)cs.eval("(mutate :rebind \"x\" \"42\")");
             (void)cs.eval("(eval-current)");
             const auto after = query_field(cs, "type-timeout-repair-publish-total");
             const auto aff_nodes_count =

@@ -30,7 +30,7 @@
 ; A rebind changes the tag the policy returns: the NEW literal must still be
 ; the same interned symbol the caller's literal is (dispatch keeps working
 ; across the evolution instead of silently going #f).
-(mutate:rebind "ws-level" "(lambda (x) (if (> x 1) 'top 'bottom))" "issue-4727-tag-swap")
+(mutate :rebind "ws-level" "(lambda (x) (if (> x 1) 'top 'bottom))" "issue-4727-tag-swap")
 (check! (eq? (ws-level 2) 'top) "rebound atom eq? to the caller literal")
 (check! (eq? (ws-level 0) 'bottom) "rebound other branch eq? too")
 (check! (= (if (memv (ws-level 2) '(top bottom)) 1 0) 1) "memv after rebind")

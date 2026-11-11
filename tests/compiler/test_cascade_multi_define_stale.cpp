@@ -134,7 +134,7 @@ int run_test_cascade_multi_define_stale() {
         const auto multi0 = m->cascade_multi_define_stale_total.load(std::memory_order_relaxed);
 
         // Stage defuse_affected_syms for "f" via set-body (rebind path).
-        auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (* x 3))\" \"#2815\")");
+        auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (* x 3))\" \"#2815\")");
         CHECK(mut.has_value(), "AC2: set-body f");
 
         // Single-define workspace: multi metric may stay 0 (no 2nd def).
@@ -218,7 +218,7 @@ int run_test_cascade_multi_define_stale() {
         CHECK(cs.eval("(set-code \"(define (h x) x) (h 0)\")").has_value(), "AC4: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "AC4: eval");
         auto r0 = cs.eval("(eval-current)");
-        auto mut = cs.eval("(mutate:set-body \"h\" \"(lambda (x) (+ x 1))\" \"#2815-1\")");
+        auto mut = cs.eval("(mutate :set-body \"h\" \"(lambda (x) (+ x 1))\" \"#2815-1\")");
         CHECK(mut.has_value(), "AC4: set-body");
         auto r1 = cs.eval("(eval-current)");
         CHECK(r1.has_value(), "AC4: eval after mutate");

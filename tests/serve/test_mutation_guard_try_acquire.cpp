@@ -98,7 +98,7 @@ static void ac3_propagate() {
         bool ok = true;
         CHECK(Guard::try_acquire(ev, 1, &ok).has_value(), "burn budget");
     }
-    auto mr = cs.public_typed_mutate("(mutate:rebind \"f\" \"(lambda () 2)\" \"#1628\")");
+    auto mr = cs.public_typed_mutate("(mutate :rebind \"f\" \"(lambda () 2)\" \"#1628\")");
     CHECK(!mr.success, "typed_mutate fails");
     CHECK(mr.error.find("mutation quota exceeded") != std::string::npos || !mr.error.empty(),
           "typed_mutate error text");
@@ -110,7 +110,7 @@ static void ac3_propagate() {
         bool ok = true;
         CHECK(Guard::try_acquire(ev, 1, &ok).has_value(), "burn for eval_on");
     }
-    auto er = cs.eval_on_current("(mutate:rebind \"f\" \"(lambda () 3)\" \"#1628b\")");
+    auto er = cs.eval_on_current("(mutate :rebind \"f\" \"(lambda () 3)\" \"#1628b\")");
     CHECK(!er.has_value(), "eval_on_current fails on quota");
 }
 

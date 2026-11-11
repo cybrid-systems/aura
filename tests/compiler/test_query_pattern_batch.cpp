@@ -135,7 +135,7 @@ static void ac1609_4_mutate_requery() {
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "macro workspace");
     const auto before = list_len(cs, "(query:pattern \"*\")");
-    (void)cs.eval("(mutate:set-body \"base\" \"11\" \"#1609\")");
+    (void)cs.eval("(mutate :set-body \"base\" \"11\" \"#1609\")");
     (void)cs.eval("(eval-current)");
     const auto after = list_len(cs, "(query:pattern \"*\")");
     CHECK(before >= 0 && after >= 0, "pattern after mutate");
@@ -287,7 +287,7 @@ int main() {
                     else
                         ok_queries.fetch_add(1, std::memory_order_relaxed);
                     if (i % 7 == 0)
-                        (void)cs.eval("(mutate:replace-value (define (h x) (+ x 1)) "
+                        (void)cs.eval("(mutate :replace-value (define (h x) (+ x 1)) "
                                       "(define (h x) (+ x 2)))");
                 }
             });

@@ -100,7 +100,7 @@ int run_test_workspace_rollback_latest() {
 
         constexpr int N = 64;
         for (int i = 1; i <= N; ++i) {
-            auto r = cs.eval(std::format("(mutate:replace-value {} {} \"ac2787-mut\")", lit, i));
+            auto r = cs.eval(std::format("(mutate :replace-value {} {} \"ac2787-mut\")", lit, i));
             CHECK(r.has_value(), std::format("AC3: mutate {}", i).c_str());
         }
         CHECK(static_cast<int>(flat->int_val(lit)) == N, "AC3: value is N");

@@ -85,7 +85,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC2: Guard mutate bumps reflect-hygiene-validation ---");
     const auto reflect0 = hash_int(cs, "reflect-hygiene-validation");
-    (void)cs.eval("(mutate:rebind \"user-val\" \"42\")");
+    (void)cs.eval("(mutate :rebind \"user-val\" \"42\")");
     (void)cs.eval("(eval-current)");
     const auto reflect1 = hash_int(cs, "reflect-hygiene-validation");
     std::println("  reflect-hygiene-validation: {} -> {}", reflect0, reflect1);
@@ -109,7 +109,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: multi-round macro+mutate stats monotonic ---");
     const auto stats5a = stats_sum(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"user-val\" \"" + std::to_string(50 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"user-val\" \"" + std::to_string(50 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(query:pattern \"define\")");
     }

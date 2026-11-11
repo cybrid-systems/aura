@@ -229,7 +229,7 @@ int run_test_workload_adaptive_relower() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define (h n) (+ n 1))\")").has_value(), "set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
-        CHECK(cs.eval("(mutate:set-body \"h\" \"(lambda (n) (+ n 2))\")").has_value(), "set-body");
+        CHECK(cs.eval("(mutate :set-body \"h\" \"(lambda (n) (+ n 2))\")").has_value(), "set-body");
         CHECK(cs.eval("(eval-current)").has_value(), "re-eval");
         auto r = cs.eval("(h 10)");
         CHECK(r && is_int(*r) && as_int(*r) == 12, "h 10 = 12");

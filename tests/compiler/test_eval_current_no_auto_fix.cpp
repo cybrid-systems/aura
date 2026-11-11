@@ -241,7 +241,7 @@ static void ac3918_batch_rebind_env() {
     CHECK(cs.eval("(require \"std/mutate\" all:)").has_value(), "3918 require");
     CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "3918 set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3918 seed");
-    auto br = cs.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" "
+    auto br = cs.eval("(mutate :atomic-batch (list (list \"mutate:rebind\" \"f\" "
                       "\"(lambda (x) (if (< x 0) (* x -1) x))\" \"abs\")) \"abs\")");
     CHECK(br && is_bool(*br) && as_bool(*br), "3918 AC: batch #t");
     auto direct = cs.eval("(f -4)");
@@ -280,7 +280,7 @@ static void ac4079_second_eval_current_displays() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define (cand) 1) (display (cand)) (newline)\")").has_value(),
           "4079: set-code");
-    CHECK(cs.eval("(mutate:rebind \"cand\" \"(lambda () 99)\" \"shared-ast-probe\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"cand\" \"(lambda () 99)\" \"shared-ast-probe\")").has_value(),
           "4079: rebind");
     std::fflush(stdout);
     int fds[2] = {-1, -1};
@@ -551,7 +551,7 @@ static void ac4439_fixnum_arg_binds() {
     CHECK(cs.eval("(require \"std/mutate\" all:)").has_value(), "4439: require mutate");
     CHECK(cs.eval("(set-code \"(define f (lambda (x) x))\")").has_value(), "4439: reseed f");
     CHECK(cs.eval("(eval-current)").has_value(), "4439: eval-current reseed");
-    auto rb = cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) x (quote dropped)))\" "
+    auto rb = cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) x (quote dropped)))\" "
                       "\"probe\")");
     CHECK(rb && is_bool(*rb) && as_bool(*rb), "4439: mutate:rebind returns #t");
     CHECK(cs.eval("(eval-current)").has_value(), "4439: eval-current after rebind");

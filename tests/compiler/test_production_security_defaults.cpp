@@ -151,7 +151,7 @@ int run_test_production_security_defaults() {
             static_cast<std::uint8_t>(g_capability_registry().sandbox_mode.load()));
         CHECK(cs.eval("(set-code \"(define (f x) (+ x 1))\")").has_value(), "set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
-        auto r = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 9))\" \"prod-deny\")");
+        auto r = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 9))\" \"prod-deny\")");
         // Deny is make_merr (Error) or legacy pair; success is a non-error value.
         const bool denied = !r || is_error(*r) || is_pair(*r);
         CHECK(denied, "Restricted without grant denies set-body");
@@ -193,7 +193,7 @@ int run_test_production_security_defaults() {
         cs.evaluator().set_effect_sandbox_mode(0);
         CHECK(cs.eval("(set-code \"(define (g x) x)\")").has_value(), "set-code g");
         CHECK(cs.eval("(eval-current)").has_value(), "eval g");
-        auto r = cs.eval("(mutate:set-body \"g\" \"(lambda (x) (+ x 1))\" \"dev\")");
+        auto r = cs.eval("(mutate :set-body \"g\" \"(lambda (x) (+ x 1))\" \"dev\")");
         CHECK(r.has_value(), "dev Off mutate returns");
     }
 

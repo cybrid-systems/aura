@@ -97,7 +97,7 @@ static void ac1_apply_stale_after_mutate() {
     const auto fb0 = load_u64(m->closure_epoch_mismatch_fallback);
     const auto b0 = cs.bridge_epoch();
 
-    // Production invalidate path (mutate:rebind / mark dirty equivalent).
+    // Production invalidate path (mutate :rebind / mark dirty equivalent).
     cs.public_mark_define_dirty("f1604");
     if (cs.bridge_epoch() == b0)
         cs.public_atomic_bump_epochs_and_stamp_bridge("f1604");
@@ -258,7 +258,7 @@ static void ac6_fresh_define_still_works() {
     // Mutate body and re-eval via set-body + eval-current path.
     (void)cs.eval("(set-code \"(define (g1604 x) (* x 3))\")");
     (void)cs.eval("(eval-current)");
-    (void)cs.eval("(mutate:set-body \"g1604\" \"(+ x 10)\")");
+    (void)cs.eval("(mutate :set-body \"g1604\" \"(+ x 10)\")");
     (void)cs.eval("(eval-current)");
     auto r2 = cs.eval("(g1604 7)");
     // Soft: mutate may need workspace binding; correctness if int.

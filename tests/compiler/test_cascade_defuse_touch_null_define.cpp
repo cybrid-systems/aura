@@ -127,7 +127,7 @@ int run_test_cascade_defuse_touch_null_define() {
         CHECK(cs.eval("(eval-current)").has_value(), "AC3: eval");
         auto* m = metrics_of(cs);
         const auto g0 = m->cascade_ghost_name_touch_total.load(std::memory_order_relaxed);
-        auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda (x) (+ x 1))\" \"#2817\")");
+        auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda (x) (+ x 1))\" \"#2817\")");
         CHECK(mut.has_value(), "AC3: set-body real define");
         const auto g1 = m->cascade_ghost_name_touch_total.load(std::memory_order_relaxed);
         // Real define should not bump ghost counter (path1/2 finds Define).

@@ -91,7 +91,7 @@ int run_test_rebind_parse_failure_no_leak() {
         const auto size0 = flat->size();
         const auto freed0 = flat->ghost_orphan_nodes_freed();
 
-        auto bad = cs.eval("(mutate:rebind \"f\" \"(((\")");
+        auto bad = cs.eval("(mutate :rebind \"f\" \"(((\")");
         CHECK(bad.has_value(), "AC2: rebind returns value");
         // Expect failure (merr or non-#t).
         CHECK(!(is_bool(*bad) && as_bool(*bad)), "AC2: parse-error not success #t");
@@ -117,7 +117,7 @@ int run_test_rebind_parse_failure_no_leak() {
         const auto size0 = flat->size();
 
         for (int i = 0; i < 50; ++i) {
-            auto r = cs.eval("(mutate:rebind \"f\" \"(((\")");
+            auto r = cs.eval("(mutate :rebind \"f\" \"(((\")");
             CHECK(r.has_value(), "AC3: rebind attempt returns");
             CHECK(!(is_bool(*r) && as_bool(*r)), "AC3: each attempt fails");
         }
@@ -135,9 +135,9 @@ int run_test_rebind_parse_failure_no_leak() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define f (lambda () 1))\")").has_value(), "AC4: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "AC4: eval");
-        (void)cs.eval("(mutate:rebind \"f\" \"(((\")");
-        (void)cs.eval("(mutate:rebind \"f\" \"(((\")");
-        auto ok = cs.eval("(mutate:rebind \"f\" \"(lambda () 42)\")");
+        (void)cs.eval("(mutate :rebind \"f\" \"(((\")");
+        (void)cs.eval("(mutate :rebind \"f\" \"(((\")");
+        auto ok = cs.eval("(mutate :rebind \"f\" \"(lambda () 42)\")");
         CHECK(ok && is_bool(*ok) && as_bool(*ok), "AC4: successful rebind after fails");
         auto v = cs.eval("(begin (eval-current) (f))");
         CHECK(v && is_int(*v) && as_int(*v) == 42, "AC4: f returns 42 after rebind");

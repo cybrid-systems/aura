@@ -212,7 +212,7 @@ static void ac5_service_closed_loop() {
             CHECK(true, "no MacroIntroduced left in workspace (soft)");
     }
     // Mutate after expand should not ghost-stale.
-    (void)cs.eval("(mutate:rebind \"n/a\" \"1\")");
+    (void)cs.eval("(mutate :rebind \"n/a\" \"1\")");
     auto compact = cs.eval("(mutate :compact-env-frames)");
     CHECK(compact.has_value(), "compact after expand+mutate soft");
 }

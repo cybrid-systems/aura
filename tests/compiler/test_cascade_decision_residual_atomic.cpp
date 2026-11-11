@@ -235,7 +235,7 @@ static void ac4930_1_warm_hit_uses_parent_link() {
     bool rebound = true;
     for (int i = 0; i < 20; ++i) {
         rebound = rebound &&
-                  cs.eval("(mutate:rebind \"f4930\" \"(lambda (x) (+ x 2))\" \"w\")").has_value();
+                  cs.eval("(mutate :rebind \"f4930\" \"(lambda (x) (+ x 2))\" \"w\")").has_value();
         rebound = rebound && cs.eval("(eval-current)").has_value();
     }
     CHECK(rebound, "4930: 20 same-name rebinds accepted");

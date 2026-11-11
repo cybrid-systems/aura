@@ -50,7 +50,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(cs.eval("(set-code \"(define x 1) (define y 2)\")").has_value(), "workspace setup");
     CHECK(cs.eval("(eval-current)").has_value(), "workspace eval");
     const auto stats2a = propagation_stats(cs);
-    (void)cs.eval("(mutate:rebind \"x\" \"42\")");
+    (void)cs.eval("(mutate :rebind \"x\" \"42\")");
     (void)cs.eval("(eval-current)");
     const auto stats2b = propagation_stats(cs);
     std::println("  propagation stats: {} -> {}", stats2a, stats2b);
@@ -74,7 +74,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: multi-round mutate matrix monotonic ---");
     const auto stats5a = propagation_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"y\" \"" + std::to_string(20 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"y\" \"" + std::to_string(20 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(verify:report-coverage 1)");
     }

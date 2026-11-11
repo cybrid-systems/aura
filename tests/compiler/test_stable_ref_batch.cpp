@@ -81,7 +81,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(valid && is_bool(*valid), "query:ref-valid? returns bool");
 
     std::println("\n--- AC4: mutate:rebind + children-stable ---");
-    (void)cs.eval("(mutate:rebind \"acc\" \"99\")");
+    (void)cs.eval("(mutate :rebind \"acc\" \"99\")");
     auto kids = cs.eval("(query :children-stable 0)");
     CHECK(kids.has_value(), "query:children-stable returns on root");
 
@@ -89,7 +89,7 @@ static void run_matrix(CompilerService& cs) {
     const auto stats5a = cow_fiber_stats(cs);
     const auto cc5a = cs.evaluator().get_cross_cow_invalidations();
     for (int i = 0; i < 20; ++i) {
-        (void)cs.eval("(mutate:rebind \"a\" \"" + std::to_string(10 + i) + "\")");
+        (void)cs.eval("(mutate :rebind \"a\" \"" + std::to_string(10 + i) + "\")");
         const auto gen = ws->generation();
         (void)cs.evaluator().validate_stable_ref(0, gen > 0 ? gen - 1 : 0);
     }
@@ -102,7 +102,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: multi-round matrix monotonic ---");
     const auto stats6a = cow_fiber_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"b\" \"" + std::to_string(round) + "\")");
+        (void)cs.eval("(mutate :rebind \"b\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(let ((r (query:stable-ref 1))) (query:ref-valid? r))");
     }
@@ -324,7 +324,7 @@ static void run_matrix(CompilerService& cs) {
                             "  (workspace :switch 0) "
                             "  (define rx (query :stable-ref-pair 1)) "
                             "  (workspace :switch 1) "
-                            "  (mutate:rebind \"x\" \"(quote 9)\" \"mut\") "
+                            "  (mutate :rebind \"x\" \"(quote 9)\" \"mut\") "
                             "  (define r (query :resolve-stable-ref 0 (car rx) (cdr rx))) "
                             "  (if r 1 0))");
     CHECK(resolved && is_int(*resolved) && as_int(*resolved) == 1,

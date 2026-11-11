@@ -1232,7 +1232,7 @@ static void ac3761_1_node_only_caller_this_sweep() {
     CHECK(cs.lookup_define_v2("g", hash_g) == 1, "3761 AC1: lookup_define_v2(g)==1");
     CHECK(m.dual_dep_graph_parity_fail_total.load() > fail0,
           "3761 AC1: hole remirror fired (parity fail)");
-    auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () 2)\" \"#3761\")");
+    auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda () 2)\" \"#3761\")");
     CHECK(mut.has_value(), "3761 AC1: set-body f");
     CHECK(cs.eval("(eval-current)").has_value(), "3761 AC1: peel this sweep");
     auto r = cs.eval("(g)");
@@ -1554,7 +1554,7 @@ static void ac3762_1_unload_dirties_caller() {
     const auto* ge = cs.get_define_v2("g");
     CHECK(ge && (ge->dirty || ge->dirty_block_count() > 0), "3762 AC1: g is body-dirty");
     CHECK(cs.public_graphs_consistent(), "3762 AC1: graphs_consistent after remirror");
-    auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () 2)\" \"#3762\")");
+    auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda () 2)\" \"#3762\")");
     CHECK(mut.has_value(), "3762 AC1: set-body f");
     CHECK(cs.eval("(eval-current)").has_value(), "3762 AC1: peel dirty g");
     auto r = cs.eval("(g)");

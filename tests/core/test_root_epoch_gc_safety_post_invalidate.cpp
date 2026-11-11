@@ -96,7 +96,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: multi-round invalidate+mutate monotonic ---");
     const auto stats6a = stats_sum(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"a\" \"" + std::to_string(100 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"a\" \"" + std::to_string(100 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(f " + std::to_string(round) + ")");
     }

@@ -270,7 +270,7 @@ def gen_edsl():
     yield '(set-code "(define (f x) (+ x 1))")(display (query:calls "f"))'
     yield '(set-code "(define (f x) (+ x 1))")(display (current-source))'
     # mutate then eval
-    yield ('(set-code "(define (f x) (+ x 1))")(mutate:rebind "f" "(lambda (x) (* x 2))")(eval-current)')
+    yield ('(set-code "(define (f x) (+ x 1))")(mutate :rebind "f" "(lambda (x) (* x 2))")(eval-current)')
     # set-code on empty/nil
     yield '(set-code "")(display (current-source))'
     yield '(set-code "()")(display (current-source))'
@@ -280,7 +280,7 @@ def gen_edsl():
     # Chain: set-code → mutate → query
     yield (
         '(set-code "(define (f x) (+ x 1))")'
-        '(mutate:rebind "f" "(lambda (x) (* x 10))")'
+        '(mutate :rebind "f" "(lambda (x) (* x 10))")'
         '(display (query:node-type "Lambda"))'
     )
     # Remove node

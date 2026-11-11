@@ -182,7 +182,7 @@ static void ac4_1622_mutate() {
         (void)cs.eval(std::format("(+ {} {})", i, i + 1));
         (void)cs.eval("(add1 1)");
     }
-    (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     (void)cs.eval("(eval-current)");
     CHECK(load_u64(value_dispatch_hit_count) > hits0, "hits advanced");
     CHECK(load_u64(v2_string_collision_attempts) == 0, "collisions unchanged (0 growth)");
@@ -284,7 +284,7 @@ static void ac6_task4_shape() {
     CompilerService cs;
     CHECK(seed_value(cs), "workspace for shape classify");
     for (int i = 0; i < 10; ++i) {
-        (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(50 + i) + "\")");
+        (void)cs.eval("(mutate :rebind \"base\" \"" + std::to_string(50 + i) + "\")");
         (void)cs.eval("(eval-current)");
     }
     CHECK(v2_string_collision_attempts.load() == 0, "zero collisions after mutate batch");
@@ -303,7 +303,7 @@ static void ac7_task4_fuzz() {
         (void)inline_shape_of(make_int(v).val);
         (void)inline_shape_of(make_string(static_cast<std::uint64_t>(v & 127)).val);
         if ((i & 3) == 0)
-            (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(v) + "\")");
+            (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(v) + "\")");
         if ((i & 7) == 0)
             (void)cs.eval("(eval-current)");
     }
@@ -328,7 +328,7 @@ static void ac8_task4_concurrent() {
             (void)inline_shape_of(make_string(static_cast<std::uint64_t>(v)).val);
             {
                 std::scoped_lock lock(eval_mu);
-                (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(v) + "\")");
+                (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(v) + "\")");
             }
         }
         done.fetch_add(1, std::memory_order_relaxed);
@@ -359,7 +359,8 @@ static void ac9_task4_fiber() {
                 (void)inline_shape_of(make_int(f + i).val);
                 {
                     std::scoped_lock lock(eval_mu);
-                    (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(f * 10 + i) + "\")");
+                    (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(f * 10 + i) +
+                                  "\")");
                 }
                 Fiber::yield(YieldReason::MutationBoundary);
             }
@@ -387,9 +388,9 @@ static void ac10_task4_stress() {
         const int v = val_dist(rng);
         (void)inline_shape_of(make_string(static_cast<std::uint64_t>(v & 255)).val);
         if ((i & 1) == 0)
-            (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(v) + "\")");
+            (void)cs.eval("(mutate :rebind \"base\" \"" + std::to_string(v) + "\")");
         else
-            (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(v) +
+            (void)cs.eval("(mutate :replace-value (define acc " + std::to_string(v) +
                           ") (define acc " + std::to_string(v) + "))");
         if ((i & 15) == 0)
             (void)cs.eval("(eval-current)");

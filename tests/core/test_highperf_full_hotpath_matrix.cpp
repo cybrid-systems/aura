@@ -121,8 +121,8 @@ bool test_mutation_stability_under_mutate() {
     CHECK(setup_hotpath_workspace(cs), "workspace for mutation stability");
     const auto m0 = eval_int(cs, "(stats:get \"query:task4-mutation-stability\")");
     for (int i = 0; i < 10; ++i) {
-        (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(100 + i) + "\")");
-        (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(i) + ") (define acc " +
+        (void)cs.eval("(mutate :rebind \"base\" \"" + std::to_string(100 + i) + "\")");
+        (void)cs.eval("(mutate :replace-value (define acc " + std::to_string(i) + ") (define acc " +
                       std::to_string(i) + "))");
     }
     const auto m1 = eval_int(cs, "(stats:get \"query:task4-mutation-stability\")");
@@ -169,7 +169,7 @@ bool test_soa_dirty_hook_under_mutate() {
         return false;
     ws->rebuild_tag_arity_index();
     const auto d0 = ws->tag_arity_index_dirty_marks();
-    (void)cs.eval("(mutate:rebind \"tmp\" \"99\")");
+    (void)cs.eval("(mutate :rebind \"tmp\" \"99\")");
     const auto d1 = ws->tag_arity_index_dirty_marks();
     std::println("  dirty_marks: {} -> {}", d0, d1);
     CHECK(d1 >= d0, "tag_arity_index_dirty_marks monotonic after mutate");
@@ -197,7 +197,7 @@ bool test_mutate_eval_hotpath_matrix() {
     std::println("\n--- AC7: mutate + eval hot path matrix ---");
     CompilerService cs;
     CHECK(setup_hotpath_workspace(cs), "workspace for hot path");
-    CHECK(cs.eval("(mutate:rebind \"base\" \"42\")").has_value(), "mutate:rebind succeeds");
+    CHECK(cs.eval("(mutate :rebind \"base\" \"42\")").has_value(), "mutate:rebind succeeds");
     CHECK(cs.eval("(set-code \"(define base 100) (define acc 7)\")").has_value(),
           "set-code succeeds");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current succeeds");
@@ -213,7 +213,7 @@ bool test_arena_gc_integration() {
     CompilerService cs;
     CHECK(setup_hotpath_workspace(cs), "workspace for arena/GC");
     for (int i = 0; i < 5; ++i) {
-        (void)cs.eval("(mutate:replace-value (define tmp " + std::to_string(i) + ") (define tmp " +
+        (void)cs.eval("(mutate :replace-value (define tmp " + std::to_string(i) + ") (define tmp " +
                       std::to_string(i) + "))");
     }
     auto gc = cs.eval("(gc-heap)");
@@ -235,11 +235,13 @@ bool test_fuzz_hotpath_sequences() {
     for (int i = 0; i < k_fuzz_iters(); ++i) {
         switch (op_dist(rng)) {
             case 0:
-                (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(val_dist(rng)) + "\")");
+                (void)cs.eval("(mutate :rebind \"base\" \"" + std::to_string(val_dist(rng)) +
+                              "\")");
                 break;
             case 1:
-                (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(val_dist(rng)) +
-                              ") (define acc " + std::to_string(val_dist(rng)) + "))");
+                (void)cs.eval("(mutate :replace-value (define acc " +
+                              std::to_string(val_dist(rng)) + ") (define acc " +
+                              std::to_string(val_dist(rng)) + "))");
                 break;
             case 2:
                 (void)cs.eval("(query:tag-arity-count 32 0)");
@@ -277,11 +279,12 @@ bool test_eight_thread_concurrent_hotpath() {
             if ((i & 3) == 0) {
                 (void)cs.eval("(query:tag-arity-count 32 0)");
             } else if ((i & 3) == 1) {
-                (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(tid * 1000 + i) + "\")");
+                (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(tid * 1000 + i) +
+                              "\")");
             } else if ((i & 3) == 2) {
                 (void)cs.eval("(gc-heap)");
             } else {
-                (void)cs.eval("(mutate:replace-value (define tmp " + std::to_string(i) +
+                (void)cs.eval("(mutate :replace-value (define tmp " + std::to_string(i) +
                               ") (define tmp " + std::to_string(tid + i) + "))");
             }
             if (!cs.eval("(stats:get \"query:task4-hotpath-safety-score\")")) {
@@ -351,9 +354,9 @@ bool test_long_running_hotpath_stress() {
     std::uniform_int_distribution<int> val_dist(0, 500);
     for (int i = 0; i < k_stress_iters(); ++i) {
         if ((i & 1) == 0) {
-            (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(val_dist(rng)) + "\")");
+            (void)cs.eval("(mutate :rebind \"base\" \"" + std::to_string(val_dist(rng)) + "\")");
         } else {
-            (void)cs.eval("(mutate:replace-value (define acc " + std::to_string(val_dist(rng)) +
+            (void)cs.eval("(mutate :replace-value (define acc " + std::to_string(val_dist(rng)) +
                           ") (define acc " + std::to_string(val_dist(rng)) + "))");
         }
         if ((i & 15) == 0) {

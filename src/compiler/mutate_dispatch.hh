@@ -34,9 +34,9 @@ namespace aura::compiler {
 // the END to preserve wire-format compatibility with prior
 // snapshots.
 enum class MutateKind : std::uint8_t {
-    SetBody = 0,                  // Formerly (mutate:set-body …)
+    SetBody = 0,                  // Formerly (mutate :set-body …)
     Redefine = 1,                 // Formerly (engine:redefine …)
-    FromVerificationFeedback = 2, // Formerly (mutate:from-verification-feedback …)
+    FromVerificationFeedback = 2, // Formerly (mutate :from-verification-feedback …)
     Typed = 3,                    // Typed mutation path
     Structural = 4,               // Structural mutation path
 };

@@ -98,7 +98,7 @@ static void run_matrix(CompilerService& cs) {
     (void)cs.eval("(mutate :arena-request-defrag)");
     for (int i = 0; i < 40; ++i)
         (void)cs.eval("(fact 3)");
-    (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     (void)cs.eval("(eval-current)");
     const auto triggers1 = policy_hash(cs, "auto-compact-triggers");
     std::println("  auto-compact-triggers: {} -> {}", triggers0, triggers1);

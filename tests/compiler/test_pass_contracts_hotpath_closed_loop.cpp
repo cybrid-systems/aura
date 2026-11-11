@@ -73,7 +73,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC4: mutate + eval bumps pass counters ---");
     const auto stats4a = pass_stats(cs);
-    (void)cs.eval("(mutate:rebind \"base\" \"42\")");
+    (void)cs.eval("(mutate :rebind \"base\" \"42\")");
     CHECK(cs.eval("(eval-current)").has_value(), "eval after mutate");
     (void)cs.eval("(eval-current :jit)");
     const auto stats4b = pass_stats(cs);
@@ -83,7 +83,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC5: multi-round mutate matrix ---");
     const auto stats5a = pass_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
+        (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(eval-current :jit)");
     }

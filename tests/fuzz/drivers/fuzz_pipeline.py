@@ -54,7 +54,7 @@ PIPELINES = [
     (set-code "(define (f x) x)")
     (synthesize:register-template "double" "(define (double-{n} x) (* 2 x))" "n")
     (synthesize:pipeline "triple"
-      (mutate:rebind "f" "(lambda (x) (+ x 1))" "inc")
+      (mutate :rebind "f" "(lambda (x) (+ x 1))" "inc")
       (synthesize:fill "double" "val")
       (set-code "(define z 42)"))
     """,

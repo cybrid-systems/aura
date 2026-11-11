@@ -13,7 +13,7 @@
 
 (set-code "(define p (lambda (x) (> x 10)))\n(define e4782 (lambda (x) (p x)))") (eval-current)
 (define S0 (mutate :snapshot "s0"))
-(mutate:rebind "p" "(lambda (x) (> x 3))" "v2") (eval-current)
+(mutate :rebind "p" "(lambda (x) (> x 3))" "v2") (eval-current)
 (assert! (eq? (e4782 5) #t) "rebind v2 live")
 (define S1 (mutate :snapshot "s1"))
 (assert! (eq? (mutate :restore S0) #t) "restore S0 ok")
@@ -30,7 +30,7 @@
 (assert! (eq? (e4782 5) #t) "second forward restore S1")
 ;; a snapshot taken after a restore keeps the stamp path and stays exact
 (define S2 (mutate :snapshot "s2"))
-(mutate:rebind "p" "(lambda (x) (> x 100))" "v3") (eval-current)
+(mutate :rebind "p" "(lambda (x) (> x 100))" "v3") (eval-current)
 (assert! (eq? (e4782 50) #f) "rebind v3 live")
 (mutate :restore S2) (eval-current)
 (assert! (eq? (e4782 5) #t) "restore S2 (post-restore capture) -> S1 body")

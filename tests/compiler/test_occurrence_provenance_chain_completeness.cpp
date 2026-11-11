@@ -215,7 +215,7 @@ static void ac6_multi_delta_suite() {
     (void)cs.eval("(typecheck-current)");
     for (int i = 0; i < 8; ++i) {
         (void)cs.eval(std::format(
-            "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x {}) 0))\" \"m{}\")", i + 2,
+            "(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x {}) 0))\" \"m{}\")", i + 2,
             i));
         (void)cs.eval("(typecheck-current)");
         (void)cs.eval(std::format("(f {})", i));

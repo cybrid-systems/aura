@@ -3614,7 +3614,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :rebind: mutation of MacroIntroduced requires "
-                    "MacroSelfEvo capability (mutate:rebind :allow-macro? #t)"});
+                    "MacroSelfEvo capability (mutate :rebind :allow-macro? #t)"});
             // Issue #4248: MSE-validated allow — latch for the #3637 net
             // (public hygiene_protected_error / #4035 parity). Soft/Off
             // early-out stays latch-free.
@@ -3679,7 +3679,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
                     return std::unexpected(aura::diag::Diagnostic{
                         aura::diag::ErrorKind::InternalError,
                         "batch :rebind: MacroIntroduced body requires MacroSelfEvo "
-                        "capability (mutate:rebind :allow-macro? #t)"});
+                        "capability (mutate :rebind :allow-macro? #t)"});
                 // Issue #4248: body MSE allow also latches #3637 net.
                 note_boundary_macro_allow_latch();
             }
@@ -3748,7 +3748,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
         // workspace pool (the #3915 face — same as eval-current). The
         // lockless batch refresh left that re-key in place, so the next
         // bind in the CALLER's frame mirrored its SymId through the
-        // workspace pool: (define x (mutate:atomic-batch ...)) stored the
+        // workspace pool: (define x (mutate :atomic-batch ...)) stored the
         // define under a cross-pool SymId with no string mirror, and the
         // following set_pool re-key rebuilt bindings_symid_ from the
         // string truth — dropping x entirely (unbound variable).
@@ -3899,7 +3899,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_value(std::span<const types
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :replace-value: mutation of MacroIntroduced requires "
-                    "MacroSelfEvo capability (mutate:replace-value :allow-macro? #t)"});
+                    "MacroSelfEvo capability (mutate :replace-value :allow-macro? #t)"});
             // Issue #4248: MSE-validated allow — latch for #3637 net.
             note_boundary_macro_allow_latch();
         }
@@ -4025,7 +4025,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :tweak-literal: mutation of MacroIntroduced requires "
-                    "MacroSelfEvo capability (mutate:tweak-literal :allow-macro? #t)"});
+                    "MacroSelfEvo capability (mutate :tweak-literal :allow-macro? #t)"});
             // Issue #4127: MSE-validated allow — latch for the #3637 net
             // (parity with the public hygiene_protected_error allow arm,
             // #4035). Soft/Off early-out stays latch-free.
@@ -4057,11 +4057,11 @@ EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types
     return make_int(static_cast<std::int64_t>(new_val));
 }
 
-// Issue #396 Phase 2: lockless variant of (mutate:remove-node).
+// Issue #396 Phase 2: lockless variant of (mutate :remove-node).
 // Replicates the inner logic of the wrapper primitive but skips
 // the MutationBoundaryGuard + fiber-yield + read-only check (the
 // outer atomic-batch guard already owns these). Called from
-// (mutate:atomic-batch) for the "mutate:remove-node" sub-op.
+// (mutate :atomic-batch) for the "mutate:remove-node" sub-op.
 // Issue #1688: removes target from ALL parents (DAG), same as public.
 EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::EvalValue> a) {
     EVAL_FLAT_HOLD_BUDGET_POLL();
@@ -4097,7 +4097,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :remove-node: mutation of MacroIntroduced requires "
-                    "MacroSelfEvo capability (mutate:remove-node :allow-macro? #t)"});
+                    "MacroSelfEvo capability (mutate :remove-node :allow-macro? #t)"});
             // Issue #4248: MSE-validated allow — latch for #3637 net.
             note_boundary_macro_allow_latch();
         }
@@ -4130,7 +4130,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::
     return make_bool(true);
 }
 
-// Issue #396 Phase 2: lockless variant of (mutate:insert-child).
+// Issue #396 Phase 2: lockless variant of (mutate :insert-child).
 // Replicates the inner logic but skips the guard + fiber-yield
 // + read-only check. Parses the code-string into the workspace
 // (so all existing IDs stay valid) then routes through
@@ -4179,7 +4179,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :insert-child: mutation of MacroIntroduced requires "
-                    "MacroSelfEvo capability (mutate:insert-child :allow-macro? #t)"});
+                    "MacroSelfEvo capability (mutate :insert-child :allow-macro? #t)"});
             // Issue #4248: MSE-validated allow — latch for #3637 net.
             note_boundary_macro_allow_latch();
         }
@@ -4221,7 +4221,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
     return make_int(static_cast<std::int64_t>(pr.root));
 }
 
-// Issue #1900: lockless variant of (mutate:set-body). Inner logic
+// Issue #1900: lockless variant of (mutate :set-body). Inner logic
 // from the wrapper primitive stripped of Guard + fiber-yield +
 // read-only + hygiene + lazy COW + dep-graph query + typecheck +
 // ownership validation + mark_define_dirty_fn + repopulate_dep_graph.
@@ -4291,7 +4291,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :set-body: mutation of MacroIntroduced requires "
-                    "MacroSelfEvo capability (mutate:set-body :allow-macro? #t)"});
+                    "MacroSelfEvo capability (mutate :set-body :allow-macro? #t)"});
             // Issue #4127: MSE-validated allow — latch for the #3637 net
             // (parity with the public reject_structural_macro_hygiene allow
             // arms on the define + lambda, #4035). Soft/Off: latch-free.
@@ -4346,7 +4346,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :set-body: MacroIntroduced body requires MacroSelfEvo "
-                    "capability (mutate:set-body :allow-macro? #t)"});
+                    "capability (mutate :set-body :allow-macro? #t)"});
             }
         }
     }
@@ -4413,7 +4413,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
     return make_bool(true);
 }
 
-// Issue #1900: lockless variant of (mutate:replace-pattern). Inner
+// Issue #1900: lockless variant of (mutate :replace-pattern). Inner
 // logic stripped of Guard + fiber-yield + read-only + hygiene.
 // Single-subtree wildcard match (no Kleene capture substitution
 // in batch context — outer batch can be re-issued with strict-arity
@@ -4767,7 +4767,7 @@ EvalResult Evaluator::apply_replace_pattern_matches(
     return make_bool(true);
 }
 
-// Issue #1900: lockless variant of (mutate:replace-subtree).
+// Issue #1900: lockless variant of (mutate :replace-subtree).
 // Hygiene gate kept inline (per-#142 contract).
 EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const types::EvalValue> a) {
     EVAL_FLAT_HOLD_BUDGET_POLL();
@@ -4807,7 +4807,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :replace-subtree: mutation of MacroIntroduced requires "
-                    "MacroSelfEvo capability (mutate:replace-subtree :allow-macro? #t)"});
+                    "MacroSelfEvo capability (mutate :replace-subtree :allow-macro? #t)"});
             // Issue #4127: MSE-validated allow — latch for the #3637 net
             // (parity with the public reject_structural_macro_hygiene allow
             // arm, #4035). Soft/Off early-out stays latch-free.
@@ -4872,7 +4872,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :replace-subtree: MacroIntroduced body requires "
-                    "MacroSelfEvo capability (mutate:replace-subtree :allow-macro? #t)"});
+                    "MacroSelfEvo capability (mutate :replace-subtree :allow-macro? #t)"});
             }
         }
     }
@@ -4948,7 +4948,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
     return make_bool(true);
 }
 
-// Issue #1900: lockless variant of (mutate:splice).
+// Issue #1900: lockless variant of (mutate :splice).
 EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalValue> a) {
     EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !workspace_flat_ || !workspace_pool_)
@@ -4986,7 +4986,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalV
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :splice: mutation of MacroIntroduced requires "
-                    "MacroSelfEvo capability (mutate:splice :allow-macro? #t)"});
+                    "MacroSelfEvo capability (mutate :splice :allow-macro? #t)"});
             // Issue #4248: MSE-validated allow — latch for #3637 net.
             note_boundary_macro_allow_latch();
         }
@@ -5047,7 +5047,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalV
     return reversed;
 }
 
-// Issue #1900: lockless variant of (mutate:wrap).
+// Issue #1900: lockless variant of (mutate :wrap).
 // Issue #1700: re-validate parent_of_target after parse; resolve parents
 // via parent_of (not O(N×C)); is_live_node not is_valid_in post-restamp.
 EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalValue> a) {
@@ -5087,7 +5087,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalVal
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :wrap: mutation of MacroIntroduced requires "
-                    "MacroSelfEvo capability (mutate:wrap :allow-macro? #t)"});
+                    "MacroSelfEvo capability (mutate :wrap :allow-macro? #t)"});
             // Issue #4248: MSE-validated allow — latch for #3637 net.
             note_boundary_macro_allow_latch();
         }
@@ -5193,7 +5193,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalVal
     return make_int(static_cast<std::int64_t>(pr.root));
 }
 
-// Issue #1900: lockless variant of (mutate:rename-symbol).
+// Issue #1900: lockless variant of (mutate :rename-symbol).
 // Issue #2961 / Issue #3213: MacroIntroduced / MacroDef sites default-reject;
 // :allow-macro? #t or global allow unlocks. mark_dirty_upward + restamp
 // after success.
@@ -5255,7 +5255,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types
                     return std::unexpected(aura::diag::Diagnostic{
                         aura::diag::ErrorKind::InternalError,
                         "batch :rename-symbol: MacroIntroduced site requires MacroSelfEvo "
-                        "capability (mutate:rename-symbol :allow-macro? #t)"});
+                        "capability (mutate :rename-symbol :allow-macro? #t)"});
                 // Issue #4248: MSE-validated allow — latch for #3637 net
                 // (once per allowed MI site; Soft/Off latch-free).
                 note_boundary_macro_allow_latch();
@@ -5296,7 +5296,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types
     return make_bool(true);
 }
 
-// Issue #1900: lockless variant of (mutate:move-node).
+// Issue #1900: lockless variant of (mutate :move-node).
 // Issue #2801 / #142: MacroIntroduced target rejected (parity with
 // replace-subtree). Moving a macro-internal node into a non-macro
 // parent would hoist macro scope bindings — hygiene contract leak.
@@ -5343,7 +5343,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :move-node: mutation of MacroIntroduced requires "
-                    "MacroSelfEvo capability (mutate:move-node :allow-macro? #t)"});
+                    "MacroSelfEvo capability (mutate :move-node :allow-macro? #t)"});
             // Issue #4127: MSE-validated allow — latch for the #3637 net
             // (moved-node arm, public reject_structural parity #4035).
             note_boundary_macro_allow_latch();
@@ -5366,7 +5366,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :move-node: mutation of MacroIntroduced requires "
-                    "MacroSelfEvo capability (mutate:move-node :allow-macro? #t)"});
+                    "MacroSelfEvo capability (mutate :move-node :allow-macro? #t)"});
             // Issue #4127: MSE-validated allow — latch for the #3637 net
             // (dest-parent arm, public reject_structural parity #4035).
             note_boundary_macro_allow_latch();
@@ -5434,7 +5434,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
     return make_bool(true);
 }
 
-// Issue #1900: lockless variant of (mutate:inline-call).
+// Issue #1900: lockless variant of (mutate :inline-call).
 EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::EvalValue> a) {
     EVAL_FLAT_HOLD_BUDGET_POLL();
     if (a.empty() || !is_int(a[0]) || !workspace_flat_ || !workspace_pool_)
@@ -5466,7 +5466,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :inline-call: mutation of MacroIntroduced requires "
-                    "MacroSelfEvo capability (mutate:inline-call :allow-macro? #t)"});
+                    "MacroSelfEvo capability (mutate :inline-call :allow-macro? #t)"});
             // Issue #4248: MSE-validated allow — latch for #3637 net.
             note_boundary_macro_allow_latch();
         }
@@ -5533,7 +5533,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
                 return std::unexpected(aura::diag::Diagnostic{
                     aura::diag::ErrorKind::InternalError,
                     "batch :inline-call: mutation of MacroIntroduced requires "
-                    "MacroSelfEvo capability (mutate:inline-call :allow-macro? #t)"});
+                    "MacroSelfEvo capability (mutate :inline-call :allow-macro? #t)"});
             // Issue #4248: body MSE allow also latches #3637 net.
             note_boundary_macro_allow_latch();
         }
@@ -12988,7 +12988,7 @@ __attribute__((noinline)) EvalResult Evaluator::eval_flat_body(aura::ast::FlatAS
 //
 // Walks the mutation's affected subtree and re-expands any
 // macro call sites it finds. This fixes the bug where
-// EDSL mutations (mutate:rebind, mutate:set-body, etc.)
+// EDSL mutations (mutate :rebind, mutate:set-body, etc.)
 // leave stale macro expansions — the macro's gensym'd
 // bindings may not be re-generated, and the call site
 // may pick up caller's bindings that should have been

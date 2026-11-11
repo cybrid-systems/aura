@@ -144,14 +144,14 @@ static void ac3_mutating_thunk_contract() {
         g_orch_module_stats.pure_contract_violated_total.load(std::memory_order_relaxed);
 
     auto r = cs.eval("(parallel-intend"
-                     "  (vector (lambda () (begin (mutate:set-body \"sf\" \"(+ x 2)\") 1)))"
+                     "  (vector (lambda () (begin (mutate :set-body \"sf\" \"(+ x 2)\") 1)))"
                      "  :pure #t :max-concurrency 1 :timeout-ms 10000 :collect-errors #t)");
     CHECK(r && is_hash(*r), "mutate pure batch");
 
     auto err_count =
         cs.eval("(hash-ref"
                 "  (parallel-intend"
-                "    (vector (lambda () (begin (mutate:set-body \"sf\" \"(+ x 3)\") 1)))"
+                "    (vector (lambda () (begin (mutate :set-body \"sf\" \"(+ x 3)\") 1)))"
                 "    :pure #t :max-concurrency 1 :timeout-ms 10000 :collect-errors #t)"
                 "  \"err-count\")");
     const auto viol1 =
@@ -161,7 +161,7 @@ static void ac3_mutating_thunk_contract() {
 
     auto err_s =
         cs.eval("(let ((out (parallel-intend"
-                "             (vector (lambda () (begin (mutate:set-body \"sf\" \"(+ x 4)\") 1)))"
+                "             (vector (lambda () (begin (mutate :set-body \"sf\" \"(+ x 4)\") 1)))"
                 "             :pure #t :max-concurrency 1 :timeout-ms 10000 :collect-errors #t)))"
                 "  (let ((res (hash-ref out \"results\")))"
                 "    (if (and (vector? res) (> (vector-length res) 0))"

@@ -310,7 +310,7 @@ namespace {
             href(cs, "query:pattern-hygiene-stats", "macro_introduced_skipped_in_query_total");
         for (int i = 0; i < 256; ++i) {
             if ((i % 8) == 0) {
-                (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\")");
+                (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 1))\")");
                 (void)cs.eval("(eval-current)");
             }
             (void)cs.eval("(query:pattern '(define _ _))");
@@ -835,7 +835,7 @@ namespace aura_issue_547_detail {
         CHECK(ws != nullptr, "workspace for pattern-index-stats");
         if (ws) {
             for (int i = 0; i < 5; ++i) {
-                (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i) +
+                (void)cs.eval("(mutate :replace-value (define a " + std::to_string(i) +
                               ") (define a " + std::to_string(i) + "))");
                 ws->ensure_tag_arity_index();
                 (void)ws->find_by_tag_arity(32, 0, 0);
@@ -1223,7 +1223,7 @@ int run_hygiene_provenance_1914() {
         CompilerService cs;
         CHECK(seed(cs), "seed");
         // Drive a mutate to populate mutation log
-        auto mut = cs.eval("(mutate:rebind \"z\" \"99\" \"1914-ac4\")");
+        auto mut = cs.eval("(mutate :rebind \"z\" \"99\" \"1914-ac4\")");
         CHECK(mut.has_value(), "mutate");
         auto r = cs.eval("(query:last-mutation-provenance)");
         // May be hash or void if log empty under some paths — prefer hash.
@@ -1297,7 +1297,7 @@ int run_hygiene_provenance_1914() {
         CompilerService cs;
         CHECK(seed(cs), "seed");
         for (int i = 0; i < 10; ++i) {
-            (void)cs.eval(std::format("(mutate:rebind \"z\" \"{}\" \"r{}\")", 100 + i, i));
+            (void)cs.eval(std::format("(mutate :rebind \"z\" \"{}\" \"r{}\")", 100 + i, i));
             auto lp = cs.eval("(query:last-mutation-provenance)");
             CHECK(lp.has_value(), std::format("last-prov round {}", i));
             auto* ws = cs.evaluator().workspace_flat();

@@ -702,7 +702,7 @@ namespace {
         };
 
         // Issue #396 Phase 1: lightweight yield-reason setter for
-        // (mutate:atomic-batch) Guard entry. Sets the current fiber's
+        // (mutate :atomic-batch) Guard entry. Sets the current fiber's
         // last_yield_reason_ to MutationBoundary WITHOUT actually
         // yielding — this lets work-stealing decisions
         // (is_stealable(snap) / is_steal_candidate) see the fiber as being

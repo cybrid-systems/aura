@@ -180,7 +180,7 @@ static ClosureId make_stale_unimpacted_lambda(CompilerService& cs) {
     CHECK(cs.eval("(define score (lambda (x) (* x 2)))").has_value(), "define score");
     auto r = cs.eval("(lambda (x) (+ x 1))");
     CHECK(r && is_closure(*r), "unimpacted lambda");
-    CHECK(cs.eval("(mutate:rebind \"score\" \"(lambda (x) (* x 3))\" \"t\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"score\" \"(lambda (x) (* x 3))\" \"t\")").has_value(),
           "rebind other define");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current after rebind");
     return r && is_closure(*r) ? as_closure_id(*r) : 0;
@@ -214,7 +214,7 @@ static void ac1_closure_survive() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
     CHECK(eval_int_eq(cs, "(bump)", 2), "bump after set-code");
     CHECK(eval_int_eq(cs, "(score 5)", 10), "score *2");
-    CHECK(cs.eval("(mutate:rebind \"score\" \"(lambda (x) (* x 3))\" \"t\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"score\" \"(lambda (x) (* x 3))\" \"t\")").has_value(),
           "rebind *3");
     CHECK(cs.eval("(eval-current)").has_value(), "eval after rebind");
     auto b3 = cs.eval("(bump)");
@@ -225,7 +225,7 @@ static void ac1_closure_survive() {
     CHECK(eval_int_eq(cs, "(score 5)", 15), "score *3");
     // N rounds without invalid closure
     for (int i = 0; i < 4; ++i) {
-        CHECK(cs.eval("(mutate:rebind \"score\" \"(lambda (x) (+ x 1))\" \"t\")").has_value(),
+        CHECK(cs.eval("(mutate :rebind \"score\" \"(lambda (x) (+ x 1))\" \"t\")").has_value(),
               "rebind loop");
         CHECK(cs.eval("(eval-current)").has_value(), "eval loop");
         auto br = cs.eval("(bump)");
@@ -246,7 +246,7 @@ static void ac2_hash_survive() {
     CHECK(cs.eval("(set-code \"(define score (lambda (x) (* x 2)))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     CHECK(eval_int_eq(cs, "(hbump \"rounds\")", 2), "hbump after set-code");
-    CHECK(cs.eval("(mutate:rebind \"score\" \"(lambda (x) (* x 3))\" \"t\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"score\" \"(lambda (x) (* x 3))\" \"t\")").has_value(),
           "rebind");
     CHECK(cs.eval("(eval-current)").has_value(), "eval rebind");
     CHECK(eval_int_eq(cs, "(hbump \"commits\")", 1), "AC2: hbump commits after rebind");
@@ -1472,7 +1472,7 @@ static void ac14_3681_production_pre_reemit_refuse() {
         auto pre = cs.evaluator().apply_closure(cid_f, args);
         CHECK(pre.has_value() && is_int(*pre) && as_int(*pre) == 10,
               "AC1 pre: F applies the current body before set-body");
-        CHECK(cs.eval("(mutate:set-body \"f3681\" \"(lambda (x) (* x 20))\")").has_value(),
+        CHECK(cs.eval("(mutate :set-body \"f3681\" \"(lambda (x) (* x 20))\")").has_value(),
               "AC1: set-body F (define dirtied this epoch)");
         const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
         ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/0, /*lcp_allow=*/true, &cs.evaluator());

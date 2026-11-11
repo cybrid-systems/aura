@@ -736,7 +736,7 @@ void Evaluator::install_defuse_subsystem() {
 
     // ── 依赖图查询回调注册 ─────────────────────────────────────
     // 在 def-use 索引中注册依赖图查询函数，供 mutation 原语
-    // (mutate:rebind / set-body) 在变更前查询调用者节点。
+    // (mutate :rebind / set-body) 在变更前查询调用者节点。
     // 定义在这里（DefUseIndex 完整类型已知后），绕开前向声明问题。
     dep_caller_fn_ = [](void* idx_ptr, aura::ast::SymId sym) -> std::vector<aura::ast::NodeId> {
         if (!idx_ptr)
@@ -764,7 +764,7 @@ void Evaluator::install_defuse_subsystem() {
     // (#10) Tracks rebuild count and clears affected_syms_ after rebuild.
     // (#107 part 5) Per-sym version: DefUseIndex itself tracks which
     // syms are stale (DefUseIndex::stale_syms_). The mutation paths
-    // that report affected_syms (mutate:rebind / set-body) also call
+    // that report affected_syms (mutate :rebind / set-body) also call
     // defuse_touch_fn_ to mark the sym stale in the index. The
     // staleness set is used for observability (query:index-stats)
     // and for the update_callers_for() path to know which syms need

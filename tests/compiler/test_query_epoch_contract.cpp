@@ -166,7 +166,7 @@ int run_test_query_epoch_contract() {
         auto mutate_worker = [&]() {
             for (int i = 0; i < 10; ++i) {
                 std::scoped_lock<std::mutex> lk(eval_mu);
-                auto r = cs.eval(std::format("(mutate:set-body \"g\" \"(lambda () {})\")", i + 2));
+                auto r = cs.eval(std::format("(mutate :set-body \"g\" \"(lambda () {})\")", i + 2));
                 if (r)
                     ++mutate_ok;
                 else
@@ -304,7 +304,7 @@ int run_test_query_epoch_contract() {
             // Issue #3766: query:result-fresh? / query:result-matches are
             // SlimSurface add() (occupancy poll). Freshness SSOT is
             // query_result_is_fresh_with_refs under production.
-            CHECK(cs.eval("(mutate:set-body \"f\" \"(lambda (x) 2)\")").has_value() ||
+            CHECK(cs.eval("(mutate :set-body \"f\" \"(lambda (x) 2)\")").has_value() ||
                       cs.eval("(set-code \"(define f (lambda (x) 2))\")").has_value(),
                   "mutate/redefine f");
             CHECK(cs.eval("(eval-current)").has_value(), "re-eval");
@@ -389,7 +389,7 @@ int run_test_query_epoch_contract() {
                   "AC2 define qr");
             apply_production_audit_defaults();
             CHECK(query_epoch_strict(), "AC2: production strict on");
-            CHECK(cs.eval("(mutate:set-body \"f\" \"(lambda (x) 2)\")").has_value() ||
+            CHECK(cs.eval("(mutate :set-body \"f\" \"(lambda (x) 2)\")").has_value() ||
                       cs.eval("(set-code \"(define f (lambda (x) 2))\")").has_value(),
                   "AC2 mutate/redefine f");
             CHECK(cs.eval("(eval-current)").has_value(), "AC2 re-eval");

@@ -188,7 +188,18 @@ std::vector<std::string> repl_defined_names(std::string_view src) {
         ++i;
         skip_ws(i);
         const std::string head = read_atom(i);
-        if (head == "define" || head == "mutate:rebind") {
+        // Issue #5144: (mutate :rebind name code …) is the canonical spelling
+        // now that the mutate:rebind alias is dispatch-only; treat it as the
+        // same top-level rebind statement so the record still names the define.
+        bool is_rebind = head == "mutate:rebind";
+        if (head == "mutate") {
+            skip_ws(i);
+            if (i < src.size() && src[i] == ':') {
+                const std::string op = read_atom(i);
+                is_rebind = op == ":rebind";
+            }
+        }
+        if (head == "define" || is_rebind) {
             skip_ws(i);
             std::string name;
             if (i < src.size() && (src[i] == '(' || src[i] == '[')) {
@@ -564,7 +575,7 @@ public:
         {
         SigGuard guard(fuel_);
         if (in_workspace_(name))
-            err = eval_quiet_("(mutate:rebind " + quote_(name) + " " + quote_(def->second.value) +
+            err = eval_quiet_("(mutate :rebind " + quote_(name) + " " + quote_(def->second.value) +
                                   " \"repl :propose\")",
                               &shown);
         if (err.empty())
@@ -659,7 +670,7 @@ public:
             return eval_quiet_(text);
         if (in_workspace_(name)) {
             std::string shown;
-            const auto err = eval_quiet_("(mutate:rebind " + quote_(name) + " " +
+            const auto err = eval_quiet_("(mutate :rebind " + quote_(name) + " " +
                                             quote_(def->second.value) + " \"repl :undo\")",
                                         &shown);
             if (!err.empty())
@@ -1461,7 +1472,7 @@ public:
     // generated data, stays). A define that is not a live workspace node
     // (one that came in via (require …)) is redefined in place instead
     // (`redefined` = true); a sandbox denial stays an error. Values
-    // (mutate:rebind is procedure-only) re-evaluate just this define.
+    // (mutate :rebind is procedure-only) re-evaluate just this define.
     std::string apply_def_(const std::string& name, const Def& def, bool live_is_fn,
                            bool& redefined) {
         redefined = false;
@@ -1480,7 +1491,7 @@ public:
             return err;
         }
         std::string shown;
-        auto err = eval_quiet_("(mutate:rebind " + quote_(name) + " " + quote_(def.value) +
+        auto err = eval_quiet_("(mutate :rebind " + quote_(name) + " " + quote_(def.value) +
                                    " \"repl :reload\")",
                                &shown);
         if (!err.empty() || shown == "#t")

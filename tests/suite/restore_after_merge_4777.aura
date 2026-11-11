@@ -12,7 +12,7 @@
 
 (set-code "(define f (lambda (x) 1))\n(define g (lambda (x) 7))") (eval-current)
 (define w (workspace :create "cand"))
-(workspace :switch w) (mutate:rebind "f" "(lambda (x) 2)" "child") (eval-current)
+(workspace :switch w) (mutate :rebind "f" "(lambda (x) 2)" "child") (eval-current)
 (workspace :switch 0) (eval-current)
 (define snap (mutate :snapshot "pre-merge"))
 (workspace :merge w) (eval-current)
@@ -33,7 +33,7 @@
 
 ;; control: snapshot / rebind / restore without merge
 (define snap2 (mutate :snapshot "x"))
-(mutate:rebind "g" "(lambda (x) 9)" "r") (eval-current)
+(mutate :rebind "g" "(lambda (x) 9)" "r") (eval-current)
 (mutate :restore snap2) (eval-current)
 (assert! (= (g 0) 7) "control: g restored to 7")
 

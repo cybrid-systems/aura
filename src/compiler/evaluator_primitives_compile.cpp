@@ -3524,7 +3524,7 @@ void CompilePrims::register_compile_p36(PrimRegistrar add, Evaluator& ev) {
     //
     // Composes with (query:where :node-type "...") for
     // filtered coverage-hole scans and
-    // (mutate:query-and-replace ...) for automated refine.
+    // (mutate :query-and-replace ...) for automated refine.
     add("verify:coverage-holes", [&ev](std::span<const EvalValue> a) -> EvalValue {
         // Optional first arg: parse the report first (so
         // downstream calls see freshly-marked dirty nodes).
@@ -3628,7 +3628,7 @@ void CompilePrims::register_compile_p37(PrimRegistrar add, Evaluator& ev) {
     //   NodeId is also kCoverageFeedbackDirty (and the
     //   caller can use (query:where ...) to filter by
     //   :node-type "Define" / "Lambda" / etc. before
-    //   piping through (mutate:query-and-replace ...)).
+    //   piping through (mutate :query-and-replace ...)).
     //
     // Composes with (verify:coverage-holes) (same source
     // set) and (mutate :snapshot / ast:rollback) for safe

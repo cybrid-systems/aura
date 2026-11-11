@@ -148,12 +148,13 @@ static void ac4_post_mutation() {
     CompilerService cs;
     seed(cs);
     const auto n0 = load_u64(metrics_of(cs)->let_poly_post_mutation_scope_total);
-    CHECK(cs.eval("(mutate:rebind \"y\" \"2\")").has_value(), "mutate y");
+    CHECK(cs.eval("(mutate :rebind \"y\" \"2\")").has_value(), "mutate y");
     (void)cs.eval("(eval-current)");
     // Direct post_mutation path via typecheck after mutate may or may not
     // see Let nodes in dirty set; force a rebind of use that has occurrence.
-    CHECK(cs.eval("(mutate:rebind \"use\" \"(lambda (n) (if (number? n) (id n) 1))\")").has_value(),
-          "mutate use");
+    CHECK(
+        cs.eval("(mutate :rebind \"use\" \"(lambda (n) (if (number? n) (id n) 1))\")").has_value(),
+        "mutate use");
     (void)cs.eval("(eval-current)");
     // Counter is non-negative and schema still readable
     CHECK(href(cs, "let-poly-post-mutation-scope") >= 0, "post-mutation scope key");
@@ -173,7 +174,7 @@ static void ac5_stress() {
         unit_cs.mark_let_poly_dirty(v);
         (void)solve_delta_with(unit_cs, {Constraint::EQUAL, v, reg.int_type()});
         if ((i % 8) == 0)
-            (void)cs.eval(std::format("(mutate:rebind \"y\" \"{}\")", i));
+            (void)cs.eval(std::format("(mutate :rebind \"y\" \"{}\")", i));
     }
     CHECK(load_u64(metrics_of(cs)->let_poly_dirty_roots_tracked_total) >= n0 + 40, "40 marks");
     auto r = cs.eval("(+ 1 1)");

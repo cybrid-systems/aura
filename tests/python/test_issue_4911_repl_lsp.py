@@ -163,8 +163,8 @@ class Repl(unittest.TestCase):
                 "(eval-current)\n"
                 "(define (step! k)\n"
                 '  (let* ((snap (mutate :snapshot "s"))\n'
-                '         (a (mutate:rebind "params" (format "(lambda () (list ~a 4))" k) "step"))\n'
-                '         (b (mutate:rebind "rules" "(lambda () (list \'a \'b))" "step")))\n'
+                '         (a (mutate :rebind "params" (format "(lambda () (list ~a 4))" k) "step"))\n'
+                '         (b (mutate :rebind "rules" "(lambda () (list \'a \'b))" "step")))\n'
                 "    (eval-current)\n"
                 "    (let ((s (score (params) (rules))))\n"
                 "      (mutate :restore snap)\n"
@@ -255,7 +255,7 @@ class Lsp(unittest.TestCase):
             (root / "lib" / "util.aura").write_text(
                 "(define (pick x xs)\n  (helper x xs))\n(define (helper x xs) (member x xs))\n"
                 # optional third argument of a runtime primitive: not an arity diagnostic
-                '(define (bump!) (mutate:rebind "pick" "(lambda (x xs) x)" "why"))\n'
+                '(define (bump!) (mutate :rebind "pick" "(lambda (x xs) x)" "why"))\n'
             )
             main = root / "backtest.aura"
             main.write_text(

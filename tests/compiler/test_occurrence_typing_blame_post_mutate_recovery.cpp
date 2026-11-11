@@ -64,7 +64,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC2: if-predicate mutate → stats grow + narrow eval ---");
     const auto stats2a = occurrence_narrow_stats(cs);
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 7) 0))\" "
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 7) 0))\" "
                   "\"issue-609-if\")");
     const auto stats2b = occurrence_narrow_stats(cs);
     std::println("  occurrence-narrow-stats: {} -> {}", stats2a, stats2b);
@@ -78,7 +78,7 @@ static void run_matrix(CompilerService& cs) {
     const auto stats3a = occurrence_narrow_stats(cs);
     const auto snap3a = cs.snapshot();
     cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (string? x) x 0))\" "
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (string? x) x 0))\" "
                   "\"issue-609-blame\")");
     (void)cs.eval("(typecheck-current)");
     const auto stats3b = occurrence_narrow_stats(cs);
@@ -95,13 +95,13 @@ static void run_matrix(CompilerService& cs) {
           "blame/stale path bumped on predicate swap");
 
     std::println("\n--- AC4: provenance-of present after mutate ---");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 3) 0))\" "
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 3) 0))\" "
                   "\"issue-609-prov\")");
     auto prov = cs.eval("(query:provenance-of \"x\")");
     CHECK(prov.has_value(), "query:provenance-of after predicate mutate");
 
     std::println("\n--- AC5: occurrence-stale-count == 0 after auto re-narrow ---");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 5) 0))\" "
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 5) 0))\" "
                   "\"issue-609-stale\")");
     auto stale = cs.eval("(stats:get \"query:occurrence-stale-count\")");
     const auto stale_count = stale && is_int(*stale) ? as_int(*stale) : -1;
@@ -110,7 +110,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC6: define-type + match mutate → typecheck + stats ---");
     const auto stats6a = occurrence_narrow_stats(cs);
-    (void)cs.eval("(mutate:rebind \"m\" \"(lambda (t) (match t ((Num) 11) ((Str) 22)))\" "
+    (void)cs.eval("(mutate :rebind \"m\" \"(lambda (t) (match t ((Num) 11) ((Str) 22)))\" "
                   "\"issue-609-match\")");
     auto tc6 = cs.eval("(typecheck-current)");
     CHECK(tc6.has_value(), "typecheck-current after match mutate");
@@ -129,9 +129,9 @@ static void run_matrix(CompilerService& cs) {
             "(lambda (x) (if (number? x) (+ x " + std::to_string(round + 8) + ") 0))";
         const std::string m_body = "(lambda (t) (match t ((Num) " + std::to_string(round + 30) +
                                    ") ((Str) " + std::to_string(round + 40) + ")))";
-        (void)cs.eval("(mutate:rebind \"f\" \"" + f_body + "\" \"r" + std::to_string(round) +
+        (void)cs.eval("(mutate :rebind \"f\" \"" + f_body + "\" \"r" + std::to_string(round) +
                       "-f\")");
-        (void)cs.eval("(mutate:rebind \"m\" \"" + m_body + "\" \"r" + std::to_string(round) +
+        (void)cs.eval("(mutate :rebind \"m\" \"" + m_body + "\" \"r" + std::to_string(round) +
                       "-m\")");
         auto rf = cs.eval("(f 2)");
         auto rm = cs.eval("(m Str)");
@@ -150,7 +150,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC8: sequential query/eval stress under mutate ---");
     std::int64_t stress_sum = 0;
     for (int i = 0; i < 8; ++i) {
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
                       std::to_string(i) + ") 0))\" \"stress-" + std::to_string(i) + "\")");
         auto qs = cs.eval("(engine:metrics \"query:occurrence-narrow-stats\")");
         CHECK(qs && is_int(*qs), "query:occurrence-narrow-stats during stress");

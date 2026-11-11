@@ -1,5 +1,5 @@
 // @category: integration
-// @reason: concurrent query_mutation_log + Aura (mutate:rebind ...) loop.
+// @reason: concurrent query_mutation_log + Aura (mutate :rebind ...) loop.
 //          Thread A calls query_mutation_log() directly via C++ API
 //          (bypasses cs.eval() serialization to actually race at
 //          workspace_mtx_); Thread B does Aura eval that triggers
@@ -19,7 +19,7 @@
 // 6222-6250).
 //
 // Tests:
-//   AC1: concurrent query_mutation_log + Aura (mutate:rebind ...)
+//   AC1: concurrent query_mutation_log + Aura (mutate :rebind ...)
 //        loop runs for T seconds without SIGSEGV/SIGABRT
 //   AC2: query_mutation_log returns monotonically non-decreasing
 //        size under sequential mutate:rebind (smoke test)
@@ -55,7 +55,7 @@ void thread_query_loop(aura::compiler::CompilerService& cs, std::atomic<bool>& d
     }
 }
 
-// Thread B: Aura (mutate:rebind ...) loop. mutate:rebind goes
+// Thread B: Aura (mutate :rebind ...) loop. mutate:rebind goes
 // through typed_mutate internally, which appends to
 // mutation_log_.
 //
@@ -71,10 +71,10 @@ void thread_mutate_loop(aura::compiler::CompilerService& cs, std::atomic<bool>& 
                         std::atomic<int>& mutation_count) {
     int n = 0;
     while (!done.load(std::memory_order_acquire)) {
-        // (mutate:rebind "name" "value-as-source") — value arg is
+        // (mutate :rebind "name" "value-as-source") — value arg is
         // a STRING containing s-expression source (parsed+eval'd
         // by the primitive). Using literal "{}" → x = n each iter.
-        std::string src = std::format("(mutate:rebind \"x\" \"{}\")", n);
+        std::string src = std::format("(mutate :rebind \"x\" \"{}\")", n);
         auto r = cs.eval(src);
         (void)r; // may fail in edge cases; counter tracks attempts
         n++;
@@ -112,7 +112,7 @@ bool test_ac1_concurrent_no_ub() {
     std::println("  AC1: query_count={} mutation_count={} max_size={}", q, m, mx);
     CHECK(q > 0, "AC1: query thread completed iterations (no deadlock)");
     CHECK(m > 0, "AC1: mutate thread completed iterations (no deadlock)");
-    CHECK(mx > 0, "AC1: mutation_log_ actually grew (mutate:rebind "
+    CHECK(mx > 0, "AC1: mutation_log_ actually grew (mutate :rebind "
                   "appended; test exercises the race)");
     CHECK(mx < 1000000, "AC1: max_size under sanity bound (no UB / vector corruption)");
     return true;
@@ -131,17 +131,17 @@ bool test_ac2_well_formed_vectors() {
     std::println("  AC2: initial.size()={}", initial.size());
     CHECK(initial.empty(), "AC2: initial log is empty (no spurious entries)");
 
-    // Mutate via typed_mutate path (mutate:rebind), then query.
+    // Mutate via typed_mutate path (mutate :rebind), then query.
     // (set! ...) does NOT append to mutation_log_ — only
     // typed_mutate path does.
-    cs.eval("(mutate:rebind \"x\" \"1\")");
+    cs.eval("(mutate :rebind \"x\" \"1\")");
     auto after_one = cs.query_mutation_log();
     std::println("  AC2: after_one.size()={}", after_one.size());
     CHECK(after_one.size() >= 1, "AC2: log has >= 1 entry after first mutate:rebind");
 
     // Mutate twice more
-    cs.eval("(mutate:rebind \"x\" \"2\")");
-    cs.eval("(mutate:rebind \"x\" \"3\")");
+    cs.eval("(mutate :rebind \"x\" \"2\")");
+    cs.eval("(mutate :rebind \"x\" \"3\")");
     auto after_three = cs.query_mutation_log();
     std::println("  AC2: after_three.size()={}", after_three.size());
     CHECK(after_three.size() >= after_one.size(),
@@ -158,7 +158,7 @@ bool test_ac3_multi_query_no_deadlock() {
     cs.eval("(eval-current)");
     // Seed the log with one entry so query threads have something
     // to iterate over (more realistic than iterating empty log).
-    cs.eval("(mutate:rebind \"x\" \"1\")");
+    cs.eval("(mutate :rebind \"x\" \"1\")");
 
     std::atomic<bool> done{false};
     std::atomic<int> total_query_count{0};

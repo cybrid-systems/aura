@@ -182,7 +182,7 @@ static void ac7_mutate_stress() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     for (int i = 0; i < 40; ++i) {
         (void)cs.eval(
-            std::format("(mutate:rebind \"h\" \"(lambda (x) (+ x {}))\" \"issue1917\")", i % 5));
+            std::format("(mutate :rebind \"h\" \"(lambda (x) (+ x {}))\" \"issue1917\")", i % 5));
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(query:pattern '(define _ _))");
     }

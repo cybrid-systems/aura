@@ -148,7 +148,7 @@ static void ac2_post_mutate_query() {
     (void)cs.eval("(typecheck-current)");
     const auto sel0 = metrics.predicate_memo_selective_invalidate_total.load();
     const auto wired0 = metrics.predicate_memo_boundary_selective_wired.load();
-    auto reb = cs.eval("(mutate:rebind \"f\" "
+    auto reb = cs.eval("(mutate :rebind \"f\" "
                        "\"(lambda (x) (if (number? x) (+ x 2) 0))\" "
                        "\"issue-2104\")");
     CHECK(reb.has_value(), "mutate:rebind");
@@ -237,7 +237,7 @@ static void ac7_phase2_full_affected() {
     (void)cs.eval("(typecheck-current)");
     const auto sel0 = metrics.predicate_memo_selective_invalidate_total.load();
     const auto boundary0 = metrics.predicate_memo_boundary_selective_total.load();
-    auto reb = cs.eval("(mutate:rebind \"f\" "
+    auto reb = cs.eval("(mutate :rebind \"f\" "
                        "\"(lambda (x) (if (number? x) (+ x 2) 0))\" "
                        "\"issue-2285\")");
     CHECK(reb.has_value(), "mutate:rebind f");

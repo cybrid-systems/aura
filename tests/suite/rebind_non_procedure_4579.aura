@@ -22,7 +22,7 @@
         (newline))))
 
 (define (rebind name body label)
-  (try (mutate:rebind name body label) (catch (e) (list "raised" e))))
+  (try (mutate :rebind name body label) (catch (e) (list "raised" e))))
 (define (accepted label r)
   (if (not (eq? r #t)) (begin (display "    got: ") (write r) (newline)))
   (assert! (eq? r #t) label))

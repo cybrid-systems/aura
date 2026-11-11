@@ -4503,7 +4503,7 @@ void InferenceEngine::init_primitive_env_part0(TypeId Int, TypeId Bool, TypeId F
     register_primitive("string->number", {String, Int}, Int, true);
     // Issue #5056: (format template args…) -> String. It was unbound, so
     // every call came back Any and a format result passed to a String slot
-    // (mutate:rebind's second argument) printed a false gradual warning.
+    // (mutate :rebind's second argument) printed a false gradual warning.
     register_primitive("format", {String, Dyn}, String, true);
 
     // Pair operations
@@ -6624,7 +6624,7 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
                         (cname == "tcp-recv" && ft.args.size() == 2) ||
                         (cname == "tcp-listen" && ft.args.size() == 2))
                         optional_max = ft.args.size();
-                    // Issue #5056: (mutate:rebind name code [summary]
+                    // Issue #5056: (mutate :rebind name code [summary]
                     // [validate type-name]) — two optional trailing args.
                     else if (cname == "mutate:rebind" && ft.args.size() == 3)
                         optional_max = 4;
@@ -6724,7 +6724,7 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
         // recursive call's result Any, and the production join gate then
         // rejected the resulting `Int ~ Any` pair as a HARD type error — so no
         // recursive definition could be installed at runtime
-        // (mutate:rebind fail-closed, "solve_delta not SOLVED") while the same
+        // (mutate :rebind fail-closed, "solve_delta not SOLVED") while the same
         // source loaded from a file passed. A fresh var keeps the join
         // gradual (the gate's is_var branch) and lets the later unification
         // pin the real type.
@@ -11403,7 +11403,7 @@ namespace {
             // Lambda scope exits) doesn't have the new Lambda's params
             // bound — so Variables in the new body get reported as
             // unbound. Symptom: test_issue_166 Test 3 fails on
-            // `(mutate:set-body "g" "(lambda (x) (+ x 100))")` because
+            // `(mutate :set-body "g" "(lambda (x) (+ x 100))")` because
             // the selective recheck visits the new Lambda's body Variable
             // `x` without x being in env_. Fix: skip `id` if any ancestor
             // is also in the affected set.
@@ -12628,7 +12628,7 @@ bool OwnershipEnv::validate_ownership_impl(const FlatAST& flat, const StringPool
 // ═══════════════════════════════════════════════════════════
 // Issue #147: post-mutation invariant check.
 //
-// A typed mutation (mutate:replace-type, mutate:wrap, ...) changes a
+// A typed mutation (mutate :replace-type, mutate:wrap, ...) changes a
 // subtree in the workspace FlatAST. Downstream, two soundness risks
 // need re-validation:
 //

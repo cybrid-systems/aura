@@ -133,7 +133,7 @@
         "(eval-current)",
         "(symbol? v)",
         "(eq? v 'high)",
-        "(mutate:rebind \"ws-level\"",
+        "(mutate :rebind \"ws-level\"",
         "memv",
         "OK-workspace-symbol-4727"
       ]

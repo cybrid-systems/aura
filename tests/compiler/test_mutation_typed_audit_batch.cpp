@@ -305,7 +305,7 @@ namespace {
         const auto t0 =
             load_u64(g_typed_mutation_audit_counters.typed_mutation_audit_triggered_total);
         const auto inv0 = load_u64(g_typed_mutation_audit_counters.invariant_audits);
-        CHECK(cs.eval("(mutate:rebind \"x\" \"42\")").has_value(), "mutate:rebind");
+        CHECK(cs.eval("(mutate :rebind \"x\" \"42\")").has_value(), "mutate:rebind");
         CHECK(load_u64(g_typed_mutation_audit_counters.invariant_audits) >= inv0,
               "invariant_audits non-decreasing");
         CHECK(load_u64(g_typed_mutation_audit_counters.typed_mutation_audit_triggered_total) >= t0,
@@ -358,14 +358,14 @@ namespace {
         const auto t0 =
             load_u64(g_typed_mutation_audit_counters.typed_mutation_audit_triggered_total);
         for (int i = 0; i < 32; ++i) {
-            (void)cs.eval("(mutate:rebind \"x\" \"7\")");
-            (void)cs.eval("(mutate:rebind \"y\" \"8\")");
+            (void)cs.eval("(mutate :rebind \"x\" \"7\")");
+            (void)cs.eval("(mutate :rebind \"y\" \"8\")");
             if ((i % 4) == 0)
                 (void)cs.eval("(eval-current)");
         }
         set_strategy(AuditStrategy::Sampled);
         for (int i = 0; i < 16; ++i)
-            (void)cs.eval("(mutate:rebind \"z\" \"9\")");
+            (void)cs.eval("(mutate :rebind \"z\" \"9\")");
         CHECK(load_u64(g_typed_mutation_audit_counters.typed_mutation_audit_triggered_total) >= t0,
               "triggered monotonic after fuzz");
         CHECK(trail_href(cs, "invariant-audits") >= 0, "invariant-audits readable");
@@ -479,7 +479,7 @@ namespace {
         CompilerService cs;
         seed(cs);
         const auto inv0 = load_u64(g_typed_mutation_audit_counters.invariant_audits);
-        CHECK(cs.eval("(mutate:rebind \"x\" \"99\")").has_value(), "mutate:rebind");
+        CHECK(cs.eval("(mutate :rebind \"x\" \"99\")").has_value(), "mutate:rebind");
         // Full strategy + nodes_changed should sample every mutation id.
         CHECK(load_u64(g_typed_mutation_audit_counters.invariant_audits) >= inv0,
               "invariant audits non-decreasing after mutate");
@@ -538,7 +538,7 @@ namespace {
         set_strategy(AuditStrategy::Full);
         CompilerService cs;
         seed(cs);
-        (void)cs.eval("(mutate:rebind \"y\" \"2\")");
+        (void)cs.eval("(mutate :rebind \"y\" \"2\")");
         CHECK(href(cs, "contextual-total") >= 0, "contextual-total");
         CHECK(href(cs, "trail-size") >= 0, "trail-size");
     }
@@ -551,7 +551,7 @@ namespace {
         seed(cs);
         set_strategy(AuditStrategy::Full);
         for (int i = 0; i < 20; ++i) {
-            (void)cs.eval(std::format("(mutate:rebind \"x\" \"{}\")", i));
+            (void)cs.eval(std::format("(mutate :rebind \"x\" \"{}\")", i));
             (void)cs.eval("(eval-current)");
         }
         CHECK(load_u64(g_typed_mutation_audit_counters.invariant_audits) >= 1 ||
@@ -1405,12 +1405,12 @@ namespace aura_509_detail {
               "load workspace");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(typecheck-current)");
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 2) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 2) 0))\" "
                       "\"issue-509-a\")");
         auto* ws = cs.workspace_flat();
         CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
         (void)cs.incremental_infer(ws->all_mutations().back());
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 3) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 3) 0))\" "
                       "\"issue-509-b\")");
         (void)cs.incremental_infer(ws->all_mutations().back());
         auto r = cs.eval("(f 4)");

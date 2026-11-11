@@ -249,7 +249,7 @@ static void ac5_metrics_and_stress() {
             }
         }
         (void)ev.restamp_pinned_stable_refs();
-        (void)cs.eval(std::format("(mutate:rebind \"a\" \"{}\")", 10 + round));
+        (void)cs.eval(std::format("(mutate :rebind \"a\" \"{}\")", 10 + round));
         (void)cs.eval(std::format("(unpin-stable-refs {})", nid));
     }
     CHECK(ev.agent_pin_ops_total() > ops0, "pin ops grew under multi-round stress");

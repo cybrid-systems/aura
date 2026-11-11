@@ -450,9 +450,9 @@ int run_354_mutation_boundary_held_smoke() {
     CHECK(!cs.mutation_boundary_held(), "idle: held=false");
     CHECK(cs.eval("(set-code \"(begin (define g 42))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
-    CHECK(cs.eval("(mutate:rebind \"g\" \"99\" \"#354\")").has_value(), "mutate:rebind");
+    CHECK(cs.eval("(mutate :rebind \"g\" \"99\" \"#354\")").has_value(), "mutate:rebind");
     CHECK(!cs.mutation_boundary_held(), "post-mutate held=false");
-    CHECK(cs.eval("(mutate:rebind \"g\" \"1\" \"#354b\")").has_value(), "second mutate");
+    CHECK(cs.eval("(mutate :rebind \"g\" \"1\" \"#354b\")").has_value(), "second mutate");
     CHECK(!cs.mutation_boundary_held(), "post-2nd held=false");
     return g_failed ? 1 : 0;
 }
@@ -525,7 +525,7 @@ int run_439_gc_safepoint_coord_smoke() {
     CompilerService cs;
     auto r = cs.eval("(engine:metrics \"query:gc-safepoint-stats\")");
     CHECK(r && is_int(*r), "gc-safepoint-stats int");
-    auto req = cs.eval("(mutate:request-gc-safepoint)");
+    auto req = cs.eval("(mutate :request-gc-safepoint)");
     CHECK(req && is_int(*req), "mutate:request-gc-safepoint int");
     auto code = as_int(*req);
     CHECK(code == 0 || code == 1, "safepoint code 0|1");
@@ -718,7 +718,7 @@ int run_362_yield_skip_under_guard_smoke() {
         CHECK(g.has_value() && g->get() != nullptr, "try_acquire Guard");
         CHECK(ev.any_active_mutation_boundary(), "active during Guard");
         // yield_mutation_boundary must not hang while Guard held
-        (void)cs.eval("(mutate:request-gc-safepoint)");
+        (void)cs.eval("(mutate :request-gc-safepoint)");
         CHECK(true, "safepoint/yield path under Guard");
     }
     CHECK(!ev.any_active_mutation_boundary(), "cleared after dtor");
@@ -760,8 +760,8 @@ int run_1544_linear_safepoint_steal_smoke() {
     CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     for (int i = 0; i < 20; ++i) {
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 1))\" \"#1544\")");
-        (void)cs.eval("(mutate:request-gc-safepoint)");
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 1))\" \"#1544\")");
+        (void)cs.eval("(mutate :request-gc-safepoint)");
         cs.evaluator().test_probe_linear_on_fiber_steal();
     }
     CHECK(m->linear_post_mutate_enforcements.load(std::memory_order_relaxed) >= e0,
@@ -2077,7 +2077,7 @@ constexpr const char* kClosureCycleProgram = R"AURA(
 (eval-current)
 (define (cycle k)
   (let* ((s (mutate :snapshot))
-         (_r (mutate:rebind "f3" "(define (f3 x) (+ x 33))" "probe"))
+         (_r (mutate :rebind "f3" "(define (f3 x) (+ x 33))" "probe"))
          (_e (eval-current))
          (_x (mutate :restore s))
          (_y (eval-current)))

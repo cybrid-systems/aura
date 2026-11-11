@@ -55,7 +55,7 @@
 (check "before: c4547:b" (safe (lambda () (c4547:b))) 2001)
 (check "before: c4547:a" (safe (lambda () (c4547:a))) 1001)
 
-(check "rebind wb4547 accepted" (mutate:rebind "wb4547" "(lambda (x) (+ x 3000))" "t4547") #t)
+(check "rebind wb4547 accepted" (mutate :rebind "wb4547" "(lambda (x) (+ x 3000))" "t4547") #t)
 (check "after rebind: top-level wb4547" (safe (lambda () (wb4547 1))) 3001)
 (check "after rebind: c4547:b sees new wb4547" (safe (lambda () (c4547:b))) 3001)
 (check "after rebind: c4547:a unchanged" (safe (lambda () (c4547:a))) 1001)
@@ -66,19 +66,19 @@
 (check "after eval-current: c4547:a" (safe (lambda () (c4547:a))) 1001)
 
 ; atomic-batch path (aura-kernel-sink swap) on the other define
-(mutate:atomic-batch (list (list "mutate:rebind" "wa4547" "(lambda (x) (+ x 5000))" "t4547")))
+(mutate :atomic-batch (list (list "mutate:rebind" "wa4547" "(lambda (x) (+ x 5000))" "t4547")))
 (eval-current)
 (check "batch rebind wa4547: c4547:a" (safe (lambda () (c4547:a))) 5001)
 (check "batch rebind wa4547: c4547:b" (safe (lambda () (c4547:b))) 3001)
 (check "batch rebind wa4547: c4547:two" (safe (lambda () (c4547:two 1 5))) 5006)
 
 ; different arity rebind must not surface as invalid closure in the module
-(mutate:rebind "wb4547" "(lambda (x) (* x 7))" "t4547")
+(mutate :rebind "wb4547" "(lambda (x) (* x 7))" "t4547")
 (check "rebind wb4547 again: c4547:b" (safe (lambda () (c4547:b))) 7)
 
 ;; snapshot / restore (hot-strategy:heal! rolls a sunk kernel back this way)
 (define sid4547 (mutate :snapshot))
-(mutate:atomic-batch (list (list "mutate:rebind" "wb4547" "(lambda (x) (+ x 9000))" "t4547")))
+(mutate :atomic-batch (list (list "mutate:rebind" "wb4547" "(lambda (x) (+ x 9000))" "t4547")))
 (eval-current)
 (check "batch rebind wb4547: c4547:b" (safe (lambda () (c4547:b))) 9001)
 (check "batch rebind wb4547: c4547:a" (safe (lambda () (c4547:a))) 5001)

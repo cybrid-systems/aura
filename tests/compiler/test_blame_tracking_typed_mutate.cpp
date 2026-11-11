@@ -150,7 +150,7 @@ static void ac4_mutate_stress() {
     constexpr int kRounds = 120;
     for (int i = 0; i < kRounds; ++i) {
         (void)cs.eval(std::format(
-            "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x {}) 0))\" \"b{}\")", i % 9,
+            "(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x {}) 0))\" \"b{}\")", i % 9,
             i));
         (void)cs.eval("(eval-current)");
     }
@@ -181,7 +181,8 @@ static void ac5_audit_counters() {
     CHECK(cs.eval("(set-code \"(define (t x) x)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     for (int i = 0; i < 20; ++i) {
-        (void)cs.eval(std::format("(mutate:rebind \"t\" \"(lambda (x) (+ x {}))\" \"a{}\")", i, i));
+        (void)cs.eval(
+            std::format("(mutate :rebind \"t\" \"(lambda (x) (+ x {}))\" \"a{}\")", i, i));
         (void)cs.eval("(eval-current)");
     }
     // Audit may or may not fire depending on strategy; counters stay non-negative.

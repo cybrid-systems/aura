@@ -110,7 +110,7 @@ static void ac3658_1_replace_subtree_mirrors_cone() {
     const auto mir0 = type_dirty_cone_mirrored_total.load();
     CHECK(cs.eval("(define qr3658 (query :find \"B\" :as-query-result #t))").has_value(),
           "3658 AC1: query result for B");
-    auto rs = cs.eval("(mutate:replace-subtree qr3658 \"(lambda () 2)\")");
+    auto rs = cs.eval("(mutate :replace-subtree qr3658 \"(lambda () 2)\")");
     CHECK(rs.has_value(), "3658 AC1: replace-subtree commits");
     if (rs && is_bool(*rs))
         CHECK(as_bool(*rs), "3658 AC1: replace-subtree not bool-false");
@@ -173,7 +173,7 @@ static void ac3658_4_soft_no_force() {
     CHECK(cs.eval("(set-code \"(define B 1)\")").has_value(), "3658 AC4: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3658 AC4: eval");
     const auto mir0 = type_dirty_cone_mirrored_total.load();
-    (void)cs.eval("(mutate:tweak-literal 0 0)");
+    (void)cs.eval("(mutate :tweak-literal 0 0)");
     CHECK(type_dirty_cone_mirrored_total.load() >= mir0, "3658 AC4: Soft mirror not forced");
 }
 
@@ -257,7 +257,7 @@ int run_test_type_dirty_cone_dep_graph() {
         CHECK(cs.public_node_dep_has_mirror_edge("A", "B"), "NodeId mirror B→A");
         const auto mir0 = type_dirty_cone_mirrored_total.load();
         // Mutate B body — triggers partial type re-infer + cascade.
-        CHECK(cs.eval("(mutate:set-body \"B\" \"(lambda () 2)\")").has_value(), "set-body B");
+        CHECK(cs.eval("(mutate :set-body \"B\" \"(lambda () 2)\")").has_value(), "set-body B");
         CHECK(cs.eval("(eval-current)").has_value(), "re-eval");
         auto r = cs.eval("(A)");
         CHECK(r && is_int(*r) && as_int(*r) == 3, "A = 3 after B mutate");

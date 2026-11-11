@@ -18,7 +18,7 @@
   (let* ((live-value (guess))
          (src (format "(define (guess) ~a)" cand))
          (snap (mutate :snapshot (format "step-~a" i)))
-         (ok (mutate:rebind "guess" src "evolve")))
+         (ok (mutate :rebind "guess" src "evolve")))
     (eval-current)
     (if (and (eq? ok #t) (keep? live-value cand))
         (display (format "~a ~a~a   live ~a\n" i (pad "KEEP" 10) (pad src 19) (live)))

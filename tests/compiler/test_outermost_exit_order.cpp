@@ -257,7 +257,7 @@ static void ac4335_cow_refused_deny_exit() {
     CHECK(wt != nullptr, "4335: workspace tree live");
     wt->set_read_only(wt->active_idx(), true);
 
-    const auto r = cs.eval("(mutate:replace-value (define b 2) (define b 2))");
+    const auto r = cs.eval("(mutate :replace-value (define b 2) (define b 2))");
     // Mutate denies surface as error-tagged pair values (kind . msg), not
     // as unexpected — assert the cow-refused kind on the returned value.
     CHECK(r.has_value() && aura::compiler::types::is_pair(*r) && merr_kind(cs, *r) == "cow-refused",

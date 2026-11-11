@@ -3056,7 +3056,7 @@ void Evaluator::refresh_stale_frame_in_walk(EnvId id, const char* site) const {
 // #2579 — hash-set! bumps defuse but the cell id did not change) is
 // restamped so the next materialize_call_env does not strand it. A
 // frame whose captured cell differs from the workspace cell for that
-// name (mutate:rebind / set-code replaced the define and allocated a
+// name (mutate :rebind / set-code replaced the define and allocated a
 // new cell) is NOT restamped — it stays behind and materialize
 // returns the empty Env instead of copying pre-mutate bindings into
 // the call. Frame-local captures (lambda params / let bindings with
@@ -3106,7 +3106,7 @@ void Evaluator::restamp_live_capture_frames_locked(std::uint64_t cur_defuse,
     // Issue #4109: the boundary's OWN re-definitions decide which captures
     // are invalidated. Walk the mutation-log window this boundary recorded
     // ([log_from, size)) and collect the SymIds whose Define nodes it
-    // replaced (mutate:rebind / set-body / set-code define rewrite). A
+    // replaced (mutate :rebind / set-body / set-code define rewrite). A
     // predating frame is stranded ONLY when it captures one of those names
     // — its cell was replaced by the boundary and the next materialize
     // must return the empty Env instead of copying pre-mutate bindings.

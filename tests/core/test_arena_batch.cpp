@@ -133,7 +133,7 @@ static void run_1623_query_schema() {
     signal_dirty_cascade();
     for (int i = 0; i < 20; ++i)
         (void)cs.eval("(fact 2)");
-    (void)cs.eval("(mutate:rebind \"a\" \"10\")");
+    (void)cs.eval("(mutate :rebind \"a\" \"10\")");
     (void)cs.eval("(eval-current)");
 
     auto h = cs.eval("(engine:metrics \"query:arena-auto-policy-stats\")");
@@ -161,7 +161,7 @@ static void run_1621_mutate_path() {
     (void)cs.eval("(mutate :arena-compact)");
     for (int i = 0; i < 30; ++i)
         (void)cs.eval("(fact 3)");
-    (void)cs.eval("(mutate:rebind \"b\" \"20\")");
+    (void)cs.eval("(mutate :rebind \"b\" \"20\")");
     (void)cs.eval("(eval-current)");
     CHECK(href(cs, "smart-policy-evaluations") >= e0, "evaluations advanced");
     CHECK(href(cs, "auto-compact-triggers") >= t0, "triggers monotonic");
@@ -180,7 +180,7 @@ static void run_1621_stress() {
         signal_dirty_cascade();
         if ((i % 7) == 0)
             signal_shape_churn();
-        (void)cs.eval(std::format("(mutate:rebind \"a\" \"{}\")", i));
+        (void)cs.eval(std::format("(mutate :rebind \"a\" \"{}\")", i));
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(fact 2)");
     }
@@ -237,7 +237,7 @@ static void run_405_matrix() {
 
     std::println("\n--- AC4 (#405): mutate + eval orchestration signals ---");
     const auto stats4a = compaction_stats_405(cs);
-    (void)cs.eval("(mutate:rebind \"base\" \"42\")");
+    (void)cs.eval("(mutate :rebind \"base\" \"42\")");
     CHECK(cs.eval("(eval-current)").has_value(), "eval after mutate");
     const auto stats4b = compaction_stats_405(cs);
     std::println("  compaction stats: {} -> {}", stats4a, stats4b);
@@ -253,7 +253,7 @@ static void run_405_matrix() {
     std::println("\n--- AC6 (#405): multi-round mutate matrix ---");
     const auto stats6a = compaction_stats_405(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
+        (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(mutate :arena-compact)");
     }
@@ -408,7 +408,7 @@ static void run_546_inner_panic_outer_rollback() {
           "(panic-checkpoint) succeeded (workspace loaded)");
     CHECK(cs.evaluator().has_panic_checkpoint(),
           "has_panic_checkpoint() true after Aura (panic-checkpoint)");
-    auto r1 = cs.eval("(mutate:replace-value (define x 42) (define x 42))");
+    auto r1 = cs.eval("(mutate :replace-value (define x 42) (define x 42))");
     CHECK(r1.has_value(), "mutate succeeded via Guard");
 }
 
@@ -420,7 +420,7 @@ static void run_546_outer_guard_failure() {
     auto r = cs.eval("(panic-checkpoint)");
     CHECK(r.has_value() && aura::compiler::types::as_bool(*r),
           "(panic-checkpoint) before outer mutation succeeded");
-    (void)cs.eval("(mutate:replace-value (define x 99) (define x 99))");
+    (void)cs.eval("(mutate :replace-value (define x 99) (define x 99))");
     auto pre = cs.eval("x");
     (void)pre;
     auto r2 = cs.eval("(panic-restore)");
@@ -469,7 +469,7 @@ static void run_546_panic_fuzz() {
         if (i == next_panic) {
             (void)cs.eval("(panic-checkpoint)");
             ++panics;
-            (void)cs.eval("(mutate:replace-value (define a 9999) "
+            (void)cs.eval("(mutate :replace-value (define a 9999) "
                           "(define a 9999))");
             auto r = cs.eval("(panic-restore)");
             if (r.has_value() && aura::compiler::types::is_bool(*r) &&
@@ -505,7 +505,7 @@ static void run_546_gc_heap_integration() {
     (void)cs.eval("(eval-current)");
     auto r1 = cs.eval("(panic-checkpoint)");
     CHECK(r1.has_value() && aura::compiler::types::as_bool(*r1), "(panic-checkpoint) succeeded");
-    (void)cs.eval("(mutate:replace-value (define x 99) (define x 99))");
+    (void)cs.eval("(mutate :replace-value (define x 99) (define x 99))");
     auto r2 = cs.eval("(gc-heap)");
     CHECK(r2.has_value(), "(gc-heap) callable under panic-checkpoint");
     auto r3 = cs.eval("(panic-restore)");

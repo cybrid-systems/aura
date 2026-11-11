@@ -33,7 +33,7 @@
 (set-code "(define (g x) x)")
 (if (procedure? mutate:rebind)
     (begin
-      (mutate:rebind "g" "(lambda (x) (+ x 1))" "2921")
+      (mutate :rebind "g" "(lambda (x) (+ x 1))" "2921")
       (define mid (current-source :workspace))
       (set-code mid)
       (if (string? (current-source :workspace))

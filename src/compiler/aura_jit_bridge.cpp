@@ -3178,7 +3178,7 @@ extern "C" void aura_refresh_live_closures_for_mutated_define(void* ev_ptr,
 
 // Issue #1907: bridge hook for post-mutation reflect validation +
 // hygiene gate. Called from Evaluator::flush_mutation_boundary outermost
-// exit (Step 1 of the #1907 plan) + the (mutate:validate-reflected)
+// exit (Step 1 of the #1907 plan) + the (mutate :validate-reflected)
 // primitive (Step 2). Combines the aura::reflect::auto_validate pass
 // with the aura::reflect::hygiene_allows_evolution macro guard.
 //

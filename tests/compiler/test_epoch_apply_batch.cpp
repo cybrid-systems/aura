@@ -393,7 +393,7 @@ static void ac1632_4_mutate_then_apply() {
     const auto safe0 = load_u64(m->compiler_closure_safe_fallbacks);
     const auto stale0 = load_u64(m->stale_closure_prevented);
 
-    (void)cs.eval("(mutate:rebind \"g\" \"(lambda (x) (+ x 2))\" \"#1632\")");
+    (void)cs.eval("(mutate :rebind \"g\" \"(lambda (x) (+ x 2))\" \"#1632\")");
     cs.public_mark_define_dirty("g");
     cs.evaluator().bump_defuse_version_for_test();
 

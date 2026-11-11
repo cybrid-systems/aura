@@ -66,7 +66,7 @@
 (check (integer? (stats:get "query:aot-hot-update-stats")) "aot-hot-update-stats")
 
 ;; ── query_tail.cpp: schema / occurrence / pass-pipeline phase ───────
-(check (integer? (mutate:validate-reflected)) "mutate:validate-reflected")
+(check (integer? (mutate :validate-reflected)) "mutate:validate-reflected")
 (check (boolean? (query:schema "int")) "query:schema")
 (check (boolean? (stats:get "mutate:validate-against-schema" "(+ 1 2)" "int")) "validate-against-schema")
 (check (hash? (stats:get "query:pass-pipeline-incremental-stats-hash")) "pass-pipeline hash")

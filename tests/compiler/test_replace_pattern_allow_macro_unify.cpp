@@ -166,7 +166,7 @@ static void ac1_default_skip_unchanged() {
         CHECK(true, "soft-skip: no MacroIntroduced (hygiene-pass-limit leftover)");
         return;
     }
-    auto r = cs.eval("(mutate:replace-pattern \"(* 21 2)\" \"(+ 21 2)\")");
+    auto r = cs.eval("(mutate :replace-pattern \"(* 21 2)\" \"(+ 21 2)\")");
     CHECK(r.has_value(), "AC1: returns a value");
     CHECK(!(r && is_bool(*r) && as_bool(*r)), "AC1: no-kwarg replace did not succeed");
     // Prim errors are (kind . message) pairs — not-found is the no-match face.
@@ -186,7 +186,7 @@ static void ac2_allow_macro_primary() {
     }
     auto* cm = metrics(cs);
     const auto prop0 = cm->hygiene_mutate_marker_propagate_total.load(std::memory_order_relaxed);
-    auto r = cs.eval("(mutate:replace-pattern \"(* ... ...)\" \"(+ ... ...)\" :allow-macro? #t)");
+    auto r = cs.eval("(mutate :replace-pattern \"(* ... ...)\" \"(+ ... ...)\" :allow-macro? #t)");
     CHECK(r.has_value() && is_bool(*r) && as_bool(*r),
           "AC2: :allow-macro? #t accepted and replaced (not bad-arg)");
     const auto prop1 = cm->hygiene_mutate_marker_propagate_total.load(std::memory_order_relaxed);
@@ -201,7 +201,7 @@ static void ac3_compat_aliases_end_to_end() {
     {
         CompilerService cs;
         if (setup_macro_ws(cs)) {
-            auto r = cs.eval("(mutate:replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
+            auto r = cs.eval("(mutate :replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
                              ":allow-macro-introduced #t)");
             CHECK(r.has_value() && is_bool(*r) && as_bool(*r),
                   "AC3: :allow-macro-introduced #t end-to-end (no gate split)");
@@ -212,7 +212,7 @@ static void ac3_compat_aliases_end_to_end() {
     {
         CompilerService cs;
         if (setup_macro_ws(cs)) {
-            auto r = cs.eval("(mutate:replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
+            auto r = cs.eval("(mutate :replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
                              ":include-macro-introduced #t)");
             CHECK(r.has_value() && is_bool(*r) && as_bool(*r),
                   "AC3: :include-macro-introduced #t end-to-end (no gate split)");
@@ -256,7 +256,7 @@ static void ac4_mse_fence_intact() {
         // Strictness (#3650 AC1): revoke TenantAdmin so ONLY the missing
         // MacroSelfEvo can explain the deny.
         g_capability_registry().revoke(cs.evaluator().capability_tenant_id(), "tenant-admin");
-        auto rd = cs.eval("(mutate:replace-pattern \"(* 21 2)\" \"(+ 21 2)\" :allow-macro? #t)");
+        auto rd = cs.eval("(mutate :replace-pattern \"(* 21 2)\" \"(+ 21 2)\" :allow-macro? #t)");
         CHECK(rd.has_value(), "AC4: deny call returns");
         CHECK(!(rd && is_bool(*rd) && as_bool(*rd)), "AC4: allow-arm denied without MSE grant");
         if (rd && is_pair(*rd))
@@ -287,7 +287,7 @@ static void ac4_mse_fence_intact() {
         const auto tenant = cs.evaluator().capability_tenant_id();
         g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{},
                                                      aura_test_grant_prov(), tenant);
-        auto ra = cs.eval("(mutate:replace-pattern \"(* 21 2)\" \"(+ 21 2)\" :allow-macro? #t)");
+        auto ra = cs.eval("(mutate :replace-pattern \"(* 21 2)\" \"(+ 21 2)\" :allow-macro? #t)");
         CHECK(ra.has_value() && is_bool(*ra) && as_bool(*ra),
               "AC4: allow-arm allowed with MSE grant");
     }

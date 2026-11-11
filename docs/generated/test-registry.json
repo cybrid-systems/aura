@@ -2363,7 +2363,7 @@
     {
       "file": "tests/compiler/test_mutation_log_query_race.cpp",
       "category": "integration",
-      "reason": "concurrent query_mutation_log + Aura (mutate:rebind ...) loop.",
+      "reason": "concurrent query_mutation_log + Aura (mutate :rebind ...) loop.",
       "issue": null
     },
     {

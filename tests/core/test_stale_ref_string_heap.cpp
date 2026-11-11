@@ -39,11 +39,11 @@ using aura::test::g_passed;
 int main() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
-    auto pol = cs.eval("(mutate:set-stale-ref-policy \"strict\")");
+    auto pol = cs.eval("(mutate :set-stale-ref-policy \"strict\")");
     CHECK(pol && is_bool(*pol) && as_bool(*pol), "AC1: set strict policy");
 
     // Stable-ref wire format is (id . (gen . ())) i.e. (list id gen).
-    const char* stale_check = "(mutate:check-stable-ref (list 0 9999))";
+    const char* stale_check = "(mutate :check-stable-ref (list 0 9999))";
 
     // ── AC2: first blocked call is not a success bool #t ──
     {
@@ -198,7 +198,7 @@ int main() {
         std::println("\n--- #3400 AC2/AC3: node-gen domain probe ---");
         CompilerService cs3;
         CHECK(cs3.eval("(set-code \"(define a 1)(define b 2)\")").has_value(), "3400: set-code");
-        CHECK(cs3.eval(R"((mutate:set-stale-ref-policy "warn"))").has_value(),
+        CHECK(cs3.eval(R"((mutate :set-stale-ref-policy "warn"))").has_value(),
               "3400: warn policy (bool face)");
         auto* ws3 = cs3.evaluator().workspace_flat();
         CHECK(ws3 != nullptr, "3400: workspace");
@@ -221,16 +221,16 @@ int main() {
             // unchanged → old captured ref must still read #t (old
             // flat.generation() compare said stale = lying oracle).
             auto r3400_2 = cs3.eval(std::format(
-                "(let ((r (query:as-stable-ref {0})))(begin (mutate:record-patch {1} \"op\" \"s\")"
-                " (mutate:check-stable-ref r)))",
+                "(let ((r (query:as-stable-ref {0})))(begin (mutate :record-patch {1} \"op\" \"s\")"
+                " (mutate :check-stable-ref r)))",
                 target3400, sib3400));
             CHECK(r3400_2 && is_bool(*r3400_2) && as_bool(*r3400_2),
                   "3400 AC2: live node after sibling mutate → #t");
             // 3400 AC3: remove the target itself (slot recycled → node_gen
             // tombstone 0) → old captured ref must read #f under warn.
             auto r3400_3 = cs3.eval(
-                std::format("(let ((r (query:as-stable-ref {0})))(begin (mutate:remove-node {0})"
-                            " (mutate:check-stable-ref r)))",
+                std::format("(let ((r (query:as-stable-ref {0})))(begin (mutate :remove-node {0})"
+                            " (mutate :check-stable-ref r)))",
                             target3400));
             CHECK(r3400_3 && is_bool(*r3400_3) && !as_bool(*r3400_3),
                   "3400 AC3: restamped target old ref → #f");

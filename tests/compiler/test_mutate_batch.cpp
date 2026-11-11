@@ -212,7 +212,7 @@ static void run_4689_rollback_since_id() {
         }
         auto lit = find_literal_int_4689(*ws, 10);
         CHECK(lit != NULL_NODE, "4689 AC1: found the literal 10");
-        auto tw = cs.eval(std::format("(mutate:tweak-literal {} 5)", lit));
+        auto tw = cs.eval(std::format("(mutate :tweak-literal {} 5)", lit));
         CHECK(tw && is_int(*tw) && as_int(*tw) == 15, "4689 AC1: the tweak commits 10 -> 15");
         CHECK(ws->get(lit).int_value == 15, "4689 AC1: the workspace holds 15");
         MutationRecord tweak_rec{};
@@ -223,7 +223,7 @@ static void run_4689_rollback_since_id() {
         const auto size_before = ws->size();
         const auto live_before = live_nodes_4689(*ws);
         const auto freed_before = ws->ghost_orphan_nodes_freed();
-        auto fr = cs.eval("(mutate:query-and-replace (query:where :callee \"f\") \"1)\")");
+        auto fr = cs.eval("(mutate :query-and-replace (query:where :callee \"f\") \"1)\")");
         CHECK(fr.has_value(), "4689 AC1: the rejected replace returns");
         const auto kind = fr ? merr_kind_4689(cs, *fr) : std::string("novalue");
         CHECK(kind == "parse-failure", std::format("4689 AC1: parse-failure (got {})", kind));
@@ -258,10 +258,10 @@ static void run_4689_rollback_since_id() {
         }
         auto lit = find_literal_int_4689(*ws, 10);
         CHECK(lit != NULL_NODE, "4689 AC1b: found the literal 10");
-        auto tw = cs.eval(std::format("(mutate:tweak-literal {} 5)", lit));
+        auto tw = cs.eval(std::format("(mutate :tweak-literal {} 5)", lit));
         CHECK(tw && is_int(*tw) && as_int(*tw) == 15, "4689 AC1b: the tweak commits 10 -> 15");
 
-        auto fr = cs.eval("(mutate:query-and-replace-batch (query:where :callee \"f\") \"1)\")");
+        auto fr = cs.eval("(mutate :query-and-replace-batch (query:where :callee \"f\") \"1)\")");
         CHECK(fr.has_value(), "4689 AC1b: the rejected batch returns");
         const auto kind = fr ? merr_kind_4689(cs, *fr) : std::string("novalue");
         CHECK(kind == "partial-fail", std::format("4689 AC1b: partial-fail (got {})", kind));
@@ -292,7 +292,7 @@ static void run_4689_rollback_since_id() {
             return;
         }
         const auto log_before = ws->mutation_log_view().size();
-        auto fr = cs.eval("(mutate:query-and-replace-batch (query:where :node-type \"Call\") "
+        auto fr = cs.eval("(mutate :query-and-replace-batch (query:where :node-type \"Call\") "
                           "\"(+ 1 2)\" :validate \"NoSuchType4689\")");
         CHECK(fr.has_value(), "4689 AC2: the rejected batch returns");
         const auto kind = fr ? merr_kind_4689(cs, *fr) : std::string("novalue");
@@ -333,7 +333,7 @@ static void run_1436_dispatch() {
     {
         CHECK(eval_ok(cs, "(mutate :rebind \"f\" \"(lambda (x) (* x 2))\" \"t\")"),
               "mutate :rebind");
-        CHECK(eval_ok(cs, "(mutate:rebind \"g\" \"(lambda (y) (+ y 1))\" \"t\")"),
+        CHECK(eval_ok(cs, "(mutate :rebind \"g\" \"(lambda (y) (+ y 1))\" \"t\")"),
               "mutate:rebind alias still works");
         CHECK(eval_ok(cs, "(eval-current)"), "eval after rebind");
     }
@@ -342,7 +342,7 @@ static void run_1436_dispatch() {
     {
         auto r = cs.eval("(mutate :extract 0 \"h\")");
         CHECK(r.has_value(), "mutate :extract returns");
-        auto r2 = cs.eval("(mutate:extract-function 0 \"h2\")");
+        auto r2 = cs.eval("(mutate :extract-function 0 \"h2\")");
         CHECK(r2.has_value(), "mutate:extract-function alias returns");
     }
 
@@ -350,7 +350,7 @@ static void run_1436_dispatch() {
     {
         auto r = cs.eval("(mutate :move 0 0 0)");
         CHECK(r.has_value(), "mutate :move returns");
-        auto r2 = cs.eval("(mutate:move-node 0 0 0)");
+        auto r2 = cs.eval("(mutate :move-node 0 0 0)");
         CHECK(r2.has_value(), "mutate:move-node alias returns");
     }
 
@@ -366,7 +366,7 @@ static void run_1436_dispatch() {
     {
         auto r = cs.eval("(mutate :replace 0 :type \"Int\")");
         CHECK(r.has_value(), "mutate :replace :type returns");
-        auto r2 = cs.eval("(mutate:replace-type 0 \"Int\")");
+        auto r2 = cs.eval("(mutate :replace-type 0 \"Int\")");
         CHECK(r2.has_value(), "mutate:replace-type alias returns");
     }
 
@@ -459,7 +459,7 @@ static void run_1691_dead_heap() {
         CHECK(lit != NULL_NODE, "found lit 1");
 
         const auto heap0 = cs.evaluator().string_heap().size();
-        auto r = cs.eval(std::string("(mutate:refactor/extract ") + std::to_string(lit) +
+        auto r = cs.eval(std::string("(mutate :refactor/extract ") + std::to_string(lit) +
                          " \"extracted_fn_1691\" \"ac3\")");
         const auto heap1 = cs.evaluator().string_heap().size();
         std::println("  heap before={} after={} delta={} extract_ok={}", heap0, heap1,
@@ -492,7 +492,7 @@ static void run_1701_extract_parent() {
           "target has live parent");
 
     const auto size_before = flat->size();
-    auto expr = std::string("(mutate:extract-function ") + std::to_string(star) +
+    auto expr = std::string("(mutate :extract-function ") + std::to_string(star) +
                 " \"extracted-g\" \"1701-ac1\")";
     auto r = cs.eval(expr);
     CHECK(r.has_value(), "extract-function eval ok");
@@ -575,12 +575,12 @@ static void run_1772_from_feedback() {
         const auto n0 = m->mutate_from_feedback_invalid_node_total.load(std::memory_order_relaxed);
 
         auto r =
-            cs.eval("(mutate:from-verification-feedback \"weaken-property\" 999999 \"reset\")");
+            cs.eval("(mutate :from-verification-feedback \"weaken-property\" 999999 \"reset\")");
         CHECK(r && is_bool(*r) && !as_bool(*r), "OOB returns #f");
         CHECK(m->mutate_from_feedback_invalid_node_total.load(std::memory_order_relaxed) == n0 + 1,
               "invalid_node_total +1");
 
-        auto r2 = cs.eval("(mutate:from-verification-feedback \"weaken-property\" -1 \"reset\")");
+        auto r2 = cs.eval("(mutate :from-verification-feedback \"weaken-property\" -1 \"reset\")");
         CHECK(r2 && is_bool(*r2) && !as_bool(*r2), "negative returns #f");
     }
 
@@ -599,7 +599,7 @@ static void run_1772_from_feedback() {
                 m->mutate_from_feedback_invalid_node_total.load(std::memory_order_relaxed);
             const auto nid = static_cast<std::int64_t>(ws->size() - 1);
             auto r = cs.eval(std::format(
-                "(mutate:from-verification-feedback \"weaken-property\" {} \"reset\")", nid));
+                "(mutate :from-verification-feedback \"weaken-property\" {} \"reset\")", nid));
             CHECK(r && is_bool(*r), "returns bool");
             CHECK(m->mutate_from_feedback_invalid_node_total.load(std::memory_order_relaxed) == n0,
                   "no invalid bump for in-range id");
@@ -661,7 +661,7 @@ static void test_ac3828_2_soft_dormant_and_oob() {
     CHECK(m != nullptr, "metrics");
     const auto n0 = m->mutate_from_feedback_invalid_node_total.load(std::memory_order_relaxed);
     const auto wraps0 = m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
-    auto r = cs.eval("(mutate:from-verification-feedback \"weaken-property\" 999999 \"reset\")");
+    auto r = cs.eval("(mutate :from-verification-feedback \"weaken-property\" 999999 \"reset\")");
     CHECK(r && is_bool(*r) && !as_bool(*r), "OOB Soft → #f");
     CHECK(m->mutate_from_feedback_invalid_node_total.load(std::memory_order_relaxed) == n0 + 1,
           "invalid_node_total +1");
@@ -670,7 +670,7 @@ static void test_ac3828_2_soft_dormant_and_oob() {
     CHECK(ws && ws->size() > 0, "workspace");
     const auto nid = static_cast<std::int64_t>(ws->size() - 1);
     auto r2 = cs.eval(
-        std::format("(mutate:from-verification-feedback \"weaken-property\" {} \"reset\")", nid));
+        std::format("(mutate :from-verification-feedback \"weaken-property\" {} \"reset\")", nid));
     CHECK(r2 && is_bool(*r2) && !as_bool(*r2), "Soft dormant strategy → #f");
     CHECK(m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed) >= wraps0,
           "Guard wrap non-decreasing via add_mutate");
@@ -774,14 +774,14 @@ static void run_1684_guard_exception() {
     {
         std::println("\n--- AC3 (#1684): mutate:rebind happy path ---");
         CHECK(cs.eval("(set-code \"(define (f x) (+ x 1))\")").has_value(), "set-code f");
-        auto r = cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 2))\" \"bump\")");
+        auto r = cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 2))\" \"bump\")");
         CHECK(r && is_bool(*r) && as_bool(*r), "rebind #t");
     }
 
     // AC4: rebind after throw
     {
         std::println("\n--- AC4 (#1684): rebind after throw ---");
-        auto r = cs.eval("(mutate:rebind \"f\" \"(lambda (x) (* x 3))\" \"mul\")");
+        auto r = cs.eval("(mutate :rebind \"f\" \"(lambda (x) (* x 3))\" \"mul\")");
         CHECK(r && is_bool(*r) && as_bool(*r), "second rebind #t");
     }
 }
@@ -809,7 +809,7 @@ static void run_1702_inline_call() {
     CHECK(parent_before != NULL_NODE && flat->is_live_node(parent_before), "call has live parent");
     const auto size_before = flat->size();
 
-    auto expr = std::string("(mutate:inline-call ") + std::to_string(call) + " \"1702-ac1\")";
+    auto expr = std::string("(mutate :inline-call ") + std::to_string(call) + " \"1702-ac1\")";
     auto r = cs.eval(expr);
     CHECK(r.has_value(), "inline-call eval ok");
     if (r && is_bool(*r))
@@ -867,7 +867,7 @@ static void run_1690_insert_child() {
     const auto size_before = flat->size();
     const auto child_count_before = flat->children(begin_id).size();
 
-    auto expr = std::string("(mutate:insert-child ") + std::to_string(begin_id) +
+    auto expr = std::string("(mutate :insert-child ") + std::to_string(begin_id) +
                 " 0 \"(+ 100 200 300 400 500 600 700 800)\" \"1690-ac1\")";
     auto r = cs.eval(expr);
     CHECK(r && is_int(*r), "insert-child returns new node id");
@@ -910,7 +910,7 @@ static void run_1696_multi_node_log() {
         CHECK(flat != nullptr, "flat");
         const auto log_before = flat->mutation_count();
 
-        auto r = cs.eval("(mutate:replace-pattern \"(* 2 x)\" \"(+ x x)\" \"1696-ac2\")");
+        auto r = cs.eval("(mutate :replace-pattern \"(* 2 x)\" \"(+ x x)\" \"1696-ac2\")");
         CHECK(r && is_bool(*r) && as_bool(*r), "replace-pattern #t");
         CHECK(flat->mutation_count() > log_before, "mutation log grew");
 
@@ -929,7 +929,7 @@ static void run_1696_multi_node_log() {
         CHECK(flat != nullptr, "flat ac3");
         const auto log_before = flat->mutation_count();
 
-        auto r = cs.eval("(mutate:rename-symbol \"x\" \"y\" \"1696-ac3\")");
+        auto r = cs.eval("(mutate :rename-symbol \"x\" \"y\" \"1696-ac3\")");
         CHECK(r.has_value(), "rename-symbol completed");
         if (r && is_bool(*r))
             CHECK(as_bool(*r), "rename-symbol #t");
@@ -990,7 +990,7 @@ static void run_1685_rebind_stale_define() {
     static auto rebind_ok = [](CompilerService& cs, const std::string& name,
                                const std::string& code, const std::string& summary) {
         auto expr =
-            std::string("(mutate:rebind \"") + name + "\" \"" + code + "\" \"" + summary + "\")";
+            std::string("(mutate :rebind \"") + name + "\" \"" + code + "\" \"" + summary + "\")";
         auto r = cs.eval(expr);
         return r && is_bool(*r) && as_bool(*r);
     };
@@ -1031,7 +1031,7 @@ static void run_1685_rebind_stale_define() {
             std::string code = "(lambda (z) (+ z " + std::to_string(i) + "))";
             CHECK(rebind_ok(cs, "c", code, "grow"), "grow rebind c");
         }
-        auto expr = std::string("(mutate:set-body \"c\" \"(* z 7)\" \"1685-ac3\")");
+        auto expr = std::string("(mutate :set-body \"c\" \"(* z 7)\" \"1685-ac3\")");
         auto r = cs.eval(expr);
         CHECK(r && is_bool(*r) && as_bool(*r), "set-body c #t");
         CHECK(int_eq(cs, "(c 5)", 35), "c 5 → 35 after set-body");
@@ -1066,7 +1066,7 @@ static void run_1685_rebind_stale_define() {
         CHECK(eval_ok(cs2, "(require \"std/mutate\" all:)"), "3918 require mutate");
         CHECK(eval_ok(cs2, "(set-code \"(define (f x) x)\")"), "3918 set-code");
         CHECK(eval_ok(cs2, "(eval-current)"), "3918 eval-current seed");
-        auto br = cs2.eval("(mutate:atomic-batch (list (list \"mutate:rebind\" \"f\" "
+        auto br = cs2.eval("(mutate :atomic-batch (list (list \"mutate:rebind\" \"f\" "
                            "\"(lambda (x) (if (< x 0) (* x -1) x))\" \"abs\")) \"abs\")");
         CHECK(br && is_bool(*br) && as_bool(*br), "3918 AC: batch rebind #t");
         CHECK(int_eq(cs2, "(f -4)", 4), "3918 AC: direct (f -4)→4");
@@ -1103,7 +1103,7 @@ static void run_1703_refactor_extract() {
           "target has live parent");
     const auto size_before = flat->size();
 
-    auto expr = std::string("(mutate:refactor/extract ") + std::to_string(star) +
+    auto expr = std::string("(mutate :refactor/extract ") + std::to_string(star) +
                 " \"ref-ex\" \"1703-ac1\")";
     auto r = cs.eval(expr);
     CHECK(r.has_value(), "refactor/extract eval ok");
@@ -1130,7 +1130,7 @@ static void run_1703_refactor_extract() {
 static void run_1688_remove_node_all_parents() {
     std::println("\n--- Issue #1688: remove-node all parents ---");
     static auto remove_node_ok = [](CompilerService& cs, NodeId id) {
-        auto expr = std::string("(mutate:remove-node ") + std::to_string(id) + ")";
+        auto expr = std::string("(mutate :remove-node ") + std::to_string(id) + ")";
         auto r = cs.eval(expr);
         return r && is_bool(*r) && as_bool(*r);
     };
@@ -1251,7 +1251,7 @@ static void run_1689_remove_node_index() {
         return true;
     };
     static auto remove_ok = [](CompilerService& cs, NodeId id) {
-        auto r = cs.eval(std::string("(mutate:remove-node ") + std::to_string(id) + ")");
+        auto r = cs.eval(std::string("(mutate :remove-node ") + std::to_string(id) + ")");
         return r && is_bool(*r) && as_bool(*r);
     };
 
@@ -1345,7 +1345,7 @@ static void run_1694_replace_pattern() {
     auto* flat = cs.evaluator().workspace_flat();
     CHECK(flat != nullptr, "flat");
 
-    auto r = cs.eval("(mutate:replace-pattern \"(* 2 x)\" \"(+ x x)\" \"1694-ac1\")");
+    auto r = cs.eval("(mutate :replace-pattern \"(* 2 x)\" \"(+ x x)\" \"1694-ac1\")");
     CHECK(r && is_bool(*r) && as_bool(*r), "replace-pattern #t");
     CHECK(flat->size() > 40, "flat grew from replacements");
 
@@ -1399,7 +1399,7 @@ static void run_1697_replace_subtree() {
     CHECK(flat->is_live_node(parent_before), "parent live before");
     const auto size_before = flat->size();
 
-    auto expr = std::string("(mutate:replace-subtree ") + std::to_string(star_call) +
+    auto expr = std::string("(mutate :replace-subtree ") + std::to_string(star_call) +
                 " \"(+ x x 0 0 0 0 0 0 0 0)\" \"1697-ac1\")";
     auto r = cs.eval(expr);
     CHECK(r.has_value(), "replace-subtree eval ok");
@@ -1425,7 +1425,7 @@ static void run_1686_set_body_exception() {
     {
         std::println("\n--- AC1 (#1686): set-body happy path ---");
         CHECK(cs.eval("(set-code \"(define (f x) (+ x 1))\")").has_value(), "set-code f");
-        auto r = cs.eval("(mutate:set-body \"f\" \"(+ x 10)\" \"1686-ac1\")");
+        auto r = cs.eval("(mutate :set-body \"f\" \"(+ x 10)\" \"1686-ac1\")");
         CHECK(r && is_bool(*r) && as_bool(*r), "set-body #t");
     }
 
@@ -1447,7 +1447,7 @@ static void run_1686_set_body_exception() {
     // AC3: set-body after throw
     {
         std::println("\n--- AC3 (#1686): set-body after throw ---");
-        auto r = cs.eval("(mutate:set-body \"f\" \"(* x 3)\" \"1686-ac3\")");
+        auto r = cs.eval("(mutate :set-body \"f\" \"(* x 3)\" \"1686-ac3\")");
         CHECK(r && is_bool(*r) && as_bool(*r), "set-body after throw #t");
     }
 
@@ -1455,7 +1455,7 @@ static void run_1686_set_body_exception() {
     {
         std::println("\n--- AC4 (#1686): sibling rebind ---");
         CHECK(cs.eval("(set-code \"(define (g x) (begin 1 2 3))\")").has_value(), "set-code g");
-        auto r = cs.eval("(mutate:rebind \"g\" \"(lambda (x) (+ x 1))\" \"1686-ac4\")");
+        auto r = cs.eval("(mutate :rebind \"g\" \"(lambda (x) (+ x 1))\" \"1686-ac4\")");
         CHECK(r && is_bool(*r) && as_bool(*r), "rebind sibling #t");
     }
 }
@@ -1468,7 +1468,7 @@ static void run_1687_set_body_stale_ids() {
     static auto set_body_ok = [](CompilerService& cs, const std::string& name,
                                  const std::string& body, const std::string& summary) {
         auto expr =
-            std::string("(mutate:set-body \"") + name + "\" \"" + body + "\" \"" + summary + "\")";
+            std::string("(mutate :set-body \"") + name + "\" \"" + body + "\" \"" + summary + "\")";
         auto r = cs.eval(expr);
         return r && is_bool(*r) && as_bool(*r);
     };
@@ -1531,7 +1531,7 @@ static void run_1687_set_body_stale_ids() {
                   "grow set-body");
         }
         auto batch = std::string(
-            "(mutate:atomic-batch (list (list \"mutate:set-body\" \"target\" \"(+ n 7)\")))");
+            "(mutate :atomic-batch (list (list \"mutate:set-body\" \"target\" \"(+ n 7)\")))");
         auto r = cs.eval(batch);
         if (!(r && is_bool(*r) && as_bool(*r))) {
             CHECK(set_body_ok(cs, "target", "(+ n 7)", "1687-ac4-fallback"),
@@ -1568,7 +1568,7 @@ static void run_1699_splice() {
     const auto child_count_before = flat->children(begin_id).size();
     const auto size_before = flat->size();
 
-    auto expr = std::string("(mutate:splice ") + std::to_string(begin_id) +
+    auto expr = std::string("(mutate :splice ") + std::to_string(begin_id) +
                 " 0 \"(+ 10 20 30 40 50)\" \"(* 2 3 4 5 6)\" \"(- 9 8 7 6 5)\" \"1699-ac1\")";
     auto r = cs.eval(expr);
     CHECK(r.has_value(), "splice eval ok");
@@ -1655,7 +1655,7 @@ static void run_1700_wrap() {
           "target has live parent");
     const auto size_before = flat->size();
 
-    auto expr = std::string("(mutate:wrap ") + std::to_string(star) +
+    auto expr = std::string("(mutate :wrap ") + std::to_string(star) +
                 " \"(begin 0 0 0 0 0 _)\" \"1700-ac1\")";
     auto r = cs.eval(expr);
     CHECK(r.has_value(), "wrap eval ok");

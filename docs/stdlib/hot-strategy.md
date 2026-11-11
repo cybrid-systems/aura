@@ -67,7 +67,7 @@ Pure-Aura `mutate:rebind` **does** mark incremental compile work. Host denseness
   (let ((h (stats:get "query:jit-stats-hash")))
     (or (hash-ref h "hotswap-invalidate-total") 0)))
 
-(mutate:rebind "sum-kernel" "(lambda (n) …closed-form…)" "spec")
+(mutate :rebind "sum-kernel" "(lambda (n) …closed-form…)" "spec")
 ;; Read *before* eval-current if you want sticky dirty bits:
 (display (compile:block-dirty-count "sum-kernel"))  ; >0 when IR was cached
 (display (compile:block-dirty-count))               ; total

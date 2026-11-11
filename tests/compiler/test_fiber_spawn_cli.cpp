@@ -236,14 +236,14 @@ static void ac7_concurrent_dual_rebind_body() {
         auto r = cs.eval(R"AURA(
 (let* ((fa (fiber:spawn
              (lambda ()
-               (let ((m (try (mutate:rebind "ka" "(lambda (x) (* x 3))" "a")
+               (let ((m (try (mutate :rebind "ka" "(lambda (x) (* x 3))" "a")
                              (catch (e) #f))))
                  (if (eq? m #t)
                    (try (begin (eval-current) #t) (catch (e) #f))
                    #f)))))
        (fb (fiber:spawn
              (lambda ()
-               (let ((m (try (mutate:rebind "kb" "(lambda (x) (* x 5))" "b")
+               (let ((m (try (mutate :rebind "kb" "(lambda (x) (* x 5))" "b")
                              (catch (e) #f))))
                  (if (eq? m #t)
                    (try (begin (eval-current) #t) (catch (e) #f))
@@ -1017,7 +1017,7 @@ static void ac19_eval_split_source_cite() {
 
 // ── AC20: #4715 AC2 — the overlay intercepts ORDINARY env reads ───────
 // Before AC2 the overlay was opt-in through fiber:overlay-get only: a body
-// that did (mutate:rebind ...) + (eval-current) wrote the shared cell
+// that did (mutate :rebind ...) + (eval-current) wrote the shared cell
 // immediately and the pre-overlay / post-overlay window was observable by
 // every other body. These rows pin the wiring (source cites + the thread_local
 // fast-path gate) and then run the literal shape end-to-end.
@@ -1052,7 +1052,7 @@ static void ac20_cow_overlay_env_intercept_cite() {
 }
 
 // ── AC21: #4715 AC2 literal shape ────────────────────────────────────
-// (mutate:rebind ...) + (eval-current) INSIDE an open overlay:
+// (mutate :rebind ...) + (eval-current) INSIDE an open overlay:
 //   arm 1 (closure value, the exact issue shape): the body reads its own 49,
 //        the commit lands as one whole version, and a concurrent watcher
 //        spanning the commit only ever sees a WHOLE 14 or 49 - never a dead
@@ -1077,7 +1077,7 @@ static void ac21_cow_overlay_rebind_eval_current() {
 
     auto r = cs.eval(R"AURA(
 (let* ((open (mutate :overlay-begin))
-       (m (try (mutate:rebind "cow-target" "(lambda (x) (* x 7))" "cow") (catch (e) #f)))
+       (m (try (mutate :rebind "cow-target" "(lambda (x) (* x 7))" "cow") (catch (e) #f)))
        (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
        (own (cow-target 7))
        (sib (fiber:join (fiber:spawn (lambda () (cow-target 7)))))
@@ -1117,7 +1117,7 @@ static void ac21_cow_overlay_rebind_eval_current() {
     CHECK(pc && is_bool(*pc) && as_bool(*pc), "AC21: scalar workspace define seeded");
     auto p = cs.eval(R"AURA(
 (let* ((open (mutate :overlay-begin))
-       (m (try (mutate:rebind "cow-n" "9" "cow") (catch (e) #f)))
+       (m (try (mutate :rebind "cow-n" "9" "cow") (catch (e) #f)))
        (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
        (own cow-n)
        (sib (fiber:join (fiber:spawn (lambda () cow-n))))
@@ -1150,7 +1150,7 @@ static void ac21_cow_overlay_rebind_eval_current() {
     // deterministic: the workspace AST is not touched a second time.
     auto c = cs.eval(R"AURA(
 (let* ((open (mutate :overlay-begin))
-       (m (try (mutate:rebind "cow-n" "9" "cow") (catch (e) #f)))
+       (m (try (mutate :rebind "cow-n" "9" "cow") (catch (e) #f)))
        (ec (if (eq? m #t) (try (begin (eval-current) #t) (catch (e) #f)) #f))
        (own cow-n)
        (sib (fiber:join

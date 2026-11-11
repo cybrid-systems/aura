@@ -146,7 +146,7 @@
 (if (< s0 0) (fail4324 "snapshot counter missing") #t)
 
 (define ops-off (list (list "mutate:rebind" "ms4324" "(lambda (x) (+ x 1))" "4324")))
-(if (eq? (try (mutate:atomic-batch ops-off "4324-raw" :sync-query-index? #f)
+(if (eq? (try (mutate :atomic-batch ops-off "4324-raw" :sync-query-index? #f)
               (catch (e) e))
         #t)
   #t
@@ -195,7 +195,7 @@
   (begin (display "OK-4324 atomic-batch-safe-keywords") (newline))
   (begin (display "FAIL-4324") (newline) (unbound-4324-force-fail)))
 
-; ── Issue #4742: (mutate:check name define-source) dry-run gate ──
+; ── Issue #4742: (mutate :check name define-source) dry-run gate ──
 ; Strict parse + typecheck against the current workspace without installing
 ; anything: no workspace mutation, no mutation-log row, no epoch bump.
 (define ok4742 #t)
@@ -210,27 +210,27 @@
 (define gen4742 (query :generation))
 (define mut4742 (length (query:mutations-since 0)))
 
-(if (equal? (mutate:check "f" "(define (f x) (+ x 2))") #t)
+(if (equal? (mutate :check "f" "(define (f x) (+ x 2))") #t)
     (display "  pass: clean candidate returns #t") (fail4742 "clean candidate"))
 (newline)
 
-(if (equal? (tag4742 (mutate:check "f" "(define (f x) (+ x 2)")) "parse-error")
+(if (equal? (tag4742 (mutate :check "f" "(define (f x) (+ x 2)")) "parse-error")
     (display "  pass: missing paren is a parse-error") (fail4742 "missing paren"))
 (newline)
 
-(if (equal? (tag4742 (mutate:check "f" "(define (f x) (if x")) "parse-error")
+(if (equal? (tag4742 (mutate :check "f" "(define (f x) (if x")) "parse-error")
     (display "  pass: special-form truncation is a parse-error") (fail4742 "if truncation"))
 (newline)
 
-(if (equal? (tag4742 (mutate:check "g" "(define (f x) 1)")) "parse-error")
+(if (equal? (tag4742 (mutate :check "g" "(define (f x) 1)")) "parse-error")
     (display "  pass: define-name mismatch is a parse-error") (fail4742 "name mismatch"))
 (newline)
 
-(if (equal? (tag4742 (mutate:check "f" "(define (f x) (car 1 2 3))")) "type-error")
+(if (equal? (tag4742 (mutate :check "f" "(define (f x) (car 1 2 3))")) "type-error")
     (display "  pass: ill-typed candidate is a type-error") (fail4742 "type error"))
 (newline)
 
-(if (equal? (tag4742 (mutate:check "f" "(define (f x) (nope x))")) "type-error")
+(if (equal? (tag4742 (mutate :check "f" "(define (f x) (nope x))")) "type-error")
     (display "  pass: unbound variable is a type-error") (fail4742 "unbound"))
 (newline)
 

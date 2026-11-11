@@ -171,7 +171,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: multi-round mutate matrix ---");
     const auto stats6a = coverage_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(10 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(10 + round) + "\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats6b = coverage_stats(cs);
@@ -198,7 +198,7 @@ static void run_matrix(CompilerService& cs) {
     const auto force0 =
         cs.metrics().abort_ir_cache_force_dirty_total.load(std::memory_order_relaxed);
     ev.enter_mutation_boundary();
-    (void)cs.eval("(mutate:rebind \"f3033\" \"9\")");
+    (void)cs.eval("(mutate :rebind \"f3033\" \"9\")");
     ev.exit_mutation_boundary(false); // abort → force-dirty hook fires
     const auto force1 =
         cs.metrics().abort_ir_cache_force_dirty_total.load(std::memory_order_relaxed);
@@ -350,7 +350,7 @@ static void test_abort_restore_ir_map_fence_3117() {
     // Dual-topology abort (exit false) also leaves map invalid.
     auto& ev = cs.evaluator();
     ev.enter_mutation_boundary();
-    (void)cs.eval("(mutate:rebind \"f3117\" \"9\")");
+    (void)cs.eval("(mutate :rebind \"f3117\" \"9\")");
     ev.exit_mutation_boundary(false);
     const auto* after_exit = cs.get_define_v2("f3117");
     CHECK(after_exit && after_exit->abort_map_invalid,

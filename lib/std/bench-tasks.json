@@ -1407,7 +1407,7 @@
       ";; Step 1: Load a function",
       "(set-code \"(define (f) (* 6 7))\")",
       ";; Step 2: Rebind to a simpler body",
-      "(mutate:rebind \"f\" \"(lambda () 42)\")",
+      "(mutate :rebind \"f\" \"(lambda () 42)\")",
       ";; Step 3: Evaluate the current workspace",
       "(display (f))"
     ]
@@ -1424,7 +1424,7 @@
       ";; Step 1: Load initial code",
       "(set-code \"(define (h x) (+ x 1))\")",
       ";; Step 2: Rebind to change body to (+ x 2)",
-      "(mutate:rebind \"h\" \"(lambda (x) (+ x 2))\")",
+      "(mutate :rebind \"h\" \"(lambda (x) (+ x 2))\")",
       ";; Step 3: Evaluate to see the result",
       "(display (h 1))"
     ]
@@ -1587,7 +1587,7 @@
       "--- EDSL snapshot/restore ---",
       "(set-code \"(define (g x) (* x 2))\")",
       "(define sid (mutate :snapshot \"before\"))",
-      "(mutate:rebind \"g\" \"(lambda (x) (+ x 1))\" \"test\")",
+      "(mutate :rebind \"g\" \"(lambda (x) (+ x 1))\" \"test\")",
       "(mutate :restore sid)",
       "(display (car (query :def-use \"g\")))"
     ]
@@ -1602,7 +1602,7 @@
     [
       "--- Higher-order AST transforms ---",
       "(set-code \"(begin (display 1) (display 3))\")",
-      "(mutate:splice 0 1 \"(display 2)\" \"insert\")",
+      "(mutate :splice 0 1 \"(display 2)\" \"insert\")",
       "(display (current-source))"
     ]
   ],
@@ -1681,7 +1681,7 @@
       "(set-code \"(define (g x) (+ x 1))\")",
       "(define ws (workspace :create \"sandbox\"))",
       "(workspace :switch ws)",
-      "(mutate:rebind \"g\" \"(lambda (x) (* x 2))\" \"mutate\")",
+      "(mutate :rebind \"g\" \"(lambda (x) (* x 2))\" \"mutate\")",
       "(workspace :switch 0)",
       "(workspace :merge ws)",
       "(display (car (query :def-use \"g\")))"

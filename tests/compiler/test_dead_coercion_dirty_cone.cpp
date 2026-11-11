@@ -1314,7 +1314,7 @@ static void ac3986_shape_partial_attributed_and_typechange_soak() {
         const auto impact0 =
             cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
         const auto should0 = cs.metrics().should_relower_total.load(std::memory_order_relaxed);
-        auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () \\\"x\\\")\" \"#3986\")");
+        auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda () \\\"x\\\")\" \"#3986\")");
         CHECK(mut.has_value(), "3986 AC4: type-change set-body");
         (void)cs.public_relower_dirty_defines_from_workspace();
         const auto* g1 = cs.get_define_v2("g");
@@ -1678,7 +1678,7 @@ static void ac3689_partial_peel_aos_dce_uses_mask() {
     CHECK(cs.eval("(+ 1 1)").has_value(), "3689 soak: warm");
     CHECK(cs.eval("(set-code \"(define f (lambda () 1))\")").has_value(), "3689 soak: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "3689 soak: eval");
-    auto mut = cs.eval("(mutate:set-body \"f\" \"(lambda () 9)\" \"#3689\")");
+    auto mut = cs.eval("(mutate :set-body \"f\" \"(lambda () 9)\" \"#3689\")");
     CHECK(mut.has_value() && !is_error(*mut), "3689 soak: mutate body");
     CHECK(cs.eval("(eval-current)").has_value(), "3689 soak: partial peel re-eval");
     auto r = cs.eval("(f)");

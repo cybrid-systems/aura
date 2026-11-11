@@ -63,7 +63,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC3: mutate:rebind under Guard ---");
     const auto stats3a = edsl_stats(cs);
-    (void)cs.eval("(mutate:rebind \"x\" \"42\")");
+    (void)cs.eval("(mutate :rebind \"x\" \"42\")");
     (void)cs.eval("(eval-current)");
     const auto stats3b = edsl_stats(cs);
     std::println("  edsl stats: {} -> {}", stats3a, stats3b);
@@ -81,9 +81,9 @@ static void run_matrix(CompilerService& cs) {
     const auto stats5a = edsl_stats(cs);
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(query:pattern \"y\")");
-        (void)cs.eval("(mutate:rebind \"y\" \"" + std::to_string(20 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"y\" \"" + std::to_string(20 + round) + "\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(mutate:request-gc-safepoint 10)");
+        (void)cs.eval("(mutate :request-gc-safepoint 10)");
     }
     const auto stats5b = edsl_stats(cs);
     std::println("  edsl stats: {} -> {}", stats5a, stats5b);

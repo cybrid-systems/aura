@@ -522,7 +522,7 @@ static void ac2989_4_concurrent_query_mutate() {
     }
     threads.emplace_back([&]() {
         for (int j = 0; j < 25; ++j) {
-            auto r = cs.eval("(mutate:rebind \"base\" \"11\")");
+            auto r = cs.eval("(mutate :rebind \"base\" \"11\")");
             if (r.has_value())
                 ok.fetch_add(1);
         }
@@ -706,7 +706,7 @@ static void ac3354_4_match_subset_mutate() {
     const auto pat_def = result_len(cs, "(query:pattern \"*\")");
     const auto pat_allow = result_len(cs, "(query:pattern \"*\" :allow-macro? #t)");
     CHECK(pat_def >= 0 && pat_allow >= pat_def, "AC4: default pattern ⊆ allow (hygiene skip)");
-    auto rebind = cs.eval("(mutate:rebind \"base\" \"11\")");
+    auto rebind = cs.eval("(mutate :rebind \"base\" \"11\")");
     CHECK(rebind.has_value(), "AC4: mutate:rebind user node (query-admissible) succeeds");
 }
 

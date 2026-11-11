@@ -9,7 +9,7 @@
   (begin (fiber:yield) (l (+ t 1) (+ s (try (pol-0) (catch (e) (begin (set! errs (+ errs 1)) 0))))))
   s)))
 (define (rebinder k) (let l ((t 1)) (if (< t k)
-  (begin (mutate:rebind "pol-0" (string-append "(lambda () " (number->string t) ")") "rb")
+  (begin (mutate :rebind "pol-0" (string-append "(lambda () " (number->string t) ")") "rb")
          (eval-current) (fiber:yield) (l (+ t 1))) t)))
 (define cs (list (fiber:spawn (lambda () (caller 200))) (fiber:spawn (lambda () (caller 200)))))
 (define r (fiber:spawn (lambda () (rebinder 40))))

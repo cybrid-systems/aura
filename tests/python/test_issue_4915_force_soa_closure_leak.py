@@ -39,7 +39,7 @@ EV = """
     (if (> s steps)
         (reverse out)
         (let* ((snap (mutate :snapshot (format "s-~a" s)))
-               (r (mutate:rebind "strategy-params"
+               (r (mutate :rebind "strategy-params"
                                  (format "(lambda () (quote ((fast . ~a))))" s) "t")))
           (eval-current)
           (let ((w (work 2000 (cdr (car (strategy-params))))))

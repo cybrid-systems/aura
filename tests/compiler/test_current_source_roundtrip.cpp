@@ -273,7 +273,7 @@ static void ac_mutate_roundtrip() {
     auto before = workspace_source(cs);
     CHECK(!before.empty(), "AC10: workspace before mutate");
 
-    auto mut = cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 10))\" \"2921\")");
+    auto mut = cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 10))\" \"2921\")");
     CHECK(mut.has_value(), "AC10: mutate:rebind");
 
     auto mid = workspace_source(cs);
@@ -745,7 +745,7 @@ static void ac4349_restore_over_rebind() {
     CHECK(gen && is_int(*gen), "4349: bare (query :generation) is an int");
     auto sid = cs.eval("(mutate :snapshot \"4349\")");
     CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "4349: snapshot id");
-    CHECK(cs.eval("(mutate:rebind \"f4349\" \"(lambda (x) (* x 2))\" \"dbl\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"f4349\" \"(lambda (x) (* x 2))\" \"dbl\")").has_value(),
           "4349: rebind f -> double");
     auto post = cs.eval("(g4349 4)");
     CHECK(post && is_int(*post) && as_int(*post) == 8, "4349: (g 4) = 8 post-rebind");
@@ -824,7 +824,7 @@ static void ac4598_transitive_rebind_and_restore() {
     CHECK(sid && is_int(*sid) && as_int(*sid) >= 0, "4598: snapshot id");
     auto snap = cs.eval("(d4598)");
     CHECK(snap && is_int(*snap) && as_int(*snap) == 21, "4598: snapshot keeps (d4598)");
-    CHECK(cs.eval("(mutate:rebind \"b4598\" \"(lambda () 41)\" \"4598\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"b4598\" \"(lambda () 41)\" \"4598\")").has_value(),
           "4598: rebind leaf");
     CHECK(cs.eval("(eval-current)").has_value(), "4598: eval-current after rebind");
     auto leaf = cs.eval("(b4598)");
@@ -869,7 +869,7 @@ static void ac4598_phase3_snapshot_share_and_stamp_restore() {
     CHECK(sid1 && is_int(*sid1) && as_int(*sid1) >= 0, "4598p3: snapshot id");
     CHECK(snap_stat(cs, "ast-snapshot-share-misses") >= 1,
           "4598p3: first snapshot takes the deep path");
-    CHECK(cs.eval("(mutate:rebind \"b4598\" \"(lambda () 41)\" \"4598p3\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"b4598\" \"(lambda () 41)\" \"4598p3\")").has_value(),
           "4598p3: rebind");
     CHECK(cs.eval("(eval-current)").has_value(), "4598p3: eval-current after rebind");
     auto st1 = cs.eval(std::format("(mutate :restore {})", as_int(*sid1)));
@@ -887,7 +887,7 @@ static void ac4598_phase3_snapshot_share_and_stamp_restore() {
     CHECK(snap_stat(cs, "ast-snapshot-share-hits") == hits_before + 1,
           "4598p3 AC11: post-restore snapshot shares the frozen copy");
     // One-define restore: the stamp diff republishes the dirty cone only.
-    CHECK(cs.eval("(mutate:rebind \"b4598\" \"(lambda () 7)\" \"4598p3\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"b4598\" \"(lambda () 7)\" \"4598p3\")").has_value(),
           "4598p3: second rebind");
     CHECK(cs.eval("(eval-current)").has_value(), "4598p3: eval-current after second rebind");
     const auto unp_before = snap_stat(cs, "ast-restore-stamp-unparse");
@@ -909,7 +909,7 @@ static void ac4598_phase3_snapshot_share_and_stamp_restore() {
     // Share exactness: a snapshot over a CHANGED workspace must not share a
     // stale copy — the miss path captures fresh, and restoring it keeps the
     // changed content (a stale share would resurrect the old value).
-    CHECK(cs.eval("(mutate:rebind \"b4598\" \"(lambda () 99)\" \"4598p3\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"b4598\" \"(lambda () 99)\" \"4598p3\")").has_value(),
           "4598p3: third rebind");
     CHECK(cs.eval("(eval-current)").has_value(), "4598p3: eval-current after third rebind");
     const auto hits_mid = snap_stat(cs, "ast-snapshot-share-hits");
@@ -1053,7 +1053,8 @@ static void ac4475_workspace_floats() {
     // mutate:rebind keeps publishing the raw string; stays correct.
     CHECK(set_code(cs, "(define (z1) 0.05)"), "4475: set-code rebind face");
     CHECK(cs.eval("(eval-current)").has_value(), "4475: eval-current rebind face");
-    CHECK(cs.eval("(mutate:rebind \"z1\" \"(lambda () 0.25)\" \"f\")").has_value(), "4475: rebind");
+    CHECK(cs.eval("(mutate :rebind \"z1\" \"(lambda () 0.25)\" \"f\")").has_value(),
+          "4475: rebind");
     CHECK(cs.eval("(eval-current)").has_value(), "4475: eval-current rebind");
     auto rb = cs.eval("(z1)");
     CHECK(rb && is_float(*rb) && close_to(as_float(*rb), 0.25), "4475: rebound body 0.25");
@@ -1351,9 +1352,9 @@ static void ac4360_sibling_and_hard_caller() {
         CHECK(cs.eval("(eval-current)").has_value(), "4360: eval-current");
         auto g0 = cs.eval("(g 2)");
         CHECK(g0 && is_int(*g0) && as_int(*g0) == 4, "4360: (g 2) = 4 before add");
-        auto added = cs.eval("(mutate:rebind \"zzz\" \"(lambda (x) x)\" \"s\")");
+        auto added = cs.eval("(mutate :rebind \"zzz\" \"(lambda (x) x)\" \"s\")");
         CHECK(added && is_bool(*added) && as_bool(*added), "4360: add zzz");
-        auto bad = cs.eval("(mutate:rebind \"g\" \"(lambda (x\" \"s\")");
+        auto bad = cs.eval("(mutate :rebind \"g\" \"(lambda (x\" \"s\")");
         CHECK(!(bad && is_bool(*bad) && as_bool(*bad)), "4360: bad body is refused");
         auto src = workspace_source(cs);
         CHECK(src.find("zzz") != std::string::npos, "4360: workspace keeps zzz");
@@ -1380,7 +1381,7 @@ static void ac4360_sibling_and_hard_caller() {
         CHECK(cs.eval("(eval-current)").has_value(), "4360: hard eval-current");
         auto u0 = cs.eval("(rr-u 1)");
         CHECK(u0 && is_int(*u0) && as_int(*u0) == 2, "4360: (rr-u 1) = 2");
-        auto rb = cs.eval("(mutate:rebind \"rr-h\" \"(lambda (x) (+ x 2))\" \"r\")");
+        auto rb = cs.eval("(mutate :rebind \"rr-h\" \"(lambda (x) (+ x 2))\" \"r\")");
         CHECK(rb && is_bool(*rb) && as_bool(*rb), "4360: hard rebind");
         auto u1 = cs.eval("(rr-u 1)");
         CHECK(u1 && is_int(*u1) && as_int(*u1) == 3, "4360: (rr-u 1) = 3 after hard rebind");
@@ -1431,7 +1432,7 @@ static void ac4362_soft_caller_arity() {
     {
         CompilerService cs;
         fresh(cs);
-        auto rb = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (hello y y))\" \"s\")");
+        auto rb = cs.eval("(mutate :rebind \"bye\" \"(lambda (y) (hello y y))\" \"s\")");
         CHECK(!committed(rb), "4362: soft rebind refuses caller arity");
         auto src = workspace_source(cs);
         CHECK(src.find("(hello y y)") == std::string::npos, "4362: soft rebind leaves the call");
@@ -1441,7 +1442,7 @@ static void ac4362_soft_caller_arity() {
         CompilerService cs;
         fresh(cs);
         auto tma = cs.eval(
-            "(typed-mutate-atomic (list \"(mutate:rebind \\\"bye\\\" \\\"(lambda (y) (hello y "
+            "(typed-mutate-atomic (list \"(mutate :rebind \\\"bye\\\" \\\"(lambda (y) (hello y "
             "y))\\\")\"))");
         CHECK(!committed(tma), "4362: soft atomic refuses caller arity");
         auto src = workspace_source(cs);
@@ -1450,7 +1451,7 @@ static void ac4362_soft_caller_arity() {
     {
         CompilerService cs;
         fresh(cs);
-        auto ok = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (+ (hello y) 1))\" \"s\")");
+        auto ok = cs.eval("(mutate :rebind \"bye\" \"(lambda (y) (+ (hello y) 1))\" \"s\")");
         CHECK(committed(ok), "4362: soft same-arity rebind commits");
         auto src = workspace_source(cs);
         CHECK(src.find("(hello y)") != std::string::npos, "4362: same-arity body kept");
@@ -1459,7 +1460,7 @@ static void ac4362_soft_caller_arity() {
     {
         CompilerService cs;
         fresh(cs);
-        auto ub = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (+ y nope))\" \"s\")");
+        auto ub = cs.eval("(mutate :rebind \"bye\" \"(lambda (y) (+ y nope))\" \"s\")");
         CHECK(!committed(ub), "4362: soft still refuses an unbound name");
         auto src = workspace_source(cs);
         CHECK(src.find("nope") == std::string::npos, "4362: unbound body is not committed");
@@ -1467,7 +1468,7 @@ static void ac4362_soft_caller_arity() {
     {
         CompilerService cs;
         fresh(cs);
-        auto ty = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (string-append y 1))\" \"s\")");
+        auto ty = cs.eval("(mutate :rebind \"bye\" \"(lambda (y) (string-append y 1))\" \"s\")");
         CHECK(committed(ty), "4362: soft still commits a primitive type error");
         auto src = workspace_source(cs);
         CHECK(src.find("string-append") != std::string::npos, "4362: type-error body commits");
@@ -1476,7 +1477,7 @@ static void ac4362_soft_caller_arity() {
         set_mode(MutateTypeGate::Hard);
         CompilerService cs;
         fresh(cs);
-        auto rb = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (hello y y))\" \"s\")");
+        auto rb = cs.eval("(mutate :rebind \"bye\" \"(lambda (y) (hello y y))\" \"s\")");
         CHECK(!committed(rb), "4362: hard still refuses caller arity");
         auto src = workspace_source(cs);
         CHECK(src.find("(hello y y)") == std::string::npos, "4362: hard leaves the call");
@@ -1485,7 +1486,7 @@ static void ac4362_soft_caller_arity() {
         set_mode(MutateTypeGate::Soft);
         CompilerService cs;
         fresh(cs);
-        auto self = cs.eval("(mutate:rebind \"hello\" \"(lambda (x) (hello x x))\" \"s\")");
+        auto self = cs.eval("(mutate :rebind \"hello\" \"(lambda (x) (hello x x))\" \"s\")");
         CHECK(committed(self), "4362: self-recursive rebind still commits");
         auto src = workspace_source(cs);
         CHECK(src.find("(hello x x)") != std::string::npos, "4362: self-recursive body commits");
@@ -1496,13 +1497,13 @@ static void ac4362_soft_caller_arity() {
         set_mode(MutateTypeGate::Soft);
         CompilerService cs;
         fresh(cs);
-        auto bad = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (hello y y))\" \"s\")");
+        auto bad = cs.eval("(mutate :rebind \"bye\" \"(lambda (y) (hello y y))\" \"s\")");
         CHECK(!committed(bad), "4362: first soft rebind refuses caller arity");
         fresh(cs);
-        auto ty = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (string-append y 1))\" \"s\")");
+        auto ty = cs.eval("(mutate :rebind \"bye\" \"(lambda (y) (string-append y 1))\" \"s\")");
         CHECK(committed(ty), "4362: type error still commits after a refusal");
         fresh(cs);
-        auto ok = cs.eval("(mutate:rebind \"bye\" \"(lambda (y) (+ (hello y) 1))\" \"s\")");
+        auto ok = cs.eval("(mutate :rebind \"bye\" \"(lambda (y) (+ (hello y) 1))\" \"s\")");
         CHECK(committed(ok), "4362: same-arity rebind commits after a refusal");
         auto src = workspace_source(cs);
         CHECK(src.find("(hello y y)") == std::string::npos,
@@ -1591,7 +1592,7 @@ static void ac4587_workspace_free_names() {
         auto b2 = cs.eval("(b)");
         CHECK(b2 && is_int(*b2) && as_int(*b2) == 9, "4587: (b) sees set! through get-n");
         auto refused =
-            cs.eval("(mutate:rebind \"a\" \"(lambda () (list 1 not-a-real-name))\" \"x\")");
+            cs.eval("(mutate :rebind \"a\" \"(lambda () (list 1 not-a-real-name))\" \"x\")");
         CHECK(refused.has_value(), "4587: rebind eval returns");
         CHECK(!(refused && is_bool(*refused) && as_bool(*refused)),
               "4587: free-name rebind is not #t");
@@ -1607,7 +1608,7 @@ static void ac4587_workspace_free_names() {
         CHECK(set_code(cs, "(define a (lambda () n))\n(define b (lambda () (get-n)))"),
               "4587: set-code host-only");
         CHECK(cs.eval("(eval-current)").has_value(), "4587: eval-current host-only");
-        auto reb = cs.eval("(mutate:rebind \"a\" \"(lambda () (list (get-n) n))\" \"x\")");
+        auto reb = cs.eval("(mutate :rebind \"a\" \"(lambda () (list (get-n) n))\" \"x\")");
         CHECK(reb && !is_error(*reb), "4587: rebind that only uses host names commits");
         auto ok = cs.eval("(equal? (a) (list 5 5))");
         CHECK(ok && is_bool(*ok) && as_bool(*ok), "4587: rebound (a) is (5 5)");
@@ -1751,7 +1752,7 @@ static void ac4589_merge_child_define_wins() {
         const auto id = as_int(*idv);
         CHECK(cs.eval("(workspace :switch " + std::to_string(id) + ")").has_value(),
               "4589: switch to child");
-        auto reb = cs.eval("(mutate:rebind \"f\" \"(lambda (x) (* x 10))\" \"child edit\")");
+        auto reb = cs.eval("(mutate :rebind \"f\" \"(lambda (x) (* x 10))\" \"child edit\")");
         CHECK(reb && is_bool(*reb) && as_bool(*reb), "4589: rebind child f");
         CHECK(cs.eval("(eval-current)").has_value(), "4589: eval-current child");
         auto child_f = cs.eval("(f 2)");
@@ -1828,12 +1829,12 @@ static void ac4779_trial_merge_cycles_do_not_grow_top_env() {
 (define (body k) (string-append "(lambda (x) " (number->string k) ")"))
 (define (cycle i merge?)
   (let ((w (workspace :create "t")))
-    (workspace :switch w) (mutate:rebind "f" (body i) "trial") (eval-current)
+    (workspace :switch w) (mutate :rebind "f" (body i) "trial") (eval-current)
     (workspace :switch 0) (eval-current)
     (if merge? (begin (workspace :merge w) (eval-current)))
     (workspace :delete w)))
 (let loop ((i 1)) (if (<= i 80) (begin (cycle i (> i 60)) (loop (+ i 1)))))
-(mutate:rebind "f" (body 7) "root") (eval-current)
+(mutate :rebind "f" (body 7) "root") (eval-current)
 (f 0)
 )AURA");
     auto v = cs.eval(prog);
@@ -1877,23 +1878,23 @@ static void ac4729_merge_and_restore_keep_provenance() {
 (eval-current)
 (define (ml) (let ((l (query :mutation-log 100))) (if (list? l) l (list))))
 (define (mid) (let ((p (query:last-mutation-provenance))) (if (hash? p) (hash-ref p "mutation_id") -1)))
-(mutate:rebind "f" "(lambda (x) (+ x 2))" "root-rebind")
+(mutate :rebind "f" "(lambda (x) (+ x 2))" "root-rebind")
 (eval-current)
 (define n-pre (length (ml)))
 (define w (workspace :create "child"))
 (workspace :switch w)
-(mutate:rebind "g" "(lambda () 3)" "child-rebind")
+(mutate :rebind "g" "(lambda () 3)" "child-rebind")
 (eval-current)
 (workspace :switch 0) (eval-current)
 (workspace :merge w) (eval-current)
 (define n-merge (length (ml)))
 (define mid-merge (mid))
-(mutate:rebind "f" "(lambda (x) (+ x 5))" "root-rebind-after-merge")
+(mutate :rebind "f" "(lambda (x) (+ x 5))" "root-rebind-after-merge")
 (eval-current)
 (define n-rebind (length (ml)))
 (define mid-rebind (mid))
 (define s (mutate :snapshot "s"))
-(mutate:rebind "f" "(lambda (x) (+ x 9))" "rebind-to-roll-back")
+(mutate :rebind "f" "(lambda (x) (+ x 9))" "rebind-to-roll-back")
 (eval-current)
 (mutate :restore s) (eval-current)
 (define n-restore (length (ml)))
@@ -1953,9 +1954,9 @@ static DepGraphRun4793 run_restore_dep_graph_4793() {
     CHECK(set_code(cs, src), "4793: set-code W=200");
     CHECK(cs.eval("(eval-current)").has_value(), "4793: eval-current");
     // S0: b=1, u calls b. S1: b calls w7. S2: u calls w9 instead of b.
-    const char* edits[] = {"(mutate:rebind \"b4793\" \"(lambda () (w4793f7 1))\" \"4793\")",
-                           "(mutate:rebind \"u4793\" \"(lambda () (+ (w4793f9 2) 1))\" \"4793\")",
-                           "(mutate:rebind \"b4793\" \"(lambda () 5)\" \"4793\")"};
+    const char* edits[] = {"(mutate :rebind \"b4793\" \"(lambda () (w4793f7 1))\" \"4793\")",
+                           "(mutate :rebind \"u4793\" \"(lambda () (+ (w4793f9 2) 1))\" \"4793\")",
+                           "(mutate :rebind \"b4793\" \"(lambda () 5)\" \"4793\")"};
     std::vector<std::int64_t> ids;
     for (int k = 0; k < 3; ++k) {
         auto s = cs.eval(std::format("(mutate :snapshot \"4793-{}\")", k));
@@ -1982,7 +1983,7 @@ static DepGraphRun4793 run_restore_dep_graph_4793() {
     };
     for (int j : {0, 2, 1, 0, 1, 2, 2, 0})
         restore(j);
-    CHECK(cs.eval("(mutate:rebind \"b4793\" \"(lambda () (w4793f11 3))\" \"4793\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"b4793\" \"(lambda () (w4793f11 3))\" \"4793\")").has_value(),
           "4793: rebind after restores");
     CHECK(cs.eval("(eval-current)").has_value(), "4793: eval-current");
     out.fps.push_back(cs.public_dep_graph_fingerprint());
@@ -2052,7 +2053,7 @@ static void ac4792_cross_epoch_restore_keeps_stamps() {
         CHECK(s && is_int(*s) && as_int(*s) >= 0, "4792: snapshot id");
         ids.push_back(s && is_int(*s) ? as_int(*s) : -1);
         vals.push_back(k);
-        CHECK(cs.eval(std::format("(mutate:rebind \"b4792\" \"(lambda () {})\" \"4792\")", k + 1))
+        CHECK(cs.eval(std::format("(mutate :rebind \"b4792\" \"(lambda () {})\" \"4792\")", k + 1))
                   .has_value(),
               "4792: rebind");
         CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current after rebind");
@@ -2092,7 +2093,7 @@ static void ac4792_cross_epoch_restore_keeps_stamps() {
     // #4782 face across epochs: restore an old snapshot, edit, capture,
     // then hop between the new capture and an older one.
     CHECK(cs.eval(std::format("(mutate :restore {})", ids[0])).has_value(), "4792: restore S0");
-    CHECK(cs.eval("(mutate:rebind \"b4792\" \"(lambda () 100)\" \"4792\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"b4792\" \"(lambda () 100)\" \"4792\")").has_value(),
           "4792: rebind after restore");
     CHECK(cs.eval("(eval-current)").has_value(), "4792: eval-current");
     auto s3 = cs.eval("(mutate :snapshot \"4792-post\")");
@@ -2123,7 +2124,7 @@ static void ac4772_snapshot_quiet_guard() {
         src += std::format("(define (w4772f{} x) (* x {}))\n", i, i);
     CHECK(set_code(cs, src), "4772: set-code workspace");
     CHECK(cs.eval("(eval-current)").has_value(), "4772: eval-current binds");
-    CHECK(cs.eval("(mutate:rebind \"f4772\" \"(lambda (x) (+ x 10))\" \"4772\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"f4772\" \"(lambda (x) (+ x 10))\" \"4772\")").has_value(),
           "4772: rebind before snapshot (snapshot source differs from set-code)");
     CHECK(cs.eval("(eval-current)").has_value(), "4772: eval-current after rebind");
     const auto dv0 = cs.evaluator().defuse_version();
@@ -2138,7 +2139,7 @@ static void ac4772_snapshot_quiet_guard() {
     CHECK(live && is_int(*live) && as_int(*live) == 11,
           "4772: bound define still callable after snapshot (no re-eval needed)");
     // The quiet arm must not leak: the next real mutation still bumps.
-    CHECK(cs.eval("(mutate:rebind \"f4772\" \"(lambda (x) (+ x 100))\" \"4772\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"f4772\" \"(lambda (x) (+ x 100))\" \"4772\")").has_value(),
           "4772: rebind after snapshot");
     CHECK(cs.evaluator().defuse_version() > dv1,
           "4772: a mutate:rebind after the snapshot still bumps defuse_version");
@@ -2184,7 +2185,7 @@ static void ac4772_structural_sharing() {
     const auto shared0 = snap_stat(cs, "ast-snapshot-chunks-shared");
     constexpr int kForks = 6;
     for (int k = 1; k <= kForks; ++k) {
-        CHECK(cs.eval(std::format("(mutate:rebind \"g4772\" \"(lambda (x) (+ x {}))\" \"4772s\")",
+        CHECK(cs.eval(std::format("(mutate :rebind \"g4772\" \"(lambda (x) (+ x {}))\" \"4772s\")",
                                   k * 10))
                   .has_value(),
               "4772s: rebind one define");
@@ -2226,7 +2227,7 @@ static void ac4772_structural_sharing() {
         CHECK(f && is_int(*f) && as_int(*f) == 1198, "4772s AC4: filler intact");
     }
     // AC5: an edit after a restore does not leak into the image it came from.
-    CHECK(cs.eval("(mutate:rebind \"g4772\" \"(lambda (x) (+ x 777))\" \"4772s\")").has_value(),
+    CHECK(cs.eval("(mutate :rebind \"g4772\" \"(lambda (x) (+ x 777))\" \"4772s\")").has_value(),
           "4772s AC5: rebind after restore");
     auto st = cs.eval(std::format("(mutate :restore {})", ids[0]));
     CHECK(st && is_bool(*st) && as_bool(*st), "4772s AC5: restore base again");
@@ -2239,7 +2240,7 @@ static void ac4772_structural_sharing() {
     for (std::size_t i = 0; i < cap_images + 8; ++i) {
         if (i % 2 == 0)
             (void)cs.eval(std::format(
-                "(mutate:rebind \"g4772\" \"(lambda (x) (+ x {}))\" \"4772s\")", 1000 + i));
+                "(mutate :rebind \"g4772\" \"(lambda (x) (+ x {}))\" \"4772s\")", 1000 + i));
         (void)cs.eval("(mutate :snapshot)");
     }
     CHECK(cs.evaluator().ast_snapshot_image_count() <= cap_images,

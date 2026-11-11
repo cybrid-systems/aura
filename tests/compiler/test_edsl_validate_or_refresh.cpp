@@ -180,7 +180,7 @@ int run_test_edsl_validate_or_refresh() {
         int refresh_successes = 0;
         for (int round = 0; round < kRounds; ++round) {
             // Structural mutate + eval bumps generation / restamps slots.
-            (void)cs.eval(std::format("(mutate:rebind \"a\" \"{}\")", 10 + round));
+            (void)cs.eval(std::format("(mutate :rebind \"a\" \"{}\")", 10 + round));
             (void)cs.eval("(eval-current)");
             // Force full restamp so held gen is guaranteed stale
             // (MutationBoundaryGuard exit path analogue).
@@ -289,10 +289,10 @@ int run_test_edsl_validate_or_refresh() {
         auto* ws = cs.evaluator().workspace_flat();
         CHECK(ws != nullptr, "ws");
         const auto nid = first_live(*ws);
-        // usage: (mutate:replace-value node-id|stable-ref new-value summary)
+        // usage: (mutate :replace-value node-id|stable-ref new-value summary)
         // Resolve runs before type checks, so even a type mismatch still
         // exercises ensure_valid_or_refresh on the bare NodeId path.
-        (void)cs.eval(std::format("(mutate:replace-value {} 42 \"2186-bare-nodeid\")", nid));
+        (void)cs.eval(std::format("(mutate :replace-value {} 42 \"2186-bare-nodeid\")", nid));
         const auto ensure1 = snapshot_provenance_enforcement().ensure_calls;
         CHECK(ensure1 > ensure0, "mutate bare NodeId path called ensure_valid_or_refresh");
     }

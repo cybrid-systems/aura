@@ -7,7 +7,7 @@
 // Record schema (v=1):
 //   {"v":1,"id","parent","run","seq","ts_ms","kind","target","decision",
 //    "reason","evidence"(JSON value),"old","new","dur_ms"}
-// kind: an op name (mutate:rebind, ast:restore, …) or "record" (evo:record!).
+// kind: an op name (mutate :rebind, ast:restore, …) or "record" (evo:record!).
 //
 // Schema v=2 (#4939) adds optional members after dur_ms — multi-objective,
 // constrained, multi-parent and behavior-description records:

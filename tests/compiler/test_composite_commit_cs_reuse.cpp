@@ -135,7 +135,7 @@ int run_test_composite_commit_cs_reuse() {
             (void)cs.incremental_infer(log.back());
         } else {
             // Force a rebind to create a mutation record.
-            (void)cs.eval("(mutate:rebind \"x\" \"2\")");
+            (void)cs.eval("(mutate :rebind \"x\" \"2\")");
             flat = cs.evaluator().workspace_flat();
             if (flat && !flat->all_mutations().empty())
                 (void)cs.incremental_infer(flat->all_mutations().back());

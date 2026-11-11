@@ -88,7 +88,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC3: mutate:rebind bumps propagation stats ---");
     const auto stats3a = stats_sum(cs);
     for (int round = 0; round < 4; ++round) {
-        (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(20 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"base\" \"" + std::to_string(20 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(eval-current :jit)");
         (void)cs.eval("(narrow-add 2)");
@@ -117,7 +117,7 @@ static void run_matrix(CompilerService& cs) {
             esc.push_back(c);
         }
         (void)cs.eval(
-            std::format("(mutate:rebind \"narrow-add\" \"{}\" \"issue746-r{}\")", esc, round));
+            std::format("(mutate :rebind \"narrow-add\" \"{}\" \"issue746-r{}\")", esc, round));
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(eval-current :jit)");
         (void)cs.eval("(narrow-add 1)");

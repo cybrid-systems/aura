@@ -129,13 +129,13 @@ int run_test_atomic_batch_rollback_metric_noise() {
 
         // Unsupported sub-op → batch-unsupported-op abort path.
         auto u =
-            cs.eval("(mutate:atomic-batch (list (list \"mutate:not-a-real-op\" \"x\" \"1\")))");
+            cs.eval("(mutate :atomic-batch (list (list \"mutate:not-a-real-op\" \"x\" \"1\")))");
         CHECK(u.has_value(), "AC2: unsupported returns");
         CHECK(is_pair(*u), "AC2: unsupported merr");
         CHECK(merr_kind(cs, *u) == "batch-unsupported-op", "AC2: kind unsupported-op");
 
         // Sub-op unexpected → batch-failed abort path.
-        auto b = cs.eval("(mutate:atomic-batch "
+        auto b = cs.eval("(mutate :atomic-batch "
                          "(list (list \"mutate:rebind\" \"f\" \"(lambda () 99)\") "
                          "      (list \"mutate:rebind\" \"no-such-2796\" \"(lambda () 0)\")))");
         CHECK(b.has_value() && is_pair(*b), "AC2: batch-failed merr");
@@ -158,8 +158,8 @@ int run_test_atomic_batch_rollback_metric_noise() {
         CHECK(cs.eval("(eval-current)").has_value(), "AC3: eval");
         const auto before = snap_audit();
         for (int i = 0; i < 50; ++i) {
-            auto r =
-                cs.eval("(mutate:atomic-batch (list (list \"mutate:not-a-real-op\" \"x\" \"1\")))");
+            auto r = cs.eval(
+                "(mutate :atomic-batch (list (list \"mutate:not-a-real-op\" \"x\" \"1\")))");
             CHECK(r.has_value(), "AC3: each fail returns");
         }
         const auto after = snap_audit();

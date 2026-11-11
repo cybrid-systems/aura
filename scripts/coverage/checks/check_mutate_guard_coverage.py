@@ -32,8 +32,11 @@ ROOT = Path(__file__).resolve().parents[3]
 #   add_mutate(
 #       "mutate:foo"
 # split so AC1 cannot miss a multi-line registration.
+# Issue #5144: add_hidden is the dispatch-only registration face for the
+# mutate:* bodies, so it is still "a production mutate registration" here —
+# the Guard contract is about the BODY, not about whether the name has a slot.
 ADD_RE = re.compile(
-    r'(add_mutate|add|register_stats_impl)\(\s*"(mutate(?::[^"]+)?)"',
+    r'(add_mutate|add_hidden|add|register_stats_impl)\(\s*"(mutate(?::[^"]+)?)"',
     re.MULTILINE,
 )
 

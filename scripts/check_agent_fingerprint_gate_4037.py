@@ -90,8 +90,11 @@ def main() -> int:
         return 1
     mut = _strip_cpp_comments(mut_raw)
 
-    # The full registration region: from the raw add() to the meta stamp.
-    add_at = mut.find(f'add("{PRIM}"')
+    # The full registration region: from the registration to the meta stamp.
+    # Issue #5144: the prim is dispatch-only now, so the registration is
+    # add_hidden(); accept either spelling (the body/meta contract is the same).
+    m_add = re.search(r'add(?:_hidden)?\(\s*"' + re.escape(PRIM) + r'"', mut)
+    add_at = m_add.start() if m_add else -1
     meta_at = mut.find("PrimMeta ex{};", add_at if add_at >= 0 else 0)
     meta_end = mut.find("set_meta_for_name", meta_at if meta_at >= 0 else 0)
     if add_at < 0 or meta_at < 0 or meta_end < 0:

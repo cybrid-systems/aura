@@ -10,7 +10,7 @@
   (if (not ok)
       (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
 (define (rebind name body label)
-  (try (mutate:rebind name body label) (catch (e) (list "raised" e))))
+  (try (mutate :rebind name body label) (catch (e) (list "raised" e))))
 (define (cl k acc)
   (if (= k 20) acc
       (cl (+ k 1) (string-append acc "((= x -" (number->string (+ k 1)) ") " (number->string k) ")"))))

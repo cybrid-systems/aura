@@ -149,7 +149,7 @@ int run_test_replace_pattern_multi_match_nodeid_stability() {
         const auto stale0 = ws->replace_pattern_stale_nodeid_prevented_total();
         const auto live0 = live_node_count(*ws);
 
-        auto r = cs.eval("(mutate:replace-pattern \"(lambda () 1)\" \"(lambda () 42)\")");
+        auto r = cs.eval("(mutate :replace-pattern \"(lambda () 1)\" \"(lambda () 42)\")");
         CHECK(r.has_value(), "AC2: returns");
         CHECK(is_bool(*r) && as_bool(*r), "AC2: success #t");
 
@@ -182,7 +182,7 @@ int run_test_replace_pattern_multi_match_nodeid_stability() {
 
         // Lockless dispatch table uses keyword/string op name form.
         auto r = cs.eval(
-            "(mutate:atomic-batch "
+            "(mutate :atomic-batch "
             "(list (list \"mutate:replace-pattern\" \"(lambda () 7)\" \"(lambda () 9)\")))");
         CHECK(r.has_value(), "AC3: batch returns");
         // Success is often #t or a list of results depending on batch shape.
@@ -228,7 +228,7 @@ int run_test_replace_pattern_multi_match_nodeid_stability() {
         const auto size0 = ws->size();
 
         // Replacement larger than match → each apply appends nodes mid-batch.
-        auto rep = cs.eval("(mutate:replace-pattern \"(g 0)\" "
+        auto rep = cs.eval("(mutate :replace-pattern \"(g 0)\" "
                            "\"(begin (g 1) (g 2) (g 3) (g 4) (g 5))\")");
         CHECK(rep.has_value(), "AC4: returns");
         if (is_bool(*rep) && as_bool(*rep)) {

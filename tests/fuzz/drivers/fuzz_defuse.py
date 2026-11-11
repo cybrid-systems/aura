@@ -213,9 +213,9 @@ def run_session(n_cycles):
             new_val = rng.randint(1, 100)
             mut_op = rng.choice(
                 [
-                    f'(mutate:tweak-literal {rng.randint(0, 3)} {rng.choice([1, -1, 5])} "fuzz tweak")',
-                    f'(mutate:rebind "{fn}" "(lambda (x) (+ x {new_val}))" "fuzz rebind")',
-                    f'(mutate:replace-value {rng.randint(0, 5)} {new_val} "fuzz replace")',
+                    f'(mutate :tweak-literal {rng.randint(0, 3)} {rng.choice([1, -1, 5])} "fuzz tweak")',
+                    f'(mutate :rebind "{fn}" "(lambda (x) (+ x {new_val}))" "fuzz rebind")',
+                    f'(mutate :replace-value {rng.randint(0, 5)} {new_val} "fuzz replace")',
                 ]
             )
             resp = send(proc, mut_op)

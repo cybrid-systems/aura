@@ -115,7 +115,7 @@ int main() {
                          "(newline)\n");
     const char* rebind = "/tmp/aura-5117-rebind.aura";
     write_file(rebind, "(define g (lambda () 1))\n"
-                       "(mutate:rebind \"g\" \"(lambda () 2)\")\n"
+                       "(mutate :rebind \"g\" \"(lambda () 2)\")\n"
                        "(eval-current)\n"
                        "(display (hash? (engine:metrics)))\n"
                        "(newline)\n"

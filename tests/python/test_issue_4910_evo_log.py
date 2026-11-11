@@ -27,11 +27,11 @@ PROG = (
     '(set-code "(define (score x) (* x 2))")\n'
     "(eval-current)\n"
     '(define s (mutate :snapshot "base"))\n'
-    '(display (list "rb" (mutate:rebind "score" "(lambda (x) (* x 3))" "triple"))) (newline)\n'
+    '(display (list "rb" (mutate :rebind "score" "(lambda (x) (* x 3))" "triple"))) (newline)\n'
     "(eval-current)\n"
     '(display (list "id" (evo:record! "score-v2" "keep" "holdout 0.71 >= 0.70"'
     ' (hash "score" 0.71 "threshold" 0.7) "(define (score x) (* x 3))" 12))) (newline)\n'
-    '(display (list "bad" (mutate:rebind "score" "(lambda (x)" "broken"))) (newline)\n'
+    '(display (list "bad" (mutate :rebind "score" "(lambda (x)" "broken"))) (newline)\n'
     '(display (list "restore" (mutate :restore s))) (newline)\n'
     '(display (list "rej" (evo:record! "score-v3" "rollback" "holdout 0.52 < 0.70"'
     ' (hash "score" 0.52 "threshold" 0.7)))) (newline)\n'
@@ -58,7 +58,7 @@ TIP_PROG = (
     "(eval-current)\n"
     '(display (list "c1" (evo:record! "c1" "keep" "first candidate"'
     ' (hash "score" 0.7) "(define (score x) (* x 2))"))) (newline)\n'
-    '(display (list "rb" (mutate:rebind "score" "(lambda (x) (* x 3))" "triple"))) (newline)\n'
+    '(display (list "rb" (mutate :rebind "score" "(lambda (x) (* x 3))" "triple"))) (newline)\n'
     '(display (list "c2" (evo:record! "c2" "keep" "second candidate"'
     ' (hash "score" 0.8) "(define (score x) (* x 3))"))) (newline)\n'
 )

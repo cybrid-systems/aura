@@ -223,7 +223,7 @@ int run_test_soa_partial_desync_gate() {
         auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
         const auto ff0 =
             m ? m->soa_dirty_desync_force_full_total.load(std::memory_order_relaxed) : 0;
-        (void)cs.eval("(mutate:set-body \"g\" \"(lambda (n) (* n 3))\")");
+        (void)cs.eval("(mutate :set-body \"g\" \"(lambda (n) (* n 3))\")");
         (void)cs.eval("(eval-current)");
         if (m)
             CHECK(m->soa_dirty_desync_force_full_total.load() >= ff0, "force_full non-dec");

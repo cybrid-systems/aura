@@ -363,7 +363,7 @@ static void run_1631() {
                     if ((i % 13) == 0)
                         cs.public_mark_define_dirty("f");
                     if ((i % 29) == 0)
-                        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (+ x 2))\" \"#1631\")");
+                        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (+ x 2))\" \"#1631\")");
                 } catch (...) {
                     errors.fetch_add(1, std::memory_order_relaxed);
                 }

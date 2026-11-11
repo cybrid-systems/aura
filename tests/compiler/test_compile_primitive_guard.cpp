@@ -215,7 +215,7 @@ int main() {
         const auto before_cap = load_u64(m->compile_primitive_guard_captures_total);
         const auto before_invalid = load_u64(m->mutate_from_feedback_invalid_node_total);
         // Invalid node: fail before Guard (no capture bump required).
-        auto inv = cs.eval(R"((mutate:from-verification-feedback "weaken-property" 999999 "x"))");
+        auto inv = cs.eval(R"((mutate :from-verification-feedback "weaken-property" 999999 "x"))");
         CHECK(inv.has_value() && is_bool(*inv), "invalid node returns bool");
         if (inv && is_bool(*inv))
             CHECK(!aura::compiler::types::as_bool(*inv), "invalid → #f");
@@ -225,7 +225,7 @@ int main() {
         // Valid workspace path may still fail delegation but should Guard.
         (void)cs.eval("(set-code \"(define n 1)\")");
         (void)cs.eval("(eval-current)");
-        auto r = cs.eval("(mutate:from-verification-feedback \"weaken-property\" 0 \"payload\")");
+        auto r = cs.eval("(mutate :from-verification-feedback \"weaken-property\" 0 \"payload\")");
         CHECK(r.has_value() && is_bool(*r), "feedback returns bool");
         const auto after_cap = load_u64(m->compile_primitive_guard_captures_total);
         // When workspace exists and node is in range, Guard is acquired.

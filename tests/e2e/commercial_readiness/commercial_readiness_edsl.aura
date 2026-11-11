@@ -1,5 +1,5 @@
 ;; commercial_readiness_edsl.aura — Issue #1934
-;; set-code + eval-current + query (mutate:rebind after set-code currently
+;; set-code + eval-current + query (mutate :rebind after set-code currently
 ;; SIGSEGV; rebind without set-code is a no-op on this build — pinned later).
 
 (define *e2e-fails* 0)

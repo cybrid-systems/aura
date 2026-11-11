@@ -399,7 +399,7 @@ struct Server {
         if (msg.starts_with("type error"))
             return false;
         // The static signature table lags runtime primitives with optional
-        // arguments (mutate:rebind name src [reason]); trust the runtime for
+        // arguments (mutate :rebind name src [reason]); trust the runtime for
         // callees the project does not define itself.
         static constexpr std::string_view kArity = "arity mismatch: call '";
         if (msg.starts_with(kArity)) {

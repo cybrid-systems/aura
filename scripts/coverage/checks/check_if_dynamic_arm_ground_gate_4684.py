@@ -6,7 +6,7 @@ Root cause: InferenceEngine::lub returned dynamic_type() *before*
 ConstraintSystem::normalize and the production ground gate whenever either
 side was already Dynamic. synthesize_flat_if passes that through and
 synthesize_flat cached it with clear_dirty, so e.g.
-      (let ((d (mutate:rebind "a" "b"))) (if #t d 1))
+      (let ((d (mutate :rebind "a" "b"))) (if #t d 1))
 published a solved Dynamic with no TypeError and kept
 type_export_is_authoritative() true on the production face (sandbox non-off,
 apply_production_security_defaults / TypedMutationAudit Full|Sampled ratio=1).

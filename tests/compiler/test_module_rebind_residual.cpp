@@ -132,7 +132,7 @@ static void ac2_split_module_rebind() {
     CHECK(eval_int_eq(cs, "(aether:loop-once)", 2), "loop 2");
     CHECK(eval_ok(cs, "(set-code \"(define (score x) (* x 2))\")"), "set-code");
     CHECK(eval_ok(cs, "(eval-current)"), "eval score");
-    CHECK(eval_ok(cs, "(mutate:rebind \"score\" \"(lambda (x) (* x 3))\" \"t\")"), "rebind");
+    CHECK(eval_ok(cs, "(mutate :rebind \"score\" \"(lambda (x) (* x 3))\" \"t\")"), "rebind");
     CHECK(eval_ok(cs, "(eval-current)"), "eval after rebind");
     CHECK(eval_int_eq(cs, "(aether:loop-once)", 3), "AC2: loop after rebind");
     CHECK(eval_int_eq(cs, "(aether:stats-get \"rounds\")", 3), "AC2: stats after rebind");
@@ -179,7 +179,7 @@ static void ac4_define_after_rebind() {
     CompilerService cs;
     CHECK(eval_ok(cs, "(set-code \"(define (score x) (* x 2))\")"), "set-code");
     CHECK(eval_ok(cs, "(eval-current)"), "eval");
-    CHECK(eval_ok(cs, "(mutate:rebind \"score\" \"(lambda (x) (* x 3))\" \"t\")"), "rebind");
+    CHECK(eval_ok(cs, "(mutate :rebind \"score\" \"(lambda (x) (* x 3))\" \"t\")"), "rebind");
     CHECK(eval_ok(cs, "(eval-current)"), "eval rebind");
     CHECK(eval_int_eq(cs, "(score 5)", 15), "score *3");
     CHECK(eval_ok(cs, "(define post-cell 10)"), "define after rebind");
@@ -243,7 +243,7 @@ static void ac7_rebind_never_pre_mutate_4109() {
           "AC7: set-code v4109 + getter");
     CHECK(eval_ok(cs, "(eval-current)"), "AC7: eval-current");
     CHECK(eval_int_eq(cs, "(get-v4109)", 41), "AC7: pre-mutate capture reads 41");
-    CHECK(eval_ok(cs, "(mutate:rebind \"v4109\" \"42\" \"t\")"), "AC7: rebind v4109");
+    CHECK(eval_ok(cs, "(mutate :rebind \"v4109\" \"42\" \"t\")"), "AC7: rebind v4109");
     CHECK(eval_ok(cs, "(eval-current)"), "AC7: eval-current after rebind");
     // The capture frame bound the OLD v4109 cell; the rebind moved the
     // workspace binding to a new cell, so the frame stays behind and

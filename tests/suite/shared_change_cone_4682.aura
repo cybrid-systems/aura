@@ -26,17 +26,17 @@
 (let loop ((i 2))
   (if (< i 12)
       (begin
-        (mutate:rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
+        (mutate :rebind "f" (string-append "(lambda (x) (+ x " (number->string i) "))") "t")
         (let ((r (eval-current)) (want (+ (* 2 (+ 1 i)) 100)))
           (check! (equal? r (list want want 21 #t)) (string-append "rebind f " (number->string i))))
         (check! (= (h 1) (+ (* 2 (+ 1 i)) 100)) (string-append "top call h " (number->string i)))
         (loop (+ i 1)))))
 ;; two rebinds before one eval
-(mutate:rebind "f" "(lambda (x) (- x 1))" "t")
-(mutate:rebind "g" "(lambda (x) (* 3 (f x)))" "t")
+(mutate :rebind "f" "(lambda (x) (- x 1))" "t")
+(mutate :rebind "g" "(lambda (x) (* 3 (f x)))" "t")
 (check! (equal? (eval-current) (list 100 100 21 #t)) "two rebinds one eval")
 ;; mutual recursion: rebind one half
-(mutate:rebind "od?" "(lambda (n) (if (= n 0) 'odd (ev? (- n 1))))" "t")
+(mutate :rebind "od?" "(lambda (n) (if (= n 0) 'odd (ev? (- n 1))))" "t")
 (check! (equal? (eval-current) (list 100 100 21 #t)) "mutual rebind even")
 (set-code (string-append
   "(define ev? (lambda (n) (if (= n 0) #t (od? (- n 1)))))\n"
@@ -44,19 +44,19 @@
   (fill 20 "")
   "(ev? 7)"))
 (check! (equal? (eval-current) #f) "set-code then eval")
-(mutate:rebind "od?" "(lambda (n) (if (= n 0) 'odd (ev? (- n 1))))" "t")
+(mutate :rebind "od?" "(lambda (n) (if (= n 0) 'odd (ev? (- n 1))))" "t")
 (check! (equal? (eval-current) 'odd) "mutual rebind reaches odd base")
 ;; :jit (legacy and 6a) agrees with the tree walker after a cone-only rebind
 (set-code (string-append
   "(define f (lambda (x) (+ x 1)))\n(define g (lambda (x) (* 2 (f x))))\n"
   (fill 20 "") "(g 5)"))
 (eval-current)
-(mutate:rebind "f" "(lambda (x) (+ x 10))" "t")
+(mutate :rebind "f" "(lambda (x) (+ x 10))" "t")
 (check! (equal? (eval-current :jit) 30) ":jit after rebind")
 (check! (equal? (eval-current) 30) "interp after rebind")
 ;; rebind on a name nobody calls, then rebind the callee: still fresh
-(mutate:rebind "w3" "(lambda (x) 'w3)" "t")
-(mutate:rebind "f" "(lambda (x) (+ x 20))" "t")
+(mutate :rebind "w3" "(lambda (x) 'w3)" "t")
+(mutate :rebind "f" "(lambda (x) (+ x 20))" "t")
 (check! (equal? (eval-current) 50) "unrelated + callee rebind")
 (check! (equal? (w3 0) 'w3) "unrelated rebind visible")
 (if (= *fails* 0)

@@ -1729,7 +1729,7 @@ int run_test_hold_budget_add_mutate_inbody_poll_3480() {
         CHECK(cs.eval("(eval-current)").has_value(), "3480 AC3: eval");
         aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
         const auto u0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
-        (void)cs.eval("(mutate:rebind \"y\" \"3\" \"3480-soft\")");
+        (void)cs.eval("(mutate :rebind \"y\" \"3\" \"3480-soft\")");
         CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() == u0,
               "3480 AC3: wrapper does not force-release under Soft");
         const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");

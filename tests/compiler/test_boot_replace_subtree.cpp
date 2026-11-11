@@ -123,7 +123,7 @@ int main() {
     expect(flat->get(inner).tag == aura::ast::NodeTag::Lambda, "f's body is the inner lambda");
 
     const auto before = flat->get(outer_lam).child(0);
-    auto rep = cs.eval(std::format("(mutate:replace-subtree {} \"(lambda (x) a)\")",
+    auto rep = cs.eval(std::format("(mutate :replace-subtree {} \"(lambda (x) a)\")",
                                    static_cast<unsigned>(inner)));
     show_err(rep, "mutate:replace-subtree");
     expect(rep.has_value(), "replace-subtree returned a value");

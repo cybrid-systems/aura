@@ -89,7 +89,7 @@ static void run_integration_matrix(CompilerService& cs) {
 
     std::println("\n--- AC4: occurrence pillar ---");
     const auto stats4a = cs.eval("(engine:metrics \"query:occurrence-stats\")");
-    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 8) 0))\" "
+    (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 8) 0))\" "
                   "\"issue-495-occ\")");
     auto stats4b = cs.eval("(engine:metrics \"query:occurrence-stats\")");
     CHECK(stats4a && is_int(*stats4a), "occurrence-stats before mutate");
@@ -114,7 +114,7 @@ static void run_integration_matrix(CompilerService& cs) {
     std::println("\n--- AC8: multi-round mutate stats monotonic ---");
     const auto stats8a = task2_refinement_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
                       std::to_string(round + 10) + ") 0))\" \"r" + std::to_string(round) + "\")");
         auto ev = cs.eval("(f 2)");
         CHECK(ev && is_int(*ev), "eval ok round " + std::to_string(round));

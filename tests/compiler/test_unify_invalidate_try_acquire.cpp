@@ -86,7 +86,7 @@ static void ac2_unified_invalidate() {
     const auto bridge0 = load_u64(m->bridge_epoch_bumps_total);
 
     std::array<std::string_view, 1> batch{
-        "(mutate:rebind \"f\" \"(lambda () 2)\" \"#1634\")",
+        "(mutate :rebind \"f\" \"(lambda () 2)\" \"#1634\")",
     };
     auto mr = cs.public_typed_mutate_atomic(batch);
     CHECK(mr.success || !mr.success, "atomic batch completes without throw");
@@ -129,7 +129,7 @@ static void ac4_propagate() {
         bool ok = true;
         CHECK(Guard::try_acquire(ev, 1, &ok).has_value(), "burn budget");
     }
-    auto mr = cs.public_typed_mutate("(mutate:rebind \"g\" \"(lambda () 9)\" \"#1634b\")");
+    auto mr = cs.public_typed_mutate("(mutate :rebind \"g\" \"(lambda () 9)\" \"#1634b\")");
     CHECK(!mr.success, "typed_mutate fails on quota");
     CHECK(mr.error.find("mutation quota exceeded") != std::string::npos || !mr.error.empty(),
           "error text");

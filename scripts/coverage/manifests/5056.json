@@ -15,7 +15,7 @@
       "path": "src/compiler/type_checker_impl.cpp",
       "contains": [
         "register_primitive(\"format\", {String, Dyn}, String, true)",
-        "Issue #5056: (mutate:rebind name code [summary]",
+        "Issue #5056: (mutate :rebind name code [summary]",
         "optional_max = 4;"
       ]
     },

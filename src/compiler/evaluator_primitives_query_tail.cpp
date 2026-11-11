@@ -1046,7 +1046,7 @@ void register_query_tail_hot_update_parts(PrimRegistrar add, std::pmr::vector<Pa
     //     SyntaxMarker::MacroIntroduced gate rejects (no explicit
     //     allow_macro_evolution + dirty_macro_nodes > 0).
     //   - reflect_validate_reflected_query_total: every
-    //     (mutate:validate-reflected) call (Step 2 of #1907).
+    //     (mutate :validate-reflected) call (Step 2 of #1907).
     //   - reflect_dirty_macro_nodes_total: cumulative sum of
     //     dirty_macro_nodes reported by the bridge hook (trending
     //     metric for self-evolution hygiene regression detection).
@@ -1101,18 +1101,21 @@ void register_query_tail_schema_parts(PrimRegistrar add, std::pmr::vector<Pair>&
     // after bumping validate_reflected_query_total by 1.
     // SECURITY_EXEMPT: diagnostic counters only — no AST write (#2057/#2152).
     // GUARD_EXEMPT: diagnostic counters only — no AST write (#2986). PrimMeta.guard_exempt.
-    add("mutate:validate-reflected", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        // Public accessor: register_query_primitives is not a friend of
-        // Evaluator (unlike ObservabilityPrims / register_mutate_*).
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            m->reflect_validate_reflected_query_total.fetch_add(1, std::memory_order_relaxed);
-        }
-        const std::uint64_t post_validate = ev.get_reflect_post_mutation_validate_total();
-        const std::uint64_t macro_reject = ev.get_reflect_hygiene_macro_reject_total();
-        const std::uint64_t dirty_macro = ev.get_reflect_dirty_macro_nodes_total();
-        return make_int(static_cast<std::int64_t>(post_validate + macro_reject + dirty_macro));
-    });
+    // Issue #5144: dispatch-only body — (mutate :validate-reflected) resolves
+    // it through the primitive table; the name has no public slot.
+    ev.primitives().add_hidden(
+        "mutate:validate-reflected", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            // Public accessor: register_query_primitives is not a friend of
+            // Evaluator (unlike ObservabilityPrims / register_mutate_*).
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                m->reflect_validate_reflected_query_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            const std::uint64_t post_validate = ev.get_reflect_post_mutation_validate_total();
+            const std::uint64_t macro_reject = ev.get_reflect_hygiene_macro_reject_total();
+            const std::uint64_t dirty_macro = ev.get_reflect_dirty_macro_nodes_total();
+            return make_int(static_cast<std::int64_t>(post_validate + macro_reject + dirty_macro));
+        });
     {
         ::aura::compiler::PrimMeta ex{};
         ex.security_exempt = true;
@@ -1151,7 +1154,7 @@ void register_query_tail_schema_parts(PrimRegistrar add, std::pmr::vector<Pair>&
 
     // ── Issue #288: mutate:validate-against-schema ──────────────────
     //
-    // Standalone pre-mutation validation. Callers (mutate:rebind,
+    // Standalone pre-mutation validation. Callers (mutate :rebind,
     // mutate:query-and-replace, or user code) can use this to
     // check a new value against a registered type's schema before
     // committing the change. Returns one of:

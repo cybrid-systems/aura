@@ -288,7 +288,7 @@ static void ac1923_3_stress() {
     constexpr int kRounds = 200;
     for (int i = 0; i < kRounds; ++i) {
         (void)cs.eval(std::format(
-            "(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x {}) 0))\" \"r{}\")", i % 17,
+            "(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x {}) 0))\" \"r{}\")", i % 17,
             i));
         (void)cs.eval("(eval-current)");
         if (i % 20 == 0)
@@ -315,7 +315,8 @@ static void ac1923_4_ratio_gate() {
           "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     for (int i = 0; i < 50; ++i) {
-        (void)cs.eval(std::format("(mutate:rebind \"p\" \"(lambda (x) (+ x {}))\" \"s{}\")", i, i));
+        (void)cs.eval(
+            std::format("(mutate :rebind \"p\" \"(lambda (x) (+ x {}))\" \"s{}\")", i, i));
         (void)cs.eval("(eval-current)");
     }
     const auto ratio = href(cs, "query:type-incremental-fidelity-stats", "recheck-ratio-bp");
@@ -334,7 +335,7 @@ static void ac1923_5_memo() {
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     for (int i = 0; i < 40; ++i) {
         (void)cs.eval(std::format(
-            "(mutate:rebind \"t\" \"(lambda (x) (if (number? x) (+ x {}) 0))\" \"m{}\")", i, i));
+            "(mutate :rebind \"t\" \"(lambda (x) (if (number? x) (+ x {}) 0))\" \"m{}\")", i, i));
         (void)cs.eval("(eval-current)");
     }
     CHECK(href(cs, "query:type-incremental-fidelity-stats", "memo-hit-rate-target-bp") == 8000,
@@ -375,7 +376,7 @@ static void ac1923_8_no_crash() {
     CHECK(cs.eval("(set-code \"(define (u x) x)\")").has_value(), "set-code");
     for (int i = 0; i < 100; ++i) {
         (void)cs.eval(
-            std::format("(mutate:rebind \"u\" \"(lambda (x) (+ x {}))\" \"u{}\")", i % 3, i));
+            std::format("(mutate :rebind \"u\" \"(lambda (x) (+ x {}))\" \"u{}\")", i % 3, i));
         auto r = cs.eval("(eval-current)");
         (void)r;
     }

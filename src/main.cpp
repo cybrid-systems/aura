@@ -1786,19 +1786,19 @@ static bool serve_json_immediate(aura::compiler::CompilerService& cs, ServeCmd& 
             auto node = std::stoll(node_it->second);
             std::string sexpr;
             if (op_name == "mutate:record-patch") {
-                // (mutate:record-patch node op-name summary)
+                // (mutate :record-patch node op-name summary)
                 std::string on = on_it != cmd.end() ? on_it->second : "patch";
                 std::string s = sum_it != cmd.end() ? sum_it->second : "";
-                sexpr = std::format("(mutate:record-patch {} \"{}\" \"{}\")", node, on, s);
+                sexpr = std::format("(mutate :record-patch {} \"{}\" \"{}\")", node, on, s);
             } else if (op_name == "mutate:replace-value") {
-                // (mutate:replace-value node new-value summary)
+                // (mutate :replace-value node new-value summary)
                 std::string v = val_it != cmd.end() ? val_it->second : "0";
                 std::string s = sum_it != cmd.end() ? sum_it->second : "";
-                sexpr = std::format("(mutate:replace-value {} {} \"{}\")", node, v, s);
+                sexpr = std::format("(mutate :replace-value {} {} \"{}\")", node, v, s);
             } else if (op_name == "mutate:replace-type") {
-                // (mutate:replace-type node type-string)
+                // (mutate :replace-type node type-string)
                 std::string t = val_it != cmd.end() ? val_it->second : "Dyn";
-                sexpr = std::format("(mutate:replace-type {} \"{}\")", node, t);
+                sexpr = std::format("(mutate :replace-type {} \"{}\")", node, t);
             } else {
                 // Generic: pass through with all fields
                 std::string v = val_it != cmd.end() ? val_it->second : "0";

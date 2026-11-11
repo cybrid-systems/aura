@@ -751,7 +751,7 @@ static void run_166_cache_invalidation() {
         CompilerService cs;
         CHECK(runner(cs, "(set-code \"(define x 10)\")") >= 0, "T1 set-code");
         CHECK(runner(cs, "x") == 10, "T1 first eval x = 10");
-        CHECK(runner(cs, "(mutate:rebind \"x\" \"42\" \"bump x\")") > 0, "T1 mutate:rebind");
+        CHECK(runner(cs, "(mutate :rebind \"x\" \"42\" \"bump x\")") > 0, "T1 mutate:rebind");
         CHECK(runner(cs, "x") == 42, "T1 after mutate x = 42");
     }
     // T2: epoch increments; unrelated mutation doesn't break cached fn
@@ -760,7 +760,7 @@ static void run_166_cache_invalidation() {
         CHECK(runner(cs, "(set-code \"(define (f x) (* x x))(define y 0)\")") >= 0,
               "T2 set-code with f + y");
         CHECK(runner(cs, "(f 5)") == 25, "T2 (f 5) = 25");
-        CHECK(runner(cs, "(mutate:rebind \"y\" \"100\" \"bump y\")") > 0,
+        CHECK(runner(cs, "(mutate :rebind \"y\" \"100\" \"bump y\")") > 0,
               "T2 mutate:rebind on unrelated var");
         CHECK(runner(cs, "(f 5)") == 25,
               "T2 after unrelated mutation (f 5) still = 25 (cache handled)");
@@ -770,7 +770,7 @@ static void run_166_cache_invalidation() {
         CompilerService cs;
         CHECK(runner(cs, "(set-code \"(define (g x) (+ x 1))\")") >= 0, "T3 set-code");
         CHECK(runner(cs, "(g 10)") == 11, "T3 first (g 10) = 11");
-        CHECK(runner(cs, "(mutate:set-body \"g\" \"(lambda (x) (+ x 100))\" \"bump g\")") > 0,
+        CHECK(runner(cs, "(mutate :set-body \"g\" \"(lambda (x) (+ x 100))\" \"bump g\")") > 0,
               "T3 mutate:set-body");
         CHECK(runner(cs, "(g 10)") == 110, "T3 after mutate:set-body (g 10) = 110");
     }
@@ -780,7 +780,7 @@ static void run_166_cache_invalidation() {
         CHECK(runner(cs, "(set-code \"(define counter 0)\")") >= 0, "T4 set-code");
         bool all_ok = true;
         for (int i = 1; i <= 10; ++i) {
-            std::string mutate_src = "(mutate:rebind \"counter\" \"" + std::to_string(i) +
+            std::string mutate_src = "(mutate :rebind \"counter\" \"" + std::to_string(i) +
                                      "\" \"iter " + std::to_string(i) + "\")";
             if (runner(cs, mutate_src) <= 0) {
                 all_ok = false;
@@ -1838,7 +1838,7 @@ static void run_456_mutation_observability_primitives() {
         cs.eval("(set-code \"(define x 1) (define y 2)\")");
         (void)cs.eval("(engine:metrics \"query:epoch-stats\")");
         (void)cs.eval("(engine:metrics \"query:epoch-delta-since-last-query\")");
-        cs.eval("(mutate:rebind \"x\" \"42\")");
+        cs.eval("(mutate :rebind \"x\" \"42\")");
         auto r = cs.eval("(engine:metrics \"query:epoch-delta-since-last-query\")");
         CHECK(r.has_value() && is_int(*r) && as_int(*r) >= 2,
               "epoch-delta >= 2 after a mutate:rebind (2 bumps per boundary)");
@@ -1850,7 +1850,7 @@ static void run_456_mutation_observability_primitives() {
         cs.eval("(set-code \"(define z 1)\")");
         auto r0 = cs.eval("(query:mutation-impact)");
         int64_t before = (r0 && is_int(*r0)) ? as_int(*r0) : 0;
-        cs.eval("(mutate:rebind \"z\" \"99\")");
+        cs.eval("(mutate :rebind \"z\" \"99\")");
         auto r1 = cs.eval("(query:mutation-impact)");
         int64_t after = (r1 && is_int(*r1)) ? as_int(*r1) : 0;
         CHECK(after > before, "query:mutation-impact count increased after mutate");
@@ -2599,11 +2599,11 @@ static void run_138_incremental_dirty_propagation_type_checking() {
                                  "(eval-current) (+ x y)");
         CHECK(r1 == 3, "set-code + eval-current: 1+2=3");
         int64_t r2 = run_int(cs, "(set-code \"(define x 1)\") "
-                                 "(mutate:rebind \"x\" \"(quote 99)\" \"test\") "
+                                 "(mutate :rebind \"x\" \"(quote 99)\" \"test\") "
                                  "(eval-current) x");
         CHECK(r2 == 99, "after mutate:rebind, eval-current sees x=99");
         std::string s = run_str(cs, "(set-code \"(define x 1)(define y 2)\") "
-                                    "(mutate:rebind \"x\" \"(quote 99)\" \"test\") "
+                                    "(mutate :rebind \"x\" \"(quote 99)\" \"test\") "
                                     "(typecheck-current)");
         CHECK(s.find("no errors") != std::string::npos,
               "typecheck after mutate:rebind returns no errors");
@@ -2611,7 +2611,7 @@ static void run_138_incremental_dirty_propagation_type_checking() {
                                      "(typecheck-current)");
         CHECK(s1.find("no errors") != std::string::npos, "typecheck passes before mutation");
         std::string s2 = run_str(cs, "(set-code \"(define x 1)\") "
-                                     "(mutate:replace-value (query :find \"x\") "
+                                     "(mutate :replace-value (query :find \"x\") "
                                      "\"\\\"hello\\\"\" \"test\") "
                                      "(typecheck-current)");
         bool has_error = s2.find("error") != std::string::npos ||
@@ -2657,7 +2657,7 @@ static void run_138_incremental_dirty_propagation_type_checking() {
         CompilerService cs;
         std::string code = "(set-code \"(define counter 0)\") (begin ";
         for (int i = 0; i < 50; ++i) {
-            code += "(mutate:rebind \"counter\" \"(quote " + std::to_string(i) + ")\" \"c\") ";
+            code += "(mutate :rebind \"counter\" \"(quote " + std::to_string(i) + ")\" \"c\") ";
         }
         code += "(typecheck-current))";
         std::string status = run_str(cs, code);
@@ -2669,9 +2669,9 @@ static void run_138_incremental_dirty_propagation_type_checking() {
         std::println("\n--- #138 AC4 cont.: multiple mutations don't corrupt workspace ---");
         CompilerService cs;
         std::string code = "(set-code \"(define a 1)(define b 2)(define c 3)\") (begin "
-                           "(mutate:rebind \"a\" \"(quote 10)\" \"t\") "
-                           "(mutate:rebind \"b\" \"(quote 20)\" \"t\") "
-                           "(mutate:rebind \"c\" \"(quote 30)\" \"t\") "
+                           "(mutate :rebind \"a\" \"(quote 10)\" \"t\") "
+                           "(mutate :rebind \"b\" \"(quote 20)\" \"t\") "
+                           "(mutate :rebind \"c\" \"(quote 30)\" \"t\") "
                            "(eval-current) (+ a b c))";
         int64_t sum = run_int(cs, code);
         CHECK(sum == 60, "after mutations: 10+20+30=60");
@@ -2681,7 +2681,7 @@ static void run_138_incremental_dirty_propagation_type_checking() {
         std::println("\n--- #138 workspace isolation (per-eval set-code) ---");
         CompilerService cs;
         int64_t r1 = run_int(cs, "(set-code \"(define x 1)\") "
-                                 "(mutate:rebind \"x\" \"(quote 99)\" \"t\") "
+                                 "(mutate :rebind \"x\" \"(quote 99)\" \"t\") "
                                  "(eval-current) x");
         CHECK(r1 == 99, "first eval: x=99 after mutate");
         int64_t r2 = run_int(cs, "(set-code \"(define x 1)\") "
@@ -2709,13 +2709,13 @@ static void run_139_structural_refactor_operators() {
         // rename-symbol all occurrences
         std::string s = run_str(cs, "(set-code \"(define (f x) (+ x x))\") "
                                     "(begin "
-                                    "  (mutate:rename-symbol \"x\" \"y\" \"rename test\") "
+                                    "  (mutate :rename-symbol \"x\" \"y\" \"rename test\") "
                                     "  (typecheck-current))");
         bool ok = s.find("no errors") != std::string::npos;
         CHECK(ok, "after rename x→y, typecheck-current passes");
         // rename creates new binding (cross-binding)
         int64_t r = run_int(cs, "(set-code \"(define (f x) (+ x 1))(f 5)\") "
-                                "(mutate:rename-symbol \"f\" \"g\" \"rename test\") "
+                                "(mutate :rename-symbol \"f\" \"g\" \"rename test\") "
                                 "(eval-current) (g 5)");
         CHECK(r == 6, "after rename f→g, (g 5) = 6");
         // rename preserves shadow
@@ -2723,28 +2723,28 @@ static void run_139_structural_refactor_operators() {
                                  "\""
                                  "(define (outer x) (define (inner x) (* x 2)) (+ x (inner x)))"
                                  "\") "
-                                 "(mutate:rename-symbol \"outer\" \"outer2\" \"test\") "
+                                 "(mutate :rename-symbol \"outer\" \"outer2\" \"test\") "
                                  "(eval-current) (outer2 5)");
         CHECK(r2 == 15, "after rename outer→outer2, (outer2 5) = 15");
         // inline-call basic
         int64_t r3 =
             run_int(cs, "(set-code \"(define (sq x) (* x x))(define v (sq 5))\") "
                         "(begin "
-                        "  (mutate:inline-call (list-ref (query:node-type \"Call\") 1) \"test\") "
+                        "  (mutate :inline-call (list-ref (query:node-type \"Call\") 1) \"test\") "
                         "  (eval-current) v)");
         CHECK(r3 == 25, "after inline-call, v=25");
         // refactor-extract
         int64_t r4 =
             run_int(cs, "(set-code \"(define (f x) (+ (* x 2) 1))\") "
                         "(begin "
-                        "  (mutate:refactor/extract (car (query:node-type \"Call\")) \"doubled\") "
+                        "  (mutate :refactor/extract (car (query:node-type \"Call\")) \"doubled\") "
                         "  (length (query:node-type \"Define\")))");
         CHECK(r4 == 2, "after refactor/extract: 2 Defines (original + extracted)");
         // move-node
         int64_t r5 =
             run_int(cs, "(set-code \"(begin (define a 1) (define b 2))\") "
                         "(begin "
-                        "  (mutate:move-node (query :find \"b\") "
+                        "  (mutate :move-node (query :find \"b\") "
                         "                       (query :find \"a\") 0 \"move b before a\") "
                         "  (eval-current) (+ a b))");
         CHECK(r5 == 3, "after move-node, (+ a b) = 3");
@@ -2754,7 +2754,7 @@ static void run_139_structural_refactor_operators() {
         int64_t r6 =
             run_int(cs, "(set-code \"(define (f x) (+ (* x 2) 1))\") "
                         "(begin "
-                        "  (mutate:extract-function (car (query :find \"x\")) \"double-of\") "
+                        "  (mutate :extract-function (car (query :find \"x\")) \"double-of\") "
                         "  (eval-current) (f 5))");
         CHECK(r6 >= 0, "after extract-function, (f 5) still evaluates to an int");
         // hygiene preservation
@@ -2775,9 +2775,9 @@ static void run_139_structural_refactor_operators() {
         std::string code2 = "(set-code \"(define a 1)(define b 2)\") (begin ";
         for (int i = 0; i < 50; ++i) {
             if (i % 2 == 0) {
-                code2 += "(mutate:rename-symbol \"a\" \"tmp\" \"test\") ";
+                code2 += "(mutate :rename-symbol \"a\" \"tmp\" \"test\") ";
             } else {
-                code2 += "(mutate:rename-symbol \"tmp\" \"a\" \"test\") ";
+                code2 += "(mutate :rename-symbol \"tmp\" \"a\" \"test\") ";
             }
         }
         code2 += "(typecheck-current))";
@@ -2788,15 +2788,15 @@ static void run_139_structural_refactor_operators() {
         std::string status2 =
             run_str(cs, "(set-code \"(define (sq x) (* x x))(define v (sq 5))\") "
                         "(begin "
-                        "  (mutate:rename-symbol \"sq\" \"square\" \"test\") "
-                        "  (mutate:inline-call (list-ref (query:node-type \"Call\") 1) \"test\") "
+                        "  (mutate :rename-symbol \"sq\" \"square\" \"test\") "
+                        "  (mutate :inline-call (list-ref (query:node-type \"Call\") 1) \"test\") "
                         "  (typecheck-current))");
         bool ok2 = status2.find("no errors") != std::string::npos;
         CHECK(ok2, "after rename+inline, typecheck passes");
         // splice and wrap
         std::string code3 = "(set-code \"(define x 5)\") "
                             "(begin "
-                            "  (mutate:wrap (car (query :find \"x\")) \"lambda-wrap\" \"test\") "
+                            "  (mutate :wrap (car (query :find \"x\")) \"lambda-wrap\" \"test\") "
                             "  (typecheck-current))";
         std::string status3 = run_str(cs, code3);
         bool ok3 = status3.find("no errors") != std::string::npos;
@@ -2808,14 +2808,14 @@ static void run_139_structural_refactor_operators() {
         CompilerService cs;
         std::string s1 = run_str(cs, "(set-code \"(define (add1 x) (+ x 1))(add1 5)\") "
                                      "(begin "
-                                     "  (mutate:rename-symbol \"add1\" \"increment\" \"test\") "
+                                     "  (mutate :rename-symbol \"add1\" \"increment\" \"test\") "
                                      "  (typecheck-current))");
         bool ok1 = s1.find("no errors") != std::string::npos;
         CHECK(ok1, "after rename add1→increment, typecheck passes");
         std::string s2 =
             run_str(cs, "(set-code \"(define (f x) (+ (* x 2) 1))\") "
                         "(begin "
-                        "  (mutate:extract-function (car (query :find \"x\")) \"double-of\") "
+                        "  (mutate :extract-function (car (query :find \"x\")) \"double-of\") "
                         "  (typecheck-current))");
         bool ok2 = s2.find("no errors") != std::string::npos;
         CHECK(ok2, "after extract-function, typecheck passes");

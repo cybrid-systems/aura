@@ -192,7 +192,7 @@ int run_test_parallel_intend_pure_contract() {
         auto seed = cs.eval("(begin (set-code \"(define (sf x) (+ x 1))\") (eval-current) 1)");
         CHECK(seed.has_value(), "AC3: seed define for mutate probe");
         auto r = cs.eval("(parallel-intend"
-                         "  (vector (lambda () (begin (mutate:set-body \"sf\" \"(+ x 2)\") 1))"
+                         "  (vector (lambda () (begin (mutate :set-body \"sf\" \"(+ x 2)\") 1))"
                          "          (lambda () 2)"
                          "          (lambda () 3))"
                          "  :pure #t :max-concurrency 3 :timeout-ms 10000 :collect-errors #t)");
@@ -200,11 +200,12 @@ int run_test_parallel_intend_pure_contract() {
         const auto violated_after =
             g_orch_module_stats.pure_contract_violated_total.load(std::memory_order_relaxed);
         std::println("  pure_contract_violated delta={}", violated_after - violated_before);
-        auto err = cs.eval("(hash-ref"
-                           "  (parallel-intend"
-                           "    (vector (lambda () (begin (mutate:set-body \"sf\" \"(+ x 3)\") 1)))"
-                           "    :pure #t :max-concurrency 1 :timeout-ms 10000 :collect-errors #t)"
-                           "  \"err-count\")");
+        auto err =
+            cs.eval("(hash-ref"
+                    "  (parallel-intend"
+                    "    (vector (lambda () (begin (mutate :set-body \"sf\" \"(+ x 3)\") 1)))"
+                    "    :pure #t :max-concurrency 1 :timeout-ms 10000 :collect-errors #t)"
+                    "  \"err-count\")");
         const bool metric_hit = violated_after > violated_before;
         const bool err_hit = err && is_int(*err) && as_int(*err) > 0;
         CHECK(metric_hit || err_hit,
@@ -1600,23 +1601,23 @@ int run_test_parallel_intend_pure_contract() {
             "(begin (set-code \"(define (sf x) (+ x 1)) (define (sg x) (+ x 1))\") "
             "(eval-current) 1)";
         constexpr const char* kMutateZeroKeys = R"m3299(
-            (parallel-intend (vector (lambda () (begin (mutate:set-body "sf" "(+ x 2)") 1))
-                                     (lambda () (begin (mutate:set-body "sg" "(+ x 3)") 2)))
+            (parallel-intend (vector (lambda () (begin (mutate :set-body "sf" "(+ x 2)") 1))
+                                     (lambda () (begin (mutate :set-body "sg" "(+ x 3)") 2)))
                              :max-concurrency 2
                              :collect-errors #t
                              :timeout-ms 5000)
         )m3299";
         constexpr const char* kMutateTwoKeys = R"m3299(
-            (parallel-intend (vector (lambda () (begin (mutate:set-body "sf" "(+ x 2)") 1))
-                                     (lambda () (begin (mutate:set-body "sg" "(+ x 3)") 2)))
+            (parallel-intend (vector (lambda () (begin (mutate :set-body "sf" "(+ x 2)") 1))
+                                     (lambda () (begin (mutate :set-body "sg" "(+ x 3)") 2)))
                              :max-concurrency 2
                              :region-keys (vector 1 2)
                              :collect-errors #t
                              :timeout-ms 5000)
         )m3299";
         constexpr const char* kMutateOverlapKeys = R"m3299(
-            (parallel-intend (vector (lambda () (begin (mutate:set-body "sf" "(+ x 2)") 1))
-                                     (lambda () (begin (mutate:set-body "sg" "(+ x 3)") 2)))
+            (parallel-intend (vector (lambda () (begin (mutate :set-body "sf" "(+ x 2)") 1))
+                                     (lambda () (begin (mutate :set-body "sg" "(+ x 3)") 2)))
                              :max-concurrency 2
                              :region-keys (vector 7 7)
                              :collect-errors #t

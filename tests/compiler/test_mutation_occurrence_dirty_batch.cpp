@@ -385,7 +385,7 @@ namespace aura_639_detail {
         CHECK(ws != nullptr, "workspace flat present");
         const auto inv0 = ws ? ws->narrow_invalidation_post_mutate_count() : 0u;
 
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (string? x) x 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (string? x) x 0))\" "
                       "\"issue-639-pred\")");
         const auto inv1 = ws->narrow_invalidation_post_mutate_count();
         const auto stale_count = ws->stale_narrowing_record_count();
@@ -401,7 +401,7 @@ namespace aura_639_detail {
         const auto stats0 = narrow_blame_stats(cs);
 
         cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
                       "\"issue-639-stale\")");
         (void)cs.eval("(typecheck-current)");
 
@@ -422,7 +422,7 @@ namespace aura_639_detail {
         std::println("\n--- AC4: query:provenance-of includes :stale ---");
         CompilerService cs;
         CHECK(load_if_workspace(cs), "load if workspace");
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (pair? x) (car x) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (pair? x) (car x) 0))\" "
                       "\"issue-639-prov\")");
         (void)cs.eval("(typecheck-current)");
         auto prov = cs.eval("(query:provenance-of \"x\")");
@@ -434,7 +434,7 @@ namespace aura_639_detail {
         CompilerService cs;
         CHECK(load_if_workspace(cs), "load if workspace");
         cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 3) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 3) 0))\" "
                       "\"issue-639-renarrow\")");
         auto* ws = cs.workspace_flat();
         CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
@@ -453,7 +453,7 @@ namespace aura_639_detail {
         aura::compiler::typed_audit::apply_dev_audit_defaults();
         CompilerService cs;
         CHECK(load_if_workspace(cs), "load if workspace");
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 10) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 10) 0))\" "
                       "\"issue-639-sem\")");
         auto* ws = cs.workspace_flat();
         CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
@@ -534,7 +534,7 @@ namespace aura_627_detail {
         std::println("\n--- AC1: check-mode narrow after mutate ---");
         CompilerService cs;
         CHECK(load_if_workspace(cs), "load if workspace");
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 5) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 5) 0))\" "
                       "\"issue-627-check\")");
         auto tc = cs.eval("(typecheck-current)");
         CHECK(tc.has_value(), "typecheck-current after mutate succeeds");
@@ -546,7 +546,7 @@ namespace aura_627_detail {
         std::println("\n--- AC2: synthesize eval semantics preserved ---");
         CompilerService cs;
         CHECK(load_if_workspace(cs), "load if workspace");
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 10) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 10) 0))\" "
                       "\"issue-627-synth\")");
         auto* ws = cs.workspace_flat();
         CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
@@ -562,7 +562,7 @@ namespace aura_627_detail {
         CompilerService cs;
         CHECK(load_if_workspace(cs), "load if workspace");
         const auto stats0 = bidirectional_narrow_stats(cs);
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 4) 0))\" "
                       "\"issue-627-stats\")");
         auto* ws = cs.workspace_flat();
         CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
@@ -588,7 +588,7 @@ namespace aura_627_detail {
         CHECK(load_if_workspace(cs), "load if workspace");
         const auto blame0 = narrow_blame_stats(cs);
         cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
                       "\"issue-627-stale\")");
         (void)cs.eval("(typecheck-current)");
         const auto blame1 = narrow_blame_stats(cs);
@@ -604,7 +604,7 @@ namespace aura_627_detail {
         CompilerService cs;
         CHECK(load_if_workspace(cs), "load if workspace");
         cs.set_incremental_typecheck_mode(aura::compiler::IncrementalTypecheckMode::Lazy);
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 20) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 20) 0))\" "
                       "\"issue-627-inc\")");
         auto* ws = cs.workspace_flat();
         CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
@@ -621,7 +621,7 @@ namespace aura_627_detail {
         CompilerService cs;
         CHECK(load_if_workspace(cs), "load if workspace");
         cs.set_bidirectional_mode(false);
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 1) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 1) 0))\" "
                       "\"issue-627-optout\")");
         auto tc = cs.eval("(typecheck-current)");
         CHECK(tc.has_value(), "typecheck works with bidirectional_mode=false post-mutate");
@@ -700,7 +700,7 @@ namespace aura_608_detail {
 
         std::println("\n--- AC2: define+if mutate → stats grow + narrow eval ---");
         const auto stats0 = type_incremental_stats(cs);
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x 5) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x 5) 0))\" "
                       "\"issue-608-if\")");
         const auto stats1 = type_incremental_stats(cs);
         std::println("  type-incremental-stats: {} -> {}", stats0, stats1);
@@ -712,7 +712,7 @@ namespace aura_608_detail {
 
         std::println("\n--- AC3: closure rebind selective + eval ---");
         const auto sel0 = cs.evaluator().get_selective_recheck_count();
-        (void)cs.eval("(mutate:rebind \"g\" \"(lambda (y) (+ y 20))\" \"issue-608-closure\")");
+        (void)cs.eval("(mutate :rebind \"g\" \"(lambda (y) (+ y 20))\" \"issue-608-closure\")");
         const auto sel1 = cs.evaluator().get_selective_recheck_count();
         std::println("  selective_recheck: {} -> {}", sel0, sel1);
         CHECK(sel1 >= sel0, "selective_recheck monotonic on closure rebind");
@@ -722,7 +722,7 @@ namespace aura_608_detail {
             CHECK(as_int(*r3) == 22, "closure body (+ y 20) correct");
 
         std::println("\n--- AC4: delta_constraints_processed after incremental ---");
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (* x 2) 0))\" "
                       "\"issue-608-dep\")");
         auto* ws = cs.workspace_flat();
         CHECK(ws != nullptr && !ws->all_mutations().empty(), "mutation logged");
@@ -734,7 +734,7 @@ namespace aura_608_detail {
 
         std::println("\n--- AC5: narrowing_dirty_recovery bumps ---");
         const auto snap5a = cs.snapshot();
-        (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (- x 1) 0))\" "
+        (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (- x 1) 0))\" "
                       "\"issue-608-occ\")");
         const auto snap5b = cs.snapshot();
         std::println("  narrowing_dirty_recovery: {} -> {}", snap5a.narrowing_dirty_recovery_total,
@@ -748,9 +748,9 @@ namespace aura_608_detail {
             const std::string f_body =
                 "(lambda (x) (if (number? x) (+ x " + std::to_string(round + 6) + ") 0))";
             const std::string g_body = "(lambda (y) (+ y " + std::to_string(round + 30) + "))";
-            (void)cs.eval("(mutate:rebind \"f\" \"" + f_body + "\" \"r" + std::to_string(round) +
+            (void)cs.eval("(mutate :rebind \"f\" \"" + f_body + "\" \"r" + std::to_string(round) +
                           "-f\")");
-            (void)cs.eval("(mutate:rebind \"g\" \"" + g_body + "\" \"r" + std::to_string(round) +
+            (void)cs.eval("(mutate :rebind \"g\" \"" + g_body + "\" \"r" + std::to_string(round) +
                           "-g\")");
             auto rf = cs.eval("(f 1)");
             auto rg = cs.eval("(g 1)");
@@ -764,7 +764,7 @@ namespace aura_608_detail {
         std::println("\n--- AC7: sequential query/eval stress under mutate ---");
         std::int64_t stress_sum = 0;
         for (int i = 0; i < 8; ++i) {
-            (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
+            (void)cs.eval("(mutate :rebind \"f\" \"(lambda (x) (if (number? x) (+ x " +
                           std::to_string(i) + ") 0))\" \"stress-" + std::to_string(i) + "\")");
             auto qs = cs.eval("(engine:metrics \"query:type-incremental-stats\")");
             CHECK(qs && is_int(*qs), "query:type-incremental-stats during stress");
@@ -974,7 +974,7 @@ namespace aura_414_detail {
 
         std::println("\n--- AC2: mutate:rebind bumps epoch counters ---");
         const auto stats2a = generation_epoch_stats(cs);
-        (void)cs.eval("(mutate:rebind \"base\" \"99\")");
+        (void)cs.eval("(mutate :rebind \"base\" \"99\")");
         const auto stats2b = generation_epoch_stats(cs);
         std::println("  generation-epoch-stats: {} -> {}", stats2a, stats2b);
         CHECK(stats2b > stats2a, "mutate bumps generation epoch stats");
@@ -993,7 +993,7 @@ namespace aura_414_detail {
         std::println("\n--- AC5: multi-round mutate matrix ---");
         const auto stats5a = generation_epoch_stats(cs);
         for (int round = 0; round < 3; ++round) {
-            (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(round) + "\")");
+            (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(round) + "\")");
             (void)cs.eval("(eval-current)");
         }
         const auto stats5b = generation_epoch_stats(cs);

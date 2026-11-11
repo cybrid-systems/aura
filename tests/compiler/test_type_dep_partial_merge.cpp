@@ -268,7 +268,7 @@ static void ac4925_top_level_begin_define_adds_root() {
           "4925: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "4925: eval-current");
     const auto added_before = query_field(cs, "type-dep-partial-nodes-added");
-    auto r = cs.eval("(mutate:rebind \"f\" \"(lambda () (g 1))\" \"t\")");
+    auto r = cs.eval("(mutate :rebind \"f\" \"(lambda () (g 1))\" \"t\")");
     CHECK(r.has_value() && !aura::compiler::types::is_error(*r), "4925: rebind commits");
     const auto added = query_field(cs, "type-dep-partial-nodes-added") - added_before;
     std::println("  4925: type-dep-partial-nodes-added delta = {}", added);

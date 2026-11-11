@@ -87,7 +87,7 @@ static void run_matrix(CompilerService& cs) {
     const auto dirty0 = loop_hash(cs, "dirty-from-shape");
     const auto stats3a = stats_sum(cs);
     for (int round = 0; round < 4; ++round) {
-        (void)cs.eval("(mutate:rebind \"base\" \"" + std::to_string(20 + round) + "\")");
+        (void)cs.eval("(mutate :rebind \"base\" \"" + std::to_string(20 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(add1 5)");
         (void)cs.eval("(wrap 10)");
@@ -107,7 +107,7 @@ static void run_matrix(CompilerService& cs) {
     for (int round = 0; round < 3; ++round) {
         cs.invalidate_shape("wrap");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(mutate:rebind \"dbl\" \"(lambda (y) (* y 3))\" \"issue744\")");
+        (void)cs.eval("(mutate :rebind \"dbl\" \"(lambda (y) (* y 3))\" \"issue744\")");
         (void)cs.eval("(eval-current)");
     }
     const auto stats5b = stats_sum(cs);

@@ -455,7 +455,7 @@ namespace _574_detail {
             const auto elim_before = cs.snapshot().dead_coercion_eliminated_total;
 
             for (int i = 0; i < 4; ++i) {
-                CHECK(cs.eval("(mutate:rebind \"n\" \"" + std::to_string(10 + i) + "\" \"574-" +
+                CHECK(cs.eval("(mutate :rebind \"n\" \"" + std::to_string(10 + i) + "\" \"574-" +
                               std::to_string(i) + "\")")
                           .has_value(),
                       "mutate:rebind ok");
@@ -573,7 +573,7 @@ namespace _468_detail {
             const auto elim4a = cs.snapshot().dead_coercion_eliminated_total;
 
             for (int i = 0; i < 4; ++i) {
-                CHECK(cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(100 + i) + "\" \"468-" +
+                CHECK(cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(100 + i) + "\" \"468-" +
                               std::to_string(i) + "\")")
                           .has_value(),
                       "mutate:rebind ok");
@@ -637,7 +637,7 @@ namespace _468_detail {
             std::println("\n--- AC8: multi-round gradual mutate ---");
             const auto stats8a = zerooverhead_stats(cs);
             for (int round = 0; round < 3; ++round) {
-                (void)cs.eval("(mutate:rebind \"acc\" \"" + std::to_string(200 + round) + "\")");
+                (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(200 + round) + "\")");
                 (void)cs.eval("(eval-current)");
             }
             const auto stats8b = zerooverhead_stats(cs);

@@ -103,7 +103,7 @@ int run_test_rebind_new_body_hygiene() {
         auto nid = as_int(*find_r);
         auto set_r = cs.eval(std::format("(mutate :set-marker {} 1)", nid));
         CHECK(set_r && is_bool(*set_r) && as_bool(*set_r), "AC2: stamp MacroIntroduced");
-        auto r = cs.eval("(mutate:rebind \"myvar\" \"99\")");
+        auto r = cs.eval("(mutate :rebind \"myvar\" \"99\")");
         CHECK(r.has_value(), "AC2: rebind returns");
         CHECK(is_pair(*r) && merr_kind(cs, *r) == "hygiene-protected",
               "AC2: hygiene-protected on MacroIntroduced define");
@@ -146,10 +146,10 @@ int run_test_rebind_new_body_hygiene() {
         CHECK(find_r && is_int(*find_r), "AC4: find g");
         CHECK(cs.eval(std::format("(mutate :set-marker {} 1)", as_int(*find_r))).has_value(),
               "AC4: stamp g");
-        auto denied = cs.eval("(mutate:rebind \"g\" \"2\")");
+        auto denied = cs.eval("(mutate :rebind \"g\" \"2\")");
         CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene-protected",
               "AC4: denied without allow");
-        auto allowed = cs.eval("(mutate:rebind \"g\" \"2\" :allow-macro? #t)");
+        auto allowed = cs.eval("(mutate :rebind \"g\" \"2\" :allow-macro? #t)");
         CHECK(allowed.has_value() && merr_kind(cs, *allowed) != "hygiene-protected",
               "AC4: :allow-macro? #t opts out");
     }
