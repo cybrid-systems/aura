@@ -56,6 +56,21 @@
       "min_delta_ms": 80,
       "description": "letrec fib(20) eval; CI runner drift since 2026-07-18 baseline (1.28x / d38ms then 1.42x / d57ms on consecutive main pushes with no fib change) - same-run literal_int 5x faster proves env change, not product regression",
       "owner": "compiler"
+    },
+    "hot_list_map_2k": {
+      "tolerance_percent": 60,
+      "description": "2000 list cons + map; shared-runner spread (#5135)",
+      "owner": "stdlib"
+    },
+    "hot_hash_set_get_2k": {
+      "tolerance_percent": 60,
+      "description": "2000 hash-set! + one hash-ref; shared-runner spread (#5135)",
+      "owner": "stdlib"
+    },
+    "hot_fiber_spawn_join_200": {
+      "tolerance_percent": 80,
+      "description": "200 fiber:spawn/join pairs; scheduler jitter (#5135)",
+      "owner": "orchestration"
     }
   }
 }
