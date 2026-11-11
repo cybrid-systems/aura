@@ -109,8 +109,11 @@ int main() {
     // Issue #3568: fork-isolate each member. An in-process hang (leftover
     // #3495 / join_all) previously consumed the 600s binary timeout with
     // 0 passed because redirected stdout never flushed. Alarm fails that
-    // member in 30s; parent continues.
-    const auto run = [&](const char* name, int (*fn)()) {
+    // member in 90s (360s for #3728 apply-mutex); parent continues.
+    // isolate_s: child alarm and parent wait. #3728's apply-mutex member
+    // runs a 4M-iteration body (about 50s here) and then a pair whose
+    // joins wait 1.5x that measurement. 90s fires SIGALRM inside the pair.
+    const auto run = [&](const char* name, int (*fn)(), int isolate_s = 90) {
         std::println("\n──── {} ────", name);
         reset_member_face();
         g_passed = 0;
@@ -119,7 +122,7 @@ int main() {
         if (pid == 0) {
             setvbuf(stdout, nullptr, _IOLBF, 0);
             setvbuf(stderr, nullptr, _IOLBF, 0);
-            ::alarm(90);
+            ::alarm(static_cast<unsigned>(isolate_s));
             const int rc = fn();
             std::fflush(nullptr);
             ::_exit((rc != 0 || g_failed != 0) ? 1 : 0);
@@ -135,9 +138,9 @@ int main() {
             return;
         }
         int st = 0;
-        // Child alarm(90) is belt; SIGALRM can be stolen by the
-        // scheduler. Parent waitpid is bounded — SIGKILL and continue.
-        constexpr int kIsolateMs = 90'000;
+        // Child alarm is belt; SIGALRM can be stolen by the scheduler.
+        // Parent waitpid is bounded — SIGKILL and continue.
+        const int kIsolateMs = isolate_s * 1000;
         int waited_ms = 0;
         pid_t w = 0;
         while ((w = ::waitpid(pid, &st, WNOHANG)) == 0) {
@@ -176,7 +179,7 @@ int main() {
     // that can segfault the process (run order must not gate them).
     run("test_per_scope_bp_admit", run_test_per_scope_bp_admit);
     run("test_bare_bp_resolve", run_test_bare_bp_resolve_3179);
-    run("test_agent_apply_mutex", run_test_agent_apply_mutex);
+    run("test_agent_apply_mutex", run_test_agent_apply_mutex, 360);
     run("test_agent_ask", run_test_agent_ask);
     run("test_agent_ask_typed_corr", run_test_agent_ask_typed_corr);
     run("test_agent_failure_policy", run_test_agent_failure_policy);

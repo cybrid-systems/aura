@@ -63,6 +63,41 @@ using aura::core::security_event::SecurityEvent;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
+// Gate denies are merr pairs (kind . (message . 0)), not RefError.
+// is_error() only matches RefError, so a real capability-denied /
+// stale-ref deny fails that predicate. Same car-is-kind face as #4039.
+static std::string merr_kind(CompilerService& cs, const aura::compiler::types::EvalValue& v) {
+    using aura::compiler::types::as_pair_idx;
+    using aura::compiler::types::as_string_idx;
+    using aura::compiler::types::is_pair;
+    using aura::compiler::types::is_string;
+    if (!is_pair(v))
+        return {};
+    const auto idx = as_pair_idx(v);
+    auto& pairs = cs.evaluator().pairs();
+    if (idx >= pairs.size() || !is_string(pairs[idx].car))
+        return {};
+    const auto sidx = as_string_idx(pairs[idx].car);
+    auto heap = cs.evaluator().string_heap();
+    if (sidx >= heap.size())
+        return {};
+    return std::string(heap[sidx]);
+}
+
+static std::string mutate_face(CompilerService& cs, const aura::compiler::types::EvalValue& v) {
+    using aura::compiler::types::as_int;
+    using aura::compiler::types::is_error;
+    using aura::compiler::types::is_int;
+    if (is_int(v))
+        return "int:" + std::to_string(as_int(v));
+    if (is_error(v))
+        return "ref-error";
+    const auto kind = merr_kind(cs, v);
+    if (!kind.empty())
+        return kind;
+    return "other";
+}
+
 static std::string read_file(const char* path) {
     for (const auto& p :
          {std::string(path), std::string("../") + path, std::string("../../") + path}) {
@@ -2019,7 +2054,11 @@ static void ac3724_1_query_root_deny_does_not_occupy() {
           "3724 AC1: not occupied by A before mutate");
     auto r = cs.eval(std::string("(mutate :replace-type ") +
                      std::to_string(aura::compiler::types::as_int(*root)) + " \"Int\")");
-    CHECK(r.has_value() && aura::compiler::types::is_error(*r), "3724 AC1: bare-int mutate denied");
+    // #3724: consult_bare skips for_node_id, so this no-grant mutate denies
+    // on require_effect and must not stamp. The deny is a merr pair.
+    const auto face3724a = r ? mutate_face(cs, *r) : std::string{"<no-value>"};
+    CHECK(face3724a == "capability-denied",
+          std::format("3724 AC1: bare-int mutate denied ({})", face3724a));
     CHECK(aura::core::provenance::existing_stamp_for_node(nid) != 7,
           "3724 AC1: occupancy slot is not A after deny");
     CHECK(!ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
@@ -2062,8 +2101,9 @@ static void ac3724_2_owner_not_isolation_denied_after_a_deny() {
     ev.set_capability_tenant_id(7);
     auto denied =
         cs.eval(std::string("(mutate :replace-type ") + std::to_string(nid) + " \"Int\")");
-    CHECK(denied.has_value() && aura::compiler::types::is_error(*denied),
-          "3724 AC2: A bare-int mutate denied");
+    const auto face3724b = denied ? mutate_face(cs, *denied) : std::string{"<no-value>"};
+    CHECK(face3724b == "capability-denied",
+          std::format("3724 AC2: A bare-int mutate denied ({})", face3724b));
     CHECK(aura::core::provenance::existing_stamp_for_node(static_cast<std::uint32_t>(nid)) == 99,
           "3724 AC2: occupancy still B (A did not hijack)");
     ev.set_capability_tenant_id(99);
@@ -2857,7 +2897,12 @@ static void ac4051_1_torn_read_denies_before_stamp() {
                            .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
     CHECK(after >= prev + 1, "4051 AC1: nodeid_only_entry_prevented bumped");
     const auto edsl = cs.eval(std::format("(mutate :replace-type {} \"Int\")", live));
-    CHECK(edsl.has_value() && is_error(*edsl), "4051 AC1: EDSL mutate is_error (fail-closed)");
+    // consult_bare does not take for_node_id, so this call does not stamp.
+    // The deny is the capability-denied merr, not a RefError and not a
+    // mutation id. The write and occupant checks below stay the contract.
+    const auto face4051 = edsl ? mutate_face(cs, *edsl) : std::string{"<no-value>"};
+    CHECK(face4051 == "capability-denied",
+          std::format("4051 AC1: EDSL mutate fail-closed ({})", face4051));
     CHECK(ws->subtree_bump_count() == bumps_before, "4051 AC1: zero workspace write");
     // The occupant is still A — the deny wrote no caller stamp.
     CHECK(occupant_node_4051(live) == live, "4051 AC1: occupant node preserved");
