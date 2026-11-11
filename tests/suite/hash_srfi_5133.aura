@@ -1,0 +1,25 @@
+; #5133: pin the SRFI-125 minimal hash surface, including the copy-on-write
+; promise INDEX makes for hash-set / hash-remove.
+(require "std/hash" all:)
+
+(define h (hash 1 'a 2 'b))
+(define (check)
+  (and
+   (= (hash-length h) 2)
+   (eq? (hash-ref h 1) 'a)
+   (eq? (hash-ref h 9 'dflt) 'dflt)
+   (= (length (hash-keys h)) 2)
+   (eq? (hash-has-key? h 2) #t)
+   (eq? (hash-has-key? h 9) #f)
+   ; hash-set returns a new table; the original is untouched
+   (let ((h2 (hash-set h 3 'c))) (and (= (hash-length h) 2) (= (hash-length h2) 3)))
+   ; hash-remove is the same shape
+   (let ((h3 (hash-remove h 1))) (and (= (hash-length h) 2) (= (hash-length h3) 1)))))
+
+(define host (if (check) 1 0))
+(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+
+(if (and (= host 1) (= guest 1))
+    (begin (display "OK-5133-hash") (newline))
+    (begin (display "FAIL-5133-hash host=") (display host)
+           (display " guest=") (display guest) (newline) (exit 1)))
