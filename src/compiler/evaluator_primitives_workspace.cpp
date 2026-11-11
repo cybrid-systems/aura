@@ -421,18 +421,8 @@ void RegSplitParts::workspace_merge_splice(
 
 // Issue #5033: workspace snapshots + rollback surfaces.
 void RegSplitParts::register_workspace_snapshot_primitives(PrimRegistrar add, Evaluator& ev) {
-    // Issue #737: (workspace:snapshot name) → snapshot ID.
-    // Named convenience wrapper over (mutate :snapshot name) for
-    // AI Agent multi-round edit loops.
-    if (false)
-        add("workspace:snapshot", [&ev](std::span<const EvalValue> a) -> EvalValue {
-            if (a.empty() || !is_string(a[0]))
-                return make_int(-1);
-            auto snap_fn = ev.primitives_.lookup("mw:snapshot");
-            if (!snap_fn)
-                return make_int(-1);
-            return (*snap_fn)(a);
-        });
+    // Issue #5141: the dead `if (false) add("workspace:snapshot")` convenience
+    // wrapper (#737 / #2788) is gone. (mutate :snapshot name) is the surface.
 
     // Issue #737 / #2788: (mutate :rollback-to name-or-id) → #t on
     // success; typed make_merr on failure:

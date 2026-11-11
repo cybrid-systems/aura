@@ -189,6 +189,13 @@ public:
         if (is_hot)
             hot_map_[ordered_names_.back()] = fn_slots_.back();
     }
+    // Issue #5141: dispatch-only registration. The body stays reachable through
+    // its verb — (query :op) / (mutate :op) / (workspace :op) resolve the name
+    // with lookup(), which reads table_ — but the name is not part of the
+    // public surface: it gets no slot, no PrimMeta and no ordered_names_ entry,
+    // so (query :api-reference), primitive:describe, the docs generator and the
+    // tier gate do not see it, and a direct (mw:op) call stays unbound.
+    void add_hidden(std::string name, PrimFn fn) { table_[std::move(name)] = std::move(fn); }
     // Issue #709: O(1) slot dispatch — dense table parallel to ordered_names_.
     [[nodiscard]] std::optional<PrimFn> slot_lookup_fast(std::size_t slot) const {
         if (slot >= fn_slots_.size())
