@@ -35,6 +35,14 @@
 // structural write (resize / clear / replace / unsafe_storage) and on
 // note_write(idx), which every in-place content writer calls
 // (string-fill!, f64vector-set!, slot reuse in the agent loop).
+//
+// Issue #5146: string-append intern used to walk every slot, and the heap's
+// size is the high-water mark, so N distinct appends were quadratic. The
+// heap keeps an open-addressed FNV-1a index from content to slot, updated
+// on mint, release, note_write, claimed-batch publish, resize, clear and
+// replace. find_content is a lookup. A miss does not scan the heap.
+// Duplicate contents all stay indexed; the first probe hit is the earliest
+// inserted live slot whose bytes still match.
 #pragma once
 
 #include <algorithm>
@@ -43,17 +51,20 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <memory_resource>
 #include <mutex>
 #include <new>
 #include <span>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "hash_meta.h"    // Issue #5146: FNV-1a content index
 #include "utf8_scalar.hh" // Issue #4548: code-point index cache
 
 namespace aura::compiler {
@@ -429,6 +440,9 @@ public:
                 slot_free_[idx] = 0;
             set_claimed_locked(idx, true);
             invalidate_cp_index_locked(idx);
+            // A free slot is already unindexed. Drop a stale entry before
+            // the bytes are cleared so a later publish cannot alias them.
+            unindex_slot_locked(idx);
             std::string().swap(v_[idx]); // already empty; defensive
             out.push_back(static_cast<std::uint64_t>(idx));
         }
@@ -490,6 +504,9 @@ private:
             const auto i = static_cast<size_type>(raw);
             if (i < v_.size() && i < claimed_.size())
                 claimed_[i] = 0;
+            // Published now: the bytes are a real string. Index after the
+            // claim bit drops, or find_content skips the slot as claimed.
+            index_slot_locked(i);
         }
         std::size_t released = 0;
         for (const auto raw : unused) {
@@ -498,6 +515,7 @@ private:
             // sentinel): never released, exactly as release_unmarked has it.
             if (i == 0 || i >= v_.size()) [[unlikely]]
                 continue;
+            unindex_slot_locked(i);
             std::string().swap(v_[i]);
             invalidate_cp_index_locked(i);
             if (slot_free_.size() < v_.size())
@@ -546,6 +564,10 @@ private:
             free_slots_.pop_back();
             if (idx < slot_free_.size())
                 slot_free_[idx] = 0;
+            // Drop the index entry for the previous content before the
+            // bytes change (#5146). A free slot is normally already
+            // unindexed; this covers a slot that was freed without one.
+            unindex_slot_locked(idx);
             {
                 std::string tmp(std::forward<Args>(args)...);
                 v_[idx].swap(tmp);
@@ -561,6 +583,7 @@ private:
             // tenant (the hook runs on the reuse path too).
             if (hook_)
                 hook_(hook_ctx_, idx);
+            index_slot_locked(idx);
             return static_cast<std::uint64_t>(idx);
         }
         const auto idx = v_.size();
@@ -568,6 +591,7 @@ private:
         slot_free_.push_back(0);
         if (hook_)
             hook_(hook_ctx_, idx);
+        index_slot_locked(idx);
         return static_cast<std::uint64_t>(idx);
     }
 
@@ -615,6 +639,9 @@ public:
             // free-list reuse.
             if (slot_is_claimed(i))
                 continue;
+            // Drop the content index before the bytes go, so a lookup
+            // cannot return this slot for its old text (#5146).
+            unindex_slot_locked(i);
             // Drop the content: swapping in an empty string releases
             // the old heap buffer with the temporary.
             std::string().swap(v_[i]);
@@ -672,9 +699,48 @@ public:
 
     // In-place content write to slot idx (same size or not): drop every
     // cached index. Call with or without the lock held.
-    void note_write(size_type /*idx*/) noexcept {
+    // Issue #5146: the content index is keyed by the old bytes. Re-index
+    // after the write so a lookup of the new text hits and the old text
+    // does not.
+    void note_write(size_type idx) noexcept {
         Guard g(mu_, lock_observer_);
         write_gen_.fetch_add(1, std::memory_order_release);
+        if (idx >= v_.size())
+            return;
+        try {
+            unindex_slot_locked(idx);
+            index_slot_locked(idx);
+        } catch (const std::bad_alloc&) {
+            // The slot stays unindexed. The next intern misses and mints.
+        }
+    }
+
+    // Issue #5146: slot whose bytes equal `s`, or npos. Does not walk the
+    // heap. find_content takes the heap lock. find_content_locked is for a
+    // caller that already holds mutex(), or an unbound heap.
+    [[nodiscard]] std::size_t find_content(std::string_view s) const {
+        Guard g(mu_, lock_observer_);
+        return find_content_locked(s);
+    }
+    [[nodiscard]] std::size_t find_content_locked(std::string_view s) const {
+        if (content_.empty())
+            return npos;
+        const auto h = hash::fnv1a_bytes(s);
+        const auto mask = content_.size() - 1;
+        for (std::size_t n = 0, i = static_cast<std::size_t>(h) & mask; n < content_.size();
+             ++n, i = (i + 1) & mask) {
+            const auto& e = content_[i];
+            if (e.state == 0)
+                return npos;
+            if (e.state != 1 || e.hash != h)
+                continue;
+            const auto idx = static_cast<size_type>(e.idx);
+            if (idx >= v_.size() || slot_is_free(idx) || slot_is_claimed(idx))
+                continue;
+            if (std::string_view(v_[idx]) == s)
+                return idx;
+        }
+        return npos;
     }
     // Issue #4714 Row 2: the generation is readable WITHOUT the lock. The
     // per-fiber slab path checks it per mint so a structural write
@@ -744,6 +810,11 @@ public:
     void resize(size_type n) {
         Guard g(mu_, lock_observer_);
         write_gen_.fetch_add(1, std::memory_order_release);
+        const auto old = v_.size();
+        if (n < old) {
+            for (size_type i = n; i < old; ++i)
+                unindex_slot_locked(i);
+        }
         // Issue #4754: GCC 16 at -O3 (Release + -Werror) inlines these two
         // std::vector::resize calls from a call site that resizes a young,
         // small heap (tests/core/test_locked_string_heap.cpp:283,
@@ -771,6 +842,13 @@ public:
         // Issue #4714: a claimed index past the new end no longer exists.
         if (claimed_.size() > n)
             claimed_.resize(n);
+        if (slot_indexed_.size() > n) {
+            slot_indexed_.resize(n);
+            slot_hash_.resize(n);
+        } else if (n > slot_indexed_.size()) {
+            slot_indexed_.resize(n, 0);
+            slot_hash_.resize(n, 0);
+        }
         std::erase_if(free_slots_, [n](size_type i) { return i >= n; });
     }
     void clear() noexcept {
@@ -780,6 +858,7 @@ public:
         slot_free_.clear();
         claimed_.clear();
         free_slots_.clear();
+        content_reset();
     }
     void shrink_to_fit() {
         Guard g(mu_, lock_observer_);
@@ -801,6 +880,14 @@ public:
         // owner notices through write_generation() and re-claims.
         claimed_.clear();
         free_slots_.clear();
+        // Issue #5146: the rebuilt heap has new indices. Rebuild the
+        // content index in slot order so the earliest slot stays the
+        // first probe hit.
+        content_reset();
+        slot_hash_.assign(v_.size(), 0);
+        slot_indexed_.assign(v_.size(), 0);
+        for (size_type i = 0; i < v_.size(); ++i)
+            index_slot_locked(i);
     }
 
     static constexpr std::size_t npos = static_cast<std::size_t>(-1);
@@ -913,6 +1000,123 @@ private:
     // caller holds the lock.
     void invalidate_cp_index_locked(size_type idx) noexcept { cp_meta_.erase(idx); }
 
+    // Issue #5146: open-addressed content index. state 0 is empty (probe
+    // stops), 1 is live, 2 is a tombstone (probe continues). The caller
+    // holds the lock. A slot is indexed only while it is live and not
+    // claimed; free and claimed slots are absent.
+    struct ContentEnt {
+        std::uint64_t hash = 0;
+        std::uint32_t idx = 0;
+        std::uint8_t state = 0;
+    };
+
+    void content_reset() noexcept {
+        content_.clear();
+        content_live_ = 0;
+        content_fill_ = 0;
+        slot_hash_.clear();
+        slot_indexed_.clear();
+    }
+
+    void content_rehash(std::size_t min_cap) {
+        std::size_t cap = 16;
+        while (cap < min_cap)
+            cap *= 2;
+        std::vector<ContentEnt> neu(cap);
+        const auto mask = cap - 1;
+        for (const auto& e : content_) {
+            if (e.state != 1)
+                continue;
+            std::size_t i = static_cast<std::size_t>(e.hash) & mask;
+            while (neu[i].state == 1)
+                i = (i + 1) & mask;
+            neu[i] = e;
+        }
+        content_.swap(neu);
+        content_fill_ = content_live_;
+    }
+
+    // False only when the probe finds no empty slot. The load-factor
+    // rehash makes that unreachable; a false return leaves the slot
+    // unindexed instead of recording a hit that is not in the table.
+    bool content_insert(std::uint64_t h, std::uint32_t idx) {
+        const std::size_t need = content_live_ + 1;
+        if (content_.empty() || content_fill_ * 2 >= content_.size() || need * 2 >= content_.size())
+            content_rehash(
+                std::max(content_.empty() ? std::size_t{16} : content_.size() * 2, need * 2));
+        const auto mask = content_.size() - 1;
+        std::size_t tomb = content_.size();
+        for (std::size_t n = 0, i = static_cast<std::size_t>(h) & mask; n < content_.size();
+             ++n, i = (i + 1) & mask) {
+            auto& e = content_[i];
+            if (e.state == 1)
+                continue;
+            if (e.state == 2) {
+                if (tomb == content_.size())
+                    tomb = i;
+                continue;
+            }
+            auto& dst = tomb == content_.size() ? e : content_[tomb];
+            if (tomb == content_.size())
+                ++content_fill_;
+            dst.hash = h;
+            dst.idx = idx;
+            dst.state = 1;
+            ++content_live_;
+            return true;
+        }
+        return false;
+    }
+
+    void content_remove(std::uint64_t h, std::uint32_t idx) noexcept {
+        if (content_.empty())
+            return;
+        const auto mask = content_.size() - 1;
+        for (std::size_t n = 0, i = static_cast<std::size_t>(h) & mask; n < content_.size();
+             ++n, i = (i + 1) & mask) {
+            auto& e = content_[i];
+            if (e.state == 0)
+                return;
+            if (e.state == 1 && e.hash == h && e.idx == idx) {
+                e.state = 2;
+                --content_live_;
+                return;
+            }
+        }
+    }
+
+    void unindex_slot_locked(size_type idx) noexcept {
+        if (idx >= slot_indexed_.size() || slot_indexed_[idx] == 0)
+            return;
+        content_remove(slot_hash_[idx], static_cast<std::uint32_t>(idx));
+        slot_indexed_[idx] = 0;
+    }
+
+    void index_slot_locked(size_type idx) {
+        if (idx >= v_.size() || slot_is_free(idx) || slot_is_claimed(idx))
+            return;
+        if (idx > static_cast<size_type>(std::numeric_limits<std::uint32_t>::max()))
+            return;
+        try {
+            const auto h = hash::fnv1a_bytes(std::string_view(v_[idx]));
+            if (idx < slot_indexed_.size() && slot_indexed_[idx] != 0) {
+                if (idx < slot_hash_.size() && slot_hash_[idx] == h)
+                    return;
+                unindex_slot_locked(idx);
+            }
+            if (slot_hash_.size() <= idx) {
+                slot_hash_.resize(idx + 1, 0);
+                slot_indexed_.resize(idx + 1, 0);
+            }
+            if (!content_insert(h, static_cast<std::uint32_t>(idx)))
+                return;
+            slot_hash_[idx] = h;
+            slot_indexed_[idx] = 1;
+        } catch (const std::bad_alloc&) {
+            // Leave the slot unindexed. The next intern misses and mints.
+        }
+    }
+
     // Issue #4717: stable slots (a slot never moves once minted).
     StringSlotStore v_;
     std::recursive_mutex* mu_ = nullptr;
@@ -934,6 +1138,15 @@ private:
     std::atomic<std::uint64_t> write_gen_{0};
     mutable std::uint64_t cp_meta_gen_ = 0;
     mutable std::unordered_map<size_type, CpIndex> cp_meta_;
+    // Issue #5146. Guarded by mu_ like v_. slot_indexed_[i] is 1 when
+    // slot i has a live table entry; slot_hash_[i] is the hash that
+    // entry was inserted under (so note_write can drop it after the
+    // bytes have already changed).
+    std::vector<ContentEnt> content_;
+    std::size_t content_live_ = 0;
+    std::size_t content_fill_ = 0;
+    std::vector<std::uint64_t> slot_hash_;
+    std::vector<std::uint8_t> slot_indexed_;
 };
 
 // ── Issue #4717: the read-only string-pool view ──────────────────────────

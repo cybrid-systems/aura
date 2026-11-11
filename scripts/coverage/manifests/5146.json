@@ -1,0 +1,22 @@
+{
+  "issue": 5146,
+  "title": "Issue #5146: string-append intern is a content lookup, not a heap scan.",
+  "ok": "OK: Issue #5146 string-append content index",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/locked_string_heap.hh",
+      "contains": ["#5146", "find_content"]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_pair.cpp",
+      "contains": ["#5146", "find_content_locked"]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_locked_string_heap.cpp",
+      "contains": ["ac6_content_index_5146", "repeated append reuses one slot"]
+    }
+  ]
+}

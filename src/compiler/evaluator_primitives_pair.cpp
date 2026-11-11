@@ -1174,10 +1174,13 @@ void RegSplitParts::register_string_ops(PrimRegistrar add, Evaluator& ev,
             }
             // Issue #2577: content intern — repeated append of the same pieces
             // (hot PrimCall loops) reuses one heap slot instead of O(N) growth.
-            for (std::size_t i = 0; i < string_heap.size(); ++i) {
-                if (string_heap[i] == result)
-                    return make_string(i);
-            }
+            // Issue #5146: the old walk was the whole high-water mark, so N
+            // distinct appends were quadratic. The heap index is a lookup.
+            // The caller already holds alloc_storage_lock_, which is the
+            // heap mutex.
+            if (const auto hit = string_heap.find_content_locked(result);
+                hit != ::aura::compiler::LockedStringHeap::npos)
+                return make_string(hit);
             // Issue #2916: soft strings quota only when a new slot is required.
             if (!ev.prim_heap_quota_allow(PrimHeapDim::Strings, string_heap.size() + 1)) {
                 return make_primitive_error(

@@ -2862,7 +2862,8 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
             // Issue #2568 root cause: short_str_cache_ was keyed with
             // name *after* std::move into string_heap_ (empty key "") —
             // every short symbol missed the cache. Key/insert before move.
-            // Short path (≤6): O(1) cache. Longer: linear heap scan.
+            // Short path (≤6): O(1) cache. Longer: content index (#5146),
+            // not a linear heap scan.
             // #2651: scan + append under alloc_storage_lock_. A fiber
             // apply and a host eval both intern here; an unlocked
             // size()/push_back pair corrupts the monotonic resource
@@ -2873,11 +2874,9 @@ EvalValue Evaluator::ast_to_data(const aura::ast::FlatAST& flat, const aura::ast
                 auto it = short_str_cache_.find(name);
                 if (it != short_str_cache_.end())
                     return it->second;
-            } else {
-                for (std::size_t i = 0; i < string_heap_.size(); ++i) {
-                    if (string_at(i) == name)
-                        return make_string(static_cast<std::int64_t>(i));
-                }
+            } else if (const auto hit = string_heap_.find_content_locked(name);
+                       hit != ::aura::compiler::LockedStringHeap::npos) {
+                return make_string(static_cast<std::int64_t>(hit));
             }
             // Cache key must use name before move (empty-key bug #2568).
             const bool cache_short = name.size() <= 6;

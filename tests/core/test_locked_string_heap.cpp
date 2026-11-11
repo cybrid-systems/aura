@@ -23,11 +23,16 @@
 //        code_point_slice agree with the #4472 reference walk on ASCII,
 //        multi-byte and ill-formed strings above and below the threshold;
 //        note_write, resize and a reallocating rewrite invalidate it.
+//   AC6: Issue #5146 content index — find_content hits the earliest live
+//        slot, note_write / release / replace / clear keep it honest, N
+//        distinct intern-or-mint steps are not a heap scan, and repeated
+//        string-append reuses one slot.
 
 #include "test_harness.hpp"
 #include "compiler/locked_string_heap.hh"
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory_resource>
 #include <mutex>
@@ -51,6 +56,7 @@ using aura::compiler::types::as_string_idx;
 using aura::compiler::types::EvalValue;
 using aura::compiler::types::is_string;
 using aura::compiler::types::make_int;
+using aura::compiler::types::make_string;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -310,6 +316,97 @@ void ac5_code_point_index() {
     }
 }
 
+void ac6_content_index_5146() {
+    std::println("\n--- AC6: #5146 content index ---");
+    LockedStringHeap h;
+    const auto first = h.mint(std::string("zz"));
+    const auto second = h.mint(std::string("zz"));
+    CHECK(first != second, "5146: mint itself still appends a slot");
+    CHECK(h.find_content("zz") == first, "5146: earliest equal slot is the intern hit");
+    CHECK(h.find_content("nope") == LockedStringHeap::npos, "5146: a miss is npos");
+
+    h[first] = "yy";
+    h.note_write(first);
+    CHECK(h.find_content("yy") == first, "5146: note_write indexes the new content");
+    CHECK(h.find_content("zz") == second, "5146: note_write drops the old content");
+
+    std::vector<std::uint8_t> seen(h.size(), 1);
+    seen[second] = 0;
+    std::vector<std::uint8_t> free_at(h.size(), 0);
+    h.release_unmarked(seen, free_at);
+    CHECK(h.find_content("zz") == LockedStringHeap::npos, "5146: a released slot leaves the index");
+    CHECK(h.find_content("yy") == first, "5146: a live slot stays indexed across a release");
+
+    const auto again = h.mint(std::string("zz"));
+    CHECK(h.find_content("zz") == again, "5146: a reused slot is indexed as its new content");
+    CHECK(h[again] == "zz", "5146: the reused slot holds the new bytes");
+
+    LockedStringHeap hr;
+    (void)hr.mint(std::string("p"));
+    (void)hr.mint(std::string("q"));
+    hr.resize(1);
+    CHECK(hr.find_content("p") == 0, "5146: resize keeps the prefix indexed");
+    CHECK(hr.find_content("q") == LockedStringHeap::npos, "5146: resize drops the tail");
+
+    std::pmr::vector<std::string> rebuilt;
+    rebuilt.emplace_back("aa");
+    rebuilt.emplace_back("bb");
+    h.replace(std::move(rebuilt));
+    CHECK(h.find_content("aa") == 0 && h.find_content("bb") == 1,
+          "5146: replace rebuilds the index");
+    CHECK(h.find_content("zz") == LockedStringHeap::npos, "5146: replace drops the old index");
+    h.clear();
+    CHECK(h.empty() && h.find_content("aa") == LockedStringHeap::npos,
+          "5146: clear drops the index");
+
+    // N distinct intern-or-mint steps. A heap scan is quadratic; the bound
+    // is loose enough for a busy runner and tight enough to catch the scan.
+    constexpr int kN = 15000;
+    LockedStringHeap heap;
+    int false_hits = 0;
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < kN; ++i) {
+        const auto s = "s" + std::to_string(i);
+        if (heap.find_content(s) != LockedStringHeap::npos)
+            ++false_hits;
+        (void)heap.mint(s);
+    }
+    const auto ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0)
+            .count();
+    std::println("  5146 distinct {} intern-or-mint: {} ms", kN, ms);
+    CHECK(false_hits == 0, "5146: a distinct string misses");
+    CHECK(heap.size() == static_cast<std::size_t>(kN), "5146: one slot per distinct string");
+    CHECK(ms < 3000, "5146: distinct interns are not a heap scan");
+    bool hits = true;
+    for (int i = 0; i < kN; i += 97) {
+        if (heap.find_content("s" + std::to_string(i)) == LockedStringHeap::npos)
+            hits = false;
+    }
+    CHECK(hits, "5146: indexed strings are found");
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto append = ev.primitives().lookup("string-append");
+    CHECK(append.has_value(), "5146: string-append registered");
+    if (!append)
+        return;
+    const EvalValue a = make_string(static_cast<std::uint64_t>(ev.push_string_heap("same")));
+    const EvalValue b = make_string(static_cast<std::uint64_t>(ev.push_string_heap("pieces")));
+    const EvalValue args[2] = {a, b};
+    const auto before = ev.string_heap_size();
+    EvalValue got{};
+    for (int i = 0; i < 200; ++i)
+        got = (*append)(std::span<const EvalValue>(args, 2));
+    CHECK(is_string(got), "5146: string-append returns a string");
+    CHECK(ev.string_heap_size() == before + 1, "5146: repeated append reuses one slot");
+    if (is_string(got)) {
+        const auto again_s = (*append)(std::span<const EvalValue>(args, 2));
+        CHECK(is_string(again_s) && as_string_idx(again_s) == as_string_idx(got),
+              "5146: repeated append returns the same slot");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -318,6 +415,7 @@ int main() {
     ac3_shared_evaluator_prims();
     ac4_tenant_stamp_on_prim_mint();
     ac5_code_point_index();
+    ac6_content_index_5146();
     std::println("\n=== test_locked_string_heap: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
