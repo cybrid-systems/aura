@@ -882,7 +882,7 @@ void RegSplitParts::register_ir_cache_primitives(PrimRegistrar add, Evaluator& e
                                                  MakeErrorVal mev) {
     // (query :ir-dirty? name) — #t if the named define's IR cache entry is
     // marked dirty.
-    add("qr:ir-dirty?", [&ev, mev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("qr:ir-dirty?", [&ev, mev](const auto& a) -> EvalValue {
         if (a.size() < 1 || !is_string(a[0]))
             return mev("bad-arg", "usage: (query :ir-dirty? name)");
         if (!ev.is_define_dirty_fn_)
@@ -895,7 +895,7 @@ void RegSplitParts::register_ir_cache_primitives(PrimRegistrar add, Evaluator& e
     });
 
     // (query :ir-dependents name) — list of defines that reference this one.
-    add("qr:ir-dependents", [&ev, mev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("qr:ir-dependents", [&ev, mev](const auto& a) -> EvalValue {
         if (a.size() < 1 || !is_string(a[0]))
             return mev("bad-arg", "usage: (query :ir-dependents name)");
         if (!ev.get_dependents_fn_)
@@ -1388,7 +1388,7 @@ void RegSplitParts::register_source_inspection_primitives(PrimRegistrar add, Eva
 // replacement). It does not tell the caller to re-run the old name through
 // (engine:metrics "name").
 void RegSplitParts::register_api_reference_primitive(PrimRegistrar add, Evaluator& ev) {
-    add("qr:api-reference", [&ev](const auto&) -> EvalValue {
+    ev.primitives().add_hidden("qr:api-reference", [&ev](const auto&) -> EvalValue {
         std::string out = "Available Aura primitives:\n\n";
         std::vector<std::pair<std::string, std::string>> deprecated;
         deprecated.reserve(32);

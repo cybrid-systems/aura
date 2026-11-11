@@ -99,7 +99,7 @@
     "orch:supervise-batch"
   ],
   "counts": {
-    "kernel": 503,
+    "kernel": 473,
     "stdlib-candidate": 0,
     "delete": 1
   },
@@ -1398,16 +1398,6 @@
       "tier": "kernel",
       "rule": "K-ENGINE"
     },
-    "qr:allow-macro-mutate?": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:api-reference": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "query:arena-offset": {
       "tier": "kernel",
       "rule": "K-QRY",
@@ -1429,24 +1419,9 @@
       "tier": "kernel",
       "rule": "K-QRY"
     },
-    "qr:can-write?": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "query:code": {
       "tier": "kernel",
       "rule": "K-QRY"
-    },
-    "qr:concurrent-mutation-policy": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:conflicts-with": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "query:defines": {
       "tier": "kernel",
@@ -1455,16 +1430,6 @@
     "query:defines-by-marker": {
       "tier": "kernel",
       "rule": "K-QRY"
-    },
-    "qr:deopt-fn?": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:diff": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "query:dirty-impact": {
       "tier": "kernel",
@@ -1486,53 +1451,13 @@
       "tier": "kernel",
       "rule": "K-QRY"
     },
-    "qr:fiber-backend": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "query:filter": {
       "tier": "kernel",
       "rule": "K-QRY"
     },
-    "qr:find-define": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:generation": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:get-provenance": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:ir-dependents": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:ir-dirty?": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "query:last-mutation-provenance": {
       "tier": "kernel",
       "rule": "K-QRY"
-    },
-    "qr:memory-limit": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:memory-used": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "query:module-exports": {
       "tier": "kernel",
@@ -1541,16 +1466,6 @@
     "query:mutation-impact": {
       "tier": "kernel",
       "rule": "K-QRY"
-    },
-    "qr:mutation-log-diff": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:mutation-log-summary": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "query:mutations-since": {
       "tier": "kernel",
@@ -1576,16 +1491,6 @@
       "tier": "kernel",
       "rule": "K-QRY"
     },
-    "qr:ppa-reasons": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:protected?": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "query:provenance-of": {
       "tier": "kernel",
       "rule": "K-QRY"
@@ -1599,32 +1504,7 @@
       "tier": "kernel",
       "rule": "K-QRY"
     },
-    "qr:reasons": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:ref-deserialize": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:ref-get": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "qr:ref-mutation-id": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:ref-serialize": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:ref-valid-id-gen": {
       "tier": "kernel",
       "rule": "K-QRY",
       "note": "v0.2.1: body moved off the retired prefix (#5097)"
@@ -1634,11 +1514,6 @@
       "rule": "K-QRY"
     },
     "qr:ref-workspace-id": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:resolve-stable-ref": {
       "tier": "kernel",
       "rule": "K-QRY",
       "note": "v0.2.1: body moved off the retired prefix (#5097)"
@@ -1659,19 +1534,9 @@
       "tier": "kernel",
       "rule": "K-QRY"
     },
-    "qr:snapshot-fail-reason": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "query:stable-ref": {
       "tier": "kernel",
       "rule": "K-QRY"
-    },
-    "qr:stable-ref-pair": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "query:stable-ref-provenance": {
       "tier": "kernel",
@@ -1680,21 +1545,6 @@
     "query:type-feedback": {
       "tier": "kernel",
       "rule": "K-QRY"
-    },
-    "qr:validate-nodes": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:validate-ownership": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "qr:validate-post-restore": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "query:where": {
       "tier": "kernel",

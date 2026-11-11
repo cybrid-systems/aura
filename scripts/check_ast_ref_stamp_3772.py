@@ -63,8 +63,8 @@ def main() -> int:
         print(f"  {'PASS' if good else 'FAIL'}: {name}: {msg}")
         ok = ok and good
 
-    get_body = _lambda_body(prim, 'add("qr:ref-get",')
-    valid_body = _lambda_body(prim, 'add("qr:ref-valid-id-gen",')
+    get_body = _lambda_body(prim, 'add_hidden("qr:ref-get",')
+    valid_body = _lambda_body(prim, 'add_hidden("qr:ref-valid-id-gen",')
     bulk_pos = prim.find('"ast:stable-refs-valid?"')
 
     good = (

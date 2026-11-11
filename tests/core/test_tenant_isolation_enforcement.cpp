@@ -8604,7 +8604,7 @@ int main() {
         CHECK(persist.find("if (blob.source.empty())") != std::string::npos,
               "4400 AC5: log Mutate gate is only the empty-source branch");
         const auto restore_at = ast.find("add_hidden(\"mw:restore\"");
-        const auto restore_end = ast.find("add(\"qr:diff\"", restore_at);
+        const auto restore_end = ast.find("add_hidden(\"qr:diff\"", restore_at);
         CHECK(restore_at != std::string::npos && restore_end != std::string::npos &&
                   restore_end > restore_at,
               "4400 AC5: ast:restore body located");

@@ -701,53 +701,54 @@ void RegSplitParts::register_workspace_inspection_primitives(PrimRegistrar add, 
     // current (or explicit) target layer. Cross-layer resolution uses
     // the per-layer NodeIdRemapTable and treats unchanged nodes as live
     // even when generation advanced after a child-layer mutate.
-    add("qr:resolve-stable-ref", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        // Issue #1994 / Wave1 B-09: pin (shared or adopt Guard exclusive).
-        auto pin = ev.pin_workspace_flat();
-        if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) ||
-            !ev.workspace_tree_ || !pin)
-            return make_void();
-        // Issue #1566: cross-layer resolve is a tenant boundary; optional
-        // 5th arg = ref tenant_id for provenance check.
-        const auto ref_tenant =
-            a.size() >= 5 && is_int(a[4]) ? static_cast<std::uint64_t>(as_int(a[4])) : 0;
-        if (!ev.check_workspace_isolation(0, ref_tenant, 0, "qr:resolve-stable-ref"))
-            return make_void();
-        auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-        auto from_layer = static_cast<std::uint32_t>(as_int(a[0]));
-        auto node_id = static_cast<aura::ast::NodeId>(as_int(a[1]));
-        auto gen = static_cast<std::uint16_t>(as_int(a[2]));
-        auto to_layer = wt->active_idx();
-        if (a.size() >= 4 && is_int(a[3]))
-            to_layer = static_cast<std::uint32_t>(as_int(a[3]));
-        aura::ast::FlatAST::StableNodeRef src_ref{node_id, gen, 0, from_layer, 0, 0, 0, 0};
-        if (a.size() >= 5 && is_int(a[4])) {
-            src_ref.workspace_id = static_cast<std::uint32_t>(as_int(a[4]));
-            if (src_ref.workspace_id != from_layer) {
-                ev.bump_provenance_mismatch();
-                // Issue #818: fiber/workspace provenance mismatch prevented.
-                ev.bump_stable_ref_fiber_workspace_mismatch_prevented();
+    ev.primitives().add_hidden(
+        "qr:resolve-stable-ref", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            // Issue #1994 / Wave1 B-09: pin (shared or adopt Guard exclusive).
+            auto pin = ev.pin_workspace_flat();
+            if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) ||
+                !ev.workspace_tree_ || !pin)
+                return make_void();
+            // Issue #1566: cross-layer resolve is a tenant boundary; optional
+            // 5th arg = ref tenant_id for provenance check.
+            const auto ref_tenant =
+                a.size() >= 5 && is_int(a[4]) ? static_cast<std::uint64_t>(as_int(a[4])) : 0;
+            if (!ev.check_workspace_isolation(0, ref_tenant, 0, "qr:resolve-stable-ref"))
+                return make_void();
+            auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+            auto from_layer = static_cast<std::uint32_t>(as_int(a[0]));
+            auto node_id = static_cast<aura::ast::NodeId>(as_int(a[1]));
+            auto gen = static_cast<std::uint16_t>(as_int(a[2]));
+            auto to_layer = wt->active_idx();
+            if (a.size() >= 4 && is_int(a[3]))
+                to_layer = static_cast<std::uint32_t>(as_int(a[3]));
+            aura::ast::FlatAST::StableNodeRef src_ref{node_id, gen, 0, from_layer, 0, 0, 0, 0};
+            if (a.size() >= 5 && is_int(a[4])) {
+                src_ref.workspace_id = static_cast<std::uint32_t>(as_int(a[4]));
+                if (src_ref.workspace_id != from_layer) {
+                    ev.bump_provenance_mismatch();
+                    // Issue #818: fiber/workspace provenance mismatch prevented.
+                    ev.bump_stable_ref_fiber_workspace_mismatch_prevented();
+                }
             }
-        }
-        auto resolved = wt->resolve_stable_ref(from_layer, src_ref, to_layer);
-        if (!resolved) {
-            ev.bump_stable_ref_workspace_resolve_miss();
-            return make_void();
-        }
-        ev.bump_stable_ref_workspace_resolve();
-        // Issue #818: successful cross-layer resolve counts as cross-COW refresh.
-        ev.bump_stable_ref_cross_cow_refresh();
-        ev.bump_stable_ref_provenance_enforced();
-        // Issue #424: return (id . (gen . nil)) — same stable-ref
-        // pair shape as (query:stable-ref) so (query:ref-valid?)
-        // accepts cross-layer resolved refs.
-        auto gen_pid = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(resolved->gen)), make_void()});
-        auto pair_pid = ev.pairs_.size();
-        ev.pairs_.push_back(
-            {make_int(static_cast<std::int64_t>(resolved->id)), make_pair(gen_pid)});
-        return make_pair(pair_pid);
-    });
+            auto resolved = wt->resolve_stable_ref(from_layer, src_ref, to_layer);
+            if (!resolved) {
+                ev.bump_stable_ref_workspace_resolve_miss();
+                return make_void();
+            }
+            ev.bump_stable_ref_workspace_resolve();
+            // Issue #818: successful cross-layer resolve counts as cross-COW refresh.
+            ev.bump_stable_ref_cross_cow_refresh();
+            ev.bump_stable_ref_provenance_enforced();
+            // Issue #424: return (id . (gen . nil)) — same stable-ref
+            // pair shape as (query:stable-ref) so (query:ref-valid?)
+            // accepts cross-layer resolved refs.
+            auto gen_pid = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(resolved->gen)), make_void()});
+            auto pair_pid = ev.pairs_.size();
+            ev.pairs_.push_back(
+                {make_int(static_cast<std::int64_t>(resolved->id)), make_pair(gen_pid)});
+            return make_pair(pair_pid);
+        });
 
     // Issue #372: (query :find-define name)
     //   → NodeId of the first Define node whose name matches
@@ -774,7 +775,7 @@ void RegSplitParts::register_workspace_inspection_primitives(PrimRegistrar add, 
     // when no WorkspaceTree is initialized (no (workspace :create)
     // has been called yet) — useful for ad-hoc lookups in tests
     // and for callers that haven't adopted the workspace_tree.
-    add("qr:find-define", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.primitives().add_hidden("qr:find-define", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_string(a[0]) || !ev.workspace_flat_ || !ev.workspace_pool_)
             return make_void();
         auto name_idx = as_string_idx(a[0]);
@@ -943,7 +944,7 @@ void RegSplitParts::register_workspace_memory_primitives(PrimRegistrar add, Eval
 
     // Issue #97 Action 3: per-workspace memory primitives
     // (query :memory-used) → bytes used by current workspace
-    add("qr:memory-used", [&ev](const auto&) -> EvalValue {
+    ev.primitives().add_hidden("qr:memory-used", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_tree_)
             return make_int(0);
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -954,7 +955,7 @@ void RegSplitParts::register_workspace_memory_primitives(PrimRegistrar add, Eval
     });
 
     // (query :memory-limit) → current limit (or -1 if unlimited)
-    add("qr:memory-limit", [&ev](const auto&) -> EvalValue {
+    ev.primitives().add_hidden("qr:memory-limit", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_tree_)
             return make_int(-1);
         auto* wt = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -1014,7 +1015,7 @@ void RegSplitParts::register_workspace_memory_primitives(PrimRegistrar add, Eval
             }
             return make_bool(false);
         });
-    add("qr:concurrent-mutation-policy", [&ev](const auto&) -> EvalValue {
+    ev.primitives().add_hidden("qr:concurrent-mutation-policy", [&ev](const auto&) -> EvalValue {
         return make_int(
             static_cast<std::int64_t>(static_cast<std::uint8_t>(ev.concurrent_mutation_policy())));
     });
@@ -1147,7 +1148,7 @@ void RegSplitParts::register_workspace_lock_primitives(PrimRegistrar add, Evalua
 
     // (query :can-write? [id])
     //   → #t if workspace allows mutations
-    add("qr:can-write?", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.primitives().add_hidden("qr:can-write?", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (!ev.workspace_tree_)
             return make_bool(true);
         auto* __tw2 = static_cast<WorkspaceTree*>(ev.workspace_tree_);
@@ -1583,52 +1584,53 @@ void RegSplitParts::register_workspace_conflict_primitives(PrimRegistrar add, Ev
     //   that exist in BOTH parent (root, id=0) and child.
     //   Returns an unordered list of strings, or () if no conflicts.
     //   Dry run - does NOT modify either workspace.
-    add("qr:conflicts-with", [&ev, extract_defines](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
-            return make_void();
-        auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
-        auto child_idx = static_cast<std::uint32_t>(as_int(a[0]));
-        if (child_idx == 0 || child_idx >= tree->size())
-            return make_void();
-        auto child_source = RegSplitParts::workspace_ws_source(ev, child_idx);
-        if (child_source.empty())
-            return make_void();
-        auto& parent = tree->nodes_[0];
-        if (parent.read_only)
-            return make_void();
-        ev.workspace_flat_ = parent.flat;
-        ev.workspace_pool_ = parent.pool;
-        tree->set_active(0);
-        auto src_fn = ev.primitives_.lookup("current-source");
-        std::string parent_source;
-        if (src_fn) {
-            // Issue #135: pass :workspace so we read the parent
-            // workspace's saved flat, not the per-eval current flat.
-            std::uint64_t ws_kw = ev.intern_keyword_slot(":workspace");
-            auto src = (*src_fn)({types::make_keyword(ws_kw)});
-            if (is_string(src)) {
-                auto sidx = as_string_idx(src);
-                if (sidx < ev.string_heap_.size())
-                    parent_source = ev.string_at(sidx);
+    ev.primitives().add_hidden(
+        "qr:conflicts-with", [&ev, extract_defines](const auto& a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]) || !ev.workspace_tree_)
+                return make_void();
+            auto* tree = static_cast<WorkspaceTree*>(ev.workspace_tree_);
+            auto child_idx = static_cast<std::uint32_t>(as_int(a[0]));
+            if (child_idx == 0 || child_idx >= tree->size())
+                return make_void();
+            auto child_source = RegSplitParts::workspace_ws_source(ev, child_idx);
+            if (child_source.empty())
+                return make_void();
+            auto& parent = tree->nodes_[0];
+            if (parent.read_only)
+                return make_void();
+            ev.workspace_flat_ = parent.flat;
+            ev.workspace_pool_ = parent.pool;
+            tree->set_active(0);
+            auto src_fn = ev.primitives_.lookup("current-source");
+            std::string parent_source;
+            if (src_fn) {
+                // Issue #135: pass :workspace so we read the parent
+                // workspace's saved flat, not the per-eval current flat.
+                std::uint64_t ws_kw = ev.intern_keyword_slot(":workspace");
+                auto src = (*src_fn)({types::make_keyword(ws_kw)});
+                if (is_string(src)) {
+                    auto sidx = as_string_idx(src);
+                    if (sidx < ev.string_heap_.size())
+                        parent_source = ev.string_at(sidx);
+                }
             }
-        }
-        auto parent_names = extract_defines(parent_source);
-        auto child_names = extract_defines(child_source);
-        std::vector<std::string> conflicts;
-        for (auto& n : child_names) {
-            if (parent_names.count(n))
-                conflicts.push_back(n);
-        }
-        std::sort(conflicts.begin(), conflicts.end());
-        EvalValue result = make_void();
-        for (auto it = conflicts.rbegin(); it != conflicts.rend(); ++it) {
-            auto sidx = ev.string_heap_.mint(*it);
-            auto pidx = ev.pairs_.size();
-            ev.pairs_.push_back({make_string(sidx), result});
-            result = make_pair(pidx);
-        }
-        return result;
-    });
+            auto parent_names = extract_defines(parent_source);
+            auto child_names = extract_defines(child_source);
+            std::vector<std::string> conflicts;
+            for (auto& n : child_names) {
+                if (parent_names.count(n))
+                    conflicts.push_back(n);
+            }
+            std::sort(conflicts.begin(), conflicts.end());
+            EvalValue result = make_void();
+            for (auto it = conflicts.rbegin(); it != conflicts.rend(); ++it) {
+                auto sidx = ev.string_heap_.mint(*it);
+                auto pidx = ev.pairs_.size();
+                ev.pairs_.push_back({make_string(sidx), result});
+                result = make_pair(pidx);
+            }
+            return result;
+        });
 
     // (mutate :merge-3way base-id ours-id theirs-id [strategy: ...]) -> #t
     //   Source-level 3-way merge. The merged source combines all 3.

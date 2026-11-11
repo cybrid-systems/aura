@@ -1521,25 +1521,27 @@ void RegSplitParts::register_memory_dirty_primitives(PrimRegistrar add, Evaluato
     //   0x08 = ownership, 0x10 = coercion, 0x20 = struct, 0x40 = defuse,
     //   0x80 = ppa-hint. Returns 0 for clean nodes or out-of-range ids.
     // Multi-arg (node-id) — public add(); not zero-arity stats.
-    add("qr:reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
-            return make_int(0);
-        if (!ev.workspace_flat_)
-            return make_int(0);
-        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->dirty_reasons(id)));
-    });
+    ev.primitives().add_hidden(
+        "qr:reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]))
+                return make_int(0);
+            if (!ev.workspace_flat_)
+                return make_int(0);
+            auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            return make_int(static_cast<std::int64_t>(ev.workspace_flat_->dirty_reasons(id)));
+        });
     // (query :ppa-reasons node-id) — Issue #277: return the per-node
     // PPA dirty bitmask from the orthogonal ppa_dirty_ column.
     //   0x01 = timing, 0x02 = power, 0x04 = area, 0x08 = backend-hint.
-    add("qr:ppa-reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
-            return make_int(0);
-        if (!ev.workspace_flat_)
-            return make_int(0);
-        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->ppa_dirty_reasons(id)));
-    });
+    ev.primitives().add_hidden(
+        "qr:ppa-reasons", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]))
+                return make_int(0);
+            if (!ev.workspace_flat_)
+                return make_int(0);
+            auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            return make_int(static_cast<std::int64_t>(ev.workspace_flat_->ppa_dirty_reasons(id)));
+        });
     // (dirty:counts) — Issue #188/#262/#277: aggregate per-reason dirty counts
     // across the workspace. Returns hash with integer fields:
     //   general, constraint, occurrence, ownership, coercion,
