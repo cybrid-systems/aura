@@ -54,3 +54,10 @@ Each `--update` with `--rationale` appends an entry here.
 - **Cases:** 55 (passed=55, failed=0)
 - **Total time_s (median suite sum):** 4.455
 - **Command:** `benchmark.py --update --runs 3`
+
+## 2026-11-11T08:23:16.085349+08:00
+
+- **Rationale:** v0.2.2 hot-path baselines: list/hash/fiber cases (#5135), recorded on the dev image
+- **Cases:** 62 (passed=62, failed=0)
+- **Total time_s (median suite sum):** 0.509
+- **Command:** `benchmark.py --update --rationale v0.2.2 hot-path baselines: list/hash/fiber cases (#5135), recorded on the dev image`

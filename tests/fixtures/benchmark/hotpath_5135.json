@@ -1,0 +1,20 @@
+[
+  {
+    "name": "hot_list_map_2k",
+    "code": "(let loop ((i 0) (xs (quote ()))) (if (= i 2000) (length (map (lambda (x) (* x 2)) xs)) (loop (+ i 1) (cons i xs))))",
+    "pipeline": "eval",
+    "expected_val": 2000
+  },
+  {
+    "name": "hot_hash_set_get_2k",
+    "code": "(let ((h (hash))) (let loop ((i 0)) (if (= i 2000) (hash-ref h 1999) (begin (hash-set! h i i) (loop (+ i 1))))))",
+    "pipeline": "eval",
+    "expected_val": 1999
+  },
+  {
+    "name": "hot_fiber_spawn_join_200",
+    "code": "(let loop ((i 0) (s 0)) (if (= i 200) s (loop (+ i 1) (+ s (fiber:join (fiber:spawn (lambda () 1)))))))",
+    "pipeline": "eval",
+    "expected_val": 200
+  }
+]

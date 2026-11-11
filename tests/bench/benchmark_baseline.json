@@ -1,15 +1,15 @@
 {
-  "timestamp": "2026-10-03T20:57:14.955160+08:00",
-  "total_cases": 59,
-  "passed": 59,
+  "timestamp": "2026-11-11T08:23:14.762287+08:00",
+  "total_cases": 62,
+  "passed": 62,
   "failed": 0,
-  "total_time_s": 6.462,
+  "total_time_s": 0.509,
   "cases": [
     {
       "name": "occurrence",
       "code": "(let ((x \"hi\")) (if (string? x) x \"fallback\"))",
       "pipeline": "typecheck",
-      "time_s": 0.012206,
+      "time_s": 0.005701,
       "output": "",
       "error": "",
       "passed": true,
@@ -19,18 +19,18 @@
       "stdout": "type: String\nno errors",
       "stderr": "",
       "time_samples": [
-        0.012206,
-        0.012248,
-        0.012201
+        0.009792,
+        0.004288,
+        0.005701
       ],
-      "time_min_s": 0.012201,
-      "time_max_s": 0.012248
+      "time_min_s": 0.004288,
+      "time_max_s": 0.009792
     },
     {
       "name": "str_literal",
       "code": "\"hi\"",
       "pipeline": "typecheck",
-      "time_s": 0.01205,
+      "time_s": 0.008667,
       "output": "",
       "error": "",
       "passed": true,
@@ -40,18 +40,18 @@
       "stdout": "type: String\nno errors",
       "stderr": "",
       "time_samples": [
-        0.014382,
-        0.01205,
-        0.010962
+        0.008817,
+        0.004386,
+        0.008667
       ],
-      "time_min_s": 0.010962,
-      "time_max_s": 0.014382
+      "time_min_s": 0.004386,
+      "time_max_s": 0.008817
     },
     {
       "name": "tc_add",
       "code": "(+ 1 2)",
       "pipeline": "typecheck",
-      "time_s": 0.011338,
+      "time_s": 0.004556,
       "output": "",
       "error": "",
       "passed": true,
@@ -61,18 +61,18 @@
       "stdout": "type: Int\nno errors",
       "stderr": "",
       "time_samples": [
-        0.011781,
-        0.009224,
-        0.011338
+        0.004032,
+        0.004556,
+        0.00521
       ],
-      "time_min_s": 0.009224,
-      "time_max_s": 0.011781
+      "time_min_s": 0.004032,
+      "time_max_s": 0.00521
     },
     {
       "name": "tc_coercion",
       "code": "(+ (string->number \"42\") 1)",
       "pipeline": "typecheck",
-      "time_s": 0.009953,
+      "time_s": 0.004925,
       "output": "",
       "error": "",
       "passed": true,
@@ -82,18 +82,18 @@
       "stdout": "type: Int\nno errors",
       "stderr": "",
       "time_samples": [
-        0.010933,
-        0.009771,
-        0.009953
+        0.003818,
+        0.005289,
+        0.004925
       ],
-      "time_min_s": 0.009771,
-      "time_max_s": 0.010933
+      "time_min_s": 0.003818,
+      "time_max_s": 0.005289
     },
     {
       "name": "tc_lambda",
       "code": "(lambda (x) x)",
       "pipeline": "typecheck",
-      "time_s": 0.010921,
+      "time_s": 0.004943,
       "output": "",
       "error": "",
       "passed": true,
@@ -103,18 +103,18 @@
       "stdout": "type: (x -> x)\nno errors",
       "stderr": "",
       "time_samples": [
-        0.010639,
-        0.010921,
-        0.011266
+        0.004943,
+        0.005011,
+        0.003711
       ],
-      "time_min_s": 0.010639,
-      "time_max_s": 0.011266
+      "time_min_s": 0.003711,
+      "time_max_s": 0.005011
     },
     {
       "name": "tc_let",
       "code": "(let ((x 10)) x)",
       "pipeline": "typecheck",
-      "time_s": 0.010747,
+      "time_s": 0.005077,
       "output": "",
       "error": "",
       "passed": true,
@@ -124,18 +124,18 @@
       "stdout": "type: Int\nno errors",
       "stderr": "",
       "time_samples": [
-        0.010747,
-        0.011067,
-        0.01061
+        0.003731,
+        0.008502,
+        0.005077
       ],
-      "time_min_s": 0.01061,
-      "time_max_s": 0.011067
+      "time_min_s": 0.003731,
+      "time_max_s": 0.008502
     },
     {
       "name": "tc_literal",
       "code": "42",
       "pipeline": "typecheck",
-      "time_s": 0.011197,
+      "time_s": 0.004872,
       "output": "",
       "error": "",
       "passed": true,
@@ -145,18 +145,18 @@
       "stdout": "type: Int\nno errors",
       "stderr": "",
       "time_samples": [
-        0.010872,
-        0.01269,
-        0.011197
+        0.004872,
+        0.005082,
+        0.003784
       ],
-      "time_min_s": 0.010872,
-      "time_max_s": 0.01269
+      "time_min_s": 0.003784,
+      "time_max_s": 0.005082
     },
     {
       "name": "tc_occurrence",
       "code": "(let ((x \"hello\")) (if (string? x) x \"fallback\"))",
       "pipeline": "typecheck",
-      "time_s": 0.010843,
+      "time_s": 0.005128,
       "output": "",
       "error": "",
       "passed": true,
@@ -166,18 +166,18 @@
       "stdout": "type: String\nno errors",
       "stderr": "",
       "time_samples": [
-        0.010843,
-        0.010884,
-        0.010244
+        0.005128,
+        0.005005,
+        0.008925
       ],
-      "time_min_s": 0.010244,
-      "time_max_s": 0.010884
+      "time_min_s": 0.005005,
+      "time_max_s": 0.008925
     },
     {
       "name": "tc_str",
       "code": "\"hello\"",
       "pipeline": "typecheck",
-      "time_s": 0.010922,
+      "time_s": 0.008997,
       "output": "",
       "error": "",
       "passed": true,
@@ -187,18 +187,18 @@
       "stdout": "type: String\nno errors",
       "stderr": "",
       "time_samples": [
-        0.011301,
-        0.010922,
-        0.010835
+        0.004979,
+        0.00901,
+        0.008997
       ],
-      "time_min_s": 0.010835,
-      "time_max_s": 0.011301
+      "time_min_s": 0.004979,
+      "time_max_s": 0.00901
     },
     {
       "name": "tc_string_append",
       "code": "(string-append \"a\" \"b\")",
       "pipeline": "typecheck",
-      "time_s": 0.010458,
+      "time_s": 0.008958,
       "output": "",
       "error": "",
       "passed": true,
@@ -208,18 +208,18 @@
       "stdout": "type: String\nno errors",
       "stderr": "",
       "time_samples": [
-        0.009393,
-        0.010458,
-        0.010942
+        0.008964,
+        0.008958,
+        0.008943
       ],
-      "time_min_s": 0.009393,
-      "time_max_s": 0.010942
+      "time_min_s": 0.008943,
+      "time_max_s": 0.008964
     },
     {
       "name": "tc_string_length",
       "code": "(string-length \"hello\")",
       "pipeline": "typecheck",
-      "time_s": 0.011094,
+      "time_s": 0.003904,
       "output": "",
       "error": "",
       "passed": true,
@@ -229,18 +229,18 @@
       "stdout": "type: Int\nno errors",
       "stderr": "",
       "time_samples": [
-        0.011403,
-        0.010533,
-        0.011094
+        0.003904,
+        0.005133,
+        0.003714
       ],
-      "time_min_s": 0.010533,
-      "time_max_s": 0.011403
+      "time_min_s": 0.003714,
+      "time_max_s": 0.005133
     },
     {
       "name": "tc_type_of",
       "code": "(type-of 42)",
       "pipeline": "typecheck",
-      "time_s": 0.011597,
+      "time_s": 0.005071,
       "output": "",
       "error": "",
       "passed": true,
@@ -250,18 +250,18 @@
       "stdout": "type: Type\nno errors",
       "stderr": "",
       "time_samples": [
-        0.010216,
-        0.011597,
-        0.012686
+        0.008288,
+        0.004887,
+        0.005071
       ],
-      "time_min_s": 0.010216,
-      "time_max_s": 0.012686
+      "time_min_s": 0.004887,
+      "time_max_s": 0.008288
     },
     {
       "name": "tc_type_query",
       "code": "(type? 42 \"Int\")",
       "pipeline": "typecheck",
-      "time_s": 0.011703,
+      "time_s": 0.003973,
       "output": "",
       "error": "",
       "passed": true,
@@ -271,18 +271,18 @@
       "stdout": "type: Bool\nno errors",
       "stderr": "",
       "time_samples": [
-        0.011089,
-        0.011703,
-        0.012375
+        0.008868,
+        0.00396,
+        0.003973
       ],
-      "time_min_s": 0.011089,
-      "time_max_s": 0.012375
+      "time_min_s": 0.00396,
+      "time_max_s": 0.008868
     },
     {
       "name": "wrong_arity",
       "code": "(+ 1)",
       "pipeline": "typecheck",
-      "time_s": 0.010804,
+      "time_s": 0.005071,
       "output": "",
       "error": "",
       "passed": true,
@@ -292,18 +292,18 @@
       "stdout": "type: Int\nno errors",
       "stderr": "",
       "time_samples": [
-        0.010904,
-        0.010804,
-        0.0106
+        0.005071,
+        0.004952,
+        0.006334
       ],
-      "time_min_s": 0.0106,
-      "time_max_s": 0.010904
+      "time_min_s": 0.004952,
+      "time_max_s": 0.006334
     },
     {
       "name": "ir_add",
       "code": "(+ 1 2)",
       "pipeline": "ir",
-      "time_s": 0.011987,
+      "time_s": 0.008627,
       "output": "",
       "error": "",
       "passed": true,
@@ -313,18 +313,18 @@
       "stdout": "3",
       "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
       "time_samples": [
-        0.013412,
-        0.010836,
-        0.011987
+        0.008972,
+        0.008627,
+        0.00376
       ],
-      "time_min_s": 0.010836,
-      "time_max_s": 0.013412
+      "time_min_s": 0.00376,
+      "time_max_s": 0.008972
     },
     {
       "name": "ir_closure",
       "code": "(let ((f (lambda (x) (+ x 1)))) (f 41))",
       "pipeline": "ir",
-      "time_s": 0.012098,
+      "time_s": 0.005085,
       "output": "",
       "error": "",
       "passed": true,
@@ -334,18 +334,18 @@
       "stdout": "42",
       "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
       "time_samples": [
-        0.012098,
-        0.012248,
-        0.012093
+        0.009195,
+        0.005085,
+        0.003779
       ],
-      "time_min_s": 0.012093,
-      "time_max_s": 0.012248
+      "time_min_s": 0.003779,
+      "time_max_s": 0.009195
     },
     {
       "name": "ir_fact",
       "code": "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 5))",
       "pipeline": "ir",
-      "time_s": 0.011983,
+      "time_s": 0.00523,
       "output": "",
       "error": "",
       "passed": true,
@@ -355,18 +355,18 @@
       "stdout": "120",
       "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
       "time_samples": [
-        0.011075,
-        0.013221,
-        0.011983
+        0.00523,
+        0.003671,
+        0.008314
       ],
-      "time_min_s": 0.011075,
-      "time_max_s": 0.013221
+      "time_min_s": 0.003671,
+      "time_max_s": 0.008314
     },
     {
       "name": "ir_fib_10",
       "code": "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 10))",
       "pipeline": "ir",
-      "time_s": 0.013452,
+      "time_s": 0.008895,
       "output": "",
       "error": "",
       "passed": true,
@@ -376,18 +376,18 @@
       "stdout": "55",
       "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
       "time_samples": [
-        0.013452,
-        0.014323,
-        0.0127
+        0.00893,
+        0.008895,
+        0.004988
       ],
-      "time_min_s": 0.0127,
-      "time_max_s": 0.014323
+      "time_min_s": 0.004988,
+      "time_max_s": 0.00893
     },
     {
       "name": "ir_if",
       "code": "(if (< 3 5) 100 200)",
       "pipeline": "ir",
-      "time_s": 0.012238,
+      "time_s": 0.00509,
       "output": "",
       "error": "",
       "passed": true,
@@ -397,18 +397,18 @@
       "stdout": "100",
       "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
       "time_samples": [
-        0.012705,
-        0.011841,
-        0.012238
+        0.00509,
+        0.003671,
+        0.008301
       ],
-      "time_min_s": 0.011841,
-      "time_max_s": 0.012705
+      "time_min_s": 0.003671,
+      "time_max_s": 0.008301
     },
     {
       "name": "ir_lambda",
       "code": "((lambda (x) (* x 2)) 5)",
       "pipeline": "ir",
-      "time_s": 0.012167,
+      "time_s": 0.003808,
       "output": "",
       "error": "",
       "passed": true,
@@ -418,18 +418,18 @@
       "stdout": "10",
       "stderr": "PM: running type-specialize->type-propagation->compute-kind->arity->const-fold->dead-coercion",
       "time_samples": [
-        0.012097,
-        0.012816,
-        0.012167
+        0.003808,
+        0.005194,
+        0.003625
       ],
-      "time_min_s": 0.012097,
-      "time_max_s": 0.012816
+      "time_min_s": 0.003625,
+      "time_max_s": 0.005194
     },
     {
       "name": "add",
       "code": "(+ 1 2)",
       "pipeline": "eval",
-      "time_s": 0.04284,
+      "time_s": 0.003966,
       "output": "",
       "error": "",
       "passed": true,
@@ -439,18 +439,18 @@
       "stdout": "3",
       "stderr": "",
       "time_samples": [
-        0.045915,
-        0.041953,
-        0.04284
+        0.003966,
+        0.005364,
+        0.003871
       ],
-      "time_min_s": 0.041953,
-      "time_max_s": 0.045915
+      "time_min_s": 0.003871,
+      "time_max_s": 0.005364
     },
     {
       "name": "add_many",
       "code": "(+ (+ (+ (+ 1 2) 3) 4) 5)",
       "pipeline": "eval",
-      "time_s": 0.042571,
+      "time_s": 0.009052,
       "output": "",
       "error": "",
       "passed": true,
@@ -460,18 +460,18 @@
       "stdout": "15",
       "stderr": "",
       "time_samples": [
-        0.042197,
-        0.042571,
-        0.04273
+        0.009052,
+        0.004617,
+        0.009383
       ],
-      "time_min_s": 0.042197,
-      "time_max_s": 0.04273
+      "time_min_s": 0.004617,
+      "time_max_s": 0.009383
     },
     {
       "name": "adt_list_length",
       "code": "(define (length lst)   (if (null? lst) 0 (+ 1 (length (cdr lst))))) (length (list 1 2 3 4 5 6 7 8 9 10))",
       "pipeline": "eval",
-      "time_s": 0.043155,
+      "time_s": 0.005486,
       "output": "",
       "error": "",
       "passed": true,
@@ -481,18 +481,18 @@
       "stdout": "10",
       "stderr": "",
       "time_samples": [
-        0.042571,
-        0.043155,
-        0.044352
+        0.0062,
+        0.004191,
+        0.005486
       ],
-      "time_min_s": 0.042571,
-      "time_max_s": 0.044352
+      "time_min_s": 0.004191,
+      "time_max_s": 0.0062
     },
     {
       "name": "closure",
       "code": "(let ((f (lambda (x) (+ x 1)))) (f 41))",
       "pipeline": "eval",
-      "time_s": 0.040303,
+      "time_s": 0.003853,
       "output": "",
       "error": "",
       "passed": true,
@@ -502,186 +502,39 @@
       "stdout": "42",
       "stderr": "",
       "time_samples": [
-        0.040303,
-        0.039559,
-        0.041299
+        0.003853,
+        0.003821,
+        0.008366
       ],
-      "time_min_s": 0.039559,
-      "time_max_s": 0.041299
+      "time_min_s": 0.003821,
+      "time_max_s": 0.008366
     },
     {
       "name": "coerce_arith",
       "code": "(+ 1 \"2\")",
       "pipeline": "eval",
-      "time_s": 0.041937,
+      "time_s": 0.008953,
       "output": "",
-      "error": "",
+      "error": "error: 1:2: type error: type mismatch \u2014 expected Int, got String '2' (in +, argument 2)\n   |\n  1 | (+ 1 \"2\")\n   |  ^",
       "passed": true,
       "memory_stats": {},
-      "returncode": 0,
+      "returncode": 1,
       "timed_out": false,
-      "stdout": "3",
-      "stderr": "",
+      "stdout": "",
+      "stderr": "error: 1:2: type error: type mismatch \u2014 expected Int, got String '2' (in +, argument 2)\n   |\n  1 | (+ 1 \"2\")\n   |  ^",
       "time_samples": [
-        0.042799,
-        0.041937,
-        0.041716
+        0.00892,
+        0.008953,
+        0.009024
       ],
-      "time_min_s": 0.041716,
-      "time_max_s": 0.042799
+      "time_min_s": 0.00892,
+      "time_max_s": 0.009024
     },
     {
       "name": "coerce_str_len",
       "code": "(string-length 12345)",
       "pipeline": "eval",
-      "time_s": 0.042059,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "5",
-      "stderr": "",
-      "time_samples": [
-        0.042059,
-        0.042758,
-        0.04172
-      ],
-      "time_min_s": 0.04172,
-      "time_max_s": 0.042758
-    },
-    {
-      "name": "cons_car",
-      "code": "(car (cons 1 2))",
-      "pipeline": "eval",
-      "time_s": 0.042792,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "1",
-      "stderr": "",
-      "time_samples": [
-        0.042633,
-        0.042792,
-        0.044353
-      ],
-      "time_min_s": 0.042633,
-      "time_max_s": 0.044353
-    },
-    {
-      "name": "cons_cdr",
-      "code": "(cdr (cons 1 2))",
-      "pipeline": "eval",
-      "time_s": 0.041988,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "2",
-      "stderr": "",
-      "time_samples": [
-        0.041988,
-        0.041054,
-        0.04331
-      ],
-      "time_min_s": 0.041054,
-      "time_max_s": 0.04331
-    },
-    {
-      "name": "div",
-      "code": "(/ 100 5)",
-      "pipeline": "eval",
-      "time_s": 0.042682,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "20",
-      "stderr": "",
-      "time_samples": [
-        0.041196,
-        0.043623,
-        0.042682
-      ],
-      "time_min_s": 0.041196,
-      "time_max_s": 0.043623
-    },
-    {
-      "name": "fib_20",
-      "code": "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 20))",
-      "pipeline": "eval",
-      "time_s": 0.693557,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "6765",
-      "stderr": "",
-      "time_samples": [
-        0.689337,
-        0.70039,
-        0.693557
-      ],
-      "time_min_s": 0.689337,
-      "time_max_s": 0.70039
-    },
-    {
-      "name": "higher_order",
-      "code": "((lambda (f) (f 10)) (lambda (x) (* x x)))",
-      "pipeline": "eval",
-      "time_s": 0.041045,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "100",
-      "stderr": "",
-      "time_samples": [
-        0.041133,
-        0.041045,
-        0.035775
-      ],
-      "time_min_s": 0.035775,
-      "time_max_s": 0.041133
-    },
-    {
-      "name": "if_compare",
-      "code": "(if (< 3 5) 100 200)",
-      "pipeline": "eval",
-      "time_s": 0.041017,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "100",
-      "stderr": "",
-      "time_samples": [
-        0.045825,
-        0.036615,
-        0.041017
-      ],
-      "time_min_s": 0.036615,
-      "time_max_s": 0.045825
-    },
-    {
-      "name": "if_false",
-      "code": "(if #f 42 0)",
-      "pipeline": "eval",
-      "time_s": 0.047168,
+      "time_s": 0.004115,
       "output": "",
       "error": "",
       "passed": true,
@@ -691,291 +544,39 @@
       "stdout": "0",
       "stderr": "",
       "time_samples": [
-        0.0495,
-        0.046233,
-        0.047168
+        0.008914,
+        0.004,
+        0.004115
       ],
-      "time_min_s": 0.046233,
-      "time_max_s": 0.0495
+      "time_min_s": 0.004,
+      "time_max_s": 0.008914
     },
     {
-      "name": "if_true",
-      "code": "(if 1 42 0)",
+      "name": "cons_car",
+      "code": "(car (cons 1 2))",
       "pipeline": "eval",
-      "time_s": 0.046898,
+      "time_s": 0.00456,
       "output": "",
       "error": "",
       "passed": true,
       "memory_stats": {},
       "returncode": 0,
       "timed_out": false,
-      "stdout": "42",
+      "stdout": "1",
       "stderr": "",
       "time_samples": [
-        0.046708,
-        0.046898,
-        0.046985
+        0.00424,
+        0.00456,
+        0.008884
       ],
-      "time_min_s": 0.046708,
-      "time_max_s": 0.046985
+      "time_min_s": 0.00424,
+      "time_max_s": 0.008884
     },
     {
-      "name": "lambda_apply",
-      "code": "((lambda (x) (* x 2)) 5)",
+      "name": "cons_cdr",
+      "code": "(cdr (cons 1 2))",
       "pipeline": "eval",
-      "time_s": 0.040574,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "10",
-      "stderr": "",
-      "time_samples": [
-        0.040574,
-        0.040023,
-        0.040633
-      ],
-      "time_min_s": 0.040023,
-      "time_max_s": 0.040633
-    },
-    {
-      "name": "let_add",
-      "code": "(let ((x 1) (y 2)) (+ x y))",
-      "pipeline": "eval",
-      "time_s": 0.04143,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "3",
-      "stderr": "",
-      "time_samples": [
-        0.044436,
-        0.040332,
-        0.04143
-      ],
-      "time_min_s": 0.040332,
-      "time_max_s": 0.044436
-    },
-    {
-      "name": "let_simple",
-      "code": "(let ((x 10)) x)",
-      "pipeline": "eval",
-      "time_s": 0.042079,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "10",
-      "stderr": "",
-      "time_samples": [
-        0.042079,
-        0.041008,
-        0.045352
-      ],
-      "time_min_s": 0.041008,
-      "time_max_s": 0.045352
-    },
-    {
-      "name": "letrec_fact",
-      "code": "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))",
-      "pipeline": "eval",
-      "time_s": 0.040717,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "3628800",
-      "stderr": "",
-      "time_samples": [
-        0.041071,
-        0.040294,
-        0.040717
-      ],
-      "time_min_s": 0.040294,
-      "time_max_s": 0.041071
-    },
-    {
-      "name": "literal_int",
-      "code": "42",
-      "pipeline": "eval",
-      "time_s": 0.043904,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "42",
-      "stderr": "",
-      "time_samples": [
-        0.048077,
-        0.040156,
-        0.043904
-      ],
-      "time_min_s": 0.040156,
-      "time_max_s": 0.048077
-    },
-    {
-      "name": "literal_neg",
-      "code": "-5",
-      "pipeline": "eval",
-      "time_s": 0.046343,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "-5",
-      "stderr": "",
-      "time_samples": [
-        0.046343,
-        0.046405,
-        0.046174
-      ],
-      "time_min_s": 0.046174,
-      "time_max_s": 0.046405
-    },
-    {
-      "name": "literal_string",
-      "code": "\"hello\"",
-      "pipeline": "eval",
-      "time_s": 0.042547,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "\"hello\"",
-      "stderr": "",
-      "time_samples": [
-        0.041852,
-        0.042547,
-        0.042827
-      ],
-      "time_min_s": 0.041852,
-      "time_max_s": 0.042827
-    },
-    {
-      "name": "mul",
-      "code": "(* 6 7)",
-      "pipeline": "eval",
-      "time_s": 0.042474,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "42",
-      "stderr": "",
-      "time_samples": [
-        0.042907,
-        0.042474,
-        0.042211
-      ],
-      "time_min_s": 0.042211,
-      "time_max_s": 0.042907
-    },
-    {
-      "name": "multi_agent_pipeline",
-      "code": "(require \"std/orch\" all:) (define (pipeline x)   (define r1 (fiber:join (fiber:spawn (lambda () (* x 2)))))   (define r2 (fiber:join (fiber:spawn (lambda () (+ r1 1)))))   (define r3 (fiber:join (fiber:spawn (lambda () (* r2 3)))))   r3) (pipeline 10)",
-      "pipeline": "eval",
-      "time_s": 0.066158,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "63",
-      "stderr": "",
-      "time_samples": [
-        0.069941,
-        0.060493,
-        0.066158
-      ],
-      "time_min_s": 0.060493,
-      "time_max_s": 0.069941
-    },
-    {
-      "name": "nested_arith",
-      "code": "(+ (* 2 3) (/ 10 2))",
-      "pipeline": "eval",
-      "time_s": 0.042451,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "11",
-      "stderr": "",
-      "time_samples": [
-        0.042451,
-        0.042162,
-        0.045454
-      ],
-      "time_min_s": 0.042162,
-      "time_max_s": 0.045454
-    },
-    {
-      "name": "par_orch_3_agents",
-      "code": "(require \"std/orch\" all:) (orch:parallel (list (lambda (x) (* x x)) (lambda (x) (* x 2)) (lambda (x) (+ x 100))) 5)",
-      "pipeline": "eval",
-      "time_s": 0.06644,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "(25 10 105)",
-      "stderr": "",
-      "time_samples": [
-        0.068051,
-        0.06644,
-        0.065313
-      ],
-      "time_min_s": 0.065313,
-      "time_max_s": 0.068051
-    },
-    {
-      "name": "par_orch_5_agents",
-      "code": "(require \"std/orch\" all:) (orch:parallel (list (lambda (x) (+ x 1)) (lambda (x) (+ x 2)) (lambda (x) (+ x 3)) (lambda (x) (+ x 4)) (lambda (x) (+ x 5))) 0)",
-      "pipeline": "eval",
-      "time_s": 0.068954,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "(1 2 3 4 5)",
-      "stderr": "",
-      "time_samples": [
-        0.068954,
-        0.068921,
-        0.070156
-      ],
-      "time_min_s": 0.068921,
-      "time_max_s": 0.070156
-    },
-    {
-      "name": "parallel_intend_small",
-      "code": "(hash-ref (parallel-intend (vector (lambda () 1) (lambda () 2)) :timeout-ms 10000) \"ok-count\")",
-      "pipeline": "eval",
-      "time_s": 1.043597,
+      "time_s": 0.008989,
       "output": "",
       "error": "",
       "passed": true,
@@ -985,165 +586,18 @@
       "stdout": "2",
       "stderr": "",
       "time_samples": [
-        1.046423,
-        1.043526,
-        1.043597
+        0.00915,
+        0.008989,
+        0.008967
       ],
-      "time_min_s": 1.043526,
-      "time_max_s": 1.046423
+      "time_min_s": 0.008967,
+      "time_max_s": 0.00915
     },
     {
-      "name": "parallel_intend_with_gc",
-      "code": "(hash-ref (parallel-intend (vector (lambda () (begin (gc-heap) 1)) (lambda () 2)) :timeout-ms 10000) \"ok-count\")",
+      "name": "div",
+      "code": "(/ 100 5)",
       "pipeline": "eval",
-      "time_s": 1.045058,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "2",
-      "stderr": "",
-      "time_samples": [
-        1.040084,
-        1.045058,
-        1.049395
-      ],
-      "time_min_s": 1.040084,
-      "time_max_s": 1.049395
-    },
-    {
-      "name": "query_pattern_simple",
-      "code": "(set-code \"(begin (fib 1) (fib 2) (fib 3) (fib 4) (fib 5))\") (length (query:pattern \"(fib ...)\"))",
-      "pipeline": "eval",
-      "time_s": 0.04291,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "5",
-      "stderr": "",
-      "time_samples": [
-        0.046081,
-        0.04291,
-        0.042445
-      ],
-      "time_min_s": 0.042445,
-      "time_max_s": 0.046081
-    },
-    {
-      "name": "query_pattern_with_let",
-      "code": "(set-code \"(begin (let ((x 1)) x) (let ((x 2)) x) (let ((x 3)) x))\") (length (query:pattern \"(let ((x ...)) ...)\"))",
-      "pipeline": "eval",
-      "time_s": 0.041806,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "3",
-      "stderr": "",
-      "time_samples": [
-        0.041806,
-        0.047274,
-        0.041102
-      ],
-      "time_min_s": 0.041102,
-      "time_max_s": 0.047274
-    },
-    {
-      "name": "str_append",
-      "code": "(string-append \"a\" \"b\")",
-      "pipeline": "eval",
-      "time_s": 0.042995,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "\"ab\"",
-      "stderr": "",
-      "time_samples": [
-        0.04163,
-        0.042995,
-        0.045168
-      ],
-      "time_min_s": 0.04163,
-      "time_max_s": 0.045168
-    },
-    {
-      "name": "str_length",
-      "code": "(string-length \"hello\")",
-      "pipeline": "eval",
-      "time_s": 0.045824,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "5",
-      "stderr": "",
-      "time_samples": [
-        0.043119,
-        0.045824,
-        0.047706
-      ],
-      "time_min_s": 0.043119,
-      "time_max_s": 0.047706
-    },
-    {
-      "name": "sub",
-      "code": "(- 10 3)",
-      "pipeline": "eval",
-      "time_s": 0.042247,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "7",
-      "stderr": "",
-      "time_samples": [
-        0.048206,
-        0.042247,
-        0.042023
-      ],
-      "time_min_s": 0.042023,
-      "time_max_s": 0.048206
-    },
-    {
-      "name": "vec_basic",
-      "code": "(vector 1 2 3)",
-      "pipeline": "eval",
-      "time_s": 0.043607,
-      "output": "",
-      "error": "",
-      "passed": true,
-      "memory_stats": {},
-      "returncode": 0,
-      "timed_out": false,
-      "stdout": "<vector[0]>",
-      "stderr": "",
-      "time_samples": [
-        0.043607,
-        0.043815,
-        0.042618
-      ],
-      "time_min_s": 0.042618,
-      "time_max_s": 0.043815
-    },
-    {
-      "name": "vec_ref",
-      "code": "(vector-ref (vector 10 20 30) 1)",
-      "pipeline": "eval",
-      "time_s": 0.042999,
+      "time_s": 0.008906,
       "output": "",
       "error": "",
       "passed": true,
@@ -1153,18 +607,609 @@
       "stdout": "20",
       "stderr": "",
       "time_samples": [
-        0.042647,
-        0.044728,
-        0.042999
+        0.008935,
+        0.004171,
+        0.008906
       ],
-      "time_min_s": 0.042647,
-      "time_max_s": 0.044728
+      "time_min_s": 0.004171,
+      "time_max_s": 0.008935
+    },
+    {
+      "name": "fib_20",
+      "code": "(letrec ((fib (lambda (n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))))) (fib 20))",
+      "pipeline": "eval",
+      "time_s": 0.022249,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "6765",
+      "stderr": "",
+      "time_samples": [
+        0.022249
+      ],
+      "time_min_s": 0.022249,
+      "time_max_s": 0.022249
+    },
+    {
+      "name": "higher_order",
+      "code": "((lambda (f) (f 10)) (lambda (x) (* x x)))",
+      "pipeline": "eval",
+      "time_s": 0.008956,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "100",
+      "stderr": "",
+      "time_samples": [
+        0.004615,
+        0.008956,
+        0.008987
+      ],
+      "time_min_s": 0.004615,
+      "time_max_s": 0.008987
+    },
+    {
+      "name": "if_compare",
+      "code": "(if (< 3 5) 100 200)",
+      "pipeline": "eval",
+      "time_s": 0.009022,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "100",
+      "stderr": "",
+      "time_samples": [
+        0.008997,
+        0.009022,
+        0.009023
+      ],
+      "time_min_s": 0.008997,
+      "time_max_s": 0.009023
+    },
+    {
+      "name": "if_false",
+      "code": "(if #f 42 0)",
+      "pipeline": "eval",
+      "time_s": 0.006812,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "0",
+      "stderr": "",
+      "time_samples": [
+        0.007032,
+        0.006812,
+        0.006721
+      ],
+      "time_min_s": 0.006721,
+      "time_max_s": 0.007032
+    },
+    {
+      "name": "if_true",
+      "code": "(if 1 42 0)",
+      "pipeline": "eval",
+      "time_s": 0.011501,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "42",
+      "stderr": "",
+      "time_samples": [
+        0.012295,
+        0.007515,
+        0.011501
+      ],
+      "time_min_s": 0.007515,
+      "time_max_s": 0.012295
+    },
+    {
+      "name": "lambda_apply",
+      "code": "((lambda (x) (* x 2)) 5)",
+      "pipeline": "eval",
+      "time_s": 0.008855,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "10",
+      "stderr": "",
+      "time_samples": [
+        0.008855,
+        0.009051,
+        0.003935
+      ],
+      "time_min_s": 0.003935,
+      "time_max_s": 0.009051
+    },
+    {
+      "name": "let_add",
+      "code": "(let ((x 1) (y 2)) (+ x y))",
+      "pipeline": "eval",
+      "time_s": 0.003915,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "3",
+      "stderr": "",
+      "time_samples": [
+        0.003829,
+        0.003915,
+        0.008361
+      ],
+      "time_min_s": 0.003829,
+      "time_max_s": 0.008361
+    },
+    {
+      "name": "let_simple",
+      "code": "(let ((x 10)) x)",
+      "pipeline": "eval",
+      "time_s": 0.003811,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "10",
+      "stderr": "",
+      "time_samples": [
+        0.003811,
+        0.003766,
+        0.008366
+      ],
+      "time_min_s": 0.003766,
+      "time_max_s": 0.008366
+    },
+    {
+      "name": "letrec_fact",
+      "code": "(letrec ((fact (lambda (n) (if (= n 0) 1 (* n (fact (- n 1))))))) (fact 10))",
+      "pipeline": "eval",
+      "time_s": 0.008629,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "3628800",
+      "stderr": "",
+      "time_samples": [
+        0.008629,
+        0.004373,
+        0.008905
+      ],
+      "time_min_s": 0.004373,
+      "time_max_s": 0.008905
+    },
+    {
+      "name": "literal_int",
+      "code": "42",
+      "pipeline": "eval",
+      "time_s": 0.007384,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "42",
+      "stderr": "",
+      "time_samples": [
+        0.011979,
+        0.007143,
+        0.007384
+      ],
+      "time_min_s": 0.007143,
+      "time_max_s": 0.011979
+    },
+    {
+      "name": "literal_neg",
+      "code": "-5",
+      "pipeline": "eval",
+      "time_s": 0.011042,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "-5",
+      "stderr": "",
+      "time_samples": [
+        0.01137,
+        0.011042,
+        0.006497
+      ],
+      "time_min_s": 0.006497,
+      "time_max_s": 0.01137
+    },
+    {
+      "name": "literal_string",
+      "code": "\"hello\"",
+      "pipeline": "eval",
+      "time_s": 0.009008,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "\"hello\"",
+      "stderr": "",
+      "time_samples": [
+        0.004359,
+        0.009105,
+        0.009008
+      ],
+      "time_min_s": 0.004359,
+      "time_max_s": 0.009105
+    },
+    {
+      "name": "mul",
+      "code": "(* 6 7)",
+      "pipeline": "eval",
+      "time_s": 0.00801,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "42",
+      "stderr": "",
+      "time_samples": [
+        0.004037,
+        0.00886,
+        0.00801
+      ],
+      "time_min_s": 0.004037,
+      "time_max_s": 0.00886
+    },
+    {
+      "name": "multi_agent_pipeline",
+      "code": "(require \"std/orch\" all:) (define (pipeline x)   (define r1 (fiber:join (fiber:spawn (lambda () (* x 2)))))   (define r2 (fiber:join (fiber:spawn (lambda () (+ r1 1)))))   (define r3 (fiber:join (fiber:spawn (lambda () (* r2 3)))))   r3) (pipeline 10)",
+      "pipeline": "eval",
+      "time_s": 0.017448,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "63",
+      "stderr": "",
+      "time_samples": [
+        0.017448
+      ],
+      "time_min_s": 0.017448,
+      "time_max_s": 0.017448
+    },
+    {
+      "name": "nested_arith",
+      "code": "(+ (* 2 3) (/ 10 2))",
+      "pipeline": "eval",
+      "time_s": 0.008913,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "11",
+      "stderr": "",
+      "time_samples": [
+        0.009527,
+        0.006018,
+        0.008913
+      ],
+      "time_min_s": 0.006018,
+      "time_max_s": 0.009527
+    },
+    {
+      "name": "par_orch_3_agents",
+      "code": "(require \"std/orch\" all:) (orch:parallel (list (lambda (x) (* x x)) (lambda (x) (* x 2)) (lambda (x) (+ x 100))) 5)",
+      "pipeline": "eval",
+      "time_s": 0.014359,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "(25 10 105)",
+      "stderr": "",
+      "time_samples": [
+        0.014359
+      ],
+      "time_min_s": 0.014359,
+      "time_max_s": 0.014359
+    },
+    {
+      "name": "par_orch_5_agents",
+      "code": "(require \"std/orch\" all:) (orch:parallel (list (lambda (x) (+ x 1)) (lambda (x) (+ x 2)) (lambda (x) (+ x 3)) (lambda (x) (+ x 4)) (lambda (x) (+ x 5))) 0)",
+      "pipeline": "eval",
+      "time_s": 0.012707,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "(1 2 3 4 5)",
+      "stderr": "",
+      "time_samples": [
+        0.012707
+      ],
+      "time_min_s": 0.012707,
+      "time_max_s": 0.012707
+    },
+    {
+      "name": "parallel_intend_small",
+      "code": "(hash-ref (parallel-intend (vector (lambda () 1) (lambda () 2)) :timeout-ms 10000) \"ok-count\")",
+      "pipeline": "eval",
+      "time_s": 0.01124,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "2",
+      "stderr": "",
+      "time_samples": [
+        0.01124
+      ],
+      "time_min_s": 0.01124,
+      "time_max_s": 0.01124
+    },
+    {
+      "name": "parallel_intend_with_gc",
+      "code": "(hash-ref (parallel-intend (vector (lambda () (begin (gc-heap) 1)) (lambda () 2)) :timeout-ms 10000) \"ok-count\")",
+      "pipeline": "eval",
+      "time_s": 0.013952,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "2",
+      "stderr": "",
+      "time_samples": [
+        0.013952
+      ],
+      "time_min_s": 0.013952,
+      "time_max_s": 0.013952
+    },
+    {
+      "name": "query_pattern_simple",
+      "code": "(set-code \"(begin (fib 1) (fib 2) (fib 3) (fib 4) (fib 5))\") (length (query:pattern \"(fib ...)\"))",
+      "pipeline": "eval",
+      "time_s": 0.009891,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "5",
+      "stderr": "",
+      "time_samples": [
+        0.010496,
+        0.007102,
+        0.009891
+      ],
+      "time_min_s": 0.007102,
+      "time_max_s": 0.010496
+    },
+    {
+      "name": "query_pattern_with_let",
+      "code": "(set-code \"(begin (let ((x 1)) x) (let ((x 2)) x) (let ((x 3)) x))\") (length (query:pattern \"(let ((x ...)) ...)\"))",
+      "pipeline": "eval",
+      "time_s": 0.005435,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "3",
+      "stderr": "",
+      "time_samples": [
+        0.009962,
+        0.005435,
+        0.00482
+      ],
+      "time_min_s": 0.00482,
+      "time_max_s": 0.009962
+    },
+    {
+      "name": "str_append",
+      "code": "(string-append \"a\" \"b\")",
+      "pipeline": "eval",
+      "time_s": 0.005728,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "\"ab\"",
+      "stderr": "",
+      "time_samples": [
+        0.009506,
+        0.005382,
+        0.005728
+      ],
+      "time_min_s": 0.005382,
+      "time_max_s": 0.009506
+    },
+    {
+      "name": "str_length",
+      "code": "(string-length \"hello\")",
+      "pipeline": "eval",
+      "time_s": 0.004859,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "5",
+      "stderr": "",
+      "time_samples": [
+        0.004859,
+        0.004812,
+        0.009338
+      ],
+      "time_min_s": 0.004812,
+      "time_max_s": 0.009338
+    },
+    {
+      "name": "sub",
+      "code": "(- 10 3)",
+      "pipeline": "eval",
+      "time_s": 0.004768,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "7",
+      "stderr": "",
+      "time_samples": [
+        0.004768,
+        0.009246,
+        0.004672
+      ],
+      "time_min_s": 0.004672,
+      "time_max_s": 0.009246
+    },
+    {
+      "name": "vec_basic",
+      "code": "(vector 1 2 3)",
+      "pipeline": "eval",
+      "time_s": 0.009915,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "#(1 2 3)",
+      "stderr": "",
+      "time_samples": [
+        0.009201,
+        0.010054,
+        0.009915
+      ],
+      "time_min_s": 0.009201,
+      "time_max_s": 0.010054
+    },
+    {
+      "name": "vec_ref",
+      "code": "(vector-ref (vector 10 20 30) 1)",
+      "pipeline": "eval",
+      "time_s": 0.009253,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "20",
+      "stderr": "",
+      "time_samples": [
+        0.004779,
+        0.009253,
+        0.009966
+      ],
+      "time_min_s": 0.004779,
+      "time_max_s": 0.009966
+    },
+    {
+      "name": "hot_list_map_2k",
+      "code": "(let loop ((i 0) (xs (quote ()))) (if (= i 2000) (length (map (lambda (x) (* x 2)) xs)) (loop (+ i 1) (cons i xs))))",
+      "pipeline": "eval",
+      "time_s": 0.01047,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "2000",
+      "stderr": "",
+      "time_samples": [
+        0.01047
+      ],
+      "time_min_s": 0.01047,
+      "time_max_s": 0.01047
+    },
+    {
+      "name": "hot_hash_set_get_2k",
+      "code": "(let ((h (hash))) (let loop ((i 0)) (if (= i 2000) (hash-ref h 1999) (begin (hash-set! h i i) (loop (+ i 1))))))",
+      "pipeline": "eval",
+      "time_s": 0.015503,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "1999",
+      "stderr": "",
+      "time_samples": [
+        0.015503
+      ],
+      "time_min_s": 0.015503,
+      "time_max_s": 0.015503
+    },
+    {
+      "name": "hot_fiber_spawn_join_200",
+      "code": "(let loop ((i 0) (s 0)) (if (= i 200) s (loop (+ i 1) (+ s (fiber:join (fiber:spawn (lambda () 1)))))))",
+      "pipeline": "eval",
+      "time_s": 0.014925,
+      "output": "",
+      "error": "",
+      "passed": true,
+      "memory_stats": {},
+      "returncode": 0,
+      "timed_out": false,
+      "stdout": "200",
+      "stderr": "",
+      "time_samples": [
+        0.014925
+      ],
+      "time_min_s": 0.014925,
+      "time_max_s": 0.014925
     },
     {
       "name": "replace_value_one_4320",
       "code": "(set-code \"(define letter-a \\\"a\\\")\")\n(define t0 (monotonic-ms))\n(display (mutate:replace-value 0 \"Z\" \"k\"))\n(newline)\n(display (- (monotonic-ms) t0))\n(newline)\n",
       "pipeline": "eval",
-      "time_s": 0.0127,
+      "time_s": 0.01175,
       "output": "",
       "error": "",
       "passed": true,
@@ -1174,60 +1219,56 @@
       "stdout": "1\n0",
       "stderr": "",
       "time_samples": [
-        0.0178,
-        0.0127,
-        0.0119
+        0.011915,
+        0.007167,
+        0.01175
       ],
-      "time_min_s": 0.0119,
-      "time_max_s": 0.0178
+      "time_min_s": 0.007167,
+      "time_max_s": 0.011915
     },
     {
       "name": "replace_value_seed_4320",
       "code": "(set-code \"(define lit-0 \\\"v0\\\") (define lit-1 \\\"v1\\\") (define lit-2 \\\"v2\\\") (define lit-3 \\\"v3\\\") (define lit-4 \\\"v4\\\") (define lit-5 \\\"v5\\\") (define lit-6 \\\"v6\\\") (define lit-7 \\\"v7\\\") (define lit-8 \\\"v8\\\") (define lit-9 \\\"v9\\\") (define lit-10 \\\"v10\\\") (define lit-11 \\\"v11\\\") (define lit-12 \\\"v12\\\") (define lit-13 \\\"v13\\\") (define lit-14 \\\"v14\\\") (define lit-15 \\\"v15\\\") (define lit-16 \\\"v16\\\") (define lit-17 \\\"v17\\\") (define lit-18 \\\"v18\\\") (define lit-19 \\\"v19\\\") (define lit-20 \\\"v20\\\") (define lit-21 \\\"v21\\\") (define lit-22 \\\"v22\\\") (define lit-23 \\\"v23\\\") (define lit-24 \\\"v24\\\") (define lit-25 \\\"v25\\\") (define lit-26 \\\"v26\\\") (define lit-27 \\\"v27\\\") (define lit-28 \\\"v28\\\") (define lit-29 \\\"v29\\\") (define lit-30 \\\"v30\\\") (define lit-31 \\\"v31\\\") (define lit-32 \\\"v32\\\") (define lit-33 \\\"v33\\\") (define lit-34 \\\"v34\\\") (define lit-35 \\\"v35\\\") (define lit-36 \\\"v36\\\") (define lit-37 \\\"v37\\\") (define lit-38 \\\"v38\\\") (define lit-39 \\\"v39\\\") (define lit-40 \\\"v40\\\") (define lit-41 \\\"v41\\\") (define lit-42 \\\"v42\\\") (define lit-43 \\\"v43\\\") (define lit-44 \\\"v44\\\") (define lit-45 \\\"v45\\\") (define lit-46 \\\"v46\\\") (define lit-47 \\\"v47\\\") (define body-0 (lambda () (list \\\"k0\\\" \\\"word\\\"))) (define body-1 (lambda () (list \\\"k1\\\" \\\"word\\\"))) (define body-2 (lambda () (list \\\"k2\\\" \\\"word\\\"))) (define body-3 (lambda () (list \\\"k3\\\" \\\"word\\\"))) (define body-4 (lambda () (list \\\"k4\\\" \\\"word\\\"))) (define body-5 (lambda () (list \\\"k5\\\" \\\"word\\\"))) (define body-6 (lambda () (list \\\"k6\\\" \\\"word\\\"))) (define body-7 (lambda () (list \\\"k7\\\" \\\"word\\\"))) (define body-8 (lambda () (list \\\"k8\\\" \\\"word\\\"))) (define body-9 (lambda () (list \\\"k9\\\" \\\"word\\\"))) (define body-10 (lambda () (list \\\"k10\\\" \\\"word\\\"))) (define body-11 (lambda () (list \\\"k11\\\" \\\"word\\\"))) (define body-12 (lambda () (list \\\"k12\\\" \\\"word\\\"))) (define body-13 (lambda () (list \\\"k13\\\" \\\"word\\\"))) (define body-14 (lambda () (list \\\"k14\\\" \\\"word\\\"))) (define body-15 (lambda () (list \\\"k15\\\" \\\"word\\\"))) (define body-16 (lambda () (list \\\"k16\\\" \\\"word\\\"))) (define body-17 (lambda () (list \\\"k17\\\" \\\"word\\\")))\")\n(define t0 (monotonic-ms))\n(display (mutate:replace-value 0 \"Z\" \"k\"))\n(newline)\n(display (- (monotonic-ms) t0))\n(newline)\n",
       "pipeline": "eval",
-      "time_s": 0.9749,
+      "time_s": 0.012857,
       "output": "",
       "error": "",
       "passed": true,
       "memory_stats": {},
       "returncode": 0,
       "timed_out": false,
-      "stdout": "1\n5",
+      "stdout": "1\n0",
       "stderr": "",
       "time_samples": [
-        0.9749,
-        0.9845,
-        0.9668
+        0.012857
       ],
-      "time_min_s": 0.9668,
-      "time_max_s": 0.9845
+      "time_min_s": 0.012857,
+      "time_max_s": 0.012857
     },
     {
       "name": "replace_batch_six_4320",
       "code": "(set-code \"(define lit-0 \\\"v0\\\") (define lit-1 \\\"v1\\\") (define lit-2 \\\"v2\\\") (define lit-3 \\\"v3\\\") (define lit-4 \\\"v4\\\") (define lit-5 \\\"v5\\\") (define lit-6 \\\"v6\\\") (define lit-7 \\\"v7\\\") (define lit-8 \\\"v8\\\") (define lit-9 \\\"v9\\\") (define lit-10 \\\"v10\\\") (define lit-11 \\\"v11\\\") (define lit-12 \\\"v12\\\") (define lit-13 \\\"v13\\\") (define lit-14 \\\"v14\\\") (define lit-15 \\\"v15\\\") (define lit-16 \\\"v16\\\") (define lit-17 \\\"v17\\\") (define lit-18 \\\"v18\\\") (define lit-19 \\\"v19\\\") (define lit-20 \\\"v20\\\") (define lit-21 \\\"v21\\\") (define lit-22 \\\"v22\\\") (define lit-23 \\\"v23\\\") (define lit-24 \\\"v24\\\") (define lit-25 \\\"v25\\\") (define lit-26 \\\"v26\\\") (define lit-27 \\\"v27\\\") (define lit-28 \\\"v28\\\") (define lit-29 \\\"v29\\\") (define lit-30 \\\"v30\\\") (define lit-31 \\\"v31\\\") (define lit-32 \\\"v32\\\") (define lit-33 \\\"v33\\\") (define lit-34 \\\"v34\\\") (define lit-35 \\\"v35\\\") (define lit-36 \\\"v36\\\") (define lit-37 \\\"v37\\\") (define lit-38 \\\"v38\\\") (define lit-39 \\\"v39\\\") (define lit-40 \\\"v40\\\") (define lit-41 \\\"v41\\\") (define lit-42 \\\"v42\\\") (define lit-43 \\\"v43\\\") (define lit-44 \\\"v44\\\") (define lit-45 \\\"v45\\\") (define lit-46 \\\"v46\\\") (define lit-47 \\\"v47\\\") (define body-0 (lambda () (list \\\"k0\\\" \\\"word\\\"))) (define body-1 (lambda () (list \\\"k1\\\" \\\"word\\\"))) (define body-2 (lambda () (list \\\"k2\\\" \\\"word\\\"))) (define body-3 (lambda () (list \\\"k3\\\" \\\"word\\\"))) (define body-4 (lambda () (list \\\"k4\\\" \\\"word\\\"))) (define body-5 (lambda () (list \\\"k5\\\" \\\"word\\\"))) (define body-6 (lambda () (list \\\"k6\\\" \\\"word\\\"))) (define body-7 (lambda () (list \\\"k7\\\" \\\"word\\\"))) (define body-8 (lambda () (list \\\"k8\\\" \\\"word\\\"))) (define body-9 (lambda () (list \\\"k9\\\" \\\"word\\\"))) (define body-10 (lambda () (list \\\"k10\\\" \\\"word\\\"))) (define body-11 (lambda () (list \\\"k11\\\" \\\"word\\\"))) (define body-12 (lambda () (list \\\"k12\\\" \\\"word\\\"))) (define body-13 (lambda () (list \\\"k13\\\" \\\"word\\\"))) (define body-14 (lambda () (list \\\"k14\\\" \\\"word\\\"))) (define body-15 (lambda () (list \\\"k15\\\" \\\"word\\\"))) (define body-16 (lambda () (list \\\"k16\\\" \\\"word\\\"))) (define body-17 (lambda () (list \\\"k17\\\" \\\"word\\\")))\")\n(define t0 (monotonic-ms))\n(define r (mutate:atomic-batch (list (list \"mutate:replace-value\" 0 \"a\" \"k\") (list \"mutate:replace-value\" 0 \"b\" \"k\") (list \"mutate:replace-value\" 0 \"c\" \"k\") (list \"mutate:replace-value\" 0 \"d\" \"k\") (list \"mutate:replace-value\" 0 \"e\" \"k\") (list \"mutate:replace-value\" 0 \"f\" \"k\")) \"batch\" :sync-query-index? #f))\n(display (if (equal? r #t) 1 0))\n(newline)\n(display (- (monotonic-ms) t0))\n(newline)\n",
       "pipeline": "eval",
-      "time_s": 1.0082,
+      "time_s": 0.014879,
       "output": "",
       "error": "",
       "passed": true,
       "memory_stats": {},
       "returncode": 0,
       "timed_out": false,
-      "stdout": "1\n9",
+      "stdout": "1\n1",
       "stderr": "",
       "time_samples": [
-        1.0477,
-        1.0082,
-        1.0034
+        0.014879
       ],
-      "time_min_s": 1.0034,
-      "time_max_s": 1.0477
+      "time_min_s": 0.014879,
+      "time_max_s": 0.014879
     },
     {
       "name": "string_ref_walk_4320",
       "code": "(define i 0)\n(define n 0)\n(define s \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\")\n(define t0 (monotonic-ms))\n(while (< i 2000)\n  (begin\n    (set! n (+ n (string-ref s i)))\n    (set! i (+ i 1))))\n(display n)\n(newline)\n(display (- (monotonic-ms) t0))\n(newline)\n",
       "pipeline": "eval",
-      "time_s": 0.0114,
+      "time_s": 0.006974,
       "output": "",
       "error": "",
       "passed": true,
@@ -1237,12 +1278,12 @@
       "stdout": "194000\n2",
       "stderr": "",
       "time_samples": [
-        0.012,
-        0.0114,
-        0.011
+        0.00629,
+        0.010685,
+        0.006974
       ],
-      "time_min_s": 0.011,
-      "time_max_s": 0.012
+      "time_min_s": 0.00629,
+      "time_max_s": 0.010685
     }
   ]
 }
