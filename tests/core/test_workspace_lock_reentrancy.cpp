@@ -86,15 +86,19 @@ int main() {
         CHECK(r.has_value(), "AC2: eval-current after mutate:rebind (no deadlock)");
     }
 
-    // ── AC3: workspace-state under post-mutate eval path ─────────────
+    // ── AC3: ws:state under post-mutate eval path ────────────────────
+    // #5144: (workspace-state) is retired; ws:state is the std formatter
+    // over the same workspace read (stats:get "ast:defs" + timeline).
     {
-        std::println("\n--- AC3: workspace-state after mutate ---");
+        std::println("\n--- AC3: ws:state after mutate ---");
         CompilerService cs;
         (void)cs.eval("(set-code \"(define x 1)\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(mutate :rebind \"x\" \"2\")");
-        auto ws = cs.eval("(workspace-state)");
-        CHECK(ws.has_value(), "AC3: workspace-state after mutate (pin adopt / short lock)");
+        // #5144: workspace-state is the std/workspace formatter now.
+        (void)cs.eval("(require \"std/workspace\" all:)");
+        auto ws = cs.eval("(ws:state)");
+        CHECK(ws.has_value(), "AC3: ws:state after mutate (pin adopt / short lock)");
     }
 
     // ── AC6 (#4264): (require …) inside set-code'd source + eval-current ──

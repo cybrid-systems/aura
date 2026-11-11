@@ -1,17 +1,22 @@
-; lib/std/persist.aura — Issue #1381
+; lib/std/persist.aura — Issue #1381 / #5144
 ; High-level save/load of evaluator workspace state to binary files.
 ;
 ; Builds on C primitives:
 ;   (serialize-workspace path) → #t/#f
 ;   (deserialize-workspace path) → #t/#f
 ;   (workspace-persist-info path) → hash | #f
-;   (workspace-persist-format-version) → int
+;
+; persist:format-version is the blob format version the engine writes
+; (kFormatVersion in evaluator_primitives_persist.cpp). Since #5144 it is a
+; plain std constant: the engine's (workspace-persist-format-version)
+; primitive is retired, so no Aura code calls into C++ for the number.
 ;
 ; Usage:
 ;   (require "std/persist" all:)
 ;   (persist:save "/tmp/session.aura-soul")
 ;   (persist:load "/tmp/session.aura-soul")
 ;   (persist:info "/tmp/session.aura-soul")
+;   persist:format-version
 
 (export persist:save
         persist:load
@@ -20,11 +25,11 @@
         persist:format-version
         persist:round-trip?)
 
-(define (persist:format-version)
-  (workspace-persist-format-version))
+; Blob format version written by serialize-workspace (engine kFormatVersion).
+(define persist:format-version 2)
 
 (define (persist:version)
-  (persist:format-version))
+  persist:format-version)
 
 ; Save workspace + AOT meta + mutation log to path.
 (define (persist:save path)

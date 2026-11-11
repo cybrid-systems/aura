@@ -12,9 +12,11 @@
       (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\\n" msg)))))
 
 ;; ── fingerprint + stable-ref pin surface ─────────────────────────────
-(check (integer? (pin-table-size)) "pin-table-size")
+;; #5144: pin-table-size is a metrics key, not a bare primitive; the
+;; fingerprint verb is (mutate :set-agent-fingerprint).
+(check (integer? (engine:metrics "pin-table-size")) "pin-table-size")
 (check (integer? (mutate :set-agent-fingerprint 0)) "mutate:set-agent-fingerprint")
-(check (integer? (pin-table-size)) "pin-table-size after fingerprint")
+(check (integer? (engine:metrics "pin-table-size")) "pin-table-size after fingerprint")
 
 ;; ── typed mutation surface (rebind / set-body / tweak-literal) ───────
 (set-code "(define m5033e 1)")

@@ -184,6 +184,16 @@ struct aura_hot_update_registry_snapshot {
     std::int64_t force_jit_repromote_allow_pending_idle_when_force_jit_covered;
     std::int64_t schema_2601;
     std::int64_t issue_2601;
+    // Issue #3636: per-region force watermark + storm attribution. The C
+    // writer emits every field; this mirror was missing them, so
+    // (query:hot-update-registry-stats) wrote 40 bytes past the stack
+    // struct ("stack smashing detected"). Keep lockstep with
+    // hot_update_registry.hh.
+    std::int64_t region_force_max_age_ms;
+    std::int64_t reemit_throttle_cause_mask;
+    std::int64_t reemit_soft_storm_region_skips_total;
+    std::int64_t schema_3636;
+    std::int64_t issue_3636;
 };
 void aura_hot_update_registry_get_snapshot(aura_hot_update_registry_snapshot* out);
 // Issue #2748: deferred reemit age (C ABI).
@@ -1559,8 +1569,11 @@ template <typename Ctx> void RegSplitParts::register_mutate_pin_primitives(Ctx& 
         ev.primitives().set_meta_for_name("with-pinned", std::move(meta));
     }
 
-    // (pin-table-size) — active Agent pin count.
-    add("pin-table-size", [&ev](std::span<const EvalValue>) -> EvalValue {
+    // (engine:metrics "pin-table-size") — active Agent pin count.
+    // Issue #5144: metrics-face only; the bare (pin-table-size) name is
+    // retired (the query:stable-ref-boundary-stats-hash facade also folds
+    // the same value into its "pin-table-size" row).
+    ObservabilityPrims::register_stats_impl("pin-table-size", [&ev](const auto&) -> EvalValue {
         return make_int(static_cast<std::int64_t>(ev.cow_boundary_pinned_ref_count()));
     });
 }

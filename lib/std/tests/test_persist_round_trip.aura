@@ -12,7 +12,7 @@
          (crc (hash-ref info "crc-ok"))
          (srcb (hash-ref info "source-bytes"))
          (ok-load (persist:load path))
-         (fmt (persist:format-version)))
+         (fmt persist:format-version))
     (and ok-save
          ok-load
          (= fv 2)

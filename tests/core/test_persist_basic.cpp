@@ -68,11 +68,13 @@ std::uint32_t crc32_bytes(const std::vector<char>& buf) {
 int main() {
     std::remove(kPath);
 
-    // ── AC1: format version primitive ──
+    // ── AC1: format version std constant (#5144) ──
+    // The (workspace-persist-format-version) primitive is retired; the
+    // number lives in std/persist as a plain constant.
     {
         CompilerService cs;
-        auto v = cs.eval("(workspace-persist-format-version)");
-        CHECK(v && is_int(*v) && as_int(*v) == 2, "format version == 2");
+        CHECK(cs.eval("(require \"std/persist\" all:)").has_value(), "require persist");
+        CHECK(eval_bool(cs, "(= persist:format-version 2)"), "format version == 2");
     }
 
     // ── AC2: serialize empty / with code ──
@@ -172,7 +174,7 @@ int main() {
     {
         CompilerService cs;
         CHECK(cs.eval("(require \"std/persist\" all:)").has_value(), "require persist");
-        CHECK(eval_bool(cs, "(= (persist:format-version) 2)"), "persist:format-version");
+        CHECK(eval_bool(cs, "(= persist:format-version 2)"), "persist:format-version");
         CHECK(cs.eval("(set-code \"(define z 99)\")").has_value(), "set-code z");
         const char* p = "/tmp/aura_persist_std_1381.bin";
         CHECK(eval_bool(cs, std::format("(persist:save \"{}\")", p).c_str()), "persist:save");

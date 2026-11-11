@@ -2239,10 +2239,16 @@ void register_query_pin_provenance_parts(PrimRegistrar add, std::pmr::vector<Pai
             std::uint64_t flat_pins = 0;
             std::uint64_t boundary_checks = 0;
             std::uint64_t cow_epoch = 0;
+            std::uint64_t lw_commit = 0;
+            std::uint64_t lw_rollback = 0;
             if (auto* ws = ev.workspace_flat()) {
                 flat_pins = ws->pinned_across_boundaries();
                 boundary_checks = ws->cross_boundary_validations();
                 cow_epoch = ws->workspace_cow_epoch();
+                // Issue #5144: the retired mutation-lightweight-commit /
+                // -rollback primitives fold their counters in here.
+                lw_commit = ws->lightweight_commit_total();
+                lw_rollback = ws->lightweight_rollback_total();
             }
             insert_kv("cross-cow-invalidations", static_cast<std::int64_t>(cross_cow));
             insert_kv("pinned-across-boundaries", static_cast<std::int64_t>(flat_pins));
@@ -2253,6 +2259,8 @@ void register_query_pin_provenance_parts(PrimRegistrar add, std::pmr::vector<Pai
             insert_kv("schema", 738);
             // Issue #2189: Agent pin table lifecycle (pin-stable-refs / with-pinned).
             insert_kv("pin-table-size", static_cast<std::int64_t>(pins_active));
+            insert_kv("mutation-lightweight-commit", static_cast<std::int64_t>(lw_commit));
+            insert_kv("mutation-lightweight-rollback", static_cast<std::int64_t>(lw_rollback));
             insert_kv("agent-pin-ops-total", static_cast<std::int64_t>(ev.agent_pin_ops_total()));
             insert_kv("agent-unpin-ops-total",
                       static_cast<std::int64_t>(ev.agent_unpin_ops_total()));
