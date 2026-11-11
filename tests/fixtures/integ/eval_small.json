@@ -1,13 +1,13 @@
 [
   {
     "name": "char_alpha",
-    "code": "(char-alphabetic? 65)",
+    "code": "(require \"std/char\" all:)\n        (char-alphabetic? 65)",
     "pipeline": "eval",
     "expected": "#t"
   },
   {
     "name": "char_downcase",
-    "code": "(char-downcase 65)",
+    "code": "(require \"std/char\" all:)\n        (char-downcase 65)",
     "pipeline": "eval",
     "expected": "97"
   },
@@ -25,7 +25,7 @@
   },
   {
     "name": "char_numeric",
-    "code": "(char-numeric? 48)",
+    "code": "(require \"std/char\" all:)\n        (char-numeric? 48)",
     "pipeline": "eval",
     "expected": "#t"
   },
@@ -37,13 +37,13 @@
   },
   {
     "name": "char_upcase",
-    "code": "(char-upcase 97)",
+    "code": "(require \"std/char\" all:)\n        (char-upcase 97)",
     "pipeline": "eval",
     "expected": "65"
   },
   {
     "name": "char_whitespace",
-    "code": "(char-whitespace? 32)",
+    "code": "(require \"std/char\" all:)\n        (char-whitespace? 32)",
     "pipeline": "eval",
     "expected": "#t"
   },
