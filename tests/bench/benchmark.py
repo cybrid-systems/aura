@@ -80,6 +80,12 @@ DEFAULT_STATISTICAL_RUNS = 3  # when --statistical without --runs
 # samples even when the suite runs a single pass (#1936 follow-up).
 MICRO_CASE_S = 0.050
 MICRO_CASE_RUNS = 3
+# Machine-class calibration: the baseline may be recorded on a different
+# machine (dev image vs shared CI runner, arm64 vs x86), where the same work
+# costs a different number of CPU-seconds. A trivial process measures that
+# class factor, so the gate compares `case_cpu` against
+# `baseline_cpu * (run_startup / baseline_startup)` instead of raw seconds.
+STARTUP_PROBE_RUNS = 3
 
 
 def env_flag_true(name: str) -> bool:
@@ -301,6 +307,8 @@ class BenchSuiteResult:
     failed: int = 0
     total_time_s: float = 0.0
     cases: list[dict] = field(default_factory=list)
+    # Per-pipeline cost of one trivial invocation (machine-class factor).
+    startup_cpu_s: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -324,6 +332,22 @@ def get_timestamp() -> str:
     return datetime.datetime.now().astimezone().isoformat()
 
 
+def measure_startup_probe(pipeline: str) -> float:
+    """Best-of-N child CPU seconds for the cheapest possible run of *pipeline*.
+
+    This is the machine-class factor: it carries process startup plus the
+    fixed interpreter bring-up, so dividing case cost by it cancels a runner
+    that is uniformly slower or faster than the one that recorded the baseline.
+    """
+    best = 0.0
+    for _ in range(STARTUP_PROBE_RUNS):
+        result = measure_pipeline(f"__startup_{pipeline}", "1", pipeline, env=None)
+        cpu = float(result.get("cpu_s") or 0.0)
+        if cpu > 0 and (best == 0.0 or cpu < best):
+            best = cpu
+    return round(best, 6)
+
+
 def run_all(*, runs: int = 1) -> BenchSuiteResult:
     """Run the full suite. *runs* > 1 → median-of-N timing (#1936)."""
     runs = max(1, int(runs))
@@ -340,6 +364,15 @@ def run_all(*, runs: int = 1) -> BenchSuiteResult:
     # outlier under --strict (single-run CI). Discarded from results.
     with contextlib.suppress(Exception):
         run_aura("1", None)
+
+    # Machine-class calibration (#1936 follow-up): record what one trivial
+    # invocation costs here, so a baseline recorded on another machine can be
+    # scaled instead of compared raw.
+    pipelines = sorted({c.pipeline for c in load_benchmark_cases()})
+    suite.startup_cpu_s = {p: v for p in pipelines if (v := measure_startup_probe(p)) > 0}
+    if suite.startup_cpu_s:
+        probes = ", ".join(f"{p}={v * 1000:.1f}ms" for p, v in sorted(suite.startup_cpu_s.items()))
+        print(f"Startup probe (cpu): {probes}")
 
     # #1936 follow-up: micro cases get several samples even in a single-pass
     # run, so their best sample is not just the one noisy startup.
@@ -406,20 +439,51 @@ def run_all(*, runs: int = 1) -> BenchSuiteResult:
 # ── Baseline management ───────────────────────────────────────
 
 
-def load_baseline() -> BenchSuiteResult:
+def platform_tag() -> str:
+    """Machine class the numbers belong to (CPU-seconds are not portable).
+
+    A 10 ms case on the dev image (arm64, 14 fast cores, warm cache) costs
+    3x that on a shared 2-core x86 runner, so a single committed baseline can
+    only be compared within the class that recorded it (#1936 follow-up).
+    """
+    import platform as _platform
+
+    return f"{_platform.system().lower()}-{_platform.machine()}"
+
+
+def _read_baseline_doc() -> dict:
     if not os.path.exists(BASELINE_FILE):
-        return BenchSuiteResult()
+        return {"schema": 2, "platforms": {}}
     with open(BASELINE_FILE) as f:
         data = json.load(f)
-    suite = BenchSuiteResult(**data)
-    return suite
+    if "platforms" in data:
+        return data
+    # Legacy flat baseline: it was recorded on this machine class.
+    return {"schema": 2, "platforms": {platform_tag(): data}}
+
+
+def load_baseline() -> BenchSuiteResult:
+    doc = _read_baseline_doc()
+    entry = (doc.get("platforms") or {}).get(platform_tag())
+    if entry is None:
+        return BenchSuiteResult()
+    return BenchSuiteResult(**entry)
+
+
+def baseline_platforms() -> list[str]:
+    return sorted((_read_baseline_doc().get("platforms") or {}).keys())
 
 
 def save_baseline(suite: BenchSuiteResult):
     os.makedirs(os.path.dirname(BASELINE_FILE) or ".", exist_ok=True)
+    doc = _read_baseline_doc()
+    tag = platform_tag()
+    doc.setdefault("platforms", {})[tag] = asdict(suite)
+    doc["schema"] = 2
     with open(BASELINE_FILE, "w") as f:
-        json.dump(asdict(suite), f, indent=2)
-    print(f"Baseline saved to {BASELINE_FILE}")
+        json.dump(doc, f, indent=2)
+        f.write("\n")
+    print(f"Baseline saved to {BASELINE_FILE} (platform {tag})")
 
 
 def append_update_log(*, rationale: str, suite: BenchSuiteResult, argv: list[str]) -> None:
@@ -576,6 +640,8 @@ def collect_regressions(
             base_time = float(base.get("time_min_s") or base["time_s"])
             cur_time = float(cur.get("time_min_s") or cur["time_s"])
             metric = "wall"
+        else:
+            pass
         if base_time <= 0:
             continue
         thr, md, cat = case_thresholds(
@@ -619,6 +685,23 @@ def check_regression(
     Returns False when regressions found (for --check/--strict).
     `strict` only changes messaging (SLO VIOLATION vs warn).
     """
+    baseline = load_baseline()
+    if not baseline.cases:
+        tag = platform_tag()
+        known = ", ".join(baseline_platforms()) or "none"
+        print(
+            f"⚠️  No benchmark baseline for platform {tag} (recorded: {known}). "
+            "CPU-seconds do not transfer between machine classes, so the gate "
+            "cannot compare raw numbers here."
+        )
+        if strict:
+            print(
+                "SLO VIOLATION: missing baseline for this platform — record it with\n"
+                '  python3 tests/bench/benchmark.py --update --runs 3 --rationale "..."\n'
+                "(run on this machine class, e.g. the CI runner)."
+            )
+            return False
+        return True
     if not validate_baseline_names(suite):
         return False
 

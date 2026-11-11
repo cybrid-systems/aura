@@ -68,3 +68,14 @@ Each `--update` with `--rationale` appends an entry here.
 - **Cases:** 62 (passed=62, failed=0)
 - **Total time_s (median suite sum):** 0.87
 - **Command:** `benchmark.py --update --runs 3 --rationale gate on child CPU (user+sys) instead of wall time: shared-runner startup contention inflated 10ms cases to 35ms (#1936 follow-up)`
+
+## 2026-11-11T19:19:42.822340+08:00
+
+- **Rationale:** per-platform baselines: CPU-seconds do not transfer between the arm64 dev image and the shared x86 CI runner (2.9x class gap). The aarch64 slot is re-recorded here; the linux-x86_64 slot is seeded from CI run 43003952324 so the gate compares like with like.
+- **Cases:** 62 (passed=62, failed=0)
+- **Total time_s (median suite sum):** 0.531
+- **Command:** `benchmark.py --update --runs 3 --rationale per-platform baselines: CPU-seconds do not transfer between the arm64 dev image and the shared x86 CI runner (2.9x class gap). The aarch64 slot is re-recorded here; the linux-x86_64 slot is seeded from CI run 43003952324 so the gate compares like with like.`
+
+Root cause it closes: the 2026-11-11T17:43 CPU-only baseline still read 5 cases 2.6-3.3x slow on CI. Re-deriving run 43003952324's log shows *every* case, including `occurrence` (7.0 -> 20.5ms cpu) and `tc_let` (6.1 -> 17.7), sits at the same ~2.9x factor: the baseline came from this arm64 dev image, the gate ran on a shared x86 runner, and a CPU-second is not a portable unit. Normalising each case by its own run's trivial-invocation cost puts all 62 within 1.26x (worst: par_orch_3_agents 1.26, multi_agent_pipeline 1.24 - both already carry a 180% meta tolerance). A single scaling factor was tried first and rejected: startup is sys/IO-bound (2.9x on this fleet) while compute cases scale with core throughput (1.6x), so one probe cannot correct both. Hence a baseline slot per `platform.system()-platform.machine()`; `--update` writes the current class, the loader refuses to borrow another class's numbers, and strict mode fails loudly when a class has no slot instead of comparing raw.
+
+linux-x86_64 slot: seeded from run 43003952324 (sha 5492c6a85) - the first run that printed `/cpu`, so wall+cpu per case come from that job's log rather than a guess. Re-record it with `--update` on a CI runner when convenient.
