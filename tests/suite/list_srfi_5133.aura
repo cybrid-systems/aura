@@ -1,0 +1,38 @@
+; #5133: pin what std/list actually promises, against the SRFI-1 label the
+; INDEX carried. The folds take the accumulator first (R7RS fold-left shape),
+; not SRFI-1's element-first order, so the assertions below are written the way
+; the module behaves and the module states the difference.
+(require "std/list" all:)
+
+(define xs (list 1 2 3))
+(define (check)
+  (and
+   ; foldl is (proc acc elem): building with cons yields the reversed list
+   (equal? (foldl cons (quote ()) xs) (quote ((((() . 1) . 2) . 3))))
+   ; foldr is (proc elem acc): the documented shape restores the order
+   (equal? (foldr cons (quote ()) xs) xs)
+   (equal? (foldl + 0 xs) 6)
+   (equal? (foldr + 0 xs) 6)
+   ; SRFI-1 predicates over one and many lists
+   (eq? (any odd? (list 2 4 5)) #t)
+   (eq? (every even? (list 2 4 5)) #f)
+   (eq? (every even? (list 2 4)) #t)
+   ; take/drop take the list first (#4177)
+   (equal? (take xs 2) (list 1 2))
+   (equal? (drop xs 2) (list 3))
+   (equal? (take xs 0) (quote ()))
+   ; membership and friends
+   (equal? (member 2 xs) (list 2 3))
+   (eq? (member 9 xs) #f)
+   (equal? (zip (list 1 2) (list 3 4)) (list (list 1 3) (list 2 4)))
+   (equal? (iota 3) (list 0 1 2))
+   (equal? (last xs) 3)
+   (equal? (reverse xs) (list 3 2 1))))
+
+(define host (if (check) 1 0))
+(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+
+(if (and (= host 1) (= guest 1))
+    (begin (display "OK-5133-list") (newline))
+    (begin (display "FAIL-5133-list host=") (display host)
+           (display " guest=") (display guest) (newline) (exit 1)))

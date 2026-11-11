@@ -148,7 +148,7 @@
             "(require \"std/synthesize\" all:)(synthesize:run-tests code tests)"))
     ; ── Collection + data ──
     (list "list"
-      (list "SRFI-1 list utilities (foldl/foldr, any/every, cons*, append-map, filter-map) [perf-tier:hot #923/#928]"
+      (list "SRFI-1 list utilities (foldl/foldr take the accumulator first, i.e. R7RS fold-left/right; any/every, cons*, append-map, filter-map) [perf-tier:hot #923/#928]"
             "(append-map (lambda (x) (list x x)) (list 1 2))"))
     (list "vector"
       (list "SRFI-133 vector library (vector-append, vector-map, vector-fold, vector-count, vector-copy!)"
