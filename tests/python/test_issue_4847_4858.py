@@ -88,7 +88,9 @@ class TestIssueBatch4847To4858(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("unbound binding never-defined-key", proc.stdout)
-        self.assertIn("mw:overlay-define", proc.stdout)
+        # Issue #5097 renamed the overlay verbs: the hint now names the live
+        # fiber: spelling, which is what a caller has to use today.
+        self.assertIn("fiber:overlay-define", proc.stdout)
         self.assertNotIn(" + name + ", proc.stdout)
 
     def test_4850_agent_join_keeps_raised_symbol(self) -> None:
