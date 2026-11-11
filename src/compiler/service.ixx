@@ -2360,6 +2360,12 @@ public:
     void set_require_failure_is_diagnostic(bool on) noexcept {
         evaluator_.set_require_failure_is_diagnostic(on);
     }
+    // Issue #5140: --serve-async-bench runs its script as the top-level
+    // program on the bench fiber; that body arms file-mode diagnostics just
+    // like --load, so an uncaught error keeps its location and snippet.
+    void set_file_diag_in_fiber_body(bool on) noexcept {
+        evaluator_.set_file_diag_in_fiber_body(on);
+    }
     std::string session_id() const { return session_id_; }
     void set_wake_eventfd(int fd) { wake_eventfd_ = fd; }
 
