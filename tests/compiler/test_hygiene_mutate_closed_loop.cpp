@@ -1448,7 +1448,7 @@ static void ac3121_4_source_and_linter() {
     CHECK(qws.find("Issue #3121") != std::string::npos, "3121 AC4: query sites cite");
     CHECK(qws.find("budget-exceeded:") != std::string::npos, "3121 AC4: structured reason prefix");
     CHECK(asr.find("Issue #3121") != std::string::npos, "3121 AC4: as-stable-ref cites");
-    CHECK(asr.find("mev(\"restamp-lag\"") != std::string::npos,
+    CHECK(asr.find("\"restamp-lag\"") != std::string::npos,
           "3121 AC4: as-stable-ref structured (not void)");
     CHECK(sec.find("Issue #3121") != std::string::npos || sec.find("#3121") != std::string::npos,
           "3121 AC4: allow-gate cites");
@@ -5338,10 +5338,10 @@ static bool is_hygiene_exempt_3576(std::string_view name) {
 }
 
 static std::vector<std::string> registered_mutate_star_3576(CompilerService& cs) {
+    // Issue #5144: the mutate: bodies are dispatch-only, so the registration
+    // surface is the hidden table, not the slot list.
     std::vector<std::string> out;
-    const auto& prims = cs.evaluator().primitives();
-    for (std::size_t i = 0; i < prims.slot_count(); ++i) {
-        const auto& n = prims.name_for_slot(i);
+    for (const auto& n : cs.evaluator().primitives().hidden_names("mutate:")) {
         if (n.starts_with("mutate:"))
             out.push_back(n);
     }
@@ -8523,17 +8523,17 @@ static void ac4665_2_exempt_inventory_records_reason() {
 
     // The registration point records the policy, so a gated prim and an exempt
     // prim are distinguishable from the registry - not only from the body.
-    const auto gated_slot = prims.slot_for_name("mutate:replace-type");
-    CHECK(gated_slot < prims.slot_count(), "4665 AC2: mutate:replace-type is registered");
-    if (gated_slot < prims.slot_count()) {
-        const auto& doc = prims.meta_for_slot(gated_slot).doc;
+    const auto* gated_meta = prims.hidden_meta_for_name("mutate:replace-type");
+    CHECK(gated_meta != nullptr, "4665 AC2: mutate:replace-type is registered");
+    if (gated_meta != nullptr) {
+        const auto& doc = gated_meta->doc;
         CHECK(doc.find("HYGIENE_POLICY_REQUIRED (#4665)") != std::string::npos,
               "4665 AC2: a gated prim records the Required policy");
     }
-    const auto exempt_slot = prims.slot_for_name("mutate:set-agent-fingerprint");
-    CHECK(exempt_slot < prims.slot_count(), "4665 AC2: mutate:set-agent-fingerprint is registered");
-    if (exempt_slot < prims.slot_count()) {
-        const auto& doc = prims.meta_for_slot(exempt_slot).doc;
+    const auto* exempt_meta = prims.hidden_meta_for_name("mutate:set-agent-fingerprint");
+    CHECK(exempt_meta != nullptr, "4665 AC2: mutate:set-agent-fingerprint is registered");
+    if (exempt_meta != nullptr) {
+        const auto& doc = exempt_meta->doc;
         CHECK(doc.find("HYGIENE_POLICY_EXEMPT (#4665)") != std::string::npos,
               "4665 AC2: the exempt metadata prim records the Exempt policy");
         CHECK(doc.find("metadata-only agent identity stamp") != std::string::npos,

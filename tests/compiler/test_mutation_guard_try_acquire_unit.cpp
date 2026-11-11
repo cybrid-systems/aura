@@ -730,7 +730,8 @@ static void ac3452_1_raw_add_exempt_only() {
     std::println("\n--- #3452 AC1: raw add(\"mutate: is MetadataGuardExempt only ---");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     const auto lint = read_file("scripts/coverage/checks/check_mutate_dispatch_sole_guard_3074.py");
-    CHECK(mut.find("add(\"mutate:set-agent-fingerprint\"") != std::string::npos,
+    // Issue #5144: the registration is dispatch-only and may be wrapped.
+    CHECK(mut.find("\"mutate:set-agent-fingerprint\"") != std::string::npos,
           "3452 AC1: fingerprint raw add");
     CHECK(mut.find("MutateRegKind::MetadataGuardExempt") != std::string::npos,
           "3452 AC1: fingerprint kind");
@@ -766,7 +767,8 @@ static void ac3452_3_exempt_skip_acquire() {
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     CHECK(mut.find("/*guard_exempt=*/true") != std::string::npos, "3452 AC3: exempt flag");
     CHECK(mut.find("GUARD_EXEMPT:") != std::string::npos, "3452 AC3: GUARD_EXEMPT comments");
-    const auto pos = mut.find("add(\"mutate:set-agent-fingerprint\"");
+    // Issue #5144: dispatch-only registration, possibly wrapped.
+    const auto pos = mut.find("\"mutate:set-agent-fingerprint\"");
     CHECK(pos != std::string::npos, "3452 AC3: fingerprint add");
     if (pos != std::string::npos) {
         // Brace-matched fingerprint body: the whole body is checked for
