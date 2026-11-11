@@ -11,10 +11,12 @@
 ;   ws:rollback-latest           — Roll back to latest snapshot
 ;   ws:memory-pressure           — Memory pressure indicator
 ;   ws:current-stats             — Combined stats for AI context
+;   ws:state                     — Human-readable workspace snapshot (#5144)
 ;
 (export ws:merge-symbols ws:diff ws:snapshot-current
         ws:list-snapshots ws:rollback-latest
-        ws:memory-pressure ws:current-stats)
+        ws:memory-pressure ws:current-stats
+        ws:state)
 
 ; ── ws:merge-symbols child-id ──
 ; Merges individual symbols from child workspace into the active parent.
@@ -98,3 +100,83 @@
     (list "memory-used"    (query :memory-used))
     (list "memory-limit"   (query :memory-limit))
     (list "cow-refused"    (stats:get "workspace:cow-refused-count"))))
+
+
+; ── ws:state ──
+; Human-readable workspace snapshot for the Agent / EDSL (#5144). The
+; retired (workspace-state) primitive printed exactly this text; the
+; std formatter rebuilds it from (stats:get "ast:defs") and the intend
+; timeline so the output stays byte-identical:
+;   WORKSPACE: <n> defines      one header line, <n> = DEFINE: line count
+;   DEFINE: <name>              one per define, in workspace (flat) order
+;   (no defines)                placeholder when there is no define
+;   MUTATIONS (last 10):        timeline section header
+;     <i>:<line>                last ten entries, index-prefixed
+;   (none)                      placeholder when the timeline is empty
+; No workspace AST loaded -> the same WORKSPACE-ERROR line as the engine.
+(define (ws:state)
+  (define defs (stats:get "ast:defs"))
+  (if (void? defs)
+      "WORKSPACE-ERROR: no workspace AST loaded"
+      (let ((ds (if (pair? defs) defs '())))
+        (string-append "WORKSPACE: " (number->string (ws:define-count ds)) " defines\n"
+                       (if (= (ws:define-count ds) 0)
+                           "(no defines)\n"
+                           (ws:define-lines ds))
+                       "MUTATIONS (last 10):\n"
+                       (ws:last-timeline)))))
+
+; Count the (name . node-id) entries; defensive against a bare name.
+(define (ws:define-count ds)
+  (let loop ((rest ds) (n 0))
+    (if (null? rest)
+        n
+        (loop (cdr rest) (if (pair? (car rest)) (+ n 1) n)))))
+
+; One "DEFINE: <name>" line per entry, in flat (registration) order.
+(define (ws:define-lines ds)
+  (let loop ((rest ds) (out ""))
+    (if (null? rest)
+        out
+        (let ((entry (car rest)))
+          (loop (cdr rest)
+                (if (pair? entry)
+                    (string-append out "DEFINE: " (car entry) "\n")
+                    out))))))
+
+; Last ten timeline entries, "  <i>:<line>" each. The intend timeline
+; snapshot is "i:line\n" per entry with absolute indexes, so keeping the
+; prefix and indenting reproduces the engine's timeline_tail(10) text.
+(define (ws:last-timeline)
+  (let ((hist (intend-history)))
+    (if (string=? hist "(empty)")
+        "  (none)\n"
+        (let* ((lines (ws:split-newlines hist))
+               (n (length lines))
+               (tail (if (> n 10) (ws:drop (- n 10) lines) lines)))
+          (ws:indent-lines tail)))))
+
+; Split on #\newline and drop the trailing empty piece (the final "\n").
+(define (ws:split-newlines s)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (start 0) (acc '()))
+      (if (>= i n)
+          (let ((piece (substring s start i)))
+            (reverse (if (string=? piece "") acc (cons piece acc))))
+          (if (= (string-ref s i) 10)
+              (loop (+ i 1) (+ i 1) (cons (substring s start i) acc))
+              (loop (+ i 1) start acc))))))
+
+; "  " + line + "\n" for each line, concatenated.
+(define (ws:indent-lines lines)
+  (let loop ((rest lines) (out ""))
+    (if (null? rest)
+        out
+        (loop (cdr rest)
+              (string-append out "  " (car rest) "\n")))))
+
+; Drop the first n elements (tail-recursive; keeps the list when short).
+(define (ws:drop n lst)
+  (if (or (= n 0) (null? lst))
+      lst
+      (ws:drop (- n 1) (cdr lst))))

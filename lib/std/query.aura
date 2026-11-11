@@ -31,7 +31,8 @@
         query:nodes-with-marker query:find-by-name query:subtree
         query:defines query:defines-by-marker
         query:calls-by-marker
-        query:node-marker query:ref-counts)
+        query:node-marker query:ref-counts
+        query:ref-mutation-id query:ref-workspace-id)
 
 ; Issue #4345: (query:ref-counts node-id) — the engine registers this
 ; behind the stats_impl face, which has no bare-name Soft binding; the
@@ -40,6 +41,23 @@
 ; to that face.
 (define (query:ref-counts node-id)
   (engine:metrics "query:ref-counts" node-id))
+
+; Issue #5144: the StableNodeRef unpack helpers. The engine primitives
+; (qr:ref-mutation-id / qr:ref-workspace-id) are retired; a serialized
+; StableNodeRef is the 4-tuple (id gen mutation_id workspace_id), so the
+; 3rd / 4th fields are a plain list access with the same contract: any
+; non-integer argument (or the wrong arity) yields #f instead of an int.
+(define (query:ref-mutation-id id gen mutation-id workspace-id)
+  (if (and (integer? id) (integer? gen)
+           (integer? mutation-id) (integer? workspace-id))
+      mutation-id
+      #f))
+
+(define (query:ref-workspace-id id gen mutation-id workspace-id)
+  (if (and (integer? id) (integer? gen)
+           (integer? mutation-id) (integer? workspace-id))
+      workspace-id
+      #f))
 
 ; ── (query:list-categories) — list the query: sub-namespaces
 ;     Used for discovery by AI Agents / docs.

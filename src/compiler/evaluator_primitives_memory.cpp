@@ -1030,17 +1030,22 @@ void RegSplitParts::register_memory_densify_mutation_primitives(PrimRegistrar ad
                 return make_int(0);
             return make_int(static_cast<std::int64_t>(ev.workspace_flat_->lightweight_total()));
         });
-    add("mutation-lightweight-commit", [&ev](const auto&) -> EvalValue {
-        if (!ev.workspace_flat_)
-            return make_int(0);
-        return make_int(static_cast<std::int64_t>(ev.workspace_flat_->lightweight_commit_total()));
-    });
-    add("mutation-lightweight-rollback", [&ev](const auto&) -> EvalValue {
-        if (!ev.workspace_flat_)
-            return make_int(0);
-        return make_int(
-            static_cast<std::int64_t>(ev.workspace_flat_->lightweight_rollback_total()));
-    });
+    // Issue #5144: metrics-face only. The Agent reads these through
+    // (engine:metrics "mutation-lightweight-commit") — no public slot.
+    ObservabilityPrims::register_stats_impl(
+        "mutation-lightweight-commit", [&ev](const auto&) -> EvalValue {
+            if (!ev.workspace_flat_)
+                return make_int(0);
+            return make_int(
+                static_cast<std::int64_t>(ev.workspace_flat_->lightweight_commit_total()));
+        });
+    ObservabilityPrims::register_stats_impl(
+        "mutation-lightweight-rollback", [&ev](const auto&) -> EvalValue {
+            if (!ev.workspace_flat_)
+                return make_int(0);
+            return make_int(
+                static_cast<std::int64_t>(ev.workspace_flat_->lightweight_rollback_total()));
+        });
     ObservabilityPrims::register_stats_impl(
         "mutation-lightweight-records", [&ev](const auto&) -> EvalValue {
             if (!ev.workspace_flat_)

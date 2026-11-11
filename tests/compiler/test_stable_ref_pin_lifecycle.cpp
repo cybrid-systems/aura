@@ -95,7 +95,8 @@ static void ac1_edsl_surface() {
     const auto nid = first_live(*ws);
     CHECK(nid != NULL_NODE, "live node");
 
-    auto n0 = cs.eval("(pin-table-size)");
+    // #5144: pin-table-size is a metrics key, not a bare primitive.
+    auto n0 = cs.eval("(engine:metrics \"pin-table-size\")");
     CHECK(n0 && is_int(*n0), "pin-table-size returns int");
 
     auto pin = cs.eval(std::format("(pin-stable-refs {})", nid));

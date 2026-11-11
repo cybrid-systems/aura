@@ -71,7 +71,7 @@
 | `std/orch` | `orch:spawn` `orch:handle` `orch:list` `orch:status` `orch:stop` `orch:restart` `orch:local?` `orch:registry-epoch` … (+50) | lib/std/orch.aura — multi-agent orchestration on the five primitives (#5004) |
 | `std/parameter` | `make-parameter` `parameterize` `parameter?` `parameter-set!` | lib/std/parameter.aura — R7RS parameters (Issue #5005) |
 | `std/pareto` | `pareto:archive` `pareto:archive?` `pareto:insert!` `pareto:entries` `pareto:front` `pareto:size` `pareto:dominates?` `pareto:cd-dominates?` … (+17) | lib/std/pareto.aura — Issue #4940 (v0.2 P1): algorithm-independent Pareto |
-| `std/persist` | `persist:save` `persist:load` `persist:info` `persist:version` `persist:format-version` `persist:round-trip?` | lib/std/persist.aura — Issue #1381 |
+| `std/persist` | `persist:save` `persist:load` `persist:info` `persist:version` `persist:format-version` `persist:round-trip?` | lib/std/persist.aura — Issue #1381 / #5144 |
 | `std/pipeline` | `synthesize:pipeline` | Aura std/pipeline — 代码生成管线 |
 | `std/portfolio` | `portfolio:make` `portfolio:add!` `portfolio:members` `portfolio:member` `portfolio:external` `portfolio:run` `portfolio:matrix` `portfolio:vbs` … (+2) | lib/std/portfolio.aura — Issue #4945 (v0.2 P8): algorithm portfolios, |
 | `std/primitives` | `primitives:help` `primitives:list` `primitives:categories` `primitives:entry-points` `primitives:registry-file` `primitives:discover` `primitives:reference` | lib/std/primitives.aura — Engine primitives discoverability (#1552) |
@@ -81,7 +81,7 @@
 | `std/pso` | `pso:init` `pso:init-hash` `pso:step!` `pso:best` `pso:population` `pso:report` `pso:export` `pso:help` … (+12) | lib/std/pso.aura — Issue #2877 Particle Swarm Optimization surface |
 | `std/qd` | `qd:map-elites` `qd:insert!` `qd:elites` `qd:coverage` `qd:qd-score` `qd:best` `qd:novelty` `qd:select-parent` … (+11) | lib/std/qd.aura — Issue #4941 (v0.2 P2): quality diversity and open-ended |
 | `std/query-workspace` | `query:macro-introduced-calls` `query:macro-introduced-defines` | — |
-| `std/query` | `query:list-categories` `query:help` `query:nodes-with-marker` `query:find-by-name` `query:subtree` `query:defines` `query:defines-by-marker` `query:calls-by-marker` … (+2) | lib/std/query.aura — query: namespace high-level Agent API |
+| `std/query` | `query:list-categories` `query:help` `query:nodes-with-marker` `query:find-by-name` `query:subtree` `query:defines` `query:defines-by-marker` `query:calls-by-marker` … (+4) | lib/std/query.aura — query: namespace high-level Agent API |
 | `std/queue` | `make-queue` `enqueue` `dequeue` `queue-front` `queue-rest` `queue-empty?` `queue-length` `queue->list` … (+1) | queue.aura — FIFO queue (pair-based, immutable) |
 | `std/r7rs` | `r7rs:libraries` `r7rs:coverage` `r7rs:status` `r7rs:missing` `r7rs:library-exports` | lib/std/r7rs.aura — R7RS-small coverage table (Issue #5005) |
 | `std/random` | `make-random` `random-next` `random-integer` `random-float` `random-range` `random-vector` `shuffle` `random-seed` | random.aura — Simple pseudo-random number generator |
@@ -110,7 +110,7 @@
 | `std/vector-math` | `vec:map` `vec:zip` `vec:fold` `vec:sum` `vec:prod` `vec:mean` `vec:dot` `vec:norm` … (+26) | lib/std/vector-math.aura — Numerical vector operations |
 | `std/vector` | `vector?` `make-vector` `vector-length` `vector-ref` `vector-set!` `vector->list` `list->vector` `vector-fill!` … (+16) | lib/std/vector.aura — SRFI-133 vector library (Issue #5003) |
 | `std/verify` | `verify-output` | verify.aura — Output-verified code checking |
-| `std/workspace` | `ws:merge-symbols` `ws:diff` `ws:snapshot-current` `ws:list-snapshots` `ws:rollback-latest` `ws:memory-pressure` `ws:current-stats` | lib/std/workspace.aura — Workspace utilities (Issue #563 / #4274) |
+| `std/workspace` | `ws:merge-symbols` `ws:diff` `ws:snapshot-current` `ws:list-snapshots` `ws:rollback-latest` `ws:memory-pressure` `ws:current-stats` `ws:state` | lib/std/workspace.aura — Workspace utilities (Issue #563 / #4274) |
 
 ## Engine primitives (#1552)
 
@@ -118,7 +118,7 @@ Low-level capabilities are **not** stdlib modules; they are C++ `PrimRegistrar` 
 
 - `(require "std/primitives" all:)` → `primitives:help` / `primitives:list` / `primitives:discover`
 - `(require "std/INDEX" all:)` → `(stdlib:help "primitives")`
-- Full name catalog: [primitives.md](primitives.md) (443 scanned registrations)
+- Full name catalog: [primitives.md](primitives.md) (440 scanned registrations)
 - Registry map: [primitives-registry.md](primitives-registry.md)
 - Authoring scaffold (#2915): [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md)
 

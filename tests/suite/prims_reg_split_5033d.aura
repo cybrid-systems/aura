@@ -4,6 +4,7 @@
 ;; intend, the orch scope/messaging surface and the per-batch phases). Primitive
 ;; names, registration order and behavior must not move.
 (require "std/io" all:)
+(require "std/workspace" all:)
 
 (set-code "(define probe5033d 1)") (eval-current)
 
@@ -34,7 +35,8 @@
 ;; ── strategy parts: intend bookkeeping ───────────────────────────────
 (define ih (intend-history))
 (check (string? (format "~a" ih)) "intend-history")
-(check (string? (workspace-state)) "workspace-state")
+;; #5144: (workspace-state) is retired; ws:state is the std formatter.
+(check (string? (ws:state)) "ws:state")
 (check (string? (intend-analytics)) "intend-analytics")
 
 ;; ── strategy parts: parallel-intend (empty batch) + orch surface ─────
