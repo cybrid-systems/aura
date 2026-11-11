@@ -93,9 +93,10 @@ namespace {
         if (is_string(k)) {
             auto i = as_string_idx(k);
             if (i < sh.size()) {
-                // Issue #4612: the SAME hash the native string-hash
-                // primitive returns (#4614) -- hash_meta.h fnv1a_bytes.
-                // One string hash in the tree, not two.
+                // Issue #4612: the SAME FNV-1a the native string-hash
+                // primitive starts from (#4614) -- hash_meta.h fnv1a_bytes.
+                // The table keeps this raw uint64. string-hash folds a code
+                // that does not fit a fixnum (#5145).
                 return ::aura::compiler::hash::fnv1a_bytes(std::string_view(sh[i]));
             }
         }

@@ -1,4 +1,4 @@
-;; expect: #(1 2 3) #(2 3) #(0 0) 1 0 1 2 (a) (a b) 2 1 (b)
+;; expect: #(1 2 3) #(2 3) #(0 0) 1 0 1 0 0 0 0 1 1 2 (a) (a b) 2 1 (b)
 ;; #4614: native vector-copy (optional start/end) + native vector-fill!,
 ;; the native string-hash, and the copy-on-write hash-set / hash-remove
 ;; (the old stdlib wrappers silently mutated their argument).
@@ -16,6 +16,15 @@
 ; native string-hash: equal strings hash equal, different strings differ
 (show (if (= (string-hash "abc") (string-hash "abc")) 1 0))
 (show (if (= (string-hash "abc") (string-hash "abd")) 1 0))
+
+; #5145: these FNV codes sit outside the fixnum range and used to SIGABRT.
+; A minted copy (substring always allocates a new slot) hashes the same.
+(show (if (= (string-hash "a") (string-hash "a")) 1 0))
+(show (if (= (string-hash "a") (string-hash "abc")) 1 0))
+(show (if (= (string-hash "1") (string-hash "abc")) 1 0))
+(show (if (= (string-hash "x\r\n") (string-hash "abc")) 1 0))
+(show (if (= (string-hash "012345678") (string-hash "abc")) 1 0))
+(show (if (= (string-hash "a") (string-hash (substring "za" 1 2))) 1 0))
 
 ; hash-set is copy-on-write: the source table is untouched
 (define h (hash "a" 1))

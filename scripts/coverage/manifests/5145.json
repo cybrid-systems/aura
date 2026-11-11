@@ -1,0 +1,22 @@
+{
+  "issue": 5145,
+  "title": "Issue #5145: string-hash returns a fixnum for every string.",
+  "ok": "OK: Issue #5145 string-hash fixnum fold",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_pair.cpp",
+      "contains": ["#5145", "fits_fixnum", "kFixnumOverflowBit"]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_hash_table_grow.cpp",
+      "contains": ["ac5145_string_hash_fixnum", "012345678", "minted copy hashes equal"]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/suite/vector_hash_cow_4614.aura",
+      "contains": ["#5145", "012345678", "x\\r\\n"]
+    }
+  ]
+}

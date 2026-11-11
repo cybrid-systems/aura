@@ -44,6 +44,7 @@ using types::as_primitive_slot;
 using types::as_string_idx;
 using types::as_vector_idx;
 using types::EvalValue;
+using types::fits_fixnum;
 using types::is_bool;
 using types::is_cell;
 using types::is_closure;
@@ -1224,11 +1225,17 @@ void RegSplitParts::register_string_ops(PrimRegistrar add, Evaluator& ev,
     // Issue #4614: native string-hash. Hashing a key in Aura used to cost
     // ~50 us for 8 characters (a string->list fold). The hash table already
     // hashes string keys with FNV-1a 64 over the UTF-8 bytes
-    // (eval_hash_key_hash), so this exposes exactly that hash code to Aura
-    // code: equal strings always produce equal codes, the value is stable
-    // across calls, and distinct strings are distinct with overwhelming
-    // probability. The 64-bit code is returned as its two's-complement
-    // 64-bit value, so it may be negative.
+    // (eval_hash_key_hash). Equal strings always produce equal codes, the
+    // value is stable across calls, and distinct strings differ with
+    // overwhelming probability.
+    //
+    // Issue #5145: make_int aborts outside [-2^62, 2^62-1]. A raw FNV-1a
+    // code is 64 bits, so about half of all strings SIGABRT (the high bits
+    // 01 and 10). Codes that already fit stay bit-identical, which keeps
+    // the #4614 "abc" pin. An out-of-range code flips bit 62: the positive
+    // overflow quadrant lands on [0, 2^62-1] and the negative one lands on
+    // [-2^62, -1], so the fold is injective across the codes that used to
+    // abort. The hash table keeps the raw uint64 and does not fold.
     register_prim(
         add, ev, "string-hash",
         [&ev, &string_heap, &error_values](std::span<const EvalValue> a) {
@@ -1253,10 +1260,18 @@ void RegSplitParts::register_string_ops(PrimRegistrar add, Evaluator& ev,
                                             ev.primitive_error_counter_ptr());
             const std::string& s = string_heap[idx];
             const auto h = ::aura::compiler::hash::fnv1a_bytes(std::string_view(s));
-            return make_int(static_cast<std::int64_t>(h));
+            // Issue #5145: bit 62 is the fixnum overflow bit. Flip it only
+            // when the raw code is outside [-2^62, 2^62-1], so make_int's
+            // contract holds and an in-range code stays unchanged.
+            constexpr std::int64_t kFixnumOverflowBit = std::int64_t{1} << 62;
+            auto code = static_cast<std::int64_t>(h);
+            if (!fits_fixnum(code))
+                code ^= kFixnumOverflowBit;
+            return make_int(code);
         },
         pure_general(1, "(string) -> int",
-                     "FNV-1a 64-bit hash of the string's UTF-8 bytes (stable; may be negative)."));
+                     "Stable fixnum digest of the UTF-8 bytes (FNV-1a; may be negative). "
+                     "A code outside the fixnum range flips bit 62."));
     register_prim(
         add, ev, "string-ref",
         [&ev, &error_values](std::span<const EvalValue> a) {
