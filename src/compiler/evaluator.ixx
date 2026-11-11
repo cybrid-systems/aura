@@ -142,10 +142,10 @@ export struct PrimMeta {
 };
 
 // Issue #1563: treat rendering hot-tier + explicit flags as render-critical.
-[[nodiscard]] inline bool is_render_critical_meta(const PrimMeta& m) noexcept {
-    if (m.render_critical || m.stable_hot_path)
+[[nodiscard]] inline bool is_render_critical_meta(const PrimMeta& meta) noexcept {
+    if (meta.render_critical || meta.stable_hot_path)
         return true;
-    return m.category == "rendering" && m.perf_tier == kPrimPerfHot;
+    return meta.category == "rendering" && meta.perf_tier == kPrimPerfHot;
 }
 
 export class Primitives {
@@ -160,8 +160,8 @@ public:
     Primitives();
     // Issue #914: string_view primary API (string& converts implicitly).
     [[nodiscard]] std::optional<PrimFn> lookup(std::string_view n) const pre(!n.empty());
-    void add(std::string name, PrimFn fn) { add(std::move(name), std::move(fn), PrimMeta{}); }
-    void add(std::string name, PrimFn fn, PrimMeta meta) {
+    void add(std::string name, PrimFn func) { add(std::move(name), std::move(func), PrimMeta{}); }
+    void add(std::string name, PrimFn func, PrimMeta meta) {
         // Issue #2152: construction-time auto-stamp required_effects from the
         // primitive name when unset. Closes the residual gap where a new
         // effectful prim skips PrimMeta / add_mutate but still matches a
@@ -181,8 +181,8 @@ public:
         }
         const bool is_hot = (meta.perf_tier == kPrimPerfHot);
         meta_.push_back(std::move(meta));
-        fn_slots_.push_back(fn);
-        table_[name] = std::move(fn);
+        fn_slots_.push_back(func);
+        table_[name] = std::move(func);
         // Issue #899: O(1) reverse index for slot_for_name.
         name_to_slot_[ordered_names_.back()] = slot;
         // Issue #1356: provisional hot-tier entry (finalized after all regs).
@@ -195,7 +195,7 @@ public:
     // public surface: it gets no slot, no PrimMeta and no ordered_names_ entry,
     // so (query :api-reference), primitive:describe, the docs generator and the
     // tier gate do not see it, and a direct (mw:op) call stays unbound.
-    void add_hidden(std::string name, PrimFn fn) { table_[std::move(name)] = std::move(fn); }
+    void add_hidden(std::string name, PrimFn func) { table_[std::move(name)] = std::move(func); }
     // Issue #709: O(1) slot dispatch — dense table parallel to ordered_names_.
     [[nodiscard]] std::optional<PrimFn> slot_lookup_fast(std::size_t slot) const {
         if (slot >= fn_slots_.size())

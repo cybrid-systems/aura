@@ -436,6 +436,15 @@ namespace {
     std::string prim_window(const std::string& src, const char* name) {
         auto needle = std::string("add(\"") + name + "\"";
         auto pos = src.find(needle);
+        if (pos == std::string::npos) {
+            needle = std::string("add_hidden(\"") + name + "\"";
+            pos = src.find(needle);
+        }
+        if (pos == std::string::npos) {
+            // #5144: clang-format may wrap add_hidden(\n        "name",
+            needle = std::string("\"") + name + "\"";
+            pos = src.find(needle);
+        }
         if (pos == std::string::npos)
             return {};
         auto end = src.find("\n    add(\"", pos + 10);

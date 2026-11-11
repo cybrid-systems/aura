@@ -72,8 +72,8 @@
     "expected": "#t"
   },
   {
-    "name": "issue_141_if_procedure_query_root",
-    "code": "(if (procedure? query:root) 1 0)",
+    "name": "issue_141_if_procedure_pin_stable_refs",
+    "code": "(if (procedure? pin-stable-refs) 1 0)",
     "pipeline": "eval",
     "expected": "1"
   },

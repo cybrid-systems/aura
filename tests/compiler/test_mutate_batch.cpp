@@ -387,8 +387,11 @@ static void run_1436_dispatch() {
                                 ? heap[static_cast<std::size_t>(idx)]
                                 : "";
             CHECK(s.find("mutate") != std::string::npos, "lists mutate");
-            CHECK(s.find("*deprecated*") != std::string::npos, "*deprecated* section");
-            CHECK(s.find("mutate:rebind") != std::string::npos, "deprecated mutate:rebind");
+            // Issue #5144: every mutate: alias is dispatch-only now, so the
+            // catalog carries no mutate: name and no deprecated-marker section
+            // for it. The verb is the surface.
+            CHECK(s.find("mutate:rebind") == std::string::npos,
+                  "retired mutate:rebind is absent from api-reference");
         }
     }
 

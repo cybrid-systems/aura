@@ -6890,11 +6890,12 @@ static void ac4106_read_trio() {
           "4106: Soft ref-counts still counts (not an error)");
     // Source-cite: each touched body carries the gate + issue cite.
     const auto qd = read_file("src/compiler/evaluator_primitives_query_defuse.cpp");
-    const auto b_re = qd.find("add(\"query:reaches\"");
+    // #5144: the alias registers dispatch-only and may be line-wrapped.
+    const auto b_re = qd.find("\"query:reaches\"");
     CHECK(b_re != std::string::npos, "4106: reaches body present");
     // Next primitive bounds the cite. A fixed 3600-char cap dropped the
     // #3395 face after the reaches body grew (fiberless resolve, #4438).
-    const auto b_fx = qd.find("add(\"query:effects\"", b_re);
+    const auto b_fx = qd.find("\"query:effects\"", b_re);
     CHECK(b_fx != std::string::npos && b_fx > b_re, "4106: reaches body bounded");
     const auto w_re =
         (b_fx != std::string::npos && b_fx > b_re) ? qd.substr(b_re, b_fx - b_re) : std::string{};
