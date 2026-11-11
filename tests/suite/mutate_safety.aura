@@ -5,7 +5,6 @@
 (require "std/list" all:)
 (require "std/mutate" all:)
 (require "std/agent" all:)
-(require "std/orchestrator" all:)
 
 (test-suite "mutate:boundary-surface"
   (check (number? (mutate:boundary-depth)))

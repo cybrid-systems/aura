@@ -13,12 +13,12 @@
 //
 //   #2766 AC1: require-before-export + private *cell* free-var works
 //   #2766 AC2: export-before-require still works (parity)
-//   #2766 AC3: std/orchestrator agent:spawn + agent:ask + agent:list
+//   #2766 AC3: std/orch orch:spawn + orch:ask + orch:list
 //   #2766 AC4: source-cite prologue skip + Phase 0 require-before-letrec
 //   #2766 AC5: coverage linter wired; no docs/design/*
 //
-//   #2768 AC1: orchestrator.aura export-before-require + #2768 note
-//   #2768 AC2: agent:spawn/ask/list + epoch monotonic on stdin
+//   #2768 AC1: std/orch export-before-require + #2768 note
+//   #2768 AC2: orch:spawn/ask/list + epoch monotonic on stdin
 //   #2768 AC3: agent:status/stop/restart lifecycle
 //   #2768 AC4: orch:parallel-with-yield callable (no unbound private free-vars)
 //   #2768 AC5: coverage linter; no docs/design/*
@@ -248,7 +248,7 @@ static void ac2766_2_export_before_require_parity() {
 }
 
 static void ac2766_3_orchestrator_agent_registry() {
-    std::println("\n--- #2766 AC3: std/orchestrator agent:spawn / ask / list ---");
+    std::println("\n--- #2766 AC3: std/orch orch:spawn / ask / list ---");
     const auto lib = find_lib_std();
     CHECK(!lib.empty(), "AC3: lib found");
     if (lib.empty())
@@ -259,9 +259,9 @@ static void ac2766_3_orchestrator_agent_registry() {
 
     CompilerService cs;
     // Full official agent surface under stdin denseness host.
-    auto spawn = cs.eval("(begin (require \"std/orchestrator\" all:) "
-                         "(agent:spawn \"ping\" (lambda (x) (+ x 1))))");
-    CHECK(spawn.has_value(), "AC3: agent:spawn succeeds (no unbound agent-register)");
+    auto spawn = cs.eval("(begin (require \"std/orch\" all:) "
+                         "(orch:spawn \"ping\" (lambda (x) (+ x 1))))");
+    CHECK(spawn.has_value(), "AC3: orch:spawn succeeds (no unbound agent-register)");
     if (spawn && is_string(*spawn)) {
         // Prefer string "ping" when returned as name.
         auto si = as_string_idx(*spawn);
@@ -269,10 +269,10 @@ static void ac2766_3_orchestrator_agent_registry() {
         (void)si;
         CHECK(true, "AC3: spawn returned value");
     }
-    auto ask = cs.eval("(agent:ask \"ping\" 41)");
-    CHECK(ask && is_int(*ask) && as_int(*ask) == 42, "AC3: (agent:ask \"ping\" 41) → 42");
-    auto list = cs.eval("(agent:list)");
-    CHECK(list.has_value(), "AC3: agent:list callable (no unbound *agents*)");
+    auto ask = cs.eval("(orch:ask \"ping\" 41)");
+    CHECK(ask && is_int(*ask) && as_int(*ask) == 42, "AC3: (orch:ask \"ping\" 41) → 42");
+    auto list = cs.eval("(orch:list)");
+    CHECK(list.has_value(), "AC3: orch:list callable (no unbound *agents*)");
     auto epoch = cs.eval("(orch:registry-epoch)");
     CHECK(epoch && is_int(*epoch) && as_int(*epoch) >= 1,
           "AC3: orch:registry-epoch ≥ 1 (no unbound *registry-epoch*)");
@@ -305,11 +305,11 @@ static void ac2766_5_linter() {
           "AC5: no docs/design/2766-* per #1655");
 }
 
-// ── Issue #2768: std/orchestrator multi-agent surface on stdin denseness ──
+// ── Issue #2768: std/orch multi-agent surface on stdin denseness ──
 
 static void ac2768_1_orchestrator_export_first() {
-    std::println("\n--- #2768 AC1: orchestrator.aura export-before-require ---");
-    const auto orch = read_file("lib/std/orchestrator.aura");
+    std::println("\n--- #2768 AC1: std/orch export-before-require ---");
+    const auto orch = read_file("lib/std/orch.aura");
     CHECK(!orch.empty(), "AC1: read orchestrator.aura");
     CHECK(orch.find("#2768") != std::string::npos, "AC1: cites #2768");
     CHECK(orch.find("#2766") != std::string::npos, "AC1: cites #2766 host fix");
@@ -345,20 +345,20 @@ static void ac2768_2_spawn_ask_list_epoch() {
     setenv("AURA_PIPELINE_STRICT", "0", 1);
 
     CompilerService cs;
-    CHECK(cs.eval("(require \"std/orchestrator\" all:)").has_value(), "AC2: require orchestrator");
+    CHECK(cs.eval("(require \"std/orch\" all:)").has_value(), "AC2: require std/orch");
     auto e0 = cs.eval("(orch:registry-epoch)");
     CHECK(e0 && is_int(*e0), "AC2: epoch readable at rest");
     const auto n0 = as_int(*e0);
-    CHECK(cs.eval("(agent:spawn \"ping\" (lambda (x) (+ x 1)))").has_value(), "AC2: spawn");
+    CHECK(cs.eval("(orch:spawn \"ping\" (lambda (x) (+ x 1)))").has_value(), "AC2: spawn");
     auto e1 = cs.eval("(orch:registry-epoch)");
     CHECK(e1 && is_int(*e1) && as_int(*e1) > n0, "AC2: epoch bumps on spawn");
-    auto ask = cs.eval("(agent:ask \"ping\" 41)");
+    auto ask = cs.eval("(orch:ask \"ping\" 41)");
     CHECK(ask && is_int(*ask) && as_int(*ask) == 42, "AC2: ask 41 → 42");
-    CHECK(cs.eval("(agent:list)").has_value(), "AC2: agent:list");
+    CHECK(cs.eval("(orch:list)").has_value(), "AC2: orch:list");
 }
 
 static void ac2768_3_status_stop_restart() {
-    std::println("\n--- #2768 AC3: agent:status / stop / restart lifecycle ---");
+    std::println("\n--- #2768 AC3: orch:status / stop / restart lifecycle ---");
     const auto lib = find_lib_std();
     CHECK(!lib.empty(), "AC3: lib found");
     if (lib.empty())
@@ -368,14 +368,14 @@ static void ac2768_3_status_stop_restart() {
     setenv("AURA_PIPELINE_STRICT", "0", 1);
 
     CompilerService cs;
-    CHECK(cs.eval("(require \"std/orchestrator\" all:)").has_value(), "AC3: require");
-    CHECK(cs.eval("(agent:spawn \"lc\" (lambda (x) (* x 2)))").has_value(), "AC3: spawn lc");
-    auto st = cs.eval("(agent:status \"lc\")");
+    CHECK(cs.eval("(require \"std/orch\" all:)").has_value(), "AC3: require");
+    CHECK(cs.eval("(orch:spawn \"lc\" (lambda (x) (* x 2)))").has_value(), "AC3: spawn lc");
+    auto st = cs.eval("(orch:status \"lc\")");
     CHECK(st.has_value(), "AC3: status callable");
-    CHECK(cs.eval("(agent:stop \"lc\")").has_value(), "AC3: stop");
-    CHECK(cs.eval("(agent:status \"lc\")").has_value(), "AC3: status after stop");
-    CHECK(cs.eval("(agent:restart \"lc\")").has_value(), "AC3: restart");
-    auto ask = cs.eval("(agent:ask \"lc\" 5)");
+    CHECK(cs.eval("(orch:stop \"lc\")").has_value(), "AC3: stop");
+    CHECK(cs.eval("(orch:status \"lc\")").has_value(), "AC3: status after stop");
+    CHECK(cs.eval("(orch:restart \"lc\")").has_value(), "AC3: restart");
+    auto ask = cs.eval("(orch:ask \"lc\" 5)");
     CHECK(ask && is_int(*ask) && as_int(*ask) == 10, "AC3: ask after restart → 10");
 }
 
@@ -390,7 +390,7 @@ static void ac2768_4_parallel_with_yield_smoke() {
     setenv("AURA_PIPELINE_STRICT", "0", 1);
 
     CompilerService cs;
-    CHECK(cs.eval("(require \"std/orchestrator\" all:)").has_value(), "AC4: require");
+    CHECK(cs.eval("(require \"std/orch\" all:)").has_value(), "AC4: require");
     // Callable without unbound private free-vars (orch-yield-safe / wrap).
     // Empty list is OK when fiber:spawn is unavailable on host.
     auto r = cs.eval("(orch:parallel-with-yield "
@@ -403,7 +403,7 @@ static void ac2768_5_linter() {
     const auto build = read_file("build.py");
     const auto lint = read_file("scripts/coverage/checks/check_orchestrator_agent_stdin_2768.py");
     const auto t = read_file("tests/compiler/test_module_require_freevar.cpp");
-    const auto orch = read_file("lib/std/orchestrator.aura");
+    const auto orch = read_file("lib/std/orch.aura");
     CHECK(build.find("check_orchestrator_agent_stdin_2768") != std::string::npos,
           "AC5: build.py wires linter");
     CHECK(!lint.empty(), "AC5: linter present");
@@ -460,7 +460,7 @@ static void ac2769_1_inventory() {
     CHECK(!read_file("lib/std/llm.aura").empty(), "AC1: llm.aura");
     CHECK(!read_file("lib/std/hot-strategy.aura").empty(), "AC1: hot-strategy.aura");
     CHECK(!read_file("lib/std/net.aura").empty(), "AC1: net.aura");
-    CHECK(!read_file("lib/std/orchestrator.aura").empty(), "AC1: orchestrator.aura");
+    CHECK(!read_file("lib/std/orch.aura").empty(), "AC1: orchestrator.aura");
     CHECK(!read_file("lib/std/agent.aura").empty(), "AC1: agent.aura");
 }
 
@@ -488,10 +488,10 @@ static void ac2769_2_denseness_paths_green() {
     CHECK(ver && is_int(*ver), "AC2: hot-strategy:version cell");
 
     CompilerService cs3;
-    CHECK(cs3.eval("(require \"std/orchestrator\" all:)").has_value(), "AC2: require orchestrator");
-    CHECK(cs3.eval("(agent:spawn \"d9\" (lambda (x) (* x 2)))").has_value(), "AC2: agent:spawn");
-    auto ask = cs3.eval("(agent:ask \"d9\" 21)");
-    CHECK(ask && is_int(*ask) && as_int(*ask) == 42, "AC2: agent:ask denseness");
+    CHECK(cs3.eval("(require \"std/orch\" all:)").has_value(), "AC2: require std/orch");
+    CHECK(cs3.eval("(orch:spawn \"d9\" (lambda (x) (* x 2)))").has_value(), "AC2: orch:spawn");
+    auto ask = cs3.eval("(orch:ask \"d9\" 21)");
+    CHECK(ask && is_int(*ask) && as_int(*ask) == 42, "AC2: orch:ask denseness");
 
     CompilerService cs4;
     CHECK(cs4.eval("(require \"std/agent\" all:)").has_value(), "AC2: require agent");
@@ -533,7 +533,7 @@ static void ac2769_4_form_order_policy() {
         "lib/std/net.aura",
         "lib/std/io.aura",
         "lib/std/agent.aura",
-        "lib/std/orchestrator.aura",
+        "lib/std/orch.aura",
         "lib/std/ast-viz.aura",
         "lib/std/hash.aura",
         "lib/std/heal.aura",
@@ -672,7 +672,7 @@ int run_test_module_require_freevar() {
     ac2766_3_orchestrator_agent_registry();
     ac2766_4_source_cite();
     ac2766_5_linter();
-    std::println("\n=== Issue #2768: std/orchestrator multi-agent stdin denseness ===");
+    std::println("\n=== Issue #2768: std/orch multi-agent stdin denseness ===");
     ac2768_1_orchestrator_export_first();
     ac2768_2_spawn_ask_list_epoch();
     ac2768_3_status_stop_restart();

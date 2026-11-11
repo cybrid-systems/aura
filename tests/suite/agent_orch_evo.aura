@@ -6,7 +6,6 @@
 (require "std/agent" all:)
 (require "std/orch" all:)
 (require "std/evo" all:)
-(require "std/orchestrator" all:)
 
 (define *fails* 0)
 (define (assert! pred msg)
@@ -89,11 +88,10 @@
 (assert! (= (orch:pipeline (list (lambda (x) (* x 3))) 2) 6) "pipeline")
 (assert! (= (orch:run "named" (list (lambda (x) (+ x 4))) 0) 4) "orch:run")
 
-; pre-#5004 names still work through std/orchestrator
-(assert! (string=? (agent:spawn "legacy" (lambda (x) (+ x 1))) "legacy")
-         "agent:spawn compat")
-(assert! (= (agent:ask "legacy" 1) 2) "agent:ask compat")
-(agent:stop "legacy")
+; Issue #5132: the pre-#5004 orchestrator aliases are gone with std/orchestrator.
+; The live names are the orch:* ones above; a legacy spelling must be unbound.
+(assert! (eq? (try (begin agent:spawn 'bound) (catch (e) 'unbound)) 'unbound)
+         "agent:spawn is unbound after std/orchestrator retired")
 
 ; ═══════════════════════════════════════════════════════════════
 ; AC3: std/evo — selectors over the evo:record! worldline

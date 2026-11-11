@@ -26,6 +26,8 @@
 ; orch:supervise-batch, orch:agent-join, …). This module does not
 ; reimplement them. They resolve because the kernel still registers them.
 ;
+; Issue #2766 / #2768: export before require, and the module must stay usable
+; on the stdin denseness host (the agent surface that #2768 pinned).
 ; Issue #5004: std/orchestrator keeps one release of forwarding; this
 ; module is the implementation it forwards to.
 ;
@@ -41,7 +43,10 @@
         orch:default-timeout
         ; Issue #5131 (K-EXC-5118): the scheduler metrics read lives here now;
         ; the kernel registration of the same name is gone.
-        orch:metrics)
+        orch:metrics
+        ; Issue #5132: the last useful form from std/orchestrator; that module
+        ; forwards nothing now and is gone.
+        orch:run)
 
 (require "std/list" all:)
 (require "std/string" all:)
@@ -66,6 +71,10 @@
 ; stats surface; this is the Aura home for the name. Outside serve-async
 ; the scheduler reports nothing and the read answers void, as before.
 (define (orch:metrics) (stats:get "orch:metrics"))
+
+; ── orch:run — named pipeline (moved from std/orchestrator, #5132) ──
+(define (orch:run name steps input)
+  (orch:pipeline steps input))
 
 ; A channel is an opaque value, not a hash — only false means absent.
 (define (orch-channel? c) (if c #t #f))
