@@ -137,6 +137,14 @@ struct Context {
     bool rebind_light_path = false;
     bool rebind_light_cascaded = false;
     bool rebind_light_stamped = false;
+    // Issue #5147: a real mutate:rebind drops native code for the define and
+    // its called_by cone only. It must not bump the process bridge epoch
+    // (that walk marks every captured JIT function stale).
+    bool rebind_precise_deopt = false;
+    // Issue #5147: commit_panic_checkpoint bumps the process bridge and the
+    // AOT table epoch on every successful mutate. A rebind sets this so that
+    // commit is not a second global deopt. Consumed by the commit.
+    bool rebind_skip_bridge_bump = false;
     std::string rebind_light_focus;
     // Observability: owning fiber id (0 = plain thread fallback).
     std::uint64_t owner_fiber = 0;

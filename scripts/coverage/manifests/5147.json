@@ -1,0 +1,22 @@
+{
+  "issue": 5147,
+  "title": "Issue #5147: a same-body rebind must not deopt the rest of the workspace.",
+  "ok": "OK: Issue #5147 same-body rebind keeps the bridge epoch",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": ["#5147", "rebind_body_unchanged"]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": ["#5147", "rebind_precise_drop_cone"]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_rebind_same_body.cpp",
+      "contains": ["ac5147_same_body_keeps_bridge", "does not bump bridge"]
+    }
+  ]
+}

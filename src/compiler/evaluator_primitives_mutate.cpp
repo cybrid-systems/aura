@@ -422,6 +422,72 @@ namespace {
         });
     }
 
+    // Issue #5147: structural identity of two subtrees. Ignores node id,
+    // source position, and type_id (the live tree has been inferred; the
+    // rebind parse has not). Symbol identity is the resolved spelling, so
+    // a pool reset that minted new SymIds for the same names still matches.
+    // A budget miss reports "changed" and the caller does the real rebind.
+    [[nodiscard]] bool rebind_subtree_same(const aura::ast::FlatAST& flat,
+                                           const aura::ast::StringPool& pool, aura::ast::NodeId a,
+                                           aura::ast::NodeId b, int& budget) {
+        if (a == b)
+            return true;
+        if (a == aura::ast::NULL_NODE || b == aura::ast::NULL_NODE)
+            return false;
+        if (--budget < 0)
+            return false;
+        if (a >= flat.size() || b >= flat.size() || flat.is_free_slot(a) || flat.is_free_slot(b))
+            return false;
+        const auto av = flat.get(a);
+        const auto bv = flat.get(b);
+        if (av.tag != bv.tag || av.marker != bv.marker || av.int_value != bv.int_value)
+            return false;
+        if (av.tag == aura::ast::NodeTag::LiteralFloat &&
+            std::bit_cast<std::uint64_t>(av.float_value) !=
+                std::bit_cast<std::uint64_t>(bv.float_value))
+            return false;
+        auto same_sym = [&](aura::ast::SymId x, aura::ast::SymId y) {
+            if (x == y)
+                return true;
+            if (x == aura::ast::INVALID_SYM || y == aura::ast::INVALID_SYM)
+                return false;
+            return pool.resolve(x) == pool.resolve(y);
+        };
+        if (!same_sym(av.sym_id, bv.sym_id) || av.params.size() != bv.params.size() ||
+            av.param_annotations.size() != bv.param_annotations.size() ||
+            av.children.size() != bv.children.size())
+            return false;
+        for (std::size_t i = 0; i < av.params.size(); ++i) {
+            if (!same_sym(av.params[i], bv.params[i]))
+                return false;
+        }
+        for (std::size_t i = 0; i < av.param_annotations.size(); ++i) {
+            if (!rebind_subtree_same(flat, pool, av.param_annotations[i], bv.param_annotations[i],
+                                     budget))
+                return false;
+        }
+        for (std::uint32_t i = 0; i < av.children.size(); ++i) {
+            if (!rebind_subtree_same(flat, pool, av.child(i), bv.child(i), budget))
+                return false;
+        }
+        return true;
+    }
+
+    // Issue #5147: the live value child equals the parsed replacement.
+    // A same-body rebind must not set_child, log a mutation, or dirty.
+    [[nodiscard]] bool rebind_body_unchanged(const aura::ast::FlatAST& flat,
+                                             const aura::ast::StringPool& pool,
+                                             aura::ast::NodeId old_define,
+                                             aura::ast::NodeId new_value) {
+        if (old_define >= flat.size() || flat.is_free_slot(old_define))
+            return false;
+        const auto def = flat.get(old_define);
+        if (def.tag != aura::ast::NodeTag::Define || def.children.empty())
+            return false;
+        int budget = 8192;
+        return rebind_subtree_same(flat, pool, def.child(0), new_value, budget);
+    }
+
     // Issue #270: verify a node is still attached under its parent.
     std::optional<std::uint32_t> parent_child_index_if_attached(const aura::ast::FlatAST& flat,
                                                                 aura::ast::NodeId match_id) {
@@ -4367,9 +4433,40 @@ template <typename Ctx> void RegSplitParts::register_mutate_rebind_primitive(Ctx
                                                          ok, new_value, size_before_parse))
             return *err;
 
+        // Issue #5147: byte-identical (and whitespace-equivalent) body.
+        // The lost optimisation is process-wide JIT freshness: mark_define_dirty
+        // bumps the bridge epoch and walk_active_closures deopts every captured
+        // function, then eval-current re-lowers the dirty cone without the
+        // first compile's profile. That needs a live set-code workspace; a
+        // file / -e / --load rebind errors no-workspace and does not bump.
+        // Return before set_child, the mutation log, and the dirty cascade.
+        // Not a worldline tip: no mutation is logged, and disarm leaves the
+        // light path clear (#5139 KEEP is unchanged — this row is not a record).
+        if (ev.workspace_pool_ &&
+            rebind_body_unchanged(flat, *ev.workspace_pool_, old_define, new_value)) {
+            if (size_before_parse < static_cast<std::size_t>(flat.size()))
+                (void)flat.free_orphan_nodes_from(
+                    static_cast<aura::ast::NodeId>(size_before_parse));
+            ok = true;
+            rebind_after_rejected.failed = false;
+            // Keep the body's disarm from clearing state before the
+            // outermost commit. Nothing was armed; focus stays empty, so
+            // the wrapper's reinstall is a no-op. The skip flag makes that
+            // commit leave the process bridge epoch alone.
+            rebind_light_disarm.keep = true;
+            ev.arm_rebind_skip_bridge_bump();
+            return make_bool(true);
+        }
+
         if (auto err = RegSplitParts::rebind_shape_and_hygiene(ev, flat, old_define, new_value, a,
                                                                name, size_before_parse, mev, ok))
             return *err;
+
+        // Issue #5147: real body change. The outermost drain still runs;
+        // precise deopt keeps it off the process-wide epoch walk, and the
+        // skip flag keeps commit_panic_checkpoint off that same walk.
+        ev.arm_rebind_precise_deopt();
+        ev.arm_rebind_skip_bridge_bump();
 
         std::uint64_t cone_log_before_4682 = 0;
         if (auto err = RegSplitParts::rebind_link_new_body(ev, flat, old_define, new_value, a, name,
