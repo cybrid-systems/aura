@@ -37,7 +37,7 @@
   },
   {
     "name": "issue_135_require_std_orchestrator_all",
-    "code": "\n        (require \"std/orchestrator\" all:)\n        (null? (orch:parallel (quote ()) 42))\n    ",
+    "code": "\n        (require \"std/orch\" all:)\n        (null? (orch:parallel (quote ()) 42))\n    ",
     "pipeline": "eval",
     "expected": "#t"
   },
