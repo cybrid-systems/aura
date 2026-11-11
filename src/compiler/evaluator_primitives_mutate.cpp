@@ -4447,6 +4447,15 @@ template <typename Ctx> void RegSplitParts::register_mutate_rebind_primitive(Ctx
             if (size_before_parse < static_cast<std::size_t>(flat.size()))
                 (void)flat.free_orphan_nodes_from(
                     static_cast<aura::ast::NodeId>(size_before_parse));
+            // Issue #5147 follow-up: the short-circuit wins the JIT freshness,
+            // not the post-mutate gates. Without this a body that never
+            // typechecked (bad arity, free name next to a keyword) is accepted
+            // by an identity rebind: #4544/#4545 expect the same rejection the
+            // real rebind path gives. Nothing was linked or replaced, so the
+            // ownership pass has no caller cone to walk.
+            if (auto err = RegSplitParts::rebind_typecheck_and_gate(
+                    ev, flat, guard, old_define, std::vector<aura::ast::NodeId>{}, name, mev, ok))
+                return *err;
             ok = true;
             rebind_after_rejected.failed = false;
             // Keep the body's disarm from clearing state before the
