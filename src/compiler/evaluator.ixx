@@ -196,6 +196,24 @@ public:
     // so (query :api-reference), primitive:describe, the docs generator and the
     // tier gate do not see it, and a direct (mw:op) call stays unbound.
     void add_hidden(std::string name, PrimFn func) { table_[std::move(name)] = std::move(func); }
+    // Issue #5144: a dispatch-only body keeps its PrimMeta and is enumera-
+    // ble for gates/tests, without gaining a slot or a public catalog entry.
+    [[nodiscard]] const PrimMeta* hidden_meta_for_name(std::string_view name) const {
+        const auto it = hidden_meta_.find(std::string{name});
+        return it == hidden_meta_.end() ? nullptr : &it->second;
+    }
+    [[nodiscard]] std::vector<std::string> hidden_names(std::string_view prefix) const {
+        std::vector<std::string> out;
+        for (const auto& entry : table_) {
+            if (name_to_slot_.find(entry.first) != name_to_slot_.end())
+                continue;
+            if (prefix.empty() || entry.first.starts_with(prefix))
+                out.push_back(entry.first);
+        }
+        std::sort(out.begin(), out.end());
+        return out;
+    }
+
     // Issue #709: O(1) slot dispatch — dense table parallel to ordered_names_.
     [[nodiscard]] std::optional<PrimFn> slot_lookup_fast(std::size_t slot) const {
         if (slot >= fn_slots_.size())
@@ -257,6 +275,8 @@ public:
         const auto slot = slot_for_name(name);
         if (slot < meta_.size())
             meta_[slot] = std::move(meta);
+        else
+            hidden_meta_[name] = std::move(meta); // Issue #5144: dispatch-only contract
         // Issue #4599: meta backfill changes the mask. Drop the cached bit.
         if (slot < effect_cache_.size())
             std::atomic_ref<std::uint32_t>(effect_cache_[slot]).store(0, std::memory_order_release);
@@ -413,6 +433,8 @@ private:
     std::atomic<std::size_t> hot_table_size_{0};
     // Issue #899: reverse index name → slot for O(1) slot_for_name.
     std::unordered_map<std::string, std::size_t, StringHash, std::equal_to<>> name_to_slot_;
+    // Issue #5144: PrimMeta for dispatch-only registrations (no slot).
+    std::unordered_map<std::string, PrimMeta, StringHash, std::equal_to<>> hidden_meta_;
     // Issue #145 Phase 2.4: pmr-backed to match Evaluator's
     // string_heap_ arena allocation. Vector metadata lives in
     // the same monotonic arena as the underlying EvalValue /

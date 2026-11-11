@@ -539,7 +539,8 @@ static void ac4037_5_off_ungated() {
 static void ac4037_source_cite() {
     std::println("\n--- #4037 source-cite: conditional in-body require + non-exempt meta ---");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
-    const auto at = mut.find("add(\"mutate:set-agent-fingerprint\"");
+    // Issue #5144: dispatch-only registration, possibly wrapped.
+    const auto at = mut.find("\"mutate:set-agent-fingerprint\"");
     CHECK(at != std::string::npos, "4037 cite: registration located");
     if (at != std::string::npos) {
         const auto win = mut.substr(at, 1800);
@@ -4130,12 +4131,12 @@ int run_test_dispatch_required_effects() {
         CompilerService cs;
         auto& ev = cs.evaluator();
         ev.set_effect_sandbox_mode(2); // Strict
-        // mutate:set-body is add_mutate → effect_enforced_in_body
-        const auto slot = ev.primitives().slot_for_name("mutate:set-body");
-        CHECK(slot < ev.primitives().slot_count(), "set-body registered");
-        const auto& meta = ev.primitives().meta_for_slot(slot);
-        CHECK(meta.required_effects == kEffectMutate, "stamped Mutate");
-        CHECK(meta.effect_enforced_in_body, "body-enforced flag");
+        // mutate:set-body is add_mutate → effect_enforced_in_body. The name is
+        // dispatch-only (#5144), so its contract lives in the hidden meta.
+        const auto* hidden = ev.primitives().hidden_meta_for_name("mutate:set-body");
+        CHECK(hidden != nullptr, "set-body registered");
+        CHECK(hidden != nullptr && hidden->required_effects == kEffectMutate, "stamped Mutate");
+        CHECK(hidden != nullptr && hidden->effect_enforced_in_body, "body-enforced flag");
 
         auto* cm = static_cast<CompilerMetrics*>(ev.compiler_metrics());
         const auto dcheck0 = cm ? cm->dispatch_required_effects_check_total.load() : 0;
