@@ -108,6 +108,12 @@ struct Context {
     std::uint32_t file_resume_line = 0;
     std::uint32_t file_resume_column = 0;
     std::uint32_t file_resume_file_id = 0;
+    // Issue #5140: the --serve-async-bench face runs the whole bench script as
+    // the top-level program on one fiber body. That body still owns file-mode
+    // diagnostics (one located error with a snippet, like --load); only nested
+    // bodies spawned from it are excluded (#5064). Set by the bench entry on
+    // its own context, so it follows that body across a steal.
+    bool file_diag_in_fiber_body = false;
     int try_body_depth = 0;
     // Issue #4717: the pool/flat the body's intern lookups are bound to.
     // The intern TABLES are shared read-mostly data (#4719); which pool they

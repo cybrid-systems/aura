@@ -1624,6 +1624,12 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
             // Issue #4856: an uncaught error must be a located diagnostic
             // (the --load face), not a bare error value.
             sess->service.set_require_failure_is_diagnostic(true);
+            // Issue #5140: this fiber body is the top-level program of the
+            // bench face, not a nested spawned body, so it arms the same
+            // file-mode diagnostic root --load uses. An uncaught error then
+            // prints ONE located diagnostic with its snippet above, instead
+            // of a bare "error: ..." line plus "eval error: <error>".
+            sess->service.set_file_diag_in_fiber_body(true);
             auto result = sess->service.eval(bench_code);
             // Issue #4844: an eval failure is either an unexpected
             // Diagnostic or a first-class error VALUE (for example

@@ -3845,6 +3845,11 @@ public:
     [[nodiscard]] bool require_failure_is_diagnostic() const noexcept {
         return require_failure_is_diagnostic_;
     }
+    // Issue #5140: --serve-async-bench runs its script as the top-level
+    // program on the bench fiber; that body arms file-mode diagnostics like a
+    // plain CLI face. The flag lives in the running body's Context, so it does
+    // not leak into nested spawned bodies (#5064).
+    void set_file_diag_in_fiber_body(bool on) noexcept { eval_ctx().file_diag_in_fiber_body = on; }
     // Issue #4901: registry sequence for FlatAST::macro_view_seq_4901.
     [[nodiscard]] std::uint64_t macro_seq_4901() const noexcept {
         return macro_seq_4901_.load(std::memory_order_acquire);
@@ -7533,6 +7538,11 @@ private:
         return static_cast<ast::NodeId>(eval_ctx().file_diag_root_id);
     }
     void set_file_diag_root_id(ast::NodeId id) noexcept { eval_ctx().file_diag_root_id = id; }
+    // Issue #5140: the outermost eval of a top-level program fiber
+    // (--serve-async-bench) arms file-mode diagnostics like a plain CLI face.
+    [[nodiscard]] bool file_diag_in_fiber_body() const noexcept {
+        return eval_ctx().file_diag_in_fiber_body;
+    }
     // Issue #4471: start of the file-root child that returned the diagnostic.
     void set_file_resume_form(const aura::diag::SourceLocation& l) noexcept {
         eval_ctx().file_resume_line = l.line;

@@ -6848,8 +6848,13 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
     // the first nested eval stringifies a primitive error into
     // "file:line:col: type error: ..." before the body's try/catch can
     // bind the cause. The host file's outermost eval still arms.
+    // Issue #5140: the bench face evaluates its whole script on one fiber
+    // body; that body IS the top-level program, so it may arm the root when
+    // the host marked it (file_diag_in_fiber_body). Spawned nested bodies
+    // keep #5064's rule (no root of their own).
     const bool arm_file_diag = allow_file_diag_arm && require_failure_is_diagnostic_ &&
-                               file_diag_root_flat() == nullptr && aura_fiber_body_active() == 0;
+                               file_diag_root_flat() == nullptr &&
+                               (aura_fiber_body_active() == 0 || file_diag_in_fiber_body());
     if (arm_file_diag) {
         set_file_diag_root_flat(&flat);
         set_file_diag_root_id(id);
