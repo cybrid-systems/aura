@@ -45,11 +45,11 @@ def main() -> int:
     cmake = _read("CMakeLists.txt")
 
     # Locate sync-from window
-    pos = ws.find('add("mw:sync-from"')
+    pos = ws.find('add_hidden("mw:sync-from"')
     if pos < 0:
         fails.append("AC1: workspace:sync-from not found")
         pos = 0
-    end = ws.find('add("mw:discard"', pos)
+    end = ws.find('add_hidden("mw:discard"', pos)
     if end < 0:
         end = pos + 5000
     win = ws[pos:end]

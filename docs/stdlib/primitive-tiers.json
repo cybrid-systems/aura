@@ -99,7 +99,7 @@
     "orch:supervise-batch"
   ],
   "counts": {
-    "kernel": 546,
+    "kernel": 503,
     "stdlib-candidate": 0,
     "delete": 1
   },
@@ -1005,30 +1005,10 @@
       "tier": "kernel",
       "rule": "K-WS"
     },
-    "mw:arena-compact": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:arena-compact-with-policy": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:arena-request-defrag": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "mutate:atomic-batch": {
       "tier": "kernel",
       "rule": "K-WS",
       "note": "public write primitive registered by add_mutate (#5095)"
-    },
-    "mw:auto-rollback-on-panic": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "mutate:check": {
       "tier": "kernel",
@@ -1038,41 +1018,6 @@
       "tier": "kernel",
       "rule": "K-WS",
       "note": "public write primitive registered by add_mutate (#5095)"
-    },
-    "mw:closure-free": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:compact-env-frames": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:compact-nodes": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:define-strategy": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:define-struct": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:discard": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:exception-fibers-clear": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "mutate:extract-function": {
       "tier": "kernel",
@@ -1084,11 +1029,6 @@
       "rule": "K-WS",
       "note": "public write primitive registered by add_mutate (#5095)"
     },
-    "mw:hot-swap-fn": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "mutate:inline-call": {
       "tier": "kernel",
       "rule": "K-WS",
@@ -1099,70 +1039,10 @@
       "rule": "K-WS",
       "note": "public write primitive registered by add_mutate (#5095)"
     },
-    "mw:merge-3way": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "mutate:move-node": {
       "tier": "kernel",
       "rule": "K-WS",
       "note": "public write primitive registered by add_mutate (#5095)"
-    },
-    "mw:overlay-begin": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:overlay-commit": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:overlay-conflict": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:overlay-define": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:overlay-get": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:overlay-has": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:overlay-pending": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:overlay-report": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:overlay-rollback": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:overlay-set!": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:propagate-marker": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "mutate:query-and-replace": {
       "tier": "kernel",
@@ -1183,11 +1063,6 @@
       "tier": "kernel",
       "rule": "K-WS",
       "note": "public write primitive registered by add_mutate (#5095)"
-    },
-    "mw:recycle-nodes": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "mutate:refactor/extract": {
       "tier": "kernel",
@@ -1229,129 +1104,44 @@
       "rule": "K-WS",
       "note": "public write primitive registered by add_mutate (#5095)"
     },
-    "mw:restore": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "mutate:restore-hygiene-checkpoint": {
       "tier": "kernel",
       "rule": "K-WS",
       "note": "public write primitive registered by add_mutate (#5095)"
-    },
-    "mw:rollback-latest": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "mutate:rollback-macro-introduced": {
       "tier": "kernel",
       "rule": "K-WS",
       "note": "public write primitive registered by add_mutate (#5095)"
     },
-    "mw:rollback-to": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "mutate:save-hygiene-checkpoint": {
       "tier": "kernel",
       "rule": "K-WS",
       "note": "public write primitive registered by add_mutate (#5095)"
     },
-    "mw:scheduler-pin": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:self-heal-on-drift": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:session-create": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "mutate:set-agent-fingerprint": {
       "tier": "kernel",
       "rule": "K-WS"
-    },
-    "mw:set-allow-macro-mutate": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:set-auto-compact-threshold": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "mutate:set-body": {
       "tier": "kernel",
       "rule": "K-WS",
       "note": "public write primitive registered by add_mutate (#5095)"
     },
-    "mw:set-concurrent-mutation-policy": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:set-marker": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:set-memory-limit": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "mutate:set-pattern-index-policy": {
       "tier": "kernel",
       "rule": "K-WS",
       "note": "public write primitive registered by add_mutate (#5095)"
-    },
-    "mw:set-provenance": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "mutate:set-stale-ref-policy": {
       "tier": "kernel",
       "rule": "K-WS",
       "note": "public write primitive registered by add_mutate (#5095)"
     },
-    "mw:snapshot": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "mutate:splice": {
       "tier": "kernel",
       "rule": "K-WS",
       "note": "public write primitive registered by add_mutate (#5095)"
-    },
-    "mw:string-pool-compact": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:sync-from": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:try-mutation": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
-    "mw:tune-gc-frequency": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "mutate:tweak-literal": {
       "tier": "kernel",
@@ -1361,11 +1151,6 @@
     "mutate:validate-reflected": {
       "tier": "kernel",
       "rule": "K-WS"
-    },
-    "mw:workspace-delete": {
-      "tier": "kernel",
-      "rule": "K-WS",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "mutate:wrap": {
       "tier": "kernel",

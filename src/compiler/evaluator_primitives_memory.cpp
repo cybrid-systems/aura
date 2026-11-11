@@ -781,7 +781,8 @@ void RegSplitParts::register_memory_arena_compact_primitives(
     // buffer by rebuilding it at used-size + 25% headroom. Returns
     // the number of bytes reclaimed. Use (arena:compact-all) to
     // compact every per-module arena above the configured threshold.
-    add("mw:arena-compact",
+    ev.primitives().add_hidden(
+        "mw:arena-compact",
         [&ev, destroy_defuse_index, with_arena_compact_idle](const auto&) -> EvalValue {
             if (!ev.arena_)
                 return make_int(0);
@@ -830,12 +831,13 @@ void RegSplitParts::register_memory_arena_compact_primitives(
     // To check safepoint registration status independently
     // (which the old "observed = registered" semantics used to
     // conflate), call `(arena:safepoint-registered?)` separately.
-    add("mw:arena-request-defrag", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        if (!ev.arena_)
-            return make_bool(false);
-        const bool observed = ev.arena_->request_defrag();
-        return make_bool(observed);
-    });
+    ev.primitives().add_hidden("mw:arena-request-defrag",
+                               [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+                                   if (!ev.arena_)
+                                       return make_bool(false);
+                                   const bool observed = ev.arena_->request_defrag();
+                                   return make_bool(observed);
+                               });
     // (arena:safepoint-registered?) — Issue #1390: boolean
     // query for whether the GC has registered a safepoint
     // callback. Operators can call this before requesting
@@ -1240,7 +1242,8 @@ void RegSplitParts::register_memory_arena_policy_primitives(
     // memory-pressure watchdog that has decided the
     // adaptive threshold is too lax for the current
     // workload.
-    add("mw:arena-compact-with-policy",
+    ev.primitives().add_hidden(
+        "mw:arena-compact-with-policy",
         [&ev, destroy_defuse_index, with_arena_compact_idle](const auto& a) -> EvalValue {
             if (!ev.arena_group_)
                 return make_int(0);
@@ -1428,12 +1431,13 @@ void RegSplitParts::register_memory_string_pool_primitives(
     // StringPool to the smallest power-of-2 capacity that still
     // holds all live entries. Reclaims hash_tbl_ memory. Returns
     // bytes reclaimed. SymIds are stable (buf_ is monotonic).
-    add("mw:string-pool-compact", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        if (!ev.workspace_pool_ && !ev.canonical_pool())
-            return make_int(0);
-        auto* pool = ev.workspace_pool_ ? ev.workspace_pool_ : ev.canonical_pool();
-        return make_int(static_cast<std::int64_t>(pool->compact()));
-    });
+    ev.primitives().add_hidden(
+        "mw:string-pool-compact", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
+            if (!ev.workspace_pool_ && !ev.canonical_pool())
+                return make_int(0);
+            auto* pool = ev.workspace_pool_ ? ev.workspace_pool_ : ev.canonical_pool();
+            return make_int(static_cast<std::int64_t>(pool->compact()));
+        });
     // (string-pool:stats) — Issue #187: StringPool observability.
     // Returns hash {entries, capacity, load-factor, data-size,
     // hash-bytes, fragmentation}.
@@ -1990,26 +1994,27 @@ void RegSplitParts::register_memory_arena_threshold_primitives(PrimRegistrar add
         const double cur = ev.arena_group_->compact_threshold();
         return make_int(static_cast<std::int64_t>(cur * 100.0));
     });
-    add("mw:set-auto-compact-threshold", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (!ev.arena_group_)
-            return make_int(-1);
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-            m->arena_auto_compact_threshold_set_total.fetch_add(1, std::memory_order_relaxed);
-        const double prev = ev.arena_group_->compact_threshold();
-        // Default to no-op return of previous value (reads-only mode).
-        if (a.empty() || !is_int(a[0]))
+    ev.primitives().add_hidden(
+        "mw:set-auto-compact-threshold", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            if (!ev.arena_group_)
+                return make_int(-1);
+            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                m->arena_auto_compact_threshold_set_total.fetch_add(1, std::memory_order_relaxed);
+            const double prev = ev.arena_group_->compact_threshold();
+            // Default to no-op return of previous value (reads-only mode).
+            if (a.empty() || !is_int(a[0]))
+                return make_int(static_cast<std::int64_t>(prev * 100.0));
+            const std::int64_t requested = as_int(a[0]);
+            // Clamp 0..95 internally, same as the C++ std::clamp in
+            // set_compact_threshold. Negative → 0, > 95 → 95.
+            std::int64_t clamped = requested;
+            if (clamped < 0)
+                clamped = 0;
+            else if (clamped > 95)
+                clamped = 95;
+            ev.arena_group_->set_compact_threshold(static_cast<double>(clamped) / 100.0);
             return make_int(static_cast<std::int64_t>(prev * 100.0));
-        const std::int64_t requested = as_int(a[0]);
-        // Clamp 0..95 internally, same as the C++ std::clamp in
-        // set_compact_threshold. Negative → 0, > 95 → 95.
-        std::int64_t clamped = requested;
-        if (clamped < 0)
-            clamped = 0;
-        else if (clamped > 95)
-            clamped = 95;
-        ev.arena_group_->set_compact_threshold(static_cast<double>(clamped) / 100.0);
-        return make_int(static_cast<std::int64_t>(prev * 100.0));
-    });
+        });
 }
 
 void RegSplitParts::register_memory_closure_free_primitives(PrimRegistrar add, Evaluator& ev) {
@@ -2017,7 +2022,7 @@ void RegSplitParts::register_memory_closure_free_primitives(PrimRegistrar add, E
     // - int id → JIT runtime table (aura_free_closure + g_closure_freed)
     // - Closure value → tree-walker Evaluator::closures_ erase (#1665
     //   durable free so scan_live_closures never iterates dead slots)
-    add("mw:closure-free", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.primitives().add_hidden("mw:closure-free", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty())
             return make_bool(false);
         if (is_int(a[0])) {

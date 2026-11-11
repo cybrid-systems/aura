@@ -128,7 +128,7 @@ def main() -> int:
     # no new check file).
     ws3863 = _read("src/compiler/evaluator_primitives_workspace.cpp")
     t3863 = _read("tests/compiler/test_workspace_delete_child.cpp")
-    ps3863 = ws3863.find('add("mw:discard"')
+    ps3863 = ws3863.find('"mw:discard"')
     ps_end = ws3863.find("workspace :merge", ps3863) if ps3863 != -1 else -1
     ps_body = ws3863[ps3863 : ps_end if ps_end != -1 else ps3863 + 4000] if ps3863 != -1 else ""
     must("Issue #3863", "AC3863 discard cite", ps_body)

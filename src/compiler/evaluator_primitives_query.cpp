@@ -2904,27 +2904,28 @@ void register_query_gc_tune_parts(PrimRegistrar add, std::pmr::vector<Pair>& pai
     // (query:scheduler-mutation-coord-stats) so the LLM-aware
     // tuning loop can be wired up without re-touching the
     // scheduler in the same PR.
-    add("mw:tune-gc-frequency", [](std::span<const EvalValue> a) -> EvalValue {
-        auto& ratio = aura::serve::gc_frequency_tune_ratio();
-        const std::uint64_t prev = ratio.load(std::memory_order_relaxed);
-        if (a.empty()) {
-            return make_int(static_cast<std::int64_t>(prev));
-        }
-        if (!is_int(a[0])) {
-            // Bad-arg: return current value as int, no change.
-            return make_int(static_cast<std::int64_t>(prev));
-        }
-        std::int64_t requested = as_int(a[0]);
-        std::uint32_t clamped = 0;
-        if (requested < 0)
-            clamped = 0;
-        else if (requested > 100)
-            clamped = 100;
-        else
-            clamped = static_cast<std::uint32_t>(requested);
-        ratio.store(clamped, std::memory_order_relaxed);
-        return make_int(static_cast<std::int64_t>(prev));
-    });
+    ev.primitives().add_hidden("mw:tune-gc-frequency",
+                               [](std::span<const EvalValue> a) -> EvalValue {
+                                   auto& ratio = aura::serve::gc_frequency_tune_ratio();
+                                   const std::uint64_t prev = ratio.load(std::memory_order_relaxed);
+                                   if (a.empty()) {
+                                       return make_int(static_cast<std::int64_t>(prev));
+                                   }
+                                   if (!is_int(a[0])) {
+                                       // Bad-arg: return current value as int, no change.
+                                       return make_int(static_cast<std::int64_t>(prev));
+                                   }
+                                   std::int64_t requested = as_int(a[0]);
+                                   std::uint32_t clamped = 0;
+                                   if (requested < 0)
+                                       clamped = 0;
+                                   else if (requested > 100)
+                                       clamped = 100;
+                                   else
+                                       clamped = static_cast<std::uint32_t>(requested);
+                                   ratio.store(clamped, std::memory_order_relaxed);
+                                   return make_int(static_cast<std::int64_t>(prev));
+                               });
 
     // Issue #447: query:query-stats. Returns the sum
     // of the 3 tag+arity index counters (hits / misses /

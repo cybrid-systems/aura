@@ -2241,14 +2241,15 @@ void RegSplitParts::register_messaging_fiber_lifecycle_primitives(PrimRegistrar 
 
     // (mutate :session-create name) — Create a new isolated session (serve mode only)
     // Returns #t on success, #f in stdin mode or if name already exists
-    add("mw:session-create", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
-            return make_bool(false);
-        auto& name = ev.mutable_string_at(as_string_idx(a[0]));
-        if (!aura::messaging::g_session_create || !(*aura::messaging::g_session_create))
-            return make_bool(false);
-        return make_bool((*aura::messaging::g_session_create)(name));
-    });
+    ev.primitives().add_hidden(
+        "mw:session-create", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_string(a[0]))
+                return make_bool(false);
+            auto& name = ev.mutable_string_at(as_string_idx(a[0]));
+            if (!aura::messaging::g_session_create || !(*aura::messaging::g_session_create))
+                return make_bool(false);
+            return make_bool((*aura::messaging::g_session_create)(name));
+        });
 
     // (_agent:spawn name) — Create a new named agent session (internal primitive)
     // Called by the Aura-level agent:spawn wrapper.
@@ -2718,18 +2719,19 @@ void RegSplitParts::register_messaging_scheduler_primitives(PrimRegistrar add, E
     // run on that worker (won't be stolen). Returns #t on success, #f
     // when not in serve-async mode or invalid worker ID.
     // worker-id: 0..N-1 where N = number of workers.
-    add("mw:scheduler-pin", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
-            return make_bool(false);
-        auto wid = static_cast<int>(as_int(a[0]));
-        if (wid < 0)
-            return make_bool(false);
-        if (aura::messaging::g_fiber_set_affinity) {
-            aura::messaging::g_fiber_set_affinity(wid);
-            return make_bool(true);
-        }
-        return make_bool(false);
-    });
+    ev.primitives().add_hidden("mw:scheduler-pin",
+                               [&ev](std::span<const EvalValue> a) -> EvalValue {
+                                   if (a.empty() || !is_int(a[0]))
+                                       return make_bool(false);
+                                   auto wid = static_cast<int>(as_int(a[0]));
+                                   if (wid < 0)
+                                       return make_bool(false);
+                                   if (aura::messaging::g_fiber_set_affinity) {
+                                       aura::messaging::g_fiber_set_affinity(wid);
+                                       return make_bool(true);
+                                   }
+                                   return make_bool(false);
+                               });
 
     // ── orch:reset-metrics — reset scheduler counters (Issue #32) ─
     // (orch:reset-metrics) → Resets all metrics to zero.

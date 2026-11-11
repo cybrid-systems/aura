@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-11-10 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-11-11 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** living document — re-run the script after consolidations.
 
 ## Purpose
@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 919 | Preferred destination suites |
-| **Total scanned** | **919** | |
+| `tests/core/test_*.cpp` | 920 | Preferred destination suites |
+| **Total scanned** | **920** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 96 | 96 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 280 | 280 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 281 | 281 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 110 | 110 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 28 | 28 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 61 | 61 | P1 — domain hygiene suite exists |
@@ -817,6 +817,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_pre_scan_quote_boundary.cpp`
 - `tests/compiler/test_predicate_meet_join_lattice.cpp`
 - `tests/compiler/test_predicate_memo_boundary_selective.cpp`
+- `tests/compiler/test_prim_add_hidden.cpp`
 - `tests/core/test_prim_call_count_clamp.cpp`
 - `tests/compiler/test_prim_registrar_ref.cpp`
 - `tests/compiler/test_primcall_narg.cpp`
@@ -1243,13 +1244,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (280)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (281)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (280)
+#### domain/ (281)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1453,6 +1454,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_post_mutate_push_cascade.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2038; push_post_mutate_incremental_cascade +
 - `tests/compiler/test_post_steal_linear_revalidate.cpp` (—) [domain_suite, theme_compiler] — AC1: Steal under Strict + incomplete linear provenance → hard fail /
 - `tests/compiler/test_predicate_memo_boundary_selective.cpp` (—) [domain_suite, theme_compiler] — AC1: mutate binding used in one predicate → only that memo entry drops
+- `tests/compiler/test_prim_add_hidden.cpp` (—) [small, domain_suite, theme_compiler] — AC1: lookup() finds a hidden body, so (query :op) / (mutate :op) still work
 - `tests/compiler/test_primfn_arith_overlay.cpp` (—) [domain_suite, theme_compiler] — AC1: a small lambda and a function pointer are PrimFn, not std::function
 - `tests/compiler/test_production_readiness_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — tests/compiler/test_production_readiness_batch.cpp
 - `tests/compiler/test_production_security_defaults.cpp` (—) [domain_suite, theme_compiler] — AC1: apply_production_security_defaults → Restricted (unset AURA_SANDBOX)

@@ -258,6 +258,59 @@ RETIRED_022 = frozenset(
 # under K-ORCH-STATE, so the rule id must not come back.
 FORBIDDEN_RULES_022 = frozenset({"K-EXC-5118"})
 
+# Issue #5142: the mw: prefix aliases are dispatch-only. Their bodies stay in
+# the primitive table under the same name, so (mutate :op) and (workspace :op)
+# still resolve them, but the name is no longer a public registration: no slot,
+# no PrimMeta, no api-reference entry, no tier row. Registering one with add()
+# again would silently reopen the surface this batch closed.
+RETIRED_MW_ALIASES_022 = frozenset(
+    {
+        "mw:arena-compact",
+        "mw:arena-compact-with-policy",
+        "mw:arena-request-defrag",
+        "mw:auto-rollback-on-panic",
+        "mw:closure-free",
+        "mw:compact-env-frames",
+        "mw:compact-nodes",
+        "mw:define-strategy",
+        "mw:define-struct",
+        "mw:discard",
+        "mw:exception-fibers-clear",
+        "mw:hot-swap-fn",
+        "mw:merge-3way",
+        "mw:overlay-begin",
+        "mw:overlay-commit",
+        "mw:overlay-conflict",
+        "mw:overlay-define",
+        "mw:overlay-get",
+        "mw:overlay-has",
+        "mw:overlay-pending",
+        "mw:overlay-report",
+        "mw:overlay-rollback",
+        "mw:overlay-set!",
+        "mw:propagate-marker",
+        "mw:recycle-nodes",
+        "mw:restore",
+        "mw:rollback-latest",
+        "mw:rollback-to",
+        "mw:scheduler-pin",
+        "mw:self-heal-on-drift",
+        "mw:session-create",
+        "mw:set-allow-macro-mutate",
+        "mw:set-auto-compact-threshold",
+        "mw:set-concurrent-mutation-policy",
+        "mw:set-marker",
+        "mw:set-memory-limit",
+        "mw:set-provenance",
+        "mw:snapshot",
+        "mw:string-pool-compact",
+        "mw:sync-from",
+        "mw:try-mutation",
+        "mw:tune-gc-frequency",
+        "mw:workspace-delete",
+    }
+)
+
 
 def check_retired_022(tiers: dict, catalog: set[str]) -> list[str]:
     errors: list[str] = []
@@ -270,6 +323,16 @@ def check_retired_022(tiers: dict, catalog: set[str]) -> list[str]:
         entry = tiers["primitives"].get(name)
         if entry is not None:
             errors.append(f"{name} was retired in v0.2.2 but still has a tier entry")
+    # Issue #5142: a deregistered mw: alias must not come back as a public
+    # registration or a tier row; its dispatch-only body has no surface.
+    for name in sorted(RETIRED_MW_ALIASES_022):
+        if name in catalog:
+            errors.append(
+                f"{name} was deregistered in v0.2.2 (#5142); call "
+                "(mutate :<op>) instead of registering the mw: alias again"
+            )
+        if name in tiers["primitives"]:
+            errors.append(f"{name} was deregistered in v0.2.2 (#5142) but still has a tier entry")
     for name, entry in sorted(tiers["primitives"].items()):
         if entry.get("rule") in FORBIDDEN_RULES_022:
             errors.append(f"{name} still uses the settled rule {entry.get('rule')}")

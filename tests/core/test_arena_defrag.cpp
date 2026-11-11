@@ -213,7 +213,7 @@ static void ac3269_1_unique_after_tls_skip() {
     CHECK(mem.find("WorkspaceUniqueIfNeeded compact_hold") != std::string::npos,
           "3269 AC1: unique workspace");
     CHECK(mem.find("Issue #3269") != std::string::npos, "3269 AC1: cite");
-    auto cpos = mem.find("add(\"mw:arena-compact\"");
+    auto cpos = mem.find("add_hidden(\"mw:arena-compact\"");
     CHECK(cpos != std::string::npos, "3269 AC1: compact public");
     auto cwin = mem.substr(cpos, 700);
     CHECK(cwin.find("with_arena_compact_idle") != std::string::npos,
@@ -270,9 +270,8 @@ static void ac3269_4_compact_under_guard() {
         // 0 and eval returns a non-int. Drive the prim directly so the
         // #3269 TLS skip (with_arena_compact_idle) is what we measure.
         auto& prims = cs.evaluator().primitives();
-        const auto slot = prims.slot_for_name("mw:arena-compact");
-        auto fnopt = prims.slot_lookup_fast(slot);
-        CHECK(fnopt.has_value(), "3269 AC4: arena:compact slot");
+        auto fnopt = prims.lookup("mw:arena-compact");
+        CHECK(fnopt.has_value(), "3269 AC4: arena:compact hidden body");
         if (!fnopt)
             return;
         auto paused = (*fnopt)(std::span<const aura::compiler::types::EvalValue>{});

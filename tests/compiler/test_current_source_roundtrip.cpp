@@ -2155,7 +2155,7 @@ static void ac4772_snapshot_quiet_guard() {
     auto filler = cs.eval("(w4772f7 3)");
     CHECK(filler && is_int(*filler) && as_int(*filler) == 21, "4772: filler intact after restore");
     const auto prim = read_file("src/compiler/evaluator_primitives_ast.cpp");
-    const auto at = prim.find("add(\"mw:snapshot\"");
+    const auto at = prim.find("add_hidden(\"mw:snapshot\"");
     const auto arm = prim.find("ev.heap_slot_quiet_for_next_boundary_ = true;", at);
     const auto acq = prim.find("MutationBoundaryGuard::try_acquire(", at);
     CHECK(at != std::string::npos && arm != std::string::npos && acq != std::string::npos &&

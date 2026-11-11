@@ -122,7 +122,7 @@ int main() {
         // The Guard must wrap the delete/rebind: try_acquire BEFORE the
         // flat delete (the torn-flat window), held via unique_ptr for the
         // scope (RAII release).
-        auto dpos = ws_cpp.find("add(\"mw:discard\"");
+        auto dpos = ws_cpp.find("add_hidden(\"mw:discard\"");
         CHECK(dpos != std::string::npos, "3863: workspace:discard present");
         auto dwin_end = ws_cpp.find("workspace :merge", dpos);
         auto dwin = ws_cpp.substr(dpos, (dwin_end == std::string::npos ? 4000 : dwin_end - dpos));
@@ -141,7 +141,7 @@ int main() {
     {
         const auto ws_cpp = read_file("src/compiler/evaluator_primitives_workspace.cpp");
         CHECK(ws_cpp.find("Issue #3957") != std::string::npos, "3957: cite");
-        auto dpos = ws_cpp.find("add(\"mw:discard\"");
+        auto dpos = ws_cpp.find("add_hidden(\"mw:discard\"");
         CHECK(dpos != std::string::npos, "3957: discard present");
         auto dwin_end = ws_cpp.find("workspace :merge", dpos);
         auto dwin = ws_cpp.substr(dpos, (dwin_end == std::string::npos ? 4000 : dwin_end - dpos));

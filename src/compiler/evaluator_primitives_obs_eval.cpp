@@ -245,12 +245,13 @@ void ObservabilityPrims::register_eval_p0(PrimRegistrar add, Evaluator& ev) {
     // (mutate :auto-rollback-on-panic [#t|#f]) — Get/set auto-rollback on panic flag
     // When enabled, runtime error triggers automatic rollback to last safe
     // checkpoint. Returns previous value.
-    add("mw:auto-rollback-on-panic", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        bool old = ev.panic_auto_rollback_;
-        if (!a.empty() && types::is_bool(a[0]))
-            ev.panic_auto_rollback_ = types::as_bool(a[0]);
-        return make_bool(old);
-    });
+    ev.primitives().add_hidden("mw:auto-rollback-on-panic",
+                               [&ev](std::span<const EvalValue> a) -> EvalValue {
+                                   bool old = ev.panic_auto_rollback_;
+                                   if (!a.empty() && types::is_bool(a[0]))
+                                       ev.panic_auto_rollback_ = types::as_bool(a[0]);
+                                   return make_bool(old);
+                               });
 
     // (panic-auto-rollback?) — Query current auto-rollback state
     add("panic-auto-rollback?",

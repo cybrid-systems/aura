@@ -868,7 +868,8 @@ void RegSplitParts::register_ast_snapshot_primitive(PrimRegistrar add, Evaluator
     constexpr std::uint8_t kSnapFailEmptySource = 3;
     (void)kSnapFailNone;
 
-    add("mw:snapshot",
+    ev.primitives().add_hidden(
+        "mw:snapshot",
         [&ev, kSnapFailGuard, kSnapFailNoWorkspace,
          kSnapFailEmptySource](std::span<const EvalValue> a) -> EvalValue {
             // Issue #2918: the checkpoint text comes from
@@ -1293,7 +1294,8 @@ void RegSplitParts::register_ast_restore_primitive(PrimRegistrar add_in, Evaluat
     // pool/flat is null, which shouldn't happen but be defensive)
     // we fall through to the source path.
     // Issue #4910: temporarily route `add` through the evolution-log wrap so the
-    // registration stays a literal add("mw:restore", …) for the surface scanners.
+    // registration stays a literal ev.primitives().add_hidden("mw:restore", …)
+    // so the surface scanners can see that the body is dispatch-only (#5142).
     // #4936 follow-up: this must be an OWNING copy. PrimRegistrar is a
     // std::function_ref; copying it would point back at `add`, and after the
     // reassignment below that reference resolves to the wrapper itself —
@@ -1302,103 +1304,105 @@ void RegSplitParts::register_ast_restore_primitive(PrimRegistrar add_in, Evaluat
     add = [add_plain_4910](std::string n, PrimFn f) {
         add_plain_4910(std::move(n), PrimFn(evo_wrap_restore_4910(std::move(f))));
     };
-    add("mw:restore", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
-            return make_bool(false);
-        auto id = static_cast<std::size_t>(as_int(a[0]));
-        if (id >= ev.snapshot_sources_.size())
-            return make_bool(false);
-
-        // Issue #4400: the direct copy assigns the snapshot flat with no
-        // dispatch effect. Pay Mutate once, before cache clears and before
-        // the boundary, and only when this call will take the direct path.
-        // Deny returns the effect-deny error and does not fall through to
-        // set-code. The source fallback is gated inside set-code (a second
-        // check here would consume a single-use grant twice).
-        const bool can_direct = id < ev.snapshot_flats_.size() && ev.snapshot_flats_[id].has_flat &&
-                                ev.snapshot_flats_[id].flat && ev.snapshot_flats_[id].pool &&
-                                ev.workspace_flat_ && ev.workspace_pool_;
-        if (can_direct) {
-            const std::string_view ast_restore_op = "mw:restore";
-            if (!ev.require_effect(aura::compiler::security::kEffectMutate, ast_restore_op, 0,
-                                   ev.capability_tenant_id())) {
-                return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                            aura::compiler::security::format_deny_reason(
-                                                aura::compiler::security::kEffectMutate,
-                                                ev.capability_tenant_id(), "mw:restore"),
-                                            ev.primitive_error_counter_ptr());
-            }
-        }
-
-        // Clear any previous restore error / eval cache
-        ev.last_set_code_error_kind_.clear();
-        ev.last_set_code_error_msg_.clear();
-        ev.last_eval_current_result_.reset();
-        // Issue #4266 follow-up: ast:restore swaps the workspace contents under
-        // the live flat, so the #159 clean-workspace gate sees no dirty bits —
-        // drop the cached typecheck report/status too.
-        ev.invalidate_typecheck_report_cache();
-
-        // (#107 part 6) Direct path: copy from snapshot's flat/pool
-        // into the workspace's flat/pool. This is the lossless
-        // restore path — SymIds, mutation_log_, type_id_, value_cache_
-        // are all preserved bit-for-bit.
-        bool did_direct = false;
-        AstRestoreState state;
-        state.id = id;
-        // Issue #4729: a restore used to only TRUNCATE the log back to the
-        // snapshot copy, so a rolled-back mutation left no trace at all.
-        // These capture the audit identity of the records the restore
-        // discards (and the live id counter) so one rollback entry can be
-        // appended afterwards.
-        {
-            // Issue #1904: MutationBoundaryGuard RAII owns the lock + version bump.
-            bool ok = true;
-            // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
-                ev, /*pending=*/1, &ok);
-            if (!guard_r) {
+    ev.primitives().add_hidden(
+        "mw:restore", [&ev, destroy_defuse_index](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]))
                 return make_bool(false);
-            }
-            auto guard = std::move(*guard_r);
-            if (ev.workspace_read_only_) {
-                ok = false;
+            auto id = static_cast<std::size_t>(as_int(a[0]));
+            if (id >= ev.snapshot_sources_.size())
                 return make_bool(false);
-            }
+
+            // Issue #4400: the direct copy assigns the snapshot flat with no
+            // dispatch effect. Pay Mutate once, before cache clears and before
+            // the boundary, and only when this call will take the direct path.
+            // Deny returns the effect-deny error and does not fall through to
+            // set-code. The source fallback is gated inside set-code (a second
+            // check here would consume a single-use grant twice).
+            const bool can_direct = id < ev.snapshot_flats_.size() &&
+                                    ev.snapshot_flats_[id].has_flat &&
+                                    ev.snapshot_flats_[id].flat && ev.snapshot_flats_[id].pool &&
+                                    ev.workspace_flat_ && ev.workspace_pool_;
             if (can_direct) {
-                try {
-                    AstRestoreCapture cap;
-                    RegSplitParts::ast_restore_capture(ev, state, cap);
-                    // Issue #4772: delta assign from the image — chunks the
-                    // workspace has not written since its own image base and
-                    // that the snapshot shares with that base are skipped.
-                    // Issue #4793: dep-graph upkeep may re-walk only the changed
-                    // defines when the graph is in sync with the pre-swap
-                    // workspace (every unchanged define's edges are then
-                    // already recorded). Sampled before the swap replaces
-                    // the log.
-                    const auto& snap_entry = ev.snapshot_flats_[id];
-                    ev.workspace_flat_->assign_from_image(snap_entry.flat);
-                    ev.workspace_pool_->assign_from_image(snap_entry.pool);
-                    RegSplitParts::ast_restore_publish(ev, state, cap, destroy_defuse_index);
-                    did_direct = true;
-                } catch (...) {
-                    // [SILENCE-PRIM-#615] Fall through to
-                    // source-based restore when the fast path fails.
-                    did_direct = false;
+                const std::string_view ast_restore_op = "mw:restore";
+                if (!ev.require_effect(aura::compiler::security::kEffectMutate, ast_restore_op, 0,
+                                       ev.capability_tenant_id())) {
+                    return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                                aura::compiler::security::format_deny_reason(
+                                                    aura::compiler::security::kEffectMutate,
+                                                    ev.capability_tenant_id(), "mw:restore"),
+                                                ev.primitive_error_counter_ptr());
                 }
             }
-        }
-        if (did_direct) {
-            RegSplitParts::ast_restore_finalize(ev, state);
-            return make_bool(true);
-        }
 
-        // Source-based fallback (existing behavior). Holds its own
-        // unique_lock inside set-code; we must not be holding ours
-        // (we released above by scope).
-        return RegSplitParts::ast_restore_source_fallback(ev, state.id);
-    });
+            // Clear any previous restore error / eval cache
+            ev.last_set_code_error_kind_.clear();
+            ev.last_set_code_error_msg_.clear();
+            ev.last_eval_current_result_.reset();
+            // Issue #4266 follow-up: ast:restore swaps the workspace contents under
+            // the live flat, so the #159 clean-workspace gate sees no dirty bits —
+            // drop the cached typecheck report/status too.
+            ev.invalidate_typecheck_report_cache();
+
+            // (#107 part 6) Direct path: copy from snapshot's flat/pool
+            // into the workspace's flat/pool. This is the lossless
+            // restore path — SymIds, mutation_log_, type_id_, value_cache_
+            // are all preserved bit-for-bit.
+            bool did_direct = false;
+            AstRestoreState state;
+            state.id = id;
+            // Issue #4729: a restore used to only TRUNCATE the log back to the
+            // snapshot copy, so a rolled-back mutation left no trace at all.
+            // These capture the audit identity of the records the restore
+            // discards (and the live id counter) so one rollback entry can be
+            // appended afterwards.
+            {
+                // Issue #1904: MutationBoundaryGuard RAII owns the lock + version bump.
+                bool ok = true;
+                // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+                auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
+                    ev, /*pending=*/1, &ok);
+                if (!guard_r) {
+                    return make_bool(false);
+                }
+                auto guard = std::move(*guard_r);
+                if (ev.workspace_read_only_) {
+                    ok = false;
+                    return make_bool(false);
+                }
+                if (can_direct) {
+                    try {
+                        AstRestoreCapture cap;
+                        RegSplitParts::ast_restore_capture(ev, state, cap);
+                        // Issue #4772: delta assign from the image — chunks the
+                        // workspace has not written since its own image base and
+                        // that the snapshot shares with that base are skipped.
+                        // Issue #4793: dep-graph upkeep may re-walk only the changed
+                        // defines when the graph is in sync with the pre-swap
+                        // workspace (every unchanged define's edges are then
+                        // already recorded). Sampled before the swap replaces
+                        // the log.
+                        const auto& snap_entry = ev.snapshot_flats_[id];
+                        ev.workspace_flat_->assign_from_image(snap_entry.flat);
+                        ev.workspace_pool_->assign_from_image(snap_entry.pool);
+                        RegSplitParts::ast_restore_publish(ev, state, cap, destroy_defuse_index);
+                        did_direct = true;
+                    } catch (...) {
+                        // [SILENCE-PRIM-#615] Fall through to
+                        // source-based restore when the fast path fails.
+                        did_direct = false;
+                    }
+                }
+            }
+            if (did_direct) {
+                RegSplitParts::ast_restore_finalize(ev, state);
+                return make_bool(true);
+            }
+
+            // Source-based fallback (existing behavior). Holds its own
+            // unique_lock inside set-code; we must not be holding ours
+            // (we released above by scope).
+            return RegSplitParts::ast_restore_source_fallback(ev, state.id);
+        });
     add = add_plain_4910; // Issue #4910: restore the plain registrar
 }
 
@@ -2037,7 +2041,7 @@ void RegSplitParts::register_ast_node_maintenance_primitives(PrimRegistrar add, 
     // AI query→mutate→eval loops.
 
     // (mutate :recycle-nodes) — mark unreachable slots free for reuse.
-    add("mw:recycle-nodes", [&ev](const auto&) -> EvalValue {
+    ev.primitives().add_hidden("mw:recycle-nodes", [&ev](const auto&) -> EvalValue {
         // Issue #1904: MutationBoundaryGuard RAII owns the lock + version bump.
         bool ok = true;
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
@@ -2055,7 +2059,7 @@ void RegSplitParts::register_ast_node_maintenance_primitives(PrimRegistrar add, 
     });
 
     // (mutate :compact-nodes) — densify live nodes into 0..n-1 slots.
-    add("mw:compact-nodes", [&ev](const auto&) -> EvalValue {
+    ev.primitives().add_hidden("mw:compact-nodes", [&ev](const auto&) -> EvalValue {
         // Issue #1904: MutationBoundaryGuard RAII owns the lock + version bump.
         bool ok = true;
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.

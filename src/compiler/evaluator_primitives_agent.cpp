@@ -2695,58 +2695,60 @@ void RegSplitParts::register_strategy_definition_primitives(Evaluator& ev, AddFn
     //   :max-attempts <int>     (1..20, default 3)
     //   :temperature <float>   (0.0..1.0, default 0.3)
     //   :sys-prompt-template <str>
-    add("mw:define-strategy", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
-            return make_bool(false);
-        auto name = heap_str_from(ev.string_heap_, a[0]);
-        auto body = heap_str_from(ev.string_heap_, a[1]);
-        // Optional keyword args (pairs from index 2)
-        int new_max = 3;
-        double new_temp = 0.3;
-        std::string new_spt;
-        for (std::size_t i = 2; i + 1 < a.size(); i += 2) {
-            // Issue #63 Phase 3: keywords come in as a separate EvalValue
-            // type, not strings. Resolve both.
-            std::string k;
-            if (types::is_string(a[i])) {
-                k = heap_str_from(ev.string_heap_, a[i]);
-            } else if (types::is_keyword(a[i])) {
-                auto kidx = types::as_keyword_idx(a[i]);
-                if (kidx < ev.keyword_table_.size())
-                    k = ev.keyword_table_[kidx];
-            } else {
-                continue;
-            }
-            if (k == ":max-attempts" && types::is_int(a[i + 1])) {
-                int v = static_cast<int>(types::as_int(a[i + 1]));
-                if (v >= 1 && v <= 20)
-                    new_max = v;
-            } else if (k == ":temperature" &&
-                       (types::is_int(a[i + 1]) || types::is_float(a[i + 1]))) {
-                double v = types::is_float(a[i + 1]) ? types::as_float(a[i + 1])
-                                                     : static_cast<double>(types::as_int(a[i + 1]));
-                if (v >= 0.0 && v <= 1.0)
-                    new_temp = v;
-            } else if (k == ":sys-prompt-template" && types::is_string(a[i + 1])) {
-                new_spt = heap_str_from(ev.string_heap_, a[i + 1]);
-            }
-        }
-        {
-            // Issue #1720 / #1722: unique lock for strategies_ mutate.
-            std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_);
-            for (auto& s : ev.strategies_) {
-                if (s.name == name) {
-                    s.body = body;
-                    s.max_attempts = new_max;
-                    s.temperature = new_temp;
-                    s.sys_prompt_template = new_spt;
-                    return make_bool(true);
+    ev.primitives().add_hidden(
+        "mw:define-strategy", [&ev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
+                return make_bool(false);
+            auto name = heap_str_from(ev.string_heap_, a[0]);
+            auto body = heap_str_from(ev.string_heap_, a[1]);
+            // Optional keyword args (pairs from index 2)
+            int new_max = 3;
+            double new_temp = 0.3;
+            std::string new_spt;
+            for (std::size_t i = 2; i + 1 < a.size(); i += 2) {
+                // Issue #63 Phase 3: keywords come in as a separate EvalValue
+                // type, not strings. Resolve both.
+                std::string k;
+                if (types::is_string(a[i])) {
+                    k = heap_str_from(ev.string_heap_, a[i]);
+                } else if (types::is_keyword(a[i])) {
+                    auto kidx = types::as_keyword_idx(a[i]);
+                    if (kidx < ev.keyword_table_.size())
+                        k = ev.keyword_table_[kidx];
+                } else {
+                    continue;
+                }
+                if (k == ":max-attempts" && types::is_int(a[i + 1])) {
+                    int v = static_cast<int>(types::as_int(a[i + 1]));
+                    if (v >= 1 && v <= 20)
+                        new_max = v;
+                } else if (k == ":temperature" &&
+                           (types::is_int(a[i + 1]) || types::is_float(a[i + 1]))) {
+                    double v = types::is_float(a[i + 1])
+                                   ? types::as_float(a[i + 1])
+                                   : static_cast<double>(types::as_int(a[i + 1]));
+                    if (v >= 0.0 && v <= 1.0)
+                        new_temp = v;
+                } else if (k == ":sys-prompt-template" && types::is_string(a[i + 1])) {
+                    new_spt = heap_str_from(ev.string_heap_, a[i + 1]);
                 }
             }
-            ev.strategies_.push_back({name, body, new_max, new_temp, new_spt, 0, ""});
-        }
-        return make_bool(true);
-    });
+            {
+                // Issue #1720 / #1722: unique lock for strategies_ mutate.
+                std::unique_lock<std::shared_mutex> lk(ev.strategies_mtx_);
+                for (auto& s : ev.strategies_) {
+                    if (s.name == name) {
+                        s.body = body;
+                        s.max_attempts = new_max;
+                        s.temperature = new_temp;
+                        s.sys_prompt_template = new_spt;
+                        return make_bool(true);
+                    }
+                }
+                ev.strategies_.push_back({name, body, new_max, new_temp, new_spt, 0, ""});
+            }
+            return make_bool(true);
+        });
     // ── register-strategy! — 注册/更新策略 ──────────────
     add("register-strategy!", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))

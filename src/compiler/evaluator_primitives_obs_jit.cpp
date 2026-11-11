@@ -231,7 +231,7 @@ void ObservabilityPrims::register_jit_p1(PrimRegistrar add, Evaluator& ev) {
     // session-reset path.
     // Issue #1295 (P0): requires kCapExceptionControl in sandbox —
     // process-global clear can corrupt in-flight try/catch on other fibers.
-    add("mw:exception-fibers-clear", [&ev](const auto&) -> EvalValue {
+    ev.primitives().add_hidden("mw:exception-fibers-clear", [&ev](const auto&) -> EvalValue {
         // Issue #1326 Phase 1: deprecation path (cross-fiber race; prefer C++ reset).
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             record_write_side_prim_deprecation(m);
@@ -7904,7 +7904,7 @@ void ObservabilityPrims::register_jit_p48(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #814 / #1139: runtime:self-heal-on-drift — return #t only when
     // metrics are attached (heal path actually recorded); else #f.
-    add("mw:self-heal-on-drift", [&ev](const auto&) -> EvalValue {
+    ev.primitives().add_hidden("mw:self-heal-on-drift", [&ev](const auto&) -> EvalValue {
         if (ev.compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
             m->runtime_self_heal_invocations_total.fetch_add(1, std::memory_order_relaxed);
@@ -7918,7 +7918,7 @@ void ObservabilityPrims::register_jit_p48(PrimRegistrar add, Evaluator& ev) {
     // Issue #816: edsl:define-struct name doc schema — Phase 1 registry
     // that validates non-empty name/schema and records metrics. Full
     // NodeTag generation is Phase 2.
-    add("mw:define-struct", [&ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("mw:define-struct", [&ev](const auto& a) -> EvalValue {
         // (mutate :define-struct name doc schema) — name/schema required strings.
         if (a.size() < 3) {
             if (ev.compiler_metrics_) {
