@@ -48,8 +48,8 @@ Pure-Aura `mutate:rebind` **does** mark incremental compile work. Host denseness
 | `(stats:get "compile:dirty-count")` | ≥1 if the name was already in `ir_cache_v2_` | often **0** (entry re-lowered clean) |
 | `(compile:block-dirty-count "name")` | >0 body/impact blocks dirty | often **0** |
 | `(compile:block-dirty-count)` | total dirty blocks (all defines) | often **0** |
-| `(stats:get "compile:epoch")` | bumps (mutation epoch) | stays until next mutate |
-| `query:jit-stats-hash` → `hotswap-invalidate-total`, `invalidate-function-calls`, `mutation-epoch` | **lifetime** counters bump on rebind | remain elevated |
+| `(stats:get "compile:epoch")` | stays (Issue #5147: a rebind does not advance the process mutation clock) | stays |
+| `query:jit-stats-hash` → `hotswap-invalidate-total`, `invalidate-function-calls` | **lifetime** counters bump on rebind | remain elevated |
 | `query:jit-stats` / `compile:jit-stats` | AuraJIT metrics line (may be sparse until warm) | may grow `compiles` later |
 | `hot-swap:fn` / `std/hot-update` | **AOT/plugin** path | not pure-Aura rebind |
 
@@ -79,7 +79,8 @@ Pure-Aura `mutate:rebind` **does** mark incremental compile work. Host denseness
 (define inv1
   (let ((h (stats:get "query:jit-stats-hash")))
     (or (hash-ref h "hotswap-invalidate-total") 0)))
-;; assert: inv1 > inv0  and/or  (stats:get "compile:epoch") > epoch0
+;; assert: inv1 > inv0
+;; compile:epoch stays (Issue #5147 — no process-clock walk)
 ```
 
 ### Denseness Axis D claim
@@ -87,7 +88,7 @@ Pure-Aura `mutate:rebind` **does** mark incremental compile work. Host denseness
 Correctness under load after algorithmic rebind does **not** require native JIT counter growth. Supported pure-Aura proof of “rebind caused recompile work” is:
 
 1. **Pre-eval dirty** (`compile:dirty-count` / `compile:block-dirty-count`), and/or  
-2. **Lifetime** `hotswap-invalidate-total` / `mutation-epoch` on `query:jit-stats-hash`.
+2. **Lifetime** `hotswap-invalidate-total` on `query:jit-stats-hash`. `compile:epoch` stays.
 
 Do **not** require `hot-swap:fn` or sticky `compile:*-dirty*` after `eval-current`.
 

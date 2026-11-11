@@ -122,8 +122,8 @@ static void ac4_index_design_cmake() {
 }
 
 // Issue #2684 / denseness H7: pure-Aura mutate:rebind is observable.
-// Dirty bits are sticky only until eval-current re-lowers; lifetime
-// counters (hotswap-invalidate / epoch) survive. Zero-arg
+// Dirty bits are sticky only until eval-current re-lowers; the lifetime
+// hotswap-invalidate counter survives. compile:epoch stays (#5147). Zero-arg
 // compile:block-dirty-count and compile:jit-stats alias are wired.
 static void ac5_rebind_dirty_observability() {
     std::println("\n--- #2684 AC5: rebind dirty + jit-stats observability ---");
@@ -153,14 +153,19 @@ static void ac5_rebind_dirty_observability() {
     // has a lowerable entry (verified offline with build/aura). Light
     // issue-test IR lower may leave a cache slot without block bits —
     // still require APIs return ints. Primary denseness metric is
-    // lifetime hotswap-invalidate / epoch (below).
+    // lifetime hotswap-invalidate (below).
     auto dirty = cs.eval("(engine:metrics \"compile:dirty-count\")");
     CHECK(dirty && is_int(*dirty), "#2684: compile:dirty-count returns int");
     // Issue #3172: compile:block-dirty-count sunk; stats facade is the Agent
     // surface (compile:dirty-count).
 
+    // Issue #5147: compile:epoch is the process mutation clock. A rebind
+    // drops this define's cone and must not advance that clock (the old
+    // bump walked every JIT closure). The lifetime signal is
+    // hotswap-invalidate-total, which bump_rebind_invalidate still counts.
     auto epoch1 = cs.eval("(engine:metrics \"compile:epoch\")");
-    CHECK(epoch1 && is_int(*epoch1) && as_int(*epoch1) > e0, "#2684: compile:epoch bumps");
+    CHECK(epoch1 && is_int(*epoch1) && as_int(*epoch1) == e0,
+          "#2684: compile:epoch stays on a precise rebind");
 
     auto inv1r = cs.eval(
         "(hash-ref (engine:metrics \"query:jit-stats-hash\") \"hotswap-invalidate-total\")");

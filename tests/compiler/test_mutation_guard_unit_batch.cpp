@@ -2030,21 +2030,33 @@ int run_342_narrowing_blame_smoke() {
 
 namespace aura_mut_run_wave24_1524 {
 using aura::compiler::CompilerService;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
 int run_1524_typed_mutate_dual_epoch_smoke() {
-    std::println("\n=== #1524: typed_mutate dual-epoch + bridge stamp smoke ===");
+    std::println("\n=== #1524: typed_mutate rebind keeps the process bridge ===");
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define x 1) (define y 2)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
     const auto be0 = cs.bridge_epoch();
     auto r = cs.eval("(mutate :rebind \"x\" \"10\" \"#1524\")");
     CHECK(r.has_value(), "typed_mutate rebind");
-    CHECK(cs.bridge_epoch() > be0, "bridge_epoch advanced");
-    // second mutate
+    // Issue #5147: a real rebind drops only that define's cone. It must
+    // not advance the process bridge epoch (that walk deopted every JIT
+    // closure in the workspace).
+    CHECK(cs.bridge_epoch() == be0, "rebind x leaves the process bridge");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval after rebind x");
+    auto vx = cs.eval("x");
+    CHECK(vx && is_int(*vx) && as_int(*vx) == 10, "x is 10");
     const auto be1 = cs.bridge_epoch();
     CHECK(cs.eval("(mutate :rebind \"y\" \"20\" \"#1524b\")").has_value(), "rebind y");
-    CHECK(cs.bridge_epoch() > be1, "bridge_epoch advanced again");
+    CHECK(cs.bridge_epoch() == be1, "rebind y leaves the process bridge");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval after rebind y");
+    auto vy = cs.eval("y");
+    CHECK(vy && is_int(*vy) && as_int(*vy) == 20, "y is 20");
+    auto vx2 = cs.eval("x");
+    CHECK(vx2 && is_int(*vx2) && as_int(*vx2) == 10, "x stays 10");
     return g_failed ? 1 : 0;
 }
 
