@@ -82,7 +82,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC4: static reflection introspection regression ---");
     auto node_r = cs.eval("(engine:metrics \"query:reflect-node-members\")");
-    auto schema = cs.eval("(query:schema \"User\")");
+    auto schema = cs.eval("(query :schema \"User\")");
     auto rt = cs.eval("(reflect-type \"Int\")");
     CHECK(node_r.has_value(), "reflect-node-members reachable via engine:metrics (SlimSurface)");
     CHECK(schema.has_value(), "query:schema reachable");

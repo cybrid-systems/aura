@@ -44,7 +44,7 @@ def main() -> int:
     t = _read("tests/serve/test_stable_ref_provenance_fiber_cow.cpp")
     build = _read("build.py")
 
-    start = mut.find('add("query:as-stable-ref"')
+    start = mut.find('add_hidden(\n        "query:as-stable-ref"')
     win = source_block_after(mut, start) if start >= 0 else ""
     must("Issue #3425", "AC1 cite", win)
     must("raw node-id rejected under production", "AC1 reject", win)

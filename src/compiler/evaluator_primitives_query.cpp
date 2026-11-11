@@ -1045,7 +1045,8 @@ void register_query_module_export_parts(PrimRegistrar add, std::pmr::vector<Pair
                                         ModulePathResolver resolve_module_path, Evaluator& ev) {
 
     // Issue #1680: mtime-keyed cache; amortize re-read/re-parse of module files.
-    add("query:module-exports",
+    ev.primitives().add_hidden(
+        "query:module-exports",
         [&pairs, &string_heap, &ev,
          resolve_module_path](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_string(a[0]))
@@ -1618,39 +1619,40 @@ void register_query_dirty_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs
     // [reason-mask]. Walks the **subtree** rooted at root-node-id
     // (BFS over children) and returns the number of dirty nodes.
     // Optional 2nd arg: dirty-reason bitmask (default 0xFF = all).
-    add("query:dirty-subtree", [](std::span<const EvalValue> a) -> EvalValue {
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_int(0);
-        if (a.empty() || !is_int(a[0]))
-            return make_int(0);
-        auto* ws = ev->workspace_flat();
-        if (!ws)
-            return make_int(0);
-        auto root = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        const std::uint8_t reason_mask = (a.size() >= 2 && is_int(a[1]))
-                                             ? static_cast<std::uint8_t>(as_int(a[1]) & 0xFF)
-                                             : 0xFF; // 0xFF = all reasons
-        if (root == aura::ast::NULL_NODE || root >= ws->size())
-            return make_int(0);
-        // Issue #1036: BFS descendants (include root), not ancestor walk.
-        if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
-            m->dirty_subtree_bfs_walks_total.fetch_add(1, std::memory_order_relaxed);
-        std::uint64_t count = 0;
-        std::vector<aura::ast::NodeId> stack;
-        stack.push_back(root);
-        while (!stack.empty()) {
-            const auto cur = stack.back();
-            stack.pop_back();
-            if (cur == aura::ast::NULL_NODE || cur >= ws->size())
-                continue;
-            if ((ws->dirty(cur) & reason_mask) != 0)
-                ++count;
-            for (auto child : ws->children(cur))
-                stack.push_back(static_cast<aura::ast::NodeId>(child));
-        }
-        return make_int(static_cast<std::int64_t>(count));
-    });
+    ev.primitives().add_hidden(
+        "query:dirty-subtree", [](std::span<const EvalValue> a) -> EvalValue {
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            if (a.empty() || !is_int(a[0]))
+                return make_int(0);
+            auto* ws = ev->workspace_flat();
+            if (!ws)
+                return make_int(0);
+            auto root = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            const std::uint8_t reason_mask = (a.size() >= 2 && is_int(a[1]))
+                                                 ? static_cast<std::uint8_t>(as_int(a[1]) & 0xFF)
+                                                 : 0xFF; // 0xFF = all reasons
+            if (root == aura::ast::NULL_NODE || root >= ws->size())
+                return make_int(0);
+            // Issue #1036: BFS descendants (include root), not ancestor walk.
+            if (auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics()))
+                m->dirty_subtree_bfs_walks_total.fetch_add(1, std::memory_order_relaxed);
+            std::uint64_t count = 0;
+            std::vector<aura::ast::NodeId> stack;
+            stack.push_back(root);
+            while (!stack.empty()) {
+                const auto cur = stack.back();
+                stack.pop_back();
+                if (cur == aura::ast::NULL_NODE || cur >= ws->size())
+                    continue;
+                if ((ws->dirty(cur) & reason_mask) != 0)
+                    ++count;
+                for (auto child : ws->children(cur))
+                    stack.push_back(static_cast<aura::ast::NodeId>(child));
+            }
+            return make_int(static_cast<std::int64_t>(count));
+        });
 
     // Issue #456: query:mutation-impact. Returns the
     // most-recent successful mutation-impact summary
@@ -1661,13 +1663,14 @@ void register_query_dirty_parts(PrimRegistrar add, std::pmr::vector<Pair>& pairs
     // recorded an impact summary). The follow-up returns
     // a 4-tuple (epoch-after epoch-delta nodes-changed
     // reasons-mask) of the most-recent ring-buffer entry.
-    add("query:mutation-impact", [](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_int(0);
-        return make_int(static_cast<std::int64_t>(ev->get_mutation_impact_count()));
-    });
+    ev.primitives().add_hidden(
+        "query:mutation-impact", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(ev->get_mutation_impact_count()));
+        });
 
     // Issue #488: query:mutation-impact-snapshot. Hash view of the
     // most recent Guard success impact summary for AI decision loops.
@@ -2302,7 +2305,8 @@ void register_query_pin_provenance_parts(PrimRegistrar add, std::pmr::vector<Pai
     // workspace loaded, so the Agent can branch on the bool-result
     // without confusing "unknown node" with "live node" (the
     // latter still returns a hash with all fields populated).
-    add("query:stable-ref-provenance",
+    ev.primitives().add_hidden(
+        "query:stable-ref-provenance",
         [&pairs, &string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->stable_ref_provenance_query_total.fetch_add(1, std::memory_order_relaxed);

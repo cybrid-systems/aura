@@ -8,7 +8,7 @@ generation / wrap / COW of whatever occupies the slot NOW -- and validated
 the freshly stamped ref against itself. A deleted node's id therefore
 became a valid, pinned cross-round handle for a DIFFERENT node that had
 since taken the slot. The sibling faces already refuse a bare int on the
-production face (query:as-stable-ref #3425, resolve_mutate_node_arg
+production face (query :as-stable-ref #3425, resolve_mutate_node_arg
 #3395) and already refuse to occupancy-remake an expired-gen packed ref
 (#3661), so the pin table was the asymmetric survivor.
 
@@ -69,14 +69,24 @@ def _sq(s: str) -> str:
 
 
 def _prim_body(text: str, name: str) -> str:
-    """Body of one add("<name>", ...) prim registration, up to the next add()."""
+    """Body of one prim registration, up to the next registration.
+
+    Issue #5144: the alias bodies register through add_hidden() and the
+    mutate: bodies through add_mutate(), so the old `add("`-only terminator
+    ran past them into unrelated code.
+    """
     anchor = 'add("' + name + '"'
     i = text.find(anchor)
     if i < 0:
+        anchor = 'add_hidden("' + name + '"'
+        i = text.find(anchor)
+    if i < 0:
         return ""
-    j = text.find(NL + '    add("', i)
-    if j < 0:
-        j = len(text)
+    j = len(text)
+    for pat in (NL + '    add("', NL + '    add_mutate("', NL + '    add_hidden("', NL + '        add_hidden("'):
+        k = text.find(pat, i + len(anchor))
+        if k >= 0:
+            j = min(j, k)
     return text[i:j]
 
 

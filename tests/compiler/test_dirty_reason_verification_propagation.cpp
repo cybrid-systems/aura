@@ -68,7 +68,7 @@ static void run_matrix(CompilerService& cs) {
     auto drc = cs.eval("(engine:metrics \"compile:dirty-reason-counts\")");
     CHECK(drc.has_value() && is_pair(*drc),
           "compile:dirty-reason-counts returns 8-tuple via engine:metrics");
-    auto dn = cs.eval("(query:dirty-nodes \"general\")");
+    auto dn = cs.eval("(query :dirty-nodes \"general\")");
     CHECK(dn.has_value(), "query:dirty-nodes returns a value");
 
     std::println("\n--- AC5: multi-round mutate matrix monotonic ---");

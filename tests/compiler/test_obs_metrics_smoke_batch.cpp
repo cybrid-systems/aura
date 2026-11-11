@@ -326,7 +326,7 @@ int run_1462_compat_shim_smoke() {
     // both should resolve (compat or native); presence is enough
     CHECK(r_fbn.has_value() || r_find.has_value(), "find path reachable");
     auto r_nwm = cs.eval("(query:nodes-with-marker 'nonexistent-test-marker-xyz)");
-    auto r_bm = cs.eval("(query:by-marker 'nonexistent-test-marker-xyz)");
+    auto r_bm = cs.eval("(query :by-marker 'nonexistent-test-marker-xyz)");
     CHECK(r_nwm.has_value() || r_bm.has_value(), "marker path reachable");
     return g_failed ? 1 : 0;
 }
@@ -813,16 +813,16 @@ int run_312_metrics_smoke() {
     CHECK(cs.eval("(set-code \"(define (f x) x)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
     // NodeTag names may need string form; accept list/null/empty as reachable.
-    auto i = cs.eval("(query:node-type \"Interface\")");
-    auto i2 = cs.eval("(query:node-type Interface)");
+    auto i = cs.eval("(query :node-type \"Interface\")");
+    auto i2 = cs.eval("(query :node-type Interface)");
     CHECK(i.has_value() || i2.has_value() || true, "query:node-type Interface surface");
-    auto m = cs.eval("(query:node-type \"Modport\")");
+    auto m = cs.eval("(query :node-type \"Modport\")");
     CHECK(m.has_value() || true, "query:node-type Modport surface");
-    auto c = cs.eval("(query:node-type \"Call\")");
-    auto c2 = cs.eval("(query:node-type Call)");
+    auto c = cs.eval("(query :node-type \"Call\")");
+    auto c2 = cs.eval("(query :node-type Call)");
     CHECK(c.has_value() || c2.has_value() || true, "query:node-type Call surface");
     // Always-true path: at least Define/Call-ish patterns queryable after set-code
-    auto d = cs.eval("(query:pattern \"*\")");
+    auto d = cs.eval("(query :pattern \"*\")");
     CHECK(d.has_value(), "query:pattern after define workspace");
     return g_failed ? 1 : 0;
 }

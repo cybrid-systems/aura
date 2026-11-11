@@ -670,14 +670,14 @@ static void run_506_hotpath_matrix() {
     CHECK(stats3b >= stats3a, "AC3 mutate+eval bumps adoption stats");
 
     const auto stats4a = adoption_stats(cs);
-    (void)cs.eval("(query:pattern \"base\")");
+    (void)cs.eval("(query :pattern \"base\")");
     const auto stats4b = adoption_stats(cs);
     std::println("  adoption stats: {} -> {}", stats4a, stats4b);
     CHECK(stats4b >= stats4a, "AC4 query:pattern does not regress adoption stats");
 
     const auto stats5a = adoption_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(query:pattern \"acc\")");
+        (void)cs.eval("(query :pattern \"acc\")");
         (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(round) + "\")");
         (void)cs.eval("(eval-current)");
     }

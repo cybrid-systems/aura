@@ -270,17 +270,17 @@ static void ac4_closed_loop() {
         CHECK(true, "macro workspace leftover (hygiene-pass-limit)");
         return;
     }
-    auto n0 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+    auto n0 = cs.eval("(length (query :by-marker \"MacroIntroduced\"))");
     CHECK(n0 && is_int(*n0) && as_int(*n0) >= 1, "macro-introduced ≥1 before");
     // Soft mutate on user (non-macro) node — hygiene must hold for macros.
     auto mut = cs.eval("(mutate :replace-pattern \"(+ base 1)\" \"(+ base 2)\")");
     CHECK(mut.has_value(), "user-node replace-pattern");
-    auto n1 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+    auto n1 = cs.eval("(length (query :by-marker \"MacroIntroduced\"))");
     CHECK(n1 && is_int(*n1) && as_int(*n1) >= 1, "macro-introduced still ≥1 after user mutate");
     // With allow + include, mutate a macro form and re-query.
     (void)cs.eval("(mutate :replace-pattern \"(* ... ...)\" \"(* ... ...)\" "
                   ":include-macro-introduced #t :allow-macro? #t)");
-    auto n2 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+    auto n2 = cs.eval("(length (query :by-marker \"MacroIntroduced\"))");
     CHECK(n2 && is_int(*n2), "macro-introduced query after allowed mutate");
     CHECK(as_int(*n2) >= 0, "count readable");
     // Schema still live
@@ -358,13 +358,13 @@ static void ac2762_2_closed_loop_expand_mutate_reexpand() {
         return;
     }
     // MacroIntroduced present after initial eval-current expand.
-    auto n0 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+    auto n0 = cs.eval("(length (query :by-marker \"MacroIntroduced\"))");
     CHECK(n0 && is_int(*n0) && as_int(*n0) >= 1, "macro-introduced ≥1 after expand");
     // Structural mutate on a user node still under Guard cascade.
     auto mut = cs.eval("(mutate :replace-pattern \"(+ base 1)\" \"(+ base 2)\")");
     CHECK(mut.has_value(), "user-node mutate under Guard");
     // Re-query: MacroIntroduced still present; cascade must not wipe hygiene.
-    auto n1 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+    auto n1 = cs.eval("(length (query :by-marker \"MacroIntroduced\"))");
     CHECK(n1 && is_int(*n1) && as_int(*n1) >= 1, "macro-introduced still ≥1 after mutate");
     // Next eval-current must succeed (fully expanded hygienic AST).
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current after mutate");
@@ -493,7 +493,7 @@ static void ac2858_2_cascade_descendants() {
 
     // Verify cascade: query:macro-introduced still finds macro nodes
     // (the cascade preserved hygiene marker on the replacement subtree).
-    auto n = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+    auto n = cs.eval("(length (query :by-marker \"MacroIntroduced\"))");
     CHECK(n && is_int(*n) && as_int(*n) >= 1, "AC2: macro-introduced still visible after restamp");
 }
 
@@ -582,12 +582,12 @@ static void ac2858_6_multi_round() {
     // Round 1: allowed mutate.
     (void)cs.eval("(mutate :replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
                   ":include-macro-introduced #t :allow-macro? #t)");
-    auto n1 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+    auto n1 = cs.eval("(length (query :by-marker \"MacroIntroduced\"))");
     CHECK(n1 && is_int(*n1) && as_int(*n1) >= 1, "AC6: macro-introduced ≥1 after round 1");
     // Round 2: another allowed mutate. Marker must still propagate (cascade).
     (void)cs.eval("(mutate :replace-pattern \"(+ ... ...)\" \"(- ... ...)\" "
                   ":include-macro-introduced #t :allow-macro? #t)");
-    auto n2 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+    auto n2 = cs.eval("(length (query :by-marker \"MacroIntroduced\"))");
     CHECK(n2 && is_int(*n2) && as_int(*n2) >= 1, "AC6: macro-introduced ≥1 after round 2");
     if (cm) {
         const auto restamp1 = cm->macro_mutate_auto_restamp_total.load();
@@ -931,9 +931,9 @@ static void ac3000_1_production_reject_or_post_mutate() {
             }
         }
         CHECK(live != aura::ast::NULL_NODE, "AC1: live node");
-        auto car = cs.eval(std::format("(car (query:stable-ref {}))", live));
+        auto car = cs.eval(std::format("(car (query :stable-ref {}))", live));
         CHECK(car && is_int(*car), "AC1: restamped node exports id (post-mutate)");
-        auto gen = cs.eval(std::format("(car (cdr (query:stable-ref {})))", live));
+        auto gen = cs.eval(std::format("(car (cdr (query :stable-ref {})))", live));
         CHECK(gen && is_int(*gen) && as_int(*gen) == static_cast<std::int64_t>(ws->generation()),
               "AC1: exported gen == workspace generation_");
     } else {
@@ -942,7 +942,7 @@ static void ac3000_1_production_reject_or_post_mutate() {
         brace.id = lag;
         cs.evaluator().stamp_query_stable_ref_export(brace);
         CHECK(brace.id == aura::ast::NULL_NODE, "AC1: stamp nulls lagging ref under production");
-        auto car = cs.eval(std::format("(car (query:stable-ref {}))", lag));
+        auto car = cs.eval(std::format("(car (query :stable-ref {}))", lag));
         CHECK(car && is_string(*car), "AC1: production typed reject (not bare -1)");
         auto kids = cs.eval(std::format("(query :children-stable {})", lag));
         CHECK(kids.has_value(), "AC1: children-stable returns value");
@@ -990,7 +990,7 @@ static void ac3000_2_soft_observe_unlimited_green() {
     const auto prev0 =
         aura::core::provenance::g_query_stable_ref_restamp_lag_prevented_total_atomic().load(
             std::memory_order_relaxed);
-    auto car = cs.eval(std::format("(car (query:stable-ref {}))", live));
+    auto car = cs.eval(std::format("(car (query :stable-ref {}))", live));
     CHECK(car && is_int(*car), "AC2: unlimited / not-exceeded stamps as #2960");
     CHECK(aura::core::provenance::g_query_stable_ref_stamped_total_atomic().load(
               std::memory_order_relaxed) > stamped0,
@@ -1333,7 +1333,7 @@ static void ac3121_1_production_structured_lag() {
     if (lag == aura::ast::NULL_NODE) {
         CHECK(true, "3121 AC1: incremental restamp covered live slots (no lag node)");
     } else {
-        auto sr = cs.eval(std::format("(query:stable-ref {})", lag));
+        auto sr = cs.eval(std::format("(query :stable-ref {})", lag));
         CHECK(sr.has_value(), "3121 AC1: query:stable-ref returns");
         CHECK(merr_kind_3027(cs, *sr) == "restamp-lag", "3121 AC1: error=restamp-lag");
         auto reason = merr_cadr_3121(cs, *sr);
@@ -1341,13 +1341,13 @@ static void ac3121_1_production_structured_lag() {
         CHECK(reason.find("budget-exceeded") != std::string::npos,
               "3121 AC1: reason=budget-exceeded");
         CHECK(!is_int(*sr), "3121 AC1: no green StableNodeRef pair");
-        auto asr = cs.eval(std::format("(query:as-stable-ref {})", lag));
+        auto asr = cs.eval(std::format("(query :as-stable-ref {})", lag));
         CHECK(asr.has_value(), "3121 AC1: as-stable-ref returns");
         CHECK(merr_kind_3027(cs, *asr) == "restamp-lag",
               "3121 AC1: as-stable-ref structured (not void)");
         CHECK(merr_cadr_3121(cs, *asr).find("budget-exceeded") != std::string::npos,
               "3121 AC1: as-stable-ref reason");
-        auto ens = cs.eval(std::format("(query:ensure-ref {})", lag));
+        auto ens = cs.eval(std::format("(query :ensure-ref {})", lag));
         CHECK(ens.has_value(), "3121 AC1: ensure-ref returns");
         CHECK(merr_kind_3027(cs, *ens) == "restamp-lag", "3121 AC1: ensure-ref restamp-lag");
         CHECK(merr_cadr_3121(cs, *ens).find("budget-exceeded") != std::string::npos,
@@ -1377,7 +1377,7 @@ static void ac3121_2_soft_shape_unchanged() {
         }
     }
     CHECK(live != aura::ast::NULL_NODE, "3121 AC2: live");
-    auto happy = cs.eval(std::format("(query:as-stable-ref {})", live));
+    auto happy = cs.eval(std::format("(query :as-stable-ref {})", live));
     CHECK(happy && is_pair(*happy), "3121 AC2: Soft happy as-stable-ref is pair");
     set_restamp_budget_nodes_for_process(1);
     ws->bump_generation();
@@ -1386,9 +1386,9 @@ static void ac3121_2_soft_shape_unchanged() {
     auto lag = first_lagging(*ws);
     if (lag != aura::ast::NULL_NODE) {
         CHECK(cs.evaluator().allow_query_stable_ref_export(lag), "3121 AC2: Soft allow");
-        auto asr = cs.eval(std::format("(query:as-stable-ref {})", lag));
+        auto asr = cs.eval(std::format("(query :as-stable-ref {})", lag));
         CHECK(asr && is_pair(*asr), "3121 AC2: Soft as-stable-ref still pair (not error)");
-        auto sr = cs.eval(std::format("(car (query:stable-ref {}))", lag));
+        auto sr = cs.eval(std::format("(car (query :stable-ref {}))", lag));
         CHECK(sr && is_int(*sr), "3121 AC2: Soft query:stable-ref still stamps");
     }
     clear_restamp_budget_nodes_override_for_test();
@@ -1414,7 +1414,7 @@ static void ac3121_3_under_budget_green() {
         }
     }
     CHECK(live != aura::ast::NULL_NODE, "3121 AC3: live");
-    auto sr = cs.eval(std::format("(query:stable-ref {})", live));
+    auto sr = cs.eval(std::format("(query :stable-ref {})", live));
     // Issue #4106: production stable-ref refuses bare ints (occupancy, not
     // identity — the #3395 stale-ref face supersedes the #3862 bare-int
     // schema-2 mint). The schema-2 finish stays reachable through packed v2
@@ -1426,7 +1426,7 @@ static void ac3121_3_under_budget_green() {
           "3121 AC3: under-budget stable-ref not lag");
     // Issue #3425: production as-stable-ref rejects bare int. Under-budget
     // still must not be restamp-lag (3121 AC3); occupancy remake is closed.
-    auto asr = cs.eval(std::format("(query:as-stable-ref {})", live));
+    auto asr = cs.eval(std::format("(query :as-stable-ref {})", live));
     CHECK(asr.has_value() && merr_kind_3027(cs, *asr) != "restamp-lag",
           "3121 AC3: under-budget as-stable-ref not lag");
     apply_dev_audit_defaults();
@@ -1518,7 +1518,7 @@ static void ac3037_1_production_torn_after_lazy_align() {
     brace.id = lag;
     cs.evaluator().stamp_query_stable_ref_export(brace);
     CHECK(brace.id == aura::ast::NULL_NODE, "3037 AC1: stamp nulls torn export");
-    auto car = cs.eval(std::format("(car (query:stable-ref {}))", lag));
+    auto car = cs.eval(std::format("(car (query :stable-ref {}))", lag));
     CHECK(car && is_string(*car), "3037 AC1: query:stable-ref error (not stale gen)");
     CHECK(aura::core::provenance::g_query_stable_ref_restamp_torn_reject_total_atomic().load(
               std::memory_order_relaxed) >= 1,
@@ -1597,7 +1597,7 @@ static void ac3037_3_under_budget_zero_regression() {
     ws->restamp_all_node_generations();
     CHECK(!ws->restamp_last_budget_exceeded(), "3037 AC3: not exceeded");
     CHECK(!ws->restamp_generation_torn(), "3037 AC3: not torn");
-    auto car = cs.eval(std::format("(car (query:stable-ref {}))", live));
+    auto car = cs.eval(std::format("(car (query :stable-ref {}))", live));
     CHECK(car && is_int(*car), "3037 AC3: under-budget stamps as #2960");
     CHECK(aura::core::provenance::g_query_stable_ref_stamped_total_atomic().load(
               std::memory_order_relaxed) > stamped0,
@@ -3985,18 +3985,18 @@ static void ac3230_1_production_stamp_before_layout() {
     brace.gen = 1;
     cs.evaluator().stamp_query_stable_ref_export(brace);
     CHECK(brace.id == aura::ast::NULL_NODE, "3230 AC1: stamp nulls, never green lagging gen");
-    auto sr = cs.eval(std::format("(query:stable-ref {})", lag));
+    auto sr = cs.eval(std::format("(query :stable-ref {})", lag));
     CHECK(sr.has_value(), "3230 AC1: query:stable-ref returns");
     CHECK(merr_kind_3027(cs, *sr) == "restamp-lag", "3230 AC1: stable-ref structured");
     // Issue #4106: the torn gate composes the #3425-order face — recovery
-    // hint first, then the budget-exceeded reason segment (query:stable-ref
+    // hint first, then the budget-exceeded reason segment (query :stable-ref
     // emit); assert the reason token travels in the composed cadr.
     CHECK(merr_cadr_3121(cs, *sr).find("budget-exceeded") != std::string::npos,
           "3230 AC1: reason token");
-    auto asr = cs.eval(std::format("(query:as-stable-ref {})", lag));
+    auto asr = cs.eval(std::format("(query :as-stable-ref {})", lag));
     CHECK(asr.has_value() && merr_kind_3027(cs, *asr) == "restamp-lag",
           "3230 AC1: as-stable-ref structured");
-    auto ens = cs.eval(std::format("(query:ensure-ref {})", lag));
+    auto ens = cs.eval(std::format("(query :ensure-ref {})", lag));
     CHECK(ens.has_value() && merr_kind_3027(cs, *ens) == "restamp-lag",
           "3230 AC1: ensure-ref structured");
     apply_dev_audit_defaults();
@@ -4057,7 +4057,7 @@ static void ac3230_3_under_budget_green() {
     ws->restamp_all_node_generations();
     CHECK(!ws->restamp_over_budget_torn(), "3230 AC3: not torn under unlimited");
     CHECK(cs.evaluator().allow_query_stable_ref_export(live), "3230 AC3: export allowed");
-    auto sr = cs.eval(std::format("(query:stable-ref {})", live));
+    auto sr = cs.eval(std::format("(query :stable-ref {})", live));
     CHECK(sr.has_value() && merr_kind_3027(cs, *sr) != "restamp-lag",
           "3230 AC3: stable-ref not lag");
 }
@@ -4144,12 +4144,12 @@ static void ac3487_1_latch_torn_restamp_lag() {
     CHECK(brace.id == aura::ast::NULL_NODE, "3487 AC1: stamp nulls, never green lagging gen");
     auto exported = cs.evaluator().export_ref(lag);
     CHECK(exported.id == aura::ast::NULL_NODE, "3487 AC1: export_ref fail-closed");
-    auto sr = cs.eval(std::format("(query:stable-ref {})", lag));
+    auto sr = cs.eval(std::format("(query :stable-ref {})", lag));
     CHECK(sr.has_value(), "3487 AC1: query:stable-ref returns");
     CHECK(merr_kind_3027(cs, *sr) == "restamp-lag", "3487 AC1: stable-ref structured");
     CHECK(merr_cadr_3121(cs, *sr).find("budget-exceeded") != std::string::npos,
           "3487 AC1: reason token");
-    auto ens = cs.eval(std::format("(query:ensure-ref {})", lag));
+    auto ens = cs.eval(std::format("(query :ensure-ref {})", lag));
     CHECK(ens.has_value() && merr_kind_3027(cs, *ens) == "restamp-lag",
           "3487 AC1: ensure-ref structured");
     set_production_multi_worker_latched_for_test(false);
@@ -4186,7 +4186,7 @@ static void ac3487_2_soft_unlatched_under_budget() {
     CHECK(!production_defaults_active(), "3487 AC2: Soft");
     CHECK(aura_runtime_multi_worker_production_latched() == 0, "3487 AC2: unlatched");
     CHECK(cs.evaluator().allow_query_stable_ref_export(live), "3487 AC2: export allowed");
-    auto sr = cs.eval(std::format("(query:stable-ref {})", live));
+    auto sr = cs.eval(std::format("(query :stable-ref {})", live));
     CHECK(sr.has_value() && merr_kind_3027(cs, *sr) != "restamp-lag",
           "3487 AC2: stable-ref not lag");
 }
@@ -4275,13 +4275,13 @@ static void ac3259_1_hot_cone_query_stable() {
     }
     CHECK(hot != aura::ast::NULL_NODE, "3259 AC1: hot node");
     CHECK(cs.evaluator().allow_query_stable_ref_export(hot), "3259 AC1: allow");
-    auto sr = cs.eval(std::format("(query:stable-ref {})", hot));
+    auto sr = cs.eval(std::format("(query :stable-ref {})", hot));
     CHECK(sr.has_value() && merr_kind_3027(cs, *sr) != "restamp-lag",
           "3259 AC1: query:stable-ref not lag");
-    auto asr = cs.eval(std::format("(query:as-stable-ref {})", hot));
+    auto asr = cs.eval(std::format("(query :as-stable-ref {})", hot));
     CHECK(asr.has_value() && merr_kind_3027(cs, *asr) != "restamp-lag",
           "3259 AC1: as-stable-ref not lag");
-    auto ens = cs.eval(std::format("(query:ensure-ref {})", hot));
+    auto ens = cs.eval(std::format("(query :ensure-ref {})", hot));
     CHECK(ens.has_value() && merr_kind_3027(cs, *ens) != "restamp-lag",
           "3259 AC1: ensure-ref not lag");
     apply_dev_audit_defaults();
@@ -4311,7 +4311,7 @@ static void ac3259_2_outside_cone_query_lag() {
     auto lag = first_non_eager(*ws);
     CHECK(lag != aura::ast::NULL_NODE, "3259 AC2: outside cone");
     CHECK(!cs.evaluator().allow_query_stable_ref_export(lag), "3259 AC2: reject");
-    auto sr = cs.eval(std::format("(query:stable-ref {})", lag));
+    auto sr = cs.eval(std::format("(query :stable-ref {})", lag));
     CHECK(sr.has_value() && merr_kind_3027(cs, *sr) == "restamp-lag",
           "3259 AC2: stable-ref structured");
     CHECK(merr_cadr_3121(cs, *sr).find("budget-exceeded") != std::string::npos,
@@ -4698,7 +4698,7 @@ static void ac3509_batch_default_deny() {
     aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
                                                                        std::memory_order_relaxed);
     auto denied = cs.eval("(mutate :query-and-replace-batch "
-                          "(query:where :marker \"MacroIntroduced\") \"99\")");
+                          "(query :where :marker \"MacroIntroduced\") \"99\")");
     CHECK(denied.has_value(), "3509 AC1: batch returns");
     CHECK(merr_kind_3027(cs, *denied) == "hygiene-protected" ||
               merr_kind_3027(cs, *denied) == "hygiene-protected",
@@ -4711,7 +4711,7 @@ static void ac3509_batch_default_deny() {
     aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
                                                                        std::memory_order_relaxed);
     auto allowed = cs.eval("(mutate :query-and-replace-batch "
-                           "(query:where :marker \"MacroIntroduced\") \"99\" "
+                           "(query :where :marker \"MacroIntroduced\") \"99\" "
                            ":allow-macro? #t)");
     CHECK(allowed.has_value(), "3509 AC2: :allow-macro? #t returns");
     CHECK(merr_kind_3027(cs, *allowed) != "hygiene-protected" &&
@@ -5439,8 +5439,8 @@ static bool invoke_until_hygiene_3576(CompilerService& cs, std::string_view name
         std::format("({} \"f\" \"(lambda (x) 0)\" \"3576\")", name),
         std::format("({} \"f\" \"g3576\")", name),
         std::format("({} \"(+ x 1)\" \"(+ x 9)\" :include-macro-introduced #t)", name),
-        std::format("({} (query:where :marker \"MacroIntroduced\") \"99\")", name),
-        std::format("({} (query:where :marker \"MacroIntroduced\") \"99\" "
+        std::format("({} (query :where :marker \"MacroIntroduced\") \"99\")", name),
+        std::format("({} (query :where :marker \"MacroIntroduced\") \"99\" "
                     ":include-macro-introduced #t)",
                     name),
         std::format("({} (list (list \"mutate:replace-value\" {} 99 \"3576\")))", name, target),
@@ -6458,7 +6458,7 @@ static void stamp_4076_macro(aura::ast::FlatAST& ws, aura::ast::NodeId id, std::
 static bool bind_lit_ref_4076(CompilerService& cs, aura::ast::NodeId lit, const char* qname,
                               const char* rname) {
     auto defined =
-        cs.eval(std::format("(define {} (query:filter (query:where :node-type \"LiteralInt\") "
+        cs.eval(std::format("(define {} (query :filter (query :where :node-type \"LiteralInt\") "
                             ":include-macro-introduced #t))",
                             qname));
     if (!defined.has_value()) {
@@ -6471,7 +6471,8 @@ static bool bind_lit_ref_4076(CompilerService& cs, aura::ast::NodeId lit, const 
         return false;
     }
     for (std::int64_t i = 0; i < as_int(*n); ++i) {
-        if (!cs.eval(std::format("(define {} (query:as-stable-ref {} :index {}))", rname, qname, i))
+        if (!cs.eval(
+                   std::format("(define {} (query :as-stable-ref {} :index {}))", rname, qname, i))
                  .has_value())
             continue;
         auto car = cs.eval(std::format("(car {})", rname));
@@ -6776,7 +6777,7 @@ static void ac4087_1_agent_body_write_query_schema2() {
     // Guard is the type-authority outermost (gap never survives the write).
     // #3395: production mutate rejects bare-int node args — route the target
     // through query:stable-ref (schema-2 hash operand, #3424).
-    auto w = cs.eval(std::format("(mutate :replace-subtree (query:stable-ref {}) \"99\")",
+    auto w = cs.eval(std::format("(mutate :replace-subtree (query :stable-ref {}) \"99\")",
                                  static_cast<unsigned>(target)));
     // Success is #t or a captured-vars pair (#2797 AC2b shape) — never a
     // hygiene / parse reject for a user node under production.
@@ -6790,7 +6791,7 @@ static void ac4087_1_agent_body_write_query_schema2() {
           std::format("4087 AC1: replace-subtree commits (kind: '{}', msg: '{}')", w_kind, w_msg));
     // Immediate query after the successful body write: production
     // auto-upgrades to the durable schema-2 hash — never restamp-lag.
-    auto q = cs.eval("(query:pattern \"*\")");
+    auto q = cs.eval("(query :pattern \"*\")");
     CHECK(q.has_value() && is_hash(*q), "4087 AC1: durable schema-2 QueryResult hash");
     CHECK(merr_kind_3027(cs, *q) != "restamp-lag", "4087 AC1: not restamp-lag");
     // Freshness-only TU (#3451): the reserved face is asserted through the
@@ -6824,7 +6825,7 @@ static void ac4087_1_agent_body_write_query_schema2() {
 }
 
 // Issue #4106: production read prims must resolve the node operand before
-// the walk — a bare int is occupancy, not identity, so (query:reaches
+// the walk — a bare int is occupancy, not identity, so (query :reaches
 // old-int) and (query:ref-counts old-int) are stale-ref, never the new
 // occupant's reaches or parent count. query:macro-provenance-chain is
 // currently sunk (#3175); the sink + body-gate pin composes with it.
@@ -6861,7 +6862,7 @@ static void ac4106_read_trio() {
     }
     CHECK(live4106 != aura::ast::NULL_NODE, "4106: live node");
     // reaches: the #3395 stale-ref face, never the current slot's reaches.
-    auto re4106 = cs.eval(std::format("(query:reaches {})", live4106));
+    auto re4106 = cs.eval(std::format("(query :reaches {})", live4106));
     CHECK(re4106.has_value() && merr_kind_3027(cs, *re4106) == "stale-ref",
           "4106: reaches bare int → stale-ref");
     // ref-counts (stats facade): stale-ref, never the slot's parent count.
@@ -6876,12 +6877,12 @@ static void ac4106_read_trio() {
     // still refuses — the bare-int reject is face-complete (occupancy, not
     // identity).
     CHECK(cs.eval("(mutate :rename-symbol \"f\" \"ff4106\")").has_value(), "4106: mutate ran");
-    auto re2 = cs.eval(std::format("(query:reaches {})", live4106));
+    auto re2 = cs.eval(std::format("(query :reaches {})", live4106));
     CHECK(re2.has_value() && merr_kind_3027(cs, *re2) == "stale-ref",
           "4106: reaches still stale-ref after recycle");
     // Soft keeps the historical bare-int walk (no error).
     apply_dev_audit_defaults();
-    auto resoft = cs.eval(std::format("(query:reaches {})", live4106));
+    auto resoft = cs.eval(std::format("(query :reaches {})", live4106));
     CHECK(resoft.has_value() && merr_kind_3027(cs, *resoft) != "stale-ref",
           "4106: Soft reaches still walks (no production reject)");
     auto rcsoft = cs.eval(std::format("(engine:metrics \"query:ref-counts\" {})", live4106));
@@ -8265,7 +8266,7 @@ static void ac4652_1_rejected_parse_frees_orphans() {
     auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
     const auto restores_before =
         cm ? cm->topology_dual_restore_total.load(std::memory_order_relaxed) : 0;
-    auto r = cs.eval("(mutate :query-and-replace (query:where :callee \"f\") \"1)\")");
+    auto r = cs.eval("(mutate :query-and-replace (query :where :callee \"f\") \"1)\")");
     CHECK(r.has_value(), "4652 AC1: the rejected edit returns a value");
     const auto kind = r ? merr_kind_3027(cs, *r) : std::string("novalue");
     CHECK(kind == "parse-failure", std::format("4652 AC1: parse-failure (got {})", kind));
@@ -8294,7 +8295,7 @@ static void ac4652_1_rejected_parse_frees_orphans() {
     CHECK(restores_after > restores_before,
           "4652 AC1: the rejected edit aborted the boundary (dual-topology restore ran)");
     // The rejected edit left the tree alone: the match is still there.
-    auto hit = cs.eval("(query:filter (query:where :callee \"f\"))");
+    auto hit = cs.eval("(query :filter (query :where :callee \"f\"))");
     CHECK(hit.has_value(), "4652 AC1: the match is still queryable");
     apply_dev_audit_defaults();
 }
@@ -8321,7 +8322,7 @@ static void ac4652_2_production_boundary_aborts() {
     auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
     const auto restores_before =
         cm ? cm->topology_dual_restore_total.load(std::memory_order_relaxed) : 0;
-    auto r = cs.eval("(mutate :query-and-replace (query:where :callee \"f\") \"1)\")");
+    auto r = cs.eval("(mutate :query-and-replace (query :where :callee \"f\") \"1)\")");
     CHECK(r.has_value(), "4652 AC2: the rejected edit returns a value");
     const auto kind = r ? merr_kind_3027(cs, *r) : std::string("novalue");
     // The nested Guard failed, so the outermost boundary aborts - the tree is
@@ -8361,7 +8362,7 @@ static void ac4652_3_bad_template_fails_boundary() {
         auto* cm = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
         const auto restores_before =
             cm ? cm->topology_dual_restore_total.load(std::memory_order_relaxed) : 0;
-        auto r = cs.eval("(mutate :query-and-replace (query:where :callee \"f\"))");
+        auto r = cs.eval("(mutate :query-and-replace (query :where :callee \"f\"))");
         CHECK(r.has_value(), "4652 AC3: the rejected call returns a value");
         const auto kind = r ? merr_kind_3027(cs, *r) : std::string("novalue");
         CHECK(kind == "bad-arg", std::format("4652 AC3: bad-arg (got {})", kind));
@@ -8378,7 +8379,7 @@ static void ac4652_3_bad_template_fails_boundary() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define (f x) (f x))\")").has_value(), "4652 AC3: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "4652 AC3: eval-current");
-        auto r = cs.eval("(mutate :query-and-replace (query:where :callee \"f\"))");
+        auto r = cs.eval("(mutate :query-and-replace (query :where :callee \"f\"))");
         CHECK(r.has_value(), "4652 AC3: the rejected call returns a value");
         const auto kind = r ? merr_kind_3027(cs, *r) : std::string("novalue");
         CHECK(kind == "persist-reject",

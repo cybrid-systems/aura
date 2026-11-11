@@ -99,7 +99,7 @@ public:
     // the matcher detects the keyword-head Call, matches the
     // sub-pattern, and on success stashes a (capture_set,
     // guard_expr_string) pair into pending_guards_. The caller
-    // (query:pattern) checks pending_guards_ after each match and
+    // (query :pattern) checks pending_guards_ after each match and
     // evaluates the guard via the Aura evaluator with captures
     // bound as locals. If the guard returns false, the match is
     // rejected.

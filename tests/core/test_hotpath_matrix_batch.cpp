@@ -1819,7 +1819,7 @@ static void run_456_mutation_observability_primitives() {
         std::println("\n--- #456 AC3: query:dirty-subtree returns count ---");
         CompilerService cs;
         cs.eval("(set-code \"(define x 1) (define y 2)\")");
-        auto r = cs.eval("(query:dirty-subtree 0)");
+        auto r = cs.eval("(query :dirty-subtree 0)");
         CHECK(r.has_value() && is_int(*r),
               "query:dirty-subtree returns int (count of dirty nodes)");
     }
@@ -1827,7 +1827,7 @@ static void run_456_mutation_observability_primitives() {
     {
         std::println("\n--- #456 AC4: query:mutation-impact returns value ---");
         CompilerService cs;
-        auto r = cs.eval("(query:mutation-impact)");
+        auto r = cs.eval("(query :mutation-impact)");
         CHECK(r.has_value() && is_int(*r),
               "query:mutation-impact returns int (count of recorded impacts)");
     }
@@ -1848,10 +1848,10 @@ static void run_456_mutation_observability_primitives() {
         std::println("\n--- #456 AC6: mutation-impact count increases after mutate ---");
         CompilerService cs;
         cs.eval("(set-code \"(define z 1)\")");
-        auto r0 = cs.eval("(query:mutation-impact)");
+        auto r0 = cs.eval("(query :mutation-impact)");
         int64_t before = (r0 && is_int(*r0)) ? as_int(*r0) : 0;
         cs.eval("(mutate :rebind \"z\" \"99\")");
-        auto r1 = cs.eval("(query:mutation-impact)");
+        auto r1 = cs.eval("(query :mutation-impact)");
         int64_t after = (r1 && is_int(*r1)) ? as_int(*r1) : 0;
         CHECK(after > before, "query:mutation-impact count increased after mutate");
     }
@@ -1860,9 +1860,9 @@ static void run_456_mutation_observability_primitives() {
         std::println("\n--- #456 AC7: query:dirty-subtree reason-mask ---");
         CompilerService cs;
         cs.eval("(set-code \"(define m 1)\")");
-        auto r1 = cs.eval("(query:dirty-subtree 0 255)");
+        auto r1 = cs.eval("(query :dirty-subtree 0 255)");
         CHECK(r1.has_value() && is_int(*r1), "query:dirty-subtree 0 255 returns int");
-        auto r2 = cs.eval("(query:dirty-subtree 0 0)");
+        auto r2 = cs.eval("(query :dirty-subtree 0 0)");
         CHECK(r2.has_value() && is_int(*r2), "query:dirty-subtree 0 0 returns int");
     }
     // AC8: regression — prior primitives still work
@@ -2730,15 +2730,15 @@ static void run_139_structural_refactor_operators() {
         int64_t r3 =
             run_int(cs, "(set-code \"(define (sq x) (* x x))(define v (sq 5))\") "
                         "(begin "
-                        "  (mutate :inline-call (list-ref (query:node-type \"Call\") 1) \"test\") "
+                        "  (mutate :inline-call (list-ref (query :node-type \"Call\") 1) \"test\") "
                         "  (eval-current) v)");
         CHECK(r3 == 25, "after inline-call, v=25");
         // refactor-extract
-        int64_t r4 =
-            run_int(cs, "(set-code \"(define (f x) (+ (* x 2) 1))\") "
-                        "(begin "
-                        "  (mutate :refactor/extract (car (query:node-type \"Call\")) \"doubled\") "
-                        "  (length (query:node-type \"Define\")))");
+        int64_t r4 = run_int(
+            cs, "(set-code \"(define (f x) (+ (* x 2) 1))\") "
+                "(begin "
+                "  (mutate :refactor/extract (car (query :node-type \"Call\")) \"doubled\") "
+                "  (length (query :node-type \"Define\")))");
         CHECK(r4 == 2, "after refactor/extract: 2 Defines (original + extracted)");
         // move-node
         int64_t r5 =
@@ -2789,7 +2789,7 @@ static void run_139_structural_refactor_operators() {
             run_str(cs, "(set-code \"(define (sq x) (* x x))(define v (sq 5))\") "
                         "(begin "
                         "  (mutate :rename-symbol \"sq\" \"square\" \"test\") "
-                        "  (mutate :inline-call (list-ref (query:node-type \"Call\") 1) \"test\") "
+                        "  (mutate :inline-call (list-ref (query :node-type \"Call\") 1) \"test\") "
                         "  (typecheck-current))");
         bool ok2 = status2.find("no errors") != std::string::npos;
         CHECK(ok2, "after rename+inline, typecheck passes");

@@ -22,6 +22,7 @@ Exit 0 = all rows satisfied.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -65,7 +66,10 @@ def main() -> int:
     must("allow_query_stable_ref_export", "AC1 stable-ref", qws)
     must("allow_query_stable_ref_export", "AC1 ensure-ref", qws)
     must("allow_query_stable_ref_export", "AC1 as-stable-ref", asr)
-    must('mev("restamp-lag"', "AC1 as-stable-ref structured", asr)
+    # #5144: the body sits one level deeper inside add_hidden, so clang-format
+    # breaks the call after mev( — match the call with flexible whitespace.
+    if not re.search(r'mev\(\s*"restamp-lag"', asr):
+        fails.append('AC1 as-stable-ref structured: missing mev("restamp-lag"')
     must("budget-exceeded: :as-query-result:", "AC1 :as-query-result", qws)
     must("Issue #3198", "AC1 query sites", qws)
     must("Issue #3198", "AC1 export_ref", sec)
@@ -82,7 +86,7 @@ def main() -> int:
         fails.append("AC1: export_held_ref missing allow_query_stable_ref_export")
 
     asr_win = _window(asr, "query:as-stable-ref")
-    if "allow_query_stable_ref_export" in asr_win and 'mev("restamp-lag"' not in asr_win:
+    if "allow_query_stable_ref_export" in asr_win and not re.search(r'mev\(\s*"restamp-lag"', asr_win):
         fails.append("AC1: query:as-stable-ref reject is not structured restamp-lag")
 
     hash_win = _window(qws, "auto make_query_result_hash", 9000)

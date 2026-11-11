@@ -65,7 +65,7 @@
                (= (string-index output "uncalled function" 0) -1)
                (= (string-index output "#<closure>" 0) -1)))
     ; Query workspace for Define nodes
-    (let ((defs (try (query:node-type "Define") (catch #f))))
+    (let ((defs (try (query :node-type "Define") (catch #f))))
       (if (and (pair? defs) (> (length defs) 0))
         (begin
           (set! caused "closure-no-display")

@@ -99,11 +99,11 @@ void register_misc_primitives(PrimRegistrar add, Evaluator& ev) {
         pure_general(0, "() -> int",
                      "Steady-clock milliseconds (process-relative; denseness elapsed)."));
 
-    // g_tl_arena is thread-local TLarena declared in runtime_shared.h
-    register_prim(
-        add, ev, "query:arena-offset",
-        [](const auto&) -> EvalValue { return make_int(static_cast<int64_t>(g_tl_arena.offset)); },
-        pure_general(0, "() -> int", "Thread-local arena offset (bytes)."));
+    // g_tl_arena is thread-local TLarena declared in runtime_shared.h.
+    // #5144: dispatch-only alias; reachable via (query :arena-offset).
+    ev.primitives().add_hidden("query:arena-offset", [](const auto&) -> EvalValue {
+        return make_int(static_cast<int64_t>(g_tl_arena.offset));
+    });
 }
 
 } // namespace aura::compiler::primitives_detail

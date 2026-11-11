@@ -30,7 +30,7 @@
   (or (null? x) (and (pair? x) (number? (car x)))))
 
 (define (refactor:rename-var old new)
-  (define defs (try (query:node-type "Define") (catch #f)))
+  (define defs (try (query :node-type "Define") (catch #f)))
   (if (not (refactor:ids? defs)) #f
     (let ((count 0))
       ; 1. Rename Define nodes
@@ -45,7 +45,7 @@
       (rename-defs defs)
 
       ; 2. Rename Variable references
-      (define vars (try (query:node-type "Variable") (catch #f)))
+      (define vars (try (query :node-type "Variable") (catch #f)))
       (when (pair? vars)
         (define (rename-vars ids)
           (when (pair? ids)
@@ -88,7 +88,7 @@
 ; 找到 name 的 Define 节点，用其函数体替换所有调用处。
 ; Returns: 被替换的调用数，或 #f
 (define (refactor:inline-function fn-name)
-  (define defs (try (query:node-type "Define") (catch #f)))
+  (define defs (try (query :node-type "Define") (catch #f)))
   (if (not (refactor:ids? defs)) #f
     (let ((found #f) (count 0))
       ; 找到 Define 节点

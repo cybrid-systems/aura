@@ -10,7 +10,7 @@ NodeIds into QueryResults; every later mutate resolve then failed
 stale-ref (poisoned multi-round Agent memory).
 
 Fix shape: reuse the #1299/#1300 free-slot skip on every affected size()
-walk (query:filter / query:calls / query:node-type /
+walk (query :filter / query:calls / query:node-type /
 query:defines-by-marker) and refuse free ids on the write side —
 stamp_query_result_full_provenance requires is_live_node and
 allow_query_stable_ref_export returns false for free slots (same face as
@@ -81,7 +81,7 @@ def main() -> int:
     must(bool(sec), "evaluator_security TU readable")
 
     # ── AC1: query:filter walk guard ──
-    w = _prim_window(qws, 'add("query:filter"')
+    w = _prim_window(qws, 'add_hidden(\n        "query:filter"')
     must("Issue #4162: skip free/ghost orphan slots" in w, "AC1: query:filter cites #4162")
     g = w.find("if (flat.is_free_slot(id))")
     v = w.find("auto v = flat.get(id);")
@@ -91,21 +91,21 @@ def main() -> int:
     must(h >= 0 and (g < h), "AC1: guard precedes hygiene gate (no ghost counter pollution)")
 
     # ── AC2: query:calls walk guard ──
-    w = _prim_window(qws, 'add("query:calls"')
+    w = _prim_window(qws, 'add_hidden(\n        "query:calls"')
     must("Issue #4162: skip free/ghost orphan slots" in w, "AC2: query:calls cites #4162")
     g = w.find("if (flat.is_free_slot(id))")
     v = w.find("auto v = flat.get(id);")
     must(g >= 0 and v >= 0 and (g < v), "AC2: query:calls guard precedes flat.get(id)")
 
     # ── AC3: query:node-type walk guard ──
-    w = _prim_window(qws, 'add("query:node-type"')
+    w = _prim_window(qws, 'add_hidden(\n        "query:node-type"')
     must("Issue #4162: skip free/ghost orphan slots" in w, "AC3: query:node-type cites #4162")
     g = w.find("if (flat.is_free_slot(id))")
     v = w.find("flat.get(id).tag == target_tag")
     must(g >= 0 and v >= 0 and (g < v), "AC3: query:node-type guard precedes tag match")
 
     # ── AC4: query:defines-by-marker walk guard ──
-    w = _prim_window(qws, 'add("query:defines-by-marker"')
+    w = _prim_window(qws, 'add_hidden(\n        "query:defines-by-marker"')
     must("Issue #4162: skip free/ghost orphan slots" in w, "AC4: query:defines-by-marker cites #4162")
     g = w.find("if (flat.is_free_slot(id))")
     v = w.find("auto v = flat.get(id);")

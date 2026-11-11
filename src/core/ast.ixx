@@ -2391,7 +2391,7 @@ public:
     // Issue #282: Occurrence Typing provenance log. Each entry
     // is captured when synthesize_flat_if applies a narrowing
     // (predicate → refined type in a branch). Exposed via
-    // (query:provenance-of var-name) and all_narrowings() /
+    // (query :provenance-of var-name) and all_narrowings() /
     // narrowing_count() accessors. The log is cleared on
     // full FlatAST reset, same lifecycle as mutation_log_.
     // Issue #2457: same COW strategy as mutation_log_.
@@ -2971,7 +2971,7 @@ public:
     // later in this file (after apply_verification_dirty_bits
     // is declared). See the second declaration.
     // Issue #456: public accessor for the main dirty_ byte
-    // (used by (query:dirty-subtree) to check each node's
+    // (used by (query :dirty-subtree) to check each node's
     // dirty bitmask against a reason filter).
     [[nodiscard]] std::uint8_t dirty(NodeId id) const noexcept {
         if (id >= dirty_.size())
@@ -5464,7 +5464,7 @@ public:
 
     // Issue #1520 / #1624 / #2614: preferred columnar children accessor (alias of
     // children_safe with explicit SoA-path metrics). Hot paths
-    // (query:pattern, mark_dirty_upward children walk, walk_children / walk_children_hot)
+    // (query :pattern, mark_dirty_upward children walk, walk_children / walk_children_hot)
     // must use this instead of raw children() spans. Return type is forced
     // ChildColumnar + SoAColumnarFull at compile time (see static_assert below).
     // Issue #3402: children_columnar returns a SafePCVSpan over the
@@ -7891,7 +7891,7 @@ public:
     //
     // Hygiene contract:
     //   - MacroIntroduced nodes are query-visible (they appear
-    //     in (query:defines), (query:children), etc.) so the user
+    //     in (query :defines), (query:children), etc.) so the user
     //     can introspect the expanded body.
     //   - MacroIntroduced nodes are mutation-protected by default
     //     (mutate :replace-subtree returns a hygiene error if you
@@ -8052,7 +8052,7 @@ public:
     //
     // The views are the foundation for the C++23
     // modernization issue; concrete pass-level
-    // adoption (query:pattern, mark_dirty_upward_fast,
+    // adoption (query :pattern, mark_dirty_upward_fast,
     // IRFunctionSoA scans) is follow-up work.
     [[nodiscard]] std::span<const std::uint8_t> dirty_view() const noexcept {
         return std::span<const std::uint8_t>(dirty_.data(), dirty_.size());
@@ -8077,7 +8077,7 @@ public:
     // Non-owning span over the log. The vector grows
     // unbounded (no eviction); for production runs
     // with many mutations, the agent can sample via
-    // (query:mutations-since <last_id>) instead of
+    // (query :mutations-since <last_id>) instead of
     // walking the whole log.
     [[nodiscard]] std::span<const MutationRecord> mutation_log_view() const noexcept {
         return std::span<const MutationRecord>(mutation_log_.data(), mutation_log_.size());

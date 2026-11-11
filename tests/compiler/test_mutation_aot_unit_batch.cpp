@@ -1188,10 +1188,10 @@ int run_271_tag_arity_index_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(begin (+ 1 1) (+ 2 2) (* 3 3))\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto n = cs.eval("(length (query:pattern \"(+ ... ...)\"))");
+    auto n = cs.eval("(length (query :pattern \"(+ ... ...)\"))");
     CHECK(n.has_value(), "query:pattern");
     (void)cs.eval("(mutate :replace-pattern \"(+ ... ...)\" \"(- ... ...)\" \"w48-271\")");
-    auto n2 = cs.eval("(length (query:pattern \"(- ... ...)\"))");
+    auto n2 = cs.eval("(length (query :pattern \"(- ... ...)\"))");
     CHECK(n2.has_value() || true, "query after replace");
     auto& ev = cs.evaluator();
     CHECK(ev.tag_arity_index_size() >= 0 || true, "tag_arity_index size");

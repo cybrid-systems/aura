@@ -283,7 +283,7 @@ int run_393_ref_valid_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto rv = cs.eval("(query:ref-valid? '(0 . 0))");
+    auto rv = cs.eval("(query :ref-valid? '(0 . 0))");
     CHECK(rv.has_value() || true, "query:ref-valid? surface");
     auto sr = cs.eval("(engine:metrics \"query:stable-ref-stats\")");
     CHECK(sr.has_value(), "stable-ref-stats");

@@ -115,8 +115,8 @@ int run_test_query_epoch_contract() {
         CHECK(cs.eval("(set-code \"(define f (lambda (x) (+ x 1)))\")").has_value(), "set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
         const auto c0 = g_query_epoch_capture_total().load();
-        CHECK(cs.eval("(query:root)").has_value(), "query:root");
-        CHECK(cs.eval("(query:defines)").has_value(), "query:defines");
+        CHECK(cs.eval("(query :root)").has_value(), "query:root");
+        CHECK(cs.eval("(query :defines)").has_value(), "query:defines");
         CHECK(cs.eval("(query :find \"f\")").has_value(), "query:find");
         CHECK(g_query_epoch_capture_total().load() >= c0 + 3, "≥3 captures");
         auto last = last_query_epoch();
@@ -156,7 +156,7 @@ int run_test_query_epoch_contract() {
         auto query_worker = [&]() {
             for (int i = 0; i < 20; ++i) {
                 std::scoped_lock<std::mutex> lk(eval_mu);
-                auto r = cs.eval("(query:defines)");
+                auto r = cs.eval("(query :defines)");
                 if (r)
                     ++query_ok;
                 else
@@ -187,7 +187,7 @@ int run_test_query_epoch_contract() {
         auto r = cs.eval("(g)");
         CHECK(r && is_int(*r), "g result int");
         // Topology query still works post concurrent load.
-        CHECK(cs.eval("(query:root)").has_value(), "root after concurrent");
+        CHECK(cs.eval("(query :root)").has_value(), "root after concurrent");
         CHECK(href(cs, "query:query-epoch-stats", "capture-total") >= 1, "captures during load");
     }
 
@@ -199,10 +199,10 @@ int run_test_query_epoch_contract() {
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define h (lambda () 0))\")").has_value(), "set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
-        CHECK(cs.eval("(query:root)").has_value(), "root under strict (consistent)");
+        CHECK(cs.eval("(query :root)").has_value(), "root under strict (consistent)");
         // Synthetic: capture then bump outside query body.
         auto e =
-            capture_query_epoch(static_cast<std::uint64_t>(cs.eval("(query:root)") ? 1 : 1), 0);
+            capture_query_epoch(static_cast<std::uint64_t>(cs.eval("(query :root)") ? 1 : 1), 0);
         bump_mutation_epoch();
         CHECK(!finish_query_epoch(e, e.generation), "synthetic strict stale");
         CHECK(href(cs, "query:query-epoch-stats", "stale-total") >= 1, "stale on surface");
@@ -282,9 +282,9 @@ int run_test_query_epoch_contract() {
             CHECK(href(cs, "query:query-epoch-stats", "query-result-created-total") >= 1,
                   "created-total key");
             // Pattern + children-stable + by-marker keywords accepted.
-            auto pat = cs.eval("(query:pattern \"f\" :as-query-result)");
+            auto pat = cs.eval("(query :pattern \"f\" :as-query-result)");
             CHECK(pat.has_value(), "pattern as-query-result ok");
-            auto bym = cs.eval("(query:by-marker \"User\" :as-query-result)");
+            auto bym = cs.eval("(query :by-marker \"User\" :as-query-result)");
             CHECK(bym.has_value(), "by-marker as-query-result ok");
         }
 
@@ -315,9 +315,9 @@ int run_test_query_epoch_contract() {
             CHECK(!held.is_fresh(current_mutation_epoch(), /*gen=*/1),
                   "soft: held QueryResult not fresh after epoch bump");
             auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
-            CHECK(qw.find("add(\"query:result-fresh?\"") != std::string::npos,
+            CHECK(qw.find("add_hidden(\"query:result-fresh?\"") != std::string::npos,
                   "fresh? prim SlimSurface add #3766");
-            CHECK(qw.find("add(\"query:result-matches\"") != std::string::npos,
+            CHECK(qw.find("add_hidden(\"query:result-matches\"") != std::string::npos,
                   "matches prim SlimSurface add #3766");
             CHECK(qw.find("query-epoch-stale") != std::string::npos &&
                       qw.find("query:result-fresh?") != std::string::npos,
@@ -633,7 +633,7 @@ int run_test_query_epoch_contract() {
         CompilerService cs4345;
         const char* src4345 = "(define g4345 (lambda (x) (* x 2)))";
         CHECK(cs4345.eval(std::format("(set-code \"{}\")", src4345)).has_value(), "4345: set-code");
-        auto code = cs4345.eval("(query:code)");
+        auto code = cs4345.eval("(query :code)");
         CHECK(code.has_value() && is_string(*code), "4345: query:code returns source text");
         auto& ev4345 = cs4345.evaluator();
         bool code_ok = false;
@@ -643,7 +643,7 @@ int run_test_query_epoch_contract() {
                       ev4345.string_heap()[idx].find("g4345") != std::string::npos;
         }
         CHECK(code_ok, "4345: query:code carries the loaded source");
-        auto nt = cs4345.eval("(query:node-types)");
+        auto nt = cs4345.eval("(query :node-types)");
         CHECK(nt.has_value() && is_pair(*nt), "4345: node-types census returned");
         CHECK(cs4345.eval("(require \"std/query\" all:)").has_value(), "4345: require std/query");
         auto rc = cs4345.eval("(query:ref-counts (car (car (define-lookup \"g4345\"))))");

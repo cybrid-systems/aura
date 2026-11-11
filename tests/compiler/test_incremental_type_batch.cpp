@@ -139,7 +139,7 @@ static void run_526() {
         CHECK(r1 && is_int(*r1), "query:typed-mutation-stats returns int");
         CHECK(as_int(*r1) >= 0, "typed-mutation-stats >= 0");
 
-        auto r2 = cs.eval("(query:dirty-impact)");
+        auto r2 = cs.eval("(query :dirty-impact)");
         CHECK(r2 && is_int(*r2), "query:dirty-impact returns int");
         CHECK(as_int(*r2) >= 0, "dirty-impact >= 0");
     }
@@ -223,7 +223,7 @@ static void run_536() {
     {
         std::println("\n--- AC2: typed-mutation-stats + dirty-impact ---");
         auto stats = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
-        auto impact = cs.eval("(query:dirty-impact)");
+        auto impact = cs.eval("(query :dirty-impact)");
         CHECK(stats && is_int(*stats), "query:typed-mutation-stats returns int");
         CHECK(impact && is_int(*impact), "query:dirty-impact returns int");
         CHECK(as_int(*stats) >= 0, "typed-mutation-stats >= 0");

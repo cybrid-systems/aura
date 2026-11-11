@@ -624,20 +624,20 @@ void test_3395_ac1_production_default_query_stamps() {
     expect_true("3395 AC1: production default query:find IS a schema-2 hash",
                 qr_find && is_hash(*qr_find));
     // query:by-marker without :as-query-result — same auto-upgrade.
-    auto qr_marker = cs.eval("(query:by-marker \"User\" :limit 4)");
+    auto qr_marker = cs.eval("(query :by-marker \"User\" :limit 4)");
     expect_true("3395 AC1: production default query:by-marker returns hash", qr_marker.has_value());
     expect_true("3395 AC1: production default query:by-marker IS schema-2 hash",
                 qr_marker && is_hash(*qr_marker));
     // query:filter without :as-query-result — same auto-upgrade (the new path
     // from this ship).
-    auto qr_filter = cs.eval("(query:filter (where :node-type \"Define\"))");
+    auto qr_filter = cs.eval("(query :filter (where :node-type \"Define\"))");
     expect_true("3395 AC1: production default query:filter returns hash", qr_filter.has_value());
     expect_true("3395 AC1: production default query:filter IS schema-2 hash",
                 qr_filter && is_hash(*qr_filter));
     // query:pattern without :as-query-result — same auto-upgrade (pattern /
     // find / by-marker were already routed through end_query_epoch_maybe_result
     // which has the auto-upgrade; query:filter was the gap closed in this ship).
-    auto qr_pattern = cs.eval("(query:pattern \"(define ?f (lambda (?x) ?y))\" :nested-arity #t)");
+    auto qr_pattern = cs.eval("(query :pattern \"(define ?f (lambda (?x) ?y))\" :nested-arity #t)");
     expect_true("3395 AC1: production default query:pattern returns hash", qr_pattern.has_value());
     expect_true("3395 AC1: production default query:pattern IS schema-2 hash",
                 qr_pattern && is_hash(*qr_pattern));
@@ -703,7 +703,7 @@ void test_3395_ac3_soft_unchanged() {
     expect_true("3395 AC3: Soft default query:find is NOT a hash (bare list)",
                 soft_qr && !is_hash(*soft_qr));
     // Soft default query:filter → bare list (NOT auto-upgraded — AC3 zero-cost).
-    auto soft_filter = cs.eval("(query:filter (where :node-type \"Define\"))");
+    auto soft_filter = cs.eval("(query :filter (where :node-type \"Define\"))");
     expect_true("3395 AC3: Soft default query:filter returns", soft_filter.has_value());
     expect_true("3395 AC3: Soft default query:filter is NOT a hash (bare list)",
                 soft_filter && !is_hash(*soft_filter));
@@ -1080,7 +1080,7 @@ void admit_clean_mutate_for_test() {
 }
 
 bool bind_three_child_stable(CompilerService& cs) {
-    if (!cs.eval("(define qb (query:filter (query:where :node-type \"Begin\")))").has_value())
+    if (!cs.eval("(define qb (query :filter (query :where :node-type \"Begin\")))").has_value())
         return false;
     auto qb = cs.eval("qb");
     if (!qb || !is_hash(*qb))
@@ -1123,11 +1123,11 @@ void test_ac3695_1_children_stable_index_mutate() {
     expect_true("3695 AC1: matches payload is pair not bare int",
                 pair0 && is_bool(*pair0) && as_bool(*pair0));
     expect_true("3695 AC1: bind no-index as-stable-ref",
-                cs.eval("(define r3695ni (query:as-stable-ref qc))").has_value());
+                cs.eval("(define r3695ni (query :as-stable-ref qc))").has_value());
     auto ni = cs.eval("(and (pair? r3695ni) (equal? (car r3695ni) \"bad-arg\"))");
     expect_true("3695 AC1: N>1 without :index is bad-arg", ni && is_bool(*ni) && as_bool(*ni));
     expect_true("3695 AC1: bind v2 via :index 1",
-                cs.eval("(define ref3695 (query:as-stable-ref qc :index 1))").has_value());
+                cs.eval("(define ref3695 (query :as-stable-ref qc :index 1))").has_value());
     auto ref_car = cs.eval("(car ref3695)");
     expect_true("3695 AC1: :index 1 packs v2 StableNodeRef (car is NodeId)",
                 ref_car && is_int(*ref_car));
@@ -1166,7 +1166,7 @@ void test_ac3695_2_extracted_nodeid_still_stale_ref() {
     // query:as-stable-ref is the production raw-id gate without MutationBoundary
     // admission (tweak-literal acquires first and can densify-reject).
     expect_true("3695 AC2: bind bare-int as-stable-ref",
-                cs.eval("(define r3695bare (query:as-stable-ref nid3695))").has_value());
+                cs.eval("(define r3695bare (query :as-stable-ref nid3695))").has_value());
     auto stale = cs.eval("(and (pair? r3695bare) (equal? (car r3695bare) \"stale-ref\"))");
     expect_true("3695 AC2: extracted NodeId is stale-ref",
                 stale && is_bool(*stale) && as_bool(*stale));
@@ -1272,9 +1272,9 @@ void test_ac3695_6_source_cite_no_invent() {
     expect_true("3695 AC6: mutate resolver takes :index",
                 mut.find("parse_query_result_match_index") != std::string::npos);
     expect_true("3695 AC6: query:result-matches SlimSurface add #3766",
-                qws.find("add(\"query:result-matches\"") != std::string::npos);
+                qws.find("add_hidden(\"query:result-matches\"") != std::string::npos);
     expect_true("3695 AC6: query:result-fresh? SlimSurface add #3766",
-                qws.find("add(\"query:result-fresh?\"") != std::string::npos);
+                qws.find("add_hidden(\"query:result-fresh?\"") != std::string::npos);
     expect_true("3695 AC6: no schema-3695", qws.find("schema-3695") == std::string::npos &&
                                                 mut.find("schema-3695") == std::string::npos &&
                                                 dec.find("schema-3695") == std::string::npos);
@@ -1362,7 +1362,7 @@ void test_ac3696_2_occupancy_stale_despite_mutation_epoch() {
     expect_eq_i64("3696 AC2: live Mutation epoch unchanged by occupancy restamp", live_mut,
                   static_cast<std::int64_t>(aura::core::current_mutation_epoch()));
     expect_true("3696 AC2: bind occupancy resolve",
-                cs.eval("(define r3696o (query:as-stable-ref qr3696o))").has_value());
+                cs.eval("(define r3696o (query :as-stable-ref qr3696o))").has_value());
     auto stale = cs.eval("(and (pair? r3696o) (equal? (car r3696o) \"stale-ref\"))");
     expect_true("3696 AC2: occupancy reuse is stale-ref (not hash mutation-epoch Fresh)",
                 stale && is_bool(*stale) && as_bool(*stale));
@@ -1431,7 +1431,7 @@ void test_ac3696_5_source_cite_no_invent() {
     expect_true("3696 AC5: occupancy still uses node_gen_for",
                 dec.find("flat.node_gen_for(nid) != m.generation") != std::string::npos);
     expect_true("3696 AC5: query:result-fresh? SlimSurface add #3766 occupancy",
-                qws.find("add(\"query:result-fresh?\"") != std::string::npos);
+                qws.find("add_hidden(\"query:result-fresh?\"") != std::string::npos);
     expect_true("3696 AC5: production poll uses occupancy SSOT",
                 qws.find("query_result_is_fresh_with_refs") != std::string::npos);
     expect_true("3696 AC5: no schema-3696", qws.find("schema-3696") == std::string::npos &&
@@ -1471,7 +1471,7 @@ void test_ac3766_1_lookup_registered() {
                 cs.evaluator().primitives().lookup("query:result-fresh?").has_value());
     expect_true("3766 AC1: lookup query:result-matches non-null",
                 cs.evaluator().primitives().lookup("query:result-matches").has_value());
-    auto fr = cs.eval("(query:result-fresh? qr3766)");
+    auto fr = cs.eval("(query :result-fresh? qr3766)");
     expect_true("3766 AC1: live hash is #t", fr && is_bool(*fr) && as_bool(*fr));
     apply_dev_audit_defaults();
 }
@@ -1497,11 +1497,11 @@ void test_ac3766_2_occupancy_poll_agrees_resolve() {
     flat->restamp_all_node_generations();
     expect_eq_i64("3766 AC2: hash mutation-epoch still equals live Mutation", live_mut,
                   as_int(*mid));
-    auto poll = cs.eval("(query:result-fresh? qr3766o)");
+    auto poll = cs.eval("(query :result-fresh? qr3766o)");
     expect_true("3766 AC2: poll is #f despite equal mutation-epoch",
                 poll && is_bool(*poll) && !as_bool(*poll));
     expect_true("3766 AC2: bind occupancy resolve",
-                cs.eval("(define r3766o (query:as-stable-ref qr3766o))").has_value());
+                cs.eval("(define r3766o (query :as-stable-ref qr3766o))").has_value());
     auto stale = cs.eval("(and (pair? r3766o) (equal? (car r3766o) \"stale-ref\"))");
     expect_true("3766 AC2: resolve is stale-ref (faces agree)",
                 stale && is_bool(*stale) && as_bool(*stale));
@@ -1549,8 +1549,8 @@ void test_ac3767_1_wrap_mismatch_is_false() {
     expect_true("3767 AC1: bind find hash",
                 cs.eval("(define qr3767 (query :find \"w3767\"))").has_value());
     expect_true("3767 AC1: bind v2 pack",
-                cs.eval("(define r3767 (query:as-stable-ref qr3767))").has_value());
-    auto live = cs.eval("(query:ref-valid? r3767)");
+                cs.eval("(define r3767 (query :as-stable-ref qr3767))").has_value());
+    auto live = cs.eval("(query :ref-valid? r3767)");
     expect_true("3767 AC1: live v2 is #t", live && is_bool(*live) && as_bool(*live));
     auto idv = cs.eval("(car r3767)");
     auto genv = cs.eval("(car (cdr r3767))");
@@ -1567,7 +1567,7 @@ void test_ac3767_1_wrap_mismatch_is_false() {
     expect_eq_i64("3767 AC1: slot gen still matches packed gen after wrap poison",
                   static_cast<std::int64_t>(flat->node_gen_for(nid)), as_int(*genv));
     apply_production_audit_defaults();
-    auto poll = cs.eval("(query:ref-valid? r3767)");
+    auto poll = cs.eval("(query :ref-valid? r3767)");
     expect_true("3767 AC1: wrap-mismatched v2 is bool", poll && is_bool(*poll));
     expect_true("3767 AC1: wrap-mismatched v2 is #f", poll && is_bool(*poll) && !as_bool(*poll));
     apply_dev_audit_defaults();
@@ -1587,8 +1587,8 @@ void test_ac3767_2_foreign_tenant_is_false() {
     expect_true("3767 AC2: bind find hash",
                 cs.eval("(define qr3767t (query :find \"u3767\"))").has_value());
     expect_true("3767 AC2: bind v2 pack",
-                cs.eval("(define r3767t (query:as-stable-ref qr3767t))").has_value());
-    auto live = cs.eval("(query:ref-valid? r3767t)");
+                cs.eval("(define r3767t (query :as-stable-ref qr3767t))").has_value());
+    auto live = cs.eval("(query :ref-valid? r3767t)");
     expect_true("3767 AC2: same-tenant v2 is #t", live && is_bool(*live) && as_bool(*live));
     apply_dev_audit_defaults();
     expect_true("3767 AC2: poison tenant",
@@ -1597,7 +1597,7 @@ void test_ac3767_2_foreign_tenant_is_false() {
     expect_true("3767 AC2: tenant cell is 99", tenv && is_int(*tenv) && as_int(*tenv) == 99);
     apply_production_audit_defaults();
     cs.evaluator().set_capability_tenant_id(1);
-    auto poll = cs.eval("(query:ref-valid? r3767t)");
+    auto poll = cs.eval("(query :ref-valid? r3767t)");
     expect_true("3767 AC2: foreign-tenant v2 is bool", poll && is_bool(*poll));
     expect_true("3767 AC2: foreign-tenant v2 is #f", poll && is_bool(*poll) && !as_bool(*poll));
     cs.evaluator().set_capability_tenant_id(0);
@@ -1614,8 +1614,8 @@ void test_ac3767_3_soft_id_gen_and_no_invent() {
     expect_true("3767 AC3: eval", cs.eval("(eval-current)").has_value());
     expect_true(
         "3767 AC3: bind Soft stable-ref",
-        cs.eval("(define r3767s (query:stable-ref (car (query :find \"s3767\"))))").has_value());
-    auto v = cs.eval("(query:ref-valid? r3767s)");
+        cs.eval("(define r3767s (query :stable-ref (car (query :find \"s3767\"))))").has_value());
+    auto v = cs.eval("(query :ref-valid? r3767s)");
     expect_true("3767 AC3: Soft (id . gen) is #t when slot gen matches",
                 v && is_bool(*v) && as_bool(*v));
     std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
@@ -1964,7 +1964,7 @@ void test_ac3993_1_packed_stamped_allows_when_cap_ok() {
     auto qr = cs.eval("qr3993");
     expect_true("3993 AC1: production find is hash", qr && is_hash(*qr));
     expect_true("3993 AC1: bind packed v2",
-                cs.eval("(define sr3993 (query:as-stable-ref qr3993 :index 0))").has_value());
+                cs.eval("(define sr3993 (query :as-stable-ref qr3993 :index 0))").has_value());
     auto sr_car = cs.eval("(car sr3993)");
     expect_true("3993 AC1: packed car is NodeId", sr_car && is_int(*sr_car));
     auto* ws = ev.workspace_flat();
@@ -2034,7 +2034,7 @@ void test_ac3993_2_incomplete_gen_still_denies() {
         "3993 AC2: bind find hash",
         cs.eval("(define qr3993b (query :find \"u3993\" :as-query-result #t))").has_value());
     expect_true("3993 AC2: bind packed v2",
-                cs.eval("(define sr3993b (query:as-stable-ref qr3993b :index 0))").has_value());
+                cs.eval("(define sr3993b (query :as-stable-ref qr3993b :index 0))").has_value());
     expect_true("3993 AC2: bind gen=0 twin", cs.eval("(define bad3993 (cons (car sr3993b) "
                                                      "(cons 0 (cdr (cdr sr3993b)))))")
                                                  .has_value());
@@ -2136,7 +2136,7 @@ void test_ac3827_1_production_children_v2_schema2() {
     expect_true("3827 AC1: bind 3-child children-stable for parent probe",
                 bind_three_child_stable(cs));
     expect_true("3827 AC1: bind child v2",
-                cs.eval("(define cref3827 (query:as-stable-ref qc :index 0))").has_value());
+                cs.eval("(define cref3827 (query :as-stable-ref qc :index 0))").has_value());
     auto cref_car = cs.eval("(car cref3827)");
     expect_true("3827 AC1: child v2 car is NodeId (not error kind)", cref_car && is_int(*cref_car));
     expect_true("3827 AC1: bind parent via v2",
@@ -2167,7 +2167,7 @@ void test_ac3827_2_soft_children_int_fails_prod_as_stable() {
     expect_true("3827 AC2: Soft car is bare int", nid && is_int(*nid));
     apply_production_audit_defaults();
     expect_true("3827 AC2: bind as-stable-ref of Soft int",
-                cs.eval("(define r3827bare (query:as-stable-ref nid3827))").has_value());
+                cs.eval("(define r3827bare (query :as-stable-ref nid3827))").has_value());
     auto stale = cs.eval("(and (pair? r3827bare) (equal? (car r3827bare) \"stale-ref\"))");
     expect_true("3827 AC2: Soft children int is stale-ref under Prod",
                 stale && is_bool(*stale) && as_bool(*stale));
@@ -2316,7 +2316,7 @@ void test_ac3895_3_soft_and_source() {
     CompilerService cs;
     expect_true("3895 AC3: set-code", cs.eval("(set-code \"(begin 97 98 99)\")").has_value());
     expect_true("3895 AC3: eval", cs.eval("(eval-current)").has_value());
-    auto sr = cs.eval("(query:stable-ref 0)");
+    auto sr = cs.eval("(query :stable-ref 0)");
     expect_true("3895 AC3: Soft stable-ref returns", sr.has_value());
     expect_true("3895 AC3: Soft stable-ref stays bare pair (not hash)", sr && !is_hash(*sr));
     // Soft parent-stable eval is the same CompilerService fragility as
@@ -2354,7 +2354,7 @@ void test_ac3896_1_prod_root_schema2_source() {
     std::ifstream f("src/compiler/evaluator_primitives_query_workspace.cpp");
     std::string qws((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     expect_true("3896 AC1: query_workspace readable", !qws.empty());
-    const auto root_b = qws.find("add(\"query:root\"");
+    const auto root_b = qws.find("add_hidden(\n        \"query:root\"");
     expect_true("3896 AC1: query:root present", root_b != std::string::npos);
     const auto root_e = qws.find("query:hygiene-skip-count", root_b);
     const auto root_body =
@@ -2378,7 +2378,7 @@ void test_ac3896_2_soft_root_bare_int() {
     CompilerService cs;
     expect_true("3896 AC2: set-code", cs.eval("(set-code \"(begin 1 2 3)\")").has_value());
     expect_true("3896 AC2: eval", cs.eval("(eval-current)").has_value());
-    auto root = cs.eval("(query:root)");
+    auto root = cs.eval("(query :root)");
     expect_true("3896 AC2: Soft query:root returns", root.has_value());
     expect_true("3896 AC2: Soft query:root is bare int (not hash)", root && is_int(*root));
     {
@@ -2405,14 +2405,14 @@ void test_ac3862_1_prod_schema2_finish() {
     // pair before the latch flips. Node 1 is a root child (set-code
     // "(begin ...)"), via query:as-stable-ref directly — no query:children
     // dependency (its bare-int Soft path is flaky in this cascade).
-    auto kid = cs.eval("(query:as-stable-ref 1)");
+    auto kid = cs.eval("(query :as-stable-ref 1)");
     expect_true("3862 AC1: child stable-ref (v1 pair)", kid && is_pair(*kid));
     expect_true("3862 AC1: bind child stable-ref (v1)",
-                cs.eval("(define cref3862 (query:as-stable-ref 1))").has_value());
+                cs.eval("(define cref3862 (query :as-stable-ref 1))").has_value());
     apply_production_audit_defaults();
     // Production: query:stable-ref must not return the bare (id . gen)
     // pair — it finishes schema-2 (stamped QueryResult hash).
-    auto sr = cs.eval("(query:stable-ref 0)");
+    auto sr = cs.eval("(query :stable-ref 0)");
     expect_true("3862 AC1: production stable-ref returns", sr.has_value());
     expect_true("3862 AC1: stable-ref is schema-2 hash (not layout-only pair)", sr && is_hash(*sr));
     apply_dev_audit_defaults();
@@ -2425,7 +2425,7 @@ void test_ac3862_1_prod_schema2_finish() {
     expect_true("3862 AC1: cs2 set-code", cs2.eval("(set-code \"(begin 71 72 73)\")").has_value());
     expect_true("3862 AC1: cs2 eval", cs2.eval("(eval-current)").has_value());
     expect_true("3862 AC1: cs2 bind child stable-ref (v1)",
-                cs2.eval("(define cref3862 (query:as-stable-ref 1))").has_value());
+                cs2.eval("(define cref3862 (query :as-stable-ref 1))").has_value());
     apply_production_audit_defaults();
     auto ps = cs2.eval("(query:parent-stable cref3862)");
     expect_true("3862 AC1: production parent-stable returns", ps.has_value());
@@ -2441,10 +2441,10 @@ void test_ac3862_2_soft_and_source() {
     CompilerService cs;
     expect_true("3862 AC2: set-code", cs.eval("(set-code \"(begin 81 82 83)\")").has_value());
     expect_true("3862 AC2: eval", cs.eval("(eval-current)").has_value());
-    auto sr = cs.eval("(query:stable-ref 0)");
+    auto sr = cs.eval("(query :stable-ref 0)");
     expect_true("3862 AC2: Soft stable-ref returns", sr.has_value());
     expect_true("3862 AC2: Soft stable-ref stays bare pair (not hash)", sr && !is_hash(*sr));
-    auto kid = cs.eval("(query:as-stable-ref 1)");
+    auto kid = cs.eval("(query :as-stable-ref 1)");
     expect_true("3862 AC2: child node", kid && is_pair(*kid));
     // Soft parent-stable via as_int(pair) trips AURA_HOT_CONTRACT when
     // earlier production tests armed harden (#3866). Source-cite below
@@ -2482,7 +2482,7 @@ void test_ac3862_2_soft_and_source() {
 }
 
 // ── #4088: bare NodeId list exits / reflect members / dirty-subtree root ──
-// The five list exits (query:calls / query:defines / query:node-type /
+// The five list exits (query :calls / query:defines / query:node-type /
 // query:defines-by-marker / query:calls-by-marker) previously returned a
 // bare int-linked-list of NodeIds — occupancy, not identity — so an Agent
 // holding them across rounds reads the NEW occupant after slot reuse.
@@ -2512,11 +2512,11 @@ void test_ac4088_1_prod_list_exits_schema2() {
         expect_true(std::string(label) + ": is schema-2 hash", qr && is_hash(*qr));
         apply_dev_audit_defaults();
     };
-    prod_hash("(query:calls)", "4088 AC1: query:calls");
-    prod_hash("(query:defines)", "4088 AC1: query:defines");
-    prod_hash("(query:node-type \"Define\")", "4088 AC1: query:node-type");
-    prod_hash("(query:defines-by-marker \"User\")", "4088 AC1: query:defines-by-marker");
-    prod_hash("(query:calls-by-marker \"User\")", "4088 AC1: query:calls-by-marker");
+    prod_hash("(query :calls)", "4088 AC1: query:calls");
+    prod_hash("(query :defines)", "4088 AC1: query:defines");
+    prod_hash("(query :node-type \"Define\")", "4088 AC1: query:node-type");
+    prod_hash("(query :defines-by-marker \"User\")", "4088 AC1: query:defines-by-marker");
+    prod_hash("(query :calls-by-marker \"User\")", "4088 AC1: query:calls-by-marker");
 }
 
 void test_ac4088_2_prod_dirty_subtree_stale_ref() {
@@ -2534,7 +2534,7 @@ void test_ac4088_2_prod_dirty_subtree_stale_ref() {
     // production the root resolves through resolve_query_node_arg (the
     // #3395 gate) — bare int → stale-ref error, never the new occupant's
     // dirty count.
-    auto res = cs.eval("(query:dirty-subtree 1)");
+    auto res = cs.eval("(query :dirty-subtree 1)");
     expect_true("4088 AC2: production dirty-subtree returns", res.has_value());
     expect_true("4088 AC2: bare int root is NOT a count (stale-ref reject)", res && !is_int(*res));
     apply_dev_audit_defaults();
@@ -2549,15 +2549,15 @@ void test_ac4088_3_soft_list_exits_bare() {
         "4088 AC3: set-code",
         cs.eval("(set-code \"(begin (define h4088 (lambda (x) x)) (h4088 2))\")").has_value());
     expect_true("4088 AC3: eval", cs.eval("(eval-current)").has_value());
-    auto calls = cs.eval("(query:calls)");
+    auto calls = cs.eval("(query :calls)");
     expect_true("4088 AC3: Soft query:calls NOT a hash", calls && !is_hash(*calls));
-    auto defines = cs.eval("(query:defines)");
+    auto defines = cs.eval("(query :defines)");
     expect_true("4088 AC3: Soft query:defines NOT a hash", defines && !is_hash(*defines));
-    auto ntype = cs.eval("(query:node-type \"Define\")");
+    auto ntype = cs.eval("(query :node-type \"Define\")");
     expect_true("4088 AC3: Soft query:node-type NOT a hash", ntype && !is_hash(*ntype));
-    auto dbm = cs.eval("(query:defines-by-marker \"User\")");
+    auto dbm = cs.eval("(query :defines-by-marker \"User\")");
     expect_true("4088 AC3: Soft query:defines-by-marker NOT a hash", dbm && !is_hash(*dbm));
-    auto cbm = cs.eval("(query:calls-by-marker \"User\")");
+    auto cbm = cs.eval("(query :calls-by-marker \"User\")");
     expect_true("4088 AC3: Soft query:calls-by-marker NOT a hash", cbm && !is_hash(*cbm));
 }
 
@@ -2570,7 +2570,7 @@ void test_ac4088_4_soft_dirty_subtree_int_ok() {
         "4088 AC4: set-code",
         cs.eval("(set-code \"(begin (define i4088 (lambda (x) x)) (i4088 3))\")").has_value());
     expect_true("4088 AC4: eval", cs.eval("(eval-current)").has_value());
-    auto res = cs.eval("(query:dirty-subtree 1)");
+    auto res = cs.eval("(query :dirty-subtree 1)");
     expect_true("4088 AC4: Soft dirty-subtree returns", res.has_value());
     expect_true("4088 AC4: Soft bare int root still counts (int)", res && is_int(*res));
 }
@@ -2587,7 +2587,7 @@ void test_ac4088_5_soft_reflect_member_pair() {
     // export_ref + Soft v1 pair pack) is the query:as-stable-ref Soft
     // path — runtime-proven on the same workspace: the child stable-ref
     // is a stable-ref pair, never a bare NodeId int.
-    auto kid = cs.eval("(query:as-stable-ref 2)");
+    auto kid = cs.eval("(query :as-stable-ref 2)");
     expect_true("4088 AC5: child stable-ref export is a v1 pair", kid && is_pair(*kid));
     // Pre-existing dispatch orphan (documented, NOT introduced by #4088):
     // the prim registers via ObservabilityPrims::register_stats_impl,
@@ -2636,13 +2636,14 @@ void test_ac4088_6_source_cite() {
     // AC6a: each list exit finishes via end_query_epoch_maybe_result and
     // cites the issue (bounded windows, per the 3895/3896 pattern).
     const auto calls_body =
-        window("add(\"query:calls\"", "add(\"query:defines\"", "4088 AC6a: query:calls window");
+        window("add_hidden(\n        \"query:calls\"", "add_hidden(\n        \"query:defines\"",
+               "4088 AC6a: query:calls window");
     expect_true("4088 AC6a: query:calls finishes maybe_result",
                 calls_body.find("end_query_epoch_maybe_result") != std::string::npos);
     expect_true("4088 AC6a: query:calls cites #4088",
                 calls_body.find("Issue #4088") != std::string::npos);
-    const auto defines_body =
-        window("add(\"query:defines\"", "[\"query:parent\"]", "4088 AC6a: query:defines window");
+    const auto defines_body = window("add_hidden(\n        \"query:defines\"", "[\"query:parent\"]",
+                                     "4088 AC6a: query:defines window");
     expect_true("4088 AC6a: query:defines finishes maybe_result",
                 defines_body.find("end_query_epoch_maybe_result") != std::string::npos);
     expect_true("4088 AC6a: query:defines cites #4088",
@@ -2650,20 +2651,23 @@ void test_ac4088_6_source_cite() {
     expect_true("4088 AC6a: query:defines bare end_query_epoch finish gone",
                 defines_body.find("return end_query_epoch(qe, &flat, result);") ==
                     std::string::npos);
-    const auto ntype_body = window("add(\"query:node-type\"", "add(\"query:node-marker\"",
-                                   "4088 AC6a: query:node-type window");
+    const auto ntype_body =
+        window("add_hidden(\n        \"query:node-type\"",
+               "add_hidden(\n        \"query:node-marker\"", "4088 AC6a: query:node-type window");
     expect_true("4088 AC6a: query:node-type finishes maybe_result",
                 ntype_body.find("end_query_epoch_maybe_result") != std::string::npos);
     expect_true("4088 AC6a: query:node-type cites #4088",
                 ntype_body.find("Issue #4088") != std::string::npos);
-    const auto dbm_body = window("add(\"query:defines-by-marker\"", "add(\"query:calls-by-marker\"",
+    const auto dbm_body = window("add_hidden(\n        \"query:defines-by-marker\"",
+                                 "add_hidden(\n        \"query:calls-by-marker\"",
                                  "4088 AC6a: query:defines-by-marker window");
     expect_true("4088 AC6a: query:defines-by-marker finishes maybe_result",
                 dbm_body.find("end_query_epoch_maybe_result") != std::string::npos);
     expect_true("4088 AC6a: query:defines-by-marker cites #4088",
                 dbm_body.find("Issue #4088") != std::string::npos);
-    const auto cbm_body = window("add(\"query:calls-by-marker\"", "[\"query:by-marker\"]",
-                                 "4088 AC6a: query:calls-by-marker window");
+    const auto cbm_body =
+        window("add_hidden(\n        \"query:calls-by-marker\"", "[\"query:by-marker\"]",
+               "4088 AC6a: query:calls-by-marker window");
     expect_true("4088 AC6a: query:calls-by-marker finishes maybe_result",
                 cbm_body.find("end_query_epoch_maybe_result") != std::string::npos);
     expect_true("4088 AC6a: query:calls-by-marker cites #4088",
@@ -2690,8 +2694,9 @@ void test_ac4088_6_source_cite() {
     expect_true("4088 AC6c: reflect bare-int init-node export gone",
                 reflect_body.find("append_field(\"init-node\", make_int") == std::string::npos);
     // AC6d: dirty-subtree production face re-registration.
-    const auto dirty_body = window("add(\"query:dirty-subtree\"", "\"query:defines-by-marker\"",
-                                   "4088 AC6d: dirty-subtree window");
+    const auto dirty_body =
+        window("add_hidden(\n        \"query:dirty-subtree\"", "\"query:defines-by-marker\"",
+               "4088 AC6d: dirty-subtree window");
     expect_true("4088 AC6d: dirty-subtree cites #4088",
                 dirty_body.find("Issue #4088") != std::string::npos);
     expect_true("4088 AC6d: dirty-subtree resolves the root",
@@ -3310,7 +3315,7 @@ void test_ac4113_4_source_cite() {
 // and every later mutate resolve fails stale-ref. The read side already
 // refuses them (query_result_is_fresh_with_refs is_live_node →
 // StaleByEpoch, #1299/#1300); this ship closes the write side: the four
-// full-scan walks (query:filter / query:calls / query:node-type /
+// full-scan walks (query :filter / query:calls / query:node-type /
 // query:defines-by-marker), the stamp helper (stamp_query_result_full_
 // provenance refuses non-live ids) and the export gate
 // (allow_query_stable_ref_export refuses free slots).
@@ -3330,7 +3335,7 @@ void test_ac4162_1_prod_filter_skips_ghost_define() {
     using aura::compiler::typed_audit::apply_production_audit_defaults;
     // Fresh CompilerService per production probe (#4088 zone rationale --
     // pre-existing cumulative production-eval fragility in this binary).
-    // Predicate syntax is the canonical (query:where ...) form.
+    // Predicate syntax is the canonical (query :where ...) form.
     apply_dev_audit_defaults();
     CompilerService cs;
     expect_true(
@@ -3339,7 +3344,7 @@ void test_ac4162_1_prod_filter_skips_ghost_define() {
     expect_true("4162 AC1: eval", cs.eval("(eval-current)").has_value());
     apply_production_audit_defaults();
     const auto count0 =
-        count_4162_matches(cs, "q4162f0", "(query:filter (query:where :node-type \"Define\"))",
+        count_4162_matches(cs, "q4162f0", "(query :filter (query :where :node-type \"Define\"))",
                            "4162 AC1: pre-ghost filter");
     expect_true("4162 AC1: live Define matches exist", count0 >= 1);
     auto* flat = cs.evaluator().workspace_flat();
@@ -3351,7 +3356,7 @@ void test_ac4162_1_prod_filter_skips_ghost_define() {
     (void)flat->free_orphan_nodes_from(ghost);
     expect_true("4162 AC1: ghost slot is free", flat->is_free_slot(ghost));
     const auto count1 =
-        count_4162_matches(cs, "q4162f1", "(query:filter (query:where :node-type \"Define\"))",
+        count_4162_matches(cs, "q4162f1", "(query :filter (query :where :node-type \"Define\"))",
                            "4162 AC1: post-ghost filter");
     expect_eq_i64("4162 AC1: tombstone Define not matched (count unchanged)", count0, count1);
     apply_dev_audit_defaults();
@@ -3369,7 +3374,7 @@ void test_ac4162_2_prod_calls_skip_ghost_call() {
     expect_true("4162 AC2: eval", cs.eval("(eval-current)").has_value());
     apply_production_audit_defaults();
     const auto count0 =
-        count_4162_matches(cs, "q4162c0", "(query:calls)", "4162 AC2: pre-ghost calls");
+        count_4162_matches(cs, "q4162c0", "(query :calls)", "4162 AC2: pre-ghost calls");
     expect_true("4162 AC2: live Call matches exist", count0 >= 1);
     auto* flat = cs.evaluator().workspace_flat();
     expect_true("4162 AC2: workspace flat", flat != nullptr);
@@ -3380,7 +3385,7 @@ void test_ac4162_2_prod_calls_skip_ghost_call() {
     (void)flat->free_orphan_nodes_from(ghost);
     expect_true("4162 AC2: ghost slot is free", flat->is_free_slot(ghost));
     const auto count1 =
-        count_4162_matches(cs, "q4162c1", "(query:calls)", "4162 AC2: post-ghost calls");
+        count_4162_matches(cs, "q4162c1", "(query :calls)", "4162 AC2: post-ghost calls");
     expect_eq_i64("4162 AC2: tombstone Call not matched (count unchanged)", count0, count1);
     apply_dev_audit_defaults();
 }
@@ -3396,7 +3401,7 @@ void test_ac4162_3_prod_node_type_skips_ghost_define() {
         cs.eval("(set-code \"(begin (define n4162 (lambda (x) x)) (n4162 1))\")").has_value());
     expect_true("4162 AC3: eval", cs.eval("(eval-current)").has_value());
     apply_production_audit_defaults();
-    const auto count0 = count_4162_matches(cs, "q4162n0", "(query:node-type \"Define\")",
+    const auto count0 = count_4162_matches(cs, "q4162n0", "(query :node-type \"Define\")",
                                            "4162 AC3: pre-ghost node-type");
     expect_true("4162 AC3: live Define matches exist", count0 >= 1);
     auto* flat = cs.evaluator().workspace_flat();
@@ -3404,7 +3409,7 @@ void test_ac4162_3_prod_node_type_skips_ghost_define() {
     const auto ghost = flat->add_raw_node(aura::ast::NodeTag::Define);
     (void)flat->free_orphan_nodes_from(ghost);
     expect_true("4162 AC3: ghost slot is free", flat->is_free_slot(ghost));
-    const auto count1 = count_4162_matches(cs, "q4162n1", "(query:node-type \"Define\")",
+    const auto count1 = count_4162_matches(cs, "q4162n1", "(query :node-type \"Define\")",
                                            "4162 AC3: post-ghost node-type");
     expect_eq_i64("4162 AC3: tombstone not matched by tag (count unchanged)", count0, count1);
     apply_dev_audit_defaults();
@@ -3421,7 +3426,7 @@ void test_ac4162_4_prod_defines_by_marker_skips_ghost() {
         cs.eval("(set-code \"(begin (define m4162 (lambda (x) x)) (m4162 1))\")").has_value());
     expect_true("4162 AC4: eval", cs.eval("(eval-current)").has_value());
     apply_production_audit_defaults();
-    const auto count0 = count_4162_matches(cs, "q4162m0", "(query:defines-by-marker \"User\")",
+    const auto count0 = count_4162_matches(cs, "q4162m0", "(query :defines-by-marker \"User\")",
                                            "4162 AC4: pre-ghost defines-by-marker");
     auto* flat = cs.evaluator().workspace_flat();
     expect_true("4162 AC4: workspace flat", flat != nullptr);
@@ -3431,7 +3436,7 @@ void test_ac4162_4_prod_defines_by_marker_skips_ghost() {
     const auto ghost = flat->add_raw_node(aura::ast::NodeTag::Define); // marker User default
     (void)flat->free_orphan_nodes_from(ghost);
     expect_true("4162 AC4: ghost slot is free", flat->is_free_slot(ghost));
-    const auto count1 = count_4162_matches(cs, "q4162m1", "(query:defines-by-marker \"User\")",
+    const auto count1 = count_4162_matches(cs, "q4162m1", "(query :defines-by-marker \"User\")",
                                            "4162 AC4: post-ghost defines-by-marker");
     expect_eq_i64("4162 AC4: tombstone Define not matched (count unchanged)", count0, count1);
     apply_dev_audit_defaults();
@@ -3682,7 +3687,7 @@ void test_ac4314_1_prod_captured_zero_is_stale_after_advance() {
                 nmatches && is_int(*nmatches) && as_int(*nmatches) >= 1);
     const char* idx = as_int(*nmatches) > 1 ? " :index 0" : "";
     const std::string bind_held =
-        std::string("(define held4314 (query:as-stable-ref qr4314") + idx + "))";
+        std::string("(define held4314 (query :as-stable-ref qr4314") + idx + "))";
     expect_true("4314 AC1: bind packed v2 at wrap 0", cs.eval(bind_held).has_value());
     auto held_car = cs.eval("(car held4314)");
     expect_true("4314 AC1: packed car is NodeId", held_car && is_int(*held_car));
@@ -3727,7 +3732,7 @@ void test_ac4314_1_prod_captured_zero_is_stale_after_advance() {
     flat->set_wrap_epoch_for_test(1);
     expect_stale("ch4314", "(query :children held4314)");
     expect_stale("pa4314", "(query :parent-stable held4314)");
-    expect_stale("as4314", "(query:as-stable-ref held4314)");
+    expect_stale("as4314", "(query :as-stable-ref held4314)");
     {
         // Same face as the cow half: the mutate wrapper may replace the
         // body's stale-ref with persist-reject after the boundary aborts.
@@ -3757,7 +3762,7 @@ void test_ac4314_1_prod_captured_zero_is_stale_after_advance() {
         const std::string find = std::string("(define ") + qr_name + " (query :find \"w4314\"))";
         expect_true(std::string("4314 AC1: re-find ") + label, cs.eval(find).has_value());
         const std::string pack =
-            std::string("(define fresh4314 (query:as-stable-ref ") + qr_name + idx + "))";
+            std::string("(define fresh4314 (query :as-stable-ref ") + qr_name + idx + "))";
         expect_true(std::string("4314 AC1: pack ") + label, cs.eval(pack).has_value());
         auto car = cs.eval("(car fresh4314)");
         expect_true(std::string("4314 AC1: ") + label + " car is NodeId", car && is_int(*car));
@@ -3767,7 +3772,7 @@ void test_ac4314_1_prod_captured_zero_is_stale_after_advance() {
     recapture("qr4314p", "post-wrap parent");
     expect_resolves("paf4314", "(query :parent-stable fresh4314)");
     recapture("qr4314a", "post-wrap as-stable-ref");
-    auto as_fresh = cs.eval("(query:as-stable-ref fresh4314)");
+    auto as_fresh = cs.eval("(query :as-stable-ref fresh4314)");
     expect_true("4314 AC1: asf4314 returns", as_fresh.has_value());
     expect_true("4314 AC1: asf4314 is not stale-ref", !is_stale_ref_pair(as_fresh, cs.evaluator()));
     {
@@ -3795,7 +3800,7 @@ void test_ac4314_1_prod_captured_zero_is_stale_after_advance() {
     expect_true("4314 AC1: cow find has a match", n2 && is_int(*n2) && as_int(*n2) >= 1);
     const char* idx2 = as_int(*n2) > 1 ? " :index 0" : "";
     const std::string bind_held2 =
-        std::string("(define held4314c (query:as-stable-ref qr4314c0") + idx2 + "))";
+        std::string("(define held4314c (query :as-stable-ref qr4314c0") + idx2 + "))";
     expect_true("4314 AC1: cow bind packed v2", cs2.eval(bind_held2).has_value());
     flat2->set_workspace_cow_epoch(1);
     auto expect_stale2 = [&](const char* label, const char* expr) {
@@ -3820,7 +3825,7 @@ void test_ac4314_1_prod_captured_zero_is_stale_after_advance() {
     };
     expect_stale2("chc4314", "(query :children held4314c)");
     expect_stale2("pac4314", "(query :parent-stable held4314c)");
-    expect_stale2("asc4314", "(query:as-stable-ref held4314c)");
+    expect_stale2("asc4314", "(query :as-stable-ref held4314c)");
     // The mutate wrapper turns an aborted outermost boundary into
     // persist-reject after the body has already refused the stale handle.
     // Either kind means the replacement did not commit.
@@ -3834,7 +3839,7 @@ void test_ac4314_1_prod_captured_zero_is_stale_after_advance() {
     expect_true("4314 AC1: cow re-find",
                 cs2.eval("(define qr4314c1 (query :find \"c4314\"))").has_value());
     const std::string bind_fresh2 =
-        std::string("(define fresh4314c (query:as-stable-ref qr4314c1") + idx2 + "))";
+        std::string("(define fresh4314c (query :as-stable-ref qr4314c1") + idx2 + "))";
     expect_true("4314 AC1: cow pack after advance", cs2.eval(bind_fresh2).has_value());
     auto cow_kids = cs2.eval("(query :children fresh4314c)");
     expect_true("4314 AC1: cow fresh children returns", cow_kids.has_value());
@@ -3935,7 +3940,7 @@ void test_ac4315_1_set_code_rebirth_stales_prior_install() {
     expect_true("4315 AC1: find A has a match", n && is_int(*n) && as_int(*n) >= 1);
     const char* idx = as_int(*n) > 1 ? " :index 0" : "";
     const std::string bind =
-        std::string("(define held4315 (query:as-stable-ref qr4315a") + idx + "))";
+        std::string("(define held4315 (query :as-stable-ref qr4315a") + idx + "))";
     expect_true("4315 AC1: bind packed A", cs.eval(bind).has_value());
     auto held_car = cs.eval("(car held4315)");
     expect_true("4315 AC1: packed car is NodeId", held_car && is_int(*held_car));
@@ -3965,7 +3970,7 @@ void test_ac4315_1_set_code_rebirth_stales_prior_install() {
     };
     auto ch = cs.eval("(query :children held4315)");
     expect_true("4315 AC1: packed children is stale-ref", is_stale(ch));
-    auto as_old = cs.eval(std::string("(query:as-stable-ref qr4315a") + idx + ")");
+    auto as_old = cs.eval(std::string("(query :as-stable-ref qr4315a") + idx + ")");
     expect_true("4315 AC1: prior hash as-stable-ref is stale-ref", is_stale(as_old));
     auto mu = cs.eval("(mutate :replace-subtree held4315 \"(lambda () 9)\")");
     const auto mu_kind = kind_of(mu);
@@ -3978,7 +3983,7 @@ void test_ac4315_1_set_code_rebirth_stales_prior_install() {
     expect_true("4315 AC1: find B",
                 cs.eval("(define qr4315b (query :find \"b4315\"))").has_value());
     const std::string bind_b =
-        std::string("(define held4315b (query:as-stable-ref qr4315b") + idx + "))";
+        std::string("(define held4315b (query :as-stable-ref qr4315b") + idx + "))";
     expect_true("4315 AC1: pack B", cs.eval(bind_b).has_value());
     auto ch_b = cs.eval("(query :children held4315b)");
     expect_true("4315 AC1: same-install children returns", ch_b.has_value());
@@ -4007,7 +4012,7 @@ void test_ac4315_2_soft_rebirth_has_no_install_fence() {
     expect_true("4315 AC2: bind find",
                 cs.eval("(define qr4315s (query :find \"s4315\"))").has_value());
     expect_true("4315 AC2: bind ref",
-                cs.eval("(define held4315s (query:as-stable-ref qr4315s))").has_value());
+                cs.eval("(define held4315s (query :as-stable-ref qr4315s))").has_value());
     set_ok("(define s4315b (lambda () 2))");
     auto ch = cs.eval("(query :children held4315s)");
     bool stale = false;
@@ -4185,9 +4190,9 @@ void test_ac4392_lockless_batch_rejects_bare_nodeid() {
     expect_true("4392: bind find a", cs.eval("(define qra (query :find \"a\"))").has_value());
     expect_true(
         "4392: bind packed b",
-        cs.eval("(define srb (query:as-stable-ref (query :find \"b\") :index 0))").has_value());
+        cs.eval("(define srb (query :as-stable-ref (query :find \"b\") :index 0))").has_value());
     expect_true("4392: bind packed a",
-                cs.eval("(define sra (query:as-stable-ref qra :index 0))").has_value());
+                cs.eval("(define sra (query :as-stable-ref qra :index 0))").has_value());
     auto a_car = cs.eval("(car sra)");
     auto b_car = cs.eval("(car srb)");
     expect_true("4392: packed cars are node ids",
@@ -4315,7 +4320,7 @@ void test_ac4392_lockless_batch_rejects_bare_nodeid() {
     expect_true("4392: define c still present", reachable_define("c"));
     expect_true(
         "4392: bind packed c",
-        cs.eval("(define src (query:as-stable-ref (query :find \"c\") :index 0))").has_value());
+        cs.eval("(define src (query :as-stable-ref (query :find \"c\") :index 0))").has_value());
     expect_true(
         "4392: rebuild tenant-0 spine",
         cs.eval("(define src0 (cons (car src) (cons (car (cdr src)) (cons (car (cdr (cdr src))) "
@@ -4753,12 +4758,12 @@ void test_ac4654_2_prod_node_zero_query_mutate_loop_goes_stale() {
     expect_true("4654 AC2: create a child workspace layer",
                 cs.eval("(workspace :create \"c4654\")").has_value());
     expect_true("4654 AC2: the workspace generation moved", flat->generation() != gen_before);
-    auto fresh = cs.eval("(query:result-fresh? lit4654)");
+    auto fresh = cs.eval("(query :result-fresh? lit4654)");
     expect_true("4654 AC2: result-fresh? is #f after the drift",
                 fresh && is_bool(*fresh) && !as_bool(*fresh));
     auto node = cs.eval("(query :node lit4654)");
     expect_true("4654 AC2: query:node is stale-ref", is_stale_ref_pair(node, cs.evaluator()));
-    auto sref = cs.eval("(query:as-stable-ref lit4654)");
+    auto sref = cs.eval("(query :as-stable-ref lit4654)");
     expect_true("4654 AC2: query:as-stable-ref is stale-ref",
                 is_stale_ref_pair(sref, cs.evaluator()));
     // A second mutate through the same (now stale) hash must be refused
@@ -4916,7 +4921,7 @@ void test_ac4651_2_prod_held_hash_generation_zero_goes_stale() {
     expect_true("4651 AC2: the exported generation is the slot generation",
                 flat->node_gen_for(nid) == captured_gen);
     // The live hash is fresh before the drift.
-    auto fr0 = cs.eval("(query:result-fresh? qr4651)");
+    auto fr0 = cs.eval("(query :result-fresh? qr4651)");
     expect_true("4651 AC2: the live hash is #t", fr0 && is_bool(*fr0) && as_bool(*fr0));
     // Rebuild the SAME hash with the match generation dropped to 0 (the
     // window: a bare-int match element, or a pair cdr of 0).
@@ -4935,12 +4940,12 @@ void test_ac4651_2_prod_held_hash_generation_zero_goes_stale() {
     const auto gen_after_drift = flat->generation();
     // The held hash with the real captured generation is stale (the
     // existing per-match occupancy behavior).
-    auto fr = cs.eval("(query:result-fresh? qr4651)");
+    auto fr = cs.eval("(query :result-fresh? qr4651)");
     expect_true("4651 AC2: the captured generation is stale after the drift",
                 fr && is_bool(*fr) && !as_bool(*fr));
     // The held hash whose match generation was dropped to 0 must be stale
     // too — it cannot prove the slot still holds the captured occupant.
-    auto frt = cs.eval("(query:result-fresh? tampered4651)");
+    auto frt = cs.eval("(query :result-fresh? tampered4651)");
     expect_true("4651 AC2: result-fresh? is #f for the dropped generation",
                 frt && is_bool(*frt) && !as_bool(*frt));
     // The read must not walk the current occupant.

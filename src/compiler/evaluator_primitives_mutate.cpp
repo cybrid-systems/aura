@@ -2282,7 +2282,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_query_replace_primit
     auto& add_mutate = cx.add_mutate_ref;
     auto& destroy_defuse_index = cx.destroy_defuse_index_ref;
     Evaluator& ev = cx.ev_ref;
-    // (#110, #270) mutate:query-and-replace - composes (query:where :field value)
+    // (#110, #270) mutate:query-and-replace - composes (query :where :field value)
     // predicates with replacement. Query phase snapshots flat.size() and
     // captures StableNodeRef; apply phase uses is_valid_in() + parent-slot
     // checks inside an atomic batch so multiple set_child calls share one bump.
@@ -2359,7 +2359,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_query_replace_primit
             for (std::size_t ai = 0; ai < pred_end; ++ai) {
                 if (!is_pair(a[ai])) {
                     ok = false;
-                    return mev("bad-arg", "each predicate must be a (query:where ...) pair");
+                    return mev("bad-arg", "each predicate must be a (query :where ...) pair");
                 }
                 auto pair_idx = as_pair_idx(a[ai]);
                 if (pair_idx >= ev.pairs_.size()) {
@@ -2770,7 +2770,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_query_replace_batch_
             std::vector<QueryReplacePredicate> predicates;
             for (std::size_t ai = 0; ai < pred_end; ++ai) {
                 if (!is_pair(a[ai]))
-                    return mev("bad-arg", "each predicate must be a (query:where ...) pair");
+                    return mev("bad-arg", "each predicate must be a (query :where ...) pair");
                 auto pair_idx = as_pair_idx(a[ai]);
                 if (pair_idx >= ev.pairs_.size())
                     return mev("bad-arg", "predicate pair index out of range");
@@ -3235,144 +3235,149 @@ template <typename Ctx> void RegSplitParts::register_mutate_as_stable_ref_primit
     // historical v1 (id . gen) pair (Issue #2186 compat). One SSOT spine
     // for both pack (this fn) and unpack (#3396 walk_v2) — same field
     // order, same nested-pair shape.
-    add("query:as-stable-ref", [&ev, mev, unpack_stable_ref_arg](const auto& a) -> EvalValue {
-        if (a.empty() || !ev.workspace_flat_)
-            return make_void();
-        // Issue #3058 / Issue #3230 / Issue #3121 / Issue #3487: over-budget
-        // torn must not silently stamp a pre-restamp gen (same gate as
-        // query:stable-ref). Soft + unlatched observe-only (allow returns
-        // true). Production or latch==1: structured restamp-lag +
-        // budget-exceeded (never silent void).
-        auto restamp_lag = [&] {
-            return mev("restamp-lag",
-                       "budget-exceeded: query:as-stable-ref: restamp budget exceeded; "
-                       "generation torn for export (Issue #3121 / #3058 / #3198 / #3230); ; // "
-                       "Issue #3138: Agent recovery hint recovery: re-query after budget window or "
-                       "force full restamp before reusing refs");
-        };
-        const bool hard = aura::compiler::typed_audit::production_defaults_active();
-        if (is_int(a[0])) {
-            const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-            if (!ev.allow_query_stable_ref_export(id))
-                return restamp_lag();
-            // Issue #3425: production rejects bare int (occupancy remake of
-            // the current occupant via export_ref). Same kind as #3395.
-            // Soft/Off keeps Issue #2186 v1 stamp.
-            if (hard) {
-                ev.bump_raw_nodeid_usage_in_primitives_count();
-                return mev("stale-ref",
-                           "query:as-stable-ref: raw node-id rejected under production; "
-                           "pass packed v2 StableNodeRef or QueryResult match");
+    ev.primitives().add_hidden(
+        "query:as-stable-ref", [&ev, mev, unpack_stable_ref_arg](const auto& a) -> EvalValue {
+            if (a.empty() || !ev.workspace_flat_)
+                return make_void();
+            // Issue #3058 / Issue #3230 / Issue #3121 / Issue #3487: over-budget
+            // torn must not silently stamp a pre-restamp gen (same gate as
+            // query:stable-ref). Soft + unlatched observe-only (allow returns
+            // true). Production or latch==1: structured restamp-lag +
+            // budget-exceeded (never silent void).
+            auto restamp_lag = [&] {
+                return mev(
+                    "restamp-lag",
+                    "budget-exceeded: query:as-stable-ref: restamp budget exceeded; "
+                    "generation torn for export (Issue #3121 / #3058 / #3198 / #3230); ; // "
+                    "Issue #3138: Agent recovery hint recovery: re-query after budget window or "
+                    "force full restamp before reusing refs");
+            };
+            const bool hard = aura::compiler::typed_audit::production_defaults_active();
+            if (is_int(a[0])) {
+                const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+                if (!ev.allow_query_stable_ref_export(id))
+                    return restamp_lag();
+                // Issue #3425: production rejects bare int (occupancy remake of
+                // the current occupant via export_ref). Same kind as #3395.
+                // Soft/Off keeps Issue #2186 v1 stamp.
+                if (hard) {
+                    ev.bump_raw_nodeid_usage_in_primitives_count();
+                    return mev("stale-ref",
+                               "query:as-stable-ref: raw node-id rejected under production; "
+                               "pass packed v2 StableNodeRef or QueryResult match");
+                }
+                // Issue #2224: route Agent-facing ref through export_ref so
+                // tenant + fiber stamp is guaranteed (parity with #2152 dispatch
+                // required_effects; primary outbound surface for ast: / query: /
+                // mutate return paths).
+                const auto ref = ev.export_ref(id);
+                // Issue #3198: export_ref now fail-closes on torn; do not pack (0 . 0).
+                if (ref.id == aura::ast::NULL_NODE)
+                    return restamp_lag();
+                // Soft (or sandbox=off): historical v1 (id . gen) pair.
+                const auto pid = ev.pairs_.size();
+                ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.id)),
+                                     make_int(static_cast<std::int64_t>(ref.gen))});
+                return make_pair(pid);
             }
-            // Issue #2224: route Agent-facing ref through export_ref so
-            // tenant + fiber stamp is guaranteed (parity with #2152 dispatch
-            // required_effects; primary outbound surface for ast: / query: /
-            // mutate return paths).
-            const auto ref = ev.export_ref(id);
-            // Issue #3198: export_ref now fail-closes on torn; do not pack (0 . 0).
-            if (ref.id == aura::ast::NULL_NODE)
-                return restamp_lag();
-            // Soft (or sandbox=off): historical v1 (id . gen) pair.
-            const auto pid = ev.pairs_.size();
-            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.id)),
-                                 make_int(static_cast<std::int64_t>(ref.gen))});
-            return make_pair(pid);
-        }
-        auto pack_v2 = [&](const StableNodeRef& ref) -> EvalValue {
-            // Issue #3398: v2 spine packer. Builds the nested pair
-            // (id . (gen . (wrap . (tenant . (cow . (fiber . boundary)))))
-            // — same shape as the #3396 v2 unpacker reads, so the
-            // round-trip is identity (no occupancy remap via zeroed
-            // wrap/tenant). fiber + boundary are included only when
-            // non-default (non-zero fiber_id or boundary_pinned true) to
-            // keep the spine minimal when the stamped ref is
-            // single-tenant / not boundary-pinned.
-            const auto p_id = ev.pairs_.size();
-            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.id)), make_void()});
-            const auto p_gen = ev.pairs_.size();
-            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.gen)), make_void()});
-            const auto p_wrap = ev.pairs_.size();
-            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.wrap_epoch)), make_void()});
-            const auto p_tenant = ev.pairs_.size();
-            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.tenant_id)), make_void()});
-            const auto p_cow = ev.pairs_.size();
-            ev.pairs_.push_back(
-                {make_int(static_cast<std::int64_t>(ref.cow_epoch_at_capture)), make_void()});
-            std::size_t tail = p_cow;
-            // Issue #4315: when the ref carries an install id, write fiber
-            // even if it is 0 so the following int is unambiguously the
-            // install id (a lone int after cow is fiber).
-            if (ref.fiber_id != 0 || ref.install_id_at_capture != 0) {
-                const auto p_fiber = ev.pairs_.size();
+            auto pack_v2 = [&](const StableNodeRef& ref) -> EvalValue {
+                // Issue #3398: v2 spine packer. Builds the nested pair
+                // (id . (gen . (wrap . (tenant . (cow . (fiber . boundary)))))
+                // — same shape as the #3396 v2 unpacker reads, so the
+                // round-trip is identity (no occupancy remap via zeroed
+                // wrap/tenant). fiber + boundary are included only when
+                // non-default (non-zero fiber_id or boundary_pinned true) to
+                // keep the spine minimal when the stamped ref is
+                // single-tenant / not boundary-pinned.
+                const auto p_id = ev.pairs_.size();
+                ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.id)), make_void()});
+                const auto p_gen = ev.pairs_.size();
+                ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.gen)), make_void()});
+                const auto p_wrap = ev.pairs_.size();
                 ev.pairs_.push_back(
-                    {make_int(static_cast<std::int64_t>(ref.fiber_id)), make_void()});
-                ev.pairs_[p_cow].cdr = make_pair(p_fiber);
-                tail = p_fiber;
-                if (ref.boundary_pinned) {
+                    {make_int(static_cast<std::int64_t>(ref.wrap_epoch)), make_void()});
+                const auto p_tenant = ev.pairs_.size();
+                ev.pairs_.push_back(
+                    {make_int(static_cast<std::int64_t>(ref.tenant_id)), make_void()});
+                const auto p_cow = ev.pairs_.size();
+                ev.pairs_.push_back(
+                    {make_int(static_cast<std::int64_t>(ref.cow_epoch_at_capture)), make_void()});
+                std::size_t tail = p_cow;
+                // Issue #4315: when the ref carries an install id, write fiber
+                // even if it is 0 so the following int is unambiguously the
+                // install id (a lone int after cow is fiber).
+                if (ref.fiber_id != 0 || ref.install_id_at_capture != 0) {
+                    const auto p_fiber = ev.pairs_.size();
+                    ev.pairs_.push_back(
+                        {make_int(static_cast<std::int64_t>(ref.fiber_id)), make_void()});
+                    ev.pairs_[p_cow].cdr = make_pair(p_fiber);
+                    tail = p_fiber;
+                    if (ref.boundary_pinned) {
+                        const auto p_boundary = ev.pairs_.size();
+                        ev.pairs_.push_back({make_bool(ref.boundary_pinned), make_void()});
+                        ev.pairs_[p_fiber].cdr = make_pair(p_boundary);
+                        tail = p_boundary;
+                    }
+                } else if (ref.boundary_pinned) {
                     const auto p_boundary = ev.pairs_.size();
                     ev.pairs_.push_back({make_bool(ref.boundary_pinned), make_void()});
-                    ev.pairs_[p_fiber].cdr = make_pair(p_boundary);
+                    ev.pairs_[p_cow].cdr = make_pair(p_boundary);
                     tail = p_boundary;
                 }
-            } else if (ref.boundary_pinned) {
-                const auto p_boundary = ev.pairs_.size();
-                ev.pairs_.push_back({make_bool(ref.boundary_pinned), make_void()});
-                ev.pairs_[p_cow].cdr = make_pair(p_boundary);
-                tail = p_boundary;
+                if (ref.install_id_at_capture != 0) {
+                    const auto p_inst = ev.pairs_.size();
+                    ev.pairs_.push_back(
+                        {make_int(static_cast<std::int64_t>(ref.install_id_at_capture)),
+                         make_void()});
+                    ev.pairs_[tail].cdr = make_pair(p_inst);
+                }
+                // Wire the spine: (tenant . (cow . ...)) ← (cow . ...)
+                ev.pairs_[p_tenant].cdr = make_pair(p_cow);
+                // (wrap . (tenant . (cow . ...))) ← (tenant . ...)
+                ev.pairs_[p_wrap].cdr = make_pair(p_tenant);
+                // (gen . (wrap . (tenant . (cow . ...))) ← (wrap . ...)
+                ev.pairs_[p_gen].cdr = make_pair(p_wrap);
+                // (id . (gen . (wrap . (tenant . (cow . ...))) ← (gen . ...)
+                ev.pairs_[p_id].cdr = make_pair(p_gen);
+                return make_pair(p_id);
+            };
+            if (!hard)
+                return make_void();
+            auto& flat = *ev.workspace_flat_;
+            if (is_hash(a[0])) {
+                using aura::compiler::query_result_decode::HashNodeKind;
+                using aura::compiler::query_result_decode::parse_query_result_match_index;
+                using aura::compiler::query_result_decode::resolve_query_result_match;
+                auto hr = resolve_query_result_match(
+                    a[0], ev.string_heap_, ev.pairs_, flat, ev.capability_tenant_id(),
+                    // Issue #4438: do not remint a foreign hash as this Agent.
+                    static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()), "query:as-stable-ref",
+                    parse_query_result_match_index(a, ev.keyword_table()));
+                if (hr.kind != HashNodeKind::Ok)
+                    return mev(hr.err_kind, hr.err_msg);
+                if (!ev.allow_query_stable_ref_export(hr.node))
+                    return restamp_lag();
+                const auto ref = ev.export_ref(hr.node);
+                if (ref.id == aura::ast::NULL_NODE)
+                    return restamp_lag();
+                return pack_v2(ref);
             }
-            if (ref.install_id_at_capture != 0) {
-                const auto p_inst = ev.pairs_.size();
-                ev.pairs_.push_back(
-                    {make_int(static_cast<std::int64_t>(ref.install_id_at_capture)), make_void()});
-                ev.pairs_[tail].cdr = make_pair(p_inst);
+            if (auto packed = unpack_stable_ref_arg(a[0])) {
+                StableNodeRef ref = *packed;
+                if (!ev.allow_query_stable_ref_export(ref.id))
+                    return restamp_lag();
+                // Issue #4438: tenant 0 under Restricted+MT consults occupancy
+                // before get_safe. Single-tenant and Soft allow inside the helper.
+                if (ref.tenant_id == 0 && !ev.restamp_read_ref(ref, "query:as-stable-ref"))
+                    return mev("stale-ref", "query:as-stable-ref: packed StableNodeRef not fresh");
+                // Issue #3425: validate identity; no occupancy auto-refresh.
+                if (!flat.get_safe(ref).has_value() ||
+                    !ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/false).has_value())
+                    return mev("stale-ref", "query:as-stable-ref: packed StableNodeRef not fresh");
+                return pack_v2(ref);
             }
-            // Wire the spine: (tenant . (cow . ...)) ← (cow . ...)
-            ev.pairs_[p_tenant].cdr = make_pair(p_cow);
-            // (wrap . (tenant . (cow . ...))) ← (tenant . ...)
-            ev.pairs_[p_wrap].cdr = make_pair(p_tenant);
-            // (gen . (wrap . (tenant . (cow . ...))) ← (wrap . ...)
-            ev.pairs_[p_gen].cdr = make_pair(p_wrap);
-            // (id . (gen . (wrap . (tenant . (cow . ...))) ← (gen . ...)
-            ev.pairs_[p_id].cdr = make_pair(p_gen);
-            return make_pair(p_id);
-        };
-        if (!hard)
             return make_void();
-        auto& flat = *ev.workspace_flat_;
-        if (is_hash(a[0])) {
-            using aura::compiler::query_result_decode::HashNodeKind;
-            using aura::compiler::query_result_decode::parse_query_result_match_index;
-            using aura::compiler::query_result_decode::resolve_query_result_match;
-            auto hr = resolve_query_result_match(
-                a[0], ev.string_heap_, ev.pairs_, flat, ev.capability_tenant_id(),
-                // Issue #4438: do not remint a foreign hash as this Agent.
-                static_cast<std::uint64_t>(ev.agent_scoped_fiber_id()), "query:as-stable-ref",
-                parse_query_result_match_index(a, ev.keyword_table()));
-            if (hr.kind != HashNodeKind::Ok)
-                return mev(hr.err_kind, hr.err_msg);
-            if (!ev.allow_query_stable_ref_export(hr.node))
-                return restamp_lag();
-            const auto ref = ev.export_ref(hr.node);
-            if (ref.id == aura::ast::NULL_NODE)
-                return restamp_lag();
-            return pack_v2(ref);
-        }
-        if (auto packed = unpack_stable_ref_arg(a[0])) {
-            StableNodeRef ref = *packed;
-            if (!ev.allow_query_stable_ref_export(ref.id))
-                return restamp_lag();
-            // Issue #4438: tenant 0 under Restricted+MT consults occupancy
-            // before get_safe. Single-tenant and Soft allow inside the helper.
-            if (ref.tenant_id == 0 && !ev.restamp_read_ref(ref, "query:as-stable-ref"))
-                return mev("stale-ref", "query:as-stable-ref: packed StableNodeRef not fresh");
-            // Issue #3425: validate identity; no occupancy auto-refresh.
-            if (!flat.get_safe(ref).has_value() ||
-                !ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/false).has_value())
-                return mev("stale-ref", "query:as-stable-ref: packed StableNodeRef not fresh");
-            return pack_v2(ref);
-        }
-        return make_void();
-    });
+        });
 
     // Issue #439: (mutate :request-gc-safepoint
     // [timeout-ms-int]) — request a GC safepoint.
@@ -5766,7 +5771,7 @@ template <typename Ctx> void RegSplitParts::register_mutate_replace_pattern_prim
                 matcher.clear_pending_guard();
             if (!matcher.match_subtree(id, pat_pr.root))
                 continue;
-            // Issue #292: :guard patterns need Aura eval (query:pattern).
+            // Issue #292: :guard patterns need Aura eval (query :pattern).
             // Mutate does not re-eval guards — skip those matches so we
             // never apply a replacement the query path would reject.
             if (matcher.has_pending_guard()) {

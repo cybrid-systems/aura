@@ -20,6 +20,6 @@
 
 (test-suite "ast-viz:dot-node"
   (set-code "(define (f x) (+ x 1))")
-  (define root (query:root))
+  (define root (query :root))
   (define dot-node (ast:to-dot-node root))
   (check (string? dot-node)))

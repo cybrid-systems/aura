@@ -184,7 +184,7 @@ static void ac7_mutate_stress() {
         (void)cs.eval(
             std::format("(mutate :rebind \"h\" \"(lambda (x) (+ x {}))\" \"issue1917\")", i % 5));
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(query:pattern '(define _ _))");
+        (void)cs.eval("(query :pattern '(define _ _))");
     }
     CHECK(href(cs, "query:jit-consistency-stats", "schema-1917") == 1917, "schema holds");
     CHECK(href(cs, "query:jit-consistency-stats", "critical-opcode-coverage-pct") >= 80,

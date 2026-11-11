@@ -53,7 +53,7 @@ static void ac1_macro_hygiene_stats() {
     std::println("\n--- AC1: query:macro-hygiene-stats schema 1613 ---");
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "macro workspace");
-    (void)cs.eval("(query:pattern \"*\")");
+    (void)cs.eval("(query :pattern \"*\")");
     auto h = cs.eval("(engine:metrics \"query:macro-hygiene-stats\")");
     CHECK(h && is_hash(*h), "macro-hygiene-stats hash");
     CHECK(href(cs, "query:macro-hygiene-stats", "schema") == 1613, "schema 1613");
@@ -110,7 +110,7 @@ static void ac4_self_modify_loop() {
     std::int64_t health_min = 100;
     std::int64_t health_max = 0;
     for (int i = 0; i < 30; ++i) {
-        (void)cs.eval("(query:pattern \"*\")");
+        (void)cs.eval("(query :pattern \"*\")");
         (void)cs.eval(std::format("(mutate :rebind \"base\" \"{}\")", 10 + i));
         (void)cs.eval("(eval-current)");
         const auto h = href(cs, "query:macro-hygiene-stats", "health-score");
@@ -133,7 +133,7 @@ static void ac5_lineage_nonneg() {
     std::println("\n--- AC5: lineage counters non-negative ---");
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "macro workspace");
-    (void)cs.eval("(query:pattern \"*\")");
+    (void)cs.eval("(query :pattern \"*\")");
     cs.evaluator().complete_post_resume_steal_refresh(nullptr);
     for (const char* k :
          {"root-skips", "recursive-skips", "ir-hygiene-stamped-count", "macro-stale-ref-prevented",

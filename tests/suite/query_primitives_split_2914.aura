@@ -15,7 +15,7 @@
     #t
     (begin (display "FAIL-2914 module-export-cache-stats\n") (set! ok #f)))
 
-; Schema discovery still present (query:schema primitive)
+; Schema discovery still present (query :schema primitive)
 (if (procedure? query:schema)
     #t
     (begin (display "FAIL-2914 query:schema missing\n") (set! ok #f)))

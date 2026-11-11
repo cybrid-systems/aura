@@ -268,7 +268,7 @@ echo "=== EDSL Tests ==="
 
 run_test "edsl:set-code"     "$(printf '(set-code \"(define (f x) (+ x 1))\")')" "#t"
 run_test "edsl:find"         "$(printf '(set-code \"(define (f x) (+ x 1))\") (query :find \"f\")')" "(5)"
-run_test "edsl:node-type"    "$(printf '(set-code \"(define (f x) (+ x 1))\") (query:node-type \"Define\")')" "(5)"
+run_test "edsl:node-type"    "$(printf '(set-code \"(define (f x) (+ x 1))\") (query :node-type \"Define\")')" "(5)"
 
 echo ""
 echo "=== Dual Workspace Tests (Phase 1) ==="
@@ -773,10 +773,10 @@ run_typecheck_test "diag:typecheck-ok" "(+ 1 2)" "type: Intno errors"
 run_test "agent:set-code-query" "$(printf '(set-code "(define (f x) (+ x 1))")(query :find \"f\")')" "(5)"
 
 # set-code + query:node-type
-run_test "agent:query-node-type" "$(printf '(set-code "(define (f x) (+ x 1))")(query:node-type \"Define\")')" "(5)"
+run_test "agent:query-node-type" "$(printf '(set-code "(define (f x) (+ x 1))")(query :node-type \"Define\")')" "(5)"
 
 # set-code + query:calls
-run_test "agent:query-calls" "$(printf '(set-code "(define (f x) (+ x 1)) (define (g x) (f x))")(query:calls \"f\")')" "(8)"
+run_test "agent:query-calls" "$(printf '(set-code "(define (f x) (+ x 1)) (define (g x) (f x))")(query :calls \"f\")')" "(8)"
 
 # Pipe mode: display side-effect + return value (newline returns void, not printed)
 run_test "agent:pipe-mode" "$(printf '(display 42)')" "42"
@@ -786,10 +786,10 @@ run_test "agent:mutate-rebind" "$(printf '(set-code "(define (add x y) (+ x y))"
 
 # query:filter / query:where — combined filter queries
 run_test "edsl:filter-where" \
-  "$(printf '(set-code "(define (sort lst) (if (null? lst) () (sort (cdr lst))))")(query:filter (query:where :node-type "Call") (query:where :callee "sort"))')" \
+  "$(printf '(set-code "(define (sort lst) (if (null? lst) () (sort (cdr lst))))")(query :filter (query :where :node-type "Call") (query :where :callee "sort"))')" \
   "(8)"
 run_test "edsl:filter-define-name" \
-  "$(printf '(set-code "(define (add x y) (+ x y))")(query:filter (query:where :node-type "Define") (query:where :defines "add"))')" \
+  "$(printf '(set-code "(define (add x y) (+ x y))")(query :filter (query :where :node-type "Define") (query :where :defines "add"))')" \
   "(5)"
 
 # query:pattern
@@ -1227,7 +1227,7 @@ _file_4360() {
 (eval-current)
 (display (mutate :rebind "helper" "(lambda (x) (* x 9))" "ai adds helper"))
 (newline)
-(display (query:code))
+(display (query :code))
 (newline)
 (eval-current)
 (display (f 2))
@@ -1236,7 +1236,7 @@ _file_4360() {
 (newline)
 (display (mutate :rebind "helper2" "(lambda (x) (* x 7))" "ai adds helper2"))
 (newline)
-(display (query:code))
+(display (query :code))
 (newline)
 (eval-current)
 (display (helper2 2))
@@ -1271,7 +1271,7 @@ _file_4361() {
 (display (g 1))
 (newline)
 (mutate :atomic-batch (list (list "mutate:rebind" "f" "(lambda (x) (+ x 100))" "s1") (list "mutate:rebind" "missing" "(lambda (x) x)" "s2")) "b")
-(display (query:code))
+(display (query :code))
 (newline)
 (display (f 1))
 (newline)
@@ -1318,7 +1318,7 @@ _file_4362() {
 (newline)
 (display (mutate :atomic-batch (list (list "mutate:rebind" "greet" "(lambda (n) (string-append n 1))" "batch")) "batch"))
 (newline)
-(display (query:code))
+(display (query :code))
 (newline)
 (display (mutate :atomic-batch (list (list "mutate:rebind" "hello" "(lambda (x) (+ x 2))" "ok")) "ok"))
 (newline)
@@ -1367,7 +1367,7 @@ _file_4363() {
   (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))")
   (eval-current)
   (display "RB2 ") (write (mutate :rebind "bye" "(lambda (y) (hello y y))" "w")) (newline)
-  (display "CODE2 ") (write (query:code)) (newline)
+  (display "CODE2 ") (write (query :code)) (newline)
   (display "TC2 ") (write (typecheck-incremental)) (newline))
 (main)
 '
@@ -1420,7 +1420,7 @@ _file_4931_small_stack() {
   (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))")
   (eval-current)
   (display "RB2 ") (write (mutate :rebind "bye" "(lambda (y) (hello y y))" "w")) (newline)
-  (display "CODE2 ") (write (query:code)) (newline)
+  (display "CODE2 ") (write (query :code)) (newline)
   (display "TC2 ") (write (typecheck-incremental)) (newline))
 (main)
 '
@@ -1483,27 +1483,27 @@ _file_4364() {
     src='
 (define (main)
   (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))\n(hello 3)\n(bye 4)")
-  (display "C0 ") (display (length (query:calls "hello"))) (newline)
+  (display "C0 ") (display (length (query :calls "hello"))) (newline)
   (display "R1 ") (display (mutate :rebind "bye" "(lambda (y) (- (hello y)))")) (newline)
-  (display "C1 ") (display (length (query:calls "hello"))) (newline)
+  (display "C1 ") (display (length (query :calls "hello"))) (newline)
   (display "R2 ") (display (mutate :rebind "bye" "(lambda (y) y)")) (newline)
-  (display "C2 ") (display (length (query:calls "hello"))) (newline)
+  (display "C2 ") (display (length (query :calls "hello"))) (newline)
   (display "R3 ") (display (mutate :rebind "bye" "(lambda (y) (hello (hello y)))")) (newline)
-  (display "C3 ") (display (length (query:calls "hello"))) (newline)
-  (display "CODE ") (display (query:code)) (newline)
+  (display "C3 ") (display (length (query :calls "hello"))) (newline)
+  (display "CODE ") (display (query :code)) (newline)
   (eval-current)
-  (display "C4 ") (display (length (query:calls "hello"))) (newline)
-  (set-code (query:code))
-  (display "C5 ") (display (length (query:calls "hello"))) (newline)
+  (display "C4 ") (display (length (query :calls "hello"))) (newline)
+  (set-code (query :code))
+  (display "C5 ") (display (length (query :calls "hello"))) (newline)
   (set-code "(define (hello x) (+ x 1))\n(define (bye y) (hello y))\n(hello 3)\n(bye 4)")
   (eval-current)
-  (display "S0 ") (display (length (query:calls "hello"))) (newline)
+  (display "S0 ") (display (length (query :calls "hello"))) (newline)
   (display "SB ") (display (mutate :set-body "bye" "(lambda (y) y)")) (newline)
-  (display "S1 ") (display (length (query:calls "hello"))) (newline)
+  (display "S1 ") (display (length (query :calls "hello"))) (newline)
   (display "BA ") (display (mutate :atomic-batch (list (list "mutate:rebind" "bye" "(lambda (y) (hello y))" "b")) "b")) (newline)
-  (display "S2 ") (display (length (query:calls "hello"))) (newline)
+  (display "S2 ") (display (length (query :calls "hello"))) (newline)
   (display "TA ") (display (typed-mutate-atomic (list "(mutate :rebind \"bye\" \"(lambda (y) (hello (hello y)))\" \"t\")"))) (newline)
-  (display "S3 ") (display (length (query:calls "hello"))) (newline))
+  (display "S3 ") (display (length (query :calls "hello"))) (newline))
 (main)
 '
     local hard soft errh errs
@@ -1564,16 +1564,16 @@ _file_4365() {
   (show "FP2" (mutate :set-agent-fingerprint 3))
   (show "K2" (typed-mutate-atomic (list "(mutate :rebind \\"bye\\" \\"(lambda (y) (- (hello y)))\\" \\"flip\\")")))
   (mutate :set-agent-fingerprint 1)
-  (show "LOG" (query:mutations-since 0))
+  (show "LOG" (query :mutations-since 0))
   (show "SER" (serialize-workspace "$book"))
   (set-code "(define (zzz) 0)")
   (eval-current)
   (show "DES" (deserialize-workspace "$book"))
-  (show "CODE_BACK" (query:code))
-  (show "LOG_BACK" (query:mutations-since 0))
+  (show "CODE_BACK" (query :code))
+  (show "LOG_BACK" (query :mutations-since 0))
   (show "RESTORE1" (mutate :restore s1))
   (eval-current)
-  (show "LOG_S1" (query:mutations-since 0)))
+  (show "LOG_S1" (query :mutations-since 0)))
 (main)
 EOF
 )
@@ -1620,7 +1620,7 @@ _file_4366() {
   (serialize-workspace "$book")
   (set-code "(define z 1)") (eval-current)
   (display " DES ") (write (deserialize-workspace "$book"))
-  (display " LOG ") (write (length (query:mutations-since 0))) (newline))
+  (display " LOG ") (write (length (query :mutations-since 0))) (newline))
 (define (main)
   (try1 "NUM" "(define (f x) x)\n(f 3)")
   (try1 "LIST" "(define (f x) x)\n(list 1 2)")
@@ -1653,7 +1653,7 @@ _file_4367() {
 (define (show k v) (display k) (display " ") (write v) (newline))
 (define (nid n) (car (car (define-lookup n))))
 (define (prov n)
-  (let ((h (query:node-provenance (nid n))))
+  (let ((h (query :node-provenance (nid n))))
     (list n (hash-ref h "mutation_id") (hash-ref h "author-fingerprint"))))
 (define (hit rows id mut)
   (if (null? rows)
@@ -1679,7 +1679,7 @@ _file_4367() {
   (show "DES" (deserialize-workspace "$book"))
   (show "IDS2" (list (nid "hello") (nid "bye") (nid "add")))
   (show "PROV2" (list (prov "hello") (prov "bye") (prov "add")))
-  (let ((log (query:mutations-since 0))
+  (let ((log (query :mutations-since 0))
         (ph (prov "hello"))
         (pb (prov "bye"))
         (pa (prov "add")))

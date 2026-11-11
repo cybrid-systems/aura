@@ -2111,9 +2111,10 @@ namespace primitives_detail {
         std::function<void()> build_tag_arity_index,
         std::function<EvalValue(const std::string&, const std::string&)> mev, Evaluator& ev);
     void register_defuse_query_primitives(
-        std::function_ref<void(std::string, PrimFn)> add, std::shared_mutex& workspace_mtx,
-        aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool,
-        ::aura::compiler::LockedStringHeap& string_heap, std::function<void*()> ensure_defuse,
+        std::function_ref<void(std::string, PrimFn)> add, Evaluator& ev,
+        std::shared_mutex& workspace_mtx, aura::ast::FlatAST*& workspace_flat,
+        aura::ast::StringPool*& workspace_pool, ::aura::compiler::LockedStringHeap& string_heap,
+        std::function<void*()> ensure_defuse,
         std::function<EvalValue(void* idx, aura::ast::SymId sym)> def_use_for_sym,
         std::function<EvalValue(void* idx, aura::ast::NodeId node)> reaches_for_node,
         std::function<EvalValue(void* idx, aura::ast::SymId sym)> effects_for_sym,
@@ -7271,7 +7272,7 @@ private:
     // Issue #1501: # of times snapshot served the user-only hygiene index.
     mutable std::atomic<std::uint64_t> tag_arity_hygiene_index_served_total_{0};
     // Issue #371: shared_mutex around the (tag, arity)
-    // index. Reader (query:pattern fast path read in
+    // index. Reader (query :pattern fast path read in
     // evaluator_primitives_query_workspace.cpp,
     // tag_arity_index_size/entry_count accessors) takes a
     // shared_lock; writer (build_tag_arity_index, all the
@@ -8395,7 +8396,7 @@ private:
     mutable std::atomic<std::uint64_t> provenance_mismatch_{0};
     // Issue #550: incremental typed self-mod dirty + narrowing
     // observability counters. Exposed via
-    // (query:typed-mutation-stats) + (query:dirty-impact)
+    // (query:typed-mutation-stats) + (query :dirty-impact)
     // primitives. Stats-only (relaxed-ordering). Currently
     // exposed as reachable + initialized to 0; the actual
     // wiring into TypeChecker / OccurrenceInfoFlat is the
@@ -8622,7 +8623,7 @@ private:
     mutable std::atomic<std::uint64_t> pattern_query_after_batch_latency_us_total_{0};
     mutable std::atomic<std::uint64_t> pattern_query_after_batch_samples_{0};
     // Armed after successful atomic-batch index sync; consumed by next
-    // snapshot_tag_arity_bucket (query:pattern) to record post-batch latency.
+    // snapshot_tag_arity_bucket (query :pattern) to record post-batch latency.
     mutable std::atomic<bool> pattern_query_after_batch_armed_{false};
     // Issue #448: mutation coordination observability. Bumped
     // by the scheduler / fiber hooks when:
@@ -8715,7 +8716,7 @@ private:
     // guard flushes. The deltas track: how many nodes were
     // touched, what reasons were seen, and the epoch delta
     // (defuse_version_ increment since boundary entry).
-    // Exposed via (query:mutation-impact) + (query:epoch-stats).
+    // Exposed via (query :mutation-impact) + (query:epoch-stats).
     std::atomic<std::uint64_t> mutation_impact_count_{0};
     std::atomic<std::uint64_t> mutation_impact_nodes_changed_total_{0};
     std::atomic<std::uint64_t> mutation_impact_reasons_seen_mask_{0};
@@ -8723,7 +8724,7 @@ private:
     // recent successful mutation-impact summaries. Written
     // under workspace_mtx_ (outermost guard) + relaxed-atomic
     // flag for new-data notification. Used by
-    // (query:mutation-impact) to return the head entry as an
+    // (query :mutation-impact) to return the head entry as an
     // int. P0: each entry is a 4-tuple of (count, delta,
     // reasons_mask, seq); we encode as 1 int = total
     // impact_events_count for the simplest P0 contract.
@@ -11613,7 +11614,7 @@ public:
     }
     // Issue #550: incremental typed self-mod accessors +
     // bump helpers. Public so the (query:typed-mutation-
-    // stats) + (query:dirty-impact) primitives can read
+    // stats) + (query :dirty-impact) primitives can read
     // them, and the follow-up TypeChecker / OccurrenceInfo
     // wiring can bump them.
     [[nodiscard]] std::uint64_t get_narrowing_refresh_count() const noexcept {

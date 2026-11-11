@@ -453,7 +453,7 @@ static void ac1913_4_pattern_latency() {
                          "\"1913-ac4\")");
     CHECK(batch.has_value(), "batch");
 
-    auto pat = cs.eval("(query:pattern '(define _ _))");
+    auto pat = cs.eval("(query :pattern '(define _ _))");
     CHECK(pat.has_value(), "query:pattern after batch");
 
     const auto samples1 = load_u64(metrics_of(cs)->pattern_query_after_batch_samples);
@@ -517,7 +517,7 @@ static void ac1913_7_multi_round_stress() {
                         "\"r{}\")",
                         i % 20, i, i));
         CHECK(b.has_value(), std::format("round {} batch", i));
-        auto p = cs.eval("(query:pattern '(define _ _))");
+        auto p = cs.eval("(query :pattern '(define _ _))");
         CHECK(p.has_value(), std::format("round {} pattern", i));
     }
     const auto us =

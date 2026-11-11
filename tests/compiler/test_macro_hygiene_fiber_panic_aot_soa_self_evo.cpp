@@ -93,8 +93,8 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC3: query:pattern hygiene filter ---");
     const auto prov0 = hash_int(cs, "provenance-violations");
-    (void)cs.eval("(query:pattern \"v\")");
-    (void)cs.eval("(query:pattern \"define\")");
+    (void)cs.eval("(query :pattern \"v\")");
+    (void)cs.eval("(query :pattern \"define\")");
     const auto prov1 = hash_int(cs, "provenance-violations");
     std::println("  provenance-violations: {} -> {}", prov0, prov1);
     CHECK(prov1 >= prov0, "provenance-violations monotonic after query:pattern");
@@ -111,7 +111,7 @@ static void run_matrix(CompilerService& cs) {
     for (int round = 0; round < 3; ++round) {
         (void)cs.eval("(mutate :rebind \"user-val\" \"" + std::to_string(50 + round) + "\")");
         (void)cs.eval("(eval-current)");
-        (void)cs.eval("(query:pattern \"define\")");
+        (void)cs.eval("(query :pattern \"define\")");
     }
     const auto stats5b = stats_sum(cs);
     std::println("  macro-hygiene sum: {} -> {}", stats5a, stats5b);

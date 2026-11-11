@@ -86,15 +86,15 @@ INFRA_REQUIRED: tuple[tuple[str, str], ...] = (
 EXPORT_SITE_REQUIRED: tuple[tuple[str, str, str], ...] = (
     # (path, site-name-keyword, restamp-lag-error-keyword)
     # query:children-stable
-    ("src/compiler/evaluator_primitives_query_workspace.cpp", "query:children-stable", r"mev\(\"restamp-lag\""),
+    ("src/compiler/evaluator_primitives_query_workspace.cpp", "query:children-stable", r"mev\(\s*\"restamp-lag\""),
     # query:parent-stable
-    ("src/compiler/evaluator_primitives_query_workspace.cpp", "query:parent-stable", r"mev\(\"restamp-lag\""),
+    ("src/compiler/evaluator_primitives_query_workspace.cpp", "query:parent-stable", r"mev\(\s*\"restamp-lag\""),
     # query:stable-ref
-    ("src/compiler/evaluator_primitives_query_workspace.cpp", "query:stable-ref", r"mev\(\"restamp-lag\""),
+    ("src/compiler/evaluator_primitives_query_workspace.cpp", "query:stable-ref", r"mev\(\s*\"restamp-lag\""),
     # query:ensure-ref
-    ("src/compiler/evaluator_primitives_query_workspace.cpp", "query:ensure-ref", r"mev\(\"restamp-lag\""),
+    ("src/compiler/evaluator_primitives_query_workspace.cpp", "query:ensure-ref", r"mev\(\s*\"restamp-lag\""),
     # query:as-stable-ref (mutate:export-stable-ref)
-    ("src/compiler/evaluator_primitives_mutate.cpp", "query:as-stable-ref", r"mev\(\"restamp-lag\""),
+    ("src/compiler/evaluator_primitives_mutate.cpp", "query:as-stable-ref", r"mev\(\s*\"restamp-lag\""),
 )
 
 # Issue #3138: Agent-visible recovery contract — every restamp-lag reject
@@ -105,31 +105,31 @@ RECOVERY_HINT_REQUIRED: tuple[tuple[str, str, str, str], ...] = (
     (
         "src/compiler/evaluator_primitives_query_workspace.cpp",
         "query:children-stable",
-        r"mev\(\"restamp-lag\"",
+        r"mev\(\s*\"restamp-lag\"",
         r"recovery:\s*re-query\s+after\s+budget\s+window\s+or\s+force\s+full\s+restamp\s+before\s+reusing\s+refs",
     ),
     (
         "src/compiler/evaluator_primitives_query_workspace.cpp",
         "query:parent-stable",
-        r"mev\(\"restamp-lag\"",
+        r"mev\(\s*\"restamp-lag\"",
         r"recovery:\s*re-query\s+after\s+budget\s+window\s+or\s+force\s+full\s+restamp\s+before\s+reusing\s+refs",
     ),
     (
         "src/compiler/evaluator_primitives_query_workspace.cpp",
         "query:stable-ref",
-        r"mev\(\"restamp-lag\"",
+        r"mev\(\s*\"restamp-lag\"",
         r"recovery:\s*re-query\s+after\s+budget\s+window\s+or\s+force\s+full\s+restamp\s+before\s+reusing\s+refs",
     ),
     (
         "src/compiler/evaluator_primitives_query_workspace.cpp",
         "query:ensure-ref",
-        r"mev\(\"restamp-lag\"",
+        r"mev\(\s*\"restamp-lag\"",
         r"recovery:\s*re-query\s+after\s+budget\s+window\s+or\s+force\s+full\s+restamp\s+before\s+reusing\s+refs",
     ),
     (
         "src/compiler/evaluator_primitives_mutate.cpp",
         "query:as-stable-ref",
-        r"mev\(\"restamp-lag\"",
+        r"mev\(\s*\"restamp-lag\"",
         r"recovery:\s*re-query\s+after\s+budget\s+window\s+or\s+force\s+full\s+restamp\s+before\s+reusing\s+refs",
     ),
 )

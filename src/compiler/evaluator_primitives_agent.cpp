@@ -7012,7 +7012,7 @@ void RegSplitParts::register_agent_send_primitive(Evaluator& ev, AddFn& add) {
     // Issue #2011: language surface for agent_send / agent_recv.
     // Issue #3442: resolve_aura_agent (name-table then session-local
     // AgentScope::find) so orch:scope-spawn agents are on this plane.
-    // Issue #2848: StableNodeRef-bearing payloads (query:stable-ref pair shape
+    // Issue #2848: StableNodeRef-bearing payloads (query :stable-ref pair shape
     // (id . gen) / (id . (gen . _))) auto-run Evaluator::handoff_ref then
     // stamp held_ref_token + handoff_completed before push. Ordinary
     // string/int/bool remain zero-cost (no held_ref_token). Handoff failure

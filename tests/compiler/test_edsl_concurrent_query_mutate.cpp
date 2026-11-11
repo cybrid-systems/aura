@@ -88,7 +88,7 @@ static void query_worker(SharedState* s) {
     for (int i = 0; i < K_ITERS; ++i) {
         {
             std::scoped_lock<std::mutex> lk(s->eval_mtx);
-            auto r = s->cs->eval("(query:pattern \"42\")");
+            auto r = s->cs->eval("(query :pattern \"42\")");
             (void)r;
             if (auto* flat = s->cs->evaluator().workspace_flat()) {
                 auto ref = flat->make_ref(aura::ast::NodeId{0});

@@ -107,7 +107,7 @@ static void ac2527_1_no_match_returns_success() {
     // and the primitive returns bad-arg (not a hash). Default hygiene
     // is already :macro-introduced-only.
     auto r = cs.eval("(mutate :query-and-replace-batch "
-                     "(query:where :tag \"NoSuchNodeType\") \"42\")");
+                     "(query :where :tag \"NoSuchNodeType\") \"42\")");
     if (!r) {
         CHECK(false, "AC1: mutate:query-and-replace-batch returned");
         return;
@@ -122,7 +122,7 @@ static void ac2527_1_no_match_returns_success() {
     }
     if (ok_hash) {
         auto hs = cs.eval("(hash-ref (mutate :query-and-replace-batch "
-                          "(query:where :tag \"NoSuchNodeType\") \"42\") :success)");
+                          "(query :where :tag \"NoSuchNodeType\") \"42\") :success)");
         if (!hs || !is_bool(*hs) || !as_bool(*hs)) {
             CHECK(false, "AC1: :success #t");
             return;
@@ -146,7 +146,7 @@ static void ac2527_1_size_counter_bumps() {
     }
     const std::uint64_t baseline = load_u64(m->query_replace_batch_size);
     auto r = cs.eval("(mutate :query-and-replace-batch "
-                     "(query:where :tag \"NoSuchNodeType\") \"42\")");
+                     "(query :where :tag \"NoSuchNodeType\") \"42\")");
     if (!r || !(is_hash(*r) || (is_bool(*r) && as_bool(*r)))) {
         ++g_failed;
         return;
@@ -180,7 +180,7 @@ static void ac2527_2_basic_success_path() {
     // For this test, we verify the no-op path (no matches) and the
     // partial-fail-collect path via a stub workspace.
     auto r = cs.eval("(mutate :query-and-replace-batch "
-                     "(query:where :tag \"LiteralInt\") \"999\")");
+                     "(query :where :tag \"LiteralInt\") \"999\")");
     if (!r || !(is_hash(*r) || (is_bool(*r) && as_bool(*r)))) {
         ++g_failed;
         return;
@@ -211,7 +211,7 @@ static void ac2527_4_bad_arg_template_not_string() {
         return;
     }
     auto r = cs.eval("(mutate :query-and-replace-batch "
-                     "(query:where :tag \"LiteralInt\") 42)");
+                     "(query :where :tag \"LiteralInt\") 42)");
     if (!r || !(is_error(*r) || is_string(*r) || is_pair(*r))) {
         CHECK(false, "AC3: non-string template is error");
         return;
@@ -227,7 +227,7 @@ static void ac2527_5_bad_hygiene_mode() {
         return;
     }
     auto r = cs.eval("(mutate :query-and-replace-batch "
-                     "(query:where :tag \"LiteralInt\") \"42\" "
+                     "(query :where :tag \"LiteralInt\") \"42\" "
                      " :hygiene-keep :bogus-mode)");
     if (!r || !(is_error(*r) || is_string(*r) || is_pair(*r))) {
         CHECK(false, "AC4: bad hygiene mode is error");
@@ -255,7 +255,7 @@ static void ac2527_7_query_surface_keys() {
         return;
     }
     auto r = cs.eval("(mutate :query-and-replace-batch "
-                     "(query:where :tag \"NoSuchNodeType\") \"42\")");
+                     "(query :where :tag \"NoSuchNodeType\") \"42\")");
     (void)r;
     // Structured-hash schema-2527 surface was deferred; the live query
     // returns the integer sum of the 3 counters.
@@ -331,8 +331,8 @@ static void ac4926_1_batch_abort_frees_parse_orphans() {
     const auto freed_before = ws->ghost_orphan_nodes_freed();
     // Same boundary: batch abort, then a tag query that would serve the
     // unlinked template LiteralInt rows through the (tag, arity) index.
-    auto r = cs.eval("(begin (mutate :query-and-replace-batch (query:where :callee \"f\") \"1)\") "
-                     "(length (query:filter (query:where :tag \"LiteralInt\"))))");
+    auto r = cs.eval("(begin (mutate :query-and-replace-batch (query :where :callee \"f\") \"1)\") "
+                     "(length (query :filter (query :where :tag \"LiteralInt\"))))");
     auto* ws_after = cs.evaluator().workspace_flat();
     CHECK(ws_after == ws, "4926 AC1: same flat");
     if (!ws_after)

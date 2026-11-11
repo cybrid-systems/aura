@@ -220,16 +220,16 @@ int main() {
             // 3400 AC2: sibling mutate bumps workspace gen, target node_gen_
             // unchanged → old captured ref must still read #t (old
             // flat.generation() compare said stale = lying oracle).
-            auto r3400_2 = cs3.eval(std::format(
-                "(let ((r (query:as-stable-ref {0})))(begin (mutate :record-patch {1} \"op\" \"s\")"
-                " (mutate :check-stable-ref r)))",
-                target3400, sib3400));
+            auto r3400_2 = cs3.eval(std::format("(let ((r (query :as-stable-ref {0})))(begin "
+                                                "(mutate :record-patch {1} \"op\" \"s\")"
+                                                " (mutate :check-stable-ref r)))",
+                                                target3400, sib3400));
             CHECK(r3400_2 && is_bool(*r3400_2) && as_bool(*r3400_2),
                   "3400 AC2: live node after sibling mutate → #t");
             // 3400 AC3: remove the target itself (slot recycled → node_gen
             // tombstone 0) → old captured ref must read #f under warn.
             auto r3400_3 = cs3.eval(
-                std::format("(let ((r (query:as-stable-ref {0})))(begin (mutate :remove-node {0})"
+                std::format("(let ((r (query :as-stable-ref {0})))(begin (mutate :remove-node {0})"
                             " (mutate :check-stable-ref r)))",
                             target3400));
             CHECK(r3400_3 && is_bool(*r3400_3) && !as_bool(*r3400_3),

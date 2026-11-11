@@ -4,7 +4,7 @@
 //
 // Non-duplicative refinement / additive to macro+reflect+self-evo
 // production review. Complements #547 (tag_arity_index + hygiene),
-// #486 (query:pattern filter), #501 (IR InlinePass), #524
+// #486 (query :pattern filter), #501 (IR InlinePass), #524
 // (macro-production-hygiene-stats), and #420 (contract stats) with
 // the full end-to-end matrix the Task6 review flagged:
 //
@@ -79,9 +79,9 @@ static bool setup_macro_workspace(CompilerService& cs) {
 bool test_macro_expand_stamps_macrointroduced(CompilerService& cs) {
     std::println("\n--- AC1: macro expand stamps MacroIntroduced ---");
     CHECK(setup_macro_workspace(cs), "hygienic macro workspace setup");
-    auto macro_n = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+    auto macro_n = cs.eval("(length (query :by-marker \"MacroIntroduced\"))");
     CHECK(macro_n.has_value() && aura::compiler::types::is_int(*macro_n),
-          "(query:by-marker \"MacroIntroduced\") returns int");
+          "(query :by-marker \"MacroIntroduced\") returns int");
     CHECK(aura::compiler::types::as_int(*macro_n) >= 3, "macro-introduced >= 3 nodes");
     auto* ws = cs.evaluator().workspace_flat();
     CHECK(ws != nullptr, "workspace_flat reachable");
@@ -94,8 +94,8 @@ bool test_macro_expand_stamps_macrointroduced(CompilerService& cs) {
 bool test_query_pattern_default_filters(CompilerService& cs) {
     std::println("\n--- AC2: query:pattern default filters MacroIntroduced ---");
     const auto skips0 = cs.evaluator().get_macro_introduced_skipped_in_query();
-    const auto default_cnt = result_count(cs, "(query:pattern \"*\")");
-    const auto allow_cnt = result_count(cs, "(query:pattern \"*\" :allow-macro-introduced #t)");
+    const auto default_cnt = result_count(cs, "(query :pattern \"*\")");
+    const auto allow_cnt = result_count(cs, "(query :pattern \"*\" :allow-macro-introduced #t)");
     CHECK(default_cnt >= 0 && allow_cnt >= 0, "pattern match counts observable");
     CHECK(allow_cnt >= default_cnt, "allow-macro-introduced yields >= default-filtered");
     const auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
@@ -107,12 +107,13 @@ bool test_query_pattern_default_filters(CompilerService& cs) {
 // ── AC3: :respect-hygiene keyword alias ────────────────────
 bool test_respect_hygiene_keyword(CompilerService& cs) {
     std::println("\n--- AC3: :respect-hygiene keyword alias ---");
-    auto r1 = cs.eval("(query:pattern \"base\" :respect-hygiene #f)");
-    CHECK(r1.has_value(), "(query:pattern :respect-hygiene #f) recognized");
-    auto r2 = cs.eval("(query:pattern \"base\" :include-macro-introduced #f)");
-    CHECK(r2.has_value(), "(query:pattern :include-macro-introduced #f) recognized");
-    const auto respect_cnt = result_count(cs, "(query:pattern \"*\" :respect-hygiene #t)");
-    const auto include_cnt = result_count(cs, "(query:pattern \"*\" :include-macro-introduced #t)");
+    auto r1 = cs.eval("(query :pattern \"base\" :respect-hygiene #f)");
+    CHECK(r1.has_value(), "(query :pattern :respect-hygiene #f) recognized");
+    auto r2 = cs.eval("(query :pattern \"base\" :include-macro-introduced #f)");
+    CHECK(r2.has_value(), "(query :pattern :include-macro-introduced #f) recognized");
+    const auto respect_cnt = result_count(cs, "(query :pattern \"*\" :respect-hygiene #t)");
+    const auto include_cnt =
+        result_count(cs, "(query :pattern \"*\" :include-macro-introduced #t)");
     CHECK(respect_cnt == include_cnt, ":respect-hygiene #t mirrors :include-macro-introduced #t");
     return true;
 }
@@ -120,17 +121,17 @@ bool test_respect_hygiene_keyword(CompilerService& cs) {
 // ── AC4: mutate safe on user nodes under Guard ─────────────
 bool test_mutate_safe_on_user_nodes(CompilerService& cs) {
     std::println("\n--- AC4: mutate safe on user nodes under Guard ---");
-    const auto markers_before = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+    const auto markers_before = cs.eval("(length (query :by-marker \"MacroIntroduced\"))");
     CHECK(cs.eval("(mutate :rebind \"base\" \"99\")").has_value(), "mutate:rebind under Guard");
-    (void)cs.eval("(query:pattern \"base\")");
+    (void)cs.eval("(query :pattern \"base\")");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current after mutate");
-    auto user_pat = cs.eval("(query:pattern \"base\")");
+    auto user_pat = cs.eval("(query :pattern \"base\")");
     CHECK(user_pat.has_value(), "query:pattern finds user binding after mutate");
     cs.evaluator().ensure_macro_hygiene_contract();
     CHECK(cs.evaluator().get_macro_hygiene_contract_violations() == 0,
           "zero macro hygiene contract violations after user mutate");
     if (markers_before && aura::compiler::types::is_int(*markers_before)) {
-        auto markers_after = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+        auto markers_after = cs.eval("(length (query :by-marker \"MacroIntroduced\"))");
         CHECK(markers_after.has_value() && aura::compiler::types::is_int(*markers_after),
               "macro-introduced count still observable");
         CHECK(aura::compiler::types::as_int(*markers_after) >=
@@ -168,8 +169,8 @@ bool test_tag_arity_dirty_hook_under_query(CompilerService& cs) {
     if (ws->size() > 0)
         ws->mark_dirty_upward(static_cast<aura::ast::NodeId>(0));
     CHECK(ws->tag_arity_index_dirty(), "mark_dirty_upward flips dirty flag");
-    (void)cs.eval("(query:pattern \"base\")");
-    (void)cs.eval("(query:pattern \"*\")");
+    (void)cs.eval("(query :pattern \"base\")");
+    (void)cs.eval("(query :pattern \"*\")");
     const auto d1 = ws->tag_arity_index_dirty_marks();
     std::println("  dirty_marks: {} -> {}", d0, d1);
     CHECK(d1 > d0, "dirty_marks bumped under macro+query load");
@@ -201,8 +202,8 @@ bool test_combined_metrics_monotonic(CompilerService& cs) {
     const auto prod0 =
         cs.eval("(hash-ref (engine:metrics \"query:macro-production-hygiene-stats\") "
                 "'macro-production-hygiene-total')");
-    (void)cs.eval("(query:pattern \"*\")");
-    (void)cs.eval("(query:pattern \"base\" :respect-hygiene #t)");
+    (void)cs.eval("(query :pattern \"*\")");
+    (void)cs.eval("(query :pattern \"base\" :respect-hygiene #t)");
     cs.evaluator().ensure_macro_hygiene_contract();
     const auto capture1 = hash_int(cs, "capture-prevented");
     const auto phs1 = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
@@ -239,8 +240,8 @@ bool test_fuzz_mutate_query_stress(CompilerService& cs) {
     const auto skips0 = cs.evaluator().get_macro_introduced_skipped_in_query();
     for (int i = 0; i < k_stress_iters(); ++i) {
         if (i == next_query) {
-            (void)cs.eval("(query:pattern \"*\")");
-            (void)cs.eval("(query:pattern \"base\")");
+            (void)cs.eval("(query :pattern \"*\")");
+            (void)cs.eval("(query :pattern \"base\")");
             ++queries;
             next_query = i + query_every(rng);
         }

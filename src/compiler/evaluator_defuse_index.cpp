@@ -904,7 +904,7 @@ void Evaluator::install_defuse_subsystem() {
     };
 
     primitives_detail::register_defuse_query_primitives(
-        prim_registrar(), workspace_mtx_, workspace_flat_, workspace_pool_, string_heap_,
+        prim_registrar(), *this, workspace_mtx_, workspace_flat_, workspace_pool_, string_heap_,
         ensure_defuse,
         [def_use_pair](void* idx, aura::ast::SymId sym) {
             return def_use_pair(static_cast<DefUseIndex*>(idx), sym);

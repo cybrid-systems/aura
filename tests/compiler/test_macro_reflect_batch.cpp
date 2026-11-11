@@ -90,7 +90,7 @@ static void run_597() {
         std::println("\n--- AC1: E2E macro → query → mutate → eval matrix ---");
         CompilerService cs;
         CHECK(setup_macro_workspace(cs), "macro workspace setup + eval");
-        auto q = cs.eval("(query:pattern \"user-val\")");
+        auto q = cs.eval("(query :pattern \"user-val\")");
         CHECK(q.has_value(), "query:pattern finds user binding post-macro");
         auto epoch0 = cs.eval("(engine:metrics \"query:epoch-stats\")");
         CHECK(epoch0.has_value() && aura::compiler::types::is_int(*epoch0),
@@ -117,7 +117,7 @@ static void run_597() {
         const auto s0 = eval_int(cs, "(engine:metrics \"query:macro-reflect-self-evo-stats\")");
         CHECK(s0 >= 0, "combined stats starts >= 0");
         for (int i = 0; i < 5; ++i) {
-            (void)cs.eval("(query:pattern \"user-val\")");
+            (void)cs.eval("(query :pattern \"user-val\")");
             (void)cs.eval("(mutate :replace-value (define user-val " + std::to_string(100 + i) +
                           ") (define user-val " + std::to_string(100 + i) + "))");
             (void)cs.eval("(eval-current)");
@@ -138,11 +138,11 @@ static void run_597() {
             "(engine:metrics \"query:hygiene-stats\")",
             "(engine:metrics \"query:pattern-hygiene-stats\")",
             "(engine:metrics \"query:epoch-stats\")",
-            "(query:mutation-impact)",
+            "(query :mutation-impact)",
             "(engine:metrics \"query:reflect-postmutate-stats\")",
             "(engine:metrics \"query:panic-checkpoint-lifecycle-stats\")",
             "(engine:metrics \"query:self-evolution-stability-stats\")",
-            "(query:dirty-impact)",
+            "(query :dirty-impact)",
             "(engine:metrics \"query:macro-reflect-self-evo-stats\")",
         };
         for (const char* prim : stats) {
@@ -167,8 +167,9 @@ static void run_597() {
         }
         auto m1 = cs.eval("(stats:get \"syntax-marker-counts\")");
         CHECK(m1.has_value(), "(stats:get \"syntax-marker-counts\") callable post-mutate");
-        auto by_marker = cs.eval("(query:by-marker \"MacroIntroduced\")");
-        CHECK(by_marker.has_value(), "(query:by-marker \"MacroIntroduced\") callable after cycles");
+        auto by_marker = cs.eval("(query :by-marker \"MacroIntroduced\")");
+        CHECK(by_marker.has_value(),
+              "(query :by-marker \"MacroIntroduced\") callable after cycles");
     }
 
     // AC5: Default hygiene filter on query:pattern
@@ -177,12 +178,12 @@ static void run_597() {
         CompilerService cs;
         CHECK(setup_macro_workspace(cs), "macro workspace for hygiene filter");
         const auto skips0 = cs.evaluator().get_macro_introduced_skipped_in_query();
-        (void)cs.eval("(query:pattern \"v\")");
+        (void)cs.eval("(query :pattern \"v\")");
         const auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
         std::println("  macro_introduced_skipped: {} -> {}", skips0, skips1);
         CHECK(skips1 >= skips0, "macro_introduced_skipped monotonic after query:pattern");
-        auto r = cs.eval("(query:pattern \"v\" :respect-hygiene #f)");
-        CHECK(r.has_value(), "(query:pattern :respect-hygiene #f) recognized");
+        auto r = cs.eval("(query :pattern \"v\" :respect-hygiene #f)");
+        CHECK(r.has_value(), "(query :pattern :respect-hygiene #f) recognized");
     }
 
     // AC6: Epoch + dirty propagation
@@ -192,12 +193,12 @@ static void run_597() {
         CHECK(setup_macro_workspace(cs), "macro workspace for dirty/epoch");
         const auto epoch0 = cs.evaluator().get_defuse_version();
         const auto snap0 = cs.evaluator().get_impact_snapshot_count();
-        const auto dirty0 = eval_int(cs, "(query:dirty-impact)");
+        const auto dirty0 = eval_int(cs, "(query :dirty-impact)");
         (void)cs.eval("(mutate :rebind \"user-val\" \"77\")");
         const auto epoch1 = cs.evaluator().get_defuse_version();
         const auto snap1 = cs.evaluator().get_impact_snapshot_count();
-        const auto dirty1 = eval_int(cs, "(query:dirty-impact)");
-        const auto impact1 = eval_int(cs, "(query:mutation-impact)");
+        const auto dirty1 = eval_int(cs, "(query :dirty-impact)");
+        const auto impact1 = eval_int(cs, "(query :mutation-impact)");
         std::println("  epoch: {} -> {} impact_snapshot: {} -> {} "
                      "dirty-impact: {} -> {} mutation-impact: {}",
                      epoch0, epoch1, snap0, snap1, dirty0, dirty1, impact1);
@@ -240,7 +241,7 @@ static void run_597() {
         for (int i = 0; i < k_fuzz_iters(); ++i) {
             switch (op_dist(rng)) {
                 case 0:
-                    (void)cs.eval("(query:pattern \"user-val\")");
+                    (void)cs.eval("(query :pattern \"user-val\")");
                     break;
                 case 1:
                     (void)cs.eval("(mutate :replace-value (define user-val " +
@@ -286,7 +287,7 @@ static void run_597() {
         auto worker = [&](int tid) {
             for (int i = 0; i < n_iters; ++i) {
                 std::scoped_lock<std::mutex> lk(mtx);
-                (void)cs.eval("(query:pattern \"user-val\")");
+                (void)cs.eval("(query :pattern \"user-val\")");
                 std::string code = "(mutate :replace-value (define user-val " +
                                    std::to_string(tid * 1000 + i) + ") (define user-val " +
                                    std::to_string(tid * 1000 + i) + "))";
@@ -357,7 +358,7 @@ static void run_597() {
         std::mt19937 rng(5971u);
         std::uniform_int_distribution<int> val_dist(0, 500);
         for (int i = 0; i < k_stress_iters(); ++i) {
-            (void)cs.eval("(query:pattern \"user-val\")");
+            (void)cs.eval("(query :pattern \"user-val\")");
             (void)cs.eval("(mutate :replace-value (define user-val " +
                           std::to_string(val_dist(rng)) + ") (define user-val " +
                           std::to_string(val_dist(rng)) + "))");
@@ -425,7 +426,7 @@ static void run_619() {
     {
         std::println("\n--- AC2: query:pattern hygiene filter ---");
         const auto skips0 = cs.evaluator().get_macro_introduced_skipped_in_query();
-        (void)cs.eval("(query:pattern \"v\")");
+        (void)cs.eval("(query :pattern \"v\")");
         const auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
         std::println("  hygiene_skips: {} -> {}", skips0, skips1);
         CHECK(skips1 >= skips0, "macro-introduced nodes filtered in query");
@@ -434,7 +435,7 @@ static void run_619() {
     // AC3: mutate:query-and-replace on user code succeeds
     {
         std::println("\n--- AC3: mutate under Guard on user code ---");
-        auto qr = cs.eval("(query:pattern \"user-val\")");
+        auto qr = cs.eval("(query :pattern \"user-val\")");
         CHECK(qr.has_value(), "query:pattern finds user-val");
         auto mr = cs.eval("(mutate :rebind \"user-val\" \"42\")");
         CHECK(mr.has_value(), "mutate:rebind on user binding succeeds");
@@ -484,7 +485,7 @@ static void run_619() {
         std::println("\n--- AC8: multi-round self-evo cycle ---");
         const auto stats8a = followup_stats(cs);
         for (int round = 0; round < 3; ++round) {
-            (void)cs.eval("(query:pattern \"user-val\")");
+            (void)cs.eval("(query :pattern \"user-val\")");
             (void)cs.eval("(mutate :rebind \"user-val\" \"" + std::to_string(100 + round) + "\")");
             (void)cs.eval("(eval-current)");
         }
@@ -526,7 +527,7 @@ static void run_635() {
     {
         std::println("\n--- AC2: query:pattern hygiene filter ---");
         const auto skips0 = cs.evaluator().get_macro_introduced_skipped_in_query();
-        (void)cs.eval("(query:pattern \"v\")");
+        (void)cs.eval("(query :pattern \"v\")");
         const auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
         std::println("  hygiene_skips: {} -> {}", skips0, skips1);
         CHECK(skips1 >= skips0, "macro-introduced nodes filtered in query");
@@ -536,7 +537,7 @@ static void run_635() {
     {
         std::println("\n--- AC3: mutate under Guard bumps counters ---");
         const auto stats3a = commercial_stats(cs);
-        (void)cs.eval("(query:pattern \"user-val\")");
+        (void)cs.eval("(query :pattern \"user-val\")");
         (void)cs.eval("(mutate :rebind \"user-val\" \"42\")");
         (void)cs.eval("(eval-current)");
         const auto stats3b = commercial_stats(cs);
@@ -556,7 +557,7 @@ static void run_635() {
         std::println("\n--- AC5: multi-round self-evo cycle monotonic ---");
         const auto stats5a = commercial_stats(cs);
         for (int round = 0; round < 3; ++round) {
-            (void)cs.eval("(query:pattern \"user-val\")");
+            (void)cs.eval("(query :pattern \"user-val\")");
             (void)cs.eval("(mutate :rebind \"user-val\" \"" + std::to_string(100 + round) + "\")");
             (void)cs.eval("(eval-current)");
         }

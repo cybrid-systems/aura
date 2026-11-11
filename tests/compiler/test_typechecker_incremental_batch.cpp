@@ -292,7 +292,7 @@ static void ac1923_3_stress() {
             i));
         (void)cs.eval("(eval-current)");
         if (i % 20 == 0)
-            (void)cs.eval("(query:pattern '(define _ _))");
+            (void)cs.eval("(query :pattern '(define _ _))");
     }
     CHECK(href(cs, "query:type-incremental-fidelity-stats", "schema-1923") == 1923, "schema holds");
     const auto ratio = href(cs, "query:type-incremental-fidelity-stats", "recheck-ratio-bp");

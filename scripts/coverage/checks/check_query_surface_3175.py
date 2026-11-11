@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Issue #3175: prune diagnostic / low-frequency query: primitives.
 
-Public query: add() stays under 34. Hygiene/pin-count/skeleton/templates/
+Public query: add() stays under 34. Issue #5144 moved the 35 query:
+aliases to dispatch-only bodies (add_hidden), so (query :op) still works
+but none of them is a public add() any more. Hygiene/pin-count/skeleton/templates/
 occurrence-stale/schema-of-marker/primitives-meta/build-index
 stay as sink_query_prim bodies (C++ + existing engine:metrics) but are
 not registered. Agents use calls/defines/dirty/provenance/by-marker
 plus query:result-fresh? / query:result-matches (#3766 occupancy poll).
 
-  AC1 Distinct public query: add() count < 35; core keep list present;
+  AC1 Distinct public query: add() count < 35; core keep list present as
+      dispatch-only add_hidden bodies (#5144) and never as public add();
       same-name re-registration (dispatch override) is not surface
       growth (#4088 re-registers query:dirty-subtree from the workspace
       registration so production dispatches the resolve_query_node_arg
@@ -33,6 +36,7 @@ from query_prims_sources import read_query_prims
 ROOT = Path(__file__).resolve().parents[3]
 
 ADD_RE = re.compile(r'add\(\s*"([^"]+)"')
+DISPATCH_HIDDEN_RE = re.compile(r'add_hidden\(\s*"([^"]+)"')
 SUNK = (
     "query:hygiene-diagnostic",
     "query:hygiene-skip-count",
@@ -116,9 +120,15 @@ def main() -> int:
     public = sorted({n for n in ADD_RE.findall(src) if n.startswith("query:")})
     if len(public) >= 35:
         fails.append(f"AC1: distinct public query: add() count {len(public)} >= 35: {public}")
+    # #5144: the KEEP names are dispatch-only aliases: (query :op) reaches the
+    # body through the primitive table, but the name must not reappear as a
+    # public add() registration (no slot, no PrimMeta, no tier row).
+    dispatch_only = set(DISPATCH_HIDDEN_RE.findall(src))
     for k in KEEP:
-        if k not in public:
-            fails.append(f"AC1: missing public {k}")
+        if k not in dispatch_only:
+            fails.append(f"AC1: missing dispatch-only body {k}")
+        if k in public:
+            fails.append(f"AC1: {k} is a public add() again (#5144 forbids it)")
     extra_sunk = sorted(set(public) & set(SUNK))
     if extra_sunk:
         fails.append(f"AC1: sunk names still public add(): {extra_sunk}")
@@ -137,7 +147,7 @@ def main() -> int:
     if "query:query-diagnostic" in q or "query:query-surface" in q:
         fails.append("AC4: new top-level query key (forbidden)")
     must("3175: query:templates sunk", "AC5 audit", audit)
-    must('(query:by-marker \\"MacroIntroduced\\")', "AC5 hygiene", hyg)
+    must('(query :by-marker \\"MacroIntroduced\\")', "AC5 hygiene", hyg)
     must("check_query_surface_3175", "AC6 build", build)
     must("cmd_query_surface_3175", "AC6 cmd", build)
     if (ROOT / "tests" / "compiler" / "test_issue_3175.cpp").is_file():

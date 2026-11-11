@@ -172,14 +172,14 @@ int run_test_query_index_composite() {
         const auto m0 = ev.get_query_index_composite_miss_total();
 
         // Constrained (tag+arity): Define with 2 children → index hit.
-        (void)cs.eval("(query:pattern \"(define v0 0)\" :strict-arity #t)");
+        (void)cs.eval("(query :pattern \"(define v0 0)\" :strict-arity #t)");
         CHECK(ev.get_query_index_composite_hit_total() > h0, "AC1: constrained pattern → hit");
         const auto h1 = ev.get_query_index_composite_hit_total();
         const auto m1 = ev.get_query_index_composite_miss_total();
         CHECK(m1 == m0, "AC1: constrained does not bump miss");
 
         // Empty-bucket constrained still counts as hit (index used).
-        (void)cs.eval("(query:pattern \"(+ 9 9 9)\" :strict-arity #t)");
+        (void)cs.eval("(query :pattern \"(+ 9 9 9)\" :strict-arity #t)");
         CHECK(ev.get_query_index_composite_hit_total() > h1,
               "AC1: empty-bucket constrained still hit");
         CHECK(ev.get_query_index_composite_miss_total() == m1,
@@ -187,7 +187,7 @@ int run_test_query_index_composite() {
 
         // Unconstrained: root wildcard forces full walk → miss.
         const auto h2 = ev.get_query_index_composite_hit_total();
-        (void)cs.eval("(query:pattern \"...\")");
+        (void)cs.eval("(query :pattern \"...\")");
         CHECK(ev.get_query_index_composite_miss_total() > m1, "AC1: unconstrained → miss");
         CHECK(ev.get_query_index_composite_hit_total() == h2,
               "AC1: unconstrained does not bump hit");
@@ -195,9 +195,9 @@ int run_test_query_index_composite() {
         // by-marker :where → composite hit; bare by-marker → miss.
         const auto h3 = ev.get_query_index_composite_hit_total();
         const auto m3 = ev.get_query_index_composite_miss_total();
-        (void)cs.eval("(query:by-marker \"User\" :where \"Define\")");
+        (void)cs.eval("(query :by-marker \"User\" :where \"Define\")");
         CHECK(ev.get_query_index_composite_hit_total() > h3, "AC1: by-marker :where → hit");
-        (void)cs.eval("(query:by-marker \"User\")");
+        (void)cs.eval("(query :by-marker \"User\")");
         CHECK(ev.get_query_index_composite_miss_total() > m3,
               "AC1: unconstrained by-marker → miss");
     }
@@ -210,7 +210,7 @@ int run_test_query_index_composite() {
         auto& ev = cs.evaluator();
         const auto lock0 = ev.get_query_shared_lock_us_total();
         for (int i = 0; i < 20; ++i)
-            (void)cs.eval("(query:pattern \"(define v0 0)\" :strict-arity #t)");
+            (void)cs.eval("(query :pattern \"(define v0 0)\" :strict-arity #t)");
         const auto lock1 = ev.get_query_shared_lock_us_total();
         const auto lock_max = ev.get_query_shared_lock_us_max();
         std::println("  lock_us_total {} -> {}, max={}", lock0, lock1, lock_max);
@@ -230,7 +230,7 @@ int run_test_query_index_composite() {
         std::println("\n--- #2403 AC4: additive query keys schema-2403 ---");
         CompilerService cs;
         CHECK(setup_ws(cs), "AC4: workspace setup");
-        (void)cs.eval("(query:pattern \"(define v0 0)\" :strict-arity #t)");
+        (void)cs.eval("(query :pattern \"(define v0 0)\" :strict-arity #t)");
         CHECK(href(cs, "query:pattern-index-stats-hash", "schema") == 621,
               "AC4: base schema=621 preserved");
         CHECK(href(cs, "query:pattern-index-stats-hash", "schema-2403") == 2403,
@@ -246,7 +246,7 @@ int run_test_query_index_composite() {
                   href(cs, "query:pattern-index-stats-hash", "query-index-hit-rate") <= 100,
               "AC4: query-index-hit-rate in 0..100");
         // Semantics: pattern still returns matches for define.
-        auto r = cs.eval("(query:pattern \"(define v0 0)\" :strict-arity #t)");
+        auto r = cs.eval("(query :pattern \"(define v0 0)\" :strict-arity #t)");
         CHECK(r.has_value(), "AC4: pattern still returns value");
     }
 
@@ -260,7 +260,7 @@ int run_test_query_index_composite() {
         const auto m0 = ev.get_query_index_composite_miss_total();
         constexpr int kRounds = 200;
         for (int i = 0; i < kRounds; ++i)
-            (void)cs.eval("(query:pattern \"(+ 1 2)\" :strict-arity #t)");
+            (void)cs.eval("(query :pattern \"(+ 1 2)\" :strict-arity #t)");
         const auto h1 = ev.get_query_index_composite_hit_total();
         const auto m1 = ev.get_query_index_composite_miss_total();
         std::println("  hits {} -> {} (delta {}), misses {} -> {}", h0, h1, h1 - h0, m0, m1);
@@ -270,7 +270,7 @@ int run_test_query_index_composite() {
         const auto rate = href(cs, "query:pattern-index-stats-hash", "query-index-hit-rate");
         CHECK(rate >= 0, "AC5: hit-rate surface");
         // by-marker :where composition still works
-        auto bm = cs.eval("(query:by-marker \"User\" :where \"Define\" :limit 5)");
+        auto bm = cs.eval("(query :by-marker \"User\" :where \"Define\" :limit 5)");
         CHECK(bm.has_value(), "AC5: by-marker :where returns");
     }
 
@@ -286,7 +286,7 @@ int run_test_query_index_composite() {
         CHECK(call_id != aura::ast::NULL_NODE, "AC1: (+ 1 2) call node present");
         const auto key = node_bucket_key_4163(flat, call_id);
         // Warm the composite index for the call's (tag, arity).
-        (void)cs.eval("(query:pattern \"(+ 1 2)\" :strict-arity #t)");
+        (void)cs.eval("(query :pattern \"(+ 1 2)\" :strict-arity #t)");
         const auto bucket0 = ev.snapshot_tag_arity_bucket(key);
         CHECK(!bucket0.empty(), "AC1: warm (Call,3) bucket non-empty");
         CHECK(flat->parent_of(call_id) != aura::ast::NULL_NODE,
@@ -321,11 +321,11 @@ int run_test_query_index_composite() {
         const auto call_id = find_call3_4163(flat);
         CHECK(call_id != aura::ast::NULL_NODE, "AC2: (+ 1 2) call node present");
         // Warm the index, then confirm the live baseline: the call matches
-        // its own pattern exactly once (query:pattern returns the match
+        // its own pattern exactly once (query :pattern returns the match
         // LIST directly — plain list of NodeIds, not a hash).
-        (void)cs.eval("(query:pattern \"(+ 1 2)\" :strict-arity #t)");
+        (void)cs.eval("(query :pattern \"(+ 1 2)\" :strict-arity #t)");
         {
-            const auto n = cs.eval("(length (query:pattern \"(+ 1 2)\" :strict-arity #t))");
+            const auto n = cs.eval("(length (query :pattern \"(+ 1 2)\" :strict-arity #t))");
             CHECK(n.has_value() && is_int(*n), "AC2: live match count readable");
             CHECK(n.has_value() && is_int(*n) && as_int(*n) == 1,
                   "AC2: exactly one live match for the (+ 1 2) call");
@@ -336,7 +336,7 @@ int run_test_query_index_composite() {
         // query must serve zero matches, not a recycled id.
         (void)flat->free_orphan_nodes_from(call_id);
         CHECK(flat->is_free_slot(call_id), "AC2: call node tombstoned");
-        const auto n = cs.eval("(length (query:pattern \"(+ 1 2)\" :strict-arity #t))");
+        const auto n = cs.eval("(length (query :pattern \"(+ 1 2)\" :strict-arity #t))");
         const bool served_freed = n.has_value() && is_int(*n) && as_int(*n) > 0;
         CHECK(!served_freed, "AC2: freed id not served by the index fast path");
     }
@@ -352,7 +352,7 @@ int run_test_query_index_composite() {
         const auto call_id = find_call3_4163(flat);
         CHECK(call_id != aura::ast::NULL_NODE, "AC3: (+ 1 2) call node present");
         const auto key = node_bucket_key_4163(flat, call_id);
-        (void)cs.eval("(query:pattern \"(+ 1 2)\" :strict-arity #t)");
+        (void)cs.eval("(query :pattern \"(+ 1 2)\" :strict-arity #t)");
         (void)flat->free_orphan_nodes_from(call_id);
         CHECK(flat->is_free_slot(call_id), "AC3: slot tombstoned");
         // Cold full rebuild (public test hook: invalidate clears the

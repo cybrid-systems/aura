@@ -173,11 +173,11 @@ static void ac2_default_filters_macro() {
     CHECK(m != nullptr, "metrics");
 
     const auto filt0 = m->pattern_hygiene_filtered_total.load(std::memory_order_relaxed);
-    const auto macro_n = result_len(cs, "(query:by-marker \"MacroIntroduced\")");
+    const auto macro_n = result_len(cs, "(query :by-marker \"MacroIntroduced\")");
     CHECK(macro_n >= 3, "have MacroIntroduced nodes");
 
-    const auto default_cnt = result_len(cs, "(query:pattern \"*\")");
-    const auto allow_cnt = result_len(cs, "(query:pattern \"*\" :allow-macro-introduced #t)");
+    const auto default_cnt = result_len(cs, "(query :pattern \"*\")");
+    const auto allow_cnt = result_len(cs, "(query :pattern \"*\" :allow-macro-introduced #t)");
     CHECK(default_cnt >= 0 && allow_cnt >= 0, "pattern lengths");
     CHECK(allow_cnt >= default_cnt, "allow >= default (macro residue visible only with opt-in)");
     // Default path must have filtered something when macros expanded.
@@ -202,11 +202,11 @@ static void ac3_opt_in() {
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     const auto opt0 = m->pattern_include_macro_opt_in_total.load(std::memory_order_relaxed);
 
-    auto r1 = cs.eval("(query:pattern \"*\" :include-macro-introduced #t)");
+    auto r1 = cs.eval("(query :pattern \"*\" :include-macro-introduced #t)");
     CHECK(r1.has_value(), "include-macro-introduced accepted");
-    auto r2 = cs.eval("(query:pattern \"*\" :allow-macro-introduced #t)");
+    auto r2 = cs.eval("(query :pattern \"*\" :allow-macro-introduced #t)");
     CHECK(r2.has_value(), "allow-macro-introduced accepted");
-    auto r3 = cs.eval("(query:pattern \"*\" :exclude-macro-introduced #f)");
+    auto r3 = cs.eval("(query :pattern \"*\" :exclude-macro-introduced #f)");
     CHECK(r3.has_value(), "exclude-macro-introduced #f accepted");
 
     const auto opt1 = m->pattern_include_macro_opt_in_total.load(std::memory_order_relaxed);
@@ -223,7 +223,7 @@ static void ac4_concurrent_shared_lock() {
     for (int i = 0; i < 4; ++i) {
         threads.emplace_back([&]() {
             for (int j = 0; j < 30; ++j) {
-                auto r = cs.eval("(query:pattern \"*\")");
+                auto r = cs.eval("(query :pattern \"*\")");
                 if (r.has_value())
                     ok.fetch_add(1);
             }
@@ -240,8 +240,8 @@ static void ac5_metrics_schema() {
     std::println("\n--- AC5: pattern-hygiene-stats schema-2123 ---");
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "macro workspace");
-    (void)cs.eval("(query:pattern \"*\")");
-    (void)cs.eval("(query:pattern \"*\" :include-macro-introduced #t)");
+    (void)cs.eval("(query :pattern \"*\")");
+    (void)cs.eval("(query :pattern \"*\" :include-macro-introduced #t)");
     CHECK(href(cs, "schema-2123") == 2123, "schema-2123");
     CHECK(href(cs, "issue-2123") == 2123, "issue-2123");
     CHECK(href(cs, "default-hygiene-filter-wired") == 1, "wired sentinel");
@@ -256,11 +256,11 @@ static void ac6_existing_keywords() {
     std::println("\n--- AC6: existing hygiene keywords ---");
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "macro workspace");
-    CHECK(cs.eval("(query:pattern \"base\" :respect-hygiene #f)").has_value(),
+    CHECK(cs.eval("(query :pattern \"base\" :respect-hygiene #f)").has_value(),
           ":respect-hygiene recognized");
-    CHECK(cs.eval("(query:pattern \"base\" :exclude-macro-introduced #t)").has_value(),
+    CHECK(cs.eval("(query :pattern \"base\" :exclude-macro-introduced #t)").has_value(),
           ":exclude-macro-introduced recognized");
-    CHECK(cs.eval("(query:pattern \"base\" :with-markers #t)").has_value(),
+    CHECK(cs.eval("(query :pattern \"base\" :with-markers #t)").has_value(),
           ":with-markers recognized");
 }
 
@@ -340,10 +340,10 @@ static void ac2763_2_macro_hard_filter() {
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     CHECK(m != nullptr, "AC2: metrics");
     const auto filt0 = m->pattern_hygiene_filtered_total.load(std::memory_order_relaxed);
-    const auto macro_n = result_len(cs, "(query:by-marker \"MacroIntroduced\")");
+    const auto macro_n = result_len(cs, "(query :by-marker \"MacroIntroduced\")");
     CHECK(macro_n >= 1, "AC2: MacroIntroduced nodes present");
-    const auto default_cnt = result_len(cs, "(query:pattern \"*\")");
-    const auto allow_cnt = result_len(cs, "(query:pattern \"*\" :allow-macro-introduced #t)");
+    const auto default_cnt = result_len(cs, "(query :pattern \"*\")");
+    const auto allow_cnt = result_len(cs, "(query :pattern \"*\" :allow-macro-introduced #t)");
     CHECK(default_cnt >= 0 && allow_cnt >= 0, "AC2: pattern lengths");
     CHECK(allow_cnt >= default_cnt, "AC2: opt-in >= default (hygiene hard filter)");
     const auto filt1 = m->pattern_hygiene_filtered_total.load(std::memory_order_relaxed);
@@ -358,9 +358,9 @@ static void ac2763_3_soft_opt_in() {
     CHECK(setup_macro_ws(cs), "AC3: macro workspace");
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     const auto opt0 = m->pattern_include_macro_opt_in_total.load(std::memory_order_relaxed);
-    CHECK(cs.eval("(query:pattern \"*\" :include-macro-introduced #t)").has_value(),
+    CHECK(cs.eval("(query :pattern \"*\" :include-macro-introduced #t)").has_value(),
           "AC3: include-macro-introduced #t");
-    CHECK(cs.eval("(query:pattern \"*\" :allow-macro-introduced #t)").has_value(),
+    CHECK(cs.eval("(query :pattern \"*\" :allow-macro-introduced #t)").has_value(),
           "AC3: allow-macro-introduced #t");
     const auto opt1 = m->pattern_include_macro_opt_in_total.load(std::memory_order_relaxed);
     CHECK(opt1 >= opt0 + 2, "AC3: opt-in counters still bump (no regression)");
@@ -422,7 +422,7 @@ static void ac2763_5_observability() {
 
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "AC5: workspace");
-    (void)cs.eval("(query:pattern \"*\")");
+    (void)cs.eval("(query :pattern \"*\")");
     CHECK(href(cs, "schema-2763") == 2763, "AC5: hygiene-stats schema-2763");
     CHECK(href(cs, "issue-2763") == 2763, "AC5: hygiene-stats issue-2763");
     CHECK(href(cs, "query-pattern-hygiene-filtered-total") >= 0, "AC5: live hygiene-filtered key");
@@ -454,13 +454,13 @@ static void ac2989_2_default_hygiene() {
     std::println("\n--- #2989 AC2: MacroIntroduced not in default matches ---");
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "AC2: macro workspace");
-    const auto macro_n = result_len(cs, "(query:by-marker \"MacroIntroduced\")");
+    const auto macro_n = result_len(cs, "(query :by-marker \"MacroIntroduced\")");
     CHECK(macro_n >= 1, "AC2: MacroIntroduced nodes present");
-    const auto default_cnt = result_len(cs, "(query:pattern \"*\")");
-    const auto allow_cnt = result_len(cs, "(query:pattern \"*\" :allow-macro-introduced #t)");
+    const auto default_cnt = result_len(cs, "(query :pattern \"*\")");
+    const auto allow_cnt = result_len(cs, "(query :pattern \"*\" :allow-macro-introduced #t)");
     CHECK(default_cnt >= 0 && allow_cnt >= 0, "AC2: pattern lengths");
     CHECK(allow_cnt >= default_cnt, "AC2: opt-in >= default");
-    auto fr = cs.eval("(query:filter (query:where :node-type \"Call\"))");
+    auto fr = cs.eval("(query :filter (query :where :node-type \"Call\"))");
     CHECK(fr.has_value(), "AC2: default filter accepted");
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     CHECK(m != nullptr, "AC2: metrics");
@@ -474,7 +474,7 @@ static void ac2989_3_metrics() {
     CHECK(setup_macro_ws(cs), "AC3: workspace");
     const auto pin0 = cs.evaluator().get_query_safe_span_pin_count();
     CHECK(cs.eval("(query :children 0)").has_value(), "AC3: query:children");
-    CHECK(cs.eval("(query:pattern \"*\")").has_value(), "AC3: query:pattern");
+    CHECK(cs.eval("(query :pattern \"*\")").has_value(), "AC3: query:pattern");
     const auto pin1 = cs.evaluator().get_query_safe_span_pin_count();
     CHECK(pin1 > pin0, "AC3: safe-span pin count increased");
     auto skip_r = cs.eval("(engine:metrics \"query:hygiene-skip-count\")");
@@ -505,12 +505,12 @@ static void ac2989_4_concurrent_query_mutate() {
     for (int i = 0; i < 3; ++i) {
         threads.emplace_back([&]() {
             for (int j = 0; j < 25; ++j) {
-                auto r = cs.eval("(query:pattern \"*\")");
+                auto r = cs.eval("(query :pattern \"*\")");
                 if (r.has_value())
                     ok.fetch_add(1);
                 else
                     errors.fetch_add(1);
-                auto f = cs.eval("(query:filter (query:where :node-type \"Define\"))");
+                auto f = cs.eval("(query :filter (query :where :node-type \"Define\"))");
                 if (f.has_value())
                     ok.fetch_add(1);
                 auto c = cs.eval("(query :children 0)");
@@ -533,8 +533,8 @@ static void ac2989_4_concurrent_query_mutate() {
     CHECK(done.load() == 4, "AC4: all threads finished");
     CHECK(ok.load() >= 80, "AC4: most concurrent query+mutate succeeded");
     // Default hygiene still holds after concurrent mutate.
-    const auto default_cnt = result_len(cs, "(query:pattern \"*\")");
-    const auto allow_cnt = result_len(cs, "(query:pattern \"*\" :allow-macro-introduced #t)");
+    const auto default_cnt = result_len(cs, "(query :pattern \"*\")");
+    const auto allow_cnt = result_len(cs, "(query :pattern \"*\" :allow-macro-introduced #t)");
     CHECK(default_cnt >= 0 && allow_cnt >= default_cnt, "AC4: hygiene still holds");
 }
 
@@ -623,11 +623,11 @@ static void ac3354_1_production_find_skip() {
     CHECK(setup_macro_ws(cs), "AC1: macro workspace");
     apply_production_audit_defaults();
     CHECK(production_defaults_active(), "AC1: production_defaults_active");
-    const auto macro_n = query_match_count(cs, "(query:by-marker \"MacroIntroduced\")");
+    const auto macro_n = query_match_count(cs, "(query :by-marker \"MacroIntroduced\")");
     CHECK(macro_n >= 1, "AC1: MacroIntroduced nodes present");
     auto skips0 = cs.evaluator().get_macro_introduced_skipped_in_query();
-    const auto pat_def = query_match_count(cs, "(query:pattern \"*\")");
-    const auto pat_allow = query_match_count(cs, "(query:pattern \"*\" :allow-macro? #t)");
+    const auto pat_def = query_match_count(cs, "(query :pattern \"*\")");
+    const auto pat_allow = query_match_count(cs, "(query :pattern \"*\" :allow-macro? #t)");
     auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
     CHECK(skips1 > skips0, "AC1: production pattern skipped MacroIntroduced");
     CHECK(pat_def >= 0 && pat_allow >= pat_def, "AC1: pattern default ⊆ allow");
@@ -645,14 +645,14 @@ static void ac3354_2_allow_macro_unlock() {
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "AC2: macro workspace");
     apply_production_audit_defaults();
-    CHECK(cs.eval("(query:pattern \"*\" :allow-macro? #t)").has_value(),
+    CHECK(cs.eval("(query :pattern \"*\" :allow-macro? #t)").has_value(),
           "AC2: query:pattern :allow-macro? accepted");
     CHECK(cs.eval("(query :find \"base\" :allow-macro? #t)").has_value(),
           "AC2: query:find :allow-macro? accepted");
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     CHECK(m != nullptr, "AC2: metrics");
     const auto opt0 = m->pattern_include_macro_opt_in_total.load(std::memory_order_relaxed);
-    CHECK(cs.eval("(query:pattern \"*\" :allow-macro? #t)").has_value(),
+    CHECK(cs.eval("(query :pattern \"*\" :allow-macro? #t)").has_value(),
           "AC2: second :allow-macro? pattern");
     const auto opt1 = m->pattern_include_macro_opt_in_total.load(std::memory_order_relaxed);
     CHECK(opt1 > opt0, "AC2: :allow-macro? bumps include opt-in (same as mutate unlock)");
@@ -703,8 +703,8 @@ static void ac3354_4_match_subset_mutate() {
     apply_dev_audit_defaults();
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "AC4: macro workspace");
-    const auto pat_def = result_len(cs, "(query:pattern \"*\")");
-    const auto pat_allow = result_len(cs, "(query:pattern \"*\" :allow-macro? #t)");
+    const auto pat_def = result_len(cs, "(query :pattern \"*\")");
+    const auto pat_allow = result_len(cs, "(query :pattern \"*\" :allow-macro? #t)");
     CHECK(pat_def >= 0 && pat_allow >= pat_def, "AC4: default pattern ⊆ allow (hygiene skip)");
     auto rebind = cs.eval("(mutate :rebind \"base\" \"11\")");
     CHECK(rebind.has_value(), "AC4: mutate:rebind user node (query-admissible) succeeds");

@@ -78,9 +78,9 @@ template <typename... Ts> void sink_query_prim(std::string_view name, Ts&&...) {
 }
 
 void register_defuse_query_primitives(
-    PrimRegistrar add, std::shared_mutex& workspace_mtx, aura::ast::FlatAST*& workspace_flat,
-    aura::ast::StringPool*& workspace_pool, ::aura::compiler::LockedStringHeap& string_heap,
-    std::function<void*()> ensure_defuse,
+    PrimRegistrar add, Evaluator& ev, std::shared_mutex& workspace_mtx,
+    aura::ast::FlatAST*& workspace_flat, aura::ast::StringPool*& workspace_pool,
+    ::aura::compiler::LockedStringHeap& string_heap, std::function<void*()> ensure_defuse,
     std::function<EvalValue(void* idx, aura::ast::SymId sym)> def_use_for_sym,
     std::function<EvalValue(void* idx, aura::ast::NodeId node)> reaches_for_node,
     std::function<EvalValue(void* idx, aura::ast::SymId sym)> effects_for_sym,
@@ -110,11 +110,12 @@ void register_defuse_query_primitives(
             return cb.def_use_for_sym(idx, target_sym);
         });
 
-    add("query:reaches",
+    ev.primitives().add_hidden(
+        "query:reaches",
         [&workspace_mtx, &workspace_flat, cb, make_merr](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(workspace_mtx);
             if (a.empty())
-                return make_merr("bad-arg", "usage: (query:reaches node-id)");
+                return make_merr("bad-arg", "usage: (query :reaches node-id)");
             if (!workspace_flat)
                 return make_merr("no-workspace", "no workspace AST loaded");
             auto& flat = *workspace_flat;
@@ -171,7 +172,7 @@ void register_defuse_query_primitives(
                 }
             } else {
                 if (!is_int(a[0]))
-                    return make_merr("bad-arg", "usage: (query:reaches node-id)");
+                    return make_merr("bad-arg", "usage: (query :reaches node-id)");
                 target = static_cast<aura::ast::NodeId>(as_int(a[0]));
                 if (target >= flat.size())
                     return make_merr("out-of-range", "node ID " + std::to_string(target) +
@@ -184,12 +185,13 @@ void register_defuse_query_primitives(
             return cb.reaches_for_node(idx, target);
         });
 
-    add("query:effects",
+    ev.primitives().add_hidden(
+        "query:effects",
         [&workspace_mtx, &workspace_flat, &workspace_pool, &string_heap, cb,
          make_merr](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(workspace_mtx);
             if (a.empty() || !is_string(a[0]))
-                return make_merr("bad-arg", "usage: (query:effects sym-name)");
+                return make_merr("bad-arg", "usage: (query :effects sym-name)");
             if (!workspace_flat || !workspace_pool)
                 return make_merr("no-workspace", "no workspace AST loaded");
             auto sym_idx = as_string_idx(a[0]);

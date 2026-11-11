@@ -174,49 +174,51 @@ void register_query_tail_feedback_parts(PrimRegistrar add, std::pmr::vector<Pair
                                         ModulePathResolver resolve_module_path, Evaluator& ev) {
     // Issue #4568: per-arg lattice, call targets, and the warmup budgets.
     // A missing row still prints entries=0, arg0=none, and the budgets.
-    add("query:type-feedback", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
-        std::string name;
-        if (!a.empty() && is_string(a[0])) {
-            const auto idx = as_string_idx(a[0]);
-            if (idx < string_heap.size())
-                name = string_heap[idx];
-        }
-        const auto sidx = string_heap.mint(aura::compiler::feedback::render(name));
-        return make_string(sidx);
-    });
+    ev.primitives().add_hidden(
+        "query:type-feedback", [&string_heap](std::span<const EvalValue> a) -> EvalValue {
+            std::string name;
+            if (!a.empty() && is_string(a[0])) {
+                const auto idx = as_string_idx(a[0]);
+                if (idx < string_heap.size())
+                    name = string_heap[idx];
+            }
+            const auto sidx = string_heap.mint(aura::compiler::feedback::render(name));
+            return make_string(sidx);
+        });
 
-    add("query:mutations-since", [](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
-            return make_void();
-        auto* ev = Evaluator::get_query_evaluator();
-        if (!ev)
-            return make_void();
-        auto* ws = ev->workspace_flat();
-        if (!ws)
-            return make_void();
-        const std::uint64_t since_id = static_cast<std::uint64_t>(as_int(a[0]));
-        const auto& log = ws->mutation_log_view();
-        EvalValue list = make_void();
-        // Walk most-recent first (the natural order
-        // for the agent's "newest changes" view).
-        for (std::size_t i = log.size(); i-- > 0;) {
-            const auto& rec = log[i];
-            if (rec.mutation_id <= since_id)
-                break;
-            // Issue #1419: include provenance in the string form
-            // (same trailing fields as query:mutation-log).
-            const std::string s = "id=" + std::to_string(rec.mutation_id) +
-                                  " target=" + std::to_string(rec.target_node) +
-                                  " op=" + rec.operator_name + " sum=" + rec.summary +
-                                  " author=" + std::to_string(rec.author_fingerprint) +
-                                  " parent=" + std::to_string(rec.parent_mutation_id) +
-                                  " composite=" + std::to_string(rec.composite_transaction_id);
-            const auto sidx = ev->push_string_heap(std::move(s));
-            const auto p_idx = ev->push_pair(make_string(sidx), list);
-            list = make_pair(p_idx);
-        }
-        return list;
-    });
+    ev.primitives().add_hidden(
+        "query:mutations-since", [](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]))
+                return make_void();
+            auto* ev = Evaluator::get_query_evaluator();
+            if (!ev)
+                return make_void();
+            auto* ws = ev->workspace_flat();
+            if (!ws)
+                return make_void();
+            const std::uint64_t since_id = static_cast<std::uint64_t>(as_int(a[0]));
+            const auto& log = ws->mutation_log_view();
+            EvalValue list = make_void();
+            // Walk most-recent first (the natural order
+            // for the agent's "newest changes" view).
+            for (std::size_t i = log.size(); i-- > 0;) {
+                const auto& rec = log[i];
+                if (rec.mutation_id <= since_id)
+                    break;
+                // Issue #1419: include provenance in the string form
+                // (same trailing fields as query:mutation-log).
+                const std::string s = "id=" + std::to_string(rec.mutation_id) +
+                                      " target=" + std::to_string(rec.target_node) +
+                                      " op=" + rec.operator_name + " sum=" + rec.summary +
+                                      " author=" + std::to_string(rec.author_fingerprint) +
+                                      " parent=" + std::to_string(rec.parent_mutation_id) +
+                                      " composite=" + std::to_string(rec.composite_transaction_id);
+                const auto sidx = ev->push_string_heap(std::move(s));
+                const auto p_idx = ev->push_pair(make_string(sidx), list);
+                list = make_pair(p_idx);
+            }
+            return list;
+        });
 
     // (query:last-mutation-blame) — Issue #349: returns
     // the blame info for the most recent mutation as
@@ -342,7 +344,7 @@ void register_query_tail_adt_parts(PrimRegistrar add, std::pmr::vector<Pair>& pa
             // exhaustiveness_checked = true + a
             // candidate_constructors / used_constructors
             // gap. We surface the NodeId; the agent can
-            // use (query:node-type <id>) to inspect.
+            // use (query :node-type <id>) to inspect.
             EvalValue list = make_void();
             const auto n = ws->size();
             for (std::size_t id = n; id-- > 0;) {
@@ -1125,32 +1127,34 @@ void register_query_tail_schema_parts(PrimRegistrar add, std::pmr::vector<Pair>&
         ev.primitives().set_meta_for_name("mutate:validate-reflected", std::move(ex));
     }
 
-    add("query:schema", [&string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !is_string(a[0]))
-            return make_bool(false);
-        auto idx = as_string_idx(a[0]);
-        // Issue #3906: query:macro-provenance-stats is registered only in
-        // evaluator_primitives_obs_jit.cpp (hash + schema-2235 / cross-flat keys).
-        // This nested int-sum duplicate (#1908) last-write-won; catalog seed
-        // (#3603) is unchanged.
-        if (idx >= string_heap.size())
-            return make_bool(false);
-        std::string name = string_heap[idx];
-        // Issue #4936: the Evaluator owns the registry (this used to allocate an
-        // unowned one that leaked and never bumped type_registry_gen_).
-        auto* treg = static_cast<aura::core::TypeRegistry*>(ev.ensure_type_registry());
-        if (!treg)
-            return make_bool(false);
-        auto ty = treg->lookup_type(name);
-        if (!ty.valid())
-            return make_bool(false);
-        std::string schema = "{\"title\": \"" + name + "\"";
-        schema += ", \"type\": \"" +
-                  std::string(treg->tag_of(ty) == aura::core::TypeTag::MODULE ? "object" : "any") +
-                  "\"}";
-        auto sidx = string_heap.mint(schema);
-        return make_string(sidx);
-    });
+    ev.primitives().add_hidden(
+        "query:schema", [&string_heap, &ev](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !is_string(a[0]))
+                return make_bool(false);
+            auto idx = as_string_idx(a[0]);
+            // Issue #3906: query:macro-provenance-stats is registered only in
+            // evaluator_primitives_obs_jit.cpp (hash + schema-2235 / cross-flat keys).
+            // This nested int-sum duplicate (#1908) last-write-won; catalog seed
+            // (#3603) is unchanged.
+            if (idx >= string_heap.size())
+                return make_bool(false);
+            std::string name = string_heap[idx];
+            // Issue #4936: the Evaluator owns the registry (this used to allocate an
+            // unowned one that leaked and never bumped type_registry_gen_).
+            auto* treg = static_cast<aura::core::TypeRegistry*>(ev.ensure_type_registry());
+            if (!treg)
+                return make_bool(false);
+            auto ty = treg->lookup_type(name);
+            if (!ty.valid())
+                return make_bool(false);
+            std::string schema = "{\"title\": \"" + name + "\"";
+            schema +=
+                ", \"type\": \"" +
+                std::string(treg->tag_of(ty) == aura::core::TypeTag::MODULE ? "object" : "any") +
+                "\"}";
+            auto sidx = string_heap.mint(schema);
+            return make_string(sidx);
+        });
 
     // ── Issue #288: mutate:validate-against-schema ──────────────────
     //

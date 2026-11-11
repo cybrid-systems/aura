@@ -143,9 +143,9 @@ int aura_issue_atomic_batch_snapshot_stable_ref_ai_loops_run() {
         for (int round = 0; round < 3; ++round) {
             (void)cs.eval("(workspace:snapshot (string-append \"round-\" (number->string " +
                           std::to_string(round) + ")))");
-            auto ref_ok =
-                cs.eval("(let ((r (query:stable-ref (car (query:defines-by-marker \"Define\"))))) "
-                        "(if (pair? r) (query:ref-valid? r) #f))");
+            auto ref_ok = cs.eval(
+                "(let ((r (query :stable-ref (car (query :defines-by-marker \"Define\"))))) "
+                "(if (pair? r) (query :ref-valid? r) #f))");
             CHECK(ref_ok.has_value(), std::format("round {} stable-ref query", round));
             auto batch = cs.eval("(mutate :atomic-batch "
                                  "(list (list \"mutate:rebind\" \"acc\" \"" +

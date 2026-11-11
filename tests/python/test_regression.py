@@ -643,7 +643,7 @@ def test_mutation_sequences():
     # ── DefUseIndex: chain query works after rebind ─────────────────
     r = subprocess.run(
         [AURA],
-        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (query:reaches 0) (mutate :rebind "a" "(lambda (x) (* x 2))") (query:reaches 0) (stats:get "typecheck-status"))',
+        input='(begin (define (a x) (+ x 1)) (define (b x) (a x)) (query :reaches 0) (mutate :rebind "a" "(lambda (x) (* x 2))") (query :reaches 0) (stats:get "typecheck-status"))',
         capture_output=True,
         text=True,
         timeout=10,
@@ -1884,40 +1884,40 @@ def test_type_feedback_4568():
 (define (id x) x)
 (id 1)
 (display "===ID===\n")
-(display (query:type-feedback "id"))
+(display (query :type-feedback "id"))
 (define (flt x) x)
 (flt 1.5)
 (display "===FLT===\n")
-(display (query:type-feedback "flt"))
+(display (query :type-feedback "flt"))
 (define (mix x) x)
 (mix 1)
 (mix 2.5)
 (display "===MIX===\n")
-(display (query:type-feedback "mix"))
+(display (query :type-feedback "mix"))
 (define (inc x) (+ x 1))
 (define (app f) (f 1))
 (app id)
 (app inc)
 (display "===APP===\n")
-(display (query:type-feedback "app"))
+(display (query :type-feedback "app"))
 (define (keep x) x)
 (keep 3)
 (display "===KEEP1===\n")
-(display (query:type-feedback "keep"))
+(display (query :type-feedback "keep"))
 (set-code "(define (id x) x) (define (keep x) x)")
 (eval-current)
 (id 9)
 (keep 4)
 (mutate :rebind "id" "(lambda (x) x)" "t")
 (display "===IDRESET===\n")
-(display (query:type-feedback "id"))
+(display (query :type-feedback "id"))
 (display "===KEEP2===\n")
-(display (query:type-feedback "keep"))
+(display (query :type-feedback "keep"))
 (id 7)
 (display "===ID2===\n")
-(display (query:type-feedback "id"))
+(display (query :type-feedback "id"))
 (display "===MISS===\n")
-(display (query:type-feedback "no-such"))
+(display (query :type-feedback "no-such"))
 """
     env = os.environ.copy()
     env["AURA_SANDBOX"] = "off"

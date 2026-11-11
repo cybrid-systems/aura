@@ -107,40 +107,40 @@ int run_test_edsl_validate_or_refresh() {
         CHECK(nid != NULL_NODE, "live node");
 
         // Capture packed (id . gen) via query:stable-ref.
-        auto ref = cs.eval(std::format("(query:stable-ref {})", nid));
+        auto ref = cs.eval(std::format("(query :stable-ref {})", nid));
         CHECK(ref && is_pair(*ref), "query:stable-ref returns pair");
 
         // Bind into env and feed packed ref to consumers.
         // We re-query each time via eval that embeds the pair through
-        // (let ((r (query:stable-ref N))) (query:X r)).
+        // (let ((r (query :stable-ref N))) (query:X r)).
         auto kids =
-            cs.eval(std::format("(let ((r (query:stable-ref {}))) (query :children r))", nid));
+            cs.eval(std::format("(let ((r (query :stable-ref {}))) (query :children r))", nid));
         CHECK(kids.has_value() && !is_error(*kids), "query:children accepts packed stable-ref");
 
-        auto node = cs.eval(std::format("(let ((r (query:stable-ref {}))) (query :node r))", nid));
+        auto node = cs.eval(std::format("(let ((r (query :stable-ref {}))) (query :node r))", nid));
         CHECK(node.has_value() && !is_error(*node), "query:node accepts packed stable-ref");
 
         auto parent =
-            cs.eval(std::format("(let ((r (query:stable-ref {}))) (query :parent r))", nid));
+            cs.eval(std::format("(let ((r (query :stable-ref {}))) (query :parent r))", nid));
         CHECK(parent.has_value() && !is_error(*parent), "query:parent accepts packed stable-ref");
 
         auto kids_s = cs.eval(
-            std::format("(let ((r (query:stable-ref {}))) (query :children-stable r))", nid));
+            std::format("(let ((r (query :stable-ref {}))) (query :children-stable r))", nid));
         CHECK(kids_s.has_value() && !is_error(*kids_s),
               "query:children-stable accepts packed stable-ref");
 
-        auto parent_s =
-            cs.eval(std::format("(let ((r (query:stable-ref {}))) (query :parent-stable r))", nid));
+        auto parent_s = cs.eval(
+            std::format("(let ((r (query :stable-ref {}))) (query :parent-stable r))", nid));
         CHECK(parent_s.has_value() && !is_error(*parent_s),
               "query:parent-stable accepts packed stable-ref");
 
         auto marker =
-            cs.eval(std::format("(let ((r (query:stable-ref {}))) (query:node-marker r))", nid));
+            cs.eval(std::format("(let ((r (query :stable-ref {}))) (query :node-marker r))", nid));
         CHECK(marker.has_value() && !is_error(*marker),
               "query:node-marker accepts packed stable-ref");
 
         auto prov = cs.eval(
-            std::format("(let ((r (query:stable-ref {}))) (query:node-provenance r))", nid));
+            std::format("(let ((r (query :stable-ref {}))) (query :node-provenance r))", nid));
         CHECK(prov.has_value() && !is_error(*prov),
               "query:node-provenance accepts packed stable-ref");
 
@@ -166,7 +166,7 @@ int run_test_edsl_validate_or_refresh() {
         // across structural mutates that restamp generations.
         const auto nid = first_live(*ws);
         CHECK(nid != NULL_NODE, "live node AC2");
-        auto cap = cs.eval(std::format("(query:stable-ref {})", nid));
+        auto cap = cs.eval(std::format("(query :stable-ref {})", nid));
         CHECK(cap && is_pair(*cap), "initial stable-ref capture");
 
         // Hold C++ StableNodeRef with the pre-mutate gen so we can
@@ -217,7 +217,7 @@ int run_test_edsl_validate_or_refresh() {
                   std::format("round {} query:children after restamp", round));
 
             auto node =
-                cs.eval(std::format("(let ((r (query:stable-ref {}))) (query :node r))", nid));
+                cs.eval(std::format("(let ((r (query :stable-ref {}))) (query :node r))", nid));
             // Round 0 proves packed-ref :node (AC1). Later restamps can
             // leave query:stable-ref / :node on a rebound Define as
             // fail-closed; :children on the live nid is the consume path.

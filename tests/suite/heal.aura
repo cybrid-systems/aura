@@ -113,7 +113,7 @@
 (test-suite "heal:apply-fix-add-display-workspace"
   ; AST-level: use mutate:wrap on Define node
   (set-code "(define (f x) (* x 2))")
-  (define def-nodes (query:node-type "Define"))
+  (define def-nodes (query :node-type "Define"))
   (define diag (list "closure-no-display" def-nodes "add-display" ""))
   (define fixed (heal-apply-fix "(define (f x) (* x 2))" diag))
   (check (not (= (string-index fixed "(display" 0) -1))))

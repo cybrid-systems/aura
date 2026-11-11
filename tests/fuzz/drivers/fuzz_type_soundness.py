@@ -135,7 +135,7 @@ def build_mutation(fns, mut_type, serve_script):
     elif mut_type == "mutate:inline-call":
         # Query and try inline-call. Use query first to check if node exists.
         return [
-            '(query:node-type "Call")',
+            '(query :node-type "Call")',
             "(mutate :inline-call 3)",
         ]
     return [f'(mutate :rebind "{fn}" "(lambda (x) (+ x 1))")']

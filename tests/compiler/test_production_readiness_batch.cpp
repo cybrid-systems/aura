@@ -84,7 +84,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC2: Top1 hygiene/marker propagation ---");
     const auto skips0 = cs.evaluator().get_macro_introduced_skipped_in_query();
-    (void)cs.eval("(query:pattern \"v\")");
+    (void)cs.eval("(query :pattern \"v\")");
     const auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
     auto irs = cs.eval("(engine:metrics \"query:ir-hygiene-stats\")");
     auto pms = cs.eval("(engine:metrics \"query:pattern-marker-stats\")");
@@ -104,7 +104,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(impact1 > impact0, "Guard success bumps mutation_impact");
 
     std::println("\n--- AC4: Top3 dirty/type incremental ---");
-    auto dirty = cs.eval("(query:dirty-impact)");
+    auto dirty = cs.eval("(query :dirty-impact)");
     auto typed = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(dirty && is_int(*dirty), "query:dirty-impact returns int");
     CHECK(typed && is_int(*typed), "query:typed-mutation-stats returns int");
@@ -121,7 +121,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC7: multi-round self-evo cycle ---");
     const auto stats7a = prod_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(query:pattern \"user-val\")");
+        (void)cs.eval("(query :pattern \"user-val\")");
         (void)cs.eval("(mutate :rebind \"user-val\" \"" + std::to_string(200 + round) + "\")");
         (void)cs.eval("(eval-current)");
     }
@@ -322,7 +322,7 @@ static void run_matrix(CompilerService& cs) {
     CHECK(cs.eval("(set-code \"(define acc 0)\")").has_value(), "EDSL workspace setup");
     CHECK(cs.eval("(eval-current)").has_value(), "workspace eval");
     const auto impact0 = cs.evaluator().get_mutation_impact_count();
-    (void)cs.eval("(query:pattern \"acc\")");
+    (void)cs.eval("(query :pattern \"acc\")");
     CHECK(cs.eval("(mutate :rebind \"acc\" \"42\")").has_value(), "mutate:rebind under Guard");
     const auto impact1 = cs.evaluator().get_mutation_impact_count();
     CHECK(impact1 > impact0, "mutation_impact bumped after Guard mutate");
@@ -339,7 +339,7 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- AC6: multi-round self-evo cycle ---");
     const auto stats6a = prod_stats(cs);
     for (int round = 0; round < 3; ++round) {
-        (void)cs.eval("(query:pattern \"acc\")");
+        (void)cs.eval("(query :pattern \"acc\")");
         (void)cs.eval("(mutate :rebind \"acc\" \"" + std::to_string(100 + round) + "\")");
         (void)cs.eval("(eval-current)");
         (void)cs.eval("(mutate :request-gc-safepoint 10)");

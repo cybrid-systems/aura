@@ -87,24 +87,24 @@ static void ac1_default_skip() {
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     CHECK(m != nullptr, "AC1: metrics");
 
-    const auto macro_n = result_len(cs, "(query:by-marker \"MacroIntroduced\")");
+    const auto macro_n = result_len(cs, "(query :by-marker \"MacroIntroduced\")");
     CHECK(macro_n >= 3, "AC1: have MacroIntroduced nodes");
 
-    const auto default_pat = result_len(cs, "(query:pattern \"*\")");
-    const auto allow_pat = result_len(cs, "(query:pattern \"*\" :allow-macro-introduced #t)");
+    const auto default_pat = result_len(cs, "(query :pattern \"*\")");
+    const auto allow_pat = result_len(cs, "(query :pattern \"*\" :allow-macro-introduced #t)");
     CHECK(default_pat >= 0 && allow_pat >= 0, "AC1: pattern lengths");
     CHECK(allow_pat >= default_pat, "AC1: allow >= default pattern");
 
     // query:filter default must skip macro (filter by tag Call still runs)
     const auto filt0 = m->hygiene_filter_default_skip_total.load(std::memory_order_relaxed);
-    auto fr = cs.eval("(query:filter (query:where :node-type \"Call\"))");
+    auto fr = cs.eval("(query :filter (query :where :node-type \"Call\"))");
     CHECK(fr.has_value(), "AC1: default filter accepted");
     CHECK(m->hygiene_filter_default_skip_total.load(std::memory_order_relaxed) >= filt0 + 1,
           "AC1: filter default-skip counter");
 
     const auto include0 = m->hygiene_filter_include_opt_in_total.load(std::memory_order_relaxed);
     auto fr_inc =
-        cs.eval("(query:filter (query:where :node-type \"Call\") :include-macro-introduced #t)");
+        cs.eval("(query :filter (query :where :node-type \"Call\") :include-macro-introduced #t)");
     CHECK(fr_inc.has_value(), "AC1: include-macro filter accepted");
     CHECK(m->hygiene_filter_include_opt_in_total.load(std::memory_order_relaxed) >= include0 + 1,
           "AC1: filter include opt-in counter");
@@ -125,7 +125,7 @@ static void ac2_index_marker_dimension() {
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "AC2: macro workspace");
     // Force index use via constrained pattern
-    (void)cs.eval("(query:pattern \"(define base 10)\" :strict-arity #t)");
+    (void)cs.eval("(query :pattern \"(define base 10)\" :strict-arity #t)");
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     // Rebuild may happen lazily; counter non-negative and surface readable
     CHECK(m->tag_arity_marker_dimension_rebuild_total.load(std::memory_order_relaxed) >= 0,
@@ -139,9 +139,9 @@ static void ac3_stats_surface() {
     std::println("\n--- AC3: hygiene_skip / include + schema-2525 ---");
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "AC3: macro workspace");
-    (void)cs.eval("(query:pattern \"*\")");
-    (void)cs.eval("(query:pattern \"*\" :include-macro-introduced #t)");
-    (void)cs.eval("(query:pattern \"...\")"); // unconstrained walk
+    (void)cs.eval("(query :pattern \"*\")");
+    (void)cs.eval("(query :pattern \"*\" :include-macro-introduced #t)");
+    (void)cs.eval("(query :pattern \"...\")"); // unconstrained walk
 
     CHECK(href(cs, "schema-2525") == 2525, "AC3: schema-2525");
     CHECK(href(cs, "issue-2525") == 2525, "AC3: issue-2525");
@@ -172,10 +172,10 @@ static void ac4_concurrent() {
     for (int i = 0; i < 4; ++i) {
         threads.emplace_back([&]() {
             for (int j = 0; j < 20; ++j) {
-                auto r = cs.eval("(query:pattern \"*\")");
+                auto r = cs.eval("(query :pattern \"*\")");
                 if (r)
                     ok.fetch_add(1);
-                auto f = cs.eval("(query:filter (query:where :node-type \"Define\"))");
+                auto f = cs.eval("(query :filter (query :where :node-type \"Define\"))");
                 if (f)
                     ok.fetch_add(1);
             }
@@ -200,7 +200,7 @@ static void ac2989_concurrent_mutate() {
     for (int i = 0; i < 3; ++i) {
         threads.emplace_back([&]() {
             for (int j = 0; j < 15; ++j) {
-                if (cs.eval("(query:pattern \"*\")"))
+                if (cs.eval("(query :pattern \"*\")"))
                     ok.fetch_add(1);
                 if (cs.eval("(query :children 0)"))
                     ok.fetch_add(1);

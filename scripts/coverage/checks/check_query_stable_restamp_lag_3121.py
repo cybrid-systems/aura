@@ -18,6 +18,7 @@ Exit 0 = all rows satisfied.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -52,11 +53,14 @@ def main() -> int:
     must("budget-exceeded:", "AC1 parent-stable", qws)
     must("budget-exceeded:", "AC1 stable-ref", qws)
     must("budget-exceeded:", "AC1 ensure-ref", qws)
-    must('mev("restamp-lag"', "AC1 as-stable-ref structured", asr)
+    # #5144: the body sits one level deeper inside add_hidden, so clang-format
+    # breaks the call after mev( — match the call with flexible whitespace.
+    if not re.search(r'mev\(\s*"restamp-lag"', asr):
+        fails.append('AC1 as-stable-ref structured: missing mev("restamp-lag"')
     must("Issue #3121", "AC1 as-stable-ref cite", asr)
     must("ac3121_1_production_structured_lag", "AC1 test", t)
     asr_win = asr[asr.find("query:as-stable-ref") : asr.find("query:as-stable-ref") + 1200]
-    if "allow_query_stable_ref_export" in asr_win and 'mev("restamp-lag"' not in asr_win:
+    if "allow_query_stable_ref_export" in asr_win and not re.search(r'mev\(\s*"restamp-lag"', asr_win):
         fails.append("AC1: query:as-stable-ref reject is not structured restamp-lag")
 
     must("ac3121_2_soft_shape_unchanged", "AC2 test", t)

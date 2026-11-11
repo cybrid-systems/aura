@@ -267,9 +267,9 @@ int main() {
               "v1 info crc-ok");
         CHECK(eval_bool(cs, std::format("(deserialize-workspace \"{}\")", v1_path).c_str()),
               "v1 blob deserializes");
-        CHECK(eval_bool(cs, "(not (= (string-index (query:code) \"hello\") -1))"),
+        CHECK(eval_bool(cs, "(not (= (string-index (query :code) \"hello\") -1))"),
               "v1 source restored");
-        CHECK(eval_bool(cs, "(let ((row (car (query:mutations-since 0)))) "
+        CHECK(eval_bool(cs, "(let ((row (car (query :mutations-since 0)))) "
                             "(and (not (= (string-index row \"op=rebind\") -1)) "
                             "(not (= (string-index row \"sum=closer\") -1)) "
                             "(not (= (string-index row \"author=0\") -1)) "

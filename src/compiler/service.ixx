@@ -19871,7 +19871,7 @@ public:
     }
 
     // Issue #282: public accessors for the Occurrence Typing
-    // provenance log. The Aura primitive (query:provenance-of)
+    // provenance log. The Aura primitive (query :provenance-of)
     // uses these under the hood; tests can also use them
     // directly to verify the provenance-tracking contract.
     [[nodiscard]] std::size_t narrowing_count() const noexcept {

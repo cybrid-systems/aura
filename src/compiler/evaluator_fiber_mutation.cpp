@@ -382,8 +382,8 @@ void aura::compiler::Evaluator::fiber_slab_owner_unregister() noexcept {
 thread_local std::vector<aura::compiler::Evaluator*> g_yield_hook_stack;
 // Issue #456: per-thread pointer to the active Evaluator
 // for observability primitives. Set by CompilerService
-// ctor and used by (query:mutation-impact) /
-// (query:epoch-stats) / (query:dirty-subtree) so they
+// ctor and used by (query :mutation-impact) /
+// (query:epoch-stats) / (query :dirty-subtree) so they
 // can find the Evaluator even when no
 // MutationBoundaryGuard is currently active. Without
 // this, primitives that read counters bumped in

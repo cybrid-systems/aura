@@ -42,7 +42,7 @@ static std::int64_t cache_stat(CompilerService& cs, std::string_view key) {
 static bool list_contains_name(CompilerService& cs, std::string_view needle) {
     // Flatten list of export strings via recursive member? if available,
     // else stringify via display path: count length + check known head.
-    auto r = cs.eval(std::format("(let ((xs (query:module-exports \"std/list\"))) "
+    auto r = cs.eval(std::format("(let ((xs (query :module-exports \"std/list\"))) "
                                  "  (let loop ((ys xs)) "
                                  "    (if (null? ys) #f "
                                  "        (if (equal? (car ys) \"{}\") #t (loop (cdr ys))))))",
@@ -72,7 +72,7 @@ int main() {
     // ── AC1: std/list exports ──
     {
         std::println("\n--- AC1: query:module-exports std/list ---");
-        auto r = cs.eval("(query:module-exports \"std/list\")");
+        auto r = cs.eval("(query :module-exports \"std/list\")");
         CHECK(r.has_value(), "module-exports returns value");
         // list or void; std/list should be a pair chain
         CHECK(r && (is_pair(*r) || is_void(*r)), "exports is list or void");
@@ -89,7 +89,7 @@ int main() {
     // ── AC2: second call → hit grows ──
     {
         std::println("\n--- AC2: cache hit on second call ---");
-        auto r = cs.eval("(query:module-exports \"std/list\")");
+        auto r = cs.eval("(query :module-exports \"std/list\")");
         CHECK(r.has_value(), "second module-exports call");
         const auto hits2 = cache_stat(cs, "hits");
         CHECK(hits2 > hits1 || hits2 > hits0,
@@ -101,7 +101,7 @@ int main() {
     // ── AC4: nonexistent ──
     {
         std::println("\n--- AC4: nonexistent path ---");
-        auto r = cs.eval("(query:module-exports \"nonexistent/path/xyz\")");
+        auto r = cs.eval("(query :module-exports \"nonexistent/path/xyz\")");
         CHECK(r.has_value(), "nonexistent returns a value");
         // historical: empty list displayed as () — void or empty pair
         CHECK(r && (is_void(*r) || !is_string(*r)), "nonexistent not a string error");

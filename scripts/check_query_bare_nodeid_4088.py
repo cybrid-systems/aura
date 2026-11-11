@@ -90,16 +90,16 @@ def main() -> int:
 
     # ── AC1: the five list exits finish via end_query_epoch_maybe_result ─
     exits = [
-        ('add("query:calls"', 'add("query:defines"', "query:calls"),
-        ('add("query:defines"', '["query:parent"]', "query:defines"),
-        ('add("query:node-type"', 'add("query:node-marker"', "query:node-type"),
+        ('add_hidden(\n        "query:calls"', 'add_hidden(\n        "query:defines"', "query:calls"),
+        ('add_hidden(\n        "query:defines"', '["query:parent"]', "query:defines"),
+        ('add_hidden(\n        "query:node-type"', 'add_hidden(\n        "query:node-marker"', "query:node-type"),
         (
-            'add("query:defines-by-marker"',
-            'add("query:calls-by-marker"',
+            'add_hidden(\n        "query:defines-by-marker"',
+            'add_hidden(\n        "query:calls-by-marker"',
             "query:defines-by-marker",
         ),
         (
-            'add("query:calls-by-marker"',
+            'add_hidden(\n        "query:calls-by-marker"',
             '["query:by-marker"]',
             "query:calls-by-marker",
         ),
@@ -113,7 +113,7 @@ def main() -> int:
         )
         must("Issue #4088", f"AC1 {name} cites the issue", body)
         absent("return result;\n    });", f"AC1 {name} bare exit gone", body)
-    defines_body = window(qws, 'add("query:defines"', '["query:parent"]', "AC1 defines")
+    defines_body = window(qws, 'add_hidden(\n        "query:defines"', '["query:parent"]', "AC1 defines")
     absent("return end_query_epoch(qe, &flat, result);", "AC1 defines bare end_query_epoch finish gone", defines_body)
 
     # ── AC2: the Soft contract is intact (auto-upgrade SSOT + early ret) ─
@@ -134,7 +134,7 @@ def main() -> int:
     absent('append_field("init-node", make_int', "AC3 bare init-node gone", reflect)
 
     # ── AC4: dirty-subtree production face + override precondition ───────
-    dirty = window(qws, 'add("query:dirty-subtree"', '"query:defines-by-marker"', "AC4 dirty window")
+    dirty = window(qws, 'add_hidden(\n        "query:dirty-subtree"', '"query:defines-by-marker"', "AC4 dirty window")
     must("Issue #4088", "AC4 dirty cites the issue", dirty)
     must('resolve_query_node_arg(a, "query:dirty-subtree"', "AC4 root resolve (#3395)", dirty)
     must("rlock(ws.workspace_mtx)", "AC4 workspace shared lock", dirty)
@@ -145,7 +145,7 @@ def main() -> int:
     # The override precondition: the bare registration must still exist in
     # evaluator_primitives_query.cpp and the workspace registration must
     # run after register_query_primitives.
-    must('add("query:dirty-subtree"', "AC4 overridden bare registration retained", qold)
+    must('add_hidden(\n        "query:dirty-subtree"', "AC4 overridden bare registration retained", qold)
     bare_reg = qreg.find("register_query_primitives(")
     ws_reg = qreg.find("register_workspace_query_primitives(")
     if bare_reg == -1 or ws_reg == -1 or bare_reg > ws_reg:

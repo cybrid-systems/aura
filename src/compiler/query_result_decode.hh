@@ -390,7 +390,7 @@ resolve_query_result_match(types::EvalValue arg, const StringHeap& heap, const P
 }
 
 // Issue #4106: shared production v2-spine unpack for query prims whose
-// registration lives outside the workspace TU (query:stable-ref-provenance
+// registration lives outside the workspace TU (query :stable-ref-provenance
 // in evaluator_primitives_query.cpp, query:reaches in _defuse.cpp,
 // query:macro-provenance-chain in _lifecycle.cpp). Same #3396/#3398 v2
 // wire shape the workspace file's local unpack_query_stable_ref lambda

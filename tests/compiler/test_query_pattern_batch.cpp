@@ -88,11 +88,11 @@ static void ac1609_1_default_skip() {
     std::println("\n--- AC7: default skips MacroIntroduced (#1609 AC1) ---");
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "macro workspace");
-    const auto def = list_len(cs, "(query:pattern \"*\")");
-    const auto all = list_len(cs, "(query:pattern \"*\" :allow-macro-introduced #t)");
+    const auto def = list_len(cs, "(query :pattern \"*\")");
+    const auto all = list_len(cs, "(query :pattern \"*\" :allow-macro-introduced #t)");
     CHECK(def >= 0 && all >= 0, "pattern counts ok");
     CHECK(all >= def, "allow >= default");
-    auto macro_n = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
+    auto macro_n = cs.eval("(length (query :by-marker \"MacroIntroduced\"))");
     CHECK(macro_n && is_int(*macro_n) && as_int(*macro_n) >= 1, "macro-introduced nodes exist");
     CHECK(cs.evaluator().get_macro_introduced_skipped_in_query() >= 0, "skip counter readable");
 }
@@ -103,7 +103,7 @@ static void ac1609_2_hygiene_index() {
     CHECK(setup_macro_ws(cs), "macro workspace");
     const auto served0 = cs.evaluator().get_tag_arity_hygiene_index_served();
     for (int i = 0; i < 8; ++i)
-        (void)cs.eval("(query:pattern \"(define base 10)\")");
+        (void)cs.eval("(query :pattern \"(define base 10)\")");
     const auto served1 = cs.evaluator().get_tag_arity_hygiene_index_served();
     CHECK(served1 >= served0, "hygiene index serve non-decreasing");
 }
@@ -112,7 +112,7 @@ static void ac1609_3_authoritative_stats() {
     std::println("\n--- AC9: query:pattern-hygiene-stats schema 1609 (#1609 AC3) ---");
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "macro workspace");
-    (void)cs.eval("(query:pattern \"*\")");
+    (void)cs.eval("(query :pattern \"*\")");
     auto h = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     CHECK(h && is_hash(*h), "authoritative hash (not bare int)");
     CHECK(href(cs, "query:pattern-hygiene-stats", "schema") == 1636 ||
@@ -134,12 +134,12 @@ static void ac1609_4_mutate_requery() {
     std::println("\n--- AC10: mutate + re-query hygiene holds (#1609 AC4) ---");
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "macro workspace");
-    const auto before = list_len(cs, "(query:pattern \"*\")");
+    const auto before = list_len(cs, "(query :pattern \"*\")");
     (void)cs.eval("(mutate :set-body \"base\" \"11\" \"#1609\")");
     (void)cs.eval("(eval-current)");
-    const auto after = list_len(cs, "(query:pattern \"*\")");
+    const auto after = list_len(cs, "(query :pattern \"*\")");
     CHECK(before >= 0 && after >= 0, "pattern after mutate");
-    const auto all = list_len(cs, "(query:pattern \"*\" :allow-macro-introduced #t)");
+    const auto all = list_len(cs, "(query :pattern \"*\" :allow-macro-introduced #t)");
     CHECK(all >= after, "hygiene still holds after mutate");
 }
 
@@ -149,9 +149,9 @@ static void ac1609_5_stress() {
     CHECK(setup_macro_ws(cs), "macro workspace");
     const auto skips0 = cs.evaluator().get_macro_introduced_skipped_in_query();
     for (int i = 0; i < 200; ++i) {
-        (void)cs.eval("(query:pattern \"*\")");
+        (void)cs.eval("(query :pattern \"*\")");
         if ((i % 17) == 0)
-            (void)cs.eval("(query:pattern \"(+ base 1)\")");
+            (void)cs.eval("(query :pattern \"(+ base 1)\")");
     }
     CHECK(cs.evaluator().get_macro_introduced_skipped_in_query() >= skips0,
           "skips non-decreasing under stress");
@@ -162,7 +162,7 @@ static void ac1609_6_recursive_skips() {
     std::println("\n--- AC12: recursive matcher skips readable (#1609 AC6) ---");
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "macro workspace");
-    (void)cs.eval("(query:pattern \"*\")");
+    (void)cs.eval("(query :pattern \"*\")");
     CHECK(href(cs, "query:pattern-hygiene-stats", "recursive-skips") >= 0, "recursive-skips key");
     CHECK(href(cs, "query:pattern-hygiene-stats", "matcher-recursive-skip-wired") == 1 ||
               href(cs, "query:pattern-hygiene-stats", "matcher-recursive-skip-wired") < 0,
@@ -203,7 +203,7 @@ int main() {
         std::println("\n--- AC2: query:pattern uses snapshot path ---");
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(+ 1 2) (+ 3 4) (* 5 6)\")").has_value(), "set-code exprs");
-        auto r = cs.eval("(query:pattern '(+ _ _))");
+        auto r = cs.eval("(query :pattern '(+ _ _))");
         CHECK(r.has_value(), "query:pattern returns");
         CHECK(r.has_value(), "pattern result present");
         CHECK(cs.evaluator().get_tag_arity_index_race_window_hits() == 0,
@@ -215,7 +215,7 @@ int main() {
         std::println("\n--- AC3: race-window-hits in pattern-index-stats-hash ---");
         CompilerService cs;
         CHECK(cs.eval("(set-code \"(define a 1)\")").has_value(), "set-code");
-        (void)cs.eval("(query:pattern '(define _ _))");
+        (void)cs.eval("(query :pattern '(define _ _))");
         auto race = href_expr(cs, "query:pattern-index-stats-hash", "race-window-hits");
         CHECK(race == 0, "race-window-hits key == 0");
     }
@@ -281,7 +281,7 @@ int main() {
             threads.emplace_back([&]() {
                 for (int i = 0; i < kIters; ++i) {
                     std::scoped_lock<std::mutex> lock(eval_mtx);
-                    auto r = cs.eval("(query:pattern '(define _ _))");
+                    auto r = cs.eval("(query :pattern '(define _ _))");
                     if (!r.has_value())
                         fails.fetch_add(1, std::memory_order_relaxed);
                     else

@@ -408,7 +408,7 @@ static void ac4037_1b_batch_blame_stays_zero() {
     CHECK(batch.success, "4037 AC1b: atomic batch commits");
     set_mode(SandboxMode::Off);
     ev.set_effect_sandbox_mode(0);
-    auto q = cs.eval("(hash-ref (query:last-mutation-provenance) \"author-fingerprint\")");
+    auto q = cs.eval("(hash-ref (query :last-mutation-provenance) \"author-fingerprint\")");
     CHECK(q && is_int(*q) && as_int(*q) == 0,
           "4037 AC1b: batch record author-fingerprint stays 0 (no forged label)");
 }
@@ -457,7 +457,7 @@ static void ac4037_2_ta_allow_batch_blame() {
     ev.set_effect_sandbox_mode(0);
     auto batch = cs.typed_mutate_atomic(mutations);
     CHECK(batch.success, "4037 AC2: atomic batch commits");
-    auto q = cs.eval("(hash-ref (query:last-mutation-provenance) \"author-fingerprint\")");
+    auto q = cs.eval("(hash-ref (query :last-mutation-provenance) \"author-fingerprint\")");
     CHECK(q && is_int(*q) && as_int(*q) == 4242, "4037 AC2: batch records author-fingerprint 4242");
 }
 

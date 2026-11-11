@@ -2353,7 +2353,7 @@ void CompilePrims::register_compile_p23(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 compile part 24 (orig 1889-1947)
 void CompilePrims::register_compile_p24(PrimRegistrar add, Evaluator& ev) {
 
-    // (query:dirty-nodes :reason "X") — Issue #344:
+    // (query :dirty-nodes :reason "X") — Issue #344:
     // returns a pair-list of NodeIds that have the
     // target DirtyReason bit set. X is one of:
     //   "general" | "constraint" | "occurrence" |
@@ -2365,7 +2365,7 @@ void CompilePrims::register_compile_p24(PrimRegistrar add, Evaluator& ev) {
     // sublist. Returns the empty list when no
     // workspace is loaded or the reason is
     // unknown.
-    add("query:dirty-nodes", [&ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("query:dirty-nodes", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_void();
         auto* ws = ev.workspace_flat();
@@ -3522,7 +3522,7 @@ void CompilePrims::register_compile_p36(PrimRegistrar add, Evaluator& ev) {
     //   caller can iterate left-to-right via (car / cdr) and
     //   stop early if desired).
     //
-    // Composes with (query:where :node-type "...") for
+    // Composes with (query :where :node-type "...") for
     // filtered coverage-hole scans and
     // (mutate :query-and-replace ...) for automated refine.
     add("verify:coverage-holes", [&ev](std::span<const EvalValue> a) -> EvalValue {
@@ -3626,7 +3626,7 @@ void CompilePrims::register_compile_p37(PrimRegistrar add, Evaluator& ev) {
     //
     // Returns: pair-list of NodeIds (newest-first). Each
     //   NodeId is also kCoverageFeedbackDirty (and the
-    //   caller can use (query:where ...) to filter by
+    //   caller can use (query :where ...) to filter by
     //   :node-type "Define" / "Lambda" / etc. before
     //   piping through (mutate :query-and-replace ...)).
     //
