@@ -1871,7 +1871,10 @@ void RegSplitParts::register_ast_ref_primitives(PrimRegistrar add, Evaluator& ev
     // doesn't match the #291 magic. The serialized form is the
     // 4-tuple (id gen mutation_id workspace_id); callers
     // unpack and pass the mutation_id directly.
-    add("qr:ref-mutation-id", [&ev](const auto& a) -> EvalValue {
+    // Issue #5144: dispatch-only. (query :ref-mutation-id) still reaches
+    // this body; the public name lives on as query:ref-mutation-id in
+    // lib/std/query.aura, so the registration is hidden.
+    ev.primitives().add_hidden("qr:ref-mutation-id", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
             return make_bool(false);
         return make_int(as_int(a[2]));
@@ -1880,7 +1883,8 @@ void RegSplitParts::register_ast_ref_primitives(PrimRegistrar add, Evaluator& ev
     // Issue #291: (query :ref-workspace-id id gen mutation_id workspace_id)
     // — extract the workspace_id (WorkspaceTree layer index)
     // from a serialized StableNodeRef. Returns the integer.
-    add("qr:ref-workspace-id", [&ev](const auto& a) -> EvalValue {
+    // Issue #5144: dispatch-only; std replacement is query:ref-workspace-id.
+    ev.primitives().add_hidden("qr:ref-workspace-id", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
             return make_bool(false);
         return make_int(as_int(a[3]));

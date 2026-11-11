@@ -82,8 +82,10 @@ int main() {
               "AC3: require std/workspace");
         CHECK(cs.eval("(set-code \"(define wa 1) (define wb 2)\")").has_value(), "AC3: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "AC3: eval-current");
-        CHECK(eval_bool(cs, "(string=? (workspace-state) (ws:state))"),
-              "AC3: ws:state is byte-identical to (workspace-state)");
+        // Golden text: the retired primitive's exact bytes (#5144).
+        CHECK(eval_bool(cs, "(string=? (ws:state) \"WORKSPACE: 2 defines\\nDEFINE: wa\\n"
+                            "DEFINE: wb\\nMUTATIONS (last 10):\\n  (none)\\n\")"),
+              "AC3: ws:state text is the retired primitive's bytes");
         CHECK(eval_bool(cs, "(not (string=? (ws:state) \"\"))"), "AC3: snapshot non-empty");
     }
 
@@ -91,8 +93,8 @@ int main() {
     {
         aura::compiler::CompilerService cs;
         CHECK(cs.eval("(require \"std/workspace\" all:)").has_value(), "AC3b: require");
-        CHECK(eval_bool(cs, "(string=? (workspace-state) (ws:state))"),
-              "AC3b: ws:state matches the no-workspace error line");
+        CHECK(eval_bool(cs, "(string=? (ws:state) \"WORKSPACE-ERROR: no workspace AST loaded\")"),
+              "AC3b: ws:state reports no workspace AST");
     }
 
     // === AC3c: timeline tail (last 10, index-prefixed) ===
@@ -110,8 +112,13 @@ int main() {
         CHECK(cs.eval("(intend \"seed\" gen5144 ver5144 12)").has_value(), "AC3c: intend run");
         CHECK(eval_bool(cs, "(not (= (string-index (intend-history) \"(empty)\") 0))"),
               "AC3c: timeline has entries");
-        CHECK(eval_bool(cs, "(string=? (workspace-state) (ws:state))"),
-              "AC3c: ws:state is byte-identical with a 14-entry timeline");
+        // Golden header + first three tail lines (indices 4..6 of 14).
+        CHECK(eval_bool(cs, "(= (string-index (ws:state) \"WORKSPACE: 1 defines\\n"
+                            "DEFINE: ta\\nMUTATIONS (last 10):\\n"
+                            "  4:attempt_4:empty from generator\\n"
+                            "  5:attempt_5:empty from generator\\n"
+                            "  6:attempt_6:empty from generator\\n\") 0)"),
+              "AC3c: ws:state golden header + timeline tail prefix");
         CHECK(eval_bool(cs, "(= (string-index (ws:state) \"  3:\") -1)"),
               "AC3c: entries before the last 10 are dropped");
         CHECK(eval_bool(cs, "(not (= (string-index (ws:state) \"  4:\") -1))"),

@@ -391,6 +391,25 @@ RETIRED_MUTATE_ALIASES_022 = frozenset(
     }
 )
 
+# Issue #5144: Batch 5 re-tier names. Each one moved to a std home (or to the
+# (engine:metrics "name") face) and its public registration + tier row are gone.
+# A later add() of the same name would reopen the surface this batch closed.
+RETIRED_RETIER_ALIASES_022 = frozenset(
+    {
+        # std/persist constant (blob format version)
+        "workspace-persist-format-version",
+        # std/workspace ws:state formatter
+        "workspace-state",
+        # std/query StableNodeRef accessors
+        "qr:ref-mutation-id",
+        "qr:ref-workspace-id",
+        # engine:metrics keys (register_stats_impl)
+        "mutation-lightweight-commit",
+        "mutation-lightweight-rollback",
+        "pin-table-size",
+    }
+)
+
 
 def check_retired_022(tiers: dict, catalog: set[str]) -> list[str]:
     errors: list[str] = []
@@ -409,6 +428,7 @@ def check_retired_022(tiers: dict, catalog: set[str]) -> list[str]:
         (RETIRED_MW_ALIASES_022, "#5142", "(mutate :<op>)"),
         (RETIRED_QR_ALIASES_022, "#5143", "(query :<op>)"),
         (RETIRED_MUTATE_ALIASES_022, "#5144", "(mutate :<op>)"),
+        (RETIRED_RETIER_ALIASES_022, "#5144 batch 5", "(query :<op>) / (engine:metrics)"),
     ):
         for name in sorted(retired):
             if name in catalog:

@@ -99,7 +99,7 @@
     "orch:supervise-batch"
   ],
   "counts": {
-    "kernel": 442,
+    "kernel": 435,
     "stdlib-candidate": 0,
     "delete": 1
   },
@@ -1005,14 +1005,6 @@
       "tier": "kernel",
       "rule": "K-WS"
     },
-    "mutation-lightweight-commit": {
-      "tier": "kernel",
-      "rule": "K-WS"
-    },
-    "mutation-lightweight-rollback": {
-      "tier": "kernel",
-      "rule": "K-WS"
-    },
     "mutation-log-compact": {
       "tier": "kernel",
       "rule": "K-WS"
@@ -1201,10 +1193,6 @@
       "tier": "kernel",
       "rule": "K-WS"
     },
-    "pin-table-size": {
-      "tier": "kernel",
-      "rule": "K-WS"
-    },
     "pow": {
       "tier": "kernel",
       "rule": "K-NUM"
@@ -1352,19 +1340,9 @@
       "tier": "kernel",
       "rule": "K-QRY"
     },
-    "qr:ref-mutation-id": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
-    },
     "query:ref-valid?": {
       "tier": "kernel",
       "rule": "K-QRY"
-    },
-    "qr:ref-workspace-id": {
-      "tier": "kernel",
-      "rule": "K-QRY",
-      "note": "v0.2.1: body moved off the retired prefix (#5097)"
     },
     "query:result-fresh?": {
       "tier": "kernel",
@@ -1874,15 +1852,7 @@
       "tier": "kernel",
       "rule": "K-WS"
     },
-    "workspace-persist-format-version": {
-      "tier": "kernel",
-      "rule": "K-WS"
-    },
     "workspace-persist-info": {
-      "tier": "kernel",
-      "rule": "K-WS"
-    },
-    "workspace-state": {
       "tier": "kernel",
       "rule": "K-WS"
     },
