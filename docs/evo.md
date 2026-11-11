@@ -17,7 +17,10 @@ The runtime appends one JSON object per line to the file named by
 Schema v=1 fields: `id`, `parent`, `run`, `seq`, `ts_ms`, `kind`,
 `target`, `decision`, `reason`, `evidence` (any JSON value), `old`,
 `new`, `dur_ms`. A candidate's `parent` is the worldline tip when it was
-recorded — the last `KEEP` in the same run, or the explicit parent argument.
+recorded — the last `record` KEEP in the same run, or the explicit parent
+argument. An automatic `mutate:rebind` / `mw:restore` row never becomes the
+parent a later record inherits (#5139), because the lineage resolver only
+accepts record ids and candidate names.
 
 Schema v=2 (the evolution modules) adds, after `dur_ms`: `algo`, `gen`,
 `slot`, `search`, `candidate`, `parents` (array; null for a root),

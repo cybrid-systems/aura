@@ -53,7 +53,42 @@ def aura(args: list[str], cwd: str, env: dict[str, str]) -> subprocess.Completed
     return subprocess.run([str(AURA_BIN), *args], cwd=cwd, capture_output=True, text=True, env=env, timeout=120)
 
 
+TIP_PROG = (
+    '(set-code "(define (score x) (* x 2))")\n'
+    "(eval-current)\n"
+    '(display (list "c1" (evo:record! "c1" "keep" "first candidate"'
+    ' (hash "score" 0.7) "(define (score x) (* x 2))"))) (newline)\n'
+    '(display (list "rb" (mutate:rebind "score" "(lambda (x) (* x 3))" "triple"))) (newline)\n'
+    '(display (list "c2" (evo:record! "c2" "keep" "second candidate"'
+    ' (hash "score" 0.8) "(define (score x) (* x 3))"))) (newline)\n'
+)
+
+
 class EvoLog(unittest.TestCase):
+    def test_record_tip_skips_auto_logged_rebinds(self) -> None:
+        # Issue #5139: an auto-logged mutate:rebind carries decision=KEEP but
+        # must not become the parent of the next record, or every candidate in
+        # the report loses its lineage edge.
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "p.aura").write_text(TIP_PROG)
+            log = Path(d) / "evo" / "log.jsonl"
+            r = aura(["p.aura"], d, env_for(log))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            recs = [json.loads(line) for line in log.read_text().splitlines()]
+            c1 = next(x for x in recs if x["reason"] == "first candidate")
+            rb = next(x for x in recs if x["kind"] == "mutate:rebind")
+            c2 = next(x for x in recs if x["reason"] == "second candidate")
+            self.assertEqual(c1["parent"], "")
+            self.assertEqual(rb["parent"], c1["id"])  # the rebind follows the record
+            self.assertEqual(c2["parent"], c1["id"])  # record to record, not rebind
+            rep = aura(
+                ["evo", "report", "--html", str(Path(d) / "report"), "--run", "last", "--log", str(log)],
+                d,
+                env_for(None),
+            )
+            self.assertEqual(rep.returncode, 0, rep.stderr)
+            self.assertNotIn("did not resolve", rep.stderr)
+
     def test_log_records_and_cli(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "p.aura").write_text(PROG)
@@ -74,7 +109,9 @@ class EvoLog(unittest.TestCase):
             self.assertIn("* x 3", keep["new"])
             self.assertEqual(keep["parent"], "")
             rec = next(x for x in recs if x["kind"] == "record" and x["decision"] == "KEEP")
-            self.assertEqual(rec["parent"], keep["id"])  # worldline tip
+            # Issue #5139: a rebind KEEP is not a worldline tip, so the first
+            # record starts the chain instead of inheriting the rebind id.
+            self.assertEqual(rec["parent"], "")
             self.assertEqual(rec["evidence"], {"score": 0.71, "threshold": 0.7})
             self.assertEqual(rec["reason"], "holdout 0.71 >= 0.70")
             self.assertEqual(rec["dur_ms"], 12)
