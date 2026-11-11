@@ -72,12 +72,14 @@
         "public surface keeps orch:spawn")
 (ok5006 (>= (string-find ref5006 "orch:compose-workflow") 0)
         "orch:compose-workflow stays registered (#5118)")
-(ok5006 (>= (string-find ref5006 "DEPRECATED (#5118): call (orch:compose-workflow") 0)
-        "compose-workflow doc hint names the live verb")
+; Issue #5131 removed the deprecated markers from the orch: names (user
+; decision: the live verb is the only surface), so api-reference no longer
+; prints a DEPRECATED (#5118) line for them.
+(ok5006 (= -1 (string-find ref5006 "DEPRECATED (#5118)"))
+        "the retired #5118 markers are gone from api-reference")
 (ok5006 (>= (string-find ref5006 "orch:supervise-batch") 0)
         "orch:supervise-batch stays registered (#5118)")
-(ok5006 (>= (string-find ref5006 "DEPRECATED (#5118): call (parallel-intend") 0)
-        "parallel-intend alias hint names the live verb")
+
 
 ; ── 5. std replacements ───────────────────────────────────────
 (require "std/diagnose" all:)
