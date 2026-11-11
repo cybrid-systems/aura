@@ -24,6 +24,11 @@ Issue #1936: statistical / relative modes:
   - --tolerance / --tolerance-percent: relative allowance (default 20 ≈ legacy 1.2×).
   - Per-case overrides in benchmark_meta.json (tolerance_percent, min_delta_ms).
   - Warm-up process before the suite to avoid cold-start on case 1.
+  - Gate metric: child CPU time (user+sys) per case, best-of-N, falling back
+    to wall time only for baselines that predate the CPU column. Wall time on
+    a shared runner is startup + scheduler delay, so a 10ms case reads 3-4x
+    slower under contention without doing more work; CPU time follows the work.
+    Wall times are still printed for humans.
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ import contextlib
 import json
 import os
 import re
+import resource
 import statistics
 import subprocess
 import sys
@@ -127,12 +133,22 @@ def median_time(samples: list[float]) -> float:
 # ── Measurement helpers ───────────────────────────────────────
 
 
+def child_cpu_seconds() -> float:
+    """Cumulative CPU (user+sys) of this process's reaped children, in seconds.
+
+    Used as the gate metric: it moves with the work the child did, while wall
+    time also carries startup and scheduler delay (#1936 follow-up).
+    """
+    usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    return float(usage.ru_utime) + float(usage.ru_stime)
+
+
 def run_aura(
     code: str,
     args: list[str] | None = None,
     env: dict[str, str] | None = None,
-) -> tuple[str, str, float, int, bool]:
-    """Run aura and return (stdout, stderr, elapsed_seconds, returncode, timed_out).
+) -> tuple[str, str, float, int, bool, float]:
+    """Run aura; return (stdout, stderr, elapsed, rc, timed_out, child_cpu_s).
 
     Issue #4268: keep exit status + timeout on the result. A child that prints
     the expected value and then exits non-zero must not look like PASS.
@@ -146,6 +162,7 @@ def run_aura(
     if env:
         proc_env = os.environ.copy()
         proc_env.update({str(k): str(v) for k, v in env.items()})
+    cpu_start = child_cpu_seconds()
     start = time.perf_counter()
     proc = subprocess.Popen(
         cmd,
@@ -163,8 +180,9 @@ def run_aura(
         proc.kill()
         stdout, stderr = proc.communicate()
     elapsed = time.perf_counter() - start
+    cpu_s = max(0.0, child_cpu_seconds() - cpu_start)
     rc = proc.returncode if proc.returncode is not None else -1
-    return stdout.strip(), stderr.strip(), elapsed, rc, timed_out
+    return stdout.strip(), stderr.strip(), elapsed, rc, timed_out, cpu_s
 
 
 def measure_pipeline(
@@ -190,8 +208,9 @@ def measure_pipeline(
     args_dict = {"eval": None, "ir": ["--ir"], "typecheck": ["--typecheck"]}
     args = args_dict.get(pipeline)
 
-    stdout, stderr, elapsed, rc, timed_out = run_aura(code, args, env)
+    stdout, stderr, elapsed, rc, timed_out, cpu_s = run_aura(code, args, env)
     result["time_s"] = round(elapsed, 6)
+    result["cpu_s"] = round(cpu_s, 6)
     result["stdout"] = stdout
     result["stderr"] = stderr
     result["returncode"] = rc
@@ -292,6 +311,7 @@ class RegressionHit:
     ratio: float
     delta_s: float
     catastrophic: bool = False
+    metric: str = "wall"
 
     def as_tuple(self) -> tuple:
         """Legacy (name, base, cur, ratio) for callers."""
@@ -330,6 +350,7 @@ def run_all(*, runs: int = 1) -> BenchSuiteResult:
 
     for i, bench in enumerate(load_benchmark_cases(), 1):
         samples: list[float] = []
+        cpu_samples: list[float] = []
         result: dict = {}
         base_entry = _baseline_by_name.get(bench.name) or {}
         base_s = float(base_entry.get("time_s") or 0.0)
@@ -337,10 +358,15 @@ def run_all(*, runs: int = 1) -> BenchSuiteResult:
         for _ in range(case_runs):
             result = measure_pipeline(bench.name, bench.code, bench.pipeline, env=bench.env)
             samples.append(float(result["time_s"]))
+            cpu_samples.append(float(result.get("cpu_s") or 0.0))
         result["time_samples"] = [round(s, 6) for s in samples]
         result["time_s"] = round(median_time(samples), 6)
         result["time_min_s"] = round(min(samples), 6)
         result["time_max_s"] = round(max(samples), 6)
+        if any(cpu_samples):
+            result["cpu_samples"] = [round(s, 6) for s in cpu_samples]
+            result["cpu_s"] = round(median_time(cpu_samples), 6)
+            result["cpu_min_s"] = round(min(cpu_samples), 6)
 
         if bench.pipeline in ("eval", "ir"):
             passed = check_eval_result(bench, result)
@@ -358,6 +384,8 @@ def run_all(*, runs: int = 1) -> BenchSuiteResult:
         status = "PASS" if passed else "FAIL"
         bar = "+" if passed else "-"
         time_str = f"{result['time_s'] * 1000:.1f}ms"
+        if result.get("cpu_min_s"):
+            time_str += f"/cpu {result['cpu_min_s'] * 1000:.1f}"
         if runs > 1:
             time_str += f" (med/{runs})"
         print(f"  {bar} [{i:2d}/{suite.total_cases}] {bench.name:30s} {time_str:>14s}  {status}")
@@ -450,6 +478,14 @@ def validate_baseline_names(suite: BenchSuiteResult) -> bool:
     return ok
 
 
+def gate_time(entry: dict) -> tuple[float, str]:
+    """Metric the gate should compare for *entry*: child CPU when recorded."""
+    cpu = entry.get("cpu_min_s")
+    if cpu:
+        return float(cpu), "cpu"
+    return float(entry.get("time_min_s") or entry["time_s"]), "wall"
+
+
 def classify_regression(
     base_time_s: float,
     cur_time_s: float,
@@ -528,8 +564,18 @@ def collect_regressions(
         # Compare best-of-N on both sides: a micro case's single sample is
         # startup noise, not the body under test, so one spike must not fail
         # the SLO gate. Real regressions still move the best sample.
-        base_time = float(base.get("time_min_s") or base["time_s"])
-        cur_time = float(cur.get("time_min_s") or cur["time_s"])
+        #
+        # #1936 follow-up: prefer the child CPU time over wall time. Wall time
+        # on a shared runner is process startup plus scheduler delay, so a
+        # 10 ms case reads 35 ms when the runner is contended even though it
+        # did the same work; CPU time (user+sys) follows the work. Fall back to
+        # wall when either side predates the CPU column.
+        base_time, metric = gate_time(base)
+        cur_time, cur_metric = gate_time(cur)
+        if cur_metric != metric:
+            base_time = float(base.get("time_min_s") or base["time_s"])
+            cur_time = float(cur.get("time_min_s") or cur["time_s"])
+            metric = "wall"
         if base_time <= 0:
             continue
         thr, md, cat = case_thresholds(
@@ -548,6 +594,7 @@ def collect_regressions(
         )
         if hit is not None:
             hit.name = name
+            hit.metric = metric
             regressions.append(hit)
         else:
             ratio = cur_time / base_time
@@ -596,11 +643,14 @@ def check_regression(
         for hit in regressions:
             tag = " CATASTROPHIC" if hit.catastrophic else ""
             print(
-                f"  {hit.name:30s} {hit.base_time_s * 1000:.1f}ms → "
+                f"  {hit.name:30s} [{hit.metric}] {hit.base_time_s * 1000:.1f}ms → "
                 f"{hit.cur_time_s * 1000:.1f}ms ({hit.ratio:.1f}× Δ={hit.delta_s * 1000:.1f}ms){tag}"
             )
             if strict:
-                print(f"SLO VIOLATION: {hit.name} regression {hit.ratio:.2f}x (delta={hit.delta_s * 1000:.1f}ms)")
+                print(
+                    f"SLO VIOLATION: {hit.name} regression {hit.ratio:.2f}x "
+                    f"({hit.metric} delta={hit.delta_s * 1000:.1f}ms)"
+                )
     if improvements:
         print("✅ IMPROVEMENTS (<0.7× faster):")
         for name, base, cur, ratio in improvements:

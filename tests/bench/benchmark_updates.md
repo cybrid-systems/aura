@@ -61,3 +61,10 @@ Each `--update` with `--rationale` appends an entry here.
 - **Cases:** 62 (passed=62, failed=0)
 - **Total time_s (median suite sum):** 0.509
 - **Command:** `benchmark.py --update --rationale v0.2.2 hot-path baselines: list/hash/fiber cases (#5135), recorded on the dev image`
+
+## 2026-11-11T17:43:31.362092+08:00
+
+- **Rationale:** The 2026-11-11T08:23 hot-path baseline was recorded idle on the dev image; the CI SLO gate then read six of those cases 2.5-4.3x slower in wall time (parallel_intend_small 11.2->35.1ms, hot_list_map_2k 10.5->33.6, hot_hash_set_get_2k 15.5->49.7, string_ref_walk_4320 6.3->27.3) while every case still passed. It is process startup, not the body: on the same binary the noop process costs 8-11ms wall idle and 40-55ms when two CPUs of the runner are busy, and the affected 10ms cases track that floor, so the deltas are startup contention. The gate now compares child CPU time (user+sys, from RUSAGE_CHILDREN) and falls back to wall only when a baseline predates the CPU column, so scheduling delay no longer reads as a regression while real work still moves the number. Re-baselined here with CPU + wall columns; measured with AURA_SANDBOX=off because hash-set!/set-code cases need the mutate grant. Verification: the suite under two pinned busy cores yields 0 SLO violations on CPU, where the same run judged on wall time reports 4 (hot_fiber_spawn_join_200 12.4->296.1ms, 23.9x).
+- **Cases:** 62 (passed=62, failed=0)
+- **Total time_s (median suite sum):** 0.87
+- **Command:** `benchmark.py --update --runs 3 --rationale gate on child CPU (user+sys) instead of wall time: shared-runner startup contention inflated 10ms cases to 35ms (#1936 follow-up)`
