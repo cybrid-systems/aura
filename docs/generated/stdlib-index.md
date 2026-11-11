@@ -19,7 +19,7 @@
 | `std/bench` | `all-tasks` `task-count` `run-rounds` `aggregate` `print-report` `run-one` `run-parallel` `bench:list-sort` … (+1) | — |
 | `std/bitwise` | `bitwise-not` `bitwise-and` `bitwise-ior` `bitwise-xor` `arithmetic-shift` `bit-count` `integer-length` `bitwise-if` … (+7) | lib/std/bitwise.aura — SRFI-151 bitwise operations (Issue #5003) |
 | `std/boids` | `boids:vec-add` `boids:vec-sub` `boids:vec-scale` `boids:vec-len` `boids:distance` `boids:separation` `boids:alignment` `boids:cohesion` … (+4) | lib/std/boids.aura — Issue #2879 Boids-style coordination (not physics sim) |
-| `std/bytevector` | `bytevector?` `make-bytevector` `bytevector-length` `bytevector-u8-ref` `bytevector-u8-set!` `bytevector-copy` `bytevector-copy!` `bytevector-append` … (+4) | lib/std/bytevector.aura — R7RS bytevectors + UTF-8 (Issue #5005) |
+| `std/bytevector` | `bytevector?` `bytevector` `make-bytevector` `bytevector-length` `bytevector-u8-ref` `bytevector-u8-set!` `bytevector-copy` `bytevector-copy!` … (+5) | lib/std/bytevector.aura — R7RS bytevectors + UTF-8 (Issue #5005) |
 | `std/capability` | — | std/capability.aura — Capability discovery surface (Issue #4276) |
 | `std/case-lambda` | `case-lambda` | lib/std/case-lambda.aura — R7RS (scheme case-lambda) (Issue #5005) |
 | `std/cbuild` | `cbuild-root` `cbuild-set-root!` `cbuild-digest` `cbuild-toolchain-id` `cbuild-key` `cbuild-entry-dir` `cbuild-artifact!` `cbuild-object!` … (+9) | cbuild.aura — 磁盘内容寻址增量构建缓存（Issue #4803） |

@@ -14,7 +14,7 @@
 ; Only well-formed UTF-8 is produced; utf8->string rejects a truncated
 ; or ill-formed sequence with an error.
 
-(export bytevector? make-bytevector bytevector-length
+(export bytevector? bytevector make-bytevector bytevector-length
         bytevector-u8-ref bytevector-u8-set!
         bytevector-copy bytevector-copy!
         bytevector-append bytevector->list list->bytevector
@@ -26,6 +26,16 @@
        (eq? (vector-ref x 0) 'bytevector)))
 
 (define (bytevector-length bv) (- (vector-length bv) 1))
+
+; Issue #5133: the R7RS constructor was the one (scheme bytevector) name the
+; module did not provide; without it a claim of R7RS bytevectors was hollow.
+(define (bytevector . bytes)
+  (let ((bv (make-bytevector (length bytes) 0)))
+    (let loop ((i 0) (xs bytes))
+      (if (null? xs)
+          bv
+          (begin (bytevector-u8-set! bv i (car xs))
+                 (loop (+ i 1) (cdr xs)))))))
 
 (define (make-bytevector n . fill)
   (let ((f (if (null? fill) 0 (car fill))))
