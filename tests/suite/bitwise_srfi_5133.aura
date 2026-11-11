@@ -1,0 +1,23 @@
+; #5133: pin the SRFI-151 bitwise surface, including the argument order
+; #5096 settled for bitwise-bit-set? — (index n), not (n index).
+(require "std/bitwise" all:)
+
+(define (check)
+  (and
+   (= (bitwise-and 12 10) 8)
+   (= (bitwise-ior 12 10) 14)
+   (= (bitwise-xor 12 10) 6)
+   (= (bitwise-not 0) -1)
+   (= (arithmetic-shift 1 4) 16)
+   (= (bitwise-length 8) 4)
+   ; index first: bit 3 of 8 is set
+   (eq? (bitwise-bit-set? 3 8) #t)
+   (eq? (bitwise-bit-set? 0 8) #f)))
+
+(define host (if (check) 1 0))
+(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+
+(if (and (= host 1) (= guest 1))
+    (begin (display "OK-5133-bitwise") (newline))
+    (begin (display "FAIL-5133-bitwise host=") (display host)
+           (display " guest=") (display guest) (newline) (exit 1)))

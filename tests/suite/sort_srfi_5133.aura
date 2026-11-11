@@ -1,0 +1,29 @@
+; #5133: pin the SRFI-132 sort surface (proc first, as the module declares).
+(require "std/sort" all:)
+
+(define (check)
+  (and
+   ; list-sort accepts both shapes the module documents
+   (equal? (list-sort (list 3 1 2) <) (list 1 2 3))
+   (equal? (list-sort < (list 3 1 2)) (list 1 2 3))
+   ; stability: equal keys keep their input order
+   (equal? (list-sort (lambda (x y) (< (car x) (car y)))
+                      (list (list 1 'a) (list 1 'b) (list 0 'c)))
+           (list (list 0 'c) (list 1 'a) (list 1 'b)))
+   ; vector sorts are the list round-trip; proc first (SRFI-132 / R7RS)
+   (equal? (vector-sort < (vector 3 1 2)) (vector 1 2 3))
+   (let ((v (vector 3 1 2))) (vector-sort! < v) (equal? v (vector 1 2 3)))
+   ; generic sort dispatches on the sequence type
+   (equal? (sort (list 3 1 2)) (list 1 2 3))
+   (equal? (sort (vector 3 1 2) <) (vector 1 2 3))
+   ; sorted? answers on both answers
+   (eq? (sorted? (list 1 2 3) <) #t)
+   (eq? (sorted? (list 3 1) <) #f)))
+
+(define host (if (check) 1 0))
+(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+
+(if (and (= host 1) (= guest 1))
+    (begin (display "OK-5133-sort") (newline))
+    (begin (display "FAIL-5133-sort host=") (display host)
+           (display " guest=") (display guest) (newline) (exit 1)))
