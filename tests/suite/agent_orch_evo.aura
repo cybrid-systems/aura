@@ -72,7 +72,10 @@
 (assert! (member "adder" (orch:list)) "orch:list names the agent")
 (assert! (string=? (orch:status "adder") "running") "status running")
 (assert! (string=? (orch:stop "adder") "stopped") "stop marks stopped")
-(assert! (pair? (orch:ask "adder" 1)) "ask on a stopped agent is refused")
+; Issue #5134: a refusal is a queryable record, not a bare pair
+(assert! (let ((r (orch:ask "adder" 1)))
+           (and (hash? r) (equal? (hash-ref r "status" #f) "agent-stopped")))
+         "ask on a stopped agent is refused with a record")
 
 (orch:spawn "lc" (lambda (x) (* x 2)))
 (assert! (string=? (orch:restart "lc") "lc") "restart keeps the name")

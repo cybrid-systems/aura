@@ -1,0 +1,31 @@
+; #5134: the public faces separate "no result" from "the operation failed".
+; orch answers #f only for an unknown name (absence) and a record for a
+; refusal (failure); stats:get answers one typed not-found record on both
+; arms; query/mutate answer typed bad-arg errors for an unknown op.
+(require "std/orch" all:)
+(require "std/stats" all:)
+
+(define refused (try (orch:ask "5134-nobody" 1) (catch (e) 'raised)))
+(define missing-stat (stats:get "5134:no-such-key"))
+(define (check)
+  (and
+   ; absence: #f from the read-only lookups
+   (eq? (orch:status "5134-nobody") #f)
+   (eq? (orch:handle "5134-nobody") #f)
+   ; failure: a queryable record, not #f
+   (hash? refused)
+   (equal? (hash-ref refused "status" #f) "send-failed")
+   (equal? (hash-ref refused "error" #f) "unknown-agent")
+   ; stats:get: same record on both arms (kernel and std/stats)
+   (hash? missing-stat)
+   (equal? (hash-ref missing-stat "status" #f) "not-found")
+   (eq? (hash-ref missing-stat "ok" #t) #f)))
+
+(define host (if (check) 1 0))
+(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+
+(if (and (= host 1) (= guest 1))
+    (begin (display "OK-5134") (newline))
+    (begin (display "FAIL-5134 host=") (display host)
+           (display " guest=") (display guest)
+           (display " refused=") (display refused) (newline) (exit 1)))
