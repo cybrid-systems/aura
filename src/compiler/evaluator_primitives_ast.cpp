@@ -1061,25 +1061,26 @@ void RegSplitParts::register_ast_snapshot_fail_reason_primitive(PrimRegistrar ad
     //   → keyword of last ast:snapshot failure (#2966).
     //   :none | :guard-reject | :no-workspace | :empty-source
     //   Agents / denseness probes call this after -1 instead of guessing.
-    add("qr:snapshot-fail-reason", [&ev](std::span<const EvalValue> a) -> EvalValue {
-        (void)a;
-        const char* kw = ":none";
-        switch (ev.last_ast_snapshot_fail_reason()) {
-            case 1:
-                kw = ":guard-reject";
-                break;
-            case 2:
-                kw = ":no-workspace";
-                break;
-            case 3:
-                kw = ":empty-source";
-                break;
-            default:
-                kw = ":none";
-                break;
-        }
-        return make_keyword(ev.intern_keyword_slot(kw));
-    });
+    ev.primitives().add_hidden("qr:snapshot-fail-reason",
+                               [&ev](std::span<const EvalValue> a) -> EvalValue {
+                                   (void)a;
+                                   const char* kw = ":none";
+                                   switch (ev.last_ast_snapshot_fail_reason()) {
+                                       case 1:
+                                           kw = ":guard-reject";
+                                           break;
+                                       case 2:
+                                           kw = ":no-workspace";
+                                           break;
+                                       case 3:
+                                           kw = ":empty-source";
+                                           break;
+                                       default:
+                                           kw = ":none";
+                                           break;
+                                   }
+                                   return make_keyword(ev.intern_keyword_slot(kw));
+                               });
 }
 
 // Issue #5032: workspace introspection prims (#107 part 3, #2737, ast:defs /
@@ -1413,7 +1414,7 @@ void RegSplitParts::register_ast_diff_primitive(PrimRegistrar add, Evaluator& ev
     //   Compares **workspace** source vs a snapshot (#2918 dual-workspace).
     //   If no id given, compares versus the most recent snapshot.
     //   Tags: :same / :removed / :added
-    add("qr:diff", [&ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("qr:diff", [&ev](const auto& a) -> EvalValue {
         if (!ev.workspace_flat_ || !ev.workspace_pool_)
             return make_void();
 
@@ -1627,7 +1628,7 @@ void RegSplitParts::register_ast_validate_primitives(PrimRegistrar add, Evaluato
     // (query :validate-ownership) — Validate ownership invariants after mutations
     // Returns an alist: ((:pass true/false) (:notes (...)))
     // Each note has: (:node <id> :message <str> :kind <str>)
-    add("qr:validate-ownership", [&ev](const auto&) -> EvalValue {
+    ev.primitives().add_hidden("qr:validate-ownership", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_flat_ || !ev.workspace_pool_) {
             // Return early with pass=true if no workspace
             return make_bool(true);
@@ -1726,7 +1727,7 @@ void RegSplitParts::register_ast_validate_primitives(PrimRegistrar add, Evaluato
 
     // (query :validate-nodes) — Validate all nodes against NodeMeta invariants
     // Returns an alist: ((:pass . #t/#f) (:total . N) (:errors . ((:node N :message M) ...)))
-    add("qr:validate-nodes", [&ev](const auto&) -> EvalValue {
+    ev.primitives().add_hidden("qr:validate-nodes", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_flat_) {
             return make_bool(true);
         }
@@ -1786,7 +1787,7 @@ void RegSplitParts::register_ast_ref_primitives(PrimRegistrar add, Evaluator& ev
     // (query :ref-valid-id-gen) and (query :ref-get). Use this in EDSL code
     // to safely hold a reference to a node across multiple
     // mutation / query calls.
-    add("qr:stable-ref-pair", [&ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("qr:stable-ref-pair", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_void();
         if (!ev.workspace_flat_)
@@ -1813,7 +1814,7 @@ void RegSplitParts::register_ast_ref_primitives(PrimRegistrar add, Evaluator& ev
     // (the last check is what catches "a structural mutation
     // happened between capture and use" — even if the slot
     // still exists, the structural relationship has changed).
-    add("qr:ref-valid-id-gen", [&ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("qr:ref-valid-id-gen", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
             return make_bool(false);
         if (!ev.workspace_flat_)
@@ -1837,7 +1838,7 @@ void RegSplitParts::register_ast_ref_primitives(PrimRegistrar add, Evaluator& ev
     // containing the node's tag name (so callers can at least
     // see "this is what kind of node it was" even if they
     // can't get the full NodeView through Aura values).
-    add("qr:ref-get", [&ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("qr:ref-get", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
             return make_void();
         if (!ev.workspace_flat_)
@@ -1892,7 +1893,7 @@ void RegSplitParts::register_ast_ref_primitives(PrimRegistrar add, Evaluator& ev
     // Optional trailing args (when present as ints):
     //   fiber_id tenant_id wrap_epoch cow_epoch pin(0/1)
     // so Agents can persist full provenance without C++.
-    add("qr:ref-serialize", [&ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("qr:ref-serialize", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 4 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
             return make_bool(false);
         if (!ev.workspace_flat_)
@@ -1925,7 +1926,7 @@ void RegSplitParts::register_ast_ref_primitives(PrimRegistrar add, Evaluator& ev
     // (mutation_id . workspace_id)) for Aura pair-list consumers
     // (pre-#2198 shape preserved). Returns #f if magic mismatch
     // or buffer shorter than v1.
-    add("qr:ref-deserialize", [&ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("qr:ref-deserialize", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         if (!ev.workspace_flat_)
@@ -2031,7 +2032,7 @@ void RegSplitParts::register_ast_node_maintenance_primitives(PrimRegistrar add, 
     // registration left (query :generation) unbound for editor clients
     // (same shape as the #4345 bare query bindings). Args ignored,
     // same as the stats impl above.
-    add("qr:generation", [&ev](const auto&) -> EvalValue {
+    ev.primitives().add_hidden("qr:generation", [&ev](const auto&) -> EvalValue {
         if (!ev.workspace_flat_)
             return make_int(0);
         return make_int(static_cast<std::int64_t>(ev.workspace_flat_->generation()));
@@ -2084,7 +2085,7 @@ void RegSplitParts::register_ast_node_maintenance_primitives(PrimRegistrar add, 
     // (query :validate-post-restore) — Issue #263: check generation_ /
     // node_gen_ / parent-child span consistency. Returns a hash with
     // violations, generation, live-nodes, free-slots.
-    add("qr:validate-post-restore", [&ev](const auto&) -> EvalValue {
+    ev.primitives().add_hidden("qr:validate-post-restore", [&ev](const auto&) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
         if (!ev.workspace_flat_)
             return make_void();

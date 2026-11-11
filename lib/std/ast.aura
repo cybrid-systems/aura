@@ -33,7 +33,6 @@
 ; ── Thin aliases for stats:get-only names (#2734 / #2737) ───────
 (define (ast:nodes) (stats:get "ast:nodes"))
 (define (ast:defs) (stats:get "ast:defs"))
-(define (query :generation) (stats:get "qr:generation"))
 (define (ast:version) (stats:get "ast:version"))
 (define (ast:summary) (stats:get "ast:summary"))
 (define (ast:node-count) (stats:get "ast:node-count"))

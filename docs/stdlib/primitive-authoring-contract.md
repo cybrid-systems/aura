@@ -222,7 +222,8 @@ Two op spellings are accepted:
 - a **keyword** carries the canonical short name — `(query :node-type id)`,
   `(mutate :snapshot "tag")`;
 - a **string** carries the primitive's own name —
-  `(query "qr:diff" id)`. A retired prefix in that position is an error.
+  `(query :diff id)` — a name moved into the dispatch-only table (for
+  example `qr:diff`) is reachable by keyword, never by a direct call.
 
 An unknown `:op` still fails loudly (with a `did you mean` hint), and an
 unknown string op is `no-prim`.

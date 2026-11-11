@@ -2,19 +2,19 @@
 
 # Primitives (generated)
 
-**504** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**474** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Both registration channels are covered (Issue #5008): `register_prim` / `add(...)` in `src/**/*.cpp` **and** the evaluator ctor hot table in `src/compiler/evaluator_primitives_builtins.cpp` (`+ - * / = < > <= >= not and or eq?` live only there).
 Runtime canonical list: `(query :api-reference)` (includes `*deprecated*` section).
 Tiers (Issue #5008): one list, `docs/stdlib/primitive-tiers.json`; criterion + gate in [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
-**kernel** 503 · **stdlib-candidate** 0 · **delete** 1
+**kernel** 473 · **stdlib-candidate** 0 · **delete** 1
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
 **Authoring (Issue #2915)**: prefer `register_prim` in `src/compiler/prim_registrar_scaffold.hh`; full contract [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md) + [contributing.md](../contributing.md).
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 51 primitives (10%)
-- **core**: 417 primitives (83%)
+- **mutation-safety**: 50 primitives (11%)
+- **core**: 388 primitives (82%)
 - **internal-observable**: 35 primitives (7%)
 - **convenience**: 1 primitives (0%)
 
@@ -518,40 +518,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `primitives:alias` *[core]* `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `primitives:contract-probe` *[core]* `delete` — `src/compiler/evaluator_primitives_test.cpp`
 
-## Qr: (32)
+## Qr: (2)
 
-- `qr:allow-macro-mutate?` *[core]* `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `qr:api-reference` *[mutation-safety]* `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
-- `qr:can-write?` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:concurrent-mutation-policy` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:conflicts-with` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:deopt-fn?` *[core]* `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `qr:diff` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:fiber-backend` *[core]* `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `qr:find-define` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:generation` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:get-provenance` *[core]* `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `qr:ir-dependents` *[core]* `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
-- `qr:ir-dirty?` *[core]* `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
-- `qr:memory-limit` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:memory-used` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:mutation-log-diff` *[core]* `kernel` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `qr:mutation-log-summary` *[core]* `kernel` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `qr:ppa-reasons` *[core]* `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `qr:protected?` *[core]* `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `qr:reasons` *[core]* `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `qr:ref-deserialize` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:ref-get` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
 - `qr:ref-mutation-id` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:ref-serialize` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:ref-valid-id-gen` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
 - `qr:ref-workspace-id` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:resolve-stable-ref` *[core]* `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:snapshot-fail-reason` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:stable-ref-pair` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:validate-nodes` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:validate-ownership` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:validate-post-restore` *[core]* `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
 
 ## Reflect: (3)
 
@@ -607,7 +577,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (51)
+### Mutation safety (must remain primitive) (50)
 
 - `c-alloc` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-free` `kernel` — `src/compiler/ffi_primitives_impl.cpp`
@@ -656,12 +626,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `panic-checkpoint` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `panic-restore` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `panic-safe-source` `kernel` — `src/compiler/evaluator_primitives_obs_eval.cpp`
-- `qr:api-reference` `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
 - `workspace-persist-format-version` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-persist-info` `kernel` — `src/compiler/evaluator_primitives_persist.cpp`
 - `workspace-state` `kernel` — `src/compiler/evaluator_primitives_agent.cpp`
 
-### Core builtins (must remain primitive) (417)
+### Core builtins (must remain primitive) (388)
 
 - `%base64-decode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` `kernel` — `src/compiler/evaluator_primitives_char.cpp`
@@ -924,37 +893,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `primitives:alias` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `primitives:contract-probe` `delete` — `src/compiler/evaluator_primitives_test.cpp`
 - `procedure?` `kernel` — `src/compiler/evaluator_primitives_core.cpp`
-- `qr:allow-macro-mutate?` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `qr:can-write?` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:concurrent-mutation-policy` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:conflicts-with` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:deopt-fn?` `kernel` — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `qr:diff` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:fiber-backend` `kernel` — `src/compiler/evaluator_primitives_messaging.cpp`
-- `qr:find-define` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:generation` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:get-provenance` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `qr:ir-dependents` `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
-- `qr:ir-dirty?` `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
-- `qr:memory-limit` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:memory-used` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:mutation-log-diff` `kernel` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `qr:mutation-log-summary` `kernel` — `src/compiler/evaluator_primitives_mutation.cpp`
-- `qr:ppa-reasons` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `qr:protected?` `kernel` — `src/compiler/evaluator_primitives_compile.cpp`
-- `qr:reasons` `kernel` — `src/compiler/evaluator_primitives_memory.cpp`
-- `qr:ref-deserialize` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:ref-get` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
 - `qr:ref-mutation-id` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:ref-serialize` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:ref-valid-id-gen` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
 - `qr:ref-workspace-id` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:resolve-stable-ref` `kernel` — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:snapshot-fail-reason` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:stable-ref-pair` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:validate-nodes` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:validate-ownership` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:validate-post-restore` `kernel` — `src/compiler/evaluator_primitives_ast.cpp`
 - `query` `kernel` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query-annotate-functions` `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
 - `query-expected-type` `kernel` — `src/compiler/evaluator_primitives_eval.cpp`
@@ -1127,7 +1067,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 Criterion: a name stays **kernel** only when Aura code cannot implement it without losing atomicity or a host effect. **stdlib-candidate** names are pure value->value functions Aura can host; **delete** names duplicate another registered name. See [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md).
 
-### kernel (503)
+### kernel (473)
 
 - `%base64-decode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
 - `%base64-encode` *[K-HOSTLIB]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -1437,38 +1377,8 @@ Criterion: a name stays **kernel** only when Aura code cannot implement it witho
 - `prim-hot-dispatch-hits` *[K-GOV]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `primitives:alias` *[K-ENGINE]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `procedure?` *[K-VAL]* — `src/compiler/evaluator_primitives_core.cpp`
-- `qr:allow-macro-mutate?` *[K-QRY]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `qr:api-reference` *[K-QRY]* — `src/compiler/evaluator_primitives_eval.cpp`
-- `qr:can-write?` *[K-QRY]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:concurrent-mutation-policy` *[K-QRY]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:conflicts-with` *[K-QRY]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:deopt-fn?` *[K-QRY]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
-- `qr:diff` *[K-QRY]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:fiber-backend` *[K-QRY]* — `src/compiler/evaluator_primitives_messaging.cpp`
-- `qr:find-define` *[K-QRY]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:generation` *[K-QRY]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:get-provenance` *[K-QRY]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `qr:ir-dependents` *[K-QRY]* — `src/compiler/evaluator_primitives_eval.cpp`
-- `qr:ir-dirty?` *[K-QRY]* — `src/compiler/evaluator_primitives_eval.cpp`
-- `qr:memory-limit` *[K-QRY]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:memory-used` *[K-QRY]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:mutation-log-diff` *[K-QRY]* — `src/compiler/evaluator_primitives_mutation.cpp`
-- `qr:mutation-log-summary` *[K-QRY]* — `src/compiler/evaluator_primitives_mutation.cpp`
-- `qr:ppa-reasons` *[K-QRY]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `qr:protected?` *[K-QRY]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `qr:reasons` *[K-QRY]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `qr:ref-deserialize` *[K-QRY]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:ref-get` *[K-QRY]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `qr:ref-mutation-id` *[K-QRY]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:ref-serialize` *[K-QRY]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:ref-valid-id-gen` *[K-QRY]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `qr:ref-workspace-id` *[K-QRY]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:resolve-stable-ref` *[K-QRY]* — `src/compiler/evaluator_primitives_workspace.cpp`
-- `qr:snapshot-fail-reason` *[K-QRY]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:stable-ref-pair` *[K-QRY]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:validate-nodes` *[K-QRY]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:validate-ownership` *[K-QRY]* — `src/compiler/evaluator_primitives_ast.cpp`
-- `qr:validate-post-restore` *[K-QRY]* — `src/compiler/evaluator_primitives_ast.cpp`
 - `query` *[K-CTRL]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `query-annotate-functions` *[K-ENGINE]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `query-expected-type` *[K-ENGINE]* — `src/compiler/evaluator_primitives_eval.cpp`

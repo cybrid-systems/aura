@@ -4335,7 +4335,7 @@ void CompilePrims::register_compile_p44(PrimRegistrar add, Evaluator& ev) {
     // the per-node provenance id (0 if unset). The host can
     // look up the actual macro_def_id / expansion_id /
     // mutation_id via its own side-table.
-    add("qr:get-provenance", [&ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("qr:get-provenance", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_int(0);
         if (!ev.workspace_flat_)
@@ -5592,7 +5592,7 @@ void CompilePrims::register_compile_p57(PrimRegistrar add, Evaluator& ev) {
     // protected state or opt-in globally. Per-call opt-out
     // without changing the flag is the :allow-macro? #t kwarg
     // on each mutate:* primitive.
-    add("qr:protected?", [&ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("qr:protected?", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         if (!ev.workspace_flat_)
@@ -5610,8 +5610,9 @@ void CompilePrims::register_compile_p57(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 compile part 58 (orig 4774-4946)
 void CompilePrims::register_compile_p58(PrimRegistrar add, Evaluator& ev) {
 
-    add("qr:allow-macro-mutate?",
-        [&ev](const auto&) -> EvalValue { return make_bool(ev.get_allow_macro_mutate()); });
+    ev.primitives().add_hidden("qr:allow-macro-mutate?", [&ev](const auto&) -> EvalValue {
+        return make_bool(ev.get_allow_macro_mutate());
+    });
 
     ev.primitives().add_hidden("mw:set-allow-macro-mutate", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_bool(a[0])) {

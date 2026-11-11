@@ -258,6 +258,45 @@ RETIRED_022 = frozenset(
 # under K-ORCH-STATE, so the rule id must not come back.
 FORBIDDEN_RULES_022 = frozenset({"K-EXC-5118"})
 
+# Issue #5143: the qr: read aliases are dispatch-only too. (query :op) still
+# reaches the body through the query verb, but the name has no public
+# registration and no tier row. qr:ref-mutation-id / qr:ref-workspace-id are
+# re-tier names and stay public until Batch 5 (#5144).
+RETIRED_QR_ALIASES_022 = frozenset(
+    {
+        "qr:allow-macro-mutate?",
+        "qr:api-reference",
+        "qr:can-write?",
+        "qr:concurrent-mutation-policy",
+        "qr:conflicts-with",
+        "qr:deopt-fn?",
+        "qr:diff",
+        "qr:fiber-backend",
+        "qr:find-define",
+        "qr:generation",
+        "qr:get-provenance",
+        "qr:ir-dependents",
+        "qr:ir-dirty?",
+        "qr:memory-limit",
+        "qr:memory-used",
+        "qr:mutation-log-diff",
+        "qr:mutation-log-summary",
+        "qr:ppa-reasons",
+        "qr:protected?",
+        "qr:reasons",
+        "qr:ref-deserialize",
+        "qr:ref-get",
+        "qr:ref-serialize",
+        "qr:ref-valid-id-gen",
+        "qr:resolve-stable-ref",
+        "qr:snapshot-fail-reason",
+        "qr:stable-ref-pair",
+        "qr:validate-nodes",
+        "qr:validate-ownership",
+        "qr:validate-post-restore",
+    }
+)
+
 # Issue #5142: the mw: prefix aliases are dispatch-only. Their bodies stay in
 # the primitive table under the same name, so (mutate :op) and (workspace :op)
 # still resolve them, but the name is no longer a public registration: no slot,
@@ -323,16 +362,20 @@ def check_retired_022(tiers: dict, catalog: set[str]) -> list[str]:
         entry = tiers["primitives"].get(name)
         if entry is not None:
             errors.append(f"{name} was retired in v0.2.2 but still has a tier entry")
-    # Issue #5142: a deregistered mw: alias must not come back as a public
-    # registration or a tier row; its dispatch-only body has no surface.
-    for name in sorted(RETIRED_MW_ALIASES_022):
-        if name in catalog:
-            errors.append(
-                f"{name} was deregistered in v0.2.2 (#5142); call "
-                "(mutate :<op>) instead of registering the mw: alias again"
-            )
-        if name in tiers["primitives"]:
-            errors.append(f"{name} was deregistered in v0.2.2 (#5142) but still has a tier entry")
+    # Issue #5142/#5143: a deregistered prefix alias must not come back as a
+    # public registration or a tier row; its dispatch-only body has no surface.
+    for retired, issue, verb in (
+        (RETIRED_MW_ALIASES_022, "#5142", "(mutate :<op>)"),
+        (RETIRED_QR_ALIASES_022, "#5143", "(query :<op>)"),
+    ):
+        for name in sorted(retired):
+            if name in catalog:
+                errors.append(
+                    f"{name} was deregistered in v0.2.2 ({issue}); call "
+                    f"{verb} instead of registering the prefix alias again"
+                )
+            if name in tiers["primitives"]:
+                errors.append(f"{name} was deregistered in v0.2.2 ({issue}) but still has a tier entry")
     for name, entry in sorted(tiers["primitives"].items()):
         if entry.get("rule") in FORBIDDEN_RULES_022:
             errors.append(f"{name} still uses the settled rule {entry.get('rule')}")

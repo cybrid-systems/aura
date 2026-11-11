@@ -2117,7 +2117,7 @@ void RegSplitParts::register_messaging_fiber_lifecycle_primitives(PrimRegistrar 
                                                                   Evaluator& ev) {
     // Issue #2656: which backend (fiber:spawn) will use right now.
     // "scheduler" | "thread" — denseness hosts can assert concurrent path.
-    add("qr:fiber-backend", [](const auto&) -> EvalValue {
+    ev.primitives().add_hidden("qr:fiber-backend", [](const auto&) -> EvalValue {
         // Interned at call time via make_string of heap push is heavier;
         // return a small int enum for probes + keep string via display path
         // optional. Use 1=scheduler, 2=thread (always one of these when

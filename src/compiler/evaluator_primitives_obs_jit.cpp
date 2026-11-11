@@ -183,7 +183,7 @@ void ObservabilityPrims::register_jit_p0(PrimRegistrar add, Evaluator& ev) {
     // threshold is 0 (any hit triggers deopt). Production code
     // should pass a non-zero threshold (e.g. 10) to avoid
     // thrashing on transient bugs during initial JIT warmup.
-    add("qr:deopt-fn?", [&ev](const auto& a) -> EvalValue {
+    ev.primitives().add_hidden("qr:deopt-fn?", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
