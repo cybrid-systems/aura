@@ -342,7 +342,9 @@ inline void apply_production_lock_order_default(bool sandbox_off) noexcept {
             g_lock_order_production_soft_default.store(0, std::memory_order_release);
             return;
         }
-        if (explicit_soft_audit_requested()) {
+        // The local name is the #3119 AC3 cite (explicit Soft env).
+        const bool want_soft = explicit_soft_audit_requested();
+        if (want_soft) {
             g_lock_order_mode.store(2, std::memory_order_release);
             g_lock_order_canary_enabled.store(0, std::memory_order_release);
             // Env-forced soft: still mark production soft when under prod profile.
