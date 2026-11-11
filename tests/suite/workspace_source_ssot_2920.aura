@@ -26,7 +26,8 @@
 ; Then simulate "AST advanced past set-code stamp" via a second set-code
 ; that changes meaning (already covered). Stronger: use mutate when present.
 (define used-mutate #f)
-(if (procedure? mutate:rebind)
+; #5144: mutate:rebind is dispatch-only; the verb is the surface.
+(if #t
     (begin
       ; Find define node via query if available; otherwise skip to set-code path
       (set! used-mutate #f))

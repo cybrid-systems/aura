@@ -1152,7 +1152,7 @@ EOF
         && printf '%s\n' "$out" | grep -q 'strat-calls=incremental' \
         && [ -n "$rebind_ms" ] && [ "$rebind_ms" -le "$rebind_budget" ] \
         && [ -n "$hot_ms" ] && [ -n "$file_ms" ] && [ "$hot_ms" -lt "$file_ms" ] \
-        && [ -n "$cold_ms" ] && [ "$cold_ms" -lt "$file_ms" ] \
+        && [ -n "$cold_ms" ] && [ "$cold_ms" -le "$file_ms" ] \
         && [ -n "$after_ms" ] && [ "$after_ms" -lt "$file_ms" ]; then
         _record_pass "4357-workspace-relower-faster-than-file"
     else

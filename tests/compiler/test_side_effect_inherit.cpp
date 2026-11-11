@@ -86,16 +86,18 @@ int run_test_side_effect_inherit() {
         set_mode(SandboxMode::Off);
         CompilerService cs;
         auto& prims = cs.evaluator().primitives();
-        // mutate:set-body is registered via add_mutate
-        const auto slot = prims.slot_for_name("mutate:set-body");
-        CHECK(slot < prims.slot_count(), "mutate:set-body registered");
-        const auto& meta = prims.meta_for_slot(slot);
-        std::println("  set-body required_effects={} enforced_in_body={} pure={}",
-                     meta.required_effects, meta.effect_enforced_in_body, meta.pure);
-        CHECK(meta.required_effects == kEffectMutate, "add_mutate stamps Mutate effect");
-        CHECK(meta.effect_enforced_in_body, "body-enforced flag set (no double audit)");
-        CHECK(!meta.pure, "mutate is impure");
-        CHECK(!meta.security_exempt, "not exempt");
+        // Issue #5144: mutate:set-body is dispatch-only (no slot/PrimMeta). The
+        // add_mutate stamp still declares the contract at its source site, and
+        // the wrapped body is the enforcer; pin both.
+        CHECK(prims.lookup("mutate:set-body").has_value(),
+              "mutate:set-body reachable through the mutate verb");
+        CHECK(prims.slot_for_name("mutate:set-body") >= prims.slot_count(),
+              "mutate:set-body has no public slot (#5144)");
+        const auto mut_src = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        CHECK(mut_src.find("meta.requires_mutation_guard = !guard_exempt") != std::string::npos,
+              "add_mutate stamps the guard contract");
+        CHECK(mut_src.find("meta.effect_enforced_in_body = true") != std::string::npos,
+              "body-enforced flag set (no double audit)");
     }
 
     // ── AC3: dispatch require_effect via PrimMeta.required_effects ──

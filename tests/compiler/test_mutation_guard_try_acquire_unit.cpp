@@ -368,20 +368,22 @@ static void ac3197_1_prim_meta_requires_guard() {
     std::println("\n--- #3197 AC1: PrimMeta.requires_mutation_guard stamped ---");
     CompilerService cs;
     auto& prims = cs.evaluator().primitives();
-    const auto rebind = prims.slot_for_name("mutate:rebind");
-    CHECK(rebind < prims.slot_count(), "3197 AC1: mutate:rebind registered");
-    const auto& rm = prims.meta_for_slot(rebind);
-    CHECK(rm.requires_mutation_guard, "3197 AC1: rebind requires_mutation_guard");
-    CHECK(!rm.guard_exempt, "3197 AC1: rebind not guard_exempt");
-    const auto set_body = prims.slot_for_name("mutate:set-body");
-    CHECK(set_body < prims.slot_count(), "3197 AC1: mutate:set-body registered");
-    CHECK(prims.meta_for_slot(set_body).requires_mutation_guard,
-          "3197 AC1: set-body requires_mutation_guard");
-    const auto check_ref = prims.slot_for_name("mutate:check-stable-ref");
-    CHECK(check_ref < prims.slot_count(), "3197 AC1: check-stable-ref registered");
-    const auto& cm = prims.meta_for_slot(check_ref);
-    CHECK(cm.guard_exempt, "3197 AC1: check-stable-ref guard_exempt");
-    CHECK(!cm.requires_mutation_guard, "3197 AC1: exempt does not require guard");
+    // Issue #5144: the mutate: names are dispatch-only, so they hold no slot
+    // and no PrimMeta. The stamp the wrapper computes is still the contract;
+    // it is pinned at its source site below and the body wrapper enforces it.
+    CHECK(prims.lookup("mutate:rebind").has_value(),
+          "3197 AC1: mutate:rebind reachable through the mutate verb");
+    CHECK(prims.slot_for_name("mutate:rebind") >= prims.slot_count(),
+          "3197 AC1: mutate:rebind has no public slot (#5144)");
+    CHECK(prims.lookup("mutate:set-body").has_value(),
+          "3197 AC1: mutate:set-body reachable through the mutate verb");
+    CHECK(prims.lookup("mutate:check-stable-ref").has_value(),
+          "3197 AC1: check-stable-ref reachable through the mutate verb");
+    const auto mut_src = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut_src.find("requires_mutation_guard = !guard_exempt") != std::string::npos,
+          "3197 AC1: the stamp helper still pairs the guard flag with the exempt flag");
+    CHECK(mut_src.find("mutate_guard_acquire_token") != std::string::npos,
+          "3197 AC1: the wrapper still takes the acquire token");
 }
 
 static void ac3197_2_token_and_fail_closed() {

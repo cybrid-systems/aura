@@ -31,7 +31,8 @@
 
 ; Mutate rebind when available
 (set-code "(define (g x) x)")
-(if (procedure? mutate:rebind)
+; #5144: mutate:rebind is dispatch-only; the verb is the surface.
+(if #t
     (begin
       (mutate :rebind "g" "(lambda (x) (+ x 1))" "2921")
       (define mid (current-source :workspace))

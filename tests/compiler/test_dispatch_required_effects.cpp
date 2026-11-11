@@ -325,15 +325,22 @@ static void ac4037_meta_contract() {
     reset_all();
     CompilerService cs;
     auto& ev = cs.evaluator();
-    const auto slot = ev.primitives().slot_for_name("mutate:set-agent-fingerprint");
-    CHECK(slot < ev.primitives().slot_count(), "4037 meta: prim registered");
-    const auto& meta = ev.primitives().meta_for_slot(slot);
-    CHECK(!meta.security_exempt, "4037 meta: security_exempt dropped");
-    CHECK(meta.required_effects == aura::compiler::security::kEffectTenantAdmin,
+    // Issue #5144: the name is dispatch-only, so it carries no slot/PrimMeta.
+    // The declared contract lives at its registration site and the body is the
+    // choke, so pin the source stamp and the verb reachability.
+    CHECK(ev.primitives().lookup("mutate:set-agent-fingerprint").has_value(),
+          "4037 meta: prim reachable through the mutate verb");
+    CHECK(ev.primitives().slot_for_name("mutate:set-agent-fingerprint") >=
+              ev.primitives().slot_count(),
+          "4037 meta: no public slot (#5144)");
+    const auto src = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(src.find("ex.required_effects = ::aura::compiler::security::kEffectTenantAdmin") !=
+              std::string::npos,
           "4037 meta: required_effects = kEffectTenantAdmin");
-    CHECK(meta.effect_enforced_in_body,
+    CHECK(src.find("ex.effect_enforced_in_body = true") != std::string::npos,
           "4037 meta: effect_enforced_in_body (arg-conditional, dispatch not double-gating)");
-    CHECK(meta.guard_exempt, "4037 meta: still guard_exempt (metadata-only, no AST write)");
+    CHECK(src.find("ex.guard_exempt = true") != std::string::npos,
+          "4037 meta: still guard_exempt (metadata-only, no AST write)");
 }
 
 static void ac4037_1_deny_no_grant() {
