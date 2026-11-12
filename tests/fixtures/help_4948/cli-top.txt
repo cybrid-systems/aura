@@ -19,6 +19,8 @@ Common options:
   -e, --eval EXPR    evaluate EXPR
   --preset dev|ci|prod, --grant CAPS, --deny CAPS   capabilities
   --fmt, --typecheck, --query Q, --inspect           tools
+  A tool positional that exists as a file is that file;
+  any other positional is source text.
   -V, --version      print version
 
 'aura help <command>' for details; 'aura help --all' for every option.
