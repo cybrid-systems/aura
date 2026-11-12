@@ -1,0 +1,5 @@
+(export a1)
+(require "std/list" all:)
+(export a2)
+(define a1 1)
+(define a2 2)

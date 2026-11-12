@@ -7286,8 +7286,11 @@ Evaluator::FlatStep Evaluator::eval_flat_on_export(EvalFlatCursor& cur,
     auto& tail_env = cur.tail_env;
     auto& tco_pinned = cur.tco_pinned;
     auto& tco = cur.tco;
-    // (export sym ...) — record module API during loading
-    // No runtime effect; children are Variable nodes
+    // (export sym ...) — record into the innermost module's export set
+    // (Issue #5197). load_module_file installs a fresh set for this load;
+    // several (export ...) forms in one module accumulate here. Outside a
+    // load the entry file creates the set on first use. No runtime effect;
+    // children are Variable nodes.
     if (!current_export_set_) {
         current_export_set_ = std::make_unique<std::unordered_set<std::string>>();
     }

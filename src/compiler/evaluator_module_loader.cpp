@@ -500,8 +500,10 @@ types::EvalValue Evaluator::fail_module_load(const std::string& resolved, const 
     // The fail-closed reset below is unchanged (#2570).
     if (!require_failure_is_diagnostic_)
         std::println(std::cerr, "load_module_file: eval failed for {}: {}", resolved, why);
-    if (current_export_set_)
-        current_export_set_->clear();
+    // Issue #5197: do not clear current_export_set_ here. The caller's
+    // ExportSetFrame drops this module's set and restores the parent's.
+    // Clearing the shared set used to erase names the parent recorded
+    // before this nested require.
     erase_loading_module(resolved);
     aura::diag::unbind_source_file_flats(resolved); // Issue #4916
     arena_group_->reset_module(resolved);
@@ -521,6 +523,10 @@ std::optional<std::string> Evaluator::apply_module_export_filter(Env* mod_env) {
     // those names. Missing export names (declared but never defined)
     // are filtered out below — some std modules historically export
     // names that live as primitives only; do not hard-fail those.
+    // Issue #5197: defmacro exports (delay, test-suite, case-lambda) and
+    // the parser special form parameterize are not value bindings.
+    // macros_ is evaluator-wide, so a missing binding is not proof the
+    // name was never defined. Keep skipping those names.
     //
     // Exception: `(define ceil ceil)` under multi-define letrec used
     // to re-bind the pre-allocated void cell to itself (RHS shadowed
@@ -562,7 +568,9 @@ std::optional<std::string> Evaluator::apply_module_export_filter(Env* mod_env) {
             kept.push_back(b);
     }
     mod_env->replace_string_bindings(kept);
-    current_export_set_->clear();
+    // Issue #5197: leave the names in the innermost set. The load frame
+    // discards that set on return and restores the parent. Clearing here
+    // would wipe the parent if this ran outside the frame.
     return std::nullopt;
 }
 
@@ -689,6 +697,31 @@ Env* Evaluator::create_loaded_module_env(ast::ASTArena& mod_arena, ast::StringPo
 }
 
 types::EvalValue Evaluator::load_module_file(const std::string& path) {
+    // Issue #5197: record this module's exports in a fresh set. The
+    // parent's in-flight set is saved and restored on every return
+    // (success, fail_module_load, cache hit, refuse). A fresh set is
+    // "no leftover names from the previous module". The pop is "do not
+    // erase the parent's in-flight exports". Those are not one clear().
+    struct ExportSetFrame {
+        Evaluator& ev;
+        explicit ExportSetFrame(Evaluator& e)
+            : ev(e) {
+            auto fresh = std::make_unique<std::unordered_set<std::string>>();
+            ev.export_set_stack_.push_back(std::move(ev.current_export_set_));
+            ev.current_export_set_ = std::move(fresh);
+        }
+        ~ExportSetFrame() noexcept {
+            if (ev.export_set_stack_.empty())
+                return;
+            ev.current_export_set_ = std::move(ev.export_set_stack_.back());
+            ev.export_set_stack_.pop_back();
+        }
+        ExportSetFrame(const ExportSetFrame&) = delete;
+        ExportSetFrame& operator=(const ExportSetFrame&) = delete;
+        ExportSetFrame(ExportSetFrame&&) = delete;
+        ExportSetFrame& operator=(ExportSetFrame&&) = delete;
+    } export_set_frame(*this);
+
     // Issue #4460: this load's reason replaces any previous one.
     last_module_load_failure_.clear();
     // Issue #3266: validate before lock (string predicate; no shared
@@ -834,9 +867,9 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     Env* mod_env = create_loaded_module_env(mod_arena, pool_ptr);
 
 
-    // 7. Clear any stale export set from previous module loads
-    if (current_export_set_)
-        current_export_set_->clear();
+    // 7. Issue #5197: this module's export set is the fresh frame from
+    // entry. Do not clear() the shared set here. That clear used to
+    // erase names the parent recorded before this nested require.
 
     // 8. Evaluate module in its own env.
     // Issue #2566: nested (require)/(import) must inject into mod_env so
