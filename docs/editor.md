@@ -34,7 +34,10 @@ part of the live AST, so a later `ast:snapshot` / `ast:restore` keeps it and
 `eval-current` runs it. This is the add path (issue #165), distinct from
 `no-workspace`: defines that arrived only from a file, `-e`, or `--load` are
 not in the live AST, and rebind reports `no-workspace` until they are installed
-with `set-code` and `eval-current`.
+with `set-code` and `eval-current`. Over `--serve` that loop is
+`(set-code "…")` then `(eval-current)`, and it needs `--preset dev` (mutate).
+The session uses the same walker face as a file run unless
+`AURA_PIPELINE_STRICT` pins Forbidden or force-soa.
 
 Typical loop with the evolve-strategy kit: `KIT_STEPS=1 aura repl main.aura`
 (runs one step; `train` / `val` prices stay bound), edit a function in
