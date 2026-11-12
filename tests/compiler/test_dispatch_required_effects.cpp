@@ -3557,12 +3557,30 @@ static void ac4518_inrange_apply_encoding_f64_readers() {
     const auto apos = rt_src.find("add(\"apply\"");
     CHECK(apos != std::string::npos, "4518: apply body located");
     if (apos != std::string::npos) {
-        const auto win = rt_src.substr(apos, 2200);
-        const auto gate = win.find("inrange_slot_tenant_allows");
-        const auto copy = win.find("args.push_back");
-        CHECK(gate != std::string::npos && copy != std::string::npos && gate < copy,
-              "4518: apply gate precedes the arg-vector build");
-        CHECK(win.find("require_effect") == std::string::npos, "4518: apply stays body-choke-free");
+        // Issue #5175 split the pair walk into two faces: the JIT pair-slot
+        // face (g_pair_slots, gated by check_workspace_isolation on the
+        // production face) and the evaluator face (pairs_, gated by
+        // inrange_slot_tenant_allows). The JIT face pushes into args first,
+        // so a plain "first args.push_back" anchor no longer measures the
+        // evaluator gate, and the fixed 2200-char budget stopped reaching it
+        // at all. Bound the window by the end of the apply lambda and anchor
+        // each push to its own gate, so both faces stay pinned.
+        const auto lend = rt_src.find("\n    });\n", apos);
+        CHECK(lend != std::string::npos, "4518: apply body terminated");
+        if (lend != std::string::npos) {
+            const auto win = rt_src.substr(apos, lend - apos);
+            const auto gate = win.find("inrange_slot_tenant_allows");
+            const auto copy = win.find("args.push_back(ev.pairs_[idx].car)");
+            CHECK(gate != std::string::npos && copy != std::string::npos && gate < copy,
+                  "4518: apply gate precedes the arg-vector build");
+            const auto jit_gate = win.find("check_workspace_isolation");
+            const auto jit_copy = win.find("args.push_back(EvalValue{g_pair_slots[idx]->car})");
+            CHECK(jit_gate != std::string::npos && jit_copy != std::string::npos &&
+                      jit_gate < jit_copy,
+                  "4518: apply JIT-pair gate precedes its arg-vector build");
+            CHECK(win.find("require_effect") == std::string::npos,
+                  "4518: apply stays body-choke-free");
+        }
     }
     CHECK(rt_src.find("apply: cross-tenant pair slot read denied (#4505)") != std::string::npos,
           "4518: apply deny shape present");
