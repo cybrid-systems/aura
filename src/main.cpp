@@ -5668,8 +5668,6 @@ static CliPrep prepare_cli_runtime(int& argc, char** argv) {
         }
     }
 
-    install_fatal_signal_handlers();
-
     // ── Parse common flags ───────────────────────────────
     int num_workers = 0;
     int arg_start = 1;
@@ -5790,6 +5788,11 @@ static int aura_main(int argc, char* argv[]) {
     // shell variable; seed process environ from self path so getenv and
     // child shells see the absolute binary (avoids "aura: not found" / 127).
     aura::compiler::paths::ensure_aura_bin_environ(argc > 0 ? argv[0] : nullptr);
+
+    // Issue #5155: `aura lsp` returns from the front door, before
+    // prepare_cli_runtime used to install this handler. A stack overflow
+    // in the language server then died with an empty stderr.
+    install_fatal_signal_handlers();
 
     // Issue #4913: aura new / run / test / help and `soft --load`.
     if (auto rc = front_door_4913(argc, argv))

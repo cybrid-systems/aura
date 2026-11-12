@@ -38,14 +38,29 @@ inline const Json& Json::at(std::string_view k) const {
     return p ? *p : null;
 }
 
+// Issue #5155: the evolution-log reader refuses past 64 frames. This parser
+// used to recurse once per bracket until the native stack died with SIGSEGV.
+inline constexpr std::size_t kLspJsonMaxDepth = 64;
+
 struct Parser {
     std::string_view s;
     std::size_t i = 0;
+    std::size_t depth = 0;
+    bool nesting_refused = false;
     void ws() {
         while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i])))
             ++i;
     }
     bool parse(Json& out) {
+        // depth > 64 matches cli_evo_4910.inc. Children see depth + 1.
+        if (depth > kLspJsonMaxDepth) {
+            nesting_refused = true;
+            return false;
+        }
+        struct Guard {
+            std::size_t& d;
+            ~Guard() { --d; }
+        };
         ws();
         if (i >= s.size())
             return false;
@@ -53,6 +68,8 @@ struct Parser {
         if (c == '{') {
             out.t = Json::T::Obj;
             ++i;
+            ++depth;
+            Guard guard{depth};
             ws();
             if (i < s.size() && s[i] == '}')
                 return ++i, true;
@@ -79,6 +96,8 @@ struct Parser {
         if (c == '[') {
             out.t = Json::T::Arr;
             ++i;
+            ++depth;
+            Guard guard{depth};
             ws();
             if (i < s.size() && s[i] == ']')
                 return ++i, true;
@@ -611,8 +630,18 @@ struct Server {
         while (auto body = read_message()) {
             Json m;
             Parser p{*body};
-            if (!p.parse(m))
+            if (!p.parse(m)) {
+                // #5155: a refused nest is a JSON-RPC parse error, then the
+                // server keeps reading. id is null when the header was not
+                // parsed before the nest blew the limit.
+                if (p.nesting_refused) {
+                    const Json* id = m.get("id");
+                    send(std::format(
+                        R"({{"jsonrpc":"2.0","id":{},"error":{{"code":-32700,"message":"nesting too deep"}}}})",
+                        id ? id_text(*id) : "null"));
+                }
                 continue;
+            }
             const std::string method = m.at("method").s;
             const Json* id = m.get("id");
             const Json& params = m.at("params");

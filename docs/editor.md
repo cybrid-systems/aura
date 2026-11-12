@@ -57,6 +57,9 @@ another step without regenerating the prices.
   (the directory with `aura.toml`), with or without `.aura`.
 - **Highlighting** comes from the TextMate grammar in
   `editors/vscode/syntaxes/aura.tmLanguage.json`.
+- **Nesting.** A JSON-RPC message nested deeper than 64 is answered with
+  a parse error (`nesting too deep`, code -32700) and the server keeps
+  reading. The same bound as `aura evo log`.
 
 ### VS Code
 
