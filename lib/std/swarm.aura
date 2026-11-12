@@ -249,15 +249,36 @@
           (begin (swarm-archive-sync!) #t)
           #f))))
 
+; #5153: a list whose length is not the declared objective count used to
+; reach swarm-hv-ref-point, which indexed past the vector and subtracted #f.
+; Record it the same way a raising fitness is recorded (index . message).
+(define (swarm-fit-arity-msg n)
+  (string-append "fitness length "
+                 (number->string n)
+                 " does not match objectives "
+                 (number->string *swarm-objectives*)))
+
+(define (swarm-note-fit-arity! i fit)
+  (if (and (list? fit)
+           (>= *swarm-objectives* 1)
+           (not (= (swarm-length fit) *swarm-objectives*)))
+      (begin
+        (set! *swarm-last-errors*
+              (cons (cons i (swarm-fit-arity-msg (swarm-length fit)))
+                    *swarm-last-errors*))
+        #t)
+      #f))
+
 ; Register every evaluated candidate in the archive (kept generation-best
 ; view is orthogonal: the archive accumulates across generations).
 (define (swarm-archive-record! inds fits)
   (if (< *swarm-objectives* 1) #f
-    (let loop ((is inds) (fs fits))
+    (let loop ((is inds) (fs fits) (i 0))
       (if (or (null? is) (null? fs)) #t
         (begin
+          (swarm-note-fit-arity! i (car fs))
           (swarm-archive-insert! (car is) (car fs))
-          (loop (cdr is) (cdr fs)))))))
+          (loop (cdr is) (cdr fs) (+ i 1)))))))
 
 (define (swarm:front) *swarm-archive*)
 ; Per-individual failures from the last bounded/isolated wave (#4741):
@@ -265,27 +286,53 @@
 (define (swarm:last-errors) *swarm-last-errors*)
 (define (swarm:archive-size) (swarm-length *swarm-archive*))
 
-; Hypervolume of the archive in MAXIMIZE space. Exact for 2 objectives;
-; 0.0 (documented) for other arities.
+; Shortest "max" vector in the archive. #5153: the declared objective
+; count can be longer than the fitness that was actually measured.
+(define (swarm-archive-width es)
+  (let loop ((xs es) (w #f))
+    (if (null? xs)
+        (if w w 0)
+      (let* ((m (hash-ref (car xs) "max" (list)))
+             (n (if (list? m) (swarm-length m) 0)))
+        (loop (cdr xs) (if w (if (< n w) n w) n))))))
+
+; (min max) of numeric column d, or #f when the column has no numbers.
+(define (swarm-col-bounds es d)
+  (let loop ((xs es) (mn #f) (mx #f))
+    (if (null? xs)
+        (if (and (number? mn) (number? mx)) (list mn mx) #f)
+      (let ((v (swarm-list-ref (hash-ref (car xs) "max" (list)) d)))
+        (if (number? v)
+            (loop (cdr xs)
+                  (if (number? mn) (swarm-min mn v) v)
+                  (if (number? mx) (swarm-max mx v) v))
+          (loop (cdr xs) mn mx))))))
+
+; Hypervolume reference in MAXIMIZE space. The walk stops at the measured
+; vector width, never the declared count past that width (#5153).
 (define (swarm-hv-ref-point)
-  (if (and (list? *swarm-hv-ref*) (= (swarm-length *swarm-hv-ref*) *swarm-objectives*) (> *swarm-objectives* 1))
-      *swarm-hv-ref*
-    ;; default: a point strictly BELOW the front's lower-left corner in
-    ;; maximize space — min observed minus a 10% margin (or 1.0 when the
-    ;; objective has no spread), so a non-degenerate front scores > 0.
-    (let loop ((d 0) (acc (list)))
-      (if (>= d *swarm-objectives*) (reverse acc)
-        (let* ((mn (let iloop ((es *swarm-archive*) (m 0.0) (first #t))
-                     (if (null? es) m
-                       (let ((v (swarm-list-ref (hash-ref (car es) "max") d)))
-                         (iloop (cdr es) (if first v (swarm-min m v)) #f)))))
-               (mx (let iloop ((es *swarm-archive*) (m 0.0) (first #t))
-                     (if (null? es) m
-                       (let ((v (swarm-list-ref (hash-ref (car es) "max") d)))
-                         (iloop (cdr es) (if first v (swarm-max m v)) #f)))))
-               (span (- mx mn))
-               (margin (if (> span 0.0) (* 0.1 span) 1.0)))
-          (loop (+ d 1) (cons (- mn margin) acc)))))))
+  (let* ((width (swarm-archive-width *swarm-archive*))
+         (limit (if (and (>= *swarm-objectives* 1) (< width *swarm-objectives*))
+                    width
+                    (if (>= *swarm-objectives* 1) *swarm-objectives* width))))
+    (if (and (list? *swarm-hv-ref*)
+             (= (swarm-length *swarm-hv-ref*) limit)
+             (> limit 1))
+        *swarm-hv-ref*
+      ;; default: a point strictly BELOW the front's lower-left corner in
+      ;; maximize space — min observed minus a 10% margin (or 1.0 when the
+      ;; objective has no spread), so a non-degenerate front scores > 0.
+      (let loop ((d 0) (acc (list)))
+        (if (>= d limit)
+            (reverse acc)
+          (let ((b (swarm-col-bounds *swarm-archive* d)))
+            (if (not b)
+                (loop (+ d 1) acc)
+              (let* ((mn (car b))
+                     (mx (car (cdr b)))
+                     (span (- mx mn))
+                     (margin (if (> span 0.0) (* 0.1 span) 1.0)))
+                (loop (+ d 1) (cons (- mn margin) acc))))))))))
 
 ; Hypervolume of the archive in MAXIMIZE space (#4940: std/pareto's exact
 ; 2/3-objective sweep; > 3 objectives use its fixed-seed Monte Carlo).
@@ -1047,6 +1094,9 @@
     *swarm-kind*))
 
 (define (swarm:step! fitness-fn)
+  ; One generation, one error list. A fitness-arity mismatch (#5153) is
+  ; recorded during this step and must not survive into the next one.
+  (set! *swarm-last-errors* (list))
   (cond
     ((string=? *swarm-kind* "pso") (swarm-step-pso! fitness-fn))
     ((string=? *swarm-kind* "abc") (swarm-step-abc! fitness-fn))

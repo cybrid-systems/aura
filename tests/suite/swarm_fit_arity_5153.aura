@@ -1,0 +1,89 @@
+; Issue #5153 — declared objective count longer than the fitness vector.
+; swarm:report / swarm:export must stay usable, and the mismatch must be a
+; last-errors diagnostic rather than an internal type error.
+(require "std/swarm" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define (mismatch-msg? errs)
+  (if (null? errs) #f
+    (let ((m (cdr (car errs))))
+      (if (and (string? m)
+               (not (= (string-index m "does not match objectives" 0) -1)))
+          #t
+          (mismatch-msg? (cdr errs))))))
+
+(define (check-short dirs label)
+  (swarm:init (hash "kind" "grid" "pop" 2 "dim" 1
+                    "objectives" 3 "directions" dirs "seed" 1))
+  (assert! (= (swarm:step! (lambda (x) (list 1.0 2.0))) 1)
+           (string-append label " step returns 1"))
+  (let ((front (swarm:front))
+        (rep (swarm:report))
+        (ex (swarm:export)))
+    (assert! (not (null? front)) (string-append label " front kept the vector"))
+    (assert! (hash? rep) (string-append label " report is a hash"))
+    (assert! (number? (hash-ref rep "hypervolume"))
+             (string-append label " hypervolume is a number"))
+    (assert! (number? (hash-ref rep "mean-fit"))
+             (string-append label " mean-fit is a number"))
+    (assert! (> (hash-ref rep "errors") 0)
+             (string-append label " report counts the mismatch"))
+    (assert! (string? ex) (string-append label " export is a string"))
+    (assert! (= (string-index ex "{" 0) 0)
+             (string-append label " export is json"))
+    (assert! (mismatch-msg? (swarm:last-errors))
+             (string-append label " diagnostic names the mismatch"))))
+
+(check-short (list "min" "min" "min") "dirs-3")
+(check-short (list) "dirs-empty")
+(check-short (list "min") "dirs-1")
+
+; Declared 2, fitness 1 — the other short shape from the issue table.
+(swarm:init (hash "kind" "grid" "pop" 2 "dim" 1
+                  "objectives" 2 "directions" (list "min" "min") "seed" 1))
+(assert! (= (swarm:step! (lambda (x) (list 1.0))) 1) "2-vs-1 step")
+(assert! (hash? (swarm:report)) "2-vs-1 report")
+(assert! (string? (swarm:export)) "2-vs-1 export")
+(assert! (mismatch-msg? (swarm:last-errors)) "2-vs-1 diagnostic")
+
+; A longer vector is the same mismatch, still not a type error.
+(swarm:init (hash "kind" "grid" "pop" 2 "dim" 1
+                  "objectives" 2 "seed" 1))
+(assert! (= (swarm:step! (lambda (x) (list 1.0 2.0 3.0))) 1) "long step")
+(assert! (number? (hash-ref (swarm:report) "hypervolume")) "long hypervolume")
+(assert! (string? (swarm:export)) "long export")
+(assert! (mismatch-msg? (swarm:last-errors)) "long diagnostic")
+
+; Matching length stays quiet and the report still has a numeric hypervolume.
+(swarm:init (hash "kind" "grid" "pop" 2 "dim" 1
+                  "objectives" 2 "directions" (list "min" "min") "seed" 1))
+(swarm:step! (lambda (x) (list 1.0 2.0)))
+(assert! (null? (swarm:last-errors)) "matched arity records nothing")
+(assert! (= (hash-ref (swarm:report) "errors") 0) "matched errors is 0")
+(assert! (number? (hash-ref (swarm:report) "hypervolume")) "matched hypervolume")
+(assert! (string? (swarm:export)) "matched export")
+
+; A scalar fitness never enters the archive, and the report stays fine.
+(swarm:init (hash "kind" "grid" "pop" 2 "dim" 1
+                  "objectives" 3 "directions" (list "min" "min" "min") "seed" 1))
+(swarm:step! (lambda (x) 1.0))
+(assert! (= (hash-ref (swarm:report) "front-size") 0) "scalar front stays empty")
+(assert! (null? (swarm:last-errors)) "scalar is not an arity error")
+(assert! (string? (swarm:export)) "scalar export")
+
+(if (= *fails* 0)
+    (begin (display "OK-5153 swarm fitness arity\n"))
+    (begin
+      (display "FAIL-5153 fails=")
+      (display *fails*)
+      (newline)
+      (error "5153 suite failed")))
