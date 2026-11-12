@@ -537,8 +537,20 @@ void RegSplitParts::register_list_basics(PrimRegistrar add, Evaluator& ev,
                 }
                 auto idx = as_pair_idx(v);
                 if (idx >= pairs.size()) {
-                    return make_primitive_error(string_heap, error_values,
-                                                "list-ref: corrupted pair", counter);
+                    // Issue #5175 / #4567: a JIT list lives in g_pair_slots.
+                    // Same cdr walk and #4111 gate as length.
+                    auto slot = jit_pair_cdr(ev, idx, "list-ref");
+                    if (slot.kind == JitCdrKind::Denied) {
+                        return make_primitive_error(
+                            string_heap, error_values,
+                            "list-ref: cross-tenant pair slot read denied (#4111)", counter);
+                    }
+                    if (slot.kind != JitCdrKind::Ok) {
+                        return make_primitive_error(string_heap, error_values,
+                                                    "list-ref: corrupted pair", counter);
+                    }
+                    v = slot.value;
+                    continue;
                 }
                 // Issue #4505: the walk reads foreign cdrs; compare the
                 // mint stamp before the slot read.
@@ -556,8 +568,19 @@ void RegSplitParts::register_list_basics(PrimRegistrar add, Evaluator& ev,
             if (is_pair(v)) {
                 auto idx = as_pair_idx(v);
                 if (idx >= pairs.size()) {
-                    return make_primitive_error(string_heap, error_values,
-                                                "list-ref: corrupted pair", counter);
+                    // Issue #5175: the landing pair is a JIT slot. The cdr
+                    // helper is the tenant gate; the payload is the car.
+                    auto slot = jit_pair_cdr(ev, idx, "list-ref");
+                    if (slot.kind == JitCdrKind::Denied) {
+                        return make_primitive_error(
+                            string_heap, error_values,
+                            "list-ref: cross-tenant pair slot read denied (#4111)", counter);
+                    }
+                    if (slot.kind != JitCdrKind::Ok) {
+                        return make_primitive_error(string_heap, error_values,
+                                                    "list-ref: corrupted pair", counter);
+                    }
+                    return EvalValue{g_pair_slots[idx]->car};
                 }
                 // Issue #4505: same reader gate before the payload returns.
                 if (!ev.inrange_slot_tenant_allows(idx, /*vector_heap=*/false,

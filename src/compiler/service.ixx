@@ -931,6 +931,33 @@ extern "C" std::int64_t aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_
     return aura::compiler::jit_prim_dispatch_impl(prim_id, args, argc);
 }
 
+// Issue #5175: OpHashRef's inline scan only accepts the JIT 0x80 marker.
+// An evaluator `(hash ...)` table uses fingerprint metas, so the scan
+// misses and used to raise "key not found" for a key that is present.
+// On that miss the JIT calls this, which is the same primitive the IR
+// executor uses. The inline splitmix scan stays for JIT-layout tables.
+// Unwired owner keeps the #4855 missing-key error. Weak stub returns
+// the void sentinel for light-link binaries that do not compile this TU.
+extern "C" std::int64_t aura_hash_ref_miss_error(std::int64_t key_val);
+extern "C" std::int64_t aura_jit_eval_hash_ref(std::int64_t hash_val, std::int64_t key_val) {
+    auto* prims = g_jit_prim_ctx.load(std::memory_order_acquire);
+    auto* owner = owner_evaluator(prims);
+    if (!prims || !owner)
+        return aura_hash_ref_miss_error(key_val);
+    auto pfn = prims->lookup("hash-ref");
+    if (!pfn)
+        return aura_hash_ref_miss_error(key_val);
+    if (is_str_val(key_val))
+        key_val = convert_str_for_eval(key_val, prims);
+    auto result = owner->invoke_prim_with_telemetry("hash-ref", [&] {
+        return (*pfn)({aura::compiler::types::EvalValue{hash_val},
+                       aura::compiler::types::EvalValue{key_val}});
+    });
+    if (is_str_val(result.val))
+        return convert_str_for_jit(result.val, prims);
+    return result.val;
+}
+
 // Issue #3720 / #4018: JIT hash-set! / hash-remove! / cell-set! C ABI
 // (aura_hash_set / aura_hash_remove / aura_cell_set) must share
 // require_effect with interpreter + IR telemetry. Same owner as
@@ -5507,125 +5534,199 @@ public:
         }
 
         // ── Convert JIT result to proper EvalValue type ──
+        // Issue #5175: the native word is already the value. Classify it
+        // from the ENTRY function only. A nested lambda's NewCell shares
+        // slot numbers; the old all-functions scan wrapped a fixnum as
+        // <cell[N]> (6<<1 == 12). Call/PrimCall write operands[3], Apply
+        // writes operands[2]. Follow Local and the let bind-init CellSet
+        // so a CellGet of a string or a closure is not left as a raw id.
+        // A v2 string is reminted even when the producer is CellGet or
+        // PrimCall — the JIT pool index is not an evaluator heap index.
         types::EvalValue ev_result;
         std::uint32_t ret_slot = std::numeric_limits<std::uint32_t>::max();
         for (auto& block : entry.blocks)
             for (auto& instr : block.instructions)
                 if (instr.opcode == aura::ir::IROpcode::Return)
                     ret_slot = instr.operands[0];
-        // Follow data flow through OpLocal to find the actual producer instruction
+
+        enum class JitProd : std::uint8_t { Word, Bool, Void, Pair, Cell, Closure };
+        auto result_operand = [](aura::ir::IROpcode op) -> int {
+            using aura::ir::IROpcode;
+            if (op == IROpcode::Call || op == IROpcode::PrimCall)
+                return 3;
+            if (op == IROpcode::Apply)
+                return 2;
+            switch (op) {
+                case IROpcode::Nop:
+                case IROpcode::Branch:
+                case IROpcode::Jump:
+                case IROpcode::Return:
+                case IROpcode::Capture:
+                case IROpcode::CaptureRef:
+                case IROpcode::CellSet:
+                case IROpcode::TryBegin:
+                case IROpcode::DropOp:
+                case IROpcode::ArenaPop:
+                case IROpcode::TopCellStore:
+                    return -1;
+                default:
+                    return 0;
+            }
+        };
+        auto last_writer = [&](std::uint32_t slot) -> const aura::ir::IRInstruction* {
+            const aura::ir::IRInstruction* found = nullptr;
+            for (auto& block : entry.blocks) {
+                for (auto& instr : block.instructions) {
+                    const int ri = result_operand(instr.opcode);
+                    if (ri >= 0 && instr.operands[static_cast<std::size_t>(ri)] == slot)
+                        found = &instr;
+                }
+            }
+            return found;
+        };
+        JitProd prod = JitProd::Word;
         if (ret_slot != std::numeric_limits<std::uint32_t>::max()) {
-            uint32_t search_slot = ret_slot;
-            bool chasing = true;
-            while (chasing) {
-                chasing = false;
-                for (auto& block : ir_mod.functions) {
-                    for (auto& iblock : block.blocks) {
-                        for (auto& instr : iblock.instructions) {
-                            if (instr.operands[0] == search_slot &&
-                                instr.opcode != aura::ir::IROpcode::Return) {
-                                // Follow Local passthrough
-                                if (instr.opcode == aura::ir::IROpcode::Local) {
-                                    search_slot = instr.operands[1];
-                                    chasing = true;
-                                    goto found_chain;
-                                }
-                                switch (instr.opcode) {
-                                    case aura::ir::IROpcode::ConstBool:
-                                    case aura::ir::IROpcode::Eq:
-                                    case aura::ir::IROpcode::Lt:
-                                    case aura::ir::IROpcode::Gt:
-                                    case aura::ir::IROpcode::Le:
-                                    case aura::ir::IROpcode::Ge:
-                                    case aura::ir::IROpcode::And:
-                                    case aura::ir::IROpcode::Or:
-                                    case aura::ir::IROpcode::Not:
-                                        ev_result = types::make_bool(raw_result == 7);
-                                        goto done;
-                                    case aura::ir::IROpcode::ConstI64:
-                                        ev_result = types::EvalValue(raw_result);
-                                        goto done;
-                                    case aura::ir::IROpcode::ConstVoid:
-                                        ev_result = raw_result == AURA_V_UNSPEC
-                                                        ? types::make_unspecified()
-                                                        : types::make_void(); // #4502
-                                        goto done;
-                                    case aura::ir::IROpcode::MakePair:
-                                        if (raw_result < 0)
-                                            ev_result = types::make_pair(
-                                                static_cast<std::uint64_t>(-raw_result - 1));
-                                        else
-                                            ev_result = types::make_pair(
-                                                static_cast<std::uint64_t>(raw_result >> 6));
-                                        goto done;
-                                    case aura::ir::IROpcode::NewCell:
-                                        ev_result = types::make_cell(
-                                            static_cast<std::uint64_t>(raw_result));
-                                        goto done;
-                                    case aura::ir::IROpcode::MakeClosure:
-                                        ev_result = types::make_closure(
-                                            static_cast<std::uint64_t>(raw_result));
-                                        goto done;
-                                    case aura::ir::IROpcode::ConstF64:
-                                        ev_result = types::EvalValue(raw_result);
-                                        goto done;
-                                    case aura::ir::IROpcode::ConstString: {
-                                        auto* str_content = aura_jit_string_content(raw_result);
-                                        if (str_content) {
-                                            auto& sh = evaluator_.primitives().string_heap();
-                                            auto new_idx = sh.mint(str_content);
-                                            ev_result = types::make_string(new_idx);
-                                        } else {
-                                            ev_result = types::EvalValue(raw_result);
-                                        }
-                                        goto done;
-                                    }
-                                    case aura::ir::IROpcode::PrimCall:
-                                        ev_result = types::EvalValue(raw_result);
-                                        goto done;
-                                    default:
-                                        break;
-                                }
-                                goto done; // unknown producer, fallback to value decode
-                            }
+            std::uint32_t search_slot = ret_slot;
+            for (int hop = 0; hop < 16; ++hop) {
+                const aura::ir::IRInstruction* writer = last_writer(search_slot);
+                if (!writer)
+                    break;
+                if (writer->opcode == aura::ir::IROpcode::Local) {
+                    search_slot = writer->operands[1];
+                    continue;
+                }
+                if (writer->opcode == aura::ir::IROpcode::CellGet) {
+                    // The bind-init store is what the JIT kept (#5173).
+                    // A later set! has no bind flag and is not the value.
+                    const std::uint32_t cell = writer->operands[1];
+                    const aura::ir::IRInstruction* bind = nullptr;
+                    for (auto& block : entry.blocks) {
+                        for (auto& instr : block.instructions) {
+                            if (instr.opcode == aura::ir::IROpcode::CellSet &&
+                                instr.operands[0] == cell && instr.operands[2] == 0xFFFFFFFFu)
+                                bind = &instr;
                         }
                     }
+                    if (!bind)
+                        break;
+                    search_slot = bind->operands[1];
+                    continue;
                 }
-                break; // no more matches
-            found_chain:;
+                using aura::ir::IROpcode;
+                switch (writer->opcode) {
+                    case IROpcode::ConstBool:
+                    case IROpcode::Eq:
+                    case IROpcode::Lt:
+                    case IROpcode::Gt:
+                    case IROpcode::Le:
+                    case IROpcode::Ge:
+                    case IROpcode::And:
+                    case IROpcode::Or:
+                    case IROpcode::Not:
+                        prod = JitProd::Bool;
+                        break;
+                    case IROpcode::ConstVoid:
+                    case IROpcode::TryEnd:
+                        prod = JitProd::Void;
+                        break;
+                    case IROpcode::MakePair:
+                        prod = JitProd::Pair;
+                        break;
+                    case IROpcode::NewCell:
+                        prod = JitProd::Cell;
+                        break;
+                    case IROpcode::MakeClosure:
+                        prod = JitProd::Closure;
+                        break;
+                    default:
+                        prod = JitProd::Word;
+                        break;
+                }
+                break;
             }
         }
-    done:
-        // Fallback: try to decode by value pattern if IR scan didn't determine type
-        if (ev_result.val == 0 && raw_result != 0) {
-            if (raw_result == 11)
-                ev_result = types::make_void();
-            else if (raw_result == 3 || raw_result == 7)
-                ev_result = types::make_bool(raw_result == 7);
-            else if ((raw_result & 1) == 0 /* #4482 */)
-                ev_result = types::EvalValue(raw_result); // tagged fixnum
-            else
-                ev_result = types::EvalValue(raw_result);
+
+        // Copy a JIT pair chain into the evaluator pair vector so the
+        // CLI printer walks it. Prelude pairs keep their own indices:
+        // a tagged word whose index is already in pairs_ is left as-is
+        // unless the producer is MakePair (that id is a g_pair_slots id).
+        auto reify_jit_word =
+            [&](auto& self, std::int64_t word, int depth,
+                std::unordered_map<std::uint64_t, std::uint64_t>& memo) -> types::EvalValue {
+            if (is_str_val(word))
+                return types::EvalValue(convert_str_for_eval(word, &evaluator_.primitives()));
+            if (depth > 64 || !types::is_pair(types::EvalValue(word)))
+                return types::EvalValue(word);
+            const auto id = types::as_pair_idx(types::EvalValue(word));
+            if (auto it = memo.find(id); it != memo.end())
+                return types::make_pair(it->second);
+            if (id >= ::g_pair_slots.size() || ::g_pair_slots[id] == nullptr)
+                return types::EvalValue(word);
+            const std::int64_t car_w = ::g_pair_slots[id]->car;
+            const std::int64_t cdr_w = ::g_pair_slots[id]->cdr;
+            auto& pv = evaluator_.pairs();
+            const auto idx = static_cast<std::uint64_t>(pv.size());
+            pv.push_back(Pair{});
+            memo.emplace(id, idx);
+            pv[static_cast<std::size_t>(idx)].car = self(self, car_w, depth + 1, memo);
+            pv[static_cast<std::size_t>(idx)].cdr = self(self, cdr_w, depth + 1, memo);
+            return types::make_pair(idx);
+        };
+
+        const bool pair_word = types::is_pair(types::EvalValue(raw_result));
+        const auto pair_id = pair_word ? types::as_pair_idx(types::EvalValue(raw_result)) : 0;
+        const bool pair_in_eval = pair_word && pair_id < evaluator_.pairs().size();
+        if (is_str_val(raw_result)) {
+            ev_result =
+                types::EvalValue(convert_str_for_eval(raw_result, &evaluator_.primitives()));
+        } else if (types::is_float_raw_v2(raw_result)) {
+            ev_result = types::EvalValue(raw_result);
+        } else if (raw_result == 11) {
+            ev_result = types::make_void();
+        } else if (raw_result == AURA_V_UNSPEC) {
+            ev_result = types::make_unspecified();
+        } else if (raw_result == 3 || raw_result == 7) {
+            ev_result = types::make_bool(raw_result == 7);
+        } else if (pair_word && (prod == JitProd::Pair || !pair_in_eval)) {
+            std::unordered_map<std::uint64_t, std::uint64_t> memo;
+            ev_result = reify_jit_word(reify_jit_word, raw_result, 0, memo);
+        } else if (pair_word) {
+            ev_result = types::EvalValue(raw_result);
+        } else if ((raw_result & 1) == 1 && types::is_ref(raw_result)) {
+            ev_result = types::EvalValue(raw_result);
+        } else if (prod == JitProd::Closure) {
+            // aura_alloc_closure returns a raw slot id, not a tagged ref.
+            ev_result = types::make_closure(static_cast<std::uint64_t>(raw_result));
+        } else if (prod == JitProd::Cell) {
+            ev_result = types::make_cell(static_cast<std::uint64_t>(raw_result));
+        } else if (prod == JitProd::Bool) {
+            ev_result = types::make_bool(raw_result == 7);
+        } else if (prod == JitProd::Void) {
+            ev_result =
+                raw_result == AURA_V_UNSPEC ? types::make_unspecified() : types::make_void();
+        } else if (raw_result < 0 && prod == JitProd::Pair) {
+            ev_result = types::make_pair(static_cast<std::uint64_t>(-raw_result - 1));
+        } else if ((raw_result & 1) == 0) {
+            ev_result = types::EvalValue(raw_result); // tagged fixnum
+        } else {
+            ev_result = types::EvalValue(raw_result);
         }
-        // PrimCall void-returning prims (Display/Write/Newline): void result
+        // PrimCall void-returning prims (Display/Write/Newline): void result.
+        // Entry only — a nested display must not void the outer value.
         if (types::is_int(ev_result) && types::as_int(ev_result) == 0 &&
             ret_slot != std::numeric_limits<std::uint32_t>::max()) {
-            for (auto& block : ir_mod.functions) {
-                for (auto& iblock : block.blocks) {
-                    for (auto& instr : iblock.instructions) {
-                        if (instr.opcode == aura::ir::IROpcode::PrimCall &&
-                            (instr.operands[0] == ret_slot || instr.operands[3] == ret_slot)) {
-                            auto prim_id = static_cast<aura::ir::PrimId>(instr.operands[0]);
-                            if (prim_id == aura::ir::PrimId::Display ||
-                                prim_id == aura::ir::PrimId::Write ||
-                                prim_id == aura::ir::PrimId::Newline) {
-                                ev_result = types::make_void();
-                                break;
-                            }
+            for (auto& iblock : entry.blocks) {
+                for (auto& instr : iblock.instructions) {
+                    if (instr.opcode == aura::ir::IROpcode::PrimCall &&
+                        (instr.operands[0] == ret_slot || instr.operands[3] == ret_slot)) {
+                        auto prim_id = static_cast<aura::ir::PrimId>(instr.operands[0]);
+                        if (prim_id == aura::ir::PrimId::Display ||
+                            prim_id == aura::ir::PrimId::Write ||
+                            prim_id == aura::ir::PrimId::Newline) {
+                            ev_result = types::make_void();
+                            break;
                         }
                     }
-                    if (types::is_void(ev_result))
-                        break;
                 }
                 if (types::is_void(ev_result))
                     break;

@@ -7651,10 +7651,31 @@ static void fputs_scheme_write_string(const char* s, FILE* out) {
 // must re-intern evaluator strings into g_string_pool first.
 void aura_display_value(int64_t val, int64_t write_mode) {
     using aura::compiler::types::is_fixnum;
+    using aura::compiler::types::is_ref;
     using aura::compiler::types::is_string_raw_v2;
     using aura::compiler::types::kSpecialFalse;
     using aura::compiler::types::kSpecialTrue;
     using aura::compiler::types::kSpecialVoid;
+    using aura::compiler::types::ref_index;
+    using aura::compiler::types::ref_type;
+    using aura::compiler::types::RefPair;
+
+    // Nesting depth for pair cars. The cdr walk below stays in this frame,
+    // so a long list does not count as nested.
+    static thread_local int display_depth = 0;
+    if (display_depth >= 64) {
+        fputs("...", stdout);
+        fflush(stdout);
+        return;
+    }
+    struct DisplayDepth {
+        explicit DisplayDepth(int& d)
+            : d_(d) {
+            ++d_;
+        }
+        ~DisplayDepth() { --d_; }
+        int& d_;
+    } depth_guard(display_depth);
 
     if (val == kSpecialVoid) {
         fputs("()", stdout);
@@ -7745,6 +7766,36 @@ void aura_display_value(int64_t val, int64_t write_mode) {
             fn(user, val);
             return;
         }
+    }
+    // Issue #5175: JIT cons lives in g_pair_slots. The raw word (129 for
+    // pair 2) is not the list. Print the chain the way the evaluator does.
+    if (is_ref(val) && ref_type(val) == static_cast<std::uint64_t>(RefPair)) {
+        fputc('(', stdout);
+        bool first = true;
+        int n = 0;
+        while (is_ref(val) && ref_type(val) == static_cast<std::uint64_t>(RefPair) && n < 256) {
+            const auto id = ref_index(val);
+            if (id >= g_pair_slots.size() || g_pair_slots[id] == nullptr) {
+                val = kSpecialVoid;
+                break;
+            }
+            if (!first)
+                fputc(' ', stdout);
+            first = false;
+            const std::int64_t car = g_pair_slots[id]->car;
+            const std::int64_t cdr = g_pair_slots[id]->cdr;
+            aura_display_value(car, write_mode);
+            val = cdr;
+            ++n;
+        }
+        if (val != kSpecialVoid) {
+            if (!first)
+                fputs(" . ", stdout);
+            aura_display_value(val, write_mode);
+        }
+        fputc(')', stdout);
+        fflush(stdout);
+        return;
     }
     // Fallback: keep prior raw dump for unknown tags (debug visibility)
     fprintf(stdout, "%ld", static_cast<long>(val));

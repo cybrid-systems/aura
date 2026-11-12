@@ -1465,6 +1465,10 @@ struct LLVMBuilder {
     // contract); the runtime hook mints it, unwired answers the void
     // sentinel.
     llvm::Function* fn_hash_ref_miss_error = nullptr;
+    // Issue #5175: miss falls through to the evaluator hash-ref primitive.
+    // Not named fn_hash_ref* — #4693 treats any other fn_hash_ref callee
+    // in this case as a skipped flat-table probe.
+    llvm::Function* fn_eval_hash_ref = nullptr;
     // Hash table direct accessor (Phase 4c): returns FlatHashTable*, then GEP
     llvm::Function* fn_hash_get_flat_table = nullptr;
     llvm::Function* fn_hash_key_eq = nullptr;
@@ -1779,6 +1783,9 @@ struct LLVMBuilder {
         fn_hash_ref_miss_error = llvm::Function::Create(llvm::FunctionType::get(i64, {i64}, false),
                                                         llvm::Function::ExternalLinkage,
                                                         "aura_hash_ref_miss_error", mod);
+        fn_eval_hash_ref =
+            llvm::Function::Create(llvm::FunctionType::get(i64, {i64, i64}, false),
+                                   llvm::Function::ExternalLinkage, "aura_jit_eval_hash_ref", mod);
 
         // Hash table direct accessor (Phase 4c): get FlatHashTable*, then GEP
         {
@@ -4901,9 +4908,18 @@ struct LLVMBuilder {
                 // The hash-ref primitive raises an error naming the missing
                 // key; the JIT's inline probe must agree with the eval / IR
                 // faces. The runtime hook mints the same error value.
+                // Issue #5175: the inline scan missed. Drop the read lock
+                // (the primitive takes the hash mutex and may touch the
+                // string pool) and ask the evaluator hash-ref. A JIT-layout
+                // hit already returned above; this is the fingerprint table
+                // and the real missing-key error.
                 irb->SetInsertPoint(miss_bb);
-                auto miss_val = irb->CreateCall(llvm::FunctionCallee(fn_hash_ref_miss_error),
-                                                llvm::ArrayRef<llvm::Value*>{key_val});
+                irb->CreateCall(llvm::FunctionCallee(fn_unlock_workspace_read),
+                                llvm::ArrayRef<llvm::Value*>{});
+                auto miss_val = irb->CreateCall(llvm::FunctionCallee(fn_eval_hash_ref),
+                                                llvm::ArrayRef<llvm::Value*>{hash_val, key_val});
+                irb->CreateCall(llvm::FunctionCallee(fn_lock_workspace_read),
+                                llvm::ArrayRef<llvm::Value*>{});
                 irb->CreateBr(done_bb);
 
                 // ── Done PHI ──
@@ -5265,6 +5281,7 @@ void aura_set_hash_dispatchers(int64_t (*)(int64_t, int64_t),
 int64_t aura_hash_ref(int64_t, int64_t);
 // Issue #4855: the missing-key error value (the hash-ref primitive raises).
 int64_t aura_hash_ref_miss_error(int64_t);
+int64_t aura_jit_eval_hash_ref(int64_t, int64_t); // #5175
 int64_t aura_hash_set(int64_t, int64_t);
 int64_t aura_hash_remove(int64_t, int64_t);
 // Hash table direct accessor (Phase 4c): returns FlatHashTable*, then GEP
@@ -5720,6 +5737,7 @@ struct AuraJIT::Impl {
         reg("aura_hash_ref", (void*)aura_hash_ref);
         // Issue #4855: the JIT's inline hash-ref calls this on a miss.
         reg("aura_hash_ref_miss_error", (void*)aura_hash_ref_miss_error);
+        reg("aura_jit_eval_hash_ref", (void*)aura_jit_eval_hash_ref); // #5175
         reg("aura_hash_set", (void*)aura_hash_set);
         reg("aura_hash_remove", (void*)aura_hash_remove);
         reg("aura_display_int", (void*)aura_display_int);
