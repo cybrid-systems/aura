@@ -26,7 +26,7 @@
 (define c2 (channel:create 1))
 (channel:send c2 7)
 (check (equal? 7 (channel:try-recv c2)) "channel:try-recv buffered")
-(check (equal? "" (channel:try-recv c2)) "channel:try-recv empty")
+(check (eq? #f (channel:try-recv c2)) "channel:try-recv empty is #f")
 (check (eq? #t (channel:close c)) "channel:close")
 (check (equal? "" (channel:recv c)) "channel:recv after close")
 (check (eq? #f (channel:send 999999 1)) "channel:send unknown channel")

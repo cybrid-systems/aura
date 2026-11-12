@@ -173,8 +173,8 @@ static void ac2_buffered() {
     auto g1 = (*try_recv)({make_int(id)});
     auto g2 = (*try_recv)({make_int(id)});
     CHECK(is_string(g0) && is_string(g1), "AC2: try-recv both buffered msgs");
-    // Third try-recv empty (no more messages; size never exceeded buffer)
-    CHECK(is_string(g2), "AC2: third try-recv returns string tag");
+    // Third try-recv is #f: the buffer is empty, and #f is not a message (#5161).
+    CHECK(is_bool(g2) && !as_bool(g2), "AC2: third try-recv is #f");
     if (is_string(g0) && is_string(g1)) {
         auto i0 = as_string_idx(g0), i1 = as_string_idx(g1);
         CHECK(i0 < sh.size() && sh[i0] == "a", "AC2: first payload a");

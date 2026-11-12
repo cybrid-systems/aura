@@ -2933,26 +2933,30 @@ void RegSplitParts::register_messaging_channel_primitives(PrimRegistrar add, Eva
         return channel_recv_value_4763(std::move(msg));
     });
 
-    // (channel:try-recv channel-id) — Non-blocking receive
-    // Returns message string if available, or empty string if no message.
+    // (channel:try-recv channel-id) — Non-blocking receive.
+    // A queued message is returned as itself, including a queued empty
+    // string. No message (empty queue, closed channel, bad id) is #f
+    // (#5161), so (if (channel:try-recv c) ...) does not treat "nothing
+    // waiting" as a message. Blocking channel:recv still returns "" when
+    // the channel is closed.
     add("channel:try-recv",
         [&ev, channel_recv_value_4763](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !is_int(a[0]))
-                return make_string(0);
+                return make_bool(false);
             std::size_t ch_id = 0;
             if (!channel_id::decode(as_int(a[0]), ch_id))
-                return make_string(0);
+                return make_bool(false);
             std::shared_ptr<Evaluator::Channel> ch_ptr;
             {
                 std::scoped_lock lk(ev.channels_mtx_);
                 if (ch_id >= ev.channels_.size() || !ev.channels_[ch_id])
-                    return make_string(0);
+                    return make_bool(false);
                 ch_ptr = ev.channels_[ch_id];
             }
             auto& ch = *ch_ptr;
             std::unique_lock ul(ch.mtx);
             if (ch.queue.empty())
-                return make_string(0);
+                return make_bool(false);
             auto msg = std::move(ch.queue.front());
             ch.queue.pop_front();
             ul.unlock();
