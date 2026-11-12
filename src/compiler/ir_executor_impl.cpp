@@ -2303,8 +2303,9 @@ namespace {
                         auto key = (*cfn)({pair_val});
                         auto val = (*dfn)({pair_val});
                         if (st.context.evaluator) {
+                            const EvalValue hargs[] = {hash_val, key, val};
                             out = st.context.evaluator->invoke_prim_with_telemetry(
-                                "hash-set!", [&]() { return (*pfn)({hash_val, key, val}); });
+                                "hash-set!", hargs, [&]() { return (*pfn)({hash_val, key, val}); });
                         } else if (!aura::compiler::typed_audit::production_defaults_active()) {
                             (*pfn)({hash_val, key, val});
                         }
@@ -2325,8 +2326,9 @@ namespace {
                     auto& hash_val = locals[ops[1]];
                     auto& key_val = locals[ops[2]];
                     if (st.context.evaluator) {
+                        const EvalValue hargs[] = {hash_val, key_val};
                         locals[ops[0]] = st.context.evaluator->invoke_prim_with_telemetry(
-                            "hash-remove!", [&]() { return (*pfn)({hash_val, key_val}); });
+                            "hash-remove!", hargs, [&]() { return (*pfn)({hash_val, key_val}); });
                     } else if (aura::compiler::typed_audit::production_defaults_active()) {
                         locals[ops[0]] = make_void();
                     } else {
@@ -2396,7 +2398,7 @@ namespace {
                     if (pfn) {
                         if (st.context.evaluator) {
                             presult = st.context.evaluator->invoke_prim_with_telemetry(
-                                pname, [&]() { return (*pfn)(pargs); });
+                                pname, pargs, [&]() { return (*pfn)(pargs); });
                         } else if (aura::compiler::typed_audit::production_defaults_active()) {
                             // #3798 / #3720: production + null owner — void,
                             // zero side effects (mirror HashRemove arm).
@@ -2549,7 +2551,7 @@ namespace {
                     if (pfn) {
                         if (st.context.evaluator) {
                             locals[ops[3]] = st.context.evaluator->invoke_prim_with_telemetry(
-                                prim_name, [&]() { return (*pfn)(call_args); });
+                                prim_name, call_args, [&]() { return (*pfn)(call_args); });
                             // Issue #4896: same deny raise as the PrimCall arm.
                             if (auto deny = (st.self.*st.deny)(locals[ops[3]])) {
                                 if (!deny->location.valid()) // Issue #4909

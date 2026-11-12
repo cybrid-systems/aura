@@ -2,11 +2,15 @@
 ; Import with: (import "std/iter")
 ;
 ; Provides generic operations over lists, vectors, and hash tables.
+;
+; frequencies is the same function as std/hash:frequencies (a hash of
+; counts). Requiring both modules, in either order, must not change that
+; shape. Callers that want the old alist use frequencies-alist.
 
 (export
   ;; List operations
   any? every? find find-index count occurrences
-  group-by frequencies split-at
+  group-by frequencies frequencies-alist split-at
   ;; Hash operations
   hash-map hash-filter hash-keys-filter hash-vals hash-update!
   hash-merge! hash-merge-into hash-keys-sorted
@@ -60,8 +64,12 @@
         (hash-set! groups key (append group (list (car rest))))
         (iter (cdr rest) groups)))))
 
-(define (frequencies lst)
-  (hash->alist (occurrences (lambda (x) x) lst)))
+;; Same counts as std/hash:frequencies. One implementation, so the two
+;; modules cannot drift. occurrences stays the local builder for group-by.
+(require "std/hash" all:)
+
+(define (frequencies-alist lst)
+  (hash->alist (frequencies lst)))
 
 (define (split-at n lst)
   (let iter ((i 0) (rest lst) (left (list)))

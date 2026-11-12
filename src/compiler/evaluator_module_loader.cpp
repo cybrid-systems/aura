@@ -923,6 +923,10 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // 9. Apply export filtering: if (export ...) was declared, remove unexported bindings
     if (auto why = apply_module_export_filter(mod_env))
         return fail_module_load(resolved, *why);
+    // Issue #5190: the module env is about to become a workspace root.
+    // Hashes built while the body ran stay mutable until this point;
+    // after it, in-place hash-set! needs Mutate.
+    seal_workspace_env(mod_env);
 
     // 10. Store module (pointer to arena-allocated env — persists for the
     // module's lifetime, freed by gc_module(resolved)).

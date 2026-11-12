@@ -772,7 +772,8 @@ namespace {
         auto* owner = owner_evaluator(prims);
         if (!owner)
             return 0;
-        auto result = owner->invoke_prim_with_telemetry(pname, [&] { return (*pfn)(eval_args); });
+        auto result = owner->invoke_prim_with_telemetry(pname, eval_args,
+                                                        [&] { return (*pfn)(eval_args); });
 
         if (is_str_val(result.val))
             return convert_str_for_jit(result.val, prims);

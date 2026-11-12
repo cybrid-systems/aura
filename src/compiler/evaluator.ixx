@@ -7017,6 +7017,7 @@ private:
             if (id < cell_nil_assigned_.size())
                 cell_nil_assigned_[id] = 0;
             cells_[id] = v;
+            clear_workspace_cell_bit(id);
             return id;
         }
         cells_.push_back(v);
@@ -7024,6 +7025,7 @@ private:
             cell_on_freelist_eval_.resize(cells_.size(), 0);
         if (cells_.size() - 1 < cell_nil_assigned_.size())
             cell_nil_assigned_[cells_.size() - 1] = 0;
+        clear_workspace_cell_bit(cells_.size() - 1);
         return cells_.size() - 1;
     }
 
@@ -7054,10 +7056,42 @@ public:
         // lost, so the cell keeps its void placeholder and a later read of a
         // named-let binding reports "cannot call: loop". Serialize the store
         // with the grow (recursive: alloc_cell may already hold it).
-        std::scoped_lock lock(alloc_storage_lock_);
-        cells_[ci] = v;
-        if (types::is_void(v))
-            note_cell_nil_assigned(ci);
+        bool root = false;
+        {
+            std::scoped_lock lock(alloc_storage_lock_);
+            cells_[ci] = v;
+            if (types::is_void(v))
+                note_cell_nil_assigned(ci);
+            root = ci < cell_workspace_root_.size() && cell_workspace_root_[ci] != 0;
+        }
+        // Issue #5190: the lock is released before the walk. A workspace
+        // cell makes every hash reachable from v require Mutate.
+        if (root)
+            seal_workspace_value(v);
+    }
+    // Issue #5190. Public so module load, Env::bind, and the hash/vector/pair
+    // writers can publish a value that just became reachable from a workspace.
+    void seal_workspace_value(const types::EvalValue& v);
+    void seal_workspace_env(Env* env);
+    void mark_workspace_cell(std::size_t ci);
+    void note_workspace_binding(const types::EvalValue& v);
+    [[nodiscard]] bool env_is_workspace_root(const Env* e) const noexcept;
+    [[nodiscard]] bool vector_is_workspace_reachable(std::size_t idx) const noexcept;
+    [[nodiscard]] bool pair_is_workspace_reachable(std::size_t idx) const noexcept;
+    void clear_workspace_cell_bit(std::size_t id) {
+        if (cell_workspace_root_.size() <= id)
+            cell_workspace_root_.resize(id + 1, 0);
+        cell_workspace_root_[id] = 0;
+    }
+    void clear_vector_workspace_bit(std::size_t id) {
+        if (vector_workspace_reachable_.size() <= id)
+            vector_workspace_reachable_.resize(id + 1, 0);
+        vector_workspace_reachable_[id] = 0;
+    }
+    void clear_pair_workspace_bit(std::size_t id) {
+        if (pair_workspace_reachable_.size() <= id)
+            pair_workspace_reachable_.resize(id + 1, 0);
+        pair_workspace_reachable_[id] = 0;
     }
     [[nodiscard]] bool cell_nil_assigned(std::size_t ci) const {
         std::scoped_lock lock(alloc_storage_lock_);
@@ -9452,6 +9486,13 @@ private:
     std::vector<std::size_t> hash_reuse_freelist_;
     std::vector<std::uint8_t> hash_on_freelist_;
     std::vector<std::uint8_t> hash_owned_;
+    // Issue #5190: a cell bound into a workspace root. Storing through it
+    // publishes every hash reachable from the new value.
+    std::vector<std::uint8_t> cell_workspace_root_;
+    // Containers already reachable from a workspace. A later in-place write
+    // publishes the value being stored. Fresh mints clear the bit.
+    std::vector<std::uint8_t> vector_workspace_reachable_;
+    std::vector<std::uint8_t> pair_workspace_reachable_;
     // Issue #4613: the number of hash tables the reclaim released (the
     // runtime door: the free list holds at most a couple of slots, so
     // the release COUNT is what a mint-and-drop loop pins).
@@ -10454,6 +10495,9 @@ public:
         // Issue #4428: the owner stamp is rewritten on every publish, so a
         // reused slot never carries the previous owner's tenant.
         g_hash_tenants[hidx] = capability_tenant_id_;
+        // Issue #5190: (hash) / make-hash mint a local table. hash-set! on
+        // it does not need Mutate until the value is stored in a workspace.
+        aura_hash_mark_local(static_cast<std::uint64_t>(hidx));
         if (hash_owned_.size() <= hidx)
             hash_owned_.resize(hidx + 1, 0);
         // A published hash table is THIS evaluator's: only such a table
@@ -11266,6 +11310,28 @@ public:
         const std::size_t slot =
             name.empty() ? static_cast<std::size_t>(-1) : primitives_.slot_for_name(name);
         return invoke_prim_with_telemetry_at(name, slot, std::forward<Call>(call));
+    }
+
+    // Issue #5190: hash-set! / hash-remove! consult the target hash before
+    // the dispatch Mutate choke. Callers that have the argument list use
+    // this overload. A call that does not push a target keeps the choke
+    // (fail closed).
+    template <std::invocable Call>
+    inline types::EvalValue invoke_prim_with_telemetry(std::string_view name,
+                                                       std::span<const types::EvalValue> args,
+                                                       Call&& call) {
+        const bool track = (name == "hash-set!" || name == "hash-remove!") && !args.empty() &&
+                           types::is_hash(args[0]);
+        if (track)
+            aura_hash_mutate_operand_push(args[0].val);
+        struct Pop {
+            bool on;
+            ~Pop() {
+                if (on)
+                    aura_hash_mutate_operand_pop();
+            }
+        } pop{track};
+        return invoke_prim_with_telemetry(name, std::forward<Call>(call));
     }
 
     // Issue #1676: dual-epoch + linear fence at TUI/render primitive entry

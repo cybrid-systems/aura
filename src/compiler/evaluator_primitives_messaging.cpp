@@ -1947,6 +1947,7 @@ void RegSplitParts::register_messaging_fiber_spawn_primitive(PrimRegistrar add, 
             // a takeover that will never come.
             cli_body_lock_publish_takeover();
             bool result_published = false;
+            bool result_sealed = false;
             // Issue #1291: wait until spawn path publishes the real fid
             // AND registers s_fiber_results[fid] (g_fiber_spawn may run
             // the body before returning / before register).
@@ -1973,6 +1974,13 @@ void RegSplitParts::register_messaging_fiber_spawn_primitive(PrimRegistrar add, 
                     arena_published = true;
                 }
                 if (fid != 0) {
+                    // Issue #5190: a finished fiber's result is shared with
+                    // every joiner. Hashes in it are no longer local. Once,
+                    // not on every spin.
+                    if (!result_sealed && result_ptr && result_ptr->has_value()) {
+                        ev.seal_workspace_value(**result_ptr);
+                        result_sealed = true;
+                    }
                     std::scoped_lock<std::mutex> lock(s_fiber_results_mtx);
                     auto it = s_fiber_results.find(fid);
                     if (it != s_fiber_results.end()) {
