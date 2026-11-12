@@ -15,13 +15,15 @@
 ; ── Product alias for encode ──
 (define (json-stringify v) (json-encode v))
 
-; ── json-escape -- string → JSON-safe string ───────────────────
+; ── json-escape -- interior of a JSON string (no surrounding quotes) ──
+; Delegates to json-encode so the escape table cannot drift from the
+; engine. json-encode wraps the string in quotes; this strips them.
+; Quotes, backslashes, and every control character < 0x20 (\b \f \n \r
+; \t, otherwise \u00XX) are escaped. json-obj-items / json-arr-items
+; call this for object keys.
 (define (json-escape s)
-  (define (esc-char c)
-    (if (= c 34) (list 92 34) (if (= c 92) (list 92 92) (list c))))
-  (define (escape-all cs)
-    (if (null? cs) (list) (append (esc-char (car cs)) (escape-all (cdr cs)))))
-  (list->string (escape-all (string->list s))))
+  (let ((enc (json-encode s)))
+    (substring enc 1 (- (string-length enc) 1))))
 
 ; ── json-value -- value → JSON string (uses builtin json-encode) ─
 (define (json-value v) (json-stringify v))
