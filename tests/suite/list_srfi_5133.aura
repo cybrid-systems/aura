@@ -21,6 +21,11 @@
    (equal? (take xs 2) (list 1 2))
    (equal? (drop xs 2) (list 3))
    (equal? (take xs 0) (quote ()))
+   ; #5192: take is the native primitive now (the stdlib define is gone), so
+   ; these run the primitive's own SRFI-1 arms: k == length is the list, and
+   ; k > length is an error rather than a silent truncation.
+   (equal? (take xs 3) xs)
+   (try (take xs 9) (catch e #t))
    ; membership and friends
    (equal? (member 2 xs) (list 2 3))
    (eq? (member 9 xs) #f)

@@ -384,11 +384,15 @@ static void ac14_take_drop_boundaries() {
         (void)cs2.eval(R"((begin (display (if (null? (drop (list 1 2 3) 3)) 1 0)) (newline)))");
     });
     CHECK(trim_nl(drop_all) == "1", "AC14: (drop (list 1 2 3) 3) -> ()");
-    // over-length: take clamps to the full list, drop past end -> empty
+    // over-length: take errors — SRFI-1 short-list contract (#5192). The
+    // primitive used to clamp, which is why std/list shadowed it with an
+    // interpreter loop that raised instead; the primitive owns the contract
+    // now, so the clamp row flips to the error arm. drop past end stays empty.
     CompilerService cs3;
-    auto take_over = with_stdout_capture(
-        [&] { (void)cs3.eval(R"((begin (display (take (list 1 2 3) 9)) (newline)))"); });
-    CHECK(trim_nl(take_over) == "(1 2 3)", "AC14: (take (list 1 2 3) 9) clamps -> (1 2 3)");
+    auto take_over = with_stdout_capture([&] {
+        (void)cs3.eval(R"((begin (display (if (error? (take (list 1 2 3) 9)) 1 0)) (newline)))");
+    });
+    CHECK(trim_nl(take_over) == "1", "AC14: (take (list 1 2 3) 9) -> error (#5192)");
     CompilerService cs4;
     auto drop_over = with_stdout_capture([&] {
         (void)cs4.eval(R"((begin (display (if (null? (drop (list 1 2 3) 9)) 1 0)) (newline)))");

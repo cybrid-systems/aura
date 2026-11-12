@@ -16,12 +16,14 @@
         vector-map vector-fill! vector-copy
         values call-with-values)
 
-; foldl: left fold (iterative — constant stack; preferred hot path #923/#928)
-(define (foldl f init lst)
-  (let loop ((acc init) (xs lst))
-    (if (null? xs)
-      acc
-      (loop (f acc (car xs)) (cdr xs)))))
+; foldl: the native primitive (src/compiler/evaluator_primitives_list.cpp:
+; a C++ loop over the pair heap, with the traversal counters). Issue #5192:
+; this module used to redefine it in Aura, shadowing the primitive for every
+; importer - and the prelude auto-requires std/list, so the interpreted loop
+; was the DEFAULT fold for all user code: 1.4 s vs 20 ms on a 1M-element
+; fold (72x). The two are the same R7RS fold-left shape, (foldl f acc list),
+; with the accumulator first, so the export below resolves straight to the
+; primitive (same trick std/hash uses for hash-ref). Do not redefine it.
 
 ; foldr: right fold via reverse + foldl (iterative stack; #1549)
 ; foldr f init (a b c) ≡ f(a, f(b, f(c, init)))
@@ -109,23 +111,16 @@
       (reverse acc)
       (loop (+ i 1) (cons i acc)))))
 
-; take: SRFI-1 / R7RS (lst k) — align with native #4177; Soft oneshot
-; previously shadowed native with count-first (take n lst) (#4221).
-; SRFI-1 contract: k must be a non-negative integer AND the list must
-; have at least k elements; otherwise it is an error (it used to
-; silently return a short list).
-(define (take lst n)
-  (if (integer? n)
-    (if (>= n 0)
-      (let loop ((k n) (xs lst) (acc (list)))
-        (if (= k 0)
-          (reverse acc)
-          (if (null? xs)
-            (error "take: list shorter than count")
-            (loop (- k 1) (cdr xs) (cons (car xs) acc)))))
-      (error "take: count must be a non-negative integer"))
-    (error "take: count must be a non-negative integer")))
-
+; take: the native primitive (src/compiler/evaluator_primitives_list.cpp).
+; Issue #5192: this module used to redefine it here, shadowing the primitive
+; for every importer - and the prelude auto-requires std/list, so the
+; interpreted loop was the DEFAULT take for all user code: 1.0 s vs 39 ms on
+; a 500k prefix (26x). The two agree on the SRFI-1 shape, (take lst k) with
+; the list first, and on the SRFI-1 contract: k must be a non-negative
+; integer and the list must hold at least k elements, otherwise it is an
+; error. The primitive now owns that guard (it used to clamp silently, which
+; is why this module shadowed it in the first place), so the export below
+; resolves straight to the primitive. Do not redefine it.
 (define (skip n lst)
   (let loop ((k n) (xs lst))
     (if (or (= k 0) (null? xs)) xs

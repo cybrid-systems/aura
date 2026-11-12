@@ -1032,9 +1032,12 @@ void RegSplitParts::register_list_walk(PrimRegistrar add, Evaluator& ev,
             }
             auto n = static_cast<std::size_t>(as_int(a[1]));
             auto v = a[0];
-            if (n == 0 || is_end_of_list(v))
+            if (n == 0)
                 return make_void();
-            if (!is_pair(v)) {
+            // Issue #5192: an empty list is the short-list error when n > 0
+            // (SRFI-1), not an early success; a non-list value keeps the
+            // #4177 not-a-list arm.
+            if (!is_pair(v) && !is_end_of_list(v)) {
                 return make_primitive_error(string_heap, error_values, "take: not a list", counter);
             }
             // B-list-2026-07-18-A fix: bound n by list length BEFORE the
@@ -1042,8 +1045,16 @@ void RegSplitParts::register_list_walk(PrimRegistrar add, Evaluator& ev,
             // bypass the post-loop reverse. Without this bound, callers
             // got the un-reversed accumulator as the return value, e.g.
             // (take 5 (list 10 20 30 40)) returned (40 30 20 10) instead
-            // of (10 20 30 40). Walk the list once for length, clamp n,
-            // then run the loop body exactly min(n, length) times.
+            // of (10 20 30 40). Walk the list once for length, then run the
+            // loop body exactly n times.
+            //
+            // Issue #5192: this walk used to CLAMP n to the length, so a
+            // short list truncated silently. std/list shadowed this
+            // primitive with an interpreter loop purely to enforce the
+            // SRFI-1 error contract (tests/suite/srfi_collections_5003.aura
+            // pins it), and that shadow is what cost 26x on every take.
+            // The primitive now owns the contract, so the stdlib define is
+            // gone and this is the only take.
             {
                 std::size_t len = 0;
                 auto probe = v;
@@ -1054,8 +1065,10 @@ void RegSplitParts::register_list_walk(PrimRegistrar add, Evaluator& ev,
                     ++len;
                     probe = pairs[pidx].cdr;
                 }
-                if (n > len)
-                    n = len;
+                if (n > len) {
+                    return make_primitive_error(string_heap, error_values,
+                                                "take: list shorter than count", counter);
+                }
             }
             EvalValue result = make_void();
             // Build result in reverse then reverse it
@@ -1097,7 +1110,8 @@ void RegSplitParts::register_list_walk(PrimRegistrar add, Evaluator& ev,
             }
             return final;
         },
-        pure_general(2, "(list int) -> list", "Prefix of n elements from a list."));
+        pure_general(2, "(list int) -> list",
+                     "Prefix of n elements; errors when the list is shorter than n."));
 }
 
 void RegSplitParts::register_list_sort(PrimRegistrar add, Evaluator& ev,
