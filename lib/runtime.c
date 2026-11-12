@@ -429,6 +429,25 @@ void aura_cell_set(int64_t cell_id, int64_t val) {
     cell_heap[id].value = val;
 }
 
+// Issue #5173: the JIT emits a define / let / letrec init as a CellSet
+// with the bind-init flag, and that opcode calls aura_cell_set_jit_bind
+// (the loader-plumbing entry that skips the user Mutate choke) instead
+// of aura_cell_set. Before #5173 every AOT-emitted init called
+// aura_cell_set, which this file has always defined, so the standalone
+// --emit-binary link resolved. The rename left the new symbol defined
+// only in src/compiler/aura_jit_runtime.cpp (host JIT), which the
+// standalone link does NOT compile, so the link failed with
+// "undefined reference to aura_cell_set_jit_bind" and --emit-binary
+// produced no binary (the emit:* cases in tests/python/run-tests.sh
+// failed with "(no binary)").
+//
+// Standalone AOT has no Mutate choke and no tenant gate at all, so the
+// bind entry must do exactly what aura_cell_set does here: store into
+// the same cell heap the AOT IR reads back through aura_cell_get.
+__attribute__((weak)) void aura_cell_set_jit_bind(int64_t cell_id, int64_t val) {
+    aura_cell_set(cell_id, val);
+}
+
 void aura_drop_cell(int64_t cell_id) {
     uint64_t id = (uint64_t)cell_id;
     if (id >= cell_count || !cell_heap[id].live)
@@ -588,6 +607,22 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
         if (eidx + 1 > closure_heap[id].env_count)
             closure_heap[id].env_count = eidx + 1;
     }
+}
+
+// Issue #5173: OpCapture / OpCaptureRef now call aura_closure_capture_jit
+// (the loader-plumbing entry that skips the user Mutate choke) instead
+// of aura_closure_capture. The rename left the new symbol defined only in
+// src/compiler/aura_jit_runtime.cpp (host JIT), which the standalone
+// --emit-binary link does NOT compile, so the link failed with
+// "undefined reference to aura_closure_capture_jit" and --emit-binary
+// produced no binary.
+//
+// Standalone AOT has no Mutate choke and no tenant gate at all, so the
+// jit entry must do exactly what aura_closure_capture does here: publish
+// into the same closure env the AOT IR reads back through
+// aura_closure_call.
+__attribute__((weak)) void aura_closure_capture_jit(int64_t closure_id, int64_t idx, int64_t val) {
+    aura_closure_capture(closure_id, idx, val);
 }
 
 // Forward declarations for primitive dispatch (used by aura_closure_call)

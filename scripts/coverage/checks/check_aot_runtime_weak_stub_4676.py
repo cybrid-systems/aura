@@ -76,6 +76,36 @@ PER_OP_SYM = "aura_jit_linear_per_op_typed_entry_readiness_ok"
 # needs a weak stub in lib/runtime.c.
 GATE_FAMILY_RE = re.compile(r"int\s+(aura_jit_[A-Za-z0-9_]*_ok)\s*\(void\);")
 
+# The loader-plumbing bridge family (Issue #5173). These are the C ABI
+# entries the JIT emits INTO the AOT IR for the loader's own writes: a
+# define / let / letrec init (aura_cell_set_jit_bind) and a closure env
+# capture (aura_closure_capture_jit). They are named *_jit_* because
+# they skip the user Mutate choke, and they are defined ONLY in
+# src/compiler/aura_jit_runtime.cpp (host JIT) - which the standalone
+# --emit-binary link does NOT compile.
+#
+# So a rename inside that family is a silent standalone-link break: the
+# emitted .o references a symbol no one defines, the link fails with
+# "undefined reference", --emit-binary produces no binary, and every
+# emit:* case in tests/python/run-tests.sh fails with "(no binary)".
+# #5173 renamed aura_cell_set -> aura_cell_set_jit_bind and
+# aura_closure_capture -> aura_closure_capture_jit and broke exactly
+# that way; the dist workflow caught it, the fast pre-push gate did not.
+#
+# Every member of this family needs a weak stub in lib/runtime.c.
+PLUMBING_FAMILY_RE = re.compile(r"aura_[A-Za-z0-9_]*_(?:jit_bind|capture_jit)")
+
+# The bridge namespaces whose host-side definitions live in the JIT
+# runtime TU. A symbol in these namespaces that the JIT emits into the
+# AOT IR but that lib/runtime.c does not define can only be resolved by
+# the HOST build - the standalone --emit-binary link compiles runtime.c
+# and the emitted .o only, so such a symbol is an undefined reference.
+BRIDGE_NS_RE = re.compile(r"aura_(?:cell|closure)_[A-Za-z0-9_]+")
+
+# The host JIT TU. Its strong definitions win over runtime.c's weak
+# stubs in the host build; the standalone AOT link never sees it.
+HOST_JIT_REL = "src/compiler/aura_jit_runtime.cpp"
+
 # The standalone-AOT runtime source, matched as a PATH so that
 # "test_spec_runtime.cpp" and "aura_jit_runtime.cpp" do not match.
 RUNTIME_PATH_RE = re.compile(r"(?<![A-Za-z0-9_./-])(?:lib/)?runtime\.c(?![A-Za-z0-9_])")
@@ -111,6 +141,96 @@ def _gate_family(header: str) -> list[str]:
         if m.group(1) not in seen:
             seen.append(m.group(1))
     return seen
+
+
+def _external_linkage_symbols(jit: str) -> dict[str, str]:
+    """Map the LLVM fn_ variable -> the C symbol it is declared as.
+
+    Only ExternalLinkage declarations count: those are the ones that end
+    up as undefined references in the emitted .o.
+    """
+    out: dict[str, str] = {}
+    for m in re.finditer(
+        r"(fn_[A-Za-z0-9_]+)\s*=\s*\n?\s*llvm::Function::Create\("
+        r"(?:[^;]*?)llvm::Function::ExternalLinkage,\s*\n?\s*\"([A-Za-z_][A-Za-z0-9_]*)\"",
+        jit,
+    ):
+        out[m.group(1)] = m.group(2)
+    return out
+
+
+def _create_call_args(jit: str) -> list[str]:
+    """Return the argument text of every CreateCall(...) site.
+
+    The fn_ variable is not always the whole callee expression - it can
+    sit in a ternary (fn_cell_set_jit_bind vs fn_cell_set) - so the
+    guard scans the whole call's argument list rather than requiring an
+    exact "CreateCall(llvm::FunctionCallee(fn_x))" shape.
+    """
+    args: list[str] = []
+    for m in re.finditer(r"CreateCall\(", jit):
+        i = m.end()
+        depth = 1
+        start = i
+        while i < len(jit) and depth:
+            if jit[i] == "(":
+                depth += 1
+            elif jit[i] == ")":
+                depth -= 1
+            i += 1
+        args.append(jit[start : i - 1])
+    return args
+
+
+def _called_external_symbols(jit: str) -> dict[str, str]:
+    """The ExternalLinkage symbols the JIT actually calls into the IR.
+
+    Only symbols that are actually CALLED count: a declaration nobody
+    calls never becomes an undefined reference, so it needs no stub.
+    """
+    declared = _external_linkage_symbols(jit)
+    call_args = _create_call_args(jit)
+    out: dict[str, str] = {}
+    for fn_var, sym in declared.items():
+        if not any(re.search(r"\b" + re.escape(fn_var) + r"\b", arg) for arg in call_args):
+            continue
+        out[fn_var] = sym
+    return out
+
+
+def _defined_symbols(text: str) -> set[str]:
+    """The C symbols a translation unit defines (weak or strong)."""
+    found: set[str] = set()
+    for m in re.finditer(
+        r"^\s*(?:__attribute__\(\(weak\)\)\s*)?"
+        r"(?:extern\s+\"C\"\s+)?"
+        r"[A-Za-z_][A-Za-z0-9_ \t*]*?\b(aura_[A-Za-z0-9_]+)\s*\([^;{]*\)\s*\{",
+        text,
+        re.MULTILINE,
+    ):
+        found.add(m.group(1))
+    return found
+
+
+def _plumbing_family(jit: str) -> dict[str, str]:
+    """The loader-plumbing bridge symbols the JIT emits into the AOT IR.
+
+    Two independent triggers, so a rename cannot slip past by changing
+    the name shape:
+
+      1. the *_jit_bind / *_capture_jit naming convention #5173 used;
+      2. any aura_cell_* / aura_closure_* bridge whose ONLY definition
+         is the host JIT TU - i.e. the standalone AOT link cannot
+         resolve it no matter what it is called.
+    """
+    declared = _external_linkage_symbols(jit)
+    call_args = _create_call_args(jit)
+    out: dict[str, str] = {}
+    for fn_var, sym in declared.items():
+        if not any(re.search(r"\b" + re.escape(fn_var) + r"\b", arg) for arg in call_args):
+            continue
+        out[fn_var] = sym
+    return out
 
 
 def check_per_op_stub(runtime: str) -> list[str]:
@@ -149,6 +269,68 @@ def check_gate_family(runtime: str, header: str) -> list[str]:
                 f"AC2: {RUNTIME_REL} has no weak stub for the bridge gate {sym} - a gate "
                 "emitted into the AOT IR would fail the standalone --emit-binary link "
                 "with 'undefined reference' (#4676)"
+            )
+    return fails
+
+
+def check_plumbing_family(runtime: str, jit: str, host_jit: str) -> list[str]:
+    """AC5: every loader-plumbing bridge the JIT emits has a runtime.c stub.
+
+    A rename inside this family moves a symbol that the standalone
+    --emit-binary link cannot resolve, so the emitted .o fails to link
+    and no binary is produced (#5173).
+
+    A bridge needs a runtime.c stub when the standalone link cannot
+    resolve it, i.e. when the symbol is called into the AOT IR and its
+    ONLY definition is the host JIT TU. Two triggers catch that:
+
+      1. the *_jit_bind / *_capture_jit naming convention #5173 used;
+      2. any aura_cell_* / aura_closure_* bridge that is host-only.
+
+    A bridge that runtime.c DOES define needs no extra stub - renaming
+    it and moving the stub with it is fine.
+    """
+    fails: list[str] = []
+    stubs = _weak_stub_bodies(runtime)
+    runtime_defs = _defined_symbols(runtime)
+    host_defs = _defined_symbols(host_jit)
+    family = _plumbing_family(jit)
+
+    # Validity: the parser must actually see the emitted IR surface. If it
+    # ever stops matching, the guard would go silently inert and the next
+    # rename would slip through again.
+    if not family:
+        fails.append(
+            f"AC5: no called ExternalLinkage symbol was found in {JIT_REL} - the "
+            "guard cannot see the emitted IR surface, so it is inert and a rename "
+            "would slip through again (#5173)"
+        )
+        return fails
+
+    required: dict[str, str] = {}
+    for fn_var, sym in sorted(family.items(), key=lambda kv: kv[1]):
+        if PLUMBING_FAMILY_RE.fullmatch(sym):
+            required[sym] = fn_var
+            continue
+        if BRIDGE_NS_RE.fullmatch(sym) and sym in host_defs and sym not in runtime_defs:
+            required[sym] = fn_var
+
+    for sym, fn_var in sorted(required.items()):
+        if sym not in stubs:
+            fails.append(
+                f"AC5: {RUNTIME_REL} has NO weak stub for {sym} (emitted via {fn_var}) - "
+                "the standalone --emit-binary link has no definition of it and fails "
+                "with 'undefined reference', so --emit-binary emits no binary and every "
+                "emit:* case fails with '(no binary)' (#5173)"
+            )
+            continue
+        body = stubs[sym]
+        delegates = [m.group(1) for m in re.finditer(r"\b(aura_[A-Za-z0-9_]+)\s*\(", body) if m.group(1) != sym]
+        if not delegates:
+            fails.append(
+                f"AC5: the weak stub for {sym} does not delegate to a runtime.c "
+                "implementation - the standalone AOT binary needs the write to land in "
+                "the same cell / closure heap the emitted IR reads back (#5173)"
             )
     return fails
 
@@ -216,11 +398,41 @@ int aura_jit_linear_per_op_typed_entry_readiness_ok(void) { return 1; }
 """
     hdr = "int aura_jit_linear_per_op_typed_entry_readiness_ok(void);\n"
 
+    # AC5 probes: a bridge the JIT calls into the IR.
+    bridge_jit = """
+fn_cell_set_jit_bind =
+    llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64, i64}, false),
+                           llvm::Function::ExternalLinkage, "aura_cell_set_jit_bind", mod);
+irb->CreateCall(llvm::FunctionCallee(fn_cell_set_jit_bind), vals);
+"""
+    bridge_rt = """
+__attribute__((weak)) void aura_cell_set_jit_bind(int64_t cell_id, int64_t val) {
+    aura_cell_set(cell_id, val);
+}
+"""
+    host_rt = """
+extern "C" void aura_cell_set_jit_bind(int64_t cell_id, int64_t val) {
+    aura_cell_set_checked(cell_id, val);
+}
+"""
+
     cases = [
         ("the stub is found", PER_OP_SYM in _weak_stub_bodies(good_rt)),
         ("a missing weak stub is not found", PER_OP_SYM not in _weak_stub_bodies(nostub)),
         ("the gate family is derived from the header", _gate_family(hdr) == [PER_OP_SYM]),
         ("a non-weak definition does not satisfy AC2", check_gate_family(nostub, hdr) != []),
+        (
+            "the plumbing family is derived from the JIT IR",
+            _plumbing_family(bridge_jit).get("fn_cell_set_jit_bind") == "aura_cell_set_jit_bind",
+        ),
+        (
+            "a missing plumbing stub is caught",
+            check_plumbing_family("", bridge_jit, host_rt) != [],
+        ),
+        (
+            "a delegating plumbing stub passes",
+            check_plumbing_family(bridge_rt, bridge_jit, host_rt) == [],
+        ),
     ]
     for label, ok in cases:
         if not ok:
@@ -250,14 +462,16 @@ def main(argv: list[str] | None = None) -> int:
     runtime = _read(RUNTIME_REL)
     header = _read(HEADER_REL)
     jit = _read(JIT_REL)
+    host_jit = _read(HOST_JIT_REL)
     cmake = _read(CMAKE_REL)
-    if not runtime or not header or not jit:
+    if not runtime or not header or not jit or not host_jit:
         print("FAIL #4676 aot_runtime_weak_stub: missing source files", file=sys.stderr)
         return 1
 
     fails = (
         check_per_op_stub(runtime)
         + check_gate_family(runtime, header)
+        + check_plumbing_family(runtime, jit, host_jit)
         + check_jit_emits(jit)
         + check_runtime_not_in_host(cmake)
     )
