@@ -7305,6 +7305,13 @@ int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
     // Issue #3720: require Mutate before any g_hash_tables write. Soft/Off
     // require_effect is a no-op (owner still must be wired — same fail-closed
     // as PrimCall null-owner). Deny → unlock not held yet, zero write.
+    // Issue #5190: an unpublished local table skips that grant inside
+    // require_effect. The choke call stays so a published table still needs
+    // Mutate. The tenant gate in the checked body is unchanged.
+    aura_hash_mutate_operand_push(hash_val);
+    struct Pop {
+        ~Pop() { aura_hash_mutate_operand_pop(); }
+    } pop;
     if (aura_jit_owner_require_effect(aura::compiler::security::kEffectMutate, "hash-set!") == 0)
         return 0;
     return aura_hash_set_checked(hash_val, pair_val, aura_jit_owner_capability_tenant(),
@@ -7313,6 +7320,11 @@ int64_t aura_hash_set(int64_t hash_val, int64_t pair_val) {
 
 int64_t aura_hash_remove(int64_t hash_val, int64_t key_val) {
     // Issue #3720: Mutate choke before tombstone write (parity with hash-set!).
+    // Issue #5190: same unpublished-local exemption as aura_hash_set.
+    aura_hash_mutate_operand_push(hash_val);
+    struct Pop {
+        ~Pop() { aura_hash_mutate_operand_pop(); }
+    } pop;
     if (aura_jit_owner_require_effect(aura::compiler::security::kEffectMutate, "hash-remove!") == 0)
         return 0;
     // Issue #157 Phase 2: write lock — writes the FlatHashTable
@@ -7377,6 +7389,8 @@ extern "C" int64_t aura_hash_alloc_tenant(int64_t owner_tenant) {
     if (g_hash_tenants.size() < g_hash_tables.size())
         g_hash_tenants.resize(g_hash_tables.size(), 0);
     g_hash_tenants[hidx] = static_cast<std::uint64_t>(owner_tenant);
+    // Issue #5190: a JIT (hash) is a local table until something publishes it.
+    aura_hash_mark_local(static_cast<std::uint64_t>(hidx));
     aura_unlock_workspace_write();
     return static_cast<int64_t>(static_cast<uint64_t>(hidx) << 6);
 }

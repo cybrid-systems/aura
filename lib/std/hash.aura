@@ -105,6 +105,10 @@
     (for-each (lambda (k) (hash-set! result k (hash-ref b k))) (hash-keys b))
     result))
 
+; Count occurrences. The table is built with hash-set! on a fresh local
+; hash: that write does not need the Mutate capability (#5190). A hash
+; that has been stored in a workspace still does. std/iter re-exports
+; this same function; frequencies-alist there is the explicit alist.
 (define (frequencies lst)
   (let ((h (hash)))
     (for-each (lambda (x)

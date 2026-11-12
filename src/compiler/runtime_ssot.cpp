@@ -575,6 +575,58 @@ void aura_hash_stamp_new_table_owner() {
     g_hash_tenants[g_hash_tables.size() - 1] = aura_jit_owner_capability_tenant();
 }
 
+// Issue #5190. Default 1 so a table this vector has not classified is
+// treated as published (hash-set! still needs Mutate). mint / hash-copy /
+// the JIT allocator clear the slot they just published.
+namespace {
+std::vector<std::uint8_t> g_hash_workspace_reachable;
+
+void ensure_hash_reachable_size(std::uint64_t hidx) {
+    if (g_hash_workspace_reachable.size() <= hidx)
+        g_hash_workspace_reachable.resize(static_cast<std::size_t>(hidx) + 1, 1);
+}
+} // namespace
+
+extern "C" void aura_hash_mark_local(std::uint64_t hidx) {
+    ensure_hash_reachable_size(hidx);
+    g_hash_workspace_reachable[static_cast<std::size_t>(hidx)] = 0;
+}
+
+extern "C" void aura_hash_mark_workspace_reachable(std::uint64_t hidx) {
+    ensure_hash_reachable_size(hidx);
+    g_hash_workspace_reachable[static_cast<std::size_t>(hidx)] = 1;
+}
+
+extern "C" int aura_hash_is_workspace_reachable(std::uint64_t hidx) {
+    if (hidx >= g_hash_workspace_reachable.size())
+        return 1;
+    return g_hash_workspace_reachable[static_cast<std::size_t>(hidx)] != 0 ? 1 : 0;
+}
+
+namespace {
+thread_local std::int64_t t_hash_mutate_stack[8];
+thread_local int t_hash_mutate_depth = 0;
+} // namespace
+
+extern "C" void aura_hash_mutate_operand_push(std::int64_t hash_val) {
+    if (t_hash_mutate_depth < 8)
+        t_hash_mutate_stack[t_hash_mutate_depth] = hash_val;
+    ++t_hash_mutate_depth;
+}
+
+extern "C" void aura_hash_mutate_operand_pop() {
+    if (t_hash_mutate_depth > 0)
+        --t_hash_mutate_depth;
+}
+
+extern "C" int aura_hash_mutate_operand_is_unpublished() {
+    if (t_hash_mutate_depth <= 0 || t_hash_mutate_depth > 8)
+        return 0;
+    const auto hash_val = t_hash_mutate_stack[t_hash_mutate_depth - 1];
+    const auto hidx = static_cast<std::uint64_t>(hash_val) >> 6;
+    return aura_hash_is_workspace_reachable(hidx) == 0 ? 1 : 0;
+}
+
 // ── FlatHashTable::create / destroy ──
 // Strong defs used to live only in aura_jit_runtime.cpp (JIT SOs).
 // evaluator_primitives_* in libaura_test_objects.so call create() for

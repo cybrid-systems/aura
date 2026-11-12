@@ -997,6 +997,10 @@ void Env::bind_symid_with_linear_state(aura::ast::SymId s, types::EvalValue v, s
     // per-node prim/cell cache. Param binds on a call frame must not.
     if (owner_ != nullptr && this == &owner_->top_env())
         owner_->note_top_binding_changed();
+    // Issue #5190: a binding in the top env or a loaded module publishes
+    // every hash reachable from the value. Local frames do not.
+    if (owner_ != nullptr && owner_->env_is_workspace_root(this) && !bindings_symid_.empty())
+        owner_->note_workspace_binding(bindings_symid_.back().second);
 }
 
 // Issue #1861: multi-step write (bindings_ emplace + binding_index_
@@ -1038,6 +1042,9 @@ void Env::bind_with_linear_state(std::string_view n, types::EvalValue v, std::ui
     // Issue #4599: same top_-only generation bump as bind_symid.
     if (owner_ != nullptr && this == &owner_->top_env())
         owner_->note_top_binding_changed();
+    // Issue #5190: see bind_symid_with_linear_state.
+    if (owner_ != nullptr && owner_->env_is_workspace_root(this) && !bindings_.empty())
+        owner_->note_workspace_binding(bindings_.back().second);
 }
 
 // Issue #2872: drop the most recent local string binding for `n`.

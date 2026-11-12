@@ -1018,6 +1018,21 @@ void RegSplitParts::register_mutable_pair_ops(PrimRegistrar add, Evaluator& ev,
         [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 || !is_pair(a[0]))
                 return make_void();
+            // Issue #5190: writing a workspace-reachable pair publishes the
+            // new car. Sealer runs after the lock drops.
+            struct SealOnReturn {
+                Evaluator& ev;
+                EvalValue value{};
+                bool armed = false;
+                void arm(const EvalValue& v) {
+                    value = v;
+                    armed = true;
+                }
+                ~SealOnReturn() {
+                    if (armed)
+                        ev.seal_workspace_value(value);
+                }
+            } seal_on_return{ev};
             // Issue #1397 + #1399: resolve idx + bounds check + field
             // write all under alloc_storage_lock_ so concurrent
             // push_back / resize cannot realloc pairs_ between
@@ -1035,6 +1050,8 @@ void RegSplitParts::register_mutable_pair_ops(PrimRegistrar add, Evaluator& ev,
                                                 "denied (#4298)");
                 }
                 pairs[idx].car = a[1];
+                if (ev.pair_is_workspace_reachable(idx))
+                    seal_on_return.arm(a[1]);
             } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
                 // Issue #4057: g_pair_slots index space is process-shared — a
                 // foreign tenant's JIT pair can land at idx >= pairs_.size()
@@ -1065,6 +1082,8 @@ void RegSplitParts::register_mutable_pair_ops(PrimRegistrar add, Evaluator& ev,
                                                 "denied (#4057)");
                 }
                 g_pair_slots[idx]->car = a[1].val;
+                if (ev.pair_is_workspace_reachable(idx))
+                    seal_on_return.arm(a[1]);
             }
             return make_void();
         },
@@ -1074,6 +1093,20 @@ void RegSplitParts::register_mutable_pair_ops(PrimRegistrar add, Evaluator& ev,
         [&ev, &pairs, &string_heap, &error_values](std::span<const EvalValue> a) -> EvalValue {
             if (a.size() < 2 || !is_pair(a[0]))
                 return make_void();
+            // Issue #5190: same publish rule as set-car!.
+            struct SealOnReturn {
+                Evaluator& ev;
+                EvalValue value{};
+                bool armed = false;
+                void arm(const EvalValue& v) {
+                    value = v;
+                    armed = true;
+                }
+                ~SealOnReturn() {
+                    if (armed)
+                        ev.seal_workspace_value(value);
+                }
+            } seal_on_return{ev};
             // Issue #1397 + #1399: same atomic guard as set-car! —
             // idx capture inside lock_guard, not before.
             std::scoped_lock lock(ev.alloc_storage_lock_);
@@ -1088,6 +1121,8 @@ void RegSplitParts::register_mutable_pair_ops(PrimRegistrar add, Evaluator& ev,
                                                 "denied (#4298)");
                 }
                 pairs[idx].cdr = a[1];
+                if (ev.pair_is_workspace_reachable(idx))
+                    seal_on_return.arm(a[1]);
             } else if (idx < g_pair_slots.size() && g_pair_slots[idx]) {
                 // Issue #4057: same cross-tenant arm as set-car! — the
                 // process-shared slot's owner stamp must equal the caller
@@ -1110,6 +1145,8 @@ void RegSplitParts::register_mutable_pair_ops(PrimRegistrar add, Evaluator& ev,
                                                 "denied (#4057)");
                 }
                 g_pair_slots[idx]->cdr = a[1].val;
+                if (ev.pair_is_workspace_reachable(idx))
+                    seal_on_return.arm(a[1]);
             }
             return make_void();
         },

@@ -8513,7 +8513,7 @@ Evaluator::FlatStep Evaluator::eval_flat_on_prim_value(EvalFlatCursor& cur,
                 // Issue #4690: a primitive value `while`.
                 return FlatStep::ret(
                     finish_prim_call(pname, prim_owner->invoke_prim_with_telemetry(
-                                                pname, [&]() { return (*prim)(args); })));
+                                                pname, args, [&]() { return (*prim)(args); })));
             }
         }
     }
@@ -9260,6 +9260,20 @@ Evaluator::FlatStep Evaluator::eval_flat_on_primitive(EvalFlatCursor& cur,
                 }
             }
             // Issue #4690: closure-form while parks the thunk diagnostic.
+            // Issue #5190: the slot-cached path calls _at directly, so the
+            // argument-taking overload would miss it. One push covers both.
+            const bool track_hash =
+                (cname == "hash-set!" || cname == "hash-remove!") && !args.empty() &&
+                is_hash(args[0]);
+            if (track_hash)
+                aura_hash_mutate_operand_push(args[0].val);
+            struct HashOperandPop {
+                bool on;
+                ~HashOperandPop() {
+                    if (on)
+                        aura_hash_mutate_operand_pop();
+                }
+            } hash_operand_pop{track_hash};
             auto prim_result = [&]() {
                 if (slot_here)
                     return prim_owner->invoke_prim_with_telemetry_at(
@@ -12473,7 +12487,7 @@ Evaluator::eval_data_forms_apply(const types::EvalValue& data, const Env& env, a
         // Issue #441 / #1357: call count + optional render latency.
         // Issue #4690: a closure-form while parks its thunk's diagnostic.
         return finish_prim_call(
-            fn_name, invoke_prim_with_telemetry(fn_name, [&]() { return (*prim)(args); }));
+            fn_name, invoke_prim_with_telemetry(fn_name, args, [&]() { return (*prim)(args); }));
     }
 
     // Issue #158: macro expansion in eval_data_as_code. The
