@@ -30,7 +30,8 @@
 (export qd:map-elites qd:insert! qd:elites qd:coverage qd:qd-score qd:best
         qd:novelty qd:select-parent qd:novel-enough? qd:struct-hash
         qd:islands qd:island-ask qd:island-tell! qd:islands-run! qd:islands-best
-        qd:heatmap-svg qd:lineage-svg qd:help qd:schema)
+        qd:heatmap-svg qd:lineage-svg qd:help qd:schema
+        qd-rng qd-rand! qd-opt qd-num)
 
 (require "std/evo-core" all:)
 
