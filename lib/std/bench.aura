@@ -8,6 +8,10 @@
 ;   - 135 tasks load correctly from bench-tasks.json
 ;
 
+(export all-tasks task-count run-rounds aggregate
+        print-report run-one run-parallel
+        bench:list-sort bench:foldl-sum)
+
 (require "std/synthesize-v2" all:)
 (require "std/list" all:)
 (require "std/json" all:)
@@ -17,10 +21,6 @@
 (require "std/adaptive" all:)
 ; #5006: check-success is a std function; the kernel name is a deprecated alias.
 (require "std/test")
-
-(export all-tasks task-count run-rounds aggregate
-        print-report run-one run-parallel
-        bench:list-sort bench:foldl-sum)
 
 ; ── Load tasks from JSON ──
 (define all-tasks
