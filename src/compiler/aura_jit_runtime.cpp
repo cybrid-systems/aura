@@ -770,6 +770,7 @@ extern "C" void aura_clear_top_cell_getter_if_user(void* user);
 extern "C" void aura_clear_keyword_hooks_if_user(void* user);
 extern "C" void aura_clear_symbol_hooks_if_user(void* user); // Issue #4727
 extern "C" void aura_clear_jit_error_display_if_user(void* user);
+extern "C" void aura_clear_jit_vector_walk_if_user(void* user); // Issue #5176
 extern "C" void aura_register_evaluator_runtime_hook_clearer(void (*fn)(void*));
 
 static void clear_evaluator_runtime_hooks_impl(void* user) {
@@ -784,6 +785,7 @@ static void clear_evaluator_runtime_hooks_impl(void* user) {
     aura_clear_keyword_hooks_if_user(user);
     aura_clear_symbol_hooks_if_user(user); // Issue #4727
     aura_clear_jit_error_display_if_user(user);
+    aura_clear_jit_vector_walk_if_user(user); // Issue #5176
 }
 
 namespace {
@@ -7639,6 +7641,32 @@ static void fputs_scheme_write_string(const char* s, FILE* out) {
     fputc('"', out);
 }
 
+// Issue #5176: vector elements live on the evaluator that minted them.
+// Unwired (AOT / light-link) leaves display on the raw-word fallback.
+namespace {
+    struct VectorWalkHook {
+        int (*fn)(void*, std::int64_t, void (*)(std::int64_t, void*), void*) = nullptr;
+        void* user = nullptr;
+    };
+    std::mutex g_vector_walk_mtx;
+    VectorWalkHook g_vector_walk;
+} // namespace
+
+extern "C" void aura_set_jit_vector_walk(int (*fn)(void*, std::int64_t,
+                                                   void (*)(std::int64_t, void*), void*),
+                                         void* user) {
+    std::scoped_lock lock(g_vector_walk_mtx);
+    g_vector_walk = {fn, user};
+}
+
+extern "C" void aura_clear_jit_vector_walk_if_user(void* user) {
+    std::scoped_lock lock(g_vector_walk_mtx);
+    if (g_vector_walk.user == user)
+        g_vector_walk = {};
+}
+
+static bool display_jit_vector(std::int64_t val, std::int64_t write_mode);
+
 // Issue #2572: full tagged-value display for JIT PrimCall fast-path.
 // Previous fast-path always called aura_display_int on the raw EvalValue
 // bits, so string constants (v2 STRING_BIAS encoding) printed as huge
@@ -7658,7 +7686,9 @@ void aura_display_value(int64_t val, int64_t write_mode) {
     using aura::compiler::types::kSpecialVoid;
     using aura::compiler::types::ref_index;
     using aura::compiler::types::ref_type;
+    using aura::compiler::types::RefHash;
     using aura::compiler::types::RefPair;
+    using aura::compiler::types::RefVector;
 
     // Nesting depth for pair cars. The cdr walk below stays in this frame,
     // so a long list does not count as nested.
@@ -7797,9 +7827,69 @@ void aura_display_value(int64_t val, int64_t write_mode) {
         fflush(stdout);
         return;
     }
+    // Issue #5176: a vector word (141 for slot 2) is not the value. Elements
+    // are on the evaluator heap. A missing slot prints <vector>, like
+    // io_print_val. write_mode quotes strings inside the vector.
+    if (is_ref(val) && ref_type(val) == static_cast<std::uint64_t>(RefVector)) {
+        if (display_jit_vector(val, write_mode))
+            return;
+    }
+    // Issue #5176: occupancy, the same text as io_print_val (<hash[1]> for
+    // one entry). The slot index is a different printer.
+    if (is_ref(val) && ref_type(val) == static_cast<std::uint64_t>(RefHash)) {
+        const auto id = ref_index(val);
+        std::size_t n = 0;
+        if (id < g_hash_tables.size() && g_hash_tables[id])
+            n = static_cast<std::size_t>(g_hash_tables[id]->size);
+        fprintf(stdout, "<hash[%zu]>", n);
+        fflush(stdout);
+        return;
+    }
     // Fallback: keep prior raw dump for unknown tags (debug visibility)
     fprintf(stdout, "%ld", static_cast<long>(val));
     fflush(stdout);
+}
+
+// Prints #(...) for a live vector slot, or <vector> when the slot is gone.
+// Returns false only when no evaluator walk is wired.
+static bool display_jit_vector(std::int64_t val, std::int64_t write_mode) {
+    int (*fn)(void*, std::int64_t, void (*)(std::int64_t, void*), void*) = nullptr;
+    void* user = nullptr;
+    {
+        std::scoped_lock lock(g_vector_walk_mtx);
+        fn = g_vector_walk.fn;
+        user = g_vector_walk.user;
+    }
+    if (!fn)
+        return false;
+    struct Ctx {
+        std::int64_t write_mode;
+        bool started = false;
+    } ctx{write_mode};
+    auto emit = [](std::int64_t elem, void* raw) {
+        auto* c = static_cast<Ctx*>(raw);
+        if (c->started)
+            fputc(' ', stdout);
+        else {
+            fputs("#(", stdout);
+            c->started = true;
+        }
+        aura_display_value(elem, c->write_mode);
+    };
+    const int found = fn(user, val, emit, &ctx);
+    if (found > 0) {
+        if (!ctx.started)
+            fputs("#(", stdout);
+        fputc(')', stdout);
+        fflush(stdout);
+        return true;
+    }
+    if (found == 0) {
+        fputs("<vector>", stdout);
+        fflush(stdout);
+        return true;
+    }
+    return false;
 }
 
 void aura_newline() {

@@ -118,6 +118,13 @@ aura_set_keyword_hooks(std::int64_t (* /*intern*/)(void*, const char*),
 extern "C" __attribute__((weak)) void
 aura_set_jit_error_display(void (* /*fn*/)(void*, std::int64_t), void* /*user*/) {}
 
+// Issue #5176: strong body is aura_jit_runtime.cpp. A non-JIT link of the
+// evaluator partition still registers the vector walk; the no-op keeps that
+// link resolvable (display then keeps the raw-word fallback).
+extern "C" __attribute__((weak)) void
+aura_set_jit_vector_walk(int (* /*fn*/)(void*, std::int64_t, void (*)(std::int64_t, void*), void*),
+                         void* /*user*/) {}
+
 // Issue #4855: strong bodies are aura_jit_runtime.cpp. A non-JIT link of
 // the evaluator partition still registers the hash-miss arm; the no-op
 // keeps that link resolvable (the JIT then answers the void sentinel).
