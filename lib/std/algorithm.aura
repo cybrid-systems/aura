@@ -1,10 +1,16 @@
 ; Aura standard algorithm library
 ; Import with: (import "std/algorithm")
 ; Requires: std/list
+;
+; sort-stable and sort-by both call the native list-sort (iterative
+; stable merge). list-sort accepts a comparator and keeps equal keys in
+; input order, so these sorts are stable and do not recurse per element.
 
 (export sort-stable sort-by binary-search merge-sorted
         merge sorted? unique min-by max-by
         permutations combinations)
+
+(require "std/list" all:)
 
 ; ── Sorting extensions ──────────────────────────────
 
@@ -15,25 +21,18 @@
         (if (< (car rest) prev) #f
           (loop (car rest) (cdr rest)))))))
 
+; (sort-by lst key) — stable ascending sort by (key x). The native
+; comparator is (lambda (a b) (< (key a) (key b))); equal keys stay in
+; input order. key may return any values < accepts, including the car
+; of a pair.
 (define (sort-by lst key)
-  (if (< (length lst) 2) lst
-    (let* ((pivot (car lst))
-           (rest (cdr lst))
-           (pk (key pivot))
-           (less (filter (lambda (x) (< (key x) pk)) rest))
-           (greater (filter (lambda (x) (>= (key x) pk)) rest)))
-      (append (sort-by less key)
-              (cons pivot (sort-by greater key))))))
+  (list-sort lst (lambda (a b) (< (key a) (key b)))))
 
+; (sort-stable lst) — stable sort. Same order as (list-sort lst):
+; numbers numerically, strings lexicographically. For any other element
+; type, pass a key to sort-by or a comparator to list-sort.
 (define (sort-stable lst)
-  ;; Stable sort: deferred to the basic sort (quicksort is unstable;
-  ;; for full stability use merge-sorted directly with a sort wrapper)
-  (if (< (length lst) 2) lst
-    (let* ((pivot (car lst))
-           (rest (cdr lst))
-           (less (sort-stable (filter (lambda (x) (< x pivot)) rest)))
-           (greater (sort-stable (filter (lambda (x) (>= x pivot)) rest))))
-      (append less (cons pivot greater)))))
+  (list-sort lst))
 
 ; ── Merge ────────────────────────────────────────────
 
