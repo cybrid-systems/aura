@@ -10752,13 +10752,15 @@ public:
     // as the lexical fence. Ordinary errno (ENOENT) does not. Inactive
     // policy keeps the path syscall and does not call these.
     [[nodiscard]] int open_tenant_host_fd(std::string_view resolved, int flags, unsigned mode,
-                                          std::string_view op) noexcept;
-    [[nodiscard]] int mkdir_tenant_host(std::string_view resolved, std::string_view op) noexcept;
+                                          std::string_view op_name) noexcept;
+    [[nodiscard]] int mkdir_tenant_host(std::string_view resolved,
+                                        std::string_view op_name) noexcept;
     // 1 = unlinked, 0 = directory or missing, -1 = error (escape audited).
-    [[nodiscard]] int unlink_tenant_host(std::string_view resolved, std::string_view op) noexcept;
+    [[nodiscard]] int unlink_tenant_host(std::string_view resolved,
+                                         std::string_view op_name) noexcept;
     // Same IsolationDeny row as check_tenant_host_path. Separate so an
     // openat2 refusal audits without moving the #4380 gate body.
-    void note_tenant_path_escape(std::string_view op) noexcept;
+    void note_tenant_path_escape(std::string_view op_name) noexcept;
     // Issue #4233: Restricted+MT / Strict exec-face jail for shell /
     // command-output (#3836 siblings). Same policy predicate as
     // check_tenant_host_path: Soft/Off / single-tenant Restricted →
