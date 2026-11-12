@@ -70,6 +70,47 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace")
 
 
+def _brace_body(src: str, anchor: str) -> str:
+    """Body of the first { ... } block after anchor.
+
+    Issue #5190 grew the bodies this script pins past the fixed character
+    budgets it used, so a window truncated and reported a live gate as
+    missing. Match braces instead (skipping literals and comments).
+    """
+    at = src.find(anchor)
+    if at < 0:
+        return ""
+    i = src.find("{", at)
+    if i < 0:
+        return ""
+    depth = 0
+    n = len(src)
+    while i < n:
+        c = src[i]
+        if c in ('"', "'"):
+            q = c
+            i += 1
+            while i < n and src[i] != q:
+                if src[i] == "\\":
+                    i += 1
+                i += 1
+        elif c == "/" and i + 1 < n and src[i + 1] == "/":
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif c == "/" and i + 1 < n and src[i + 1] == "*":
+            j = src.find("*/", i + 2)
+            i = n if j < 0 else j + 1
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return src[at : i + 1]
+        i += 1
+    return src[at:]
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -115,7 +156,7 @@ def main() -> int:
         if a == -1:
             fails.append(f"AC2: {nm} registration not found")
             continue
-        win = pair[a : a + 2600]
+        win = _brace_body(pair, anchor)
         if "require_effect" in win:
             fails.append(f"AC2: {nm} body adds a second effect choke (double-consume)")
         if "#4057" not in win:
@@ -145,10 +186,11 @@ def main() -> int:
 
     # ── AC3: local pairs_ branch stays first and unconditional ──
     for nm, field in (("set-car!", "car"), ("set-cdr!", "cdr")):
-        a = pair.find(f'add, ev, "{nm}"')
+        anchor = f'add, ev, "{nm}"'
+        a = pair.find(anchor)
         if a == -1:
             continue
-        win = pair[a : a + 2600]
+        win = _brace_body(pair, anchor)
         local = win.find("idx < pairs.size()")
         gated = win.find("prod_pair_face")
         if local == -1 or gated == -1 or local > gated:
