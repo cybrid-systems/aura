@@ -30,7 +30,57 @@ int cache_deserialize_header(const unsigned char* buf, std::size_t size, void* h
     return 1;
 }
 
-int cache_validate_header(const void* h) {
+namespace {
+
+    bool span_inside(std::uint64_t offset, std::uint64_t length, std::uint64_t file_size) {
+        if (length > file_size)
+            return false;
+        if (offset > file_size - length)
+            return false;
+        return true;
+    }
+
+    bool u64_add(std::uint64_t left, std::uint64_t right, std::uint64_t* out) {
+        if (left > UINT64_MAX - right)
+            return false;
+        *out = left + right;
+        return true;
+    }
+
+    bool u64_pad8(std::uint64_t value, std::uint64_t* out) {
+        if (value > UINT64_MAX - 7)
+            return false;
+        *out = (value + 7) & ~std::uint64_t{7};
+        return true;
+    }
+
+    // Smallest node-column footprint the writer emits for node_count nodes
+    // with empty child and param payloads. A forged num_nodes that cannot
+    // fit is rejected before any column pointer is formed.
+    bool node_columns_fit(const CacheHeader& header, std::uint64_t file_size) {
+        const std::uint64_t node_count = header.num_nodes;
+        std::uint64_t need = 0;
+        std::uint64_t part = 0;
+        if (!u64_pad8(node_count, &part) || !u64_add(need, part, &need))
+            return false;
+        if (node_count > UINT64_MAX / 8)
+            return false;
+        if (!u64_pad8(node_count * 8, &part) || !u64_add(need, part, &need))
+            return false;
+        if (node_count > UINT64_MAX / 4)
+            return false;
+        if (!u64_pad8(node_count * 4, &part))
+            return false;
+        for (int col = 0; col < 7; ++col) {
+            if (!u64_add(need, part, &need))
+                return false;
+        }
+        return span_inside(header.node_offset, need, file_size);
+    }
+
+} // namespace
+
+int cache_validate_header(const void* h, std::uint64_t file_size) {
     const CacheHeader* ch = static_cast<const CacheHeader*>(h);
     // Structural bounds via reflection (vector/string size gates).
     std::string err;
@@ -61,6 +111,34 @@ int cache_validate_header(const void* h) {
         return -9;
     if (ch->sig_size > 100000000U)
         return -10;
+    if (file_size == 0)
+        return 0;
+    if (file_size < sizeof(CacheHeader))
+        return -12;
+    if (!node_columns_fit(*ch, file_size))
+        return -12;
+    if (ch->num_strings > 0 && ch->string_offset == 0)
+        return -12;
+    if (ch->string_offset != 0) {
+        if (ch->num_strings > (UINT64_MAX - 4) / 4)
+            return -12;
+        const std::uint64_t table = 4 + static_cast<std::uint64_t>(ch->num_strings) * 4;
+        if (!span_inside(ch->string_offset, table, file_size))
+            return -12;
+    }
+    if (ch->num_functions > 0) {
+        if (ch->ir_offset < sizeof(CacheHeader))
+            return -12;
+        if (!span_inside(ch->ir_offset, 4, file_size))
+            return -12;
+    }
+    if (ch->sig_offset != 0) {
+        std::uint64_t sig_span = 0;
+        if (!u64_add(4, ch->sig_size, &sig_span))
+            return -12;
+        if (!span_inside(ch->sig_offset, sig_span, file_size))
+            return -12;
+    }
     return 0;
 }
 } // extern "C"

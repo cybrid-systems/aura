@@ -75,6 +75,17 @@ int run_test_production_safety_p2() {
         okh.num_functions = 1;
         okh.string_offset = 128;
         CHECK(cache_validate_header(&okh) == 0, "sane header accepted");
+        // #5213: a zero file size keeps the absolute-cap path. A real size
+        // rejects a node table that cannot fit in the file.
+        CHECK(cache_validate_header(&okh, 0) == 0, "size 0 skips spans");
+        CHECK(cache_validate_header(&okh, 80) != 0, "node span past small file");
+        CacheHeader past = okh;
+        past.node_offset = 100000;
+        past.num_nodes = 1;
+        past.num_strings = 0;
+        past.num_functions = 0;
+        past.string_offset = 0;
+        CHECK(cache_validate_header(&past, 200) != 0, "node_offset past end");
     }
 
     // Arithmetic / fold regression (bool-tag fix must not break +)

@@ -66,7 +66,7 @@ public:
 
 private:
     friend MappedCache open_cache(const std::string& path);
-    friend void setup_pointers(MappedCache& cache);
+    friend bool setup_pointers(MappedCache& cache);
 
     void copy_pointers(const MappedCache& other);
 
@@ -109,6 +109,8 @@ private:
     // Layout: [num_strings:u32, offsets[num_strings]:u32, [len:u32,data:char[]]...]
     const std::uint32_t* str_offsets_ = nullptr;
     const std::uint8_t* str_data_base_ = nullptr;
+    // Exclusive end of the string section (absolute file offset).
+    std::uint64_t string_section_end_ = 0;
 
     // IR module cache (loaded from ir_offset)
     std::vector<aura::ir::IRFunction> ir_functions_;
@@ -130,7 +132,10 @@ public:
     std::string_view sig_data() const {
         if (!has_sig() || !data_)
             return {};
-        auto off = static_cast<std::size_t>(header_->sig_offset);
+        const auto off = static_cast<std::uint64_t>(header_->sig_offset);
+        const auto span = static_cast<std::uint64_t>(header_->sig_size) + 4;
+        if (off > file_size_ || span > file_size_ - off)
+            return {};
         // 跳过 4 字节的 size 前缀
         return {static_cast<const char*>(data_) + off + 4, header_->sig_size};
     }

@@ -188,6 +188,10 @@ void aura_ir_deserialize(const char* data, size_t size, void* out_mod) {
     auto* module = static_cast<aura::ir::IRModule*>(out_mod);
     aura::reflect::BufferReader reader(data, size);
     *module = aura::reflect::bin_read<aura::ir::IRModule>(reader);
+    // A rejected vector count leaves a partial module. Drop it so the
+    // caller treats the blob as a cache miss (#5213).
+    if (reader.failed())
+        *module = aura::ir::IRModule{};
 }
 
 } // extern "C"
