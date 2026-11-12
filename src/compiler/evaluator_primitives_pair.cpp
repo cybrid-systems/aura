@@ -1274,12 +1274,19 @@ void RegSplitParts::register_string_ops(PrimRegistrar add, Evaluator& ev,
                      "A code outside the fixnum range flips bit 62."));
     register_prim(
         add, ev, "string-ref",
-        [&ev, &error_values](std::span<const EvalValue> a) {
+        [&ev, &string_heap, &error_values](std::span<const EvalValue> a) {
             if (a.size() < 2) {
                 auto __i =
                     static_cast<std::uint64_t>(ev.push_string_heap("string-ref: too few args"));
                 auto __e = primitives_detail::push_error_cause(error_values, make_string(__i));
                 return make_error(__e);
+            }
+            // Issue #5166: as_int's hot contract aborts on a non-int index.
+            // A float stays an error (same rule as vector-ref, #4456).
+            if (!is_int(a[1])) {
+                return make_primitive_error(string_heap, error_values,
+                                            "string-ref: index must be an integer",
+                                            ev.primitive_error_counter_ptr());
             }
             auto pos = static_cast<std::size_t>(as_int(a[1]));
             auto oob = [&]() {
@@ -1332,6 +1339,17 @@ void RegSplitParts::register_string_ops(PrimRegistrar add, Evaluator& ev,
             // Issue #4472: indexes are code points, so a slice never splits
             // a well-formed UTF-8 sequence. Past-the-end clamps; an OOB slot
             // reads as "" like copy_string_heap_at did.
+            // Issue #5166: both indexes are checked before either as_int.
+            if (!is_int(a[1])) {
+                return make_primitive_error(string_heap, error_values,
+                                            "substring: start index must be an integer",
+                                            ev.primitive_error_counter_ptr());
+            }
+            if (!is_int(a[2])) {
+                return make_primitive_error(string_heap, error_values,
+                                            "substring: end index must be an integer",
+                                            ev.primitive_error_counter_ptr());
+            }
             auto start = static_cast<std::size_t>(as_int(a[1]));
             auto end = static_cast<std::size_t>(as_int(a[2]));
             if (!ev.string_heap_code_point_slice(as_string_idx(a[0]), start, end, s))
