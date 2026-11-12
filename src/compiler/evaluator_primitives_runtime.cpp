@@ -21,6 +21,16 @@ import aura.compiler.value;
 // Issue #4603: JIT-inlined display error arm (aura_jit_runtime.cpp). The
 // evaluator owns error_values_ + the #4497 displayed-error counter.
 extern "C" void aura_set_jit_error_display(void (*fn)(void*, std::int64_t), void* user);
+// Issue #5176: JIT display of a vector walks this evaluator's vector heap.
+// emit receives each element word. Return 1 when the slot exists (even if
+// empty), 0 when the index is not a live vector.
+extern "C" void aura_set_jit_vector_walk(int (*fn)(void* user, std::int64_t vec_word,
+                                                   void (*emit)(std::int64_t elem, void* ctx),
+                                                   void* ctx),
+                                         void* user);
+// Issue #2575: vector slots hold evaluator-heap strings. Display reads the
+// JIT pool, so the walk re-interns the bytes before the element is printed.
+extern "C" std::int64_t aura_alloc_string(const char* s);
 
 namespace aura::compiler::primitives_detail {
 
@@ -1382,6 +1392,44 @@ void RegSplitParts::install_jit_error_hooks(Evaluator& ev) {
             if (!evp)
                 return 11; // void sentinel (no evaluator)
             return evp->make_hash_ref_missing_error(EvalValue{key}).val;
+        },
+        static_cast<void*>(&ev));
+
+    // Issue #5176: (vector ...) stores elements in this evaluator's heap and
+    // returns a tagged RefVector word. JIT display has no heap of its own, so
+    // it was printing that word (141). Walk the same slot io_print_val uses.
+    aura_set_jit_vector_walk(
+        [](void* user, std::int64_t vec_word, void (*emit)(std::int64_t, void*), void* ctx) -> int {
+            auto* evp = static_cast<Evaluator*>(user);
+            if (!evp || !emit)
+                return 0;
+            const EvalValue v{vec_word};
+            if (!is_vector(v))
+                return 0;
+            const auto idx = as_vector_idx(v);
+            const auto heap = evp->vector_heap();
+            if (idx >= heap.size())
+                return 0;
+            // Copy first. Nested display re-enters this walk and must not
+            // invalidate the span being iterated.
+            std::vector<std::int64_t> words;
+            words.reserve(heap[idx].size());
+            const auto strings = evp->string_heap();
+            for (const auto& elem : heap[idx]) {
+                // PrimCall stores evaluator string indices (#2575). The JIT
+                // pool does not have those slots, so display would print "".
+                if (is_string(elem)) {
+                    const auto sidx = as_string_idx(elem);
+                    if (sidx < strings.size()) {
+                        words.push_back(aura_alloc_string(strings[sidx].c_str()));
+                        continue;
+                    }
+                }
+                words.push_back(elem.val);
+            }
+            for (const auto word : words)
+                emit(word, ctx);
+            return 1;
         },
         static_cast<void*>(&ev));
 }

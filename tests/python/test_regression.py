@@ -955,6 +955,37 @@ def test_jit_soundness_4567():
         "(define (g) (let ((h (make-hash))) (hash-set! h 1 5) (hash-ref h 1))) (display (g))",
         expect="5",
     )
+    # Issue #5176: display/write of a list, pair, vector, and hash is the
+    # value, not the raw heap word. make-hash is the std constructor.
+    # write-file runs with this corpus's sandbox off and prints 1.
+    add(programs, "display-list-5176", "(display (list 1 2 3))", expect="(1 2 3)")
+    add(programs, "display-cons-5176", "(display (cons 1 2))", expect="(1 . 2)")
+    add(programs, "write-list-5176", "(write (list 1 2 3))", expect="(1 2 3)")
+    add(programs, "write-cons-5176", "(write (cons 1 2))", expect="(1 . 2)")
+    add(programs, "display-vector-5176", "(display (vector 1 2 3))", expect="#(1 2 3)")
+    add(programs, "write-vector-5176", "(write (vector 1 2))", expect="#(1 2)")
+    add(programs, "display-make-vector-5176", "(display (make-vector 2 7))", expect="#(7 7)")
+    add(
+        programs,
+        "display-vector-strs-5176",
+        '(display (vector "a" "b"))',
+        expect="#(a b)",
+    )
+    add(
+        programs,
+        "write-vector-strs-5176",
+        '(write (vector "a" "b"))',
+        expect='#("a" "b")',
+    )
+    add(programs, "display-hash-5176", '(display (hash "k" 1))', expect="<hash[1]>")
+    add(programs, "write-hash-5176", '(write (hash "k" 1))', expect="<hash[1]>")
+    add(programs, "display-make-hash-5176", "(display (make-hash))", expect="<hash[0]>")
+    add(
+        programs,
+        "write-file-5176",
+        '(display (write-file "/tmp/aura-5176-corpus-wf.txt" "ok"))',
+        expect="1",
+    )
     if len(programs) < 200:
         raise Exception(f"corpus has {len(programs)} programs, need >= 200")
 
