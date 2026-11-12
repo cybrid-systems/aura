@@ -74,6 +74,8 @@
 (require "std/list" all:)
 (require "std/evo-core" all:)
 (require "std/llm" all:)
+; Issue #5169: mutate:boundary-safe? is exported by std/mutate.
+(require "std/mutate" all:)
 
 ; ═══════════════════════════════════════════════════════════════════
 ; Small helpers

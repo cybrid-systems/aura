@@ -245,9 +245,10 @@
   (if (null? args) (void)
     (hash-ref (car args) "active" #f)))
 
+; Issue #5169: strategy:best-arm is not defined. strategy:best (below)
+; reads the same arms and returns the arm name, or #f when there are none.
 (define (strategy:set-strategy st name)
-  (hash-set st "active" (if (string? name) name (strategy:best-arm
-                                                  (hash-ref st "arms" (quote ()))))))
+  (hash-set st "active" (if (string? name) name (strategy:best st))))
 
 (define (strategy:arms st) (hash-ref st "arms" (quote ())))
 

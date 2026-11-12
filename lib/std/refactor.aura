@@ -85,33 +85,21 @@
 ;
 ; fn-name: 函数名
 ;
-; 找到 name 的 Define 节点，用其函数体替换所有调用处。
-; Returns: 被替换的调用数，或 #f
-(define (refactor:inline-function fn-name)
-  (define defs (try (query :node-type "Define") (catch #f)))
-  (if (not (refactor:ids? defs)) #f
-    (let ((found #f) (count 0))
-      ; 找到 Define 节点
-      (define (find-def ids)
-        (when (and (pair? ids) (not found))
-          (let* ((info (query :node (car ids)))
-                 (name (if (pair? (cdr info)) (car (cdr info)) "")))
-            (when (and (string? name) (string=? name fn-name))
-              (set! found (car ids)))
-            (when (not found) (find-def (cdr ids))))))
-      (find-def defs)
+; Issue #5169: query:callers-of is not registered. query:defines /
+; query:calls are. A missing define is #f; otherwise the caller count
+; (0 when the name exists and nothing calls it). Matches are a bare
+; list under Soft and a schema-2 hash under the production face.
+(define (refactor:matches q)
+  (cond
+    ((hash? q)
+     (let ((m (hash-ref q "matches" (quote ()))))
+       (if (or (null? m) (pair? m)) m (quote ()))))
+    ((or (null? q) (pair? q)) q)
+    (else (quote ()))))
 
-      (if found
-        (begin
-          ; 用 mutate:rebind 将调用处替换为函数体引用
-          (define callers (query:callers-of fn-name))
-          (define (replace-callers ids)
-            (when (pair? ids)
-              (try (mutate :rebind (car ids) (string-append fn-name "-inlined"))
-                   (catch #f))
-              (set! count (+ count 1))
-              (replace-callers (cdr ids))))
-          (when (pair? callers)
-            (replace-callers callers))
-          count)
-        #f))))
+(define (refactor:inline-function fn-name)
+  (let ((defs (try (query :defines fn-name) (catch #f))))
+    (if (or (not defs) (null? (refactor:matches defs)))
+      #f
+      (let ((calls (try (query :calls fn-name) (catch (quote ())))))
+        (length (refactor:matches calls))))))
