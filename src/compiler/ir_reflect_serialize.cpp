@@ -3,6 +3,8 @@
 // #2290: non-import-std + -freflection. Cannot `import aura.compiler.ir`
 // here because that module graph pulls import std, which conflicts with
 // <meta> in the same TU. POD mirrors live in ir_pod_reflect.hh.
+// #5159: the IRModule mirror below must match the real layout. Offsets are
+// pinned in reflect/ir_module_layout.hh and checked against both types.
 // #2291 Phase 4: IRInstruction / IRFunctionHeader / OpcodeArity use only
 // auto_serialize / auto_validate / to_json. Full IRModule uses bin_write.
 
@@ -48,12 +50,29 @@ struct IRFunction {
     std::vector<std::uint8_t> escape_map;
 };
 
+// 16-byte stand-in for std::shared_ptr (ptr + control block). The views are
+// process-local and are not written to the cache. Layout must match the
+// real shared_ptr so body_source is not read out of the control block.
+struct BridgeView {
+    const void* ptr = nullptr;
+    const void* ctrl = nullptr;
+};
+
 struct ClosureBridgeData {
-    const void* flat = nullptr;
-    const void* pool = nullptr;
+    BridgeView flat{};
+    BridgeView pool{};
     std::uint32_t body_id = ~0u;
     std::string body_source;
     std::uint64_t bridge_epoch = 0;
+    std::uint8_t source_marker = 0;
+    std::uint32_t provenance = 0;
+    // Owned source locations (#4931). Nested, same three uint32s as the real NodeLoc.
+    struct NodeLoc {
+        std::uint32_t node = 0;
+        std::uint32_t line = 0;
+        std::uint32_t col = 1;
+    };
+    std::vector<NodeLoc> node_locs;
 };
 
 struct IRModule {
@@ -61,9 +80,14 @@ struct IRModule {
     std::vector<ClosureBridgeData> closure_bridge;
     std::uint32_t entry_function_id = 0;
     std::vector<std::string> string_pool;
+    // string_map_ on the real IRModule follows string_pool and is not
+    // serialized. Do not append a member here: it would shift nothing
+    // above, but the layout check expects string_pool to be last.
 };
 
 } // namespace aura::ir
+
+#include "reflect/ir_module_layout.hh"
 
 // ── Buffer ownership for the C ABI below (#4936) ──────────────
 // Every buffer this file hands out is allocated by aura_ir_buffer_copy and

@@ -1675,8 +1675,11 @@ template <typename T> void bin_read(BufferReader& reader, T& val) {
         val = static_cast<T>(v);
 
     } else if constexpr (is_std_string_v<T>) {
-        // String → length-prefixed
+        // String → length-prefixed. A truncated or corrupt length must not
+        // read past the buffer (#5159).
         auto len = reader.read<std::uint32_t>();
+        if (static_cast<std::size_t>(len) > reader.remaining())
+            len = static_cast<std::uint32_t>(reader.remaining());
         val.assign(reader.data() + reader.position(), len);
         reader.seek(len);
 
