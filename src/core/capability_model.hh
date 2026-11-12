@@ -2435,6 +2435,34 @@ struct CapabilityRegistry {
         return false;
     }
 
+    // Issue #5163: workspace of the live Soft row when it holds every
+    // required bit for this tenant. Empty when the session is inactive,
+    // the tenant differs, the row is revoked, or a bit is missing. Does
+    // not compare the caller's workspace; a child heap update inherits
+    // this id only when the caller asks. Lock internally.
+    [[nodiscard]] std::optional<std::uint32_t>
+    soft_session_grant_workspace(TenantId tenant, std::uint16_t req_bits) {
+        std::scoped_lock<std::mutex> lock(mtx);
+        if (!soft_session_active_ || tenant != soft_session_tenant_)
+            return std::nullopt;
+        if (req_bits != 0 &&
+            (static_cast<std::uint16_t>(soft_session_effects_) & req_bits) != req_bits)
+            return std::nullopt;
+        auto it = by_tenant.find(tenant);
+        if (it == by_tenant.end())
+            return std::nullopt;
+        for (const auto& g : it->second) {
+            if (g.name != kSoftAutoGrantName)
+                continue;
+            if (g.revoked || g.stolen || !g.soft_session)
+                return std::nullopt;
+            if (req_bits != 0 && (static_cast<std::uint16_t>(g.effects) & req_bits) != req_bits)
+                return std::nullopt;
+            return g.workspace_id;
+        }
+        return std::nullopt;
+    }
+
     // Issue #4575: caller MUST hold mtx. The next effects_for_locked
     // skips a Soft row for a different workspace, then the caller disarms.
     // Other effects_for_locked callers leave this false.
@@ -2567,9 +2595,13 @@ inline std::size_t revoke_session_grants_on_steal_or_abort(std::uint64_t session
 //   Strict: always require grant bits for non-None required effects
 //
 // wildcard_ok: caller may pass true if kCapWildcard held (Evaluator bridge).
+// Issue #5163: grant_workspace, when set, is the workspace the Soft row
+// is matched against (rearm, filter, provenance, cover reason). Audit
+// provenance stays `prov`, so a child heap update still records the child.
 inline bool check_and_record_effect(Effect required, Effect actual, const EffectProvenance& prov,
                                     TenantId tenant, std::string_view op = "effect",
-                                    bool wildcard_ok = false, bool sandbox_active = false) {
+                                    bool wildcard_ok = false, bool sandbox_active = false,
+                                    std::optional<std::uint32_t> grant_workspace = std::nullopt) {
     auto& reg = g_capability_registry();
     auto& met = g_capability_effect_metrics();
     met.capability_check_total.fetch_add(1, std::memory_order_relaxed);
@@ -2590,6 +2622,11 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
         // MacroSelfEvo). Provenance fence stays. Soft/Off (`need_grant
         // ==false`): zero-cost short-circuit. `wildcard_ok` parameter
         // retained for backward compat (unused for allow).
+        // Issue #5163: match the Soft row on the session workspace when
+        // the caller says so. Copying prov keeps the audit on the child.
+        EffectProvenance grant_prov = prov;
+        if (grant_workspace.has_value())
+            grant_prov.workspace_id = *grant_workspace;
         if (need_grant && required != Effect::None) {
             // Issue #3126: locked variant (caller already holds mtx).
             // Issue #4038: join posture bits on the caller mid so stale
@@ -2598,8 +2635,8 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
             // Issue #4575: re-arm the Soft row onto this mid first, then
             // drop a row whose workspace is not the check's workspace.
             // The join call stays the #4038 two-argument cite.
-            reg.rearm_soft_session_locked(tenant, prov);
-            reg.arm_soft_workspace_filter_locked(prov.workspace_id);
+            reg.rearm_soft_session_locked(tenant, grant_prov);
+            reg.arm_soft_workspace_filter_locked(grant_prov.workspace_id);
             const Effect held = reg.effects_for_locked(tenant, prov.mutation_id);
             reg.disarm_soft_workspace_filter_locked();
             // Require full coverage of required bits (not just any overlap).
@@ -2622,7 +2659,7 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
         // Issue #4575: an allow that the Soft row authorized joins later
         // audit by this reason. Deny reasons stay as they were.
         if (reason_hint == nullptr && allowed &&
-            reg.soft_session_covers_locked(tenant, prov, required))
+            reg.soft_session_covers_locked(tenant, grant_prov, required))
             reason_hint = kSoftAutoGrantReason;
         reg.record_audit(required, actual, tenant, prov, !allowed, op, reason_hint);
 

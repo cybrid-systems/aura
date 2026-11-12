@@ -37,7 +37,10 @@ Safety: the path is operator configuration, never program-chosen. The log is
 an audit trail, not a program file write. `evo:trial` runs apply+evaluate in a
 child workspace and refuses to fall back to mutating the live worldline.
 Returning to the parent leaves that workspace mutable: `mutate:rebind` on
-workspace 0 still succeeds (#5162).
+workspace 0 still succeeds (#5162). A child workspace may still update
+local data: `hash-set!`, `vector-set!`, and `set-car!` succeed under
+`--preset dev` (#5163). `set-code` on that child stays denied, and a child
+`mutate:rebind` does not change the parent worldline.
 
 A `mutate:*` that succeeds in that child workspace is recorded as decision
 `FORK` with `"scope":"fork"` (#5088). It is not a live `KEEP`: the worldline
