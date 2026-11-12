@@ -41,7 +41,7 @@ stay boolean. Documented empty / not-found stay silent only as below.
 | `cadr` family | missing cdr / non-pair → void (stdlib guards with `pair?`) | — |
 | `vector-length` / `vector->list` | — | not a vector, corrupted index |
 | `modulo` / `mod` / `quotient` / `remainder` / `abs` | — | too few args, non-numeric, div-by-zero, INT64_MIN/-1 |
-| `inexact->exact` | out-of-range float saturates (documented #1153) | too few args, non-number |
+| `inexact->exact` | out-of-range float saturates to the fixnum range [-2^62, 2^62-1] (#1153, #5156). `exact` is the same primitive | too few args, non-number |
 | `json-parse` | JSON `null` → void | non-string arg, unexpected EOF, invalid token, nesting deeper than 512 (`json-parse: nesting too deep`, #5152) |
 | `json-get-string` | missing field → void | non-string args |
 | `hash-ref` | — (a missing key with an explicit default returns that default) | missing key with NO default → error naming the key (`hash-ref: key "k" not found`, #4855), too few args |

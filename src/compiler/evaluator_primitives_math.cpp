@@ -525,7 +525,15 @@ void RegSplitParts::register_math_scalar_primitives(
                   unary_math("ceiling: expected number", [](double d) { return std::ceil(d); }),
                   pure_general(1, "(number) -> float", "Alias of ceil."));
 
-    // Issue #1153/#1158/#1174 family: saturate float→int out of range.
+    // Issue #1153/#5156: saturate float→int to the fixnum range.
+    // The old targets were INT64_MAX/MIN. Those do not fit after the tag
+    // shift, and make_int aborts. The bound matches make_int (kFixnumShift == 1):
+    // [-2^62, 2^62-1].
+    static constexpr auto kFixMax = std::numeric_limits<std::int64_t>::max() >> 1;
+    static constexpr auto kFixMin = std::numeric_limits<std::int64_t>::min() >> 1;
+    static_assert(types::fits_fixnum(kFixMax));
+    static_assert(types::fits_fixnum(kFixMin));
+    static_assert(!types::fits_fixnum(kFixMax + 1));
     auto coerce_exact = [&](const char* too_few, const char* bad_type) {
         return [&string_heap, &error_values, primitive_error_counter, too_few,
                 bad_type](const auto& a) -> EvalValue {
@@ -543,18 +551,25 @@ void RegSplitParts::register_math_scalar_primitives(
                     static_cast<double>(std::numeric_limits<std::int64_t>::max());
                 constexpr double kMin =
                     static_cast<double>(std::numeric_limits<std::int64_t>::min());
+                std::int64_t n = 0;
                 if (!(d == d) || d >= kMax)
-                    return types::make_int(std::numeric_limits<std::int64_t>::max());
-                if (d <= kMin)
-                    return types::make_int(std::numeric_limits<std::int64_t>::min());
-                return types::make_int(static_cast<std::int64_t>(d));
+                    n = std::numeric_limits<std::int64_t>::max();
+                else if (d <= kMin)
+                    n = std::numeric_limits<std::int64_t>::min();
+                else
+                    n = static_cast<std::int64_t>(d);
+                if (!types::fits_fixnum(n))
+                    n = n < 0 ? kFixMin : kFixMax;
+                return types::make_int(n);
             }
             return a[0];
         };
     };
     register_prim(add, ev, "inexact->exact",
                   coerce_exact("inexact->exact: too few args", "inexact->exact: expected number"),
-                  pure_general(1, "(number) -> int", "Coerce inexact number to exact int."));
+                  pure_general(1, "(number) -> int",
+                               "Coerce inexact number to exact int. Out-of-range floats "
+                               "saturate to the fixnum range."));
     // Issue #4469: exact is the R7RS alias of inexact->exact.
     register_prim(add, ev, "exact", coerce_exact("exact: too few args", "exact: expected number"),
                   pure_general(1, "(number) -> int", "Alias of inexact->exact."));

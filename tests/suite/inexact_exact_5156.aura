@@ -1,0 +1,55 @@
+; Issue #5156 — inexact->exact / exact saturate past the fixnum range.
+; A float at or above 2^62 used to abort inside make_int.
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+; Fixnum range: [-2^62, 2^62-1].
+(define kmax 4611686018427387903)
+(define kmin -4611686018427387904)
+
+(define (expect-sat expr got want)
+  (assert! (and (exact? got) (= got want)) expr))
+
+(expect-sat "2^62" (inexact->exact 4611686018427387904.0) kmax)
+(expect-sat "-2^62" (inexact->exact -4611686018427387904.0) kmin)
+(expect-sat "2^63" (inexact->exact 9223372036854775808.0) kmax)
+(expect-sat "-2^63" (inexact->exact -9223372036854775808.0) kmin)
+(expect-sat "1e19" (inexact->exact 1e19) kmax)
+(expect-sat "-1e19" (inexact->exact -1e19) kmin)
+(expect-sat "1e300" (inexact->exact 1e300) kmax)
+(expect-sat "-1e300" (inexact->exact -1e300) kmin)
+(expect-sat "5e18" (inexact->exact 5e18) kmax)
+(expect-sat "-5e18" (inexact->exact -5e18) kmin)
+
+(expect-sat "exact 1e19" (exact 1e19) kmax)
+(expect-sat "exact -1e19" (exact -1e19) kmin)
+(expect-sat "exact 1e300" (exact 1e300) kmax)
+(expect-sat "exact 2^62" (exact 4611686018427387904.0) kmax)
+(expect-sat "exact -2^63" (exact -9223372036854775808.0) kmin)
+
+; In-range values stay the truncated integer. 4.6e18 is below 2^62.
+(assert! (= (inexact->exact 1.5) 1) "1.5 truncates to 1")
+(assert! (= (inexact->exact -1.5) -1) "-1.5 truncates to -1")
+(assert! (= (inexact->exact 1e18) 1000000000000000000) "1e18 stays exact")
+(assert! (= (inexact->exact 4.6e18) 4600000000000000000) "4.6e18 stays exact")
+(assert! (= (inexact->exact 7) 7) "an exact int passes through")
+(assert! (= (exact kmax) kmax) "exact of the fixnum max stays")
+(assert! (= (exact kmin) kmin) "exact of the fixnum min stays")
+
+(define bad (try (inexact->exact "no") (catch (e) "err")))
+(assert! (string=? bad "err") "a non-number is an error")
+
+(if (= *fails* 0)
+    (begin (display "OK-5156 inexact->exact saturates\n"))
+    (begin
+      (display "FAIL-5156 fails=")
+      (display *fails*)
+      (newline)
+      (error "5156 suite failed")))
