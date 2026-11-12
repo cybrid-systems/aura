@@ -168,26 +168,48 @@
   (if (> suflen slen) #f
     (equal? (substring s (- slen suflen) slen) suffix)))
 
-; Replace all occurrences of old with new in s — iterative (#2770).
+; Replace every non-overlapping occurrence of old with new, from the
+; left. After a match, advance by (string-length old); the replacement
+; is not searched. An empty old, or an old longer than s, returns s.
+; #2770: `while` keeps the stack O(1).
+; #5186: do not mint one string per character, and do not
+; `string-append` onto the growing result. A 40k-character replace was
+; ~2s. Keeping a parts list but still minting one string per character
+; stayed ~2s — the cost is the per-character mint (each construction
+; can scan the live string heap, #5146), not only the accumulator.
+; Walk match segments instead. A miss only advances the index. A hit
+; records one `substring` of the unmatched run (if any) and `new`, then
+; skips `olen`. One `apply` of `string-append` builds the result, so
+; the intermediate strings are O(matches), not O(characters). No match
+; returns s unchanged. Unmatched runs are copied with `substring`, the
+; same code-point slices `equal?` compares, so a byte that is only a
+; prefix of a code unit is not re-encoded into a different character.
 (define (string-replace s old new)
   (define slen (string-length s))
   (define olen (string-length old))
   (if (or (= olen 0) (> olen slen)) s
     (let ((i 0)
-          (result ""))
+          (run-start 0)
+          (parts (list))
+          (found #f))
       (while (lambda () (< i slen))
         (lambda ()
           (if (and (<= (+ i olen) slen)
                    (equal? (substring s i (+ i olen)) old))
             (begin
-              (set! result (string-append result new))
-              (set! i (+ i olen)))
-            (begin
-              (set! result
-                    (string-append result
-                                   (list->string (list (string-ref s i)))))
-              (set! i (+ i 1))))))
-      result)))
+              (if (< run-start i)
+                  (set! parts (cons (substring s run-start i) parts)))
+              (set! parts (cons new parts))
+              (set! found #t)
+              (set! i (+ i olen))
+              (set! run-start i))
+            (set! i (+ i 1)))))
+      (if (not found)
+          s
+          (begin
+            (if (< run-start slen)
+                (set! parts (cons (substring s run-start slen) parts)))
+            (apply string-append (reverse parts)))))))
 
 ; Pad string to width by adding spaces on the left
 (define (string-pad-left s width)
