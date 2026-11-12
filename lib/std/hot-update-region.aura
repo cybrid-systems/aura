@@ -23,8 +23,9 @@
 (define (region:isolate! agent-id)
   (aot:set-region-mask (region:own-mask agent-id)))
 
+; Issue #5169: aot:get-region-mask is a stats entry, read via stats:get.
 (define (region:get)
-  (aot:get-region-mask))
+  (stats:get "aot:get-region-mask"))
 
 (define (region:clear!)
   (aot:set-region-mask 0))

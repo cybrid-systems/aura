@@ -66,7 +66,7 @@
                code))
            (actual (begin (set-code full-code) (eval-current-output)))
            (actual-str actual))
-      (if (test:check-success actual-str expects)
+      (if (check-success actual-str expects)
         "#t"
         (string-append "expected: " expected-str " got: " actual-str))))
 

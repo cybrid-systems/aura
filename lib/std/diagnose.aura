@@ -12,7 +12,9 @@
 ; kernel `agent:recover-from-error` applies it under a Guard.
 ; 
 ; Import: (require "std/diagnose" all:)   → (diagnose msg)
-;         (require std/diagnose)          → (std/diagnose:diagnose msg)
+;         (require "std/diagnose")        → (diagnose msg)
+; The prefix is the file's last path component, so the same require also
+; binds diagnose:diagnose. It does not bind std/diagnose:diagnose.
 
 (export diagnose)
 

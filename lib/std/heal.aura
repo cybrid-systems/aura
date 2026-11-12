@@ -199,7 +199,7 @@
                            "(set-code failed)"))
              (output (if (string? run-result) run-result "")))
         ; Step 3: check success
-        (if (test:check-success output expected)
+        (if (check-success output expected)
           (list "healed" current-code output)
           ; Step 4: AST-level diagnose + fix
           (let* ((diag (heal-diagnose output))
@@ -221,7 +221,9 @@
                 (newline)
                 (loop (+ attempt 1) fixed))
               ; Fallback to C++ diagnose/apply-fix
-              (let* ((cpp-diag (try (diagnose:diagnose output) (catch #f)))
+              ; Issue #5169: (require "std/diagnose") binds diagnose.
+              ; diagnose:diagnose is not that binding.
+              (let* ((cpp-diag (try (diagnose output) (catch #f)))
                      (cpp-fixed (if (and (pair? cpp-diag) (> (length cpp-diag) 1))
                                   (try (apply-fix current-code cpp-diag) (catch #f))
                                   #f)))

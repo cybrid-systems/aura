@@ -9,8 +9,8 @@
 ;
 ; Builds on C/Aura primitives from #1366–#1368:
 ;   (aot:reload path [version])
-;   (aot:set-region-mask mask) / (aot:get-region-mask)
-;   (aot:set-module-version v) / (aot:get-module-version)
+;   (aot:set-region-mask mask) / (stats:get "aot:get-region-mask")
+;   (aot:set-module-version v) / (stats:get "aot:get-module-version")
 ;   (engine:metrics \"query:aot-stats\") / (engine:metrics \"query:aot-reload-primitive-stats\")
 ;
 ; Usage:
@@ -74,8 +74,9 @@
 
 ; ── Module version / region ──
 
+; Issue #5169: the getters are stats catalog entries, not callables.
 (define (hot-update:get-module-version)
-  (aot:get-module-version))
+  (stats:get "aot:get-module-version"))
 
 (define (hot-update:set-module-version! v)
   (aot:set-module-version v))
@@ -84,7 +85,7 @@
   (aot:set-region-mask mask))
 
 (define (hot-update:get-region)
-  (aot:get-region-mask))
+  (stats:get "aot:get-region-mask"))
 
 ; ── Telemetry ──
 
