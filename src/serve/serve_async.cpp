@@ -1083,17 +1083,24 @@ namespace {
                 g_current_fiber->set_state(FiberState::Running);
             }
 
-            // Parse and execute
-            auto cmd = json_field(line, "cmd");
+            // Parse and execute.
+            // Issue #5158: a line whose first non-space is not '{' is a plain
+            // s-expression, the same fallback sync --serve evaluates. Both
+            // modes then accept one client. JSON lines keep the cmd field.
+            const auto first = line.find_first_not_of(" \t");
+            const bool plain = first != std::string::npos && line[first] != '{';
+            auto cmd = plain ? std::string("exec") : json_field(line, "cmd");
             if (cmd.empty()) {
-                std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"missing cmd\"}}",
+                // Same wording as sync --serve ("missing cmd field").
+                std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":"
+                             "\"missing cmd field\"}}",
                              json_escape(sid));
                 std::fflush(stdout);
                 continue;
             }
 
             if (cmd == "exec") {
-                auto code = json_field(line, "code");
+                auto code = plain ? line : json_field(line, "code");
                 if (code.empty()) {
                     std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":"
                                  "\"missing code\"}}",
@@ -1205,6 +1212,30 @@ namespace {
                                      json_escape(sid));
                         std::fflush(stdout);
                     }
+                } else if (action == "list") {
+                    // Issue #5158: sync --serve lists sessions. One line, with
+                    // the same status / sessions / active fields. active stays
+                    // "default": this loop routes by the JSON session field and
+                    // does not retarget a later unscoped line. Do not erase a
+                    // Session here — its fiber holds a Session&.
+                    std::string body;
+                    body.reserve(64 + sessions.size() * 16);
+                    body += "{\"session\":\"";
+                    body += json_escape(sid);
+                    body += "\",\"status\":\"ok\",\"sessions\":[";
+                    bool first_name = true;
+                    for (const auto& [id, sp] : sessions) {
+                        if (!sp || !sp->active)
+                            continue;
+                        if (!first_name)
+                            body += ',';
+                        first_name = false;
+                        body += '"';
+                        body += json_escape(id);
+                        body += '"';
+                    }
+                    body += "],\"active\":\"default\"}";
+                    emit_status_line(std::move(body));
                 } else {
                     std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"unknown "
                                  "action: {}\"}}",
@@ -1240,8 +1271,9 @@ namespace {
                 std::fflush(stdout);
 
             } else {
+                // Same wording as sync --serve ("unknown command:").
                 std::println("{{\"session\":\"{}\",\"status\":\"error\",\"msg\":\"unknown "
-                             "cmd: {}\"}}",
+                             "command: {}\"}}",
                              json_escape(sid), json_escape(cmd));
                 std::fflush(stdout);
             }

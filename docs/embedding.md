@@ -42,10 +42,90 @@ a host that does not use the Aura sandbox sets `AURA_SANDBOX=off`.
 Regression tests: `tests/core/test_aura_core_embed.cpp`,
 `tests/core/test_aura_fiber_rt_embed.cpp`.
 
+## Line protocol (`--serve` and `--serve-async`) (#5158)
+
+`aura --serve` and `aura --serve-async` both read one request per line from
+stdin and write a JSON reply to stdout. A line whose first non-space
+character is `{` is a JSON command. Any other non-blank line is a plain Aura
+s-expression and is evaluated like `exec`. `--serve-async` also skips a line
+whose first non-space character is `;`.
+
+`aura help --all` prints the command names, the framing, and the reply shapes.
+
+### Shared commands
+
+The same client works against both modes for this set:
+
+| Request | What it does |
+| --- | --- |
+| `{"cmd":"exec","code":"(+ 1 2)"}` | Evaluate `code`. |
+| `{"cmd":"session","action":"list"}` | List session names. |
+| `{"cmd":"session","action":"create","name":"s"}` | Create session `s`. |
+| `(+ 1 2)` | Plain s-expression. Same as `exec` of that line. |
+
+An unknown command is an error whose `msg` is `unknown command: <cmd>`
+(`eval` is not a command). A JSON object with no `cmd` field has `msg`
+`missing cmd field`.
+
+### Reply shapes
+
+`--serve` replies have no session envelope:
+
+| Result | Shape |
+| --- | --- |
+| value | `{"status":"ok","value":"..."}` |
+| error | `{"status":"error","msg":"..."}` |
+| list | `{"status":"ok","sessions":[...],"active":"<name>"}` (pretty-printed across lines) |
+| created | `{"status":"created","session":"<name>"}` |
+| already exists | `{"status":"ok","session":"<name>"}` |
+
+Creating a session on `--serve` also activates it: later lines that omit a
+session run there. `(display ...)` writes its bytes to stdout ahead of the
+JSON line. `display` does not add a newline, so those bytes can share the
+line with the reply.
+
+`--serve-async` wraps every reply with the session that handled it. Printed
+output is captured into `display` instead of being written raw:
+
+| Result | Shape |
+| --- | --- |
+| value | `{"session":"default","status":"ok","value":"..."}` |
+| value with output | `{"session":"default","status":"ok","value":"...","display":"..."}` |
+| error | `{"session":"default","status":"error","msg":"..."}` |
+| list | `{"session":"default","status":"ok","sessions":[...],"active":"default"}` (one line) |
+| created | `{"session":"default","status":"created","name":"<name>"}` |
+| already exists | `{"session":"default","status":"ok","name":"<name>"}` |
+
+Async routes a JSON line by its `session` field. An empty field or
+`"default"` stays on the default session. A plain s-expression has no field,
+so it stays on default too. `active` in an async list reply is therefore
+`"default"`: creating a session does not retarget later unscoped lines. Put
+`"session":"<name>"` on a later `exec` to run it there. `session` `list` and
+`create` are handled on the default session.
+
+### Mode-only commands
+
+`--serve-async` only:
+
+- `{"cmd":"session-send","target":"<name>","data":"..."}` replies
+  `{"session":"...","status":"sent","target":"..."}`.
+- `{"cmd":"session-recv"}` replies `{"session":"...","status":"msg","data":"..."}`
+  or `{"session":"...","status":"timeout"}`.
+
+`--serve` only: `session` action `delete`
+(`{"status":"deleted","session":"<name>"}`; the default session cannot be
+deleted), plus `module`, `mutate`, `rollback`, `mutation-log`, `jit:metrics`,
+`config`, `defmacro`, `define`, `redefine`, `unparse`, `write`, and `query`.
+Those are outside the shared set. Async does not delete a session: the
+session fiber holds the session for the life of the process.
+
+This `msg` field is the line protocol. The in-process `aura::eval` records
+below use `message` instead.
+
 ## In-process evaluation (#4946)
 
 Before #4946 the only way to run Aura from another process was a child:
-`aura --serve` plus a line protocol over pipes. `aura::eval` embeds the
+`aura --serve` plus the line protocol above. `aura::eval` embeds the
 evaluator instead — same parser, typechecker, evaluator and stdlib module
 loader the REPL drives, in the host's own process.
 

@@ -2964,6 +2964,20 @@ static void print_denseness_usage(const char*, std::ostream& out = std::cerr) {
     std::println(out, "  Prefer: (shell (string-append (getenv \"AURA_BIN\") \" …\"))");
     std::println(out, "  Or:     (shell (string-append (aura-executable-path) \" …\"))");
     std::println(out, "  (aura seeds AURA_BIN from self when unset — still export in runners)");
+    std::println(out, "Serve line protocol (#5158): one request per line on stdin.");
+    std::println(out, "  A line whose first non-space is {{ is JSON; any other line is an");
+    std::println(out, "  s-expression. --serve and --serve-async both accept:");
+    std::println(out, "    {{\"cmd\":\"exec\",\"code\":\"(+ 1 2)\"}}");
+    std::println(out, "    {{\"cmd\":\"session\",\"action\":\"list\"}}");
+    std::println(out, "    {{\"cmd\":\"session\",\"action\":\"create\",\"name\":\"s\"}}");
+    std::println(out, "    (+ 1 2)                         plain s-expression");
+    std::println(out, "  --serve reply: {{\"status\":\"ok\",\"value\":\"...\"}} or "
+                      "{{\"status\":\"error\",\"msg\":\"...\"}}");
+    std::println(out, "  --serve-async adds \"session\": "
+                      "{{\"session\":\"default\",\"status\":\"ok\",\"value\":\"...\"}}");
+    std::println(out, "  list replies status ok, a sessions array, and active. "
+                      "docs/embedding.md");
+    std::println(out, "  Async-only: session-send, session-recv. Sync-only: session delete.");
     std::println(out, "Special modes: --serve, --serve-async, --ir, --jit, --help");
 }
 
