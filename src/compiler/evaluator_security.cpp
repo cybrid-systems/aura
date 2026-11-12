@@ -26,7 +26,8 @@ module;
 // Issue #2883: resume_had_mismatch / g_current_fiber for hard principal deny.
 #include "serve/fiber.h"
 #include "mutation_hold_budget.h" // #4278: host-thread session mid lives on the hold snapshot
-#include "hash_meta.h"             // #5190: live hash slots while sealing a table
+#include "hash_meta.h"            // #5190: live hash slots while sealing a table
+#include "runtime_shared.h"       // #5190: g_hash_tables + local-hash reachability C ABI
 
 module aura.compiler.evaluator;
 
@@ -3617,8 +3618,7 @@ void Evaluator::seal_workspace_value(const types::EvalValue& root) {
         std::vector<types::EvalValue> bound;
         EnvId parent = NULL_ENV_ID;
         {
-            std::shared_lock<std::shared_mutex> lk(
-                env_frame_shard_mu(env_frame_shard_index(id)));
+            std::shared_lock<std::shared_mutex> lk(env_frame_shard_mu(env_frame_shard_index(id)));
             if (!is_valid_env_id(id))
                 return;
             const EnvFrame& fr = env_frames_[id];
@@ -3651,7 +3651,7 @@ void Evaluator::seal_workspace_value(const types::EvalValue& root) {
                     vals.reserve(static_cast<std::size_t>(ht->size));
                     for (std::uint64_t s = 0; s < ht->capacity; ++s) {
                         if (aura::compiler::hash::hash_slot_is_live(meta[s]))
-                            vals.push_back(types::EvalValue{values[s]});
+                            vals.push_back(types::EvalValue(values[s]));
                     }
                 }
             }

@@ -72,8 +72,9 @@ class TestFrequenciesRestricted(unittest.TestCase):
     def test_local_let_hash_set_and_published_still_denied(self) -> None:
         p = _run(
             '(require "std/hash" all:)\n'
-            '(define n (let ((h (hash))) (hash-set! h "a" 1) (hash-ref h "a" 0)))\n'
-            "(display n) (newline)\n"
+            "(define (local-count)\n"
+            '  (let ((h (hash))) (hash-set! h "a" 1) (hash-ref h "a" 0)))\n'
+            "(display (local-count)) (newline)\n"
             '(define h (hash "a" 1))\n'
             '(define h2 (hash-set h "b" 2))\n'
             '(display (hash-length h)) (display " ") (display (hash-length h2)) (newline)\n'
