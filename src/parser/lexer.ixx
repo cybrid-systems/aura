@@ -1,8 +1,10 @@
 module;
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 export module aura.parser.lexer;
 import std;
@@ -28,6 +30,15 @@ export enum class TokenKind {
     EndOfFile,
     Error
 };
+// Issue #5199: the '(' that a missing ')' belongs to. followed_by_semi is
+// true when the next source character is ';', so "(;" is a real list whose
+// rest-of-line was commented out, not a file-header comment.
+export struct OpenParenLoc {
+    std::uint32_t line = 0;
+    std::uint32_t column = 0;
+    bool followed_by_semi = false;
+};
+
 export struct Token {
     TokenKind kind;
     std::string_view text;
@@ -45,6 +56,8 @@ public:
     Token peek();
     Token consume();
     bool eof() { return peek().kind == TokenKind::EndOfFile; }
+    // Innermost '(' / "#(" not yet closed. Empty at top level between forms.
+    [[nodiscard]] std::optional<OpenParenLoc> innermost_open_paren() const;
 
 private:
     Token advance();
@@ -67,6 +80,8 @@ private:
     std::uint32_t unterminated_block_comment_line_ = 0;
     std::uint32_t unterminated_block_comment_column_ = 0;
     std::string string_buf_; // temp storage for escape-resolved string tokens
+    // Issue #5199: pushed when '(' or "#(" is tokenized, popped on ')'.
+    std::vector<OpenParenLoc> open_parens_;
 };
 
 } // namespace aura::parser
