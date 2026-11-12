@@ -1905,6 +1905,17 @@ static bool serve_json_immediate(aura::compiler::CompilerService& cs, ServeCmd& 
     return false;
 }
 
+// Issue #5168: the #2213 walker refusal is a session policy, not an
+// internal fault. The oneshot wording stays in service.ixx for --load.
+static void serve_user_level_walker_policy(aura::diag::Diagnostic& d) {
+    if (d.kind == aura::diag::ErrorKind::InternalError &&
+        d.message.find("tree-walker fallback forbidden") != std::string::npos) {
+        d.kind = aura::diag::ErrorKind::UserError;
+        d.message = "this session forbids the tree walker; unset "
+                    "AURA_PIPELINE_STRICT or set it to 0";
+    }
+}
+
 static void serve_json_code(aura::compiler::CompilerService& cs, ServeCmd& cmd,
                             const std::string& type) {
     auto code_it = cmd.find("code");
@@ -1974,6 +1985,7 @@ static void serve_json_code(aura::compiler::CompilerService& cs, ServeCmd& cmd,
                              "complete form in exec chunk\"}}");
             } else if (!*result) {
                 auto& d = (*result).error();
+                serve_user_level_walker_policy(d);
                 std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}", json_escape(d.format()));
             } else {
                 try {
@@ -2053,6 +2065,7 @@ static void serve_json_code(aura::compiler::CompilerService& cs, ServeCmd& cmd,
                 }
             } else {
                 auto& d = result.error();
+                serve_user_level_walker_policy(d);
                 std::println("{{\"status\":\"error\",\"msg\":\"{}\"}}", json_escape(d.format()));
             }
         }
@@ -2218,6 +2231,12 @@ static int run_sync_serve(const OneshotLaunch& launch) {
             return soft_rc;
         }
     }
+    // Issue #5168: same walker face as a file run (#4864) unless
+    // AURA_PIPELINE_STRICT pins one. The production default forbade
+    // set-code and eval-current before the capability check.
+    if (const char* strict = std::getenv("AURA_PIPELINE_STRICT"); !(strict && *strict))
+        aura::compiler::set_tree_walker_fallback_policy(
+            aura::compiler::TreeWalkerFallbackPolicy::Allow);
     if (st.soft_shared_graph) {
         static bool soft_serve_b_logged = false;
         if (!soft_serve_b_logged) {
@@ -2267,11 +2286,20 @@ static int run_sync_serve(const OneshotLaunch& launch) {
             auto& cs = st.resolve();
             aura::messaging::g_current_compiler_service = &cs;
             auto r = cs.eval(line);
+            // Issue #5168: a top-level error value printed as status=ok
+            // "<error>" and hid the capability denial (#4273).
+            if (r && aura::compiler::types::is_error(*r) && !aura::compiler::types::is_string(*r)) {
+                aura::diag::Diagnostic d{cs.evaluator().error_value_kind(*r),
+                                         cs.evaluator().soft_error_message(*r)};
+                d.kind = d.display_kind();
+                r = std::unexpected(std::move(d));
+            }
             if (r) {
                 std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
                              json_escape(fmt_val(*r, cs)));
             } else {
                 auto& d = r.error();
+                serve_user_level_walker_policy(d);
                 std::println("{{\"status\":\"error\",\"kind\":{},\"msg\":\"{}\",\"node_id\":{}}}",
                              static_cast<int>(d.kind), json_escape(d.format()), d.node_id);
                 // Auto-fix path removed: it depended on the per-eval
@@ -3065,6 +3093,9 @@ static void print_denseness_usage(const char*, std::ostream& out = std::cerr) {
     std::println(out, "  list replies status ok, a sessions array, and active. "
                       "docs/embedding.md");
     std::println(out, "  Async-only: session-send, session-recv. Sync-only: session delete.");
+    std::println(out, "  Edit loop (#5168): (set-code \"...\") then (eval-current).");
+    std::println(out, "    {} --serve --preset dev   grants mutate. Same walker face as a", prog);
+    std::println(out, "    file run unless AURA_PIPELINE_STRICT pins Forbidden or force-soa.");
     std::println(out, "Special modes: --serve, --serve-async, --ir, --jit, --help");
 }
 
