@@ -2119,7 +2119,89 @@ static void serve_json_code(aura::compiler::CompilerService& cs, ServeCmd& cmd,
     }
 }
 
-static int run_sync_serve() {
+struct OneshotLaunch {
+    int status = -1;
+    std::string all_input;
+    bool source_from_argv = false;
+    bool stop_first_4909 = false;
+    bool soft_launch = false;
+    bool soft_explicit_4912 = false;
+    std::uint16_t soft_extra = 0;
+    std::string preset_4912;
+    bool quiet_4912 = false;
+    bool grant_seen_4912 = false;
+    std::uint16_t deny_bits_4912 = 0;
+    std::string soft_allow_list;
+};
+
+// Issue #4575 / #4912: mint the soft session and print the one caps line.
+// Issue #5167: --serve calls this with the same OneshotLaunch the file
+// face uses, so --preset / --grant / --deny are not oneshot-only.
+static int apply_oneshot_soft_session(aura::compiler::CompilerService& cs,
+                                      const OneshotLaunch& launch) {
+    bool soft_launch = launch.soft_launch;
+    // Issue #4912: a preset under AURA_SANDBOX=off has nothing to grant.
+    if (soft_launch && !launch.soft_explicit_4912 && cs.evaluator().effect_sandbox_mode() == 0) {
+        soft_launch = false;
+        if (!launch.quiet_4912)
+            std::println(std::cerr, "aura: preset={} sandbox=off (every capability)",
+                         launch.preset_4912.empty() ? "custom" : launch.preset_4912);
+    }
+    if (!soft_launch)
+        return 0;
+    const auto session = cs.evaluator().enter_soft_session(launch.soft_extra);
+    if (!session.active) {
+        const char* word = "restricted";
+        if (cs.evaluator().effect_sandbox_mode() == 2)
+            word = "strict";
+        else if (cs.evaluator().effect_sandbox_mode() == 0)
+            word = "off (dev escape hatch)";
+        else if (const char* sb = std::getenv("AURA_SANDBOX")) {
+            const std::string_view sv(sb);
+            if (sv == "off" || sv == "OFF" || sv == "Off")
+                word = "off (dev escape hatch)";
+            else if (sv == "strict" || sv == "STRICT" || sv == "Strict")
+                word = "strict";
+        }
+        std::println(std::cerr, "aura: sandbox={}, soft auto-grant: refused", word);
+        return 1;
+    }
+    std::string line =
+        std::format("aura: sandbox=restricted, soft auto-grant: mutate(tenant={}, ws={}) "
+                    "token=soft-auto-grant",
+                    session.tenant, session.workspace_id);
+    if (!launch.preset_4912.empty() || launch.grant_seen_4912 || launch.deny_bits_4912 != 0) {
+        // Issue #4912: one line naming the effective capability set.
+        using aura::core::capability::Effect;
+        std::string caps = "mutate,read";
+        const std::pair<Effect, const char*> names[] = {{Effect::Write, "write"},
+                                                        {Effect::Ffi, "ffi"},
+                                                        {Effect::Exec, "exec"},
+                                                        {Effect::Network, "network"}};
+        for (const auto& [e, n] : names)
+            if ((session.effects & static_cast<std::uint16_t>(e)) != 0) {
+                caps += ',';
+                caps += n;
+                // Issue #4912: name the scope (write:out/).
+                if (e == Effect::Write && aura::compiler::security::write_scope_active()) {
+                    caps += ':';
+                    caps += aura::compiler::security::write_scope_label();
+                }
+            }
+        line = std::format("aura: preset={} sandbox=restricted caps={} (tenant={}, ws={})",
+                           launch.preset_4912.empty() ? "custom" : launch.preset_4912, caps,
+                           session.tenant, session.workspace_id);
+    } else if (!launch.soft_allow_list.empty()) {
+        line.push_back(' ');
+        line += "allow=";
+        line += launch.soft_allow_list;
+    }
+    if (!launch.quiet_4912)
+        std::println(std::cerr, "{}", line);
+    return 0;
+}
+
+static int run_sync_serve(const OneshotLaunch& launch) {
     SyncServeState st;
     st.soft_shared_graph = !aura::serve::production_abi_selfcheck_required();
     st.shared_workspace_tree = aura::compiler::Evaluator::create_workspace_tree();
@@ -2130,6 +2212,11 @@ static int run_sync_serve() {
         default_cs.set_session_id(st.active_session);
         default_cs.set_workspace_tree(st.shared_workspace_tree);
         aura::compiler::CompilerService::register_session(st.active_session, &default_cs);
+        // Issue #5167: the mode used to return before this grant existed.
+        if (const int soft_rc = apply_oneshot_soft_session(default_cs, launch); soft_rc != 0) {
+            aura::compiler::Evaluator::destroy_workspace_tree(st.shared_workspace_tree);
+            return soft_rc;
+        }
     }
     if (st.soft_shared_graph) {
         static bool soft_serve_b_logged = false;
@@ -3153,21 +3240,6 @@ static int eval_oneshot_force_soa(aura::compiler::CompilerService& cs, const std
     return -1;
 }
 
-struct OneshotLaunch {
-    int status = -1;
-    std::string all_input;
-    bool source_from_argv = false;
-    bool stop_first_4909 = false;
-    bool soft_launch = false;
-    bool soft_explicit_4912 = false;
-    std::uint16_t soft_extra = 0;
-    std::string preset_4912;
-    bool quiet_4912 = false;
-    bool grant_seen_4912 = false;
-    std::uint16_t deny_bits_4912 = 0;
-    std::string soft_allow_list;
-};
-
 static int fold_oneshot_capabilities(
     OneshotLaunch& out, std::string& all_input, bool source_from_argv, bool from_file_4909,
     bool keep_going_4909, bool& soft_launch, std::uint16_t& soft_extra, std::string& preset_4912,
@@ -3552,6 +3624,20 @@ static OneshotLaunch parse_oneshot_launch(int argc, char** argv) {
                                   entry_path_4912, soft_allow_list) != 0)
         return out;
     return out;
+}
+
+// Issue #5167: argv[1] is the mode token. The rest is the oneshot launch
+// (--preset / --grant / --deny / --quiet), which used to be skipped entirely.
+static int run_sync_serve_from_args(int argc, char** argv) {
+    std::vector<char*> args;
+    args.reserve(static_cast<std::size_t>(argc));
+    args.push_back(argv[0]);
+    for (int i = 2; i < argc; ++i)
+        args.push_back(argv[i]);
+    const OneshotLaunch launch = parse_oneshot_launch(static_cast<int>(args.size()), args.data());
+    if (launch.status >= 0)
+        return launch.status;
+    return run_sync_serve(launch);
 }
 
 static std::optional<std::vector<std::string>> split_oneshot_forms(const std::string& all_input) {
@@ -4017,13 +4103,9 @@ static int run_oneshot_or_file(int argc, char** argv) {
     const bool source_from_argv = launch.source_from_argv;
     const bool stop_first_4909 = launch.stop_first_4909;
     bool soft_launch = launch.soft_launch;
-    const bool soft_explicit_4912 = launch.soft_explicit_4912;
     const std::uint16_t soft_extra = launch.soft_extra;
-    const std::string preset_4912 = std::move(launch.preset_4912);
+    const std::string& preset_4912 = launch.preset_4912;
     const bool quiet_4912 = launch.quiet_4912;
-    const bool grant_seen_4912 = launch.grant_seen_4912;
-    const std::uint16_t deny_bits_4912 = launch.deny_bits_4912;
-    const std::string soft_allow_list = std::move(launch.soft_allow_list);
     aura::compiler::CompilerService cs;
     // Issue #4864: the oneshot file / expression face is the SAME script face
     // as --load (#4848), not the production serve pipeline. The pack default
@@ -4129,64 +4211,8 @@ static int run_oneshot_or_file(int argc, char** argv) {
 
     // Issue #4575: mint only once we have a program. Refuse exits before
     // any form runs. The banner is the one stderr line for this launch.
-    // Issue #4912: a preset under AURA_SANDBOX=off has nothing to grant.
-    if (soft_launch && !soft_explicit_4912 && cs.evaluator().effect_sandbox_mode() == 0) {
-        soft_launch = false;
-        if (!quiet_4912)
-            std::println(std::cerr, "aura: preset={} sandbox=off (every capability)",
-                         preset_4912.empty() ? "custom" : preset_4912);
-    }
-    if (soft_launch) {
-        const auto st = cs.evaluator().enter_soft_session(soft_extra);
-        if (!st.active) {
-            const char* word = "restricted";
-            if (cs.evaluator().effect_sandbox_mode() == 2)
-                word = "strict";
-            else if (cs.evaluator().effect_sandbox_mode() == 0)
-                word = "off (dev escape hatch)";
-            else if (const char* sb = std::getenv("AURA_SANDBOX")) {
-                const std::string_view sv(sb);
-                if (sv == "off" || sv == "OFF" || sv == "Off")
-                    word = "off (dev escape hatch)";
-                else if (sv == "strict" || sv == "STRICT" || sv == "Strict")
-                    word = "strict";
-            }
-            std::println(std::cerr, "aura: sandbox={}, soft auto-grant: refused", word);
-            return 1;
-        }
-        std::string line =
-            std::format("aura: sandbox=restricted, soft auto-grant: mutate(tenant={}, ws={}) "
-                        "token=soft-auto-grant",
-                        st.tenant, st.workspace_id);
-        if (!preset_4912.empty() || grant_seen_4912 || deny_bits_4912 != 0) {
-            // Issue #4912: one line naming the effective capability set.
-            using aura::core::capability::Effect;
-            std::string caps = "mutate,read";
-            const std::pair<Effect, const char*> names[] = {{Effect::Write, "write"},
-                                                            {Effect::Ffi, "ffi"},
-                                                            {Effect::Exec, "exec"},
-                                                            {Effect::Network, "network"}};
-            for (const auto& [e, n] : names)
-                if ((st.effects & static_cast<std::uint16_t>(e)) != 0) {
-                    caps += ',';
-                    caps += n;
-                    // Issue #4912: name the scope (write:out/).
-                    if (e == Effect::Write && aura::compiler::security::write_scope_active()) {
-                        caps += ':';
-                        caps += aura::compiler::security::write_scope_label();
-                    }
-                }
-            line = std::format("aura: preset={} sandbox=restricted caps={} (tenant={}, ws={})",
-                               preset_4912.empty() ? "custom" : preset_4912, caps, st.tenant,
-                               st.workspace_id);
-        } else if (!soft_allow_list.empty()) {
-            line.push_back(' ');
-            line += "allow=";
-            line += soft_allow_list;
-        }
-        if (!quiet_4912)
-            std::println(std::cerr, "{}", line);
-    }
+    if (const int soft_rc = apply_oneshot_soft_session(cs, launch); soft_rc != 0)
+        return soft_rc;
 
     auto oneshot_forms = split_oneshot_forms(all_input);
     if (!oneshot_forms)
@@ -5843,7 +5869,7 @@ static int aura_main(int argc, char* argv[]) {
     // Each line of output is JSON. Agent reads with JSON.parse(line).
     // Messages: ok, error, fix, fixed, fix-fail
     if (argc > 1 && std::string_view(argv[1]) == "--serve")
-        return run_sync_serve();
+        return run_sync_serve_from_args(argc, argv);
 
 
     // ── --ir: lower to IR and execute ─────────────────────────────
