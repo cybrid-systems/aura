@@ -224,6 +224,44 @@ def cmd_docs(*, check: bool | None = None):
     return r
 
 
+# ═══════════════════════════════════════════════════════════════
+# CLI templates (code-generated)
+# ═══════════════════════════════════════════════════════════════
+
+GEN_CLI_TEMPLATES = TOOLS / "gen_cli_templates_4913.py"
+CLI_TEMPLATES_DIR = ROOT / "templates" / "new"
+CLI_TEMPLATES_INC = ROOT / "src" / "cli_templates_4913.inc"
+
+
+def cmd_cli_templates(*, check: bool | None = None):
+    """Generate or verify src/cli_templates_4913.inc from templates/new.
+
+    The .inc is what the binary actually serves for 'aura new'. A stale copy
+    means 'aura new' writes the old template, so this belongs in the fast
+    gate next to the docs freshness check (#5161).
+    """
+    if check is None:
+        check = "--check" in sys.argv[2:]
+    print(f"{B}═══ CLI templates {'(check)' if check else '(generate)'} ═══{N}")
+    if not GEN_CLI_TEMPLATES.exists():
+        fail(f"missing {GEN_CLI_TEMPLATES}")
+        return 1
+    args = [
+        sys.executable,
+        str(GEN_CLI_TEMPLATES),
+        str(CLI_TEMPLATES_DIR),
+        str(CLI_TEMPLATES_INC),
+    ]
+    if check:
+        args.append("--check")
+    r = run(args, cwd=ROOT)
+    if r == 0:
+        ok("cli templates OK" if check else "cli templates generated")
+    else:
+        fail("cli templates stale — run ./build.py cli-templates" if check else "cli templates generation failed")
+    return r
+
+
 def _cpp_source_files():
     """Same filter as .github/workflows/ci.yml clang-format step."""
     exts = {".cpp", ".ixx", ".hh", ".h"}
@@ -26066,7 +26104,7 @@ def cmd_gate():
         os.environ["AURA_FORMAT_CHANGED"] = "1"
 
     t_gate = time.time()
-    rc = cmd_docs(check=not fix) or cmd_lint()
+    rc = cmd_docs(check=not fix) or cmd_cli_templates(check=not fix) or cmd_lint()
     if rc:
         return rc
     if scripts_only:
@@ -27107,6 +27145,7 @@ def main():
         "ci": cmd_ci,
         "ci-issues": cmd_ci_issues,
         "docs": cmd_docs,
+        "cli-templates": cmd_cli_templates,
         "fixtures": cmd_fixtures,
         "lint": cmd_lint,
         "format": cmd_format,
