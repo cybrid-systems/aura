@@ -92,6 +92,19 @@ namespace {
         return true;
     }
 
+    // Issue #5157: coerce_to_int_pure still saturates to INT64_MAX/MIN, and
+    // abs(-2^62) is 2^62. Both are outside the fixnum range, so make_int
+    // aborts. Callers that return a computed integer saturate here.
+    [[nodiscard]] EvalValue make_sat_int(std::int64_t n) {
+        static constexpr auto kFixMax = std::numeric_limits<std::int64_t>::max() >> 1;
+        static constexpr auto kFixMin = std::numeric_limits<std::int64_t>::min() >> 1;
+        if (n > kFixMax)
+            n = kFixMax;
+        else if (n < kFixMin)
+            n = kFixMin;
+        return make_int(n);
+    }
+
     void note_arith_mismatch(const EvalValue& v, ::aura::compiler::StringPoolView heap) {
         // Issue #4735 (#4535 contract): the legacy line is the UNCAUGHT face.
         // A try body's catch must see the error value silently.
@@ -488,7 +501,8 @@ void RegSplitParts::register_math_scalar_primitives(
                   unary_math("ceil: expected number", [](double d) { return std::ceil(d); }),
                   pure_general(1, "(number) -> float", "Least integer >= argument as float."));
     // Issue #4469: halves to even. An in-range result is an exact int so
-    // display prints 0 / 2 / -2. A magnitude past int64 stays a float.
+    // display prints 0 / 2 / -2. A magnitude past the fixnum range stays a
+    // float, same as floor / ceiling / truncate (#5157).
     register_prim(
         add, ev, "round",
         [&string_heap, &error_values, primitive_error_counter,
@@ -508,9 +522,14 @@ void RegSplitParts::register_math_scalar_primitives(
                 return make_float(r);
             constexpr double kMax = static_cast<double>(std::numeric_limits<std::int64_t>::max());
             constexpr double kMin = static_cast<double>(std::numeric_limits<std::int64_t>::min());
-            if (r >= kMax || r < kMin)
+            // -2^63 compares equal to kMin. Casting it yields INT64_MIN,
+            // which does not fit a fixnum.
+            if (r >= kMax || r <= kMin)
                 return make_float(r);
-            return make_int(static_cast<std::int64_t>(r));
+            const auto n = static_cast<std::int64_t>(r);
+            if (!types::fits_fixnum(n))
+                return make_float(r);
+            return make_int(n);
         },
         pure_general(1, "(number) -> int", "Nearest integer; halves round to even."));
     // std/math re-exports (define trunc trunc); was missing while floor/ceil/round existed.
@@ -647,7 +666,7 @@ void RegSplitParts::register_math_integer_primitives(
             auto r = n % divisor;
             if (r != 0 && ((r < 0) != (divisor < 0)))
                 r += divisor;
-            return make_int(r);
+            return make_sat_int(r);
         },
         pure_general(2, "(int int) -> int", "Floor modulo of two integers."));
     register_prim(
@@ -679,7 +698,7 @@ void RegSplitParts::register_math_integer_primitives(
             auto r = n % divisor;
             if (r != 0 && ((r < 0) != (divisor < 0)))
                 r += divisor;
-            return make_int(r);
+            return make_sat_int(r);
         },
         pure_general(2, "(int int) -> int", "Alias for modulo."));
     register_prim(
@@ -707,7 +726,7 @@ void RegSplitParts::register_math_integer_primitives(
                                             "quotient: integer overflow (INT64_MIN/-1)",
                                             primitive_error_counter);
             }
-            return make_int(n / divisor);
+            return make_sat_int(n / divisor);
         },
         pure_general(2, "(int int) -> int", "Integer quotient toward zero."));
     register_prim(
@@ -735,7 +754,7 @@ void RegSplitParts::register_math_integer_primitives(
                                             "remainder: integer overflow (INT64_MIN/-1)",
                                             primitive_error_counter);
             }
-            return make_int(n % divisor);
+            return make_sat_int(n % divisor);
         },
         pure_general(2, "(int int) -> int", "Remainder of integer division."));
     register_prim(
@@ -754,7 +773,7 @@ void RegSplitParts::register_math_integer_primitives(
                 return make_primitive_error(string_heap, error_values, "abs: expected number",
                                             primitive_error_counter);
             }
-            return make_int(safe_abs_i64(n));
+            return make_sat_int(safe_abs_i64(n));
         },
         pure_general(1, "(number) -> number", "Absolute value."));
     register_prim(
@@ -786,7 +805,7 @@ void RegSplitParts::register_math_integer_primitives(
             };
             for (std::size_t i = 1; i < a.size(); ++i)
                 r = abs_gcd(r, to_int(a[i]));
-            return make_int(r);
+            return make_sat_int(r);
         },
         pure_general(2, "(int int) -> int", "Greatest common divisor."));
 }
@@ -852,9 +871,10 @@ void RegSplitParts::register_math_minmax_primitives(
                     r = next;
                 }
             }
-            // abs(INT64_MIN) is UB — saturate via safe_abs_i64.
+            // abs(INT64_MIN) is UB — saturate via safe_abs_i64, then to
+            // the fixnum range (#5157). 2^62 and INT64_MAX do not fit.
             r = safe_abs_i64(r);
-            return make_int(r);
+            return make_sat_int(r);
         },
         pure_general(2, "(int int) -> int", "Least common multiple."));
     register_prim(
@@ -885,7 +905,7 @@ void RegSplitParts::register_math_minmax_primitives(
             std::int64_t r = as_int(a[0]);
             for (std::size_t i = 1; i < a.size(); ++i)
                 r = std::min(r, as_int(a[i]));
-            return make_int(r);
+            return make_sat_int(r);
         },
         pure_general(255, "(...numbers) -> number", "Minimum of numeric arguments."));
     register_prim(
@@ -916,7 +936,7 @@ void RegSplitParts::register_math_minmax_primitives(
             std::int64_t r = as_int(a[0]);
             for (std::size_t i = 1; i < a.size(); ++i)
                 r = std::max(r, as_int(a[i]));
-            return make_int(r);
+            return make_sat_int(r);
         },
         pure_general(255, "(...numbers) -> number", "Maximum of numeric arguments."));
 }
