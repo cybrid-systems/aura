@@ -83,18 +83,28 @@
       (set! result (cons (substring s start n) result)))
     (reverse result)))
 
-; Join list of strings with separator — iterative (#2770 residual).
-; Earlier B8a let-bound recursive form still used Θ(|strs|) stack.
+; Join list of strings with separator.
+; #2770: `while` keeps the stack O(1) (the old recursive walk did not).
+; #5185: do not `string-append` onto the growing result. That copied
+; every byte already produced on each part, quadratic in the part
+; count. Cons parts and separators, reverse once, then one
+; `apply` of `string-append` (linear in the total bytes).
+; A non-string element or separator still reaches `string-append`
+; and is a type error. The native primitive skips non-strings, so
+; this define stays and continues to shadow it. Empty and
+; one-element lists return before that apply, as they always have.
 (define (string-join strs sep)
   (if (null? strs) ""
     (if (null? (cdr strs)) (car strs)
-      (let ((result (car strs))
+      (let ((parts (list (car strs)))
             (rest (cdr strs)))
         (while (lambda () (pair? rest))
           (lambda ()
-            (set! result (string-append result sep (car rest)))
+            ; Element, then separator. The list grows in reverse;
+            ; `reverse` puts the parts back in source order.
+            (set! parts (cons (car rest) (cons sep parts)))
             (set! rest (cdr rest))))
-        result))))
+        (apply string-append (reverse parts))))))
 
 ; Trim ASCII whitespace from both ends (character code <= 32: space,
 ; tab, CR, LF, and the other C0 controls). Index-based O(1) stack.
