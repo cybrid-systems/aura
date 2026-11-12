@@ -1,0 +1,48 @@
+; Issue #5154 — orch:ask must honour its timeout on the local fiber path.
+; A handler that never answers used to block in channel:recv forever.
+(require "std/orch" all:)
+
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define (stuck msg)
+  (let loop ((i 0))
+    (if #t (loop (+ i 1)) 'never)))
+
+(orch:spawn "slow" stuck)
+(define t0 (monotonic-ms))
+(define timed (orch:ask "slow" "ping" 1))
+(define dt (- (monotonic-ms) t0))
+(assert! (pair? timed) "timeout result is a pair")
+(assert! (string=? (car timed) "timeout") "timeout tag")
+(assert! (string=? (car (cdr timed))
+                   "orch:ask timeout after 1s waiting for slow")
+         "timeout message names the wait")
+(assert! (and (>= dt 1000) (< dt 4000)) "local ask returns in about one second")
+(display "done\n")
+
+; A handler that answers still returns the reply, including with timeout 0
+; and with the argument omitted (both mean orch:default-timeout, not an
+; immediate timeout and not a 30s wait).
+(orch:spawn "fast" (lambda (msg) 42))
+(define t1 (monotonic-ms))
+(assert! (= (orch:ask "fast" "ping" 2) 42) "answering agent returns the reply")
+(assert! (= (orch:ask "fast" "ping" 0) 42) "timeout 0 still receives")
+(assert! (= (orch:ask "fast" "ping") 42) "missing timeout still receives")
+(define fast-dt (- (monotonic-ms) t1))
+(assert! (< fast-dt 2000) "a live agent does not wait out the default")
+
+(if (= *fails* 0)
+    (begin (display "OK-5154 orch ask timeout\n"))
+    (begin
+      (display "FAIL-5154 fails=")
+      (display *fails*)
+      (newline)
+      (error "5154 suite failed")))
