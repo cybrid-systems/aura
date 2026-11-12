@@ -20,10 +20,24 @@
         "AC2",
         "AC3",
         "AC4",
+        "AC5",
         "GATE_FAMILY_RE",
+        "PLUMBING_FAMILY_RE",
+        "BRIDGE_NS_RE",
         "_weak_stub_bodies",
+        "_plumbing_family",
         "--self-test",
         "#4676"
+      ]
+    },
+    {
+      "ac": "AC5-stub",
+      "path": "lib/runtime.c",
+      "contains": [
+        "aura_cell_set_jit_bind",
+        "aura_closure_capture_jit",
+        "__attribute__((weak))",
+        "Issue #5173"
       ]
     },
     {
