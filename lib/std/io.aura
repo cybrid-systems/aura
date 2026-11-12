@@ -113,11 +113,11 @@
 ; object; this module does not shadow it with (void) (#5096).
 
 ; Read one UTF-8 code point from stdin bytes.  read-byte returns a byte
-; or void at EOF; a continuation that is missing or ill-formed is an
-; error (never a silent replacement character).
+; or the R7RS eof object at EOF (#5191); a continuation that is missing
+; or ill-formed is an error (never a silent replacement character).
 (define (read-stdin-char)
   (let ((b0 (read-byte)))
-    (if (void? b0)
+    (if (eof-object? b0)
         (eof-object)
         (let ((need (cond ((< b0 128) 0)
                           ((< b0 224) 1)
@@ -131,7 +131,7 @@
             (if (> k need)
                 cp
                 (let ((b (read-byte)))
-                  (if (or (void? b)
+                  (if (or (eof-object? b)
                           (not (= 128 (bitwise-and b 192))))
                       (error "read-char: truncated UTF-8 sequence"))
                   (cont (+ k 1)
