@@ -908,6 +908,79 @@ static void ac4241_5_commit_face_wal_dual_write() {
     aura::compiler::typed_audit::apply_dev_audit_defaults();
 }
 
+// Brace-matched block extractor: from byte offset `from`, find the first
+// '{' and return that brace block (open..matching close) as a string,
+// skipping braces inside string/char literals and // /* */ comments.
+// Empty when no '{' follows or the block is unterminated. Fixed-size
+// windows drift-bait as the function body grows; the body is the window.
+static std::string brace_block_after(const std::string& text, std::size_t from) {
+    const auto open = text.find('{', from);
+    if (open == std::string::npos)
+        return {};
+    int depth = 0;
+    bool in_str = false, in_chr = false, in_line = false, in_blk = false;
+    for (std::size_t i = open; i < text.size(); ++i) {
+        const char c = text[i];
+        const char n = i + 1 < text.size() ? text[i + 1] : '\0';
+        if (in_line) {
+            if (c == '\n')
+                in_line = false;
+            continue;
+        }
+        if (in_blk) {
+            if (c == '*' && n == '/') {
+                in_blk = false;
+                ++i;
+            }
+            continue;
+        }
+        if (in_str) {
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
+            if (c == '"')
+                in_str = false;
+            continue;
+        }
+        if (in_chr) {
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
+            if (c == '\'')
+                in_chr = false;
+            continue;
+        }
+        if (c == '/' && n == '/') {
+            in_line = true;
+            ++i;
+            continue;
+        }
+        if (c == '/' && n == '*') {
+            in_blk = true;
+            ++i;
+            continue;
+        }
+        if (c == '"') {
+            in_str = true;
+            continue;
+        }
+        if (c == '\'') {
+            in_chr = true;
+            continue;
+        }
+        if (c == '{') {
+            ++depth;
+        } else if (c == '}') {
+            --depth;
+            if (depth == 0)
+                return text.substr(open, i - open + 1);
+        }
+    }
+    return {};
+}
+
 static void ac3966_1_stale_proof_does_not_shadow_session();
 static void ac3966_2_nested_abort_keeps_outer_session();
 static void ac3966_3_soft_and_source();
@@ -1260,10 +1333,13 @@ static void ac4239_5_soft_observe_and_source() {
     CHECK(!sec.empty(), "4239 AC5: evaluator_security.cpp readable");
     const auto re_at = sec.find("bool Evaluator::require_effect");
     CHECK(re_at != std::string::npos, "4239 AC5: require_effect definition found");
+    // Window = brace-matched function body (drift-proof; was fixed 3000).
+    const auto re_body = brace_block_after(sec, re_at);
+    CHECK(!re_body.empty(), "4239 AC5: require_effect body (brace-matched)");
     std::size_t proof_reads = 0;
-    for (auto p = sec.find("last_type_linear_commit_proof_stamp_v_read", re_at);
-         p != std::string::npos && p < re_at + 3000;
-         p = sec.find("last_type_linear_commit_proof_stamp_v_read", p + 1))
+    for (auto p = re_body.find("last_type_linear_commit_proof_stamp_v_read");
+         p != std::string::npos;
+         p = re_body.find("last_type_linear_commit_proof_stamp_v_read", p + 1))
         ++proof_reads;
     CHECK(proof_reads == 1, "4239 AC5: hard-face proof resurrection gone (Soft SSOT read only)");
     CHECK(sec.find("#4239") != std::string::npos, "4239 AC5: cites #4239");

@@ -3318,8 +3318,12 @@ static void ac4390_legacy_eval_macro_denies_without_mse() {
         const auto src = read_file("src/compiler/evaluator_eval_flat.cpp");
         CHECK(src.find("Issue #4390") != std::string::npos, "4390: eval_flat cites #4390");
         int calls = 0;
+        // Issue #5195 gave the helper a stdlib_macro argument, so the old
+        // empty-paren spelling no longer matches any gate site. Pin the
+        // bare name token: formatter or argument changes must not make the
+        // gate look absent (definition + one call per gated entry point).
         for (std::size_t p = 0;
-             (p = src.find("legacy_eval_macro_self_evo_deny()", p)) != std::string::npos; p += 1)
+             (p = src.find("legacy_eval_macro_self_evo_deny(", p)) != std::string::npos; p += 1)
             ++calls;
         CHECK(calls >= 4, "4390: helper gates preserved, defmacro, and eval_data_as_code");
         const auto issue = src.find("Issue #4390");
