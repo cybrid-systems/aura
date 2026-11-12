@@ -753,14 +753,23 @@ void RegSplitParts::register_json_codec_primitives(
                 if (types::is_string(v)) {
                     auto idx = types::as_string_idx(v);
                     std::string str = (idx < string_heap.size()) ? string_heap[idx] : "";
+                    // RFC 8259: every code unit < 0x20 is escaped. std/json
+                    // json-escape strips the quotes this emits, so the two
+                    // paths share this table.
                     std::string r = "\"";
-                    for (auto c : str) {
+                    for (unsigned char c : str) {
                         switch (c) {
                             case '"':
                                 r += "\\\"";
                                 break;
                             case '\\':
                                 r += "\\\\";
+                                break;
+                            case '\b':
+                                r += "\\b";
+                                break;
+                            case '\f':
+                                r += "\\f";
                                 break;
                             case '\n':
                                 r += "\\n";
@@ -772,7 +781,14 @@ void RegSplitParts::register_json_codec_primitives(
                                 r += "\\t";
                                 break;
                             default:
-                                r += c;
+                                if (c < 0x20) {
+                                    constexpr char hex[] = "0123456789abcdef";
+                                    r += "\\u00";
+                                    r.push_back(hex[c >> 4]);
+                                    r.push_back(hex[c & 0x0f]);
+                                } else {
+                                    r.push_back(static_cast<char>(c));
+                                }
                         }
                     }
                     r += '\"';
