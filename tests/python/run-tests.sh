@@ -931,17 +931,17 @@ _read_stdin_case() {
         _record_fail "$name" "       expected: $expected" "       got:      $actual"
     fi
 }
-# #5096/#5104: the R7RS eof-object is a unique value. read-line and
-# read-byte still return void at EOF (#4325), so the blank line stays a
-# string and the following read is void, not that object.
+# #5096/#5104: the R7RS eof-object is a unique value. #5191: read-line
+# and read-byte return that object at EOF, so the blank line stays a
+# string and the following read is the eof object, not void.
 _read_stdin_case "4325-blank-then-eof" $'\n' \
-    '(begin (define a (read-line)) (define b (read-line)) (display (string-length a)) (display (eof-object? a)) (display (void? b)) (display (eq? a b)))' \
+    '(begin (define a (read-line)) (define b (read-line)) (display (string-length a)) (display (eof-object? a)) (display (eof-object? b)) (display (eq? a b)))' \
     '0#f#t#f'
 _read_stdin_case "4325-read-byte-no-newline" 'Q' \
     '(display (read-byte))' \
     '81'
 _read_stdin_case "4325-read-byte-eof" '' \
-    '(display (void? (read-byte)))' \
+    '(display (eof-object? (read-byte)))' \
     '#t'
 
 # Issue #4354: a loaded file of defines is one letrec begin. An alias

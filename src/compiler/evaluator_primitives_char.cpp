@@ -237,13 +237,19 @@ void RegSplitParts::register_char_core_primitives(PrimRegistrar add, Evaluator& 
         return make_string(sid);
     });
 
-    // Issue #4325: a blank line is "". EOF (or a failed stream) is void,
-    // distinct from the R7RS eof-object (#5096). A partial line with no
-    // trailing newline is still that line; the next read is void.
+    // Issue #5191: the stream readers return the R7RS eof-object at EOF,
+    // not void. #4325 accepted either spelling ("void or a documented eof
+    // object") and #5096 introduced the unique object, but the readers were
+    // never migrated, so (eof-object? (read-line)) was false at EOF and the
+    // canonical R7RS loop ran its body with no line - surfacing a bogus
+    // string-append type error three frames away and exit code 1.
+    const auto eof_value = [&ev]() { return ev.intern_symbol("#<eof-object>"); };
+    // Issue #4325: a blank line is "", not the eof object. A partial line
+    // with no trailing newline is still that line; the next read is eof.
     // Issue #4356: the blocking read runs without the CLI body mutex so a
     // thread fiber can allocate. The string_heap_ push happens only after
     // the lock is back, on this thread's private line buffer.
-    add("read-line", [&ev, deny_io](const auto&) {
+    add("read-line", [&ev, deny_io, eof_value](const auto&) {
         // Issue #4517: fail closed behind the io-read fence BEFORE getline.
         // On deny nothing is consumed from stdin; Soft/Off still reads.
         if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
@@ -251,7 +257,7 @@ void RegSplitParts::register_char_core_primitives(PrimRegistrar add, Evaluator& 
             is_error(denied))
             return denied;
         if (!std::cin.good())
-            return make_void();
+            return eof_value();
         std::string line;
         bool eof = false;
         {
@@ -262,7 +268,7 @@ void RegSplitParts::register_char_core_primitives(PrimRegistrar add, Evaluator& 
             }
         }
         if (eof)
-            return make_void();
+            return eof_value();
         auto id = ev.string_heap_.mint(std::move(line));
         return make_string(id);
     });
@@ -293,9 +299,11 @@ void RegSplitParts::register_char_core_primitives(PrimRegistrar add, Evaluator& 
     });
 
     // Issue #4325: one byte from stdin. Does not require a newline.
-    // EOF is void, distinct from byte 0 and from read-line's "".
+    // Issue #5191: EOF is the same R7RS eof-object read-line returns, so one
+    // predicate covers both readers; it stays distinct from byte 0 and from
+    // read-line's "".
     // Issue #4356: same body-mutex drop as read-line across the read.
-    add("read-byte", [&ev, deny_io](const auto&) {
+    add("read-byte", [&ev, deny_io, eof_value](const auto&) {
         // Issue #4517: fail closed behind the io-read fence BEFORE the byte
         // read. On deny nothing is consumed from stdin; Soft/Off still reads.
         if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
@@ -303,14 +311,14 @@ void RegSplitParts::register_char_core_primitives(PrimRegistrar add, Evaluator& 
             is_error(denied))
             return denied;
         if (!std::cin.good())
-            return make_void();
+            return eof_value();
         int c = std::char_traits<char>::eof();
         {
             aura::messaging::DensenessBodyLockWaitGuard unblock_body;
             c = read_stdin_byte();
         }
         if (c == std::char_traits<char>::eof())
-            return make_void();
+            return eof_value();
         return make_int(static_cast<std::int64_t>(static_cast<unsigned char>(c)));
     });
 }
