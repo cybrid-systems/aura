@@ -590,6 +590,79 @@ static void ac4037_source_cite() {
 // fail-closed stubs (the #4036 rationale), so the behavioral arms drive the
 // gate through the explicit-context checked seams with real tenant stamps;
 // the hook-driven production wiring is pinned by the cite arm + the linter.
+// Brace-matched block extractor: from byte offset `from`, find the first
+// '{' and return that brace block (open..matching close) as a string,
+// skipping braces inside string/char literals and // /* */ comments.
+// Empty when no '{' follows or the block is unterminated. Fixed-size
+// windows drift-bait as the function body grows; the body is the window.
+static std::string brace_block_after(const std::string& text, std::size_t from) {
+    const auto open = text.find('{', from);
+    if (open == std::string::npos)
+        return {};
+    int depth = 0;
+    bool in_str = false, in_chr = false, in_line = false, in_blk = false;
+    for (std::size_t i = open; i < text.size(); ++i) {
+        const char c = text[i];
+        const char n = i + 1 < text.size() ? text[i + 1] : '\0';
+        if (in_line) {
+            if (c == '\n')
+                in_line = false;
+            continue;
+        }
+        if (in_blk) {
+            if (c == '*' && n == '/') {
+                in_blk = false;
+                ++i;
+            }
+            continue;
+        }
+        if (in_str) {
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
+            if (c == '"')
+                in_str = false;
+            continue;
+        }
+        if (in_chr) {
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
+            if (c == '\'')
+                in_chr = false;
+            continue;
+        }
+        if (c == '/' && n == '/') {
+            in_line = true;
+            ++i;
+            continue;
+        }
+        if (c == '/' && n == '*') {
+            in_blk = true;
+            ++i;
+            continue;
+        }
+        if (c == '"') {
+            in_str = true;
+            continue;
+        }
+        if (c == '\'') {
+            in_chr = true;
+            continue;
+        }
+        if (c == '{') {
+            ++depth;
+        } else if (c == '}') {
+            --depth;
+            if (depth == 0)
+                return text.substr(open, i - open + 1);
+        }
+    }
+    return {};
+}
+
 static void ac4093_source_cite() {
     std::println("\n--- #4093 cite: stamps, gates, seams, hooks, resets ---");
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
@@ -649,7 +722,8 @@ static void ac4093_source_cite() {
     const auto hsp = rt.find("int64_t aura_hash_set(int64_t hash_val, int64_t pair_val)");
     CHECK(hsp != std::string::npos, "4093 cite: aura_hash_set wrapper");
     if (hsp != std::string::npos) {
-        const auto win = rt.substr(hsp, 600);
+        // Window = brace-matched body; fixed windows drift-bait (#5190).
+        const auto win = brace_block_after(rt, hsp);
         CHECK(win.find("aura_jit_owner_require_effect") != std::string::npos,
               "4093 cite: #3720 Mutate choke stays in the production wrapper");
         CHECK(win.find("aura_hash_set_checked(hash_val, pair_val,") != std::string::npos,
@@ -4552,8 +4626,10 @@ int run_test_dispatch_required_effects() {
         auto& fn = mod.functions.back();
         fn.blocks.push_back({0});
         auto& block = fn.blocks.back();
-        // Public execute() (execute_function is private). Build the hash
-        // in-IR so HashSet telemetry is the only write of key 3.
+        // Build the hash in-IR. It was never published into a workspace, so
+        // Issue #5190's local-table exemption applies: hash-set! skips the
+        // Mutate grant and the write lands. The published-table deny is the
+        // next arm.
         const auto hash_id = static_cast<std::uint32_t>(aura::ir::PrimId::Hash);
         const auto hlen_id = static_cast<std::uint32_t>(aura::ir::PrimId::HashLength);
         block.instructions = {
@@ -4572,13 +4648,48 @@ int run_test_dispatch_required_effects() {
         aura::compiler::IRContext ctx(ev.primitives(), nullptr, cm2, &ev);
         aura::compiler::IRInterpreter interp(mod, ctx);
         auto ir = interp.execute();
-        // Issue #4896: HashSet deny raises (no value) when no try is open;
-        // when a value is returned it must still be the untouched length 1.
-        CHECK(!ir.has_value() || (is_int(*ir) && as_int(*ir) == 1),
-              "3720 AC2: IR HashSet deny leaves length 1");
+        // Issue #5190: an unpublished local table is a local build, not a
+        // shared-state mutation; the write lands and no deny is recorded.
+        CHECK(ir.has_value() && is_int(*ir) && as_int(*ir) == 2,
+              "3720 AC2: local hash write allowed (#5190)");
         if (cm2)
-            CHECK(cm2->dispatch_required_effects_deny_total.load() > ddeny0,
-                  "3720 AC2: HashSet telemetry deny");
+            CHECK(cm2->dispatch_required_effects_deny_total.load() == ddeny0,
+                  "3720 AC2: local hash skips the Mutate deny");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+    }
+
+    {
+        std::println("\n--- #3720 AC2b: published hash still requires Mutate ---");
+        // Issue #3720 + #5190: the exemption is only for a table this
+        // program built and never published. Mark the table workspace-
+        // reachable and the same hash-set! choke must refuse again.
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        set_mode(SandboxMode::Restricted);
+        ev.set_capability_tenant_id(3720);
+        auto hv = cs.eval("(hash 1 2)");
+        CHECK(hv.has_value() && !is_error(*hv), "3720 AC2b: table built");
+        if (hv.has_value()) {
+            const auto hidx = static_cast<std::uint64_t>((*hv).val) >> 6;
+            // Local table: #5190 exemption admits the write.
+            aura_hash_mark_local(hidx);
+            aura_hash_mutate_operand_push((*hv).val);
+            const bool local_ok =
+                ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "hash-set!", 0);
+            aura_hash_mutate_operand_pop();
+            CHECK(local_ok, "3720 AC2b: local table skips Mutate (#5190)");
+            // Published table: the choke refuses again.
+            aura_hash_mark_workspace_reachable(hidx);
+            aura_hash_mutate_operand_push((*hv).val);
+            const bool published_ok =
+                ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "hash-set!", 0);
+            aura_hash_mutate_operand_pop();
+            CHECK(!published_ok, "3720 AC2b: published hash still requires Mutate");
+        }
         aura::core::provenance::set_multi_tenant_env_active(false);
     }
 
@@ -4592,7 +4703,8 @@ int run_test_dispatch_required_effects() {
         const auto setp = rt.find("int64_t aura_hash_set(int64_t hash_val");
         CHECK(setp != std::string::npos, "3720 AC3: aura_hash_set");
         if (setp != std::string::npos) {
-            const auto win = rt.substr(setp, 700);
+            // Window = brace-matched body; fixed windows drift-bait (#5190).
+            const auto win = brace_block_after(rt, setp);
             CHECK(win.find("aura_jit_owner_require_effect") != std::string::npos,
                   "3720 AC3: require before write");
             CHECK(win.find("kEffectMutate") != std::string::npos, "3720 AC3: Mutate bits");

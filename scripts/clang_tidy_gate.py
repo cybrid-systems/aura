@@ -230,6 +230,25 @@ def key(path: str, check: str) -> str:
     return f"{path}|{check}"
 
 
+def clang_tidy_version() -> str:
+    """The tool that produced this run, e.g. `clang-tidy 23.1.5`.
+
+    The baseline is only comparable across the same analyzer version (the
+    CI image's clang-tidy reports more readability findings than a local
+    23.1.4 run). Record the real version instead of a hard-coded string so
+    a toolchain bump shows up in the diff.
+    """
+    try:
+        out = subprocess.run(["clang-tidy", "--version"], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return "clang-tidy unknown"
+    for line in (out.stdout or out.stderr).splitlines():
+        parts = line.strip().split()
+        if len(parts) >= 3 and parts[0] == "LLVM" and parts[1] == "version":
+            return f"clang-tidy {parts[2]}"
+    return "clang-tidy unknown"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -290,7 +309,7 @@ def main() -> int:
 
     if args.update_baseline:
         payload = {
-            "generated_with": "clang-tidy 23.1.4",
+            "generated_with": clang_tidy_version(),
             "scopes": list(scopes),
             "total": sum(total.values()),
             "counts": dict(sorted(total.items())),

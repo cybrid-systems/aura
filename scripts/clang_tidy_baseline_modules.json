@@ -1,5 +1,5 @@
 {
-  "generated_with": "clang-tidy 23.1.4",
+  "generated_with": "clang-tidy 23.1.5",
   "scopes": [
     "src/core",
     "src/parser",
@@ -8,7 +8,7 @@
     "src/exec",
     "src/compiler"
   ],
-  "total": 42851,
+  "total": 42867,
   "counts": {
     "/usr/include/c++/16/bits/stl_algobase.h|misc-no-recursion": 1,
     "/usr/include/c++/16/bits/stl_construct.h|misc-no-recursion": 1,
@@ -103,7 +103,7 @@
     "src/compiler/evaluator.ixx|performance-faster-string-find,performance-prefer-single-char-overloads": 2,
     "src/compiler/evaluator.ixx|performance-move-const-arg": 3,
     "src/compiler/evaluator.ixx|performance-unnecessary-value-param": 1,
-    "src/compiler/evaluator.ixx|readability-identifier-length": 1453,
+    "src/compiler/evaluator.ixx|readability-identifier-length": 1461,
     "src/compiler/evaluator.ixx|readability-implicit-bool-conversion": 756,
     "src/compiler/evaluator_pure.ixx|bugprone-exception-escape": 1,
     "src/compiler/evaluator_pure.ixx|cppcoreguidelines-pro-bounds-array-to-pointer-decay": 4,
@@ -520,7 +520,7 @@
     "src/core/ast.ixx|modernize-use-auto": 8,
     "src/core/ast.ixx|modernize-use-nodiscard": 7,
     "src/core/ast.ixx|performance-enum-size": 2,
-    "src/core/ast.ixx|readability-identifier-length": 400,
+    "src/core/ast.ixx|readability-identifier-length": 408,
     "src/core/ast.ixx|readability-implicit-bool-conversion": 21,
     "src/core/ast_mutation_pipeline.ixx|misc-include-cleaner": 4,
     "src/core/ast_mutation_pipeline.ixx|readability-identifier-length": 3,

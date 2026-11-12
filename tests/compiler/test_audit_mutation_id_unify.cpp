@@ -927,6 +927,81 @@ static void ac3843_2_soft_mid1_unchanged() {
     CHECK(last_mid == 1, "3843 AC2: Soft observe stamp mid=1 preserved (#2493 AC4 / #3594)");
 }
 
+// Brace-matched block extractor: from byte offset `from`, find the first
+// '{' and return that brace block (open..matching close) as a string,
+// skipping braces inside string/char literals and // /* */ comments.
+// Empty when no '{' follows or the block is unterminated. Replaces the
+// fixed-size windows (2800 → 4200, drift-bait): the body itself is the
+// window, so only structural changes go red.
+static std::string brace_block_after(const std::string& text, std::size_t from) {
+    const auto open = text.find('{', from);
+    if (open == std::string::npos)
+        return {};
+    int depth = 0;
+    bool in_str = false, in_chr = false, in_line = false, in_blk = false;
+    for (std::size_t i = open; i < text.size(); ++i) {
+        const char c = text[i];
+        const char n = i + 1 < text.size() ? text[i + 1] : '\0';
+        if (in_line) {
+            if (c == '\n')
+                in_line = false;
+            continue;
+        }
+        if (in_blk) {
+            if (c == '*' && n == '/') {
+                in_blk = false;
+                ++i;
+            }
+            continue;
+        }
+        if (in_str) {
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
+            if (c == '"')
+                in_str = false;
+            continue;
+        }
+        if (in_chr) {
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
+            if (c == '\'')
+                in_chr = false;
+            continue;
+        }
+        if (c == '/' && n == '/') {
+            in_line = true;
+            ++i;
+            continue;
+        }
+        if (c == '/' && n == '*') {
+            in_blk = true;
+            ++i;
+            continue;
+        }
+        if (c == '"') {
+            in_str = true;
+            continue;
+        }
+        if (c == '\'') {
+            in_chr = true;
+            continue;
+        }
+        if (c == '{') {
+            ++depth;
+        } else if (c == '}') {
+            --depth;
+            if (depth == 0)
+                return text.substr(open, i - open + 1);
+        }
+    }
+    return {};
+}
+
+
 static void ac3843_3_source_cite_wiring_no_invent() {
     std::println("\n--- #3843 AC3: source-cite + linter/manifest/grandfather + no invent ---");
     const auto sec = read_file("src/compiler/evaluator_security.cpp");
@@ -942,7 +1017,8 @@ static void ac3843_3_source_cite_wiring_no_invent() {
     // Hard gate must OR Full — not production_defaults alone (the residual).
     const auto re = sec.find("bool Evaluator::require_effect");
     CHECK(re != std::string::npos, "3843 AC3: require_effect present");
-    const auto re_win = sec.substr(re, 5000);
+    // Window = brace-matched function body (drift-proof; was fixed 5000).
+    const auto re_win = brace_block_after(sec, re);
     CHECK(re_win.find("production_defaults_active()") != std::string::npos &&
               re_win.find("AuditStrategy::Full") != std::string::npos,
           "3843 AC3: require_effect hard = production_defaults || Full");
@@ -1440,80 +1516,6 @@ static void ac3994_2_soft_unchanged() {
     CHECK(g_typed_mutation_audit_counters.audits_considered.load() == before,
           "3994 AC2: Soft/Off does not emit Typed correlate");
     reset_all();
-}
-
-// Brace-matched block extractor: from byte offset `from`, find the first
-// '{' and return that brace block (open..matching close) as a string,
-// skipping braces inside string/char literals and // /* */ comments.
-// Empty when no '{' follows or the block is unterminated. Replaces the
-// fixed-size windows (2800 → 4200, drift-bait): the body itself is the
-// window, so only structural changes go red.
-static std::string brace_block_after(const std::string& text, std::size_t from) {
-    const auto open = text.find('{', from);
-    if (open == std::string::npos)
-        return {};
-    int depth = 0;
-    bool in_str = false, in_chr = false, in_line = false, in_blk = false;
-    for (std::size_t i = open; i < text.size(); ++i) {
-        const char c = text[i];
-        const char n = i + 1 < text.size() ? text[i + 1] : '\0';
-        if (in_line) {
-            if (c == '\n')
-                in_line = false;
-            continue;
-        }
-        if (in_blk) {
-            if (c == '*' && n == '/') {
-                in_blk = false;
-                ++i;
-            }
-            continue;
-        }
-        if (in_str) {
-            if (c == '\\') {
-                ++i;
-                continue;
-            }
-            if (c == '"')
-                in_str = false;
-            continue;
-        }
-        if (in_chr) {
-            if (c == '\\') {
-                ++i;
-                continue;
-            }
-            if (c == '\'')
-                in_chr = false;
-            continue;
-        }
-        if (c == '/' && n == '/') {
-            in_line = true;
-            ++i;
-            continue;
-        }
-        if (c == '/' && n == '*') {
-            in_blk = true;
-            ++i;
-            continue;
-        }
-        if (c == '"') {
-            in_str = true;
-            continue;
-        }
-        if (c == '\'') {
-            in_chr = true;
-            continue;
-        }
-        if (c == '{') {
-            ++depth;
-        } else if (c == '}') {
-            --depth;
-            if (depth == 0)
-                return text.substr(open, i - open + 1);
-        }
-    }
-    return {};
 }
 
 static void ac3994_3_source_cite() {

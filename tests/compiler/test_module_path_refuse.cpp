@@ -127,6 +127,79 @@ static void ac6_source_validator() {
           "AC6: pure-digit refuse");
 }
 
+// Brace-matched block extractor: from byte offset `from`, find the first
+// '{' and return that brace block (open..matching close) as a string,
+// skipping braces inside string/char literals and // /* */ comments.
+// Empty when no '{' follows or the block is unterminated. Fixed-size
+// windows drift-bait as the function body grows; the body is the window.
+static std::string brace_block_after(const std::string& text, std::size_t from) {
+    const auto open = text.find('{', from);
+    if (open == std::string::npos)
+        return {};
+    int depth = 0;
+    bool in_str = false, in_chr = false, in_line = false, in_blk = false;
+    for (std::size_t i = open; i < text.size(); ++i) {
+        const char c = text[i];
+        const char n = i + 1 < text.size() ? text[i + 1] : '\0';
+        if (in_line) {
+            if (c == '\n')
+                in_line = false;
+            continue;
+        }
+        if (in_blk) {
+            if (c == '*' && n == '/') {
+                in_blk = false;
+                ++i;
+            }
+            continue;
+        }
+        if (in_str) {
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
+            if (c == '"')
+                in_str = false;
+            continue;
+        }
+        if (in_chr) {
+            if (c == '\\') {
+                ++i;
+                continue;
+            }
+            if (c == '\'')
+                in_chr = false;
+            continue;
+        }
+        if (c == '/' && n == '/') {
+            in_line = true;
+            ++i;
+            continue;
+        }
+        if (c == '/' && n == '*') {
+            in_blk = true;
+            ++i;
+            continue;
+        }
+        if (c == '"') {
+            in_str = true;
+            continue;
+        }
+        if (c == '\'') {
+            in_chr = true;
+            continue;
+        }
+        if (c == '{') {
+            ++depth;
+        } else if (c == '}') {
+            --depth;
+            if (depth == 0)
+                return text.substr(open, i - open + 1);
+        }
+    }
+    return {};
+}
+
 static void ac3266_1_realpath_then_lstat() {
     std::println("\n--- #3266 AC1: realpath first, then lstat canonical ---");
     const auto loader = read_file("src/compiler/evaluator_module_loader.cpp");
@@ -147,7 +220,8 @@ static void ac3266_2_validate_before_lock() {
     const auto loader = read_file("src/compiler/evaluator_module_loader.cpp");
     auto pos = loader.find("Evaluator::load_module_file");
     CHECK(pos != std::string::npos, "3266 AC2: load_module_file");
-    auto win = loader.substr(pos, 1600);
+    // Window = brace-matched function body (drift-proof; was fixed 1600).
+    auto win = brace_block_after(loader, pos);
     auto val = win.find("is_plausible_module_path(path)");
     auto lock = win.find("std::scoped_lock interlock(compact_env_frames_lock_)");
     CHECK(val != std::string::npos && lock != std::string::npos && val < lock,

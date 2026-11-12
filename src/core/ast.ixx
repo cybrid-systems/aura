@@ -504,10 +504,17 @@ public:
         if (ds == 0)
             return 0.0;
         const std::size_t sb = string_bytes_total_unlocked();
-        // Under the same lock ds >= live string packing; clamp for AC2.
-        if (sb >= ds)
+        // Issue #5195 residual: every entry now carries a 4-byte length
+        // prefix (length-prefixed StringPool, 8471b734). Those header bytes
+        // are used storage, not dead gaps: an empty pool (one sentinel
+        // entry) must report 0.0 fragmentation, not 80%. string_bytes_total
+        // keeps its content+NUL contract, so the headers are added here
+        // (one per live entry plus the leading sentinel).
+        const std::size_t used = sb + kEntryHeader * (static_cast<std::size_t>(entry_count_) + 1);
+        // Under the same lock ds >= live packing; clamp for AC2.
+        if (used >= ds)
             return 0.0;
-        return static_cast<double>(ds - sb) / static_cast<double>(ds);
+        return static_cast<double>(ds - used) / static_cast<double>(ds);
     }
 
     // Issue #2408 / #2409: string_bytes walk under caller-held lock.
