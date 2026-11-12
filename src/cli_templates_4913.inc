@@ -343,7 +343,7 @@ jobs:
 (define rows
   (let loop ((acc '()))
     (let ((m (channel:try-recv out)))
-      (if (equal? m "") (reverse acc) (loop (cons m acc))))))
+      (if m (loop (cons m acc)) (reverse acc)))))
 
 (for-each
  (lambda (row)
