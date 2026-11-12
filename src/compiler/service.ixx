@@ -56,6 +56,7 @@ module;
 #include <cerrno>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #ifndef AURA_BUILD_GIT_SHA
 #define AURA_BUILD_GIT_SHA "unknown"
 #endif
@@ -6094,7 +6095,8 @@ public:
             return false;
         if (st.st_uid != static_cast<uid_t>(::geteuid()))
             return false;
-        if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0)
+        const auto shared_write = static_cast<mode_t>(S_IWGRP) | static_cast<mode_t>(S_IWOTH);
+        if ((st.st_mode & shared_write) != 0)
             return false;
         return true;
     }
