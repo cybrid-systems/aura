@@ -88,8 +88,9 @@ aura_macro_self_evo_count_fibers_meeting_filter(std::uint64_t min_violations,
 extern "C" std::uint64_t aura_macro_self_evo_get_fiber_violation_budget(void) noexcept;
 extern "C" std::uint64_t aura_macro_self_evo_fiber_violation_deny_total_v_read(void) noexcept;
 // Issue #2095: postmortem hook for default-LLVM reemit failures.
-// env-gated via AURA_REEMIT_KEEP_FAIL; rename to /tmp/aura_reemit_failed/.
+// env-gated via AURA_REEMIT_KEEP_FAIL; rename into a private directory.
 extern "C" int aura_reemit_keep_fail_enabled(void);
+extern "C" const char* aura_reemit_keep_fail_debug_dir(void);
 extern "C" std::uint64_t aura_fiber_init_aura_result_err_total();
 extern "C" std::uint64_t aura_fiber_init_aura_result_ok_total();
 extern "C" std::uint64_t aura_fiber_join_linear_enforcement_total();
@@ -15289,8 +15290,7 @@ void AotStats::emit_joint_version_fields(Kv& kv, Heap& string_heap) const {
              [&] {
                  // Keep string_heap_ push adjacent to make_string so
                  // #1668 dead-heap audit sees a real use (window ≤120).
-                 constexpr const char* kKeepFailDebugDir = "/tmp/aura_reemit_failed";
-                 auto kfdd_idx = string_heap.mint(kKeepFailDebugDir);
+                 auto kfdd_idx = string_heap.mint(aura_reemit_keep_fail_debug_dir());
                  return make_string(kfdd_idx);
              }()},
             {"schema-2095", make_int(2095)},
@@ -15555,8 +15555,7 @@ void AotReemitStats::emit_reemit_core_fields(Kv& kv, Heap& string_heap) const {
              [&] {
                  // Keep string_heap_ push adjacent to make_string so
                  // #1668 dead-heap audit sees a real use (window ≤120).
-                 constexpr const char* kDebugDir = "/tmp/aura_reemit_failed";
-                 auto dd_idx = string_heap.mint(kDebugDir);
+                 auto dd_idx = string_heap.mint(aura_reemit_keep_fail_debug_dir());
                  return make_string(dd_idx);
              }()},
             // Issue #2252: hard-reject native execution when AOT

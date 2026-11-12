@@ -211,6 +211,11 @@ if(AURA_BUILD_GIT_SHA STREQUAL "")
 endif()
 set_property(SOURCE src/main.cpp APPEND PROPERTY COMPILE_DEFINITIONS
     "AURA_BUILD_VERSION=\"${AURA_BUILD_VERSION}\"" "AURA_BUILD_GIT_SHA=\"${AURA_BUILD_GIT_SHA}\"")
+# Issue #5213: module disk-cache keys must change with the binary. The
+# compiler module does not compile main.cpp, so the same SHA is attached
+# to the service TU that builds the cache path.
+set_property(SOURCE src/compiler/service.ixx APPEND PROPERTY COMPILE_DEFINITIONS
+    "AURA_BUILD_GIT_SHA=\"${AURA_BUILD_GIT_SHA}\"")
 # Issue #5036: the REPL banner prints the same version token as
 # `aura --version`, so the REPL TU needs the same definition.
 set_property(SOURCE src/repl/repl.cppm APPEND PROPERTY COMPILE_DEFINITIONS

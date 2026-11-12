@@ -106,6 +106,15 @@ template <typename T> struct is_std_array : std::false_type {};
 template <typename T, std::size_t N> struct is_std_array<std::array<T, N>> : std::true_type {};
 template <typename T> constexpr bool is_std_array_v = is_std_array<T>::value;
 
+template <typename T> struct is_std_shared_ptr : std::false_type {};
+template <typename T> struct is_std_shared_ptr<std::shared_ptr<T>> : std::true_type {};
+template <typename T> constexpr bool is_std_shared_ptr_v = is_std_shared_ptr<T>::value;
+
+template <typename T> struct is_std_unique_ptr : std::false_type {};
+template <typename T, typename D>
+struct is_std_unique_ptr<std::unique_ptr<T, D>> : std::true_type {};
+template <typename T> constexpr bool is_std_unique_ptr_v = is_std_unique_ptr<T>::value;
+
 template <typename T> struct is_std_optional : std::false_type {};
 template <typename T> struct is_std_optional<std::optional<T>> : std::true_type {};
 template <typename T> constexpr bool is_std_optional_v = is_std_optional<T>::value;
@@ -1474,17 +1483,24 @@ public:
             pos_ += n;
     }
 
-    bool valid() const { return data_ != nullptr && pos_ <= size_; }
+    bool valid() const { return data_ != nullptr && pos_ <= size_ && !failed_; }
+    bool failed() const { return failed_; }
+    void fail() noexcept {
+        failed_ = true;
+        pos_ = size_;
+    }
     void reset(const char* d, std::size_t sz) {
         data_ = d;
         size_ = sz;
         pos_ = 0;
+        failed_ = false;
     }
 
 private:
     const char* data_ = nullptr;
     std::size_t size_ = 0;
     std::size_t pos_ = 0;
+    bool failed_ = false;
 };
 
 
@@ -1665,10 +1681,42 @@ template <typename T> void bin_write(Buffer& buf, const T& val) {
 }
 
 
+// Lower bound on the bytes bin_write emits for one value. Used to reject
+// a vector count before resize (#5213). Zero means "no positive lower
+// bound" (opaque pointer-like members); callers then cap the count by
+// the remaining byte length so 0xffffffff cannot allocate.
+template <typename T> consteval std::size_t min_serialized_size() {
+    if constexpr (std::is_enum_v<T>) {
+        return 1;
+    } else if constexpr (is_std_string_v<T> || is_std_vector_v<T>) {
+        return 4;
+    } else if constexpr (is_std_shared_ptr_v<T> || is_std_unique_ptr_v<T>) {
+        return 0;
+    } else if constexpr (is_std_array_v<T>) {
+        return std::tuple_size_v<T> * min_serialized_size<typename T::value_type>();
+    } else if constexpr (std::is_pointer_v<T> || std::is_null_pointer_v<T>) {
+        return 0;
+    } else if constexpr (std::is_arithmetic_v<T>) {
+        return sizeof(T);
+    } else if constexpr (std::is_class_v<T>) {
+        std::size_t sum = 0;
+        static constexpr auto aura_members = get_data_members<T>();
+        template for (constexpr auto m : aura_members) {
+            constexpr auto member_type = std::meta::type_of(m);
+            sum += min_serialized_size<typename[:member_type:]>();
+        }
+        return sum;
+    } else {
+        return 0;
+    }
+}
+
 // ── bin_read — recursive binary deserializer ───────────────────
 // Reads into a reference. Handles same type set as bin_write.
 
 template <typename T> void bin_read(BufferReader& reader, T& val) {
+    if (reader.failed())
+        return;
     if constexpr (std::is_enum_v<T>) {
         // Enums → read uint8, cast
         auto v = reader.read<std::uint8_t>();
@@ -1684,9 +1732,18 @@ template <typename T> void bin_read(BufferReader& reader, T& val) {
         reader.seek(len);
 
     } else if constexpr (is_std_vector_v<T>) {
-        // Vector → count + elements (recursive)
-
+        // Vector → count + elements (recursive). Bound the count by the
+        // bytes still in the buffer before resize. A 0xffffffff count must
+        // not allocate (#5213).
         auto sz = reader.read<std::uint32_t>();
+        using Elem = typename T::value_type;
+        constexpr auto elem_min = min_serialized_size<Elem>();
+        const auto remain = reader.remaining();
+        const auto max_count = elem_min == 0 ? remain : remain / elem_min;
+        if (static_cast<std::size_t>(sz) > max_count) {
+            reader.fail();
+            return;
+        }
         val.resize(sz);
         for (auto& e : val)
             bin_read(reader, e);

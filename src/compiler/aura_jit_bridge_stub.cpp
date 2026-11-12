@@ -1482,9 +1482,12 @@ extern "C" __attribute__((weak)) void aura_hot_update_on_reemit_throttled(void) 
 // Issue #2095: weak stubs for the default-LLVM reemit postmortem hook.
 // Light test binaries that don't link the production bridge TU still
 // link cleanly; the real impl reads AURA_REEMIT_KEEP_FAIL env and
-// renames failed .o into /tmp/aura_reemit_failed/.
+// renames failed .o into a private directory when the real bridge is linked.
 extern "C" __attribute__((weak)) int aura_reemit_keep_fail_enabled(void) {
     return 0;
+}
+extern "C" __attribute__((weak)) const char* aura_reemit_keep_fail_debug_dir(void) {
+    return "";
 }
 extern "C" __attribute__((weak)) void aura_reemit_keep_failed_obj(const char* /*obj_path*/,
                                                                   const char* /*reason*/) {}

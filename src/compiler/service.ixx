@@ -53,8 +53,12 @@ module;
 #include "typed_mutation_audit.h" // Issue #1884: TypeProp ↔ invariant correlation
 #include "linear_occurrence_mutate_stats.h"
 #include "shape_jit_pass_closedloop_stats.h"
+#include <cerrno>
 #include <unistd.h>
 #include <sys/stat.h>
+#ifndef AURA_BUILD_GIT_SHA
+#define AURA_BUILD_GIT_SHA "unknown"
+#endif
 #include <poll.h>
 #include "serve/fiber.h"
 #include "serve/gc_coordinator.h"
@@ -6075,17 +6079,44 @@ public:
 
     // ── Cache helpers ────────────────────────────────────────────
 
-    // Cache directory for compiled modules (~/.cache/aura/modules/)
-    static std::string module_cache_dir() {
-        auto home = std::getenv("HOME");
-        if (!home)
-            return "/tmp/aura-cache/modules/";
-        return std::string(home) + "/.cache/aura/modules/";
+    // Leaf directory must be a real directory owned by this euid with no
+    // group/other write. A symlink or a shared /tmp directory is a miss.
+    static bool module_cache_dir_trusted(const std::string& dir) {
+        std::string leaf = dir;
+        while (!leaf.empty() && (leaf.back() == '/' || leaf.back() == '\\'))
+            leaf.pop_back();
+        if (leaf.empty())
+            return false;
+        struct stat st;
+        if (::lstat(leaf.c_str(), &st) != 0)
+            return false;
+        if (!S_ISDIR(st.st_mode))
+            return false;
+        if (st.st_uid != static_cast<uid_t>(::geteuid()))
+            return false;
+        if ((st.st_mode & (S_IWGRP | S_IWOTH)) != 0)
+            return false;
+        return true;
     }
 
-    // Cache file path for a module name + source content hash.
-    // The hash prevents loading stale cache when source changes.
+    // $XDG_CACHE_HOME/aura/modules, else $HOME/.cache/aura/modules.
+    // Both unset: disk cache disabled (no shared /tmp fallback). #5213
+    static std::string module_cache_dir() {
+        if (const char* xdg = std::getenv("XDG_CACHE_HOME"); xdg && xdg[0] != '\0')
+            return std::string(xdg) + "/aura/modules/";
+        if (const char* home = std::getenv("HOME"); home && home[0] != '\0')
+            return std::string(home) + "/.cache/aura/modules/";
+        return {};
+    }
+
+    // Cache file path for a module name + source content hash + build SHA.
+    // The hash prevents loading stale cache when source changes. The SHA
+    // keeps one binary from executing another's IR (#5213). Empty when the
+    // disk cache is disabled.
     static std::string module_cache_path(const std::string& name, const std::string& source = "") {
+        const auto dir = module_cache_dir();
+        if (dir.empty())
+            return {};
         auto sanitized = name;
         if (sanitized.empty())
             sanitized = "__default__";
@@ -6098,13 +6129,40 @@ public:
             auto h = std::hash<std::string>{}(source);
             sanitized += "_" + std::to_string(h);
         }
-        return module_cache_dir() + sanitized + ".abfc";
+        std::string sha = AURA_BUILD_GIT_SHA;
+        for (auto& c : sha) {
+            const bool hex =
+                (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+            if (!hex)
+                c = '_';
+        }
+        if (sha.empty())
+            sha = "unknown";
+        sanitized += "_";
+        sanitized += sha;
+        return dir + sanitized + ".abfc";
     }
 
-    // Ensure cache directory exists
-    static void ensure_cache_dir() {
+    // Create the leaf at 0700. An existing untrusted directory is not
+    // chmod'd; the caller skips the write.
+    static bool ensure_cache_dir() {
+        const auto dir = module_cache_dir();
+        if (dir.empty())
+            return false;
+        if (module_cache_dir_trusted(dir))
+            return true;
+        std::string leaf = dir;
+        while (!leaf.empty() && leaf.back() == '/')
+            leaf.pop_back();
+        const auto slash = leaf.find_last_of('/');
+        const std::string parent =
+            slash == std::string::npos ? std::string{} : leaf.substr(0, slash);
         std::error_code ec;
-        std::filesystem::create_directories(module_cache_dir(), ec);
+        if (!parent.empty())
+            std::filesystem::create_directories(parent, ec);
+        if (::mkdir(leaf.c_str(), 0700) != 0 && errno != EEXIST)
+            return false;
+        return module_cache_dir_trusted(dir);
     }
 
     // Mark a module dirty when one of its IR dependencies changes.
@@ -6191,9 +6249,12 @@ public:
         // inline DefFinder struct in compile_module).
         auto finder = aura::compiler::find_top_level_defines(flat, pool, expanded);
 
-        // Try disk cache: load cached IR bundles to skip lowering
+        // Try disk cache: load cached IR bundles to skip lowering.
+        // An empty path (HOME and XDG unset) is a miss, not /tmp.
         auto cache_path = module_cache_path(name, source);
-        auto cached = aura::compiler::cache::open_cache(cache_path);
+        aura::compiler::cache::MappedCache cached;
+        if (!cache_path.empty())
+            cached = aura::compiler::cache::open_cache(cache_path);
         bool cache_hit = cached.valid() && cached.has_ir();
         if (cache_hit) {
             auto& all_funcs = cached.ir_functions();
@@ -6280,8 +6341,7 @@ public:
 
         // Write disk cache (only when not loaded from cache).
         // Issue #272 Cycle 4: use pre-bind snapshots (captured in cache_define).
-        if (!cache_hit) {
-            ensure_cache_dir();
+        if (!cache_hit && ensure_cache_dir()) {
             auto cache_path = module_cache_path(name, source);
             aura::ir::IRModule disk_mod;
             for (auto& [fname, _] : finder) {
@@ -11910,20 +11970,22 @@ public:
         if (sanitized.empty())
             sanitized = "__default__";
         auto dir = module_cache_dir();
-        try {
-            for (auto& entry : std::filesystem::directory_iterator(dir)) {
-                auto fn = entry.path().filename().string();
-                if (fn.starts_with(sanitized) && fn.ends_with(".abfc")) {
-                    aura::compiler::cache::remove_cache(entry.path().string());
+        if (!dir.empty() && module_cache_dir_trusted(dir)) {
+            try {
+                for (auto& entry : std::filesystem::directory_iterator(dir)) {
+                    auto fn = entry.path().filename().string();
+                    if (fn.starts_with(sanitized) && fn.ends_with(".abfc")) {
+                        aura::compiler::cache::remove_cache(entry.path().string());
+                    }
                 }
+            } catch (...) {
+                // [SILENCE-PRIM-#615] directory_iterator / cache unlink
+                // best-effort; always fall through to legacy path remove
+                // (#1669 class B intentional-state).
             }
-        } catch (...) {
-            // [SILENCE-PRIM-#615] directory_iterator / cache unlink
-            // best-effort; always fall through to legacy path remove
-            // (#1669 class B intentional-state).
+            // Also try without hash (legacy format)
+            aura::compiler::cache::remove_cache(dir + sanitized + ".abfc");
         }
-        // Also try without hash (legacy format)
-        aura::compiler::cache::remove_cache(module_cache_dir() + sanitized + ".abfc");
     }
 
     // Check if a module is loaded

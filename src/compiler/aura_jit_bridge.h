@@ -207,9 +207,11 @@ extern "C" void aura_hot_update_set_shape_storm_active(int active);
 
 // Issue #2095: postmortem hook for default-LLVM reemit failures.
 // env-gated via AURA_REEMIT_KEEP_FAIL=1 (or AURA_REEMIT_KEEP_FAIL_N>0).
-// When enabled, the failed .o is renamed into /tmp/aura_reemit_failed/
-// instead of being removed so the Agent can inspect with llvm-objdump.
+// When enabled, the failed .o is renamed into a private 0700 directory
+// (mkdtemp) instead of being removed so the Agent can inspect with
+// llvm-objdump. The directory is not a fixed /tmp name.
 extern "C" int aura_reemit_keep_fail_enabled(void);
+extern "C" const char* aura_reemit_keep_fail_debug_dir(void);
 extern "C" void aura_reemit_keep_failed_obj(const char* obj_path, const char* reason);
 
 // Issue #2093: structured reload-failure reason codes. Agents branch

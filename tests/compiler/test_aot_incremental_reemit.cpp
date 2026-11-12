@@ -1158,10 +1158,10 @@ static void ac13a_reemit_fail_counter() {
     (void)fail_before; // fail counter bump site covered by AC13c + linter
 }
 
-// Issue #2095 AC2: AURA_REEMIT_KEEP_FAIL env keeps failed .o in
-// /tmp/aura_reemit_failed/ for postmortem. The helper is a pure
-// file-rename operation so we can test it without spinning up the
-// full reemit pipeline.
+// Issue #2095 AC2: AURA_REEMIT_KEEP_FAIL env keeps failed .o in a
+// private mkdtemp directory for postmortem (#5213). The helper is a
+// pure file-rename operation so we can test it without spinning up
+// the full reemit pipeline.
 static void ac13b_reemit_keep_fail() {
     std::println("\n--- AC13b: #2095 AURA_REEMIT_KEEP_FAIL keeps failed .o ---");
     // Unset: keep-fail disabled.

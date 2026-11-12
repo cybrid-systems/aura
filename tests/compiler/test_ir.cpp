@@ -7,11 +7,16 @@
 
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
-#include <cstdlib>  // setenv / unsetenv (#4321)
+#include <cstdlib>  // setenv / unsetenv (#4321), mkdtemp (#5213)
+#include <stdlib.h> // mkdtemp
 #include <fstream>  // #5051 source-cite
 #include <iterator> // #5051 source-cite
 #include <print>    // #5051 AC output
 #include <string>   // #5051 AC output
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include "reflect/cache_format.h"
 
 import std;
 import aura.core;
@@ -768,12 +773,241 @@ bool test_character_literal_4129() {
     return failed == 0;
 }
 
+// Issue #5213: malformed module caches are misses, not crashes.
+static bool test_module_cache_untrusted_5213() {
+    using aura::compiler::cache::open_cache;
+    using aura::compiler::cache::write_cache;
+    int failed = 0;
+    auto expect = [&](bool cond, const char* msg) {
+        if (cond) {
+            std::println("5213 OK: {}", msg);
+            return;
+        }
+        std::println(std::cerr, "5213 FAIL: {}", msg);
+        ++failed;
+    };
+
+    char tmpl[] = "/tmp/aura-cache5213-XXXXXX";
+    char* made = ::mkdtemp(tmpl);
+    expect(made != nullptr, "private cache dir");
+    if (!made)
+        return false;
+    const std::string dir = made;
+    const auto trusted = dir + "/round.abfc";
+
+    auto write_raw = [&](const std::string& path, const void* data, std::size_t n) {
+        int fd = ::open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY | O_CLOEXEC | O_NOFOLLOW, 0600);
+        if (fd < 0)
+            return false;
+        const auto* p = static_cast<const char*>(data);
+        std::size_t done = 0;
+        while (done < n) {
+            const auto w = ::write(fd, p + done, n - done);
+            if (w < 0) {
+                ::close(fd);
+                return false;
+            }
+            done += static_cast<std::size_t>(w);
+        }
+        ::close(fd);
+        return true;
+    };
+
+    // Real lowered IR must pass the structural gate.
+    {
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool(alloc);
+        const char* src = "(define (f x) (+ x 1))";
+        auto pr = aura::parser::parse_to_flat(src, flat, pool);
+        flat.root = pr.root;
+        auto mod = aura::compiler::lower_to_ir(flat, pool, arena);
+        expect(aura::ir::validate_ir_module(mod), "lowered IR validates");
+        if (!mod.functions.empty() && !mod.functions[0].blocks.empty() &&
+            !mod.functions[0].blocks[0].instructions.empty()) {
+            auto bad = mod;
+            bad.functions[0].blocks[0].instructions[0].opcode =
+                static_cast<aura::ir::IROpcode>(255);
+            expect(!aura::ir::validate_ir_module(bad), "opcode 255 rejected");
+        }
+        if (!mod.functions.empty() && !mod.functions[0].blocks.empty()) {
+            auto bad = mod;
+            bad.functions[0].blocks[0].instructions.clear();
+            aura::ir::IRInstruction jump;
+            jump.opcode = aura::ir::IROpcode::Jump;
+            jump.operands = {99, 0, 0, 0};
+            bad.functions[0].blocks[0].instructions.push_back(jump);
+            expect(!aura::ir::validate_ir_module(bad), "illegal jump rejected");
+        }
+        expect(write_cache(trusted, flat, pool, flat.root, 1, &mod, nullptr), "write trusted");
+        auto mc = open_cache(trusted);
+        expect(mc.valid() && mc.has_ir(), "round-trip IR accepted");
+    }
+
+    // Symlink to a real cache is a miss (O_NOFOLLOW).
+    {
+        const auto link = dir + "/link.abfc";
+        ::unlink(link.c_str());
+        expect(::symlink(trusted.c_str(), link.c_str()) == 0, "symlink created");
+        expect(!open_cache(link).valid(), "symlink file is a miss");
+        ::unlink(link.c_str());
+    }
+
+    // Group/other-writable directory is a miss, including write_cache.
+    {
+        const auto loose = dir + "/loose";
+        ::mkdir(loose.c_str(), 0700);
+        ::chmod(loose.c_str(), 0777);
+        const auto loose_file = loose + "/x.abfc";
+        char byte = 0;
+        write_raw(loose_file, &byte, 1);
+        expect(!open_cache(loose_file).valid(), "group-writable dir is a miss");
+        aura::ast::ASTArena arena;
+        auto alloc = arena.allocator();
+        aura::ast::FlatAST flat(alloc);
+        aura::ast::StringPool pool(alloc);
+        flat.root = flat.add_literal(1);
+        expect(!write_cache(loose_file, flat, pool, flat.root, 0, nullptr, nullptr),
+               "write refuses loose dir");
+    }
+
+    // Parent /tmp is not owned by the euid (or is other-writable).
+    {
+        const char* shared = "/tmp/aura_5213_shared.abfc";
+        char byte = 0;
+        write_raw(shared, &byte, 1);
+        expect(!open_cache(shared).valid(), "shared /tmp file is a miss");
+        ::unlink(shared);
+    }
+
+    auto miss_file = [&](const std::string& name, const std::string& bytes, const char* msg) {
+        const auto path = dir + "/" + name;
+        write_raw(path, bytes.data(), bytes.size());
+        expect(!open_cache(path).valid(), msg);
+        ::unlink(path.c_str());
+    };
+
+    miss_file("trunc.abfc", std::string(10, '\0'), "truncated file is a miss");
+
+    {
+        CacheHeader hdr{};
+        std::memcpy(hdr.magic, "AURACACHE", 8);
+        hdr.version = 5;
+        hdr.num_nodes = 1;
+        hdr.node_offset = 100000;
+        hdr.num_functions = 0;
+        std::string bytes(200, '\0');
+        std::memcpy(bytes.data(), &hdr, sizeof(hdr));
+        miss_file("off.abfc", bytes, "node_offset past end is a miss");
+    }
+
+    {
+        CacheHeader hdr{};
+        std::memcpy(hdr.magic, "AURACACHE", 8);
+        hdr.version = 5;
+        hdr.num_nodes = 1000000;
+        hdr.node_offset = 72;
+        hdr.num_functions = 0;
+        std::string bytes(128, '\0');
+        std::memcpy(bytes.data(), &hdr, sizeof(hdr));
+        miss_file("huge.abfc", bytes, "huge num_nodes in a small file is a miss");
+    }
+
+    // v5 IR blob whose first vector count is 0xffffffff. Must miss, not OOM.
+    {
+        constexpr std::uint32_t n = 1;
+        auto pad8 = [](std::uint64_t v) { return (v + 7) & ~7ull; };
+        std::uint64_t off = sizeof(CacheHeader);
+        off += pad8(n);
+        off += pad8(n * 8);
+        off += pad8(n * 4); // syms
+        off += pad8(n * 4); // child counts
+        off += pad8(0);     // child data
+        off += pad8(n * 4); // param begins
+        off += pad8(n * 4); // param counts
+        off += pad8(0);     // param data
+        off += pad8(n * 4); // lines
+        off += pad8(n * 4); // cols
+        off += pad8(n * 4); // type ids
+        const auto str_off = off;
+        off += 4; // num_strings = 0
+        const auto ir_off = off;
+        const std::uint32_t ir_size = 4;
+        const std::uint32_t huge = 0xffffffffu;
+        std::string bytes(static_cast<std::size_t>(ir_off + 4 + 4), '\0');
+        CacheHeader hdr{};
+        std::memcpy(hdr.magic, "AURACACHE", 8);
+        hdr.version = 5;
+        hdr.num_nodes = n;
+        hdr.num_strings = 0;
+        hdr.num_functions = 1;
+        hdr.node_offset = sizeof(CacheHeader);
+        hdr.string_offset = str_off;
+        hdr.ir_offset = ir_off;
+        std::memcpy(bytes.data(), &hdr, sizeof(hdr));
+        std::memcpy(bytes.data() + ir_off, &ir_size, 4);
+        std::memcpy(bytes.data() + ir_off + 4, &huge, 4);
+        miss_file("vec.abfc", bytes, "vector count 0xffffffff is a miss");
+    }
+
+    // Bounded garbage must not crash.
+    std::uint32_t rng = 0x5213u;
+    for (int i = 0; i < 24; ++i) {
+        rng = rng * 1664525u + 1013904223u;
+        const auto len = 1 + (rng % 180);
+        std::string bytes(len, '\0');
+        for (std::size_t b = 0; b < bytes.size(); ++b) {
+            rng = rng * 1664525u + 1013904223u;
+            bytes[b] = static_cast<char>(rng & 0xff);
+        }
+        const auto path = dir + "/fuzz.abfc";
+        write_raw(path, bytes.data(), bytes.size());
+        (void)open_cache(path);
+        ::unlink(path.c_str());
+    }
+    expect(true, "bounded open_cache fuzz did not crash");
+
+    // HOME and XDG unset must not create the shared /tmp cache directory.
+    {
+        const char* home = std::getenv("HOME");
+        const char* xdg = std::getenv("XDG_CACHE_HOME");
+        const std::string saved_home = home ? home : "";
+        const std::string saved_xdg = xdg ? xdg : "";
+        const bool had_home = home != nullptr;
+        const bool had_xdg = xdg != nullptr;
+        ::unsetenv("HOME");
+        ::unsetenv("XDG_CACHE_HOME");
+        const bool existed = std::filesystem::exists("/tmp/aura-cache");
+        aura::compiler::CompilerService cs;
+        auto compiled =
+            cs.compile_module("aura5213_no_tmp", "(define (aura5213_no_tmp x) (+ x 1))");
+        expect(compiled.has_value(), "compile works with HOME unset");
+        if (!existed)
+            expect(!std::filesystem::exists("/tmp/aura-cache"),
+                   "HOME unset does not create /tmp cache");
+        else
+            expect(!std::filesystem::exists("/tmp/aura-cache/modules/aura5213_no_tmp.abfc"),
+                   "HOME unset does not write the shared cache name");
+        if (had_home)
+            ::setenv("HOME", saved_home.c_str(), 1);
+        if (had_xdg)
+            ::setenv("XDG_CACHE_HOME", saved_xdg.c_str(), 1);
+    }
+
+    std::filesystem::remove_all(dir);
+    return failed == 0;
+}
+
 int main() {
     // Full is the cold-start default (#2818). IR execute refuses unstamped
     // depth-0 under Full (#3224/#3414), so `(+ 1 2)` becomes
     // commit-readiness-refused and ubsan-smoke / asan-verify unit die.
     // Unit smoke is Soft: apply_dev (Sampled) before any IR/eval.
     aura::compiler::typed_audit::apply_dev_audit_defaults();
+
+    if (!test_module_cache_untrusted_5213())
+        return 1;
 
     aura::ast::ASTArena arena;
     aura::compiler::Evaluator evaluator;
@@ -1731,35 +1965,43 @@ int main() {
         }
         // Test 2: write+open cache preserves TypeId.
         {
-            const char* cache_path = "/tmp/aura_test73_cache.bin";
-            aura::ast::ASTArena arena73w;
-            auto alloc = arena73w.allocator();
-            aura::ast::FlatAST flat_w(alloc);
-            aura::ast::StringPool pool_w(alloc);
-            auto lid = flat_w.add_literal(42);
-            flat_w.set_type(lid, 9);
-            flat_w.root = lid;
-            if (!aura::compiler::cache::write_cache(cache_path, flat_w, pool_w, lid, 12345, nullptr,
-                                                    nullptr)) {
-                std::println(std::cerr, "TC73 SKIP: cache write failed (filesystem?)");
+            char tmpl73[] = "/tmp/aura-test73-XXXXXX";
+            char* dir73 = ::mkdtemp(tmpl73);
+            if (!dir73) {
+                std::println(std::cerr, "TC73 SKIP: private dir");
             } else {
-                auto mc = aura::compiler::cache::open_cache(cache_path);
-                if (!mc.valid()) {
-                    std::println(std::cerr, "TC73 FAIL: cache open failed");
-                    ++tc_failed;
-                } else if (mc.type_id(lid) != 9) {
-                    std::println(std::cerr, "TC73 FAIL: cached type_id mismatch: got {}",
-                                 mc.type_id(lid));
-                    ++tc_failed;
-                } else if (mc.get(lid).type_id != 9) {
-                    std::println(std::cerr, "TC73 FAIL: NodeView.type_id from cache: got {}",
-                                 mc.get(lid).type_id);
-                    ++tc_failed;
+                const std::string cache73 = std::string(dir73) + "/cache.bin";
+                const char* cache_path = cache73.c_str();
+                aura::ast::ASTArena arena73w;
+                auto alloc = arena73w.allocator();
+                aura::ast::FlatAST flat_w(alloc);
+                aura::ast::StringPool pool_w(alloc);
+                auto lid = flat_w.add_literal(42);
+                flat_w.set_type(lid, 9);
+                flat_w.root = lid;
+                if (!aura::compiler::cache::write_cache(cache_path, flat_w, pool_w, lid, 12345,
+                                                        nullptr, nullptr)) {
+                    std::println(std::cerr, "TC73 SKIP: cache write failed (filesystem?)");
                 } else {
-                    std::println("TC73 OK: cache round-trip preserves TypeId");
-                    ++tc_passed;
+                    auto mc = aura::compiler::cache::open_cache(cache_path);
+                    if (!mc.valid()) {
+                        std::println(std::cerr, "TC73 FAIL: cache open failed");
+                        ++tc_failed;
+                    } else if (mc.type_id(lid) != 9) {
+                        std::println(std::cerr, "TC73 FAIL: cached type_id mismatch: got {}",
+                                     mc.type_id(lid));
+                        ++tc_failed;
+                    } else if (mc.get(lid).type_id != 9) {
+                        std::println(std::cerr, "TC73 FAIL: NodeView.type_id from cache: got {}",
+                                     mc.get(lid).type_id);
+                        ++tc_failed;
+                    } else {
+                        std::println("TC73 OK: cache round-trip preserves TypeId");
+                        ++tc_passed;
+                    }
+                    std::remove(cache_path);
                 }
-                std::remove(cache_path);
+                ::rmdir(dir73);
             }
         }
         // Issue #73 Phase 5: the JIT path (aura_jit.cpp) was type-blind

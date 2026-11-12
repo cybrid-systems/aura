@@ -898,6 +898,163 @@ export struct IRModule {
     }
 };
 
+// Issue #5213: structural gate for IR loaded from an untrusted disk cache.
+// Fresh lowering does not pass through here. A false result is a cache miss
+// and a recompile, so the checks stay inside what the executor indexes.
+export [[nodiscard]] inline bool validate_ir_module(const IRModule& mod) {
+    if (mod.functions.empty() || mod.entry_function_id >= mod.functions.size())
+        return false;
+    const auto slot_ok = [](const IRFunction& fn, std::uint32_t slot) {
+        return slot < fn.local_count;
+    };
+    const auto block_ok = [](const IRFunction& fn, std::uint32_t id) {
+        return id < fn.blocks.size();
+    };
+    const auto args_fit = [](const IRFunction& fn, std::uint32_t base, std::uint32_t count) {
+        if (count == 0)
+            return true;
+        const auto end = static_cast<std::uint64_t>(base) + count;
+        return end <= fn.local_count;
+    };
+    for (const auto& fn : mod.functions) {
+        const auto region = static_cast<std::uint8_t>(fn.region);
+        if (region > static_cast<std::uint8_t>(Region::Evolution))
+            return false;
+        if (fn.generic_id != 0xFFFFFFFFu && fn.generic_id >= mod.functions.size())
+            return false;
+        if (!block_ok(fn, fn.entry_block))
+            return false;
+        for (const auto& block : fn.blocks) {
+            for (const auto succ : block.successors) {
+                if (!block_ok(fn, succ))
+                    return false;
+            }
+            for (const auto& instr : block.instructions) {
+                if (lookup_opcode(instr.opcode) == nullptr)
+                    return false;
+                const auto& ops = instr.operands;
+                switch (instr.opcode) {
+                    case IROpcode::Nop:
+                    case IROpcode::ArenaPop:
+                        break;
+                    case IROpcode::Jump:
+                        if (!block_ok(fn, ops[0]))
+                            return false;
+                        break;
+                    case IROpcode::Branch:
+                        if (!slot_ok(fn, ops[0]) || !block_ok(fn, ops[1]) || !block_ok(fn, ops[2]))
+                            return false;
+                        break;
+                    case IROpcode::TryBegin:
+                        if (!block_ok(fn, ops[0]) || !slot_ok(fn, ops[1]) || !slot_ok(fn, ops[2]))
+                            return false;
+                        break;
+                    case IROpcode::GuardShape:
+                        if (!slot_ok(fn, ops[0]) || !slot_ok(fn, ops[1]) || !block_ok(fn, ops[3]))
+                            return false;
+                        break;
+                    case IROpcode::ConstString:
+                        if (!slot_ok(fn, ops[0]) || ops[1] >= mod.string_pool.size() || ops[2] > 2)
+                            return false;
+                        break;
+                    case IROpcode::MakeClosure:
+                        if (!slot_ok(fn, ops[0]) || ops[1] >= mod.functions.size() ||
+                            ops[2] > 100000u)
+                            return false;
+                        break;
+                    case IROpcode::Call:
+                        if (!slot_ok(fn, ops[0]) || !slot_ok(fn, ops[3]) ||
+                            !args_fit(fn, ops[1], ops[2]))
+                            return false;
+                        break;
+                    case IROpcode::PrimCall:
+                        if (ops[0] >= std::size(kPrimNames) || !slot_ok(fn, ops[3]) ||
+                            !args_fit(fn, ops[1], ops[2]))
+                            return false;
+                        break;
+                    case IROpcode::Apply:
+                        if (!slot_ok(fn, ops[0]) || !slot_ok(fn, ops[2]))
+                            return false;
+                        if (ops[1] > 0) {
+                            const auto last = static_cast<std::uint64_t>(ops[0]) + ops[1];
+                            if (last >= fn.local_count)
+                                return false;
+                        }
+                        break;
+                    case IROpcode::ConstI64:
+                    case IROpcode::ConstF64:
+                    case IROpcode::Arg:
+                    case IROpcode::Return:
+                    case IROpcode::NewCell:
+                    case IROpcode::ConstBool:
+                    case IROpcode::ConstVoid:
+                    case IROpcode::TryEnd:
+                    case IROpcode::DropOp:
+                    case IROpcode::ArenaPush:
+                    case IROpcode::Primitive:
+                        if (!slot_ok(fn, ops[0]))
+                            return false;
+                        break;
+                    case IROpcode::TopCellLoad:
+                        if (!slot_ok(fn, ops[0]))
+                            return false;
+                        break;
+                    case IROpcode::TopCellStore:
+                        if (!slot_ok(fn, ops[1]))
+                            return false;
+                        break;
+                    case IROpcode::CaptureRef:
+                        if (!slot_ok(fn, ops[0]))
+                            return false;
+                        break;
+                    case IROpcode::Capture:
+                        if (!slot_ok(fn, ops[0]) || !slot_ok(fn, ops[2]))
+                            return false;
+                        break;
+                    case IROpcode::Local:
+                    case IROpcode::Not:
+                    case IROpcode::CellSet:
+                    case IROpcode::CellGet:
+                    case IROpcode::Car:
+                    case IROpcode::Cdr:
+                    case IROpcode::Raise:
+                    case IROpcode::IsError:
+                    case IROpcode::LinearWrap:
+                    case IROpcode::MoveOp:
+                    case IROpcode::BorrowOp:
+                    case IROpcode::MutBorrowOp:
+                    case IROpcode::RefCountOp:
+                    case IROpcode::CastOp:
+                        if (!slot_ok(fn, ops[0]) || !slot_ok(fn, ops[1]))
+                            return false;
+                        break;
+                    case IROpcode::Add:
+                    case IROpcode::Sub:
+                    case IROpcode::Mul:
+                    case IROpcode::Div:
+                    case IROpcode::Eq:
+                    case IROpcode::Lt:
+                    case IROpcode::Gt:
+                    case IROpcode::Le:
+                    case IROpcode::Ge:
+                    case IROpcode::And:
+                    case IROpcode::Or:
+                    case IROpcode::MakePair:
+                    case IROpcode::HashRef:
+                    case IROpcode::HashSet:
+                    case IROpcode::HashRemove:
+                        if (!slot_ok(fn, ops[0]) || !slot_ok(fn, ops[1]) || !slot_ok(fn, ops[2]))
+                            return false;
+                        break;
+                    default:
+                        return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
 // ── Issue #375: IR encoding observability snapshot ──
 //
 // Free function + struct pair that captures the AoS-vs-compact

@@ -30,7 +30,8 @@
 #include <cstdlib> // Issue #2165: getenv AURA_AOT_RELOAD_AUTO_RETRY
 #include <cstring>
 #include <format>
-#include <sys/stat.h> // Issue #2095: ::mkdir for the debug dir
+#include <sys/stat.h> // Issue #2095: private reemit directory
+#include <stdlib.h>   // mkdtemp
 #include <fstream>
 #include <limits>
 #include <mutex>
@@ -554,9 +555,9 @@ extern "C" std::uint64_t aura_long_mutation_scheduler_hook_calls_total(void) {
 
 // Issue #2095: default-LLVM reemit postmortem hook. When
 // AURA_REEMIT_KEEP_FAIL=1 (or AURA_REEMIT_KEEP_FAIL_N=count), the
-// failed .o is renamed into /tmp/aura_reemit_failed/ instead of
+// failed .o is renamed into a private 0700 directory instead of
 // being removed. Agent can then inspect with llvm-objdump /
-// llvm-dis to diagnose the actual failure.
+// llvm-dis to diagnose the actual failure. #5213: not a fixed /tmp name.
 extern "C" int aura_reemit_keep_fail_enabled(void) {
     if (const char* e = std::getenv("AURA_REEMIT_KEEP_FAIL")) {
         if (e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y')
@@ -569,11 +570,30 @@ extern "C" int aura_reemit_keep_fail_enabled(void) {
     return 0;
 }
 
+extern "C" const char* aura_reemit_keep_fail_debug_dir(void) {
+    static std::once_flag once;
+    static char storage[64];
+    static const char* path = "";
+    std::call_once(once, [] {
+        char tmpl[] = "/tmp/aura-reemit-XXXXXX";
+        if (char* made = ::mkdtemp(tmpl)) {
+            std::snprintf(storage, sizeof(storage), "%s", made);
+            path = storage;
+            std::atexit([] {
+                if (path && path[0])
+                    ::rmdir(path);
+            });
+        }
+    });
+    return path;
+}
+
 extern "C" void aura_reemit_keep_failed_obj(const char* obj_path, const char* reason) {
     if (!obj_path)
         return;
-    constexpr const char* kDebugDir = "/tmp/aura_reemit_failed";
-    ::mkdir(kDebugDir, 0755);
+    const char* debug_dir = aura_reemit_keep_fail_debug_dir();
+    if (!debug_dir || !debug_dir[0])
+        return;
     // Derive a stable suffix from the basename + sequence-ish counter so
     // multiple failures within the same second don't collide.
     static std::atomic<std::uint64_t> keep_seq{0};
@@ -581,7 +601,7 @@ extern "C" void aura_reemit_keep_failed_obj(const char* obj_path, const char* re
     const char* base = std::strrchr(obj_path, '/');
     base = base ? (base + 1) : obj_path;
     std::string dst =
-        std::format("{}/{}_{}_{}{}", kDebugDir, base, reason ? reason : "fail",
+        std::format("{}/{}_{}_{}{}", debug_dir, base, reason ? reason : "fail",
                     static_cast<unsigned long long>(seq), std::strrchr(obj_path, '.') ? "" : ".o");
     std::rename(obj_path, dst.c_str());
 }
@@ -4975,8 +4995,11 @@ static bool default_llvm_incremental_emit(const char* name, std::uint64_t region
         safe = "fn";
     static std::atomic<std::uint64_t> reemit_seq{0};
     const auto seq = reemit_seq.fetch_add(1, std::memory_order_relaxed);
+    const char* reemit_dir = aura_reemit_keep_fail_debug_dir();
+    if (!reemit_dir || !reemit_dir[0])
+        return false;
     const std::string obj_path =
-        std::format("/tmp/aura_reemit_{}_{}.o", safe, static_cast<unsigned long long>(seq));
+        std::format("{}/reemit_{}_{}.o", reemit_dir, safe, static_cast<unsigned long long>(seq));
 
     const bool ok = g_batch_deopt_jit->compile_function_to_object_by_name(name, obj_path);
     if (!ok) {
