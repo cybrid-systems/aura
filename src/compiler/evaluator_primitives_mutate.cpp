@@ -1964,6 +1964,12 @@ template <typename Ctx> void RegSplitParts::register_mutate_record_patch_primiti
                 return ev.make_merr("bad-arg",
                                     "usage: (mutate :record-patch node-id op-name summary)");
             }
+            // Issue #5164: resolve dereferences the flat. A numeric node
+            // id with no set-code used to SIGSEGV in FlatAST::size().
+            if (!ev.workspace_flat_ || !ev.workspace_pool_) {
+                ok = false;
+                return ev.make_merr("no-workspace", "no workspace AST loaded");
+            }
             aura::ast::NodeId node = aura::ast::NULL_NODE;
             if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a, "mutate:record-patch",
                                                    &ok, node);
@@ -1976,10 +1982,6 @@ template <typename Ctx> void RegSplitParts::register_mutate_record_patch_primiti
             if (op_idx >= ev.string_heap_.size() || sum_idx >= ev.string_heap_.size()) {
                 ok = false;
                 return ev.make_merr("bad-arg", "string index out of range");
-            }
-            if (!ev.workspace_flat_) {
-                ok = false;
-                return ev.make_merr("no-workspace", "no workspace AST loaded");
             }
             auto& flat = *ev.workspace_flat_;
             if (node >= flat.size()) {
@@ -3110,16 +3112,18 @@ template <typename Ctx> void RegSplitParts::register_mutate_stable_ref_policy_pr
                     "bad-arg",
                     "usage: (mutate :rollback-macro-introduced root-id [:keep-provenance? #f])");
             }
+            // Issue #5164: same order as record-patch. The null check
+            // used to sit after resolve_mutate_node_arg's dereference.
+            if (!ev.workspace_flat_ || !ev.workspace_pool_) {
+                ok = false;
+                return mev("no-workspace", "no workspace AST loaded");
+            }
             aura::ast::NodeId root = aura::ast::NULL_NODE;
             if (auto err = resolve_mutate_node_arg(*ev.workspace_flat_, a,
                                                    "mutate:rollback-macro-introduced", &ok, root);
                 !is_void(err)) {
                 ok = false;
                 return err;
-            }
-            if (!ev.workspace_flat_ || !ev.workspace_pool_) {
-                ok = false;
-                return mev("no-workspace", "no workspace AST loaded");
             }
             auto& flat = *ev.workspace_flat_;
             bool keep_provenance = false;
@@ -6775,7 +6779,25 @@ EvalValue RegSplitParts::mutate_wrapper_commit(Evaluator& ev, const MakeErrorVal
                 const auto p1 = ev.pairs_[as_pair_idx(p0.cdr)];
                 return is_string(p1.car) && is_int(p1.cdr) && as_int(p1.cdr) == 0;
             }();
-            if (body_merr)
+            // Issue #5164: nested ok=false abort-restores, then this
+            // wrapper used to hide the body's no-workspace pair. These
+            // two ops refuse before any write, so the caller keeps that
+            // reason.
+            const bool no_workspace = [&] {
+                const auto name = std::string_view(op);
+                if (name != "mutate:record-patch" && name != "mutate:rollback-macro-introduced")
+                    return false;
+                if (!is_pair(result))
+                    return false;
+                const auto p0 = ev.pairs_[as_pair_idx(result)];
+                if (!is_string(p0.car))
+                    return false;
+                const auto ki = as_string_idx(p0.car);
+                if (ki >= ev.string_heap_.size())
+                    return false;
+                return ev.string_at(ki) == "no-workspace";
+            }();
+            if (body_merr || no_workspace)
                 return result;
             return mev("persist-reject", std::string(op) + " aborted; topology restored");
         }
