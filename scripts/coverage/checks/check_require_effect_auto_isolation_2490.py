@@ -29,6 +29,48 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace")
 
 
+def _brace_body(src: str, anchor: str) -> str:
+    """Body of the first { ... } block after anchor.
+
+    Issue #5190 grew require_effect / the set-car! registration past the
+    fixed character budgets these pins used, so the window silently
+    truncated and reported a live gate as missing. Match braces instead
+    (skipping string / char literals and comments).
+    """
+    at = src.find(anchor)
+    if at < 0:
+        return ""
+    i = src.find("{", at)
+    if i < 0:
+        return ""
+    depth = 0
+    n = len(src)
+    while i < n:
+        c = src[i]
+        if c in ('"', "'"):
+            q = c
+            i += 1
+            while i < n and src[i] != q:
+                if src[i] == "\\":
+                    i += 1
+                i += 1
+        elif c == "/" and i + 1 < n and src[i + 1] == "/":
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif c == "/" and i + 1 < n and src[i + 1] == "*":
+            j = src.find("*/", i + 2)
+            i = n if j < 0 else j + 1
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return src[at : i + 1]
+        i += 1
+    return src[at:]
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -42,14 +84,12 @@ def main() -> int:
     build = _read("build.py")
 
     # Locate require_effect body.
-    req_i = sec.find("bool Evaluator::require_effect")
-    if req_i < 0:
+    # Issue #5190: a fixed 4500-char budget truncated this window once the
+    # hash-set! local-table early return was prepended to the body, and the
+    # pins below then reported a live gate as missing. Bracket the real body.
+    body = _brace_body(sec, "bool Evaluator::require_effect")
+    if not body:
         fails.append("AC1: require_effect definition missing")
-        body = ""
-    else:
-        # Generous window — #3526 prepends a 3-arg default redirect
-        # (thread_local guard + for_node_id) before isolation / effect.
-        body = sec[req_i : req_i + 4500]
 
     # AC1/AC2: auto-isolation wired before effect check.
     must("Issue #2490", "AC1", sec)

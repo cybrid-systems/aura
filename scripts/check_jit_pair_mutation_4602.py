@@ -176,6 +176,47 @@ def _compares_against(fn, name: str, value: str) -> bool:
     return False
 
 
+def _brace_body(src: str, anchor: str) -> str:
+    """Body of the first { ... } block after anchor.
+
+    Issue #5190 grew the bodies this script pins past the fixed character
+    budgets it used, so a window truncated and reported a live gate as
+    missing. Match braces instead (skipping literals and comments).
+    """
+    at = src.find(anchor)
+    if at < 0:
+        return ""
+    i = src.find("{", at)
+    if i < 0:
+        return ""
+    depth = 0
+    n = len(src)
+    while i < n:
+        c = src[i]
+        if c in ('"', "'"):
+            q = c
+            i += 1
+            while i < n and src[i] != q:
+                if src[i] == "\\":
+                    i += 1
+                i += 1
+        elif c == "/" and i + 1 < n and src[i + 1] == "/":
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif c == "/" and i + 1 < n and src[i + 1] == "*":
+            j = src.find("*/", i + 2)
+            i = n if j < 0 else j + 1
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return src[at : i + 1]
+        i += 1
+    return src[at:]
+
+
 def main() -> int:
     rt = RT.read_text() if RT.exists() else ""
     svc = SVC.read_text() if SVC.exists() else ""
@@ -222,7 +263,8 @@ def main() -> int:
         must(sent >= 0 and fb > sent, "AC2: the sentinel gates the interpreter fallback")
 
     # -- AC3: the write side keeps the #4057 / #4298 tenant stamps -----
-    car_at, car = window(pair, 'add, ev, "set-car!"', 3600)
+    car_at = pair.find('add, ev, "set-car!"')
+    car = _brace_body(pair, 'add, ev, "set-car!"')
     must(car_at >= 0, "AC3: set-car! primitive registered")
     if car_at >= 0:
         must("#4298" in car, "AC3: set-car! keeps the #4298 in-range owner-stamp gate")
@@ -236,7 +278,8 @@ def main() -> int:
             "g_pair_slots[idx]->car = a[1].val;" in car,
             "AC3: set-car! writes the process-level PairSlot",
         )
-    cdr_at, cdr = window(pair, 'add, ev, "set-cdr!"', 2800)
+    cdr_at = pair.find('add, ev, "set-cdr!"')
+    cdr = _brace_body(pair, 'add, ev, "set-cdr!"')
     must(cdr_at >= 0, "AC3: set-cdr! primitive registered")
     if cdr_at >= 0:
         must("#4298" in cdr, "AC3: set-cdr! keeps the #4298 in-range owner-stamp gate")

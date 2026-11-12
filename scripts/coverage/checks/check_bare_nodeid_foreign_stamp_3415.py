@@ -35,6 +35,47 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
 
 
+def _brace_body(src: str, anchor: str) -> str:
+    """Body of the first { ... } block after anchor.
+
+    Issue #5190 grew the bodies this script pins past the fixed character
+    budgets it used, so a window truncated and reported a live gate as
+    missing. Match braces instead (skipping literals and comments).
+    """
+    at = src.find(anchor)
+    if at < 0:
+        return ""
+    i = src.find("{", at)
+    if i < 0:
+        return ""
+    depth = 0
+    n = len(src)
+    while i < n:
+        c = src[i]
+        if c in ('"', "'"):
+            q = c
+            i += 1
+            while i < n and src[i] != q:
+                if src[i] == "\\":
+                    i += 1
+                i += 1
+        elif c == "/" and i + 1 < n and src[i + 1] == "/":
+            j = src.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif c == "/" and i + 1 < n and src[i + 1] == "*":
+            j = src.find("*/", i + 2)
+            i = n if j < 0 else j + 1
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return src[at : i + 1]
+        i += 1
+    return src[at:]
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -66,7 +107,7 @@ def main() -> int:
     must("slot.seq.store(s + 1, std::memory_order_release)", "AC1(#3629) seqlock write fence", prov)
     must("slot.seq.load(std::memory_order_acquire)", "AC1(#3629) seqlock read fence", prov)
     must("ac3629", "AC1(#3629) auto-isolation suite", test_req)
-    fn = sec.find("bool Evaluator::require_effect_for_node_id")
+    sec.find("bool Evaluator::require_effect_for_node_id")
     # Issue #3641: the consult now carries the same-slot collision-borrow
     # block (occupant tenant → foreign deny) before the on_ref call — the
     # window must span the whole function body.
@@ -76,7 +117,7 @@ def main() -> int:
     # Issue #4051: the consult now opens with the seqlock Uncertain
     # fail-closed arm (odd-seq / torn read is not an empty slot) — window
     # extended to span the whole function body again.
-    fn_body = sec[fn : fn + 8000] if fn >= 0 else ""
+    fn_body = _brace_body(sec, "bool Evaluator::require_effect_for_node_id")
     must("existing_stamp_for_node", "AC1 for_node_id", fn_body)
     must("require_effect_on_ref", "AC1 for_node_id", fn_body)
     must("make_stamped_ref", "AC1 for_node_id same-tenant", fn_body)
@@ -97,8 +138,9 @@ def main() -> int:
     if "make_stamped_ref(node_id)" in fn_body.split("existing_stamp_for_node")[0]:
         fails.append("AC1: for_node_id must consult existing stamp before restamping caller")
 
-    req = sec.find("bool Evaluator::require_effect(")
-    req_body = sec[req : req + 2500] if req >= 0 else ""
+    # Issue #5190: the 2500-char budget truncated this window once the
+    # hash-set! local-table arm was prepended; bracket the real body.
+    req_body = _brace_body(sec, "bool Evaluator::require_effect(")
     must("iso_target", "AC1 require_effect", req_body)
     must("/*ref_tenant=*/ref_tenant", "AC1 require_effect", req_body)
     must("/*target=*/iso_target", "AC1 require_effect", req_body)
