@@ -1,0 +1,57 @@
+;; Issue #5193 — (require "std/bench" all:) must bind every public name.
+;; task-count, all-tasks, run-rounds, and aggregate used to be dropped
+;; because their export form sat before a nested require chain.
+
+(require "std/bench" all:)
+
+(define fails 0)
+(define (expect cond name)
+  (if cond
+      #t
+      (begin
+        (set! fails (+ fails 1))
+        (display "FAIL-5193 ")
+        (display name)
+        (newline))))
+
+(define (caught thunk)
+  (try (thunk) (catch (e) 'unbound-5193)))
+
+(define tc (caught (lambda () (task-count))))
+(define tasks (caught (lambda () all-tasks)))
+
+(expect (and (integer? tc) (>= tc 0)) "task-count is a non-negative integer")
+(expect (list? tasks) "all-tasks is a list")
+(expect (and (integer? tc) (list? tasks) (= tc (length tasks)))
+        "task-count matches (length all-tasks)")
+(expect (and (integer? tc) (> tc 0)) "bench-tasks.json loaded")
+
+(display "task-count=")
+(display tc)
+(newline)
+
+(expect (procedure? (caught (lambda () run-rounds))) "run-rounds is bound")
+(expect (procedure? (caught (lambda () aggregate))) "aggregate is bound")
+(expect (procedure? (caught (lambda () print-report))) "print-report is bound")
+(expect (procedure? (caught (lambda () run-one))) "run-one is bound")
+(expect (procedure? (caught (lambda () run-parallel))) "run-parallel is bound")
+(expect (procedure? (caught (lambda () bench:list-sort))) "bench:list-sort is bound")
+(expect (procedure? (caught (lambda () bench:foldl-sum))) "bench:foldl-sum is bound")
+
+(define sort-r (caught (lambda () (bench:list-sort 4))))
+(expect (and (list? sort-r)
+             (= (length sort-r) 3)
+             (equal? (car sort-r) 'ok)
+             (= (list-ref sort-r 2) 4))
+        "bench:list-sort 4")
+
+(define sum-r (caught (lambda () (bench:foldl-sum 4))))
+(expect (and (list? sum-r)
+             (= (length sum-r) 3)
+             (equal? (car sum-r) 'ok)
+             (= (list-ref sum-r 2) 6))
+        "bench:foldl-sum 4 sums 0..3")
+
+(if (= fails 0)
+    (begin (display "OK-5193") (newline))
+    (exit 1))

@@ -7948,7 +7948,13 @@ private:
     void fold_remap_(aura::ast::AdaptiveCompactResult& r, bool lcp_blocked) noexcept;
     void end_densify_arm_() noexcept;
 
+    // Innermost module's export names. load_module_file pushes a fresh set
+    // per load and restores the parent on every return (Issue #5197).
+    // eval_flat_on_export and apply_module_export_filter use this set.
     std::unique_ptr<std::unordered_set<std::string>> current_export_set_;
+    // Parent sets saved by nested load_module_file. The back element is
+    // the set that was current when this load began (null if none).
+    std::vector<std::unique_ptr<std::unordered_set<std::string>>> export_set_stack_;
     // ── Strategy storage (E2) ──────────────────────────────────
     // Issue #63 Phase 3: extend with tunable fields.
     // `max_attempts_set`/`temperature_set` distinguish "not specified"
