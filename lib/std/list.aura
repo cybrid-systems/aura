@@ -292,17 +292,10 @@
       (if (< i 0) acc
         (loop (- i 1) (cons (+ start (* i step)) acc))))))
 
-; (vector-map f v1 v2 ...) — new vector of f applied elementwise; the
-; result is as long as the shortest vector
-(define (vector-map f v . vs)
-  (let* ((all (cons v vs))
-         (len (foldl (lambda (m x) (min m (vector-length x))) (vector-length v) vs))
-         (out (make-vector len 0)))
-    (let loop ((i 0))
-      (if (>= i len) out
-        (begin
-          (vector-set! out i (apply f (map (lambda (x) (vector-ref x i)) all)))
-          (loop (+ i 1)))))))
+; (vector-map f v1 v2 ...) — std/vector's map. One function, so requiring
+; std/list and std/vector in either order is the same multi-vector zip
+; (the result is as long as the shortest vector).
+(require "std/vector" all:)
 
 ; (vector-fill! v x) — set every element to x; returns v
 ; (vector-copy v [start [end]]) — fresh vector with elements start..end-1

@@ -20,7 +20,7 @@
 ;              agent:verify agent:record
 ;   recovery : agent:recover-plan agent:recover!
 ;   replace  : agent:hot-replace agent:replace-step
-;   llm      : llm-ask extract-code safe-eval (optional model IO)
+;   llm      : llm-ask llm:extract-code safe-eval (optional model IO)
 ;   legacy   : auto-grow edsl-fix
 ;
 ; The four hot-update modules (std/hot-update, std/hot-update-monitor,
@@ -33,7 +33,7 @@
 ; Import: (require "std/agent" all:)
 ;         (require std/agent)
 
-(export auto-grow edsl-fix safe-eval llm-ask extract-code
+(export auto-grow edsl-fix safe-eval llm-ask llm:extract-code
         agent:decision-metrics agent:decide agent:loop-stats
         agent:loop-stats-reset! agent:closed-loop-once agent:round
         agent:observe agent:propose agent:check agent:apply agent:verify
@@ -142,7 +142,7 @@
 ; #3928: do not string-split on "```" (first-char backtick). Peel the
 ; opening/closing fence with string-find of the whole marker so the
 ; extracted body is not "…\n```".
-(define (extract-code-rtrim s)
+(define (llm:extract-code-rtrim s)
   (define n (string-length s))
   (let ((hi n))
     (while (lambda ()
@@ -151,7 +151,7 @@
                     (or (= c 32) (= c 10) (= c 13) (= c 9)))))
       (lambda () (set! hi (- hi 1))))
     (substring s 0 hi)))
-(define (extract-code response)
+(define (llm:extract-code response)
   (let ((parsed (llm:extract-content response)))
     (let ((content (if (and (string? parsed) (> (string-length parsed) 0))
                      parsed
@@ -173,7 +173,7 @@
                            (substring after-open 0 close)
                            after-open))
                    (nl (string-find body "\n")))
-              (extract-code-rtrim
+              (llm:extract-code-rtrim
                 (if (>= nl 0)
                   (substring body (+ nl 1) (string-length body))
                   body)))
@@ -564,7 +564,7 @@
         (display tries)
         (display "] LLM generating...\n")
         (define response (llm-ask task))
-        (define code (extract-code response))
+        (define code (llm:extract-code response))
         (define result (safe-eval code))
         (if (= (car result) 1)
           (begin
@@ -667,7 +667,7 @@
                                      ". Return ONLY a single Aura lambda body "
                                      "for mutate:rebind (no markdown)."))
                                   (resp (try (llm-ask prompt) (catch (e) "")))
-                                  (code (try (extract-code resp) (catch (e) ""))))
+                                  (code (try (llm:extract-code resp) (catch (e) ""))))
                              (if (and (string? code) (> (string-length code) 0))
                                (begin
                                  (if (not (string? rname)) (set! rname "main") #f)
@@ -733,7 +733,7 @@
                                " Current source is loaded. Return ONLY the new body "
                                "expression for the primary define (no markdown)."))
                (response (try (llm-ask prompt) (catch (e) "")))
-               (body (try (extract-code response) (catch (e) ""))))
+               (body (try (llm:extract-code response) (catch (e) ""))))
           (if (and (string? body) (> (string-length body) 0))
             (begin
               (set! rebind-name "main")
