@@ -1035,6 +1035,14 @@ int aura_jit_peek_prologue_deopt_sentinel(void) noexcept;
 // arm-once (service.ixx keeps its local extern too).
 int aura_jit_take_prologue_deopt_sentinel(void) noexcept;
 
+// Issue #5174: one native frame per JIT activation. enter returns 1 and
+// does not increment once the ceiling is hit (callers unwind on the
+// prologue sentinel). A tail self-call reuses the frame and does not
+// enter again. take returns the diagnostic and clears the flag, or null.
+int aura_jit_depth_enter(void) noexcept;
+void aura_jit_depth_leave(void) noexcept;
+const char* aura_jit_take_depth_message(void) noexcept;
+
 // Issue #4600 §3 (phase 3): named-let OSR. The IR interpreter's drain
 // loop counts consecutive same-function tail-call frame replacements
 // (the named-let back-edge); past AURA_JIT_OSR_N it hands the loop to

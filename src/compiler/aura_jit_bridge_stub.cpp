@@ -437,6 +437,14 @@ extern "C" __attribute__((weak)) void aura_jit_clear_prologue_deopt_sentinel(voi
 extern "C" __attribute__((weak)) int aura_jit_peek_prologue_deopt_sentinel(void) noexcept {
     return 0;
 }
+// Issue #5174: light links never count native frames (no JIT ceiling).
+extern "C" __attribute__((weak)) int aura_jit_depth_enter(void) noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak)) void aura_jit_depth_leave(void) noexcept {}
+extern "C" __attribute__((weak)) const char* aura_jit_take_depth_message(void) noexcept {
+    return nullptr;
+}
 extern "C" __attribute__((weak)) int aura_jit_guard_shape_epoch_check(const char* /*name*/) {
     return 0;
 }
