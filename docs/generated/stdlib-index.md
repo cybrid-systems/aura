@@ -9,7 +9,7 @@
 | `std/INDEX` | `stdlib:list` `stdlib:help` `stdlib:examples` `stdlib:by-prefix` `stdlib:by-tag` | lib/std/INDEX.aura — Stdlib discoverability index (Issue #565) |
 | `std/abc` | `abc:init` `abc:init-hash` `abc:step!` `abc:best` `abc:population` `abc:report` `abc:export` `abc:help` … (+7) | lib/std/abc.aura — Issue #2878 Artificial Bee Colony surface |
 | `std/adaptive` | `string-index` `string-contains?` `string-trim` `measure-distance` `structured-diagnosis` `pid:analyze` `get-api-ref` `get-full-api-ref` | lib/std/adaptive.aura -- adaptive intend decision module |
-| `std/agent` | `auto-grow` `edsl-fix` `safe-eval` `llm-ask` `llm:extract-code` `agent:decision-metrics` `agent:decide` `agent:loop-stats` … (+13) | lib/std/agent.aura — one closed loop, six phases (#5004) |
+| `std/agent` | `auto-grow` `edsl-fix` `safe-eval` `llm-ask` `llm:extract-code` `agent-alist-ref` `agent:decision-metrics` `agent:decide` … (+14) | lib/std/agent.aura — one closed loop, six phases (#5004) |
 | `std/algo-select` | `select:make` `select:features-fn!` `select:offline` `select:choose` `select:feedback!` `select:report` `select:drift?` `select:drift-score` … (+2) | lib/std/algo-select.aura — Issue #4945 (v0.2 P8): choose the algorithm |
 | `std/algorithm` | `sort-stable` `sort-by` `binary-search` `merge-sorted` `merge` `sorted?` `unique` `min-by` … (+3) | Aura standard algorithm library |
 | `std/ant` | `pheromone:init` `pheromone:update` `pheromone:rank` `pheromone:score` `pheromone:export` `pheromone:evaporate!` `pheromone:types` `colony:search` | lib/std/ant.aura -- mutation-type pheromone ranking + colony:search |
@@ -79,7 +79,7 @@
 | `std/prompt` | `build-sys-prompt` `get-api-ref-for-modules` | lib/std/prompt.aura — Unified prompt builder for LLM code generation |
 | `std/proposer` | `prop:help` `prop:schema` `prop:ctx` `prop:propose` `prop:adapt` `prop:mock` `prop:grammar` `prop:llm` … (+33) | lib/std/proposer.aura — Issue #4942 (v0.2 P3): the proposal layer for |
 | `std/pso` | `pso:init` `pso:init-hash` `pso:step!` `pso:best` `pso:population` `pso:report` `pso:export` `pso:help` … (+12) | lib/std/pso.aura — Issue #2877 Particle Swarm Optimization surface |
-| `std/qd` | `qd:map-elites` `qd:insert!` `qd:elites` `qd:coverage` `qd:qd-score` `qd:best` `qd:novelty` `qd:select-parent` … (+11) | lib/std/qd.aura — Issue #4941 (v0.2 P2): quality diversity and open-ended |
+| `std/qd` | `qd:map-elites` `qd:insert!` `qd:elites` `qd:coverage` `qd:qd-score` `qd:best` `qd:novelty` `qd:select-parent` … (+15) | lib/std/qd.aura — Issue #4941 (v0.2 P2): quality diversity and open-ended |
 | `std/query-workspace` | `query:macro-introduced-calls` `query:macro-introduced-defines` | — |
 | `std/query` | `query:list-categories` `query:help` `query:nodes-with-marker` `query:find-by-name` `query:subtree` `query:defines` `query:defines-by-marker` `query:calls-by-marker` … (+4) | lib/std/query.aura — query: namespace high-level Agent API |
 | `std/queue` | `make-queue` `enqueue` `dequeue` `queue-front` `queue-rest` `queue-empty?` `queue-length` `queue->list` … (+1) | queue.aura — FIFO queue (pair-based, immutable) |
