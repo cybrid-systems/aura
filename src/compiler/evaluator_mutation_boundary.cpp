@@ -7075,8 +7075,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     static_cast<std::uint64_t>(densify_untracked_kept),
                     static_cast<std::uint64_t>(densify_root_remap_fails),
                     static_cast<std::uint64_t>(densify_external_roots_prep_registered_cleared),
-                    /*#4928 refused, no move*/ blocked && !densify_entry_lcp_blocked &&
-                        !had_moving_densify && pin_contract_held);
+                    // Issue #4928 / #5151: a blocked window that moved nothing
+                    // is not a stale heap. Pre-relocate gates set the incomplete
+                    // bit and force pin false before any object moves; requiring
+                    // a clear incomplete bit republished an apply-red window and
+                    // armed the throttle. LCP-blocked stays fail-closed.
+                    densify_moving_blocked && !densify_entry_lcp_blocked && !had_moving_densify &&
+                        densify_objects_moved == 0 && densify_root_remap_fails == 0);
             }
             // Issue #4304: in-flight drops only after this publish. When the
             // retry already published, recover's guard cleared the bit and
@@ -8965,7 +8970,10 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
                 static_cast<std::uint64_t>(compact_r.objects_moved_total),
                 static_cast<std::uint64_t>(compact_r.untracked_kept_total), root_fail,
                 static_cast<std::uint64_t>(compact_r.external_roots_prep_registered_total),
-                /*#4928*/ blocked && !densify_entry_lcp_blocked && compact_r.pin_contract_held);
+                // Issue #4928 / #5151: zero-move block is a clean refuse even
+                // when the pre-relocate gate set incomplete / pin false.
+                blocked && !densify_entry_lcp_blocked && compact_r.objects_moved_total == 0 &&
+                    !compact_r.moved_live_objects && root_fail == 0);
             // Issue #4143: clear the recovery sticky only AFTER the retry
             // published a unified-green window (pin held ∧ ¬incomplete ∧
             // untracked==0 ∧ root_fail==0 — same surface as

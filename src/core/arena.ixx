@@ -909,7 +909,8 @@ export inline constexpr std::uint8_t kStickyClearZeroMoveClean = 2;
 export inline constexpr std::uint8_t kStickyClearRecovery = 3;
 export inline constexpr std::uint8_t kStickyClearPhase5Green = 4;
 export inline constexpr int kProductionAutoArmMovingIssue = 3123;
-// Issue #3200: production pin/EnvFrame Soft-gate → sticky + Agent throttle.
+// Issue #3200: production pin/EnvFrame Soft-gate → sticky densify-off.
+// Issue #5151: the agent throttle stays down. Nothing moved.
 export inline constexpr int kMovingPinGuardSoftGateIssue = 3200;
 
 export inline void clear_moving_incomplete_remap_sticky_densify_off() noexcept {
@@ -1409,8 +1410,15 @@ production_moving_wanted_but_pin_or_guard(double current_fragmentation) noexcept
            aura::core::envframe_lifetime::active_guard_depth() != 0;
 }
 
-// Arm existing sticky densify-off + Agent throttle so the outer loop
-// cannot pretend Moving amortisation occurred. Soft pack never calls.
+// Arm sticky densify-off so the outer loop cannot pretend Moving
+// amortisation occurred. Soft pack never calls.
+// Issue #5151: do not arm the agent throttle. Pins or an EnvFrame guard
+// refused the relocate before it touched the heap. The next admit's
+// recover retries this same gate, so a throttle set here never clears
+// and every later mutate is AdmissionRejected: densify-throttle. Publish
+// as a clean refused relocation (#4928): would_allow stays false (pin
+// not held) but apply does not treat the unchanged heap as stale, and
+// publish does not set the throttle under production-hard.
 export inline void arm_production_pin_guard_soft_gate() noexcept {
     const auto prev_sticky =
         g_moving_incomplete_remap_sticky_densify_off.exchange(1, std::memory_order_acq_rel);
@@ -1418,11 +1426,11 @@ export inline void arm_production_pin_guard_soft_gate() noexcept {
         g_moving_incomplete_remap_sticky_densify_off_total.fetch_add(1, std::memory_order_relaxed);
     }
     aura::core::moving_densify_health::note_production_pin_guard_soft_gate();
-    aura::core::moving_densify_health::note_agent_throttle_for_moving_densify();
     aura::core::moving_densify_health::publish_last_moving_densify_window(
         /*had_moving_densify=*/true, /*pin_contract_held=*/false,
         /*moving_incomplete_remap=*/false, /*objects_moved=*/0, /*untracked_kept=*/0,
-        /*root_remap_fail_total=*/0);
+        /*root_remap_fail_total=*/0, /*external_roots_prep_registered_cleared=*/0,
+        /*relocate_refused_no_move=*/true);
 }
 
 // Issue #4386: arm sticky densify-off only. No publish and no throttle.
@@ -4628,12 +4636,17 @@ public:
                                                            r.root_remap_closure_capture_fail_total);
                             const bool pin_for_publish =
                                 r.pin_contract_held && !r.moving_blocked_precondition;
-                            // Issue #4928: a soft-gated auto-arm that moved
-                            // nothing is no stale-ref evidence for apply.
+                            // Issue #4928 / #5151: a soft-gated auto-arm that
+                            // moved nothing is no stale-ref evidence for apply.
+                            // The EnvFrame gate forces pin_contract_held false
+                            // before any relocate; requiring it here republished
+                            // an apply-red window and armed the throttle.
+                            // Issue #5151: the pre-move unpinned / untracked gates set
+                            // moving_incomplete_remap before any relocate. That bit
+                            // is not stale-ref evidence when objects_moved stays 0.
                             const bool relocate_refused_no_move =
-                                r.moving_blocked_precondition && r.pin_contract_held &&
-                                r.objects_moved == 0 && !r.moved_live_objects &&
-                                !r.moving_incomplete_remap && root_fail == 0;
+                                r.moving_blocked_precondition && r.objects_moved == 0 &&
+                                !r.moved_live_objects && root_fail == 0;
                             aura::core::moving_densify_health::publish_last_moving_densify_window(
                                 /*had_moving_densify=*/true, pin_for_publish,
                                 r.moving_incomplete_remap,

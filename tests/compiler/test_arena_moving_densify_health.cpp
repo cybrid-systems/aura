@@ -715,7 +715,8 @@ static void ac3123_5_agent_surface_and_linter() {
 }
 
 static void ac3200_1_production_pin_sticky_throttle() {
-    std::println("\n--- #3200 AC1: production pin Soft-gate → sticky + throttle ---");
+    std::println(
+        "\n--- #3200 AC1: production pin Soft-gate → sticky, throttle stays off (#5151) ---");
     CHECK(mdh::kMovingPinGuardSoftGateIssue == 3200, "3200 AC1: issue stamp");
     CHECK(aura::ast::kMovingPinGuardSoftGateIssue == 3200, "3200 AC1: arena stamp");
     MovingFlagGuard3123 on(1);
@@ -735,11 +736,14 @@ static void ac3200_1_production_pin_sticky_throttle() {
           "3200 AC1: sticky densify-off armed");
     CHECK(mdh::last_pin_guard_soft_gate(), "3200 AC1: health last-pin-or-guard");
     CHECK(mdh::production_pin_guard_soft_gate_total() >= 1, "3200 AC1: gate total");
-    CHECK(mdh::agent_throttle_for_moving_densify(), "3200 AC1: Agent throttle");
+    // Issue #5151: a pin soft-gate moved nothing. Arming the throttle here
+    // is permanent — recover retries the same gate — so the next mutate
+    // stays AdmissionRejected: densify-throttle.
+    CHECK(!mdh::agent_throttle_for_moving_densify(), "3200 AC1: no agent throttle (#5151)");
     auto s = mdh::snapshot();
     CHECK(!s.would_allow_mutate, "3200 AC1: would-allow-mutate false");
     CHECK(s.force_reason_code == mdh::kForcePin, "3200 AC1: force-reason pin");
-    CHECK(s.agent_throttle, "3200 AC1: snapshot throttle");
+    CHECK(!s.agent_throttle, "3200 AC1: snapshot throttle stays off (#5151)");
 }
 
 static void ac3200_2_soft_observe_only() {
