@@ -1,0 +1,5 @@
+(require "./inner" all:)
+(export m1)
+(export m2)
+(define m1 1)
+(define m2 2)
