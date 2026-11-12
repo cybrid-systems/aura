@@ -18,9 +18,18 @@ Token Lexer::advance() {
         return make_tok(TokenKind::EndOfFile, "");
     char c = source_[pos_];
     switch (c) {
-        case '(':
-            return make_tok(TokenKind::LParen, source_.substr(pos_++, 1));
+        case '(': {
+            auto tok = make_tok(TokenKind::LParen, source_.substr(pos_, 1));
+            ++pos_;
+            // Issue #5199: "(;" opens a real list; ';' then comments out the
+            // rest of the line. Record that before skip_ws eats the comment.
+            const bool semi = pos_ < source_.size() && source_[pos_] == ';';
+            open_parens_.push_back(OpenParenLoc{tok.line, tok.column, semi});
+            return tok;
+        }
         case ')':
+            if (!open_parens_.empty())
+                open_parens_.pop_back();
             return make_tok(TokenKind::RParen, source_.substr(pos_++, 1));
         case '\'':
             return make_tok(TokenKind::Quote, source_.substr(pos_++, 1));
@@ -87,7 +96,10 @@ Token Lexer::advance() {
                 }
                 if (next == '(') {
                     pos_ += 2;
-                    return make_tok(TokenKind::HashLParen, "#(");
+                    auto tok = make_tok(TokenKind::HashLParen, "#(");
+                    const bool semi = pos_ < source_.size() && source_[pos_] == ';';
+                    open_parens_.push_back(OpenParenLoc{tok.line, tok.column, semi});
+                    return tok;
                 }
                 // Issue #4129: #\ character literals — named forms (#\space,
                 // #\newline, #\tab, ...), single-character forms (#\a, #\0,
@@ -431,6 +443,11 @@ Token Lexer::consume() {
         return t;
     }
     return advance();
+}
+std::optional<OpenParenLoc> Lexer::innermost_open_paren() const {
+    if (open_parens_.empty())
+        return std::nullopt;
+    return open_parens_.back();
 }
 Token Lexer::make_tok(TokenKind k, std::string_view t) {
     Token r{k, t, line_, col_};
