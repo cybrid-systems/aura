@@ -91,6 +91,10 @@
 ;   status "error" and leaves the live worldline alone (it never falls back
 ;   to mutating live). The suite runs with AURA_SANDBOX=off, like every
 ;   tests/suite file.
+; * After the trial switches back to the parent and discards the child,
+;   the parent is still mutable (#5162). workspace :current is the saved
+;   root, and mutate:rebind on that root succeeds. A trial must not leave
+;   workspace 0 cow-refused. set-code is not a substitute for that rebind.
 ; * In the log an empty parent set encodes as null (Aura's () IS the unit
 ;   value); a derived candidate carries its parent ids as a JSON array.
 ;

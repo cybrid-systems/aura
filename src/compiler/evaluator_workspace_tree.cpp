@@ -201,9 +201,14 @@ bool Evaluator::trigger_lazy_cow(void* wt) {
     // Issue #5086: that check denies tenant 0 + Mutate under Restricted
     // (#2385) before the root short-circuit below, so a child layer came
     // back as cow-refused even when workspace 0 mutate:rebind was allowed
-    // (#4322, including --preset dev). The kernel's own single-tenant tree
-    // takes the same exemption require_effect already uses. Strict,
-    // multi-tenant, and a foreign principal stay on the isolation check.
+    // (#4322, including --preset dev). Issue #5162: evo:trial creates that
+    // tree, then switches back to workspace 0. The same check used to
+    // refuse the parent's next mutate:rebind ("COW refused (read-only
+    // layer)") even though the live source was unchanged and set-code
+    // still installed defines. The kernel's own single-tenant tree takes
+    // the same exemption require_effect already uses, on the child and
+    // again on the parent after the trial returns. Strict, multi-tenant,
+    // and a foreign principal stay on the isolation check.
     {
         using aura::compiler::security::kEffectMutate;
         const bool own = kernel_self_workspace_mutate("mutate:rebind", /*ref_tenant=*/0);
