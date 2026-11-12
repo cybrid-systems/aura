@@ -225,7 +225,8 @@ namespace {
     static std::string fmt_val_to_string(const EvalValue& v, ::aura::compiler::StringPoolView heap,
                                          std::span<const Pair> pairs, bool quote, int depth,
                                          std::span<const std::vector<EvalValue>> vectors,
-                                         std::span<const std::string> symbols) {
+                                         std::span<const std::string> symbols,
+                                         std::span<const std::string> keywords = {}) {
         std::string out;
         auto app = [&](const auto&... args) { (out += ... += args); };
         if (depth > 64)
@@ -257,13 +258,23 @@ namespace {
             return idx < symbols.size() ? symbols[static_cast<std::size_t>(idx)]
                                         : std::format("<symbol[{}]>", idx);
         }
+        // Issue #5151: display already prints the keyword name (the table
+        // keeps the leading ':'). format fell through to "<unknown>", so
+        // (format "~a" (query :snapshot-fail-reason)) hid :guard-reject,
+        // :no-workspace, and :none.
+        if (is_keyword(v)) {
+            const auto kidx = as_keyword_idx(v);
+            if (kidx < keywords.size())
+                return keywords[static_cast<std::size_t>(kidx)];
+            return std::format(":{}", static_cast<std::size_t>(kidx));
+        }
         if (is_pair(v)) {
             auto idx = as_pair_idx(v);
             if (idx >= pairs.size())
                 return "<pair>";
             out = "(";
-            out +=
-                fmt_val_to_string(pairs[idx].car, heap, pairs, quote, depth + 1, vectors, symbols);
+            out += fmt_val_to_string(pairs[idx].car, heap, pairs, quote, depth + 1, vectors,
+                                     symbols, keywords);
             auto cdr = pairs[idx].cdr;
             while (is_pair(cdr)) {
                 out += " ";
@@ -273,12 +284,13 @@ namespace {
                     break;
                 }
                 out += fmt_val_to_string(pairs[nidx].car, heap, pairs, quote, depth + 1, vectors,
-                                         symbols);
+                                         symbols, keywords);
                 cdr = pairs[nidx].cdr;
             }
             if (!is_end_of_list(cdr)) {
                 out += " . ";
-                out += fmt_val_to_string(cdr, heap, pairs, quote, depth + 1, vectors, symbols);
+                out += fmt_val_to_string(cdr, heap, pairs, quote, depth + 1, vectors, symbols,
+                                         keywords);
             }
             out += ")";
             return out;
@@ -294,7 +306,8 @@ namespace {
             for (std::size_t i = 0; i < elems.size(); ++i) {
                 if (i > 0)
                     out += ' ';
-                out += fmt_val_to_string(elems[i], heap, pairs, quote, depth + 1, vectors, symbols);
+                out += fmt_val_to_string(elems[i], heap, pairs, quote, depth + 1, vectors, symbols,
+                                         keywords);
             }
             out += ')';
             return out;
@@ -1061,7 +1074,8 @@ void RegSplitParts::register_format_primitive(PrimRegistrar add, Evaluator& ev) 
                                         "format: cross-tenant string slot read denied (#4505)",
                                         ev.primitive_error_counter_ptr());
                                 result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, false,
-                                                            0, ev.vector_heap_, ev.symbol_table_);
+                                                            0, ev.vector_heap_, ev.symbol_table_,
+                                                            ev.keyword_table_);
                             }
                         }
                         ++i;
@@ -1101,7 +1115,8 @@ void RegSplitParts::register_format_primitive(PrimRegistrar add, Evaluator& ev) 
                                         "format: cross-tenant string slot read denied (#4505)",
                                         ev.primitive_error_counter_ptr());
                                 result += fmt_val_to_string(val, ev.string_heap_, ev.pairs_, true,
-                                                            0, ev.vector_heap_, ev.symbol_table_);
+                                                            0, ev.vector_heap_, ev.symbol_table_,
+                                                            ev.keyword_table_);
                             }
                         }
                         ++i;
@@ -1142,11 +1157,13 @@ void RegSplitParts::register_error_primitives(PrimRegistrar add, Evaluator& ev) 
         // irritants rendered the way `format` renders them.
         if (a.size() > 1) {
             std::string text = fmt_val_to_string(a[0], ev.string_heap_, ev.pairs_, /*quote=*/false,
-                                                 /*depth=*/0, ev.vector_heap_, ev.symbol_table_);
+                                                 /*depth=*/0, ev.vector_heap_, ev.symbol_table_,
+                                                 ev.keyword_table_);
             for (std::size_t i = 1; i < a.size(); ++i) {
                 text += ' ';
                 text += fmt_val_to_string(a[i], ev.string_heap_, ev.pairs_, /*quote=*/true,
-                                          /*depth=*/0, ev.vector_heap_, ev.symbol_table_);
+                                          /*depth=*/0, ev.vector_heap_, ev.symbol_table_,
+                                          ev.keyword_table_);
             }
             cause = make_string(static_cast<std::uint64_t>(ev.push_string_heap(std::move(text))));
         }

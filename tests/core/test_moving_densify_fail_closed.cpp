@@ -4616,10 +4616,10 @@ static void ac3884_1_recover_rearms_sticky_on_lcp_reject() {
     const auto anchor = mut.find("Issue #3185 AC1: same surface as Phase-5 densify entry");
     CHECK(anchor != std::string::npos, "ac3884_1: sticky-recovery #3185 anchor present");
     // Issue #4751: window retargeted 5500 -> 7000. The zero-arena canary
-    // fold sits between the retry compact and the post-publish sticky clear;
-    // the clear token now lands ~6.8KB from the #3185 anchor. Every ordering
-    // row below keeps its exact token order (no widening past the clear).
-    const auto win = mut.substr(anchor, 7000);
+    // fold sits between the retry compact and the post-publish sticky clear.
+    // Issue #5151: the recover publish's zero-move refuse cite pushed the
+    // clear token past 7KB. 7600 keeps the same token order.
+    const auto win = mut.substr(anchor, 7600);
     CHECK(win.find("if (densify_entry_lcp_blocked)") != std::string::npos,
           "ac3884_1: LCP skip branch present");
     CHECK(win.find("g_moving_incomplete_remap_sticky_densify_off.exchange") == std::string::npos,
@@ -5112,7 +5112,8 @@ static void ac4928_relocate_refused_window_not_apply_red() {
     mdh::publish_last_moving_densify_window(true, false, false, 0, 0, 0, 0, true);
     CHECK(!mdh::window_relocate_refused_clean(), "4928: refused after red stays red");
     CHECK(mdh::window_apply_red(), "4928: refused after red is apply-red");
-    // A flag with moved objects / incomplete is ignored.
+    // A flag with moved objects is ignored. A zero-move incomplete bit is a
+    // pre-relocate refuse (#5151), not a stale heap.
     mdh::reset_moving_densify_health_for_test();
     mdh::publish_last_moving_densify_window(true, false, false, 2, 0, 0, 0, true);
     CHECK(!mdh::window_relocate_refused_clean(), "4928: moved>0 never clean");
@@ -6134,8 +6135,9 @@ static void ac3955_sticky_recover_lock_held() {
     const auto rec = mb.find("recover_moving_sticky_densify_off(/*retry_densify=*/true)");
     CHECK(rec != std::string::npos, "3955: #3128 recover site");
     // Issue #4928: 1800 -> 2000 (the Phase-5 publish gained the
-    // refused-no-move argument; ordering row unchanged).
-    const auto rwin = mb.substr(rec, 2000);
+    // refused-no-move argument). Issue #5151: that argument's cite
+    // pushed the unlock past 2KB. Ordering row unchanged.
+    const auto rwin = mb.substr(rec, 2800);
     CHECK(rwin.find("release_workspace_then_drain_after_densify_()") != std::string::npos,
           "3955: unlock after recover");
     const auto recfn = mb.find("Evaluator::recover_moving_sticky_densify_off");
@@ -7820,7 +7822,10 @@ static void ac4304_phase5_inflight_spans_publish() {
     const auto phase5_pub = mb.find("publish_last_moving_densify_window(", cite);
     CHECK(phase5_pub != std::string::npos, "4304: Phase-5 publish present");
     if (phase5_pub != std::string::npos) {
-        const auto after = mb.substr(phase5_pub, 900);
+        // Issue #5151: the zero-move refuse cite sits inside the publish
+        // argument list. 1400 stays under the 1500-char window budget and
+        // still requires reset() after the call's ");".
+        const auto after = mb.substr(phase5_pub, 1400);
         const auto reset_at = after.find("phase5_densify_inflight.reset()");
         const auto pub_end = after.find(");");
         CHECK(reset_at != std::string::npos && pub_end != std::string::npos && pub_end < reset_at,

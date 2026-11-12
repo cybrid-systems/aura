@@ -29,7 +29,8 @@ inline constexpr int kMovingUntrackedHardIssue = 2596;
 inline constexpr int kMovingDensifyFailClosedIssue = 2495;
 // Issue #3123: production auto-arm + sticky-clear reason on this surface.
 inline constexpr int kProductionAutoArmMovingIssue = 3123;
-// Issue #3200: production pin/EnvFrame Soft-gate must arm sticky + throttle.
+// Issue #3200: production pin/EnvFrame Soft-gate arms sticky densify-off.
+// Issue #5151: it does not arm the agent throttle. Nothing moved.
 inline constexpr int kMovingPinGuardSoftGateIssue = 3200;
 // Issue #4019: Soft live_compact gen/remapped_pins ≠ Moving window green.
 // Agent admit uses Moving publish + window_would_allow_mutate only.
@@ -229,9 +230,11 @@ struct MovingDensifyHealthSnapshot {
 
 // Issue #4928: a Moving attempt whose relocation was REFUSED before it
 // touched anything (#4288 / #3857 temp-canary or #2971 precondition soft
-// gate: objects_moved == 0, no incomplete remap, no untracked kept, no
-// root-remap fail) publishes a red window — that is right for the mutate
-// admit / Agent throttle (would_allow_mutate stays false, #4288). It is NOT
+// gate: objects_moved == 0, no root-remap fail) publishes a red window —
+// that is right for the mutate admit (would_allow_mutate stays false,
+// #4288). Issue #5151: the pre-relocate gates also set the incomplete bit
+// and an untracked count without moving; that is the same refuse, not a
+// stale heap, and it must not arm the agent throttle. It is NOT
 // evidence of a stale reference: the heap layout is exactly the previous
 // window's. The apply-side densify-stale refuse (#3421 / #3648) used to read
 // that red window as "references may be stale" and refused every closure
@@ -338,8 +341,13 @@ inline void publish_last_moving_densify_window(
     g_last_external_roots_prep_registered.store(external_roots_prep_registered_cleared,
                                                 std::memory_order_relaxed);
     const auto seq = g_last_window_seq.fetch_add(1, std::memory_order_relaxed) + 1;
+    // Issue #5151: a pre-relocate refuse (unpinned intermediate, pre-densify
+    // untracked, pin/EnvFrame soft-gate) sets moving_incomplete_remap and may
+    // report untracked roots even though objects_moved stays 0. Nothing was
+    // relocated, so the heap is the previous window's. That publish must not
+    // arm the agent throttle or look apply-stale. A real move never qualifies.
+    // A previous apply-red window stays red (!prev_apply_red).
     const bool refused_clean = relocate_refused_no_move && !prev_apply_red && objects_moved == 0 &&
-                               !moving_incomplete_remap && untracked_kept == 0 &&
                                root_remap_fail_total == 0;
     if (refused_clean)
         g_last_relocate_refused_clean_seq.store(seq, std::memory_order_relaxed);
