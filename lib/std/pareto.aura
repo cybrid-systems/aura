@@ -515,30 +515,74 @@
 ; 2-objective sweep in MAXIMIZE space: every point is dominated by ref.
 ; Slice [f1_i, f1_{i+1}] is covered by points 0..i, whose y extent is
 ; [min f2, r2].
+; The sweep walks the sorted list with cdr instead of indexing it:
+; list-ref is a linear walk, so the positional form made this quadratic in
+; the number of points (issue #4940: the 3-objective path blew the CI
+; per-file budget).
 (define (pa-hv2 pts ref)
   (let* ((r1 (pa-num (car ref)))
          (r2 (pa-num (car (cdr ref))))
          (ps (pa-filter (lambda (p) (and (< (pa-num (car p)) r1)
                                          (< (pa-num (car (cdr p))) r2)))
                         pts))
-         (srt (sort ps (lambda (a b) (< (pa-num (car a)) (pa-num (car b))))))
-         (n (length srt)))
-    (if (= n 0)
+         (srt (sort ps (lambda (a b) (< (pa-num (car a)) (pa-num (car b)))))))
+    (if (null? srt)
         0.0
-        (let loop ((i 0) (minf2 r2) (area 0.0))
-          (if (>= i n)
+        (let loop ((cur srt) (nxt (cdr srt)) (minf2 r2) (area 0.0))
+          (if (null? cur)
               area
-              (let* ((p (list-ref srt i))
+              (let* ((p (car cur))
                      (f1 (pa-num (car p)))
                      (f2 (pa-num (car (cdr p))))
                      (m (min minf2 f2))
-                     (next (if (= i (- n 1)) r1 (pa-num (car (list-ref srt (+ i 1))))))
+                     (next (if (null? nxt) r1 (pa-num (car (car nxt)))))
                      (width (- next f1)))
-                (loop (+ i 1) m (+ area (* width (- r2 m))))))))))
+                (loop nxt (if (null? nxt) (list) (cdr nxt))
+                      m
+                      (+ area (* width (- r2 m))))))))))
 
 ; 3-objective sweep in MAXIMIZE space: sort by x ascending; the slice
 ; [x_i, x_{i+1}] is covered by points 0..i, so its area is the 2-D
 ; hypervolume of their (y,z) projections.
+;
+; Every slice needs the (y,z) projections of the points 0..i only, and
+; those are exactly the projections filtered by the point's rank in the x
+; order. So the projections are sorted by y ONCE (each carrying its
+; rank) and the per-slice 2-D sweep skips the points outside the slice.
+; Re-sorting and re-sweeping the whole prefix per slice was quadratic in
+; the point count: a 1681-point front took ~90 s, which blew the 240 s
+; per-file suite budget on CI (issue #4940).
+(define (pa-hv3-proj srt)
+  (let loop ((ps srt) (i 0) (acc (list)))
+    (if (null? ps)
+        (sort acc (lambda (a b) (< (pa-num (car a)) (pa-num (car b)))))
+        (let ((p (car ps)))
+          (loop (cdr ps) (+ i 1)
+                (cons (list (pa-num (car (cdr p)))
+                            (pa-num (car (cdr (cdr p))))
+                            i)
+                      acc))))))
+
+; 2-D sweep over the y-sorted projections, restricted to rank <= lim.
+; The running minimum of z and the widths are accumulated in the same
+; order as pa-hv2, so the value matches sweeping the prefix itself.
+(define (pa-hv2-prefix ysrt lim r1 r2)
+  (let loop ((cur ysrt) (have #f) (py 0.0) (minz r2) (area 0.0))
+    (if (null? cur)
+        (if have
+            (+ area (* (- r1 py) (- r2 minz)))
+            area)
+        (let* ((e (car cur))
+               (rank (car (cdr (cdr e)))))
+          (if (> rank lim)
+              (loop (cdr cur) have py minz area)
+              (let* ((y (pa-num (car e)))
+                     (z (pa-num (car (cdr e))))
+                     (area2 (if have
+                                (+ area (* (- y py) (- r2 minz)))
+                                area)))
+                (loop (cdr cur) #t y (min minz z) area2)))))))
+
 (define (pa-hv3 pts ref)
   (let* ((r1 (pa-num (car ref)))
          (r2 (pa-num (car (cdr ref))))
@@ -547,21 +591,20 @@
                                          (< (pa-num (car (cdr p))) r2)
                                          (< (pa-num (car (cdr (cdr p)))) r3)))
                         pts))
-         (srt (sort ps (lambda (a b) (< (pa-num (car a)) (pa-num (car b))))))
-         (n (length srt)))
-    (if (= n 0)
+         (srt (sort ps (lambda (a b) (< (pa-num (car a)) (pa-num (car b)))))))
+    (if (null? srt)
         0.0
-        (let loop ((i 0) (seen (list)) (area 0.0))
-          (if (>= i n)
-              area
-              (let* ((p (list-ref srt i))
-                     (seen2 (cons (list (pa-num (car (cdr p)))
-                                        (pa-num (car (cdr (cdr p)))))
-                                  seen))
-                     (next (if (= i (- n 1)) r1 (pa-num (car (list-ref srt (+ i 1))))))
-                     (width (- next (pa-num (car p))))
-                     (a2 (pa-hv2 seen2 (list r2 r3))))
-                (loop (+ i 1) seen2 (+ area (* width a2)))))))))
+        (let ((ysrt (pa-hv3-proj srt)))
+          (let loop ((cur srt) (nxt (cdr srt)) (i 0) (area 0.0))
+            (if (null? cur)
+                area
+                (let* ((p (car cur))
+                       (next (if (null? nxt) r1 (pa-num (car (car nxt)))))
+                       (width (- next (pa-num (car p))))
+                       (a2 (pa-hv2-prefix ysrt i r2 r3)))
+                  (loop nxt (if (null? nxt) (list) (cdr nxt))
+                        (+ i 1)
+                        (+ area (* width a2))))))))))
 
 (define (pa-mc-next st)
   (let ((x (modulo (+ (* (hash-ref st "s" 1) 1103515245) 12345) 2147483647)))
