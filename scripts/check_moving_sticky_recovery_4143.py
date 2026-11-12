@@ -68,6 +68,68 @@ def _strip_comments(text: str) -> str:
     return "\n".join(out)
 
 
+def _function_span(src: str, start: int) -> tuple[int, int]:
+    """(start, end) of the function body starting at *start*, by brace matching.
+
+    The fixed 9800-char window below broke twice when the recovery body grew
+    (#4751: 8500 -> 9800; then the next-mutate admission folded in more). The
+    rows only care about the body's own statements, so match its braces and
+    stop; comments and string literals are skipped so their braces cannot
+    unbalance the count.
+    """
+    n = len(src)
+    i = start
+    state = "code"
+    depth = 0
+    body_start = -1
+    while i < n:
+        ch = src[i]
+        nxt = src[i + 1] if i + 1 < n else ""
+        if state == "code":
+            if ch == "/" and nxt == "/":
+                state = "line"
+                i += 2
+                continue
+            if ch == "/" and nxt == "*":
+                state = "block"
+                i += 2
+                continue
+            if ch == '"':
+                state = "string"
+            elif ch == "'":
+                state = "char"
+            elif ch == "{":
+                depth += 1
+                if body_start < 0:
+                    body_start = i
+            elif ch == "}":
+                depth -= 1
+                if depth == 0 and body_start >= 0:
+                    return start, i + 1
+        elif state == "line":
+            if ch == "\n":
+                state = "code"
+        elif state == "block":
+            if ch == "*" and nxt == "/":
+                state = "code"
+                i += 2
+                continue
+        elif state == "string":
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                state = "code"
+        elif state == "char":
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == "'":
+                state = "code"
+        i += 1
+    return start, n
+
+
 def main() -> int:
     mut = MUT.read_text() if MUT.exists() else ""
     arena = ARENA.read_text() if ARENA.exists() else ""
@@ -88,7 +150,7 @@ def main() -> int:
     # 8500 -> 9800 after the zero-arena canary fold shifted the clear (~8.7KB)
     # and the sticky_cleared resolution (~9.5KB) later in the body (ordering
     # rows unchanged).
-    win = mut[fn : fn + 9800] if fn >= 0 else ""
+    win = mut[slice(*_function_span(mut, fn))] if fn >= 0 else ""
     code_only = _strip_comments(win)
 
     compact = win.find(COMPACT)
