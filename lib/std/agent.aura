@@ -34,7 +34,7 @@
 ;         (require std/agent)
 
 (export auto-grow edsl-fix safe-eval llm-ask llm:extract-code
-        agent:decision-metrics agent:decide agent:loop-stats
+        agent-alist-ref agent:decision-metrics agent:decide agent:loop-stats
         agent:loop-stats-reset! agent:closed-loop-once agent:round
         agent:observe agent:propose agent:check agent:apply agent:verify
         agent:record agent:recover-plan agent:recover!
