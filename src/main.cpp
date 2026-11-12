@@ -3094,8 +3094,10 @@ static void print_denseness_usage(const char*, std::ostream& out = std::cerr) {
                       "docs/embedding.md");
     std::println(out, "  Async-only: session-send, session-recv. Sync-only: session delete.");
     std::println(out, "  Edit loop (#5168): (set-code \"...\") then (eval-current).");
-    std::println(out, "    {} --serve --preset dev   grants mutate. Same walker face as a", prog);
-    std::println(out, "    file run unless AURA_PIPELINE_STRICT pins Forbidden or force-soa.");
+    std::println(out, "    {} --serve --preset dev   grants mutate. The mode may follow", prog);
+    std::println(out, "    the options ({} --preset dev --serve is the same command).", prog);
+    std::println(out, "    Same walker face as a file run unless AURA_PIPELINE_STRICT");
+    std::println(out, "    pins Forbidden or force-soa.");
     std::println(out, "Special modes: --serve, --serve-async, --ir, --jit, --help");
 }
 
@@ -5833,6 +5835,106 @@ static CliPrep prepare_cli_runtime(int& argc, char** argv) {
     return prep;
 }
 
+// Issue #5170: --serve / --inspect / --typecheck / --ir / --query are tool
+// modes, not "must be argv[1]". Options (--preset, --grant, --deny, --quiet)
+// may precede them. Two modes is an error; the old chain kept argv[1] and
+// dropped the other without a word.
+static bool cli_tool_mode_5170(std::string_view a) {
+    return a == "--serve" || a == "--inspect" || a == "--typecheck" || a == "--ir" ||
+           a == "--query";
+}
+
+static bool cli_dispatch_mode_5170(std::string_view a) {
+    return cli_tool_mode_5170(a) || a == "--serve-async" || a == "--concurrent-metrics" ||
+           a == "--serve-async-bench" || a == "--query-and-fix" || a == "--auto-fix" ||
+           a == "--fmt" || a == "--unparse" || a == "--write" || a == "--cache" ||
+           a == "--cache-open" || a == "--strategy" || a == "--hot-swap" || a == "--jit-session" ||
+           a == "--jit" || a == "--freeze" || a == "--load" || a == "--emit-binary" ||
+           a == "--env" || a == "--env-json" || a == "--evo-explain";
+}
+
+// 0 = not one of the options that may sit in front of a tool mode.
+// 1 = drop this token. 2 = drop this token and the following value.
+static int cli_leading_option_5170(std::string_view a) {
+    if (a == "--quiet" || a == "--no-arena" || a == "--keep-going" || a.starts_with("--preset=") ||
+        a.starts_with("--grant=") || a.starts_with("--deny=") ||
+        a.starts_with("--worker-threads=") || a.starts_with("--health-port="))
+        return 1;
+    if (a == "--preset" || a == "--grant" || a == "--deny" || a == "--worker-threads" ||
+        a == "--health-port" || a == "-e" || a == "--eval" || a == "--allow")
+        return 2;
+    return 0;
+}
+
+// Move the single tool mode to argv[1] so the existing dispatch (which keys
+// off argv[1]) runs. --serve keeps the options; its launcher parses them.
+// The other modes take a positional in argv[2], so the options are removed
+// instead of being read as the program.
+static int normalize_tool_mode_5170(int& argc, char** argv) {
+    struct Hit {
+        int index = -1;
+        std::string_view name;
+    };
+    Hit first, second;
+    int count = 0;
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view a(argv[i]);
+        const int skip = cli_leading_option_5170(a);
+        if (skip == 2 && i + 1 < argc) {
+            ++i;
+            continue;
+        }
+        if (skip == 1)
+            continue;
+        if (!cli_tool_mode_5170(a))
+            continue;
+        if (count == 0)
+            first = Hit{i, a};
+        else if (count == 1)
+            second = Hit{i, a};
+        ++count;
+    }
+    if (count > 1) {
+        std::println(std::cerr, "error: conflicting modes '{}' and '{}'", first.name, second.name);
+        std::println(std::cerr, "hint: 'aura --help' for usage");
+        return 1;
+    }
+    if (count == 0)
+        return 0;
+    if (argc > 1) {
+        const std::string_view head(argv[1]);
+        if (head != first.name && cli_dispatch_mode_5170(head)) {
+            std::println(std::cerr, "error: conflicting modes '{}' and '{}'", head, first.name);
+            std::println(std::cerr, "hint: 'aura --help' for usage");
+            return 1;
+        }
+    }
+    if (first.index != 1) {
+        char* mode = argv[first.index];
+        for (int i = first.index; i > 1; --i)
+            argv[i] = argv[i - 1];
+        argv[1] = mode;
+    }
+    if (first.name == "--serve")
+        return 0;
+    int dst = 2;
+    for (int i = 2; i < argc; ++i) {
+        const std::string_view a(argv[i]);
+        const int skip = cli_leading_option_5170(a);
+        if (skip == 2) {
+            if (i + 1 < argc)
+                ++i;
+            continue;
+        }
+        if (skip == 1)
+            continue;
+        argv[dst++] = argv[i];
+    }
+    argv[dst] = nullptr;
+    argc = dst;
+    return 0;
+}
+
 static int aura_main(int argc, char* argv[]) {
     // Issue #137: register an atexit handler that frees the
     // runtime's hash tables. The `hash` primitive in the
@@ -5876,6 +5978,11 @@ static int aura_main(int argc, char* argv[]) {
     // #5066: --load fiber bodies are OS threads. A positive --worker-threads
     // caps how many of those bodies run at once. 0 stays unlimited.
     aura_set_cli_fiber_body_limit(num_workers);
+
+    // Issue #5170: `aura --preset dev --serve` is the same mode as
+    // `aura --serve --preset dev`. Two tool modes name the conflict.
+    if (const int mode_rc = normalize_tool_mode_5170(argc, argv); mode_rc != 0)
+        return mode_rc;
 
     // ── --serve-async: fiber-based async JSON-line protocol ─
     // Uses ucontext fibers + epoll for non-blocking multi-session support.
