@@ -46,10 +46,7 @@ CASES = {
     "tab": r'(display (string-append "\"" (json-escape "a\tb") "\""))',
     "quote-backslash": r'(display (string-append "\"" (json-escape "a\"b\\c") "\""))',
     "u0001": r'(display (json-encode "\x01"))',
-    "obj": (
-        '(display (string-append "{" '
-        '(json-obj-items (hash "a\\nb" 1) (list "a\\nb") number->string) "}"))'
-    ),
+    "obj": ('(display (string-append "{" (json-obj-items (hash "a\\nb" 1) (list "a\\nb") number->string) "}"))'),
     "arr": (
         '(display (string-append "[" '
         '(json-arr-items (list "a\\nb" "c\\"d") '
