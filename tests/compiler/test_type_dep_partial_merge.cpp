@@ -267,16 +267,32 @@ static void ac4925_top_level_begin_define_adds_root() {
     CHECK(cs.eval("(set-code \"(begin (define (g x) x))\\n(define (f) (g 1))\")").has_value(),
           "4925: set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "4925: eval-current");
+    // #5147: a rebind whose body is unchanged - cross-form included - is a
+    // documented no-op that must not move the narrow cone, so the #4925
+    // protection is asserted on what it actually protects: the rebound define
+    // still resolves its callee. The counter is checked for the no-op (must
+    // stay put) and for a real body change (the cone machinery still reports).
+    auto call_f = [&](std::int64_t want, const char* what) {
+        auto call = cs.eval("(f)");
+        CHECK(call.has_value() && aura::compiler::types::is_int(*call) &&
+                  aura::compiler::types::as_int(*call) == want,
+              what);
+    };
+    call_f(1, "4925: f calls g before any rebind");
+
     const auto added_before = query_field(cs, "type-dep-partial-nodes-added");
-    auto r = cs.eval("(mutate :rebind \"f\" \"(lambda () (g 1))\" \"t\")");
+    auto r = cs.eval("(mutate :rebind \"f\" \"(lambda () (g 1))\" \"ident\")");
     CHECK(r.has_value() && !aura::compiler::types::is_error(*r), "4925: rebind commits");
     const auto added = query_field(cs, "type-dep-partial-nodes-added") - added_before;
     std::println("  4925: type-dep-partial-nodes-added delta = {}", added);
-    CHECK(added >= 1, "4925: the root Begin joins the narrow cone for a cross-form define");
-    auto call = cs.eval("(f)");
-    CHECK(call.has_value() && aura::compiler::types::is_int(*call) &&
-              aura::compiler::types::as_int(*call) == 1,
-          "4925: f still calls g with the right arity");
+    CHECK(added == 0, "5147: a same-body cross-form rebind rebuilds no cone");
+    call_f(1, "4925: f still calls g after a no-op rebind");
+
+    // A real body change must still re-link and keep the callee resolvable.
+    auto changed = cs.eval("(mutate :rebind \"f\" \"(lambda () (g 2))\" \"chg\")");
+    CHECK(changed.has_value() && !aura::compiler::types::is_error(*changed),
+          "4925: changed rebind commits");
+    call_f(2, "4925: f sees the changed body");
 }
 
 } // namespace aura_type_dep_partial_merge_2283
