@@ -2802,27 +2802,27 @@ bool Evaluator::check_tenant_host_path(std::string_view path, std::string& out_r
 // Issue #5212: same IsolationDeny row as the lexical fence above. Kept as
 // its own function so an openat2 / mkdirat refusal (the lstat/open race)
 // audits without moving the tokens the #4380 gate body cites.
-void Evaluator::note_tenant_path_escape(std::string_view op) noexcept {
+void Evaluator::note_tenant_path_escape(std::string_view op_name) noexcept {
     using ::aura::compiler::security::kEffectWrite;
     using ::aura::compiler::security::kTenantPathEscapeReason;
     using ::aura::core::security_event::SecurityEventKind;
     using ::aura::core::security_event_wal::emit_security_event_durable;
 
     bump_capability_denial();
-    last_mutate_error_ = std::string(op) + ": " + kTenantPathEscapeReason;
+    last_mutate_error_ = std::string(op_name) + ": " + kTenantPathEscapeReason;
     const auto epoch = ::aura::core::current_mutation_epoch();
     const auto mid = production_deny_se_mid();
     const auto fiber = static_cast<std::int64_t>(aura_fiber_current_id());
     emit_security_event_durable(SecurityEventKind::IsolationDeny, capability_tenant_id_, mid, epoch,
-                                static_cast<std::uint16_t>(kEffectWrite), op,
+                                static_cast<std::uint16_t>(kEffectWrite), op_name,
                                 kTenantPathEscapeReason,
                                 /*denied=*/true, fiber);
-    typed_audit::capture_security_correlated_audit(mid, op, epoch, /*denied=*/true,
+    typed_audit::capture_security_correlated_audit(mid, op_name, epoch, /*denied=*/true,
                                                    /*target_node=*/0, fiber, capability_tenant_id_);
 }
 
 int Evaluator::open_tenant_host_fd(std::string_view resolved, int flags, unsigned mode,
-                                   std::string_view op) noexcept {
+                                   std::string_view op_name) noexcept {
     using ::aura::compiler::security::open_tenant_root_dirfd;
     using ::aura::compiler::security::open_under_tenant_root;
     using ::aura::compiler::security::tenant_fd_errno_is_escape;
@@ -2832,7 +2832,7 @@ int Evaluator::open_tenant_host_fd(std::string_view resolved, int flags, unsigne
     const auto root = tenant_host_root_for(capability_tenant_id_);
     std::string rel;
     if (!tenant_rel_under_root(resolved, root, rel)) {
-        note_tenant_path_escape(op);
+        note_tenant_path_escape(op_name);
         errno = EPERM;
         return -1;
     }
@@ -2840,7 +2840,7 @@ int Evaluator::open_tenant_host_fd(std::string_view resolved, int flags, unsigne
     if (root_fd < 0) {
         const int err = errno;
         if (tenant_fd_errno_is_escape(err))
-            note_tenant_path_escape(op);
+            note_tenant_path_escape(op_name);
         errno = err;
         return -1;
     }
@@ -2848,12 +2848,12 @@ int Evaluator::open_tenant_host_fd(std::string_view resolved, int flags, unsigne
     const int err = errno;
     ::close(root_fd);
     if (fd < 0 && tenant_fd_errno_is_escape(err))
-        note_tenant_path_escape(op);
+        note_tenant_path_escape(op_name);
     errno = err;
     return fd;
 }
 
-int Evaluator::mkdir_tenant_host(std::string_view resolved, std::string_view op) noexcept {
+int Evaluator::mkdir_tenant_host(std::string_view resolved, std::string_view op_name) noexcept {
     using ::aura::compiler::security::mkdir_under_tenant_root;
     using ::aura::compiler::security::open_tenant_root_dirfd;
     using ::aura::compiler::security::tenant_fd_errno_is_escape;
@@ -2863,7 +2863,7 @@ int Evaluator::mkdir_tenant_host(std::string_view resolved, std::string_view op)
     const auto root = tenant_host_root_for(capability_tenant_id_);
     std::string rel;
     if (!tenant_rel_under_root(resolved, root, rel)) {
-        note_tenant_path_escape(op);
+        note_tenant_path_escape(op_name);
         errno = EPERM;
         return -1;
     }
@@ -2871,7 +2871,7 @@ int Evaluator::mkdir_tenant_host(std::string_view resolved, std::string_view op)
     if (root_fd < 0) {
         const int err = errno;
         if (tenant_fd_errno_is_escape(err))
-            note_tenant_path_escape(op);
+            note_tenant_path_escape(op_name);
         errno = err;
         return -1;
     }
@@ -2879,12 +2879,12 @@ int Evaluator::mkdir_tenant_host(std::string_view resolved, std::string_view op)
     const int err = errno;
     ::close(root_fd);
     if (rc != 0 && tenant_fd_errno_is_escape(err))
-        note_tenant_path_escape(op);
+        note_tenant_path_escape(op_name);
     errno = err;
     return rc;
 }
 
-int Evaluator::unlink_tenant_host(std::string_view resolved, std::string_view op) noexcept {
+int Evaluator::unlink_tenant_host(std::string_view resolved, std::string_view op_name) noexcept {
     using ::aura::compiler::security::open_tenant_root_dirfd;
     using ::aura::compiler::security::tenant_fd_errno_is_escape;
     using ::aura::compiler::security::tenant_host_root_for;
@@ -2894,7 +2894,7 @@ int Evaluator::unlink_tenant_host(std::string_view resolved, std::string_view op
     const auto root = tenant_host_root_for(capability_tenant_id_);
     std::string rel;
     if (!tenant_rel_under_root(resolved, root, rel)) {
-        note_tenant_path_escape(op);
+        note_tenant_path_escape(op_name);
         errno = EPERM;
         return -1;
     }
@@ -2902,7 +2902,7 @@ int Evaluator::unlink_tenant_host(std::string_view resolved, std::string_view op
     if (root_fd < 0) {
         const int err = errno;
         if (tenant_fd_errno_is_escape(err))
-            note_tenant_path_escape(op);
+            note_tenant_path_escape(op_name);
         errno = err;
         return -1;
     }
@@ -2910,7 +2910,7 @@ int Evaluator::unlink_tenant_host(std::string_view resolved, std::string_view op
     const int err = errno;
     ::close(root_fd);
     if (rc < 0 && tenant_fd_errno_is_escape(err))
-        note_tenant_path_escape(op);
+        note_tenant_path_escape(op_name);
     errno = err;
     return rc;
 }
