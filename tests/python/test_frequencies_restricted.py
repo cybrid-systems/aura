@@ -73,15 +73,15 @@ class TestFrequenciesRestricted(unittest.TestCase):
         p = _run(
             '(require "std/hash" all:)\n'
             '(define n (let ((h (hash))) (hash-set! h "a" 1) (hash-ref h "a" 0)))\n'
-            '(display n) (newline)\n'
+            "(display n) (newline)\n"
             '(define h (hash "a" 1))\n'
             '(define h2 (hash-set h "b" 2))\n'
             '(display (hash-length h)) (display " ") (display (hash-length h2)) (newline)\n'
-            '(define denied (try (begin (hash-set! h "c" 3) \'ok) (catch (e) \'denied)))\n'
-            '(display denied) (newline)\n'
+            "(define denied (try (begin (hash-set! h \"c\" 3) 'ok) (catch (e) 'denied)))\n"
+            "(display denied) (newline)\n"
             '(define f (frequencies (list "a" "b" "a")))\n'
-            '(define later (try (begin (hash-set! f "z" 1) \'ok) (catch (e) \'denied)))\n'
-            '(display later) (newline)\n'
+            "(define later (try (begin (hash-set! f \"z\" 1) 'ok) (catch (e) 'denied)))\n"
+            "(display later) (newline)\n"
             '(display (hash-ref f "a" 0)) (newline)\n'
         )
         self.assertEqual(p.returncode, 0, p.stderr)
