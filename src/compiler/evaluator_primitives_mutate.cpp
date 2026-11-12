@@ -3003,7 +3003,9 @@ template <typename Ctx> void RegSplitParts::register_mutate_stable_ref_policy_pr
         [&ev, mev, unpack_stable_ref_arg](const auto& a) -> EvalValue {
             // Wave1 B-09: pin adopts outer Guard exclusive — no nested shared.
             auto pin = ev.pin_workspace_flat();
-            if (!is_pair(a[0]))
+            // Issue #5165: a[0] on an empty span is out of bounds. Every
+            // other mutate:* prim checks arity before it indexes.
+            if (a.empty() || !is_pair(a[0]))
                 return mev("bad-arg", "usage: (mutate :check-stable-ref (id . gen))");
             if (!pin)
                 return mev("no-workspace", "no workspace AST loaded");
