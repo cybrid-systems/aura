@@ -1,0 +1,33 @@
+{
+  "issue": 5194,
+  "title": "std/random:shuffle recurses per element (stack overflow above 512) and is O(n^2)",
+  "checks": [
+    {
+      "ac": "AC1-iterative",
+      "path": "lib/std/random.aura",
+      "contains": [
+        "Issue #5194",
+        "list-sort acc",
+        "constant stack"
+      ]
+    },
+    {
+      "ac": "AC2-generator-arg",
+      "path": "lib/std/random.aura",
+      "contains": [
+        "expected a generator, e.g. (random-integer (make-random))",
+        "(random-seed gen) → current seed"
+      ]
+    },
+    {
+      "ac": "AC3-suite",
+      "path": "tests/suite/random_5194.aura",
+      "contains": [
+        "#5194",
+        "OK-5194-random",
+        "10000",
+        "permutation?"
+      ]
+    }
+  ]
+}
