@@ -496,6 +496,9 @@ types::EvalValue Evaluator::fail_module_parse(const std::string& resolved,
 }
 
 types::EvalValue Evaluator::fail_module_load(const std::string& resolved, const std::string& why) {
+    // Issue #5198: this load's env is about to be freed. Drop overwrite
+    // tracking so a recycled address cannot warn against a dead module.
+    forget_import_bind_origin(require_inject_env_);
     // Issue #4460: file mode surfaces why on the require diagnostic.
     // The fail-closed reset below is unchanged (#2570).
     if (!require_failure_is_diagnostic_)
@@ -1038,6 +1041,7 @@ bool Evaluator::gc_module(const std::string& path) {
     auto mod_idx = cache_it->second;
     if (mod_idx >= modules_.size())
         return false;
+    forget_import_bind_origin(modules_[mod_idx]);
 
     // Erase closures whose owner_arena matches the module's arena.
     auto arena_it = module_arena_ptrs_.find(path);

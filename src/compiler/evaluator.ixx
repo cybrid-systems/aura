@@ -7616,6 +7616,19 @@ private:
     // vars unbound under materialize_call_env SoA walk. Null → top-level
     // import (inject into top_ only). Nested loads restore previous.
     Env* require_inject_env_ = nullptr;
+    // Issue #5198: module that last installed each name via (import)/(require)
+    // into this environment. A different module overwriting that binding with
+    // a different value warns. Re-requiring the same module, and a re-export
+    // of the same object, do not.
+    struct ImportBindOrigin {
+        std::string module;
+        types::EvalValue value{};
+    };
+    std::unordered_map<const Env*, std::unordered_map<std::string, ImportBindOrigin>>
+        import_bind_origin_;
+    void warn_import_overwrite(Env* env, const std::string& name, const types::EvalValue& val,
+                               std::string_view module_path);
+    void forget_import_bind_origin(const Env* env) noexcept;
     // Issue #4460: file-mode oneshot (see set_require_failure_is_diagnostic).
     bool require_failure_is_diagnostic_ = false;
     const void* ir_entry_escape_flat_ = nullptr; // Issue #4899 follow-up

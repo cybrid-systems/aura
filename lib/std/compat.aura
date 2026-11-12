@@ -46,6 +46,7 @@
 (define (query:nodes-with-marker marker)
   (query :by-marker marker))
 
+;; Demoted compat shim, not std/query's query:subtree.
 ;; ── query:subtree → (fold-tree self cons) ──
 ;; Pending stdlib helper. Today the shim returns the same flat
 ;; `query:children` list the old primitive returned for the

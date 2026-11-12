@@ -278,7 +278,7 @@ public:
             return;
         }
         std::string probe;
-        if (!eval_quiet_("(procedure? extract-code)", &probe).empty())
+        if (!eval_quiet_("(procedure? llm:extract-code)", &probe).empty())
             if (auto err = eval_quiet_("(require \"std/agent\" all:)"); !err.empty()) {
                 std::fprintf(stdout, ":ask: std/agent: %s\n", err.c_str());
                 std::fflush(stdout);
@@ -308,7 +308,7 @@ public:
             return;
         }
         std::string candidate;
-        eval_quiet_("(extract-code __repl_ask)", &candidate);
+        eval_quiet_("(llm:extract-code __repl_ask)", &candidate);
         if (candidate.size() >= 2 && candidate.front() == '"' && candidate.back() == '"') {
             std::string un;
             for (std::size_t i = 1; i + 1 < candidate.size(); ++i) {

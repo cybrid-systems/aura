@@ -120,14 +120,6 @@
 
 ;; ── Vector ──────────────────────────────────────────────────
 
-(define (vector-map f v)
-  (let ((len (vector-length v))
-        (result (make-vector 0)))
-    (let iter ((i 0))
-      (if (>= i len) result
-        (begin (vector-set! result i (f (vector-ref v i)))
-               (iter (+ i 1)))))))
-
 (define (vector-reverse v)
   (let ((len (vector-length v))
         (result (make-vector len)))
@@ -167,8 +159,11 @@
   (if (p seed) (list)
     (cons (f seed) (unfold p f g (g seed)))))
 
-; (iota n) — generate list 0..n-1
-(define (iota n)
-  (let iter ((i 0) (acc (list)))
-    (if (>= i n) (reverse acc)
-      (iter (+ i 1) (cons i acc)))))
+;; iota and vector-map are the std/list functions (list re-exports std/vector's
+;; vector-map). (use) plus module-get copies the closure into a fresh cell.
+;; (require "std/list" all:) would bind list's own cells here, and a later
+;; (define find ...) would overwrite that shared cell — list's find included.
+;; find and count stay the definitions above.
+(define iter-std-list (use "std/list"))
+(define iota (module-get iter-std-list "iota"))
+(define vector-map (module-get iter-std-list "vector-map"))

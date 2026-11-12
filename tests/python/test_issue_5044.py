@@ -40,7 +40,7 @@ def fixture_chat(content: str) -> str:
     return f'(define (llm:chat s u) (hash "ok" #t "content" "{content}"))\n'
 
 
-STUB = '(define (extract-code r) (hash-ref r "content"))\n'
+STUB = '(define (llm:extract-code r) (hash-ref r "content"))\n'
 
 
 class Ask(unittest.TestCase):
@@ -69,7 +69,7 @@ class Ask(unittest.TestCase):
         r = run_repl(
             BASE
             + fixture_chat("no code here")
-            + '(define (extract-code r) "")\n'
+            + '(define (llm:extract-code r) "")\n'
             + ":ask 改到 42\n:src guess\n(quit)\n"
         )
         self.assertIn("no definition extracted", r.stdout, r.stdout + r.stderr)
