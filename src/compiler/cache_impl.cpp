@@ -8,6 +8,9 @@ module;
 
 module aura.compiler.cache;
 import std;
+import aura.compiler.ir;
+
+#include "reflect/ir_module_layout.hh"
 
 // C-linkage bridge to reflection-based IR serialization
 // (implemented in ir_reflect_serialize.cpp, compiled with -freflection)
@@ -62,12 +65,26 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
                  std::uint64_t source_mtime, const aura::ir::IRModule* ir_mod,
                  const std::string* sig_data) {
 
-    std::ofstream f(path, std::ios::binary);
-    if (!f)
-        return false;
-
     auto n = flat.size();
     if (n == 0)
+        return false;
+
+    // Issue #5159: serialize the IR module before creating the file. A fault
+    // in the serializer must not leave a half-written cache at `path`.
+    struct IrBufferFree {
+        void operator()(const char* data) const noexcept { aura_ir_buffer_free(data); }
+    };
+    const char* ir_buf_data = nullptr;
+    std::size_t ir_buf_size = 0;
+    if (ir_mod)
+        aura_ir_serialize(ir_mod, &ir_buf_data, &ir_buf_size);
+    const std::unique_ptr<const char[], IrBufferFree> ir_buf{ir_buf_data};
+    if (ir_buf_size > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()))
+        return false;
+
+    const std::string tmp = path + ".tmp";
+    std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+    if (!f)
         return false;
 
     // Build string table and remapped sym_ids
@@ -210,17 +227,10 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
     auto ir_start = f.tellp();
 
     if (ir_mod) {
-        struct IrBufferFree {
-            void operator()(const char* data) const noexcept { aura_ir_buffer_free(data); }
-        };
-        const char* ir_buf_data = nullptr;
-        size_t ir_buf_size = 0;
-        aura_ir_serialize(ir_mod, &ir_buf_data, &ir_buf_size);
-        // #4936: owned until the end of this block, also if put_bytes throws.
-        const std::unique_ptr<const char[], IrBufferFree> ir_buf{ir_buf_data};
         auto ir_size = static_cast<std::uint32_t>(ir_buf_size);
         put_bytes(&ir_size, sizeof(ir_size));
-        put_bytes(ir_buf.get(), ir_buf_size);
+        if (ir_buf_size > 0)
+            put_bytes(ir_buf.get(), ir_buf_size);
     }
 
     // ── Type sig section (embedded .aura-type) ────────────────
@@ -240,7 +250,18 @@ bool write_cache(const std::string& path, const FlatAST& flat, const StringPool&
     header.num_functions = ir_mod ? 1 : 0; // signal: 1 = has IR section, 0 = no IR
     put_at(0, &header, sizeof(header));
 
+    const bool wrote = static_cast<bool>(f);
     f.close();
+    if (!wrote) {
+        std::filesystem::remove(tmp);
+        return false;
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) {
+        std::filesystem::remove(tmp);
+        return false;
+    }
     return true;
 }
 
@@ -344,11 +365,20 @@ MappedCache::MappedCache(MappedCache&& other) noexcept
     : data_(other.data_)
     , file_size_(other.file_size_)
     , header_(other.header_)
+    , ir_functions_(std::move(other.ir_functions_))
+    , ir_entry_function_id_(other.ir_entry_function_id_)
+    , ir_string_pool_(std::move(other.ir_string_pool_))
+    , has_ir_cache_(other.has_ir_cache_)
+    , root_(other.root_)
     , num_nodes_(other.num_nodes_) {
     copy_pointers(other);
     other.data_ = nullptr;
     other.file_size_ = 0;
     other.header_ = nullptr;
+    other.has_ir_cache_ = false;
+    other.ir_entry_function_id_ = 0;
+    other.root_ = NULL_NODE;
+    other.num_nodes_ = 0;
 }
 
 MappedCache& MappedCache::operator=(MappedCache&& other) noexcept {
@@ -360,9 +390,18 @@ MappedCache& MappedCache::operator=(MappedCache&& other) noexcept {
         header_ = other.header_;
         num_nodes_ = other.num_nodes_;
         copy_pointers(other);
+        ir_functions_ = std::move(other.ir_functions_);
+        ir_entry_function_id_ = other.ir_entry_function_id_;
+        ir_string_pool_ = std::move(other.ir_string_pool_);
+        has_ir_cache_ = other.has_ir_cache_;
+        root_ = other.root_;
         other.data_ = nullptr;
         other.file_size_ = 0;
         other.header_ = nullptr;
+        other.has_ir_cache_ = false;
+        other.ir_entry_function_id_ = 0;
+        other.root_ = NULL_NODE;
+        other.num_nodes_ = 0;
     }
     return *this;
 }
@@ -384,6 +423,7 @@ void MappedCache::copy_pointers(const MappedCache& o) {
     lines_ = o.lines_;
     cols_ = o.cols_;
     markers_ = o.markers_;
+    type_ids_ = o.type_ids_;
 }
 
 MappedCache::~MappedCache() {
@@ -471,26 +511,29 @@ MappedCache open_cache(const std::string& path) {
     // Version 3 used a hand-written format — safe to skip (rebuilt on miss)
     // Version 5+ IR blobs include IRInstruction::source_marker (#455).
     // v4 blobs were serialized with a smaller mirror layout — skip them.
-    if (hdr->ir_offset > 0 && hdr->num_functions > 0 && hdr->version >= 5) {
-        // Issue #1102: bounds-check ir_offset + size prefix + blob.
-        if (hdr->ir_offset + 4 > cache.file_size_) {
-            // Truncated IR section — skip IR (rebuilt on miss).
-        } else {
-            auto* ir_data = static_cast<const char*>(data) + hdr->ir_offset;
-            std::uint32_t ir_size = 0;
-            std::memcpy(&ir_size, ir_data, 4);
-            ir_data += 4;
-            if (static_cast<std::uint64_t>(hdr->ir_offset) + 4u + ir_size > cache.file_size_) {
-                // ir_size extends past file — skip.
-            } else {
-                aura::ir::IRModule ir_mod;
-                aura_ir_deserialize(ir_data, ir_size, &ir_mod);
-                cache.ir_functions_ = std::move(ir_mod.functions);
-                cache.ir_string_pool_ = std::move(ir_mod.string_pool);
-                cache.ir_entry_function_id_ = ir_mod.entry_function_id;
-                cache.has_ir_cache_ = true;
-            }
+    // Issue #5159: a v5 header that claims an IR section must contain the
+    // whole size-prefixed blob. A truncated section is not a valid cache
+    // (the old skip path reported the AST as "version=3" with no IR).
+    if (hdr->version >= 5 && hdr->num_functions > 0) {
+        const auto off = static_cast<std::uint64_t>(hdr->ir_offset);
+        const bool fits = off <= cache.file_size_ && cache.file_size_ - off >= 4;
+        std::uint32_t ir_size = 0;
+        if (fits)
+            std::memcpy(&ir_size, static_cast<const char*>(data) + off, 4);
+        if (!fits || cache.file_size_ - off - 4 < ir_size) {
+            ::munmap(data, cache.file_size_);
+            cache.data_ = nullptr;
+            cache.file_size_ = 0;
+            cache.header_ = nullptr;
+            return MappedCache{};
         }
+        auto* ir_data = static_cast<const char*>(data) + off + 4;
+        aura::ir::IRModule ir_mod;
+        aura_ir_deserialize(ir_data, ir_size, &ir_mod);
+        cache.ir_functions_ = std::move(ir_mod.functions);
+        cache.ir_string_pool_ = std::move(ir_mod.string_pool);
+        cache.ir_entry_function_id_ = ir_mod.entry_function_id;
+        cache.has_ir_cache_ = true;
     }
 
     return cache;

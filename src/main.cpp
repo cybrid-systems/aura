@@ -5933,9 +5933,11 @@ static int aura_main(int argc, char* argv[]) {
     if (argc > 1 && std::string_view(argv[1]) == "--jit")
         return run_cli_jit(argc, argv);
 
-    // ── --freeze: freeze workspace state to a snapshot file ──────
-    // Usage: echo '(define (f x) (+ x 1))(display (f 41))' | ./aura --freeze out.abc
-    // Then: echo '(current-source)' | ./aura --cache-open out.abc
+    // ── --freeze: write the program source to a snapshot file ───
+    // Usage: echo '(define (f x) (+ x 1))(display (f 41))' | ./aura --freeze out.aura
+    // Then:  ./aura --load out.aura
+    // The file is source text for --load. A binary IR cache is
+    // `aura --cache out.abc`, opened with `aura --cache-open out.abc`.
     if (argc > 2 && std::string_view(argv[1]) == "--freeze")
         return run_cli_freeze(argv);
 
