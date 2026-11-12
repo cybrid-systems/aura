@@ -64,6 +64,11 @@ using types::make_void;
 // Issue #5032: json-parse state and its recursive helpers live outside the
 // registration lambda so every helper stays under 300 lines. Member names match
 // the old captures, so the parser body did not change in the extraction.
+// Issue #5152: the source parser refuses past 512 frames. json-parse used to
+// recurse once per bracket until the native stack died with SIGSEGV. 512 is
+// the same cap; the evolution-log reader stays stricter (64).
+inline constexpr std::size_t kJsonParseMaxNesting = 512;
+
 struct JsonParser {
     std::string json_str;
     std::size_t pos = 0;
@@ -72,11 +77,14 @@ struct JsonParser {
     std::vector<EvalValue>& error_values;
     std::atomic<std::uint64_t>* primitive_error_counter;
     Evaluator& ev;
+    std::size_t depth = 0;
+    bool nesting_refused = false;
 
     void skip_ws();
     EvalValue parse_string();
     EvalValue parse_number();
     bool parse_keyword(std::string_view kw, EvalValue val);
+    EvalValue nesting_too_deep();
     EvalValue parse_array();
     std::uint64_t json_object_key_hash(const EvalValue& key_val);
     EvalValue parse_object();
@@ -225,14 +233,28 @@ bool JsonParser::parse_keyword(std::string_view kw, EvalValue val) {
     }
     return false;
 }
+EvalValue JsonParser::nesting_too_deep() {
+    nesting_refused = true;
+    return make_primitive_error(string_heap, error_values, "json-parse: nesting too deep",
+                                primitive_error_counter);
+}
 EvalValue JsonParser::parse_array() {
+    // Issue #5152: refuse before the recursive parse_value frame.
+    if (nesting_refused)
+        return make_void();
+    if (depth >= kJsonParseMaxNesting)
+        return nesting_too_deep();
+    ++depth;
     pos++; // skip [
     skip_ws();
     std::vector<EvalValue> elems;
     while (pos < json_str.size() && json_str[pos] != ']') {
         skip_ws();
         const auto before = pos;
-        elems.push_back(parse_value());
+        auto elem = parse_value();
+        if (nesting_refused)
+            return elem;
+        elems.push_back(std::move(elem));
         // Advance on stuck parse to avoid infinite loops (#1715).
         if (pos == before) {
             if (pos < json_str.size())
@@ -247,6 +269,7 @@ EvalValue JsonParser::parse_array() {
     }
     if (pos < json_str.size() && json_str[pos] == ']')
         pos++;
+    --depth;
     // Issue #2916 / #2997: lock only materialization; one allow + reserve.
     // Issue #4453: geometric pairs reserve (monotonic arena; not size+n).
     Evaluator::ListCtorLockHold hold(ev);
@@ -282,6 +305,12 @@ std::uint64_t JsonParser::json_object_key_hash(const EvalValue& key_val) {
     return kh;
 }
 EvalValue JsonParser::parse_object() {
+    // Issue #5152: same nesting cap as parse_array.
+    if (nesting_refused)
+        return make_void();
+    if (depth >= kJsonParseMaxNesting)
+        return nesting_too_deep();
+    ++depth;
     pos++; // skip {
     // Issue #2997: snapshot k/v then reserve capacity (no parse-time grow).
     std::vector<std::pair<EvalValue, EvalValue>> entries;
@@ -294,6 +323,8 @@ EvalValue JsonParser::parse_object() {
             pos++;
         skip_ws();
         auto val = parse_value();
+        if (nesting_refused)
+            return val;
         // Advance on stuck parse to avoid infinite loops (#1715).
         if (pos == before) {
             if (pos < json_str.size())
@@ -307,6 +338,7 @@ EvalValue JsonParser::parse_object() {
             pos++;
         skip_ws();
     }
+    --depth;
     if (pos < json_str.size() && json_str[pos] == '}')
         pos++;
 
@@ -887,7 +919,9 @@ void RegSplitParts::register_json_parse_primitive(
                               ev};
             return parser.parse_value();
         },
-        pure_general(1, "(string) -> any", "Parse a JSON string into an Aura value."));
+        pure_general(1, "(string) -> any",
+                     "Parse a JSON string into an Aura value. Nesting deeper than 512 "
+                     "returns json-parse: nesting too deep."));
 }
 
 void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
