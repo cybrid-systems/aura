@@ -1084,6 +1084,13 @@ struct LLVMBuilder {
     // One callee locals buffer per function: self-call sites are sequential
     // within an activation, so a single entry-block allocation is enough.
     llvm::Value* self_locals_buf = nullptr;
+    // Issue #5174: tail self-calls branch here. The header sits after the
+    // prologue, the self-id cache, the shape guard, and one depth_enter,
+    // so a named-let back-edge does not push a frame or re-enter those.
+    llvm::BasicBlock* self_loop_bb = nullptr;
+    // True after depth_enter incremented. Later returns call depth_leave.
+    // The refuse edge returns 0 without having incremented.
+    bool depth_armed = false;
 
     // Issue #4601: hoisted env-cell reads. An env slot that is written
     // only by its entry OpArg and read by OpCellGet is read once at body
@@ -1442,6 +1449,9 @@ struct LLVMBuilder {
     // Issue #4451: peek the #4084 sentinel after OpCall / OpApply.
     // Does not clear it. The host take-after still sees a callee refuse.
     llvm::Function* fn_peek_prologue_deopt_sentinel = nullptr;
+    // Issue #5174: i32 aura_jit_depth_enter() / void aura_jit_depth_leave().
+    llvm::Function* fn_depth_enter = nullptr;
+    llvm::Function* fn_depth_leave = nullptr;
     // Issue #4601: i64 aura_jit_native_self_id() — innermost native
     // activation's closure id on this thread.
     llvm::Function* fn_native_self_id = nullptr;
@@ -1629,6 +1639,13 @@ struct LLVMBuilder {
         fn_native_self_id =
             llvm::Function::Create(llvm::FunctionType::get(i64, false),
                                    llvm::Function::ExternalLinkage, "aura_jit_native_self_id", mod);
+        // Issue #5174: one native frame per activation.
+        fn_depth_enter =
+            llvm::Function::Create(llvm::FunctionType::get(i32_ty, false),
+                                   llvm::Function::ExternalLinkage, "aura_jit_depth_enter", mod);
+        fn_depth_leave =
+            llvm::Function::Create(llvm::FunctionType::get(void_ty, false),
+                                   llvm::Function::ExternalLinkage, "aura_jit_depth_leave", mod);
 
         // Issue #2576: (slot, args*, count) — full N-arg PrimCall
         fn_prim_call = llvm::Function::Create(
@@ -1937,7 +1954,15 @@ struct LLVMBuilder {
                 name_ptr, llvm::ConstantInt::get(i32_ty, block),
                 llvm::ConstantInt::get(i32_ty, instr),
                 irb->CreateBitCast(slots, llvm::PointerType::getUnqual(ctx)), nslots, argc});
-        irb->CreateRet(call);
+        emit_ret(call);
+    }
+    // Issue #5174: a return after depth_enter must drop the frame count.
+    // Before depth_armed this is a plain ret (prologue, shape guard, the
+    // depth-refuse edge itself — that edge did not increment).
+    void emit_ret(llvm::Value* v) {
+        if (depth_armed && fn_depth_leave)
+            irb->CreateCall(llvm::FunctionCallee(fn_depth_leave), {});
+        irb->CreateRet(v);
     }
     llvm::Value* c64(int64_t v) { return llvm::ConstantInt::get(llvm::Type::getInt64Ty(ctx), v); }
     // #4936: unsigned / address constants keep their bit pattern without a
@@ -2047,6 +2072,54 @@ struct LLVMBuilder {
         phi->addIncoming(slowv, slow_end);
         return phi;
     }
+    // Issue #5174: the call's result reaches a Return only through Local
+    // copies and Jumps. lower_flat_if inserts Local phi + Jump between
+    // the Call and the merge Return, so "the next opcode is Return"
+    // misses the named-let loop. A call used as an operand is not tail.
+    bool self_call_is_tail(const FlatFunction& fn, uint32_t result_slot) const {
+        uint32_t live = result_slot;
+        uint32_t block = cur_block;
+        uint32_t instr = cur_instr + 1;
+        uint32_t seen[8] = {};
+        int seen_n = 0;
+        for (int hops = 0; hops < 8; ++hops) {
+            if (block >= fn.num_blocks)
+                return false;
+            const auto& blk = fn.blocks[block];
+            if (instr >= blk.num_instructions)
+                return false;
+            const auto& in = blk.instructions[instr];
+            if (in.opcode == OpLocal && in.ops[1] == live) {
+                live = in.ops[0];
+                ++instr;
+                continue;
+            }
+            if (in.opcode == OpJump) {
+                const uint32_t dest = in.ops[0];
+                uint32_t di = fn.num_blocks;
+                for (uint32_t i = 0; i < fn.num_blocks; ++i) {
+                    if (fn.blocks[i].id == dest) {
+                        di = i;
+                        break;
+                    }
+                }
+                if (di >= fn.num_blocks)
+                    return false;
+                for (int s = 0; s < seen_n; ++s)
+                    if (seen[s] == di)
+                        return false;
+                if (seen_n < 8)
+                    seen[seen_n++] = di;
+                block = di;
+                instr = 0;
+                continue;
+            }
+            if (in.opcode == OpReturn)
+                return in.ops[0] == live;
+            return false;
+        }
+        return false;
+    }
     // Issue #4601: guarded direct self-call. The callee word must equal
     // this activation's closure id (reproducible recursion on the same
     // closure) and the fn's DefineVersion word must still hold the value
@@ -2056,9 +2129,12 @@ struct LLVMBuilder {
     // the unchanged aura_closure_call lowering. frame_deopt_ok is
     // required so a prologue deopt inside the callee returns the
     // interpreted value instead of the #4084 sentinel.
+    // Issue #5174: a tail hit stores the new args over this frame's
+    // incoming buffer and branches to self_loop_bb. The following Local
+    // / Jump / Return stay on the miss path only.
     template <class ArgAt, class Generic>
     bool emit_self_call(llvm::Value* callee, uint32_t arg_count, uint32_t result_slot, ArgAt arg_at,
-                        Generic generic) {
+                        Generic generic, bool tail) {
         if (!self_call_ok || !self_id_alloca || !fn_native_self_id || arg_count != self_arg_count ||
             self_env_count + arg_count > self_local_count)
             return false;
@@ -2078,25 +2154,67 @@ struct LLVMBuilder {
         br_likely(irb->CreateAnd(is_self, word_ok), bb_self, bb_gen);
 
         irb->SetInsertPoint(bb_self);
-        if (!self_locals_buf)
-            self_locals_buf = create_entry_alloca(llvm::ArrayType::get(i64_ty, self_local_count),
-                                                  "l1_self_locals");
-        auto* arr = self_locals_buf;
-        for (uint32_t i = 0; i < self_env_count; ++i) {
-            auto* gep = irb->CreateGEP(i64_ty, arr, c64(i));
-            auto* src = llvm_locals[self_env_slots[i]];
-            irb->CreateStore(irb->CreateLoad(i64_ty, src), gep);
+        if (tail && self_loop_bb) {
+            // args pointer is the dispatcher's locals (env, then user
+            // args). OpArg reloads it from the loop header. Do not branch
+            // to the entry block: that re-runs allocas.
+            auto* args = func->arg_begin();
+            for (uint32_t i = 0; i < self_env_count; ++i) {
+                auto* gep = irb->CreateGEP(i64_ty, args, c64(i));
+                auto* src = llvm_locals[self_env_slots[i]];
+                irb->CreateStore(irb->CreateLoad(i64_ty, src), gep);
+            }
+            for (uint32_t i = 0; i < arg_count; ++i) {
+                auto* gep = irb->CreateGEP(i64_ty, args, c64(self_env_count + i));
+                irb->CreateStore(arg_at(i), gep);
+            }
+            if (fn_poll_hold_budget)
+                irb->CreateCall(llvm::FunctionCallee(fn_poll_hold_budget));
+            irb->CreateBr(self_loop_bb);
+        } else {
+            if (!self_locals_buf)
+                self_locals_buf = create_entry_alloca(
+                    llvm::ArrayType::get(i64_ty, self_local_count), "l1_self_locals");
+            auto* arr = self_locals_buf;
+            for (uint32_t i = 0; i < self_env_count; ++i) {
+                auto* gep = irb->CreateGEP(i64_ty, arr, c64(i));
+                auto* src = llvm_locals[self_env_slots[i]];
+                irb->CreateStore(irb->CreateLoad(i64_ty, src), gep);
+            }
+            for (uint32_t i = 0; i < arg_count; ++i) {
+                auto* gep = irb->CreateGEP(i64_ty, arr, c64(self_env_count + i));
+                irb->CreateStore(arg_at(i), gep);
+            }
+            llvm::Value* own = irb->CreateCall(
+                llvm::FunctionCallee(func),
+                llvm::ArrayRef<llvm::Value*>{
+                    arr, llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), arg_count)});
+            // #4601: l1_self_call stays a direct call. An unconditional
+            // successor is merged back into this block by simplifycfg, so
+            // the sentinel peek lives only on the fixnum-0 edge (the
+            // refuse protocol is 0 + the sentinel; a real 0 peeks and
+            // continues). O2 must not sink that call into the hot block.
+            auto* bb_store = llvm::BasicBlock::Create(ctx, "l1_self_store", parent);
+            if (fn_peek_prologue_deopt_sentinel) {
+                auto* bb_zero = llvm::BasicBlock::Create(ctx, "l1_self_zero", parent);
+                auto* is_zero = irb->CreateICmpEQ(own, c64(0));
+                br_likely(irb->CreateNot(is_zero), bb_store, bb_zero);
+                irb->SetInsertPoint(bb_zero);
+                auto* sent =
+                    irb->CreateCall(llvm::FunctionCallee(fn_peek_prologue_deopt_sentinel), {});
+                auto* zero32 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+                auto* refused = irb->CreateICmpNE(sent, zero32);
+                auto* bb_refused = llvm::BasicBlock::Create(ctx, "l1_self_refused", parent);
+                irb->CreateCondBr(refused, bb_refused, bb_store);
+                irb->SetInsertPoint(bb_refused);
+                emit_ret(c64(0));
+            } else {
+                irb->CreateBr(bb_store);
+            }
+            irb->SetInsertPoint(bb_store);
+            irb->CreateStore(own, llvm_locals[result_slot]);
+            irb->CreateBr(bb_done);
         }
-        for (uint32_t i = 0; i < arg_count; ++i) {
-            auto* gep = irb->CreateGEP(i64_ty, arr, c64(self_env_count + i));
-            irb->CreateStore(arg_at(i), gep);
-        }
-        llvm::Value* own = irb->CreateCall(
-            llvm::FunctionCallee(func),
-            llvm::ArrayRef<llvm::Value*>{
-                arr, llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), arg_count)});
-        irb->CreateStore(own, llvm_locals[result_slot]);
-        irb->CreateBr(bb_done);
 
         irb->SetInsertPoint(bb_gen);
         generic();
@@ -2378,7 +2496,7 @@ struct LLVMBuilder {
             auto* bb_cont = llvm::BasicBlock::Create(ctx, "call_callee_cont", parent);
             irb->CreateCondBr(refused, bb_deopt, bb_cont);
             irb->SetInsertPoint(bb_deopt);
-            irb->CreateRet(c64(0));
+            emit_ret(c64(0));
             irb->SetInsertPoint(bb_cont);
         };
         // Issue #4671: per-op typed-entry readiness re-sample (dual of the
@@ -2438,9 +2556,9 @@ struct LLVMBuilder {
                 if (fn_deopt_to_interpreter) {
                     auto* deopt_ret = irb->CreateCall(llvm::FunctionCallee(fn_deopt_to_interpreter),
                                                       llvm::ArrayRef<llvm::Value*>{name_ptr});
-                    irb->CreateRet(deopt_ret);
+                    emit_ret(deopt_ret);
                 } else {
-                    irb->CreateRet(c64(0));
+                    emit_ret(c64(0));
                 }
             }
             irb->SetInsertPoint(bb_ok);
@@ -3176,11 +3294,11 @@ struct LLVMBuilder {
                     auto* d = spair_cdr_is_float(inst.ops[0])
                                   ? box_double(irb->CreateLoad(double_ty, spair_cdr_f[inst.ops[0]]))
                                   : irb->CreateLoad(i64_ty, spair_cdr[inst.ops[0]]);
-                    irb->CreateRet(irb->CreateCall(llvm::FunctionCallee(fn_alloc_pair),
-                                                   llvm::ArrayRef<llvm::Value*>{a, d}));
+                    emit_ret(irb->CreateCall(llvm::FunctionCallee(fn_alloc_pair),
+                                             llvm::ArrayRef<llvm::Value*>{a, d}));
                     return true;
                 }
-                irb->CreateRet(load(inst.ops[0]));
+                emit_ret(load(inst.ops[0]));
                 return true;
             case OpConstBool: {
                 // Issue #1285: ConstBool fully covered (not unused).
@@ -3454,7 +3572,8 @@ struct LLVMBuilder {
                 // already ran for both arms.
                 if (!emit_self_call(
                         closure, arg_count, inst.ops[2],
-                        [&](uint32_t i) { return load(inst.ops[0] + 1 + i); }, generic_apply))
+                        [&](uint32_t i) { return load(inst.ops[0] + 1 + i); }, generic_apply,
+                        self_call_is_tail(fn, inst.ops[2])))
                     generic_apply();
                 if (lin)
                     end_linear_epoch_fence(fb);
@@ -3487,7 +3606,8 @@ struct LLVMBuilder {
                 // locks, no general prologue re-check.
                 if (!emit_self_call(
                         callee, arg_count, inst.ops[3],
-                        [&](uint32_t i) { return load(arg_base + i); }, generic_call))
+                        [&](uint32_t i) { return load(arg_base + i); }, generic_call,
+                        self_call_is_tail(fn, inst.ops[3])))
                     generic_call();
                 return true;
             }
@@ -5635,6 +5755,9 @@ struct AuraJIT::Impl {
         reg("aura_jit_peek_prologue_deopt_sentinel", (void*)aura_jit_peek_prologue_deopt_sentinel);
         // Issue #4601: direct self-call activation id.
         reg("aura_jit_native_self_id", (void*)aura_jit_native_self_id);
+        // Issue #5174: native frame ceiling. The host take lives in exec_jit.
+        reg("aura_jit_depth_enter", (void*)aura_jit_depth_enter);
+        reg("aura_jit_depth_leave", (void*)aura_jit_depth_leave);
         reg("aura_deopt_inc", (void*)aura_deopt_inc);
         // Issue #3988: Jump back-edge poll (strong in evaluator_fiber_mutation).
         reg("aura_jit_poll_hold_budget_safepoint", (void*)aura_jit_poll_hold_budget_safepoint);
@@ -6090,7 +6213,7 @@ struct AuraJIT::Impl {
                 auto* deopt_ret =
                     builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_deopt_to_interpreter),
                                             llvm::ArrayRef<llvm::Value*>{name_ptr});
-                builder.irb->CreateRet(deopt_ret);
+                builder.emit_ret(deopt_ret);
             }
             // Body continues in cont BB.
             builder.entry_body_bb = bb_cont;
@@ -6238,9 +6361,41 @@ struct AuraJIT::Impl {
                     auto* deopt_ret = builder.irb->CreateCall(
                         llvm::FunctionCallee(builder.fn_deopt_to_interpreter),
                         llvm::ArrayRef<llvm::Value*>{name_ptr});
-                    builder.irb->CreateRet(deopt_ret);
+                    builder.emit_ret(deopt_ret);
                 }
                 builder.entry_body_bb = bb_cont;
+            }
+        }
+
+        // Issue #5174: count this activation once, after the prologue and
+        // the shape guard (those returns did not increment). Past the
+        // ceiling, return 0 without incrementing; callers unwind on the
+        // sentinel and exec_jit reports the depth diagnostic instead of
+        // eval_ir. A self-call function then branches to jit_loop so a
+        // tail back-edge does not re-enter this check. AOT skips it.
+        if (!builder.aot_mode && builder.fn_depth_enter) {
+            auto* depth_bb =
+                builder.entry_body_bb ? builder.entry_body_bb : builder.block_map[fn.entry_block];
+            builder.irb->SetInsertPoint(depth_bb);
+            auto* refused =
+                builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_depth_enter), {});
+            auto* zero32 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
+            auto* over = builder.irb->CreateICmpNE(refused, zero32);
+            auto* bb_over = llvm::BasicBlock::Create(ctx, "jit_depth_over", builder.func);
+            auto* bb_ok = llvm::BasicBlock::Create(ctx, "jit_depth_ok", builder.func);
+            builder.irb->CreateCondBr(over, bb_over, bb_ok);
+            builder.irb->SetInsertPoint(bb_over);
+            // Did not increment. depth_armed stays false, so no leave.
+            builder.irb->CreateRet(builder.c64(0));
+            builder.irb->SetInsertPoint(bb_ok);
+            builder.depth_armed = true;
+            if (builder.self_call_ok) {
+                auto* loop_bb = llvm::BasicBlock::Create(ctx, "jit_loop", builder.func);
+                builder.irb->CreateBr(loop_bb);
+                builder.self_loop_bb = loop_bb;
+                builder.entry_body_bb = loop_bb;
+            } else {
+                builder.entry_body_bb = bb_ok;
             }
         }
 

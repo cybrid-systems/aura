@@ -126,6 +126,9 @@ extern "C" void aura_register_fn_named(const char* name, std::int64_t func_id,
 // thread-local sentinel so try_jit_execute does not publish that 0.
 // Strong def in aura_jit_bridge.cpp; weak 0 in the light stub.
 extern "C" int aura_jit_take_prologue_deopt_sentinel(void) noexcept;
+// Issue #5174: native-frame ceiling. Distinct from the prologue sentinel
+// so exec_jit can refuse instead of falling through to eval_ir.
+extern "C" const char* aura_jit_take_depth_message(void) noexcept;
 // Issue #4682 (6b): native tier for hot workspace defines. Strong defs in
 // aura_jit_bridge.cpp / aura_jit_runtime.cpp; weak "armed" / -1 in the
 // light stub (no tier there).
@@ -5464,6 +5467,9 @@ public:
         }
 
         (void)aura_jit_take_prologue_deopt_sentinel();
+        // Issue #5174: a stale depth flag from another host must not
+        // refuse this call. A hit after the native call is real.
+        (void)aura_jit_take_depth_message();
         // Issue #4600: exec_jit owns no linear env by construction — the
         // top-level entry has no captures for the prologue's linear probe.
         // Declare it so the #3654 fail-closed (unset context under the
@@ -5479,6 +5485,14 @@ public:
         aura::compiler::JitDeoptHostArm deopt_host_4600{deopt_state_4600};
         auto raw_result =
             reinterpret_cast<aura::jit::ScalarFn>(fn_ptr)(locals.data(), entry.arg_count);
+        // Issue #5174: a native frame past the ceiling unwound with 0.
+        // eval_ir would run it (the IR limit is far higher) and hide the
+        // refuse. No "fiber=" — that prefix resumes onto the IR path.
+        if (const char* depth_msg = aura_jit_take_depth_message()) {
+            (void)aura_jit_take_prologue_deopt_sentinel();
+            return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                          std::string(depth_msg)});
+        }
         // Issue #4084: prologue deopt's fixnum 0 is not a successful value.
         // Issue #4606: a refused callee — a RefPrimitive-tagged prim word
         // (string?/getenv/eqv?/memv/...) loaded from a global or define

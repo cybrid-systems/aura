@@ -3638,6 +3638,40 @@ extern "C" int aura_jit_peek_prologue_deopt_sentinel(void) noexcept {
     return g_jit_prologue_deopt_sentinel;
 }
 
+// Issue #5174: native frame ceiling. Tail self-calls jump to the loop
+// header and do not enter again, so a named let stays at one frame.
+// Mutual recursion goes through aura_closure_call: 4000 frames still fit
+// in the 8MB stack and 8000 fault, so 2048 refuses first. fib(20) and
+// sum(100) stay under it. The text has no "fiber=" suffix — main.cpp
+// would otherwise resume the form on the IR path and hide the refuse.
+constexpr int kJitMaxNativeDepth = 2048;
+static const char kJitDepthMessage[] = "recursion depth exceeded (>2048)";
+static thread_local int g_jit_frame_depth = 0;
+static thread_local int g_jit_depth_exceeded = 0;
+
+extern "C" int aura_jit_depth_enter(void) noexcept {
+    if (g_jit_frame_depth >= kJitMaxNativeDepth) {
+        g_jit_depth_exceeded = 1;
+        aura_jit_note_prologue_deopt_sentinel();
+        return 1;
+    }
+    ++g_jit_frame_depth;
+    return 0;
+}
+
+extern "C" void aura_jit_depth_leave(void) noexcept {
+    if (g_jit_frame_depth > 0)
+        --g_jit_frame_depth;
+}
+
+extern "C" const char* aura_jit_take_depth_message(void) noexcept {
+    if (!g_jit_depth_exceeded)
+        return nullptr;
+    g_jit_depth_exceeded = 0;
+    g_jit_frame_depth = 0;
+    return kJitDepthMessage;
+}
+
 extern "C" std::int64_t aura_jit_deopt_to_interpreter(const char* name) {
     // Stale Apply entry: record dual-reader metrics + soft-deopt the tracker
     // so subsequent get_function_ptr refuses native. Return fixnum 0 sentinel.
