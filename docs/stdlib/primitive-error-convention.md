@@ -40,7 +40,7 @@ stay boolean. Documented empty / not-found stay silent only as below.
 | `car` / `cdr` | — | not a pair, corrupted pair index (no silent `0`) |
 | `cadr` family | missing cdr / non-pair → void (stdlib guards with `pair?`) | — |
 | `vector-length` / `vector->list` | — | not a vector, corrupted index |
-| `modulo` / `mod` / `quotient` / `remainder` / `abs` | — | too few args, non-numeric, div-by-zero, INT64_MIN/-1 |
+| `modulo` / `mod` / `quotient` / `remainder` / `abs` | a result outside the fixnum range saturates to [-2^62, 2^62-1] (#5157). `round` past that range stays a float | too few args, non-numeric, div-by-zero, INT64_MIN/-1 |
 | `inexact->exact` | out-of-range float saturates to the fixnum range [-2^62, 2^62-1] (#1153, #5156). `exact` is the same primitive | too few args, non-number |
 | `json-parse` | JSON `null` → void | non-string arg, unexpected EOF, invalid token, nesting deeper than 512 (`json-parse: nesting too deep`, #5152) |
 | `json-get-string` | missing field → void | non-string args |
