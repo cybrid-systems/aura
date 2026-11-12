@@ -106,6 +106,19 @@ BRIDGE_NS_RE = re.compile(r"aura_(?:cell|closure)_[A-Za-z0-9_]+")
 # stubs in the host build; the standalone AOT link never sees it.
 HOST_JIT_REL = "src/compiler/aura_jit_runtime.cpp"
 
+# The evaluator fall-through family (Issue #5175). When the JIT's inline
+# hash-ref scan misses, it falls through to an EVALUATOR primitive
+# (aura_jit_eval_hash_ref) instead of the runtime.c miss-error helper. That
+# callee is defined only in the host evaluator TU (src/compiler/service.ixx
+# strong, src/compiler/aura_jit_prim_dispatch_stub.cpp weak); the standalone
+# --emit-binary link compiles NEITHER, so the emitted .o referenced a symbol
+# no one defines, the link failed, and --emit-binary produced no binary for
+# every emit:* case that reaches a hash-ref.
+#
+# The family is keyed on the LLVM call-site variable (fn_eval_*), not on the
+# spelling of the C symbol, so renaming the symbol cannot slip past.
+EVAL_FAMILY_VAR_RE = re.compile(r"^fn_eval_[A-Za-z0-9_]*$")
+
 # The standalone-AOT runtime source, matched as a PATH so that
 # "test_spec_runtime.cpp" and "aura_jit_runtime.cpp" do not match.
 RUNTIME_PATH_RE = re.compile(r"(?<![A-Za-z0-9_./-])(?:lib/)?runtime\.c(?![A-Za-z0-9_])")
@@ -335,6 +348,74 @@ def check_plumbing_family(runtime: str, jit: str, host_jit: str) -> list[str]:
     return fails
 
 
+def check_eval_family(runtime: str, jit: str) -> list[str]:
+    """AC6: every evaluator fall-through callee the JIT emits has a
+    lib/runtime.c definition.
+
+    The standalone --emit-binary link compiles lib/runtime.c, the generated
+    registration / prim .c and the per-function LLVM .o - no C++ bridge
+    objects at all. So a callee the JIT emits into the IR that only the HOST
+    defines is an undefined reference there, the link fails, and every
+    emit:* case that reaches that op site fails with '(no binary)' (#5175).
+
+    The family is the LLVM call-site variable (fn_eval_*), so a rename of
+    the C symbol keeps it in the family and is still caught.
+    """
+    fails: list[str] = []
+    runtime_defs = _defined_symbols(runtime)
+    stubs = _weak_stub_bodies(runtime)
+    declared = _external_linkage_symbols(jit)
+    call_args = _create_call_args(jit)
+
+    family: dict[str, str] = {}
+    for fn_var, sym in declared.items():
+        if not EVAL_FAMILY_VAR_RE.match(fn_var):
+            continue
+        if not any(re.search(r"\b" + re.escape(fn_var) + r"\b", arg) for arg in call_args):
+            continue
+        family[sym] = fn_var
+
+    # Validity: the guard must still see the family. If the parser stops
+    # matching, the guard would go silently inert and the next rename would
+    # slip through again.
+    if not family:
+        fails.append(
+            f"AC6: no evaluator fall-through callee was found in {JIT_REL} - the "
+            "guard cannot see the fn_eval_* family, so it is inert and the next "
+            "rename would slip through again (#5175)"
+        )
+        return fails
+
+    for sym, fn_var in sorted(family.items(), key=lambda kv: kv[1]):
+        if sym not in runtime_defs:
+            fails.append(
+                f"AC6: {RUNTIME_REL} has NO definition for {sym} (emitted via "
+                f"{fn_var}) - the standalone --emit-binary link compiles only "
+                "runtime.c and the emitted .o, so it fails with 'undefined "
+                "reference' and --emit-binary emits no binary (#5175)"
+            )
+            continue
+        body = stubs.get(sym)
+        if body is None:
+            continue
+        delegates = [m.group(1) for m in re.finditer(r"\b(aura_[A-Za-z0-9_]+)\s*\(", body) if m.group(1) != sym]
+        if not delegates:
+            fails.append(
+                f"AC6: the weak stub for {sym} does not delegate to a runtime.c "
+                "implementation - the standalone AOT binary must take the same "
+                "path the host takes with no owner wired (#5175)"
+            )
+            continue
+        for target in delegates:
+            if target not in runtime_defs:
+                fails.append(
+                    f"AC6: the weak stub for {sym} delegates to {target}, which "
+                    f"{RUNTIME_REL} does not define - the standalone AOT link would "
+                    "fail with 'undefined reference' (#5175)"
+                )
+    return fails
+
+
 def check_jit_emits(jit: str) -> list[str]:
     """AC3: the JIT really emits the per-op gate into the IR."""
     fails: list[str] = []
@@ -472,6 +553,7 @@ def main(argv: list[str] | None = None) -> int:
         check_per_op_stub(runtime)
         + check_gate_family(runtime, header)
         + check_plumbing_family(runtime, jit, host_jit)
+        + check_eval_family(runtime, jit)
         + check_jit_emits(jit)
         + check_runtime_not_in_host(cmake)
     )

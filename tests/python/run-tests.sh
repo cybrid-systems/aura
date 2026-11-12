@@ -597,7 +597,7 @@ run_test "ffi:alloc-free" "$(printf '(begin (require "std/ffi" all:) (define p (
 _emit_case() {
     local name="$1" input="$2" expected="$3"
     local safe="${name//\//_}"
-    local bin_path err_path result
+    local bin_path err_path out_path result
     if [ -n "${_RESULT_DIR:-}" ]; then
         bin_path="$_RESULT_DIR/emit_$safe"
     else
@@ -605,7 +605,12 @@ _emit_case() {
     fi
     err_path="${bin_path}.err"
     # Capture stderr to a file so we can show it on failure (don't pollute test output).
-    printf '%s' "$input" | timeout 10 "$AURA" --emit-binary "$bin_path" 2>"$err_path" >/dev/null
+    # The standalone AOT link ends its link command with 2>&1, so the
+    # linker's 'undefined reference to `X' lands on stdout, not stderr.
+    # Capture stdout too, or the missing symbol is invisible when the
+    # link fails and the case reports only '(no binary)'.
+    out_path="${bin_path}.out"
+    printf '%s' "$input" | timeout 10 "$AURA" --emit-binary "$bin_path" 2>"$err_path" >"$out_path"
     if [ -x "$bin_path" ]; then
         result=$("$bin_path" 2>&1 | tr -d '\n')
         if [ "$result" = "$expected" ]; then
@@ -617,13 +622,23 @@ _emit_case() {
             fi
             _record_fail "$name" "$extra"
         fi
-        rm -f "$bin_path" "${bin_path}.o" "${bin_path}.tmp.aura" "${bin_path}.runtime.o" "${bin_path}.ir" "$err_path" 2>/dev/null
+        rm -f "$bin_path" "${bin_path}.o" "${bin_path}.tmp.aura" "${bin_path}.runtime.o" "${bin_path}.ir" "$err_path" "$out_path" 2>/dev/null
     else
         local extra=""
         if [ -s "$err_path" ]; then
             extra="       aot_err:  $(head -3 "$err_path" | tr '\n' ' ')"
         fi
-        rm -f "$err_path"
+        # Name the symbol the standalone link could not resolve: that is
+        # the one fact a reader needs to fix the case.
+        if [ -s "$out_path" ]; then
+            local undef
+            undef=$(grep -m3 'undefined reference' "$out_path" | tr '\n' ' ')
+            if [ -n "$undef" ]; then
+                extra="$extra
+       link_err: $undef"
+            fi
+        fi
+        rm -f "$err_path" "$out_path"
         _record_fail "$name (no binary)" "$extra"
     fi
 }

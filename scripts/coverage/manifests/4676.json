@@ -27,7 +27,10 @@
         "_weak_stub_bodies",
         "_plumbing_family",
         "--self-test",
-        "#4676"
+        "#4676",
+        "AC6",
+        "EVAL_FAMILY_VAR_RE",
+        "check_eval_family"
       ]
     },
     {
@@ -46,6 +49,16 @@
         "tests/issues/test_issue_4676.cpp",
         "tests/compiler/test_issue_4676.cpp",
         "docs/design/4676-aot-runtime-weak-stub.md"
+      ]
+    },
+    {
+      "ac": "AC6-stub",
+      "path": "lib/runtime.c",
+      "contains": [
+        "aura_jit_eval_hash_ref",
+        "__attribute__((weak))",
+        "Issue #5175",
+        "aura_hash_ref_miss_error"
       ]
     }
   ]
