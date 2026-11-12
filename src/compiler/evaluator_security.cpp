@@ -3679,6 +3679,16 @@ void Evaluator::seal_workspace_value(const types::EvalValue& root) {
                 if (seen_pair[idx] != 0)
                     continue;
                 seen_pair[idx] = 1;
+                // Issue #5190 follow-up: a pair still marked
+                // workspace-reachable was already sealed when it was marked
+                // (mint clears the bit; set-car!/set-cdr! seal the value they
+                // publish), so its subtree holds no unsealed value. Re-walking
+                // it made every top-level set! of an accumulating list
+                // O(list length), i.e. a closure-capture loop O(n^2): #5057's
+                // 1.2M live closures never reached arena exhaustion and
+                // build-test sat in the 900s subprocess timeout.
+                if (pair_workspace_reachable_.size() > idx && pair_workspace_reachable_[idx] != 0)
+                    continue;
                 if (pair_workspace_reachable_.size() <= idx)
                     pair_workspace_reachable_.resize(idx + 1, 0);
                 pair_workspace_reachable_[idx] = 1;
@@ -3704,6 +3714,13 @@ void Evaluator::seal_workspace_value(const types::EvalValue& root) {
                 if (seen_vec[idx] != 0)
                     continue;
                 seen_vec[idx] = 1;
+                // Issue #5190 follow-up: same frontier rule as the pair case
+                // above — mint clears the bit and vector-set! seals the value
+                // it publishes, so an already-marked vector's elements need no
+                // second visit.
+                if (vector_workspace_reachable_.size() > idx &&
+                    vector_workspace_reachable_[idx] != 0)
+                    continue;
                 if (vector_workspace_reachable_.size() <= idx)
                     vector_workspace_reachable_.resize(idx + 1, 0);
                 vector_workspace_reachable_[idx] = 1;
