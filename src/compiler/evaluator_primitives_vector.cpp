@@ -708,6 +708,21 @@ void RegSplitParts::register_vector_core_primitives(
                                             "vector-set!: index must be an integer",
                                             primitive_error_counter);
             }
+            // Issue #5190: a write into a workspace-reachable vector publishes
+            // the new element. Sealer runs after the lock drops.
+            struct SealOnReturn {
+                Evaluator& ev;
+                EvalValue value{};
+                bool armed = false;
+                void arm(const EvalValue& v) {
+                    value = v;
+                    armed = true;
+                }
+                ~SealOnReturn() {
+                    if (armed)
+                        ev.seal_workspace_value(value);
+                }
+            } seal_on_return{ev};
             // Issue #3235: lock symmetry with set-car! / hash-set! (#1397/#1399).
             std::scoped_lock lock(ev.alloc_storage_lock_);
             auto idx = as_vector_idx(a[0]);
@@ -728,6 +743,8 @@ void RegSplitParts::register_vector_core_primitives(
                     primitive_error_counter);
             }
             vector_heap[idx][pos] = a[2];
+            if (ev.vector_is_workspace_reachable(idx))
+                seal_on_return.arm(a[2]);
             return make_void();
         },
         mutate_general(3, "(vector int any) -> void", "Set vector element at index."));
@@ -1015,6 +1032,21 @@ void RegSplitParts::register_vector_seq_primitives(
                 return make_primitive_error(string_heap, error_values, "vector-fill!: not a vector",
                                             primitive_error_counter);
             }
+            // Issue #5190: filling a workspace-reachable vector publishes the
+            // fill value. Sealer runs after the lock drops.
+            struct SealOnReturn {
+                Evaluator& ev;
+                EvalValue value{};
+                bool armed = false;
+                void arm(const EvalValue& v) {
+                    value = v;
+                    armed = true;
+                }
+                ~SealOnReturn() {
+                    if (armed)
+                        ev.seal_workspace_value(value);
+                }
+            } seal_on_return{ev};
             // Issue #3235: lock symmetry with set-car! / hash-set!.
             std::scoped_lock lock(ev.alloc_storage_lock_);
             auto idx = as_vector_idx(a[0]);
@@ -1035,6 +1067,8 @@ void RegSplitParts::register_vector_seq_primitives(
             }
             for (auto& slot : vector_heap[idx])
                 slot = a[1];
+            if (ev.vector_is_workspace_reachable(idx))
+                seal_on_return.arm(a[1]);
             return a[0];
         },
         mutate_general(2, "(vector any) -> vector", "Fill every slot of a vector with a value."));
@@ -1157,6 +1191,9 @@ void RegSplitParts::register_vector_mutate_primitives(
             if (g_hash_tenants.size() < g_hash_tables.size())
                 g_hash_tenants.resize(g_hash_tables.size(), 0);
             g_hash_tenants[newidx] = ev.capability_tenant_id();
+            // Issue #5190: the copy is a fresh local table. hash-set / hash-remove
+            // mutate it before the caller stores the result.
+            aura_hash_mark_local(static_cast<std::uint64_t>(newidx));
             return make_hash(newidx);
         },
         pure_general(1, "(hash) -> hash", "Copy a hash into a new, independent table."));
@@ -1257,6 +1294,23 @@ void RegSplitParts::register_vector_mutate_primitives(
          primitive_error_counter](std::span<const EvalValue> a) {
             if (a.size() < 3 || !is_hash(a[0]))
                 return make_void();
+            // Issue #5190: if this write lands in a workspace-reachable table,
+            // the stored value becomes reachable too. The sealer is declared
+            // before the locks so it runs after they drop (hash mutex is not
+            // recursive).
+            struct SealOnReturn {
+                Evaluator& ev;
+                EvalValue value{};
+                bool armed = false;
+                void arm(const EvalValue& v) {
+                    value = v;
+                    armed = true;
+                }
+                ~SealOnReturn() {
+                    if (armed)
+                        ev.seal_workspace_value(value);
+                }
+            } seal_on_return{ev};
             // Issue #2652: aether:stats-bump! path — concurrent hash-set! + string
             // key compare must not race g_hash_tables or string_heap_ (empty ""
             // keys / zero counters under overnight fanout).
@@ -1297,6 +1351,8 @@ void RegSplitParts::register_vector_mutate_primitives(
                 eval_hash_probe(ht, kh, a[1], string_heap, &pairs, &vector_heap, &ev, "hash-set!");
             if (slot != kNoHashSlot) {
                 ht->values()[slot] = a[2].val;
+                if (aura_hash_is_workspace_reachable(hidx) != 0)
+                    seal_on_return.arm(a[2]);
                 return make_void();
             }
             // New key: insert with grow. Published table — do NOT free old
@@ -1306,6 +1362,8 @@ void RegSplitParts::register_vector_mutate_primitives(
             (void)flat_hash_insert_eval(ht, a[1], a[2], string_heap,
                                         /*destroy_old_on_grow=*/false);
             g_hash_tables[hidx] = ht;
+            if (aura_hash_is_workspace_reachable(hidx) != 0)
+                seal_on_return.arm(a[2]);
             return make_void();
         },
         mutate_general(3, "(hash any any) -> void", "Insert or replace a hash entry."));

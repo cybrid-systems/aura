@@ -2695,6 +2695,7 @@ std::size_t Evaluator::mint_pair(types::EvalValue car, types::EvalValue cdr, boo
             g_pair_slots[id]->car = car.val;
             g_pair_slots[id]->cdr = cdr.val;
         }
+        clear_pair_workspace_bit(id);
         note_inrange_pair_mint(id);
         return id;
     }
@@ -2704,6 +2705,7 @@ std::size_t Evaluator::mint_pair(types::EvalValue car, types::EvalValue cdr, boo
     pairs_.push_back({car, cdr});
     if (pair_on_freelist_.size() < pairs_.size())
         pair_on_freelist_.resize(pairs_.size(), 0);
+    clear_pair_workspace_bit(id);
     note_inrange_pair_mint(id);
     return id;
 }
@@ -2719,6 +2721,7 @@ std::size_t Evaluator::mint_vector(std::vector<types::EvalValue> elems, bool che
         if (id < vector_on_freelist_.size())
             vector_on_freelist_[id] = 0;
         vector_heap_[id].assign(elems.begin(), elems.end());
+        clear_vector_workspace_bit(id);
         note_inrange_vector_mint(id);
         return id;
     }
@@ -2728,6 +2731,7 @@ std::size_t Evaluator::mint_vector(std::vector<types::EvalValue> elems, bool che
     vector_heap_.push_back(std::move(elems));
     if (vector_on_freelist_.size() < vector_heap_.size())
         vector_on_freelist_.resize(vector_heap_.size(), 0);
+    clear_vector_workspace_bit(id);
     note_inrange_vector_mint(id);
     return id;
 }
@@ -2743,6 +2747,7 @@ std::size_t Evaluator::mint_vector_fill(std::size_t n, types::EvalValue init, bo
         if (id < vector_on_freelist_.size())
             vector_on_freelist_[id] = 0;
         vector_heap_[id].assign(n, init);
+        clear_vector_workspace_bit(id);
         note_inrange_vector_mint(id);
         return id;
     }
@@ -2752,6 +2757,7 @@ std::size_t Evaluator::mint_vector_fill(std::size_t n, types::EvalValue init, bo
     vector_heap_.emplace_back(n, init);
     if (vector_on_freelist_.size() < vector_heap_.size())
         vector_on_freelist_.resize(vector_heap_.size(), 0);
+    clear_vector_workspace_bit(id);
     note_inrange_vector_mint(id);
     return id;
 }

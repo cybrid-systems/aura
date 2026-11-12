@@ -53,7 +53,7 @@
 | `std/hot-update` | `hot-update:make-config` `hot-update:default-config` `hot-update:config-version` `hot-update:config-retries` `hot-update:config-telemetry?` `hot-update:reload` `hot-update:reload-with` `hot-update:reload-version` … (+7) | lib/std/hot-update.aura — Issue #1370 |
 | `std/hyper-heuristic` | `hh:make` `hh:next` `hh:credit!` `hh:report` `hh:usage` `hh:help` `tune:gate` `tune:race` … (+3) | lib/std/hyper-heuristic.aura — Issue #4945 (v0.2 P8): adaptive operator |
 | `std/io` | `file-exists?` `file-size` `file-copy` `file-delete` `file-read` `file-write` `file->string` `string->file` … (+20) | lib/std/io.aura — file verbs + R7RS ports (Issues #5003, #5005) |
-| `std/iter` | `;;` `List` `operations` `any?` `every?` `find` `find-index` `count` … (+24) | iter.aura — Iterator and collection utilities |
+| `std/iter` | `;;` `List` `operations` `any?` `every?` `find` `find-index` `count` … (+25) | iter.aura — Iterator and collection utilities |
 | `std/json` | `json-stringify` `json-escape` `json-value` `c2s` `json-arr-items` `json-obj-items` | Aura JSON library -- product names over C++ hot-path prims (#1440). |
 | `std/kir-build` | `kir-build!` `kir-item-unit` `kir-rebuild-set` `kir-build-memo-stats` `kir-build-memo-clear!` | kir-build.aura — per-function incremental native builds for std/kir modules (Issue #4803) |
 | `std/kir-gpu` | `kir-gpu-check` `kir->cuda` `kir->cuda-unit` `kir->ptx` `kir->triton` `kir-float-text` | kir-gpu.aura — GPU 后端：CUDA C / PTX / Triton（Issue #4802 第三阶段） |
