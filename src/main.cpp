@@ -1918,6 +1918,24 @@ static void serve_user_level_walker_policy(aura::diag::Diagnostic& d) {
     }
 }
 
+// Issue #5172: cs.exec_with_cache returns a runtime error as a value, so
+// the JSON exec/query arms used to print status=ok value="<error>" and
+// drop the cause. The s-expression arm already turns that value into the
+// sync error line (#5168). A string is not an error value, so a program
+// that returns the text "<error>" stays status=ok.
+static bool serve_reply_error_value(aura::compiler::CompilerService& cs,
+                                    const aura::compiler::types::EvalValue& v) {
+    if (!aura::compiler::types::is_error(v) || aura::compiler::types::is_string(v))
+        return false;
+    aura::diag::Diagnostic d{cs.evaluator().error_value_kind(v),
+                             cs.evaluator().soft_error_message(v)};
+    d.kind = d.display_kind();
+    serve_user_level_walker_policy(d);
+    std::println("{{\"status\":\"error\",\"kind\":{},\"msg\":\"{}\",\"node_id\":{}}}",
+                 static_cast<int>(d.kind), json_escape(d.format()), d.node_id);
+    return true;
+}
+
 static void serve_json_code(aura::compiler::CompilerService& cs, ServeCmd& cmd,
                             const std::string& type) {
     auto code_it = cmd.find("code");
@@ -1992,12 +2010,15 @@ static void serve_json_code(aura::compiler::CompilerService& cs, ServeCmd& cmd,
             } else {
                 try {
                     auto& v = **result;
-                    if (aura::compiler::types::is_closure(v)) {
-                        std::println("{{\"status\":\"closure\",\"value\":\"#<"
-                                     "procedure>\"}}");
-                    } else {
-                        std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
-                                     json_escape(fmt_val(v, cs)));
+                    // Issue #5172: an error value is status=error, not "<error>".
+                    if (!serve_reply_error_value(cs, v)) {
+                        if (aura::compiler::types::is_closure(v)) {
+                            std::println("{{\"status\":\"closure\",\"value\":\"#<"
+                                         "procedure>\"}}");
+                        } else {
+                            std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
+                                         json_escape(fmt_val(v, cs)));
+                        }
                     }
                 } catch (const std::bad_alloc&) {
                     std::println("{{\"status\":\"error\",\"msg\":\"out of memory\"}}");
@@ -2059,11 +2080,14 @@ static void serve_json_code(aura::compiler::CompilerService& cs, ServeCmd& cmd,
             auto result = future.get();
             if (result) {
                 auto& v = *result;
-                if (aura::compiler::types::is_closure(v)) {
-                    std::println("{{\"status\":\"ok\",\"value\":\"#<procedure>\"}}");
-                } else {
-                    std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
-                                 json_escape(fmt_val(v, cs)));
+                // Issue #5172: query eval uses the same error line as exec.
+                if (!serve_reply_error_value(cs, v)) {
+                    if (aura::compiler::types::is_closure(v)) {
+                        std::println("{{\"status\":\"ok\",\"value\":\"#<procedure>\"}}");
+                    } else {
+                        std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
+                                     json_escape(fmt_val(v, cs)));
+                    }
                 }
             } else {
                 auto& d = result.error();
@@ -2288,14 +2312,10 @@ static int run_sync_serve(const OneshotLaunch& launch) {
             auto& cs = st.resolve();
             aura::messaging::g_current_compiler_service = &cs;
             auto r = cs.eval(line);
-            // Issue #5168: a top-level error value printed as status=ok
-            // "<error>" and hid the capability denial (#4273).
-            if (r && aura::compiler::types::is_error(*r) && !aura::compiler::types::is_string(*r)) {
-                aura::diag::Diagnostic d{cs.evaluator().error_value_kind(*r),
-                                         cs.evaluator().soft_error_message(*r)};
-                d.kind = d.display_kind();
-                r = std::unexpected(std::move(d));
-            }
+            // Issue #5168 / #5172: a top-level error value printed as
+            // status=ok "<error>" and hid the cause (#4273).
+            if (r && serve_reply_error_value(cs, *r))
+                continue;
             if (r) {
                 std::println("{{\"status\":\"ok\",\"value\":\"{}\"}}",
                              json_escape(fmt_val(*r, cs)));
