@@ -201,7 +201,11 @@ void RegSplitParts::register_file_read_primitives(PrimRegistrar add, Evaluator& 
         std::string resolved;
         if (!ev.check_tenant_host_path(path, resolved, "read-file"))
             return make_void();
-        int fd = ::open(resolved.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        // Issue #5212: armed policy opens beneath the tenant-root fd.
+        // Inactive policy keeps the path open (the #3835 window).
+        int fd = ev.host_path_policy_active()
+                     ? ev.open_tenant_host_fd(resolved, O_RDONLY | O_CLOEXEC, 0, "read-file")
+                     : ::open(resolved.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
         if (fd < 0)
             return make_void();
         struct stat st{};
@@ -275,10 +279,20 @@ void RegSplitParts::register_file_write_primitives(PrimRegistrar add, Evaluator&
         }
         // O_NOFOLLOW | O_CREAT | O_WRONLY — no symlink follow to sensitive targets.
         // Issue #3802: use_path is tenant-rooted under Restricted+MT / Strict.
-        int fd =
-            ::open(use_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
-        if (fd < 0)
+        // Issue #5212: the create is openat2 / openat from the root fd. A
+        // path open plus a later check is too late — the file would already
+        // exist outside the jail.
+        const bool host_policy = ev.host_path_policy_active();
+        int fd = host_policy
+                     ? ev.open_tenant_host_fd(use_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+                                              0644, "write-file")
+                     : ::open(use_path.c_str(),
+                              O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+        if (fd < 0) {
+            if (host_policy && aura::compiler::security::tenant_fd_errno_is_escape(errno))
+                return file_io_fail(ev, "write-file", path, "denied: tenant path");
             return file_io_fail(ev, "write-file", path, file_errno_reason(errno));
+        }
         struct stat st{};
         if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
             ::close(fd);
@@ -334,6 +348,17 @@ void RegSplitParts::register_file_write_primitives(PrimRegistrar add, Evaluator&
         if (auto denied = file_deny_write_scope(ev, "make-directory", path, resolved);
             is_error(denied))
             return denied;
+        // Issue #5212: armed policy is mkdirat from the tenant-root fd.
+        // A missing component is not an escape, so the path mkdir below
+        // would follow a symlink planted before the create.
+        if (ev.host_path_policy_active()) {
+            if (ev.mkdir_tenant_host(resolved, "make-directory") != 0) {
+                if (aura::compiler::security::tenant_fd_errno_is_escape(errno))
+                    return file_io_fail(ev, "make-directory", path, "denied: tenant path");
+                return file_io_fail(ev, "make-directory", path, file_errno_reason(errno));
+            }
+            return make_int(1);
+        }
         // mkdir -p, one component at a time; never follow a symlink as the
         // final component (lstat check after each step).
         std::size_t pos = resolved[0] == '/' ? 1 : 0;
@@ -409,9 +434,19 @@ void RegSplitParts::register_file_probe_primitives(PrimRegistrar add, Evaluator&
         std::string resolved;
         if (!ev.check_tenant_host_path(path, resolved, "file-exists?"))
             return make_bool(false);
-        struct stat st;
-        // Issue #4919: a predicate — #t / #f, as std/fs documents.
-        return make_bool(::lstat(resolved.c_str(), &st) == 0);
+        if (!ev.host_path_policy_active()) {
+            struct stat st;
+            // Issue #4919: a predicate — #t / #f, as std/fs documents.
+            return make_bool(::lstat(resolved.c_str(), &st) == 0);
+        }
+        // O_PATH would succeed on the symlink and report it present.
+        // O_RDONLY|O_NONBLOCK fails the escape (ELOOP) without blocking on a FIFO.
+        const int fd =
+            ev.open_tenant_host_fd(resolved, O_RDONLY | O_NONBLOCK | O_CLOEXEC, 0, "file-exists?");
+        if (fd < 0)
+            return make_bool(false);
+        ::close(fd);
+        return make_bool(true);
     });
     // Issue #5005: R7RS (scheme process-context) environment access.
     // Deferred with the other recon probes and io-read-gated at the
@@ -482,13 +517,24 @@ void RegSplitParts::register_file_entry_primitives(PrimRegistrar add, Evaluator&
         if (auto denied = file_deny_write_scope(ev, "file-copy", dst_path, dst_resolved);
             is_error(denied))
             return denied;
-        if (!file_is_regular(src_resolved))
+        const bool host_policy = ev.host_path_policy_active();
+        if (!host_policy && !file_is_regular(src_resolved))
             return make_void();
-        int sfd = ::open(src_resolved.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        int sfd = host_policy
+                      ? ev.open_tenant_host_fd(src_resolved, O_RDONLY | O_CLOEXEC, 0, "file-copy")
+                      : ::open(src_resolved.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
         if (sfd < 0)
             return make_void();
-        int dfd = ::open(dst_resolved.c_str(),
-                         O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+        struct stat src_st{};
+        if (::fstat(sfd, &src_st) != 0 || !S_ISREG(src_st.st_mode)) {
+            ::close(sfd);
+            return make_void();
+        }
+        int dfd = host_policy ? ev.open_tenant_host_fd(dst_resolved,
+                                                       O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
+                                                       0644, "file-copy")
+                              : ::open(dst_resolved.c_str(),
+                                       O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
         if (dfd < 0) {
             ::close(sfd);
             return make_void();
@@ -525,6 +571,10 @@ void RegSplitParts::register_file_entry_primitives(PrimRegistrar add, Evaluator&
         if (auto denied = file_deny_write_scope(ev, "file-delete", path, resolved);
             is_error(denied))
             return denied;
+        // Issue #5212: unlinkat from the parent fd. A symlink leaf is
+        // removed, not followed. A directory stays (return 0).
+        if (ev.host_path_policy_active())
+            return make_int(ev.unlink_tenant_host(resolved, "file-delete") == 1 ? 1 : 0);
         struct stat st{};
         if (::lstat(resolved.c_str(), &st) != 0)
             return make_int(0);
@@ -550,12 +600,26 @@ void RegSplitParts::register_file_entry_primitives(PrimRegistrar add, Evaluator&
         std::string resolved;
         if (!ev.check_tenant_host_path(path, resolved, "file-size"))
             return make_int(0);
-        if (!file_is_regular(resolved))
+        if (!ev.host_path_policy_active()) {
+            if (!file_is_regular(resolved))
+                return make_int(0);
+            struct stat st{};
+            if (::lstat(resolved.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+                return make_int(0);
+            return make_int(static_cast<std::int64_t>(st.st_size));
+        }
+        const int fd =
+            ev.open_tenant_host_fd(resolved, O_RDONLY | O_NONBLOCK | O_CLOEXEC, 0, "file-size");
+        if (fd < 0)
             return make_int(0);
         struct stat st{};
-        if (::lstat(resolved.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+        if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+            ::close(fd);
             return make_int(0);
-        return make_int(static_cast<std::int64_t>(st.st_size));
+        }
+        const auto sz = static_cast<std::int64_t>(st.st_size);
+        ::close(fd);
+        return make_int(sz);
     });
 }
 
@@ -765,7 +829,18 @@ void RegSplitParts::register_directory_list_primitive(PrimRegistrar add, Evaluat
         if (!ev.check_tenant_host_path(dir_path, resolved, "directory-list"))
             return make_void();
         EvalValue result = make_void();
-        auto dir = opendir(resolved.c_str());
+        DIR* dir = nullptr;
+        if (!ev.host_path_policy_active())
+            dir = opendir(resolved.c_str());
+        else {
+            const int dirfd = ev.open_tenant_host_fd(resolved, O_RDONLY | O_DIRECTORY | O_CLOEXEC,
+                                                     0, "directory-list");
+            if (dirfd < 0)
+                return make_void();
+            dir = ::fdopendir(dirfd);
+            if (!dir)
+                ::close(dirfd);
+        }
         if (!dir)
             return make_void();
         struct dirent* entry;

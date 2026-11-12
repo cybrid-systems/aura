@@ -1200,10 +1200,21 @@ void RegSplitParts::register_load_primitive(PrimRegistrar add, Evaluator& ev, Ma
                 ev.primitive_error_counter_ptr());
         }
 
-        std::ifstream f(resolved_path);
-        if (!f)
-            return make_void();
-        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        std::string content;
+        if (ev.host_path_policy_active()) {
+            const int fd = ev.open_tenant_host_fd(resolved_path, O_RDONLY | O_CLOEXEC, 0, "load");
+            if (fd < 0)
+                return make_void();
+            const bool got = aura::compiler::io::append_fd(fd, content);
+            ::close(fd);
+            if (!got)
+                return make_void();
+        } else {
+            std::ifstream f(resolved_path);
+            if (!f)
+                return make_void();
+            content.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        }
 
         // Fresh workspace state for each load — resetting the pool corrupts
         // existing ev.top_ bindings that reference string indices from the old pool.

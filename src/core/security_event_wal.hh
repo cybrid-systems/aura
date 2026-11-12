@@ -315,6 +315,9 @@ struct SecurityEventWal : ::aura::core::NoCopy {
     mutable std::mutex mtx;
     bool enabled = false;
     std::string dir;
+    // Issue #5212: >= 0 owns a tenant directory fd (openat / unlinkat).
+    // -1 keeps the path open.
+    int anchor_fd_ = -1;
     std::string current_path;
     unique_file fp;
     std::uint64_t current_bytes = 0;
@@ -331,7 +334,11 @@ struct SecurityEventWal : ::aura::core::NoCopy {
     std::uint32_t pruned_upto_ = 0;
     static constexpr std::uint32_t kFlushEvery = 32;
 
-    ~SecurityEventWal() { close_unlocked(); }
+    ~SecurityEventWal() {
+        close_unlocked();
+        if (anchor_fd_ >= 0)
+            ::close(anchor_fd_);
+    }
 
     void close_unlocked() noexcept {
         if (fp) {
@@ -344,16 +351,20 @@ struct SecurityEventWal : ::aura::core::NoCopy {
     [[nodiscard]] bool open_segment_unlocked(std::uint32_t seg) noexcept {
         close_unlocked();
         namespace fs = std::filesystem;
-        std::error_code ec;
-        fs::create_directories(dir, ec);
-        if (ec)
-            return false;
-        current_path =
-            (fs::path(dir) / ("security-event-" + std::to_string(seg) + ".wal")).string();
+        const std::string leaf = "security-event-" + std::to_string(seg) + ".wal";
+        current_path = (fs::path(dir) / leaf).string();
         // Issue #4686: see security_event_segment_open_fail_for_test().
         if (security_event_segment_open_fail_for_test().load(std::memory_order_relaxed))
             return false;
-        fp = open_file(current_path.c_str(), "ab+");
+        if (anchor_fd_ < 0) {
+            std::error_code ec;
+            fs::create_directories(dir, ec);
+            if (ec)
+                return false;
+            fp = open_file(current_path.c_str(), "ab+");
+        } else {
+            fp = ::aura::core::open_file_at(anchor_fd_, leaf.c_str(), "ab+");
+        }
         if (!fp)
             return false;
         static char sbuf[64 * 1024];
@@ -401,9 +412,14 @@ struct SecurityEventWal : ::aura::core::NoCopy {
         namespace fs = std::filesystem;
         std::error_code ec;
         for (std::uint32_t i = first; i < first_keep; ++i) {
-            const auto p =
-                (fs::path(dir) / ("security-event-" + std::to_string(i) + ".wal")).string();
-            if (fs::remove(p, ec)) {
+            const std::string leaf = "security-event-" + std::to_string(i) + ".wal";
+            const auto p = (fs::path(dir) / leaf).string();
+            bool removed = false;
+            if (anchor_fd_ >= 0)
+                removed = ::unlinkat(anchor_fd_, leaf.c_str(), 0) == 0;
+            else
+                removed = fs::remove(p, ec);
+            if (removed) {
                 g_security_event_wal_metrics().security_event_wal_segment_prune_total.fetch_add(
                     1, std::memory_order_relaxed);
             }
@@ -448,13 +464,22 @@ struct SecurityEventWal : ::aura::core::NoCopy {
     // Returns true if enabled.
     bool enable(std::string_view persist_dir,
                 std::vector<SecurityEventWalRecord>* out_replay = nullptr,
-                std::size_t max_replay = 1024) noexcept {
+                std::size_t max_replay = 1024, int anchor_fd = -1) noexcept {
         std::scoped_lock<std::mutex> lock(mtx);
+        const int prev_anchor = anchor_fd_;
         close_unlocked();
-        dir.assign(persist_dir);
         enabled = false;
         pruned_upto_ = 0;
+        // Close-first: the previous WAL is already dead, so drop its fd
+        // unless the caller handed that same fd back.
+        if (prev_anchor >= 0 && prev_anchor != anchor_fd)
+            ::close(prev_anchor);
+        anchor_fd_ = anchor_fd;
+        dir.assign(persist_dir);
         if (dir.empty()) {
+            if (anchor_fd_ >= 0)
+                ::close(anchor_fd_);
+            anchor_fd_ = -1;
             g_security_event_wal_metrics().security_event_wal_enabled.store(
                 0, std::memory_order_relaxed);
             return false;
@@ -474,7 +499,31 @@ struct SecurityEventWal : ::aura::core::NoCopy {
         // Issue #4520: collected indices double as the enable-time upgrade
         // prune list (exact, hole-tolerant) — no extra directory pass.
         std::vector<std::uint32_t> seg_indices;
-        if (fs::exists(dir, ec)) {
+        if (anchor_fd_ >= 0) {
+            std::vector<std::string> names;
+            if (!::aura::core::list_regular_dirfd(anchor_fd_, names)) {
+                ::close(anchor_fd_);
+                anchor_fd_ = -1;
+                g_security_event_wal_metrics().security_event_wal_enabled.store(
+                    0, std::memory_order_relaxed);
+                return false;
+            }
+            for (const auto& name : names) {
+                if (name.rfind(kWalSegmentPrefix, 0) != 0 || !name.ends_with(kWalSegmentSuffix))
+                    continue;
+                const auto mid =
+                    name.substr(kWalSegmentPrefix.size(),
+                                name.size() - kWalSegmentPrefix.size() - kWalSegmentSuffix.size());
+                if (const auto parsed = aura::core::parse_leading_int<std::uint32_t>(mid)) {
+                    const auto n = *parsed;
+                    seg_indices.push_back(n);
+                    if (!any || n > max_seg) {
+                        max_seg = n;
+                        any = true;
+                    }
+                }
+            }
+        } else if (fs::exists(dir, ec)) {
             for (auto& ent : fs::directory_iterator(dir, ec)) {
                 if (!ent.is_regular_file(ec))
                     continue;
@@ -509,9 +558,10 @@ struct SecurityEventWal : ::aura::core::NoCopy {
             // s-1 .. 0 were never read (s==0 means every segment was read).
             std::uint32_t s = max_seg + 1;
             for (; any && newest_first.size() < max_replay && s > 0; --s) {
-                const auto path =
-                    (fs::path(dir) / ("security-event-" + std::to_string(s - 1) + ".wal")).string();
-                auto part = read_segment_file(path);
+                const std::string leaf = "security-event-" + std::to_string(s - 1) + ".wal";
+                const auto path = (fs::path(dir) / leaf).string();
+                auto part = anchor_fd_ >= 0 ? read_segment_anchored(anchor_fd_, leaf)
+                                            : read_segment_file(path);
                 newest_first.insert(newest_first.end(), part.rbegin(), part.rend());
             }
             // Issue #4660: replay-window truncation marker. The window did
@@ -541,6 +591,9 @@ struct SecurityEventWal : ::aura::core::NoCopy {
             replayed_nonempty = !out_replay->empty();
         }
         if (!open_segment_unlocked(any ? max_seg : 0)) {
+            if (anchor_fd_ >= 0)
+                ::close(anchor_fd_);
+            anchor_fd_ = -1;
             g_security_event_wal_metrics().security_event_wal_enabled.store(
                 0, std::memory_order_relaxed);
             return false;
@@ -572,9 +625,12 @@ struct SecurityEventWal : ::aura::core::NoCopy {
                 for (const auto n : seg_indices) {
                     if (static_cast<std::uint64_t>(n) >= floor64)
                         continue;
-                    const auto p =
-                        (fs::path(dir) / ("security-event-" + std::to_string(n) + ".wal")).string();
-                    if (fs::remove(p, ec)) {
+                    const std::string leaf = "security-event-" + std::to_string(n) + ".wal";
+                    const auto p = (fs::path(dir) / leaf).string();
+                    const bool removed = anchor_fd_ >= 0
+                                             ? ::unlinkat(anchor_fd_, leaf.c_str(), 0) == 0
+                                             : fs::remove(p, ec);
+                    if (removed) {
                         g_security_event_wal_metrics()
                             .security_event_wal_segment_prune_total.fetch_add(
                                 1, std::memory_order_relaxed);
@@ -596,6 +652,10 @@ struct SecurityEventWal : ::aura::core::NoCopy {
     void disable() noexcept {
         std::scoped_lock<std::mutex> lock(mtx);
         close_unlocked();
+        if (anchor_fd_ >= 0) {
+            ::close(anchor_fd_);
+            anchor_fd_ = -1;
+        }
         enabled = false;
         rotate_open_fail_ = false;
         pruned_upto_ = 0;
@@ -636,9 +696,10 @@ struct SecurityEventWal : ::aura::core::NoCopy {
         const std::uint32_t n = std::min(max_segments, segment_index + 1);
         for (std::uint32_t i = 0; i < n; ++i) {
             const auto seg = segment_index - i;
-            const auto path =
-                (fs::path(dir) / ("security-event-" + std::to_string(seg) + ".wal")).string();
-            auto recs = read_segment_file(path);
+            const std::string leaf = "security-event-" + std::to_string(seg) + ".wal";
+            const auto path = (fs::path(dir) / leaf).string();
+            auto recs =
+                anchor_fd_ >= 0 ? read_segment_anchored(anchor_fd_, leaf) : read_segment_file(path);
             for (auto it = recs.rbegin(); it != recs.rend(); ++it) {
                 if (it->mutation_id == mid)
                     return *it;
@@ -746,25 +807,35 @@ struct SecurityEventWal : ::aura::core::NoCopy {
         return true;
     }
 
-    static std::vector<SecurityEventWalRecord> read_segment_file(const std::string& path) noexcept {
+    static std::vector<SecurityEventWalRecord> read_segment_fp(std::FILE* fp) noexcept {
         std::vector<SecurityEventWalRecord> out;
-        const unique_file f = open_file(path.c_str(), "rb");
-        if (!f)
+        if (fp == nullptr)
             return out;
         char magic[8]{};
-        if (std::fread(magic, 1, 8, f.get()) != 8 ||
+        if (std::fread(magic, 1, 8, fp) != 8 ||
             std::memcmp(magic, kSecurityEventWalMagic, 8) != 0) {
             return out;
         }
         std::uint32_t ver = 0;
-        if (std::fread(&ver, sizeof(ver), 1, f.get()) != 1 || ver != kSecurityEventWalVersion) {
+        if (std::fread(&ver, sizeof(ver), 1, fp) != 1 || ver != kSecurityEventWalVersion) {
             return out;
         }
         SecurityEventWalRecord rec{};
-        while (std::fread(&rec, 1, sizeof(rec), f.get()) == sizeof(rec)) {
+        while (std::fread(&rec, 1, sizeof(rec), fp) == sizeof(rec)) {
             out.push_back(rec);
         }
         return out;
+    }
+
+    static std::vector<SecurityEventWalRecord> read_segment_file(const std::string& path) noexcept {
+        const unique_file f = open_file(path.c_str(), "rb");
+        return read_segment_fp(f.get());
+    }
+
+    [[nodiscard]] std::vector<SecurityEventWalRecord>
+    read_segment_anchored(int dirfd, const std::string& leaf) noexcept {
+        const unique_file f = ::aura::core::open_file_at(dirfd, leaf.c_str(), "rb");
+        return read_segment_fp(f.get());
     }
 
     void set_rotate_bytes(std::uint64_t n) noexcept {

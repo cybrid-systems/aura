@@ -19,6 +19,7 @@
 #include "core/security_event.hh"
 
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -9881,6 +9882,259 @@ int main() {
         aura::core::provenance::reset_undeclared_mt_autodetect_for_test();
         aura::core::provenance::set_hard_capture_tenant(false);
         aura::core::provenance::set_multi_tenant_env_active(false);
+        reset_all();
+    }
+
+    // Issue #5212: lstat-then-open is a TOCTOU. Two OS threads stand in for
+    // the two racing execution contexts — a cooperative fiber does not yield
+    // inside the primitive, so it cannot hit this window. The swapper only
+    // renames and symlinks; the worker is the only evaluator caller.
+    {
+        std::println("\n--- #5212: openat2 beneath the tenant root closes the symlink race ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        const auto mid = aura::core::current_mutation_epoch();
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::make_grant_provenance;
+        const auto prov = make_grant_provenance(mid, /*force_mutation_bind=*/true, 0, 0);
+        CHECK(g_capability_registry().grant(7, "io-read", Effect::Read, prov),
+              "5212: io-read grant lands while sandbox is Off");
+        CHECK(g_capability_registry().grant(7, "io-write", Effect::Write, prov),
+              "5212: io-write grant lands while sandbox is Off");
+
+        const char* tmp = std::getenv("TMPDIR");
+        const std::string base = std::string(tmp && tmp[0] ? tmp : "/tmp") + "/aura-5212-toctou";
+        ::setenv("AURA_TENANT_FS_ROOT", base.c_str(), 1);
+        ::setenv("AURA_MULTI_TENANT", "1", 1);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        using aura::compiler::security::open_tenant_root_dirfd;
+        using aura::compiler::security::open_under_tenant_root;
+        using aura::compiler::security::open_under_tenant_root_walk;
+        using aura::compiler::security::tenant_host_root_for;
+        const auto root_a = tenant_host_root_for(7);
+        const auto root_b = tenant_host_root_for(42);
+        const std::string victim_y = root_b + "/y";
+        const std::string secret = root_b + "/x";
+        std::error_code ec;
+        std::filesystem::remove_all(base, ec);
+        std::filesystem::create_directories(root_a + "/d", ec);
+        std::filesystem::create_directories(root_b, ec);
+        {
+            std::ofstream f(root_a + "/d/x");
+            f << "LOCAL";
+        }
+        {
+            std::ofstream f(secret);
+            f << "CROSS-TENANT";
+        }
+        CHECK(::symlink(root_b.c_str(), (root_a + "/e").c_str()) == 0,
+              "5212: planted symlink e -> other tenant root");
+
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(7);
+        ev.set_effect_sandbox_mode(1);
+        CHECK(ev.host_path_policy_active(), "5212: Restricted+MT arms host-path policy");
+        const auto& ring = g_security_event_ring();
+
+        auto saw_escape = [&](std::uint64_t se_base, std::string_view op) {
+            bool saw = false;
+            const auto end = ring.seq.load(std::memory_order_acquire);
+            const auto start = (end > se_base && end - se_base > ring.ring.size())
+                                   ? end - ring.ring.size()
+                                   : se_base;
+            for (std::uint64_t s = start; s < end; ++s) {
+                const auto& e = ring.ring[s % ring.ring.size()];
+                if (e.seq != s)
+                    continue;
+                if (static_cast<int>(e.kind) != static_cast<int>(SecurityEventKind::IsolationDeny))
+                    continue;
+                if (std::string_view(e.reason).find("tenant-path-escape") == std::string_view::npos)
+                    continue;
+                if (!op.empty() && std::string_view(e.op) != op)
+                    continue;
+                saw = true;
+            }
+            return saw;
+        };
+
+        const int root_fd = open_tenant_root_dirfd(root_a, /*create=*/false);
+        CHECK(root_fd >= 0, "5212: tenant root dirfd opens");
+        if (root_fd >= 0) {
+            const int ok = open_under_tenant_root(root_fd, "d/x", O_RDONLY | O_CLOEXEC, 0);
+            const int ok_err = errno;
+            CHECK(ok >= 0, "5212: in-root file opens beneath the root fd");
+            if (ok >= 0) {
+                char buf[8]{};
+                const auto n = ::read(ok, buf, sizeof buf);
+                ::close(ok);
+                CHECK(n == 5 && std::string_view(buf, 5) == "LOCAL",
+                      "5212: in-root read returns LOCAL");
+            } else {
+                std::println("5212 in-root open errno {}", ok_err);
+            }
+            const int esc = open_under_tenant_root(root_fd, "e/x", O_RDONLY | O_CLOEXEC, 0);
+            const int esc_err = errno;
+            if (esc >= 0)
+                ::close(esc);
+            CHECK(esc < 0 && esc_err == ELOOP, "5212: openat2 returns ELOOP on the symlink");
+            const int created = open_under_tenant_root_walk(
+                root_fd, "e/y", O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+            const int created_err = errno;
+            if (created >= 0)
+                ::close(created);
+            CHECK(created < 0 && created_err == ELOOP,
+                  "5212: openat walk refuses the create through the symlink");
+            CHECK(!std::filesystem::exists(victim_y, ec),
+                  "5212: walk create wrote nothing in the other tenant");
+            const int up = open_under_tenant_root(root_fd, "..", O_RDONLY | O_CLOEXEC, 0);
+            if (up >= 0)
+                ::close(up);
+            CHECK(up < 0, "5212: .. is refused");
+            ::close(root_fd);
+        }
+        {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            const int fd =
+                ev.open_tenant_host_fd(root_a + "/e/x", O_RDONLY | O_CLOEXEC, 0, "read-file");
+            const int err = errno;
+            if (fd >= 0)
+                ::close(fd);
+            CHECK(fd < 0 && err == ELOOP, "5212: open_tenant_host_fd returns ELOOP");
+            CHECK(saw_escape(se_base, "read-file"),
+                  "5212: fd refusal records IsolationDeny tenant-path-escape");
+            const int wfd = ev.open_tenant_host_fd(
+                root_a + "/e/y", O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644, "write-file");
+            if (wfd >= 0)
+                ::close(wfd);
+            CHECK(wfd < 0, "5212: create through the symlink fails");
+            CHECK(!std::filesystem::exists(victim_y, ec),
+                  "5212: fd create wrote nothing in the other tenant");
+        }
+        ::unlink((root_a + "/e").c_str());
+
+        using aura::compiler::types::make_string;
+        auto& heap_w = ev.string_heap_mut();
+        const auto ix = heap_w.mint("d/x");
+        const auto iy = heap_w.mint("d/y");
+        const auto ic = heap_w.mint("pwn");
+        auto rf = ev.primitives().lookup("read-file");
+        auto wf = ev.primitives().lookup("write-file");
+        CHECK(rf.has_value() && wf.has_value(), "5212: read-file and write-file are registered");
+        if (rf && wf) {
+            const auto rd = (*rf)({make_string(static_cast<std::uint64_t>(ix))});
+            CHECK(is_string(rd) && ev.string_at(as_string_idx(rd)) == "LOCAL",
+                  "5212: happy-path read-file returns LOCAL");
+            if (!(is_string(rd) && ev.string_at(as_string_idx(rd)) == "LOCAL"))
+                std::println("5212 happy read missed LOCAL");
+            const auto wr = (*wf)({make_string(static_cast<std::uint64_t>(iy)),
+                                   make_string(static_cast<std::uint64_t>(ic))});
+            if (!(is_int(wr) && as_int(wr) == 1)) {
+                std::println("5212 happy write: {}",
+                             is_error(wr) ? ev.soft_error_message(wr) : ev.last_mutate_error());
+            }
+            CHECK(is_int(wr) && as_int(wr) == 1, "5212: happy-path write-file returns 1");
+            CHECK(std::filesystem::exists(root_a + "/d/y", ec),
+                  "5212: happy-path write lands in the caller root");
+            CHECK(!std::filesystem::exists(victim_y, ec),
+                  "5212: happy-path write does not create the other tenant's file");
+        }
+
+        std::atomic<bool> run{true};
+        std::atomic<int> swaps{0};
+        std::atomic<int> leaks{0};
+        std::atomic<int> denies{0};
+        std::atomic<bool> oob{false};
+        std::thread swapper([&] {
+            const std::string d = root_a + "/d";
+            const std::string hold = root_a + "/d.real";
+            while (run.load(std::memory_order_relaxed)) {
+                if (::rename(d.c_str(), hold.c_str()) != 0)
+                    continue;
+                if (::symlink(root_b.c_str(), d.c_str()) != 0) {
+                    ::rename(hold.c_str(), d.c_str());
+                    continue;
+                }
+                swaps.fetch_add(1, std::memory_order_relaxed);
+                ::unlink(d.c_str());
+                ::rename(hold.c_str(), d.c_str());
+            }
+        });
+        for (int spin = 0; spin < 1000000 && swaps.load(std::memory_order_relaxed) == 0; ++spin)
+            std::this_thread::yield();
+        const int swaps_before = swaps.load(std::memory_order_relaxed);
+        std::thread worker([&] {
+            if (!rf || !wf)
+                return;
+            const auto ax = make_string(static_cast<std::uint64_t>(ix));
+            const auto ay = make_string(static_cast<std::uint64_t>(iy));
+            const auto ac = make_string(static_cast<std::uint64_t>(ic));
+            std::uint64_t seen = ring.seq.load(std::memory_order_acquire);
+            for (int n = 0; n < 10000; ++n) {
+                const auto rr = (*rf)({ax});
+                if (is_string(rr)) {
+                    const auto& got = ev.string_at(as_string_idx(rr));
+                    if (got.find("CROSS-TENANT") != std::string::npos)
+                        leaks.fetch_add(1, std::memory_order_relaxed);
+                }
+                (void)(*wf)({ay, ac});
+                std::error_code exists_ec;
+                if (std::filesystem::exists(victim_y, exists_ec))
+                    oob.store(true, std::memory_order_relaxed);
+                const auto end = ring.seq.load(std::memory_order_acquire);
+                const auto start =
+                    (end > seen && end - seen > ring.ring.size()) ? end - ring.ring.size() : seen;
+                for (std::uint64_t s = start; s < end; ++s) {
+                    const auto& e = ring.ring[s % ring.ring.size()];
+                    if (e.seq != s)
+                        continue;
+                    if (static_cast<int>(e.kind) !=
+                        static_cast<int>(SecurityEventKind::IsolationDeny))
+                        continue;
+                    if (std::string_view(e.reason).find("tenant-path-escape") ==
+                        std::string_view::npos)
+                        continue;
+                    denies.fetch_add(1, std::memory_order_relaxed);
+                }
+                seen = end;
+            }
+        });
+        worker.join();
+        run.store(false, std::memory_order_relaxed);
+        swapper.join();
+        CHECK(swaps_before > 0, "5212: swapper planted a symlink before the worker");
+        CHECK(leaks.load() == 0, "5212: zero cross-tenant reads");
+        CHECK(!oob.load() && !std::filesystem::exists(victim_y, ec),
+              "5212: zero cross-tenant writes");
+        {
+            std::ifstream in(secret);
+            const std::string body((std::istreambuf_iterator<char>(in)), {});
+            CHECK(body == "CROSS-TENANT", "5212: other tenant's file is unmodified");
+        }
+        if (leaks.load() != 0 || oob.load() || std::filesystem::exists(victim_y, ec))
+            std::println("5212 race leaks={} oob={} denies={} swaps={}", leaks.load(), oob.load(),
+                         denies.load(), swaps.load());
+
+        std::filesystem::remove_all(root_a + "/d", ec);
+        std::filesystem::remove_all(root_a + "/d.real", ec);
+        CHECK(::symlink(root_b.c_str(), (root_a + "/d").c_str()) == 0,
+              "5212: deterministic symlink replanted");
+        if (rf && wf) {
+            const auto se_base = ring.seq.load(std::memory_order_acquire);
+            (void)(*rf)({make_string(static_cast<std::uint64_t>(ix))});
+            (void)(*wf)({make_string(static_cast<std::uint64_t>(iy)),
+                         make_string(static_cast<std::uint64_t>(ic))});
+            CHECK(saw_escape(se_base, "") || denies.load() > 0,
+                  "5212: IsolationDeny tenant-path-escape was recorded");
+        }
+        CHECK(!std::filesystem::exists(victim_y, ec),
+              "5212: planted symlink write created nothing outside");
+
+        ::unsetenv("AURA_TENANT_FS_ROOT");
+        ::unsetenv("AURA_MULTI_TENANT");
+        aura::core::provenance::set_multi_tenant_env_active(false);
+        ev.set_effect_sandbox_mode(0);
         reset_all();
     }
 

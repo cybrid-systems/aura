@@ -519,9 +519,13 @@ namespace {
     // Issue #4414: open of a path that already passed check_tenant_host_path.
     // O_NOFOLLOW fails the final component (ELOOP) so a swapped symlink is
     // not read. The passthrough face keeps module_export_cache::lookup_or_load.
-    [[nodiscard]] bool read_regular_nofollow(const std::string& path, std::string& out) {
+    [[nodiscard]] bool read_regular_nofollow(Evaluator& ev, const std::string& path,
+                                             std::string& out) {
         out.clear();
-        const int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        const int fd =
+            ev.host_path_policy_active()
+                ? ev.open_tenant_host_fd(path, O_RDONLY | O_CLOEXEC, 0, "query:module-exports")
+                : ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
         if (fd < 0)
             return false;
         struct stat st{};
@@ -1065,7 +1069,7 @@ void register_query_module_export_parts(PrimRegistrar add, std::pmr::vector<Pair
                 // Do not search CWD / AURA_PATH / ../lib / ./lib, and do not
                 // last_write_time (that follows a final symlink).
                 std::string content;
-                if (!read_regular_nofollow(gated, content))
+                if (!read_regular_nofollow(ev, gated, content))
                     return make_void();
                 exports = module_export_cache::parse_module_exports(content);
             } else {

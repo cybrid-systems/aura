@@ -10,12 +10,17 @@ module;
 #include "runtime_shared.h"
 #include "security_capabilities.h" // Issue #4400: format_deny_reason on the log rewrite
 
+#include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include <fcntl.h>
+#include <unistd.h>
 
 module aura.compiler.evaluator;
 
@@ -114,14 +119,7 @@ struct PersistBlob {
     bool crc_ok = false;
 };
 
-static bool load_blob(const std::string& path, PersistBlob& blob, std::string* err) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        if (err)
-            *err = "open failed";
-        return false;
-    }
-    blob.raw.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+static bool finish_load_blob(PersistBlob& blob, std::string* err) {
     if (blob.raw.size() < 20) {
         if (err)
             *err = "file too small";
@@ -226,6 +224,37 @@ static bool load_blob(const std::string& path, PersistBlob& blob, std::string* e
         pos += len;
     }
     return true;
+}
+
+static bool load_blob(const std::string& path, PersistBlob& blob, std::string* err) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        if (err)
+            *err = "open failed";
+        return false;
+    }
+    blob.raw.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return finish_load_blob(blob, err);
+}
+
+// Issue #5212: read an already-opened tenant fd. The caller owns `fd`.
+static bool load_blob_fd(int fd, PersistBlob& blob, std::string* err) {
+    blob.raw.clear();
+    std::array<char, 8192> buf{};
+    while (true) {
+        const auto n = ::read(fd, buf.data(), buf.size());
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            if (err)
+                *err = "open failed";
+            return false;
+        }
+        if (n == 0)
+            break;
+        blob.raw.insert(blob.raw.end(), buf.data(), buf.data() + static_cast<std::size_t>(n));
+    }
+    return finish_load_blob(blob, err);
 }
 
 // Issue #4367: name of the define at `id`, or empty when the slot is not a
@@ -385,6 +414,28 @@ void RegSplitParts::register_persist_serialize(PrimRegistrar add, Evaluator& ev)
         const std::uint32_t crc = crc32_update(0, out.data(), out.size());
         append_u32(out, crc);
 
+        if (ev.host_path_policy_active()) {
+            const int fd = ev.open_tenant_host_fd(
+                resolved, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644, "serialize-workspace");
+            if (fd < 0)
+                return make_bool(false);
+            std::size_t off = 0;
+            while (off < out.size()) {
+                const auto n = ::write(fd, out.data() + off, out.size() - off);
+                if (n < 0) {
+                    if (errno == EINTR)
+                        continue;
+                    ::close(fd);
+                    return make_bool(false);
+                }
+                if (n == 0) {
+                    ::close(fd);
+                    return make_bool(false);
+                }
+                off += static_cast<std::size_t>(n);
+            }
+            return make_bool(::close(fd) == 0);
+        }
         std::ofstream ofs(resolved, std::ios::binary | std::ios::trunc);
         if (!ofs)
             return make_bool(false);
@@ -410,8 +461,18 @@ void RegSplitParts::register_persist_deserialize(PrimRegistrar add, Evaluator& e
             return make_bool(false);
         std::string err;
         PersistBlob blob;
-        if (!load_blob(resolved, blob, &err))
+        if (ev.host_path_policy_active()) {
+            const int fd =
+                ev.open_tenant_host_fd(resolved, O_RDONLY | O_CLOEXEC, 0, "deserialize-workspace");
+            if (fd < 0)
+                return make_bool(false);
+            const bool ok = load_blob_fd(fd, blob, &err);
+            ::close(fd);
+            if (!ok)
+                return make_bool(false);
+        } else if (!load_blob(resolved, blob, &err)) {
             return make_bool(false);
+        }
 
         // set-code manages its own workspace lock — call outside our lock.
         bool eval_rejected = false;
@@ -538,8 +599,18 @@ void RegSplitParts::register_persist_info(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         PersistBlob blob;
         std::string err;
-        if (!load_blob(resolved, blob, &err))
+        if (ev.host_path_policy_active()) {
+            const int fd =
+                ev.open_tenant_host_fd(resolved, O_RDONLY | O_CLOEXEC, 0, "workspace-persist-info");
+            if (fd < 0)
+                return make_bool(false);
+            const bool ok = load_blob_fd(fd, blob, &err);
+            ::close(fd);
+            if (!ok)
+                return make_bool(false);
+        } else if (!load_blob(resolved, blob, &err)) {
             return make_bool(false);
+        }
 
         auto* ht = FlatHashTable::create(16);
         if (!ht)

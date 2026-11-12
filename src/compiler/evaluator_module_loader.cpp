@@ -411,9 +411,12 @@ namespace {
     // old ifstream miss. An empty regular file is Ok with an empty string.
     enum class NofollowRead { Ok, OpenFailed, ReadFailed };
 
-    [[nodiscard]] NofollowRead read_regular_nofollow(const std::string& path, std::string& out) {
+    [[nodiscard]] NofollowRead read_regular_nofollow(Evaluator& ev, const std::string& path,
+                                                     std::string& out, std::string_view op) {
         out.clear();
-        const int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        const int fd = ev.host_path_policy_active()
+                           ? ev.open_tenant_host_fd(path, O_RDONLY | O_CLOEXEC, 0, op)
+                           : ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
         if (fd < 0)
             return NofollowRead::OpenFailed;
         struct stat st{};
@@ -591,7 +594,7 @@ void Evaluator::ingest_loaded_module_type_sigs(const std::string& resolved, Env*
     std::string type_gated;
     if (check_tenant_host_path(type_sig_path, type_gated, "load-module")) {
         std::string sig_text;
-        if (read_regular_nofollow(type_gated, sig_text) == NofollowRead::Ok) {
+        if (read_regular_nofollow(*this, type_gated, sig_text, "load-module") == NofollowRead::Ok) {
             std::istringstream tf(sig_text);
             std::string line;
             while (std::getline(tf, line)) {
@@ -828,7 +831,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // Issue #4264: open, read, and empty each adopt the held exclusive
     // before erasing loading_stack_ (the three pre-merge failure returns).
     std::string content;
-    const auto opened = read_regular_nofollow(resolved, content);
+    const auto opened = read_regular_nofollow(*this, resolved, content, "load-module");
     if (opened == NofollowRead::OpenFailed) {
         erase_loading_module(resolved);
         return types::make_void();
