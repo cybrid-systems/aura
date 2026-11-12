@@ -31,6 +31,59 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
 
 
+def _braced_body(text: str, start: int) -> str:
+    """Return the smallest {...} block that opens at/after start.
+
+    A fixed character window rots as the function grows (the #5197 export
+    frame pushed is_plausible_module_path past 1400). Brace matching keeps
+    the AC2 order check on the real body. Comments, strings and char
+    literals are skipped so a brace inside them cannot end the block.
+    """
+    open_at = text.find("{", start)
+    if open_at < 0:
+        return ""
+    depth = 0
+    i = open_at
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c == "/" and i + 1 < n and text[i + 1] == "/":
+            nl = text.find(chr(10), i)
+            i = n if nl < 0 else nl + 1
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            continue
+        if c == '"':
+            i += 1
+            while i < n:
+                if text[i] == chr(92):
+                    i += 2
+                    continue
+                if text[i] == '"':
+                    break
+                i += 1
+            i += 1
+            continue
+        if c == "'":
+            i += 1
+            while i < n and text[i] != "'":
+                if text[i] == chr(92):
+                    i += 1
+                i += 1
+            i += 1
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+        i += 1
+    return ""
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -54,7 +107,9 @@ def main() -> int:
     must("ac3266_1_realpath_then_lstat", "AC1 test", test)
 
     lpos = loader.find("Evaluator::load_module_file")
-    lwin = loader[lpos : lpos + 1400] if lpos >= 0 else ""
+    lwin = _braced_body(loader, lpos) if lpos >= 0 else ""
+    if not lwin:
+        fails.append("AC2: empty load_module_file body slice")
     val = lwin.find("is_plausible_module_path(path)")
     lock = lwin.find("std::scoped_lock interlock(compact_env_frames_lock_)")
     if val < 0 or lock < 0 or val > lock:
