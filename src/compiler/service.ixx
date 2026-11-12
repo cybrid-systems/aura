@@ -5009,6 +5009,8 @@ public:
                 flat_fn.entry_block = ir_fn.entry_block;
                 flat_fn.local_count = ir_fn.local_count;
                 flat_fn.arg_count = ir_fn.arg_count;
+                // Issue #5222: dotted rest parameter binding.
+                flat_fn.variadic = ir_fn.variadic;
                 // Issue #4601: env prefix width for direct self-calls.
                 flat_fn.env_count = static_cast<std::uint32_t>(ir_fn.free_vars.size());
                 flat_fn.blocks = flat_blocks.data();
@@ -13701,6 +13703,7 @@ public:
         job->fn.entry_block = f.entry_block;
         job->fn.local_count = f.local_count;
         job->fn.arg_count = f.arg_count;
+        job->fn.variadic = f.variadic;
         job->fn.env_count = 0;
         job->fn.func_id_map = nullptr;
         job->fn.num_callees = 0;
@@ -21787,6 +21790,8 @@ public:
                                                 final_shape_map};
                 // Issue #4601: env prefix width for direct self-calls.
                 flat_fn.env_count = static_cast<std::uint32_t>(ir_fn.free_vars.size());
+                // Issue #5222: dotted rest parameter binding.
+                flat_fn.variadic = ir_fn.variadic;
                 // Set escape map from escape analysis
                 if (!escape_storage.empty())
                     flat_fn.escape_map = escape_storage.data();

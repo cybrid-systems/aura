@@ -2897,6 +2897,9 @@ static int emit_standalone_binary(int argc, char** argv) {
                                  static_cast<std::uint32_t>(blocks.size()),
                                  nullptr, // func_id_map not used for AOT
                                  0});
+        // Issue #5222: keep the dotted-rest flag so the emitter binds the
+        // last parameter to a list of the trailing actual arguments.
+        flat_fn_array.back().variadic = ir_fn.variadic;
     }
 
     emit_register_primitive_dispatch(cs);

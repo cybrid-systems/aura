@@ -100,6 +100,11 @@ struct FlatFunction {
     // callee frame from this function's own env prefix. Trailing field so
     // positional FlatFunction initializers stay source-compatible.
     uint32_t env_count = 0;
+    // Issue #5222: dotted rest parameter. The emitter binds the last
+    // parameter to a list of the trailing actual arguments instead of
+    // the single argument at that buffer index (AOT produced #f for
+    // (sorted? (list 1 2 3)) once std/sort's sorted? became variadic).
+    bool variadic = false;
 };
 
 using ScalarFn = int64_t (*)(int64_t*, uint32_t);
