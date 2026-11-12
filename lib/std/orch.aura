@@ -247,29 +247,77 @@
       (channel:try-recv (hash-ref h "outbox"))
       #f)))
 
+; Missing timeout, and an explicit 0, both mean orch:default-timeout (#5154).
+(define (orch-ask-timeout-secs timeout-args)
+  (if (and (pair? timeout-args)
+           (number? (car timeout-args))
+           (> (car timeout-args) 0))
+      (car timeout-args)
+      orch:default-timeout))
+
+(define (orch-ask-who target h)
+  (cond ((string? target) target)
+        ((and (hash? h) (string? (hash-ref h "name" #f)))
+         (hash-ref h "name"))
+        (else "agent")))
+
+(define (orch-ask-timeout-record who timeout)
+  (list "timeout"
+        (string-append "orch:ask timeout after "
+                       (number->string timeout)
+                       "s waiting for " who)))
+
+; #5154: the outbox is a rendezvous channel, so try-recv never unblocks
+; the handler's send. Race one blocking recv against a timer on a private
+; bridge; whichever arrives first is the result. Both racers are cancelled
+; when the race ends.
+(define (orch-bridge-reply? msg)
+  (and (pair? msg) (string? (car msg)) (string=? (car msg) "reply")))
+
+(define (orch-ask-local h target input timeout)
+  (orch:send target input)
+  (let* ((outbox (hash-ref h "outbox"))
+         (who (orch-ask-who target h))
+         (bridge (channel:create 2))
+         (watcher (fiber:spawn
+                    (lambda ()
+                      (let ((reply (channel:recv outbox)))
+                        (channel:send bridge (list "reply" reply))))))
+         (timer (fiber:spawn
+                  (lambda ()
+                    (orch-wait-sec timeout)
+                    (channel:send bridge (list "timeout")))))
+         (first (channel:recv bridge))
+         (second (channel:try-recv bridge))
+         (msg (if (orch-bridge-reply? second) second first)))
+    (try (fiber:cancel watcher) (catch (e) #f))
+    (try (fiber:cancel timer) (catch (e) #f))
+    (if (orch-bridge-reply? msg)
+        (car (cdr msg))
+        (orch-ask-timeout-record who timeout))))
+
 ; ── orch:ask — send one task, wait for its result ──
 ; A stopped local agent is refused with a record: {status:"agent-stopped",
 ; error:"agent-stopped", name:…} (#3960, shape per #5134).
+; The optional timeout (seconds) is honoured on the local fiber path and
+; on the serve path. Both return ("timeout" "orch:ask timeout after Ns
+; waiting for <name>") (#5154).
 (define (orch:ask target input . timeout-args)
-  (let ((h (orch:handle-of target)))
+  (let ((h (orch:handle-of target))
+        (timeout (orch-ask-timeout-secs timeout-args)))
     (cond
       ((and (hash? h) (orch-channel? (hash-ref h "inbox" #f)))
        (if (let ((st (orch:status target)))
              (and (string? st) (string=? st "stopped")))
          ; Issue #5134: a failure is a queryable record, not a bare value.
          (hash "status" "agent-stopped" "error" "agent-stopped" "name" target)
-         (begin
-           (orch:send target input)
-           (orch:recv target))))
+         (orch-ask-local h target input timeout)))
       ((string? target)
-       (let ((timeout (if (pair? timeout-args) (car timeout-args) 30))
-             (request (try (json-encode input) (catch (e) "null"))))
+       (let ((request (try (json-encode input) (catch (e) "null"))))
          (if (try (send target request) (catch (e) #f))
            (let loop ((elapsed 0))
              (if (>= elapsed timeout)
-               (list "timeout" (string-append "orch:ask timeout after "
-                                              (number->string timeout)
-                                              "s waiting for " target))
+               (orch-ask-timeout-record target timeout)
                (let ((reply (try (recv 1) (catch (e) #f))))
                  (if reply reply (loop (+ elapsed 1))))))
            (hash "status" "send-failed" "error" "unknown-agent" "name" target))))
