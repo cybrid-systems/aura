@@ -1668,6 +1668,26 @@ __attribute__((weak)) int64_t aura_hash_ref_miss_error(int64_t key_val) {
     (void)key_val;
     return 11; // void sentinel (no evaluator wired)
 }
+
+// Issue #5175: OpHashRef's inline scan now falls through to the
+// evaluator's hash-ref primitive on a miss (aura_jit_eval_hash_ref)
+// instead of calling aura_hash_ref_miss_error directly. That renamed
+// the emitted symbol, and the new one is defined only in the host TUs
+// (src/compiler/service.ixx strong, src/compiler/aura_jit_prim_dispatch_stub.cpp
+// weak) - neither of which the standalone --emit-binary link compiles.
+// So the emitted .o referenced a symbol no one defines, the link failed
+// with "undefined reference to aura_jit_eval_hash_ref", and --emit-binary
+// produced no binary for every emit:* case that reaches a hash-ref.
+//
+// Standalone AOT has no evaluator and no owner wired, so this must do
+// exactly what the host does with no owner: fall through to the
+// missing-key error, which this file already provides. Same value the
+// AOT path produced before the rename, so the emit:* results are
+// unchanged.
+__attribute__((weak)) int64_t aura_jit_eval_hash_ref(int64_t hash_val, int64_t key_val) {
+    (void)hash_val;
+    return aura_hash_ref_miss_error(key_val);
+}
 __attribute__((weak)) int aura_hash_set(void* tbl, uint64_t key, void* val) {
     (void)tbl;
     (void)key;
