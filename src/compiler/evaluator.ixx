@@ -1693,6 +1693,11 @@ export struct MacroDef {
     // outlives the eval call that registered it — so the program has to
     // stay alive with the macro, not with the closure that triggered it.
     std::shared_ptr<EvalProgram> program;
+    // Issue #5195: the macro was defined while loading a stdlib module
+    // (lib/std/*). Its body is shipped with the runtime, so expansion is
+    // not code self-evolution: the MacroSelfEvo gate does not apply. User
+    // macros keep stdlib_module == false and the gate unchanged.
+    bool stdlib_module = false;
 };
 
 export struct Closure {
@@ -7557,6 +7562,10 @@ private:
     ModuleLoadedFn module_loaded_cb_;
     std::unordered_map<std::string, MacroDef, aura::core::TransparentStringHash, std::equal_to<>>
         macros_;
+    // Issue #5195: >0 while a lib/std module body is being loaded. A
+    // defmacro registered in that window is stdlib-owned (see
+    // MacroDef::stdlib_module).
+    std::uint32_t stdlib_module_load_depth_ = 0;
     // Issue #4901: every registration of a hygienic macro, in order, with
     // its registry sequence. A procedure body whose flat finished its
     // top-level eval at sequence S expands a call with the last definition
@@ -11330,13 +11339,28 @@ public:
                            types::is_hash(args[0]);
         if (track)
             aura_hash_mutate_operand_push(args[0].val);
+        // Issue #5195: vector-set! / vector-fill! get the same local-target
+        // exemption as #5190's hash writes. The dispatch choke cannot see
+        // the argument, so the caller classifies it: 1 = a vector this
+        // evaluator has not published into a workspace. The primitive body
+        // still runs the tenant slot gate.
+        const bool track_vec = (name == "vector-set!" || name == "vector-fill!") && !args.empty() &&
+                               types::is_vector(args[0]);
+        if (track_vec)
+            aura_vector_mutate_operand_push(vector_is_workspace_reachable(static_cast<std::size_t>(
+                                                types::as_vector_idx(args[0])))
+                                                ? 0
+                                                : 1);
         struct Pop {
             bool on;
+            bool on_vec;
             ~Pop() {
                 if (on)
                     aura_hash_mutate_operand_pop();
+                if (on_vec)
+                    aura_vector_mutate_operand_pop();
             }
-        } pop{track};
+        } pop{track, track_vec};
         return invoke_prim_with_telemetry(name, std::forward<Call>(call));
     }
 

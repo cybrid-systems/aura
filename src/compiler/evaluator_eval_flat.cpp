@@ -3270,7 +3270,13 @@ namespace {
 // sentinel and capability-not-granted. Do not stamp the fiber — a mutate
 // deny (#4149) and a later macro-free eval must not see #4078 armed.
 // Soft/Off and a live grant return nullopt and keep the existing arm.
-[[nodiscard]] static std::optional<Diagnostic> legacy_eval_macro_self_evo_deny() {
+[[nodiscard]] static std::optional<Diagnostic>
+legacy_eval_macro_self_evo_deny(bool stdlib_macro = false) {
+    // Issue #5195: a macro defined by a lib/std module is shipped with the
+    // runtime — expanding it is not code self-evolution, so the user-macro
+    // MacroSelfEvo grant does not apply. User-defined macros keep the gate.
+    if (stdlib_macro)
+        return std::nullopt;
     using aura::core::capability::check_macro_self_evo;
     const auto tenant = macro_exp::tenant_for_macro_self_evo_check();
     const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
@@ -6797,6 +6803,20 @@ std::optional<EvalResult> Evaluator::try_eval_flat_hot(aura::ast::FlatAST& flat,
                 aura_hash_mutate_operand_pop();
         }
     } hash_operand_pop{track_hash};
+    // Issue #5195: the remembered prim call needs the vector operand too —
+    // the second vector-set! of a loop runs here, not on the slow path.
+    const bool track_vec =
+        (cname == "vector-set!" || cname == "vector-fill!") && nargs > 0 && is_vector(buf[0]);
+    if (track_vec)
+        aura_vector_mutate_operand_push(
+            vector_is_workspace_reachable(static_cast<std::size_t>(as_vector_idx(buf[0]))) ? 0 : 1);
+    struct VectorOperandPop {
+        bool on;
+        ~VectorOperandPop() {
+            if (on)
+                aura_vector_mutate_operand_pop();
+        }
+    } vector_operand_pop{track_vec};
     return finish_prim_call(cname, invoke_prim_with_telemetry_at(cname, e.aux, [&]() {
                                 return (*pfn)(std::span<const types::EvalValue>(buf.data(), nargs));
                             }));
@@ -6993,9 +7013,15 @@ Evaluator::FlatStep Evaluator::eval_flat_on_macrodef(EvalFlatCursor& cur,
     // outlives the eval call that registered it — so it keeps
     // the (eval ...) program that owns f / p alive.
     macros_epoch_4894_.fetch_add(1, std::memory_order_acq_rel); // Issue #4894
-    macros_[std::string(name)] =
-        MacroDef{std::move(param_names),  is_dotted, is_hygienic, is_preserved, f, p, body_id,
-                 eval_program_for_pool(p)};
+    macros_[std::string(name)] = MacroDef{std::move(param_names),
+                                          is_dotted,
+                                          is_hygienic,
+                                          is_preserved,
+                                          f,
+                                          p,
+                                          body_id,
+                                          eval_program_for_pool(p),
+                                          /*stdlib_module=*/stdlib_module_load_depth_ > 0};
     note_macro_def_4901(std::string(name)); // Issue #4901
     macros_epoch_4894_.fetch_add(1, std::memory_order_acq_rel);
     return FlatStep::ret(EvalResult(make_void()));
@@ -9289,6 +9315,25 @@ Evaluator::FlatStep Evaluator::eval_flat_on_primitive(EvalFlatCursor& cur,
                         aura_hash_mutate_operand_pop();
                 }
             } hash_operand_pop{track_hash};
+            // Issue #5195: same for the vector writers. This is the hot
+            // tree-walker face (a module function call); the argument-taking
+            // overload covers eval_data_as_code. 1 = a vector this evaluator
+            // has not published into a workspace.
+            const bool track_vec = (cname == "vector-set!" || cname == "vector-fill!") &&
+                                   !args.empty() && is_vector(args[0]);
+            if (track_vec)
+                aura_vector_mutate_operand_push(
+                    prim_owner->vector_is_workspace_reachable(
+                        static_cast<std::size_t>(as_vector_idx(args[0])))
+                        ? 0
+                        : 1);
+            struct VectorOperandPop {
+                bool on;
+                ~VectorOperandPop() {
+                    if (on)
+                        aura_vector_mutate_operand_pop();
+                }
+            } vector_operand_pop{track_vec};
             auto prim_result = [&]() {
                 if (slot_here)
                     return prim_owner->invoke_prim_with_telemetry_at(
@@ -10154,7 +10199,7 @@ Evaluator::eval_flat_on_macro_hygienic(EvalFlatCursor& cur, const aura::ast::Nod
                 // missing grant still denies; only the
                 // expansion work is reused.
                 if (aura::core::sandbox::is_sandbox_active()) {
-                    if (auto denied = legacy_eval_macro_self_evo_deny())
+                    if (auto denied = legacy_eval_macro_self_evo_deny(md.stdlib_module))
                         return FlatStep::ret(std::unexpected(*denied));
                 }
                 auto memo_result = eval_flat(*f, *p, memo_hit, eval_env);
@@ -10360,8 +10405,9 @@ Evaluator::eval_flat_on_macro_preserved(EvalFlatCursor& cur, const aura::ast::No
     auto& tco = cur.tco;
     if (md.preserved) {
         // Issue #4390: no template eval and no
-        // data_to_flat without MacroSelfEvo.
-        if (auto denied = legacy_eval_macro_self_evo_deny())
+        // data_to_flat without MacroSelfEvo. #5195: stdlib macros are
+        // runtime-shipped and keep working under the production preset.
+        if (auto denied = legacy_eval_macro_self_evo_deny(md.stdlib_module))
             return FlatStep::ret(std::unexpected(*denied));
         if (is_rest) {
             // Rest params on preserved
@@ -10585,7 +10631,8 @@ Evaluator::eval_flat_on_macro_legacy(EvalFlatCursor& cur, const aura::ast::NodeV
     // Issue #4390: legacy defmacro double-eval. Refuse
     // before the template runs, so a source-named
     // binding in the template is not evaluated.
-    if (auto denied = legacy_eval_macro_self_evo_deny())
+    // Issue #5195: stdlib macros are exempt (runtime-shipped body).
+    if (auto denied = legacy_eval_macro_self_evo_deny(md.stdlib_module))
         return FlatStep::ret(std::unexpected(*denied));
     // Convert AST args to data (NOT evaluate — macros receive syntax)
     // Bind regular params first (all but the last)
@@ -12520,10 +12567,11 @@ Evaluator::eval_data_forms_apply(const types::EvalValue& data, const Env& env, a
         // Refuse before the tail-env template eval when MacroSelfEvo
         // is not granted. A granted hygienic clone still stamps
         // MacroIntroduced in clone_macro_body.
-        if (auto denied = legacy_eval_macro_self_evo_deny())
-            return std::unexpected(*denied);
         auto macro_it = macros_.find(fn_name);
         auto& md = macro_it->second;
+        // Issue #5195: stdlib macros are exempt from the user-macro gate.
+        if (auto denied = legacy_eval_macro_self_evo_deny(md.stdlib_module))
+            return std::unexpected(*denied);
         bool is_rest = md.dotted;
         // Rest params on legacy macros via eval_data_as_code
         // are not yet supported (same limitation as the main

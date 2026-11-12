@@ -1,0 +1,51 @@
+{
+  "issue": 5195,
+  "title": "stdlib modules and macros denied under the default Restricted preset",
+  "checks": [
+    {
+      "ac": "AC1-vector-local-write",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "Issue #5195",
+        "track_vec",
+        "aura_vector_mutate_operand_push"
+      ]
+    },
+    {
+      "ac": "AC2-require-effect-exempt",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #5195",
+        "aura_vector_mutate_operand_is_unpublished"
+      ]
+    },
+    {
+      "ac": "AC3-stdlib-macro-scope",
+      "path": "src/compiler/evaluator_module_loader.cpp",
+      "contains": [
+        "Issue #5195",
+        "is_stdlib_module_path",
+        "stdlib_module_load_depth_"
+      ]
+    },
+    {
+      "ac": "AC4-macro-gate-exempt",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #5195",
+        "stdlib_macro",
+        "stdlib_module_load_depth_ > 0"
+      ]
+    },
+    {
+      "ac": "AC5-suite",
+      "path": "tests/suite/capability_5195.aura",
+      "contains": [
+        "#5195",
+        "OK-5195-capability",
+        "vector-fill!",
+        "define-record-type"
+      ]
+    }
+  ]
+}
