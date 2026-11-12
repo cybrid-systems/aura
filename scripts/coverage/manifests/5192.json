@@ -1,0 +1,49 @@
+{
+  "issue": 5192,
+  "title": "std/list redefines foldl/take, shadowing the native primitives (foldl 72x slower on 1M elements)",
+  "checks": [
+    {
+      "ac": "AC1-shadow-gate",
+      "path": "scripts/coverage/checks/check_stdlib_list_prim_shadow_5192.py",
+      "contains": [
+        "AC1",
+        "AC4",
+        "--self-test",
+        "#5192"
+      ]
+    },
+    {
+      "ac": "AC2-stdlib-delegates",
+      "path": "lib/std/list.aura",
+      "contains": [
+        "Do not redefine it",
+        "take: the native primitive"
+      ]
+    },
+    {
+      "ac": "AC3-prim-contract",
+      "path": "src/compiler/evaluator_primitives_list.cpp",
+      "contains": [
+        "take: list shorter than count",
+        "Issue #5192",
+        "if (n > len)"
+      ]
+    },
+    {
+      "ac": "AC4-suite-pin",
+      "path": "tests/suite/list_srfi_5133.aura",
+      "contains": [
+        "#5192",
+        "(try (take xs 9)"
+      ]
+    },
+    {
+      "ac": "AC5-primcall-row",
+      "path": "tests/compiler/test_primcall_narg.cpp",
+      "contains": [
+        "(#5192)",
+        "error? (take (list 1 2 3) 9)"
+      ]
+    }
+  ]
+}
