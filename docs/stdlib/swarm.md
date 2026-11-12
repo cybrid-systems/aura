@@ -174,7 +174,15 @@ objective; a fitness may then be a list:
   `weights` or call `(swarm:scalarize fit weights directions)` yourself.
 - **Hypervolume** - exact for two objectives against `hv-ref` (default: a
   point 10% below the front's per-objective minimum); reported as 0.0 for
-  other arities, where `front-size` is the portable signal.
+  other arities, where `front-size` is the portable signal. The reference
+  is built from the measured fitness width, so a vector shorter than
+  `objectives` does not walk off the end of the list.
+- **Arity** - a list fitness whose length is not `objectives` is still
+  archived at the length that was measured. Each such individual is
+  recorded on `swarm:last-errors` as
+  `fitness length N does not match objectives M`, and the report's
+  `errors` count includes it. `swarm:report` and `swarm:export` stay
+  usable. A scalar fitness never enters the archive.
 - **Leader selection** - the v1 leader is the best scalarized particle;
   MOPSO-style leader sampling from the archive is not implemented yet.
 
