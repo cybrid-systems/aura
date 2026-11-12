@@ -43,8 +43,8 @@
     (list (+ lo (modulo (car result) (- hi lo))) (cadr result))))
 
 ; (random-vector n gen) → (list (vector of n floats) updated-gen)
-; Constant stack (the iter loop is tail-recursive). Needs mutate for the
-; vector-set! writes, so it is a dev/off-preset call until #5195 lands.
+; Constant stack (the iter loop is tail-recursive). The vector is freshly
+; built here, so its vector-set! writes do not need Mutate (#5195).
 (define (random-vector n gen)
   (let ((v (make-vector n)))
     (let iter ((i 0) (g gen))
@@ -56,27 +56,23 @@
 ; (shuffle lst gen) → (list shuffled-list updated-gen)
 ; Issue #5194: the previous Fisher-Yates-via-recursion recursed once per
 ; element (stack overflow above ~512 elements) and located + rebuilt the list
-; for every pick, so it was O(n^2). In-place Fisher-Yates needs vector-set!,
-; which a fresh vector cannot do under the default (Restricted) preset
-; (#5195), so decorate each element with two LCG draws and sort by them
-; instead: O(n log n) through the native list-sort, constant stack, no
-; mutation. Two draws per element make a key collision negligible (~n^2/2^62);
-; a collision only keeps the pair's relative order, never drops an element.
+; for every pick, so it was O(n^2). The list is copied into a fresh vector and
+; shuffled in place (backward Fisher-Yates): constant stack, O(n) swaps.
+; vector-set! on a vector this call just built is not a shared-state mutation,
+; so the default (Restricted) preset admits it (#5195); a vector bound into a
+; workspace would still need Mutate.
 (define (shuffle lst gen)
-  (let decorate ((xs lst) (g gen) (acc (list)))
-    (if (null? xs)
-        (let ((sorted (list-sort acc
-                                 (lambda (a b)
-                                   (let ((ka (car a)) (kb (car b)))
-                                     (or (< (car ka) (car kb))
-                                         (and (= (car ka) (car kb))
-                                              (< (cdr ka) (cdr kb)))))))))
-          (list (map cdr sorted) g))
-        (let* ((r1 (random-next g))
-               (r2 (random-next (cadr r1))))
-          (decorate (cdr xs)
-                    (cadr r2)
-                    (cons (cons (cons (car r1) (car r2)) (car xs)) acc))))))
+  (let ((v (list->vector lst)))
+    (let loop ((i (- (vector-length v) 1)) (g gen))
+      (if (<= i 0)
+          (list (vector->list v) g)
+          (let* ((r (random-range 0 (+ i 1) g))
+                 (j (car r))
+                 (g2 (cadr r))
+                 (tmp (vector-ref v i)))
+            (vector-set! v i (vector-ref v j))
+            (vector-set! v j tmp)
+            (loop (- i 1) g2))))))
 
 ; (random-seed gen) → current seed of the generator (an integer)
 ; Issue #5194: the module header documents every export's shape now; this one

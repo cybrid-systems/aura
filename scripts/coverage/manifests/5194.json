@@ -7,7 +7,8 @@
       "path": "lib/std/random.aura",
       "contains": [
         "Issue #5194",
-        "list-sort acc",
+        "Fisher-Yates",
+        "vector->list",
         "constant stack"
       ]
     },
