@@ -4531,6 +4531,20 @@ void aura_closure_capture(int64_t closure_id, int64_t idx, int64_t val) {
     aura_closure_capture_checked(closure_id, idx, val, aura_jit_owner_capability_tenant(), face);
 }
 
+// Issue #5173: OpCapture / OpCaptureRef publish the closure env the
+// interpreter writes while lowering a lambda. That store is compiler
+// plumbing, the same class as aura_cell_set_jit_bind. Routing it through
+// aura_closure_capture's Mutate choke dropped every capture in a
+// session-less exec_jit (production face, no Mutate grant): the closure
+// ran with an empty env, user arguments landed on the capture slots, and
+// --jit returned a different number than the interpreter (a letrec
+// countdown printed 0, fib printed 0, (f 3 100) printed 5050). The tenant
+// gate stays; the user-mutation choke does not.
+extern "C" void aura_closure_capture_jit(int64_t closure_id, int64_t idx, int64_t val) {
+    aura_closure_capture_checked(closure_id, idx, val, aura_jit_owner_capability_tenant(),
+                                 aura_jit_owner_sandbox_mode());
+}
+
 // Issue #4094: value-observation read for the capture ACs — the same
 // unisolated diagnostic family as aura_closure_get_env_gen (not a JIT
 // surface; the generated read path is unchanged). Returns the env cell
