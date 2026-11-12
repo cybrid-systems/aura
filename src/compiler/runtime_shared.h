@@ -172,6 +172,14 @@ extern "C" void aura_hash_mutate_operand_push(std::int64_t hash_val);
 extern "C" void aura_hash_mutate_operand_pop();
 extern "C" int aura_hash_mutate_operand_is_unpublished();
 
+// Issue #5195: the same dispatch-argument channel for vector-set! /
+// vector-fill!. The caller classifies the target (1 = not reachable from a
+// workspace, 0 = published) so require_effect can skip the Mutate grant for
+// a local vector build without re-reading the vector heap under a lock.
+extern "C" void aura_vector_mutate_operand_push(int unpublished);
+extern "C" void aura_vector_mutate_operand_pop();
+extern "C" int aura_vector_mutate_operand_is_unpublished();
+
 // Issue #4036/#4093: owner-Evaluator principal hook (strong def in
 // service.ixx; weak stub in aura_jit_prim_dispatch_stub.cpp; unwired → 0).
 // Declared here for the hash-alloc stamp sites outside aura_jit_runtime.cpp

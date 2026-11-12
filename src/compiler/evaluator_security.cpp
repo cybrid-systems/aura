@@ -1037,6 +1037,14 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
     if ((op == "hash-set!" || op == "hash-remove!") &&
         aura_hash_mutate_operand_is_unpublished() != 0)
         return true;
+    // Issue #5195: same rule for vector-set! / vector-fill! — a vector this
+    // evaluator has not published into a workspace is a local build, not a
+    // mutation of shared state. The dispatch caller classified the target
+    // (the choke cannot see the argument); a published or unknown target
+    // keeps the Mutate requirement and the primitive's tenant gate.
+    if ((op == "vector-set!" || op == "vector-fill!") &&
+        aura_vector_mutate_operand_is_unpublished() != 0)
+        return true;
     // Issue #3526: NodeId + ref_tenant 0 routes through for_node_id (#2658).
     if (req_bits != 0 && target_node != 0 && ref_tenant == 0) {
         static thread_local bool redirecting = false;

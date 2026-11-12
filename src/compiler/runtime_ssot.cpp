@@ -627,6 +627,32 @@ extern "C" int aura_hash_mutate_operand_is_unpublished() {
     return aura_hash_is_workspace_reachable(hidx) == 0 ? 1 : 0;
 }
 
+// Issue #5195: the vector-set! / vector-fill! side of the same channel.
+// The caller already classified the target against its own reachability
+// table, so this stack carries the yes/no bit; there is no second table to
+// keep in sync. No pushed target keeps the Mutate choke (fail closed).
+namespace {
+thread_local std::uint8_t t_vector_mutate_stack[8];
+thread_local int t_vector_mutate_depth = 0;
+} // namespace
+
+extern "C" void aura_vector_mutate_operand_push(int unpublished) {
+    if (t_vector_mutate_depth < 8)
+        t_vector_mutate_stack[t_vector_mutate_depth] = unpublished != 0 ? 1 : 0;
+    ++t_vector_mutate_depth;
+}
+
+extern "C" void aura_vector_mutate_operand_pop() {
+    if (t_vector_mutate_depth > 0)
+        --t_vector_mutate_depth;
+}
+
+extern "C" int aura_vector_mutate_operand_is_unpublished() {
+    if (t_vector_mutate_depth <= 0 || t_vector_mutate_depth > 8)
+        return 0;
+    return t_vector_mutate_stack[t_vector_mutate_depth - 1] != 0 ? 1 : 0;
+}
+
 // ── FlatHashTable::create / destroy ──
 // Strong defs used to live only in aura_jit_runtime.cpp (JIT SOs).
 // evaluator_primitives_* in libaura_test_objects.so call create() for

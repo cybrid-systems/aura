@@ -696,6 +696,13 @@ Env* Evaluator::create_loaded_module_env(ast::ASTArena& mod_arena, ast::StringPo
     return mod_env;
 }
 
+// Issue #5195: macros a lib/std module defines at load time are shipped
+// with the runtime, so their expansion is not code self-evolution. The
+// resolved path is canonical (realpath), so this is the stdlib directory.
+[[nodiscard]] static bool is_stdlib_module_path(std::string_view resolved) noexcept {
+    return resolved.find("/lib/std/") != std::string_view::npos;
+}
+
 types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // Issue #5197: record this module's exports in a fresh set. The
     // parent's in-flight set is saved and restored on every return
@@ -890,6 +897,26 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         RequireInjectGuard& operator=(RequireInjectGuard&&) = delete;
     };
     RequireInjectGuard inject_guard(*this, mod_env);
+    // Issue #5195: everything this module body registers while it runs is
+    // stdlib-owned when the resolved file lives under lib/std/.
+    struct StdlibMacroFrame {
+        Evaluator& ev;
+        bool on;
+        explicit StdlibMacroFrame(Evaluator& e, bool is_stdlib) noexcept
+            : ev(e)
+            , on(is_stdlib) {
+            if (on)
+                ++ev.stdlib_module_load_depth_;
+        }
+        ~StdlibMacroFrame() {
+            if (on && ev.stdlib_module_load_depth_ > 0)
+                --ev.stdlib_module_load_depth_;
+        }
+        StdlibMacroFrame(const StdlibMacroFrame&) = delete;
+        StdlibMacroFrame& operator=(const StdlibMacroFrame&) = delete;
+        StdlibMacroFrame(StdlibMacroFrame&&) = delete;
+        StdlibMacroFrame& operator=(StdlibMacroFrame&&) = delete;
+    } stdlib_macro_frame(*this, is_stdlib_module_path(resolved));
     // Issue #4918: "./x" / "../x" inside this module resolve against
     // this module's directory while its body runs.
     struct ModuleBaseDirGuard {

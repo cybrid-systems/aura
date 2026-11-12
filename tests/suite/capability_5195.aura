@@ -1,0 +1,73 @@
+; Issue #5195: under the default (Restricted) preset the stdlib modules that
+; build a local hash / vector internally must not require the Mutate grant,
+; and the stdlib macros (guard / delay / define-record-type) must expand
+; without MacroSelfEvo. Twelve entries used to fail with effect-denied.
+(require "std/hash" all:)
+(require "std/iter" all:)
+(require "std/core" all:)
+(require "std/set" all:)
+(require "std/data" all:)
+(require "std/bytevector" all:)
+(require "std/io" all:)
+(require "std/list" all:)
+(require "std/vector" all:)
+(require "std/exception" all:)
+(require "std/lazy" all:)
+(require "std/record" all:)
+
+(define-record-type point5195 (make-point5195 x y) point5195?
+  (x point5195-x) (y point5195-y))
+
+; A vector bound into the workspace root: writes to it stay Mutate-gated.
+(define published5195 (vector 1 2))
+
+(define (check)
+  (and
+   ; std/hash - COW hash-set on a fresh local table (op=hash-set!)
+   (= 1 (hash-ref (hash-set (hash) "k" 1) "k"))
+   ; std/iter frequencies, std/core group-by, std/set set-adjoin,
+   ; std/data trie-insert - each used to deny op=hash-set!. Assert the
+   ; stored key/value, not just the container: a denied write returns an
+   ; error value that these callers discard, so the container alone shows
+   ; nothing.
+   (= 2 (hash-ref (frequencies (list 1 2 2)) 2))
+   (equal? (list 2 4) (hash-ref (core:group-by even? (list 1 2 3 4)) #t))
+   (set-contains? (set-adjoin (set) 1) 1)
+   (let ((t (make-trie)))
+     (trie-insert t "a")
+     (trie-search t "a"))
+   ; std/bytevector + std/io build a local vector with vector-set!.
+   ; bytevector? reads the tag slot: a denied tag write leaves an
+   ; untagged vector whose length still looks right.
+   (and (= 4 (bytevector-length (make-bytevector 4)))
+        (bytevector? (make-bytevector 4)))
+   (equal? "a" (let ((p (open-output-string))) (write-char "a" p) (get-output-string p)))
+   ; local vector writes (vector-set! / vector-fill!) are not shared-state
+   ; mutations. The loop runs the remembered-prim hot path after the
+   ; first iteration, so both dispatch faces are covered.
+   (let ((v (make-vector 3 0)))
+     (vector-set! v 0 7)
+     (vector-fill! v 9)
+     (and (= 7 (vector-ref v 0)) (= 9 (vector-ref v 2))))
+   (let ((v (make-vector 4 0)))
+     (let fill ((j 0))
+       (if (< j 4)
+           (begin (vector-set! v j j) (fill (+ j 1)))
+           (and (= 0 (vector-ref v 0)) (= 3 (vector-ref v 3))))))
+   ; a PUBLISHED vector keeps the Mutate requirement: the write is refused
+   ; and the element is unchanged
+   (and (try (vector-set! published5195 0 9) (catch e #t))
+        (= 1 (vector-ref published5195 0)))
+   ; stdlib macros expand under Restricted
+   (equal? (quote caught) (guard (e (#t (quote caught))) (raise "boom")))
+   (= 3 (force (delay (+ 1 2))))
+   (let ((p (make-point5195 1 2)))
+     (and (point5195? p) (= 1 (point5195-x p)) (= 2 (point5195-y p))))))
+
+(define host (if (check) 1 0))
+(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+
+(if (and (= host 1) (= guest 1))
+    (begin (display "OK-5195-capability") (newline))
+    (begin (display "FAIL-5195-capability host=") (display host)
+           (display " guest=") (display guest) (newline) (exit 1)))
