@@ -1,0 +1,133 @@
+;; expect: OK-5185
+; Issue #5185: std/string string-join must stay linear in the part count
+; and keep stdlib type errors. The native primitive skips non-strings;
+; these cases fail if that primitive is exposed, or if a part is dropped
+; or doubled. Scale checks assert length and every part, not timing.
+
+(require "std/string" all:)
+
+(define *fails* 0)
+(define *passes* 0)
+(define (check pred msg)
+  (if pred
+      (begin
+        (set! *passes* (+ *passes* 1))
+        (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ") (display msg) (newline))))
+
+(define (caught thunk) (try (thunk) (catch (e) e)))
+(define (errmsg thunk) (format "~a" (caught thunk)))
+(define (sa-type-msg kind arg)
+  (string-append "type mismatch — expected String, got " kind
+                 " (in string-append, argument " (number->string arg) ")"))
+
+; ── semantics: empty, single, separators ───────────────────────────────────
+(check (equal? (string-join '() ",") "")
+       "empty quoted list")
+(check (equal? (string-join (list) ",") "")
+       "empty (list)")
+(check (equal? (string-join '("only") ",") "only")
+       "single string")
+; A one-element list never reaches string-append, so a non-string is
+; returned as itself (same as before #5185).
+(check (equal? (string-join (list 42) ",") 42)
+       "single non-string is returned")
+(check (equal? (string-join '("a" "b") " ") "a b")
+       "two elements")
+(check (equal? (string-join (list "a" "b" "c") ", ") "a, b, c")
+       "three elements")
+(check (equal? (string-join '("a" "b" "c") "") "abc")
+       "empty separator")
+(check (equal? (string-join '("a" "b" "c") "::") "a::b::c")
+       "multi-char separator")
+(check (equal? (string-join '("p" "q" "r") "-")
+               (string-append "p" "-" "q" "-" "r"))
+       "same order as one string-append")
+
+; ── non-strings are type errors, not silently skipped ──────────────────────
+; Native string-join would drop the int and return "a,b" / "a" / "b" / "a,b".
+(check (equal? (errmsg (lambda () (string-join (list "a" 1 "b") ",")))
+               (sa-type-msg "Int" 3))
+       "non-string in the middle is a type error")
+(check (equal? (errmsg (lambda () (string-join (list "a" 1) ",")))
+               (sa-type-msg "Int" 3))
+       "non-string second element is a type error")
+(check (equal? (errmsg (lambda () (string-join (list 1 "b") ",")))
+               (sa-type-msg "Int" 1))
+       "non-string first element is a type error")
+(check (equal? (errmsg (lambda () (string-join (list "a" "b" 1) ",")))
+               (sa-type-msg "Int" 5))
+       "non-string last element is a type error")
+(check (equal? (errmsg (lambda () (string-join (list "a" 'b) ",")))
+               (sa-type-msg "Symbol" 3))
+       "symbol element is a type error")
+(check (equal? (errmsg (lambda () (string-join '("a" "b") 1)))
+               (sa-type-msg "Int" 2))
+       "non-string separator is a type error")
+
+; ── scale: 1 / 1k / 8k / 32k identical parts, every byte checked ───────────
+(define (copies n)
+  (let ((i 0)
+        (acc (list)))
+    (while (lambda () (< i n))
+      (lambda ()
+        (set! acc (cons "abcdefghij" acc))
+        (set! i (+ i 1))))
+    acc))
+
+(define (parts-match? s n part sep)
+  (let ((i 0)
+        (ok #t)
+        (plen (string-length part))
+        (stride (+ (string-length part) (string-length sep))))
+    (while (lambda () (and ok (< i n)))
+      (lambda ()
+        (let ((start (* i stride)))
+          (if (not (string=? (substring s start (+ start plen)) part))
+              (begin
+                (display "  part mismatch at ") (display i) (newline)
+                (set! ok #f)))
+          (if (and ok (< i (- n 1)))
+              (if (not (string=? (substring s (+ start plen) (+ start stride)) sep))
+                  (begin
+                    (display "  sep mismatch at ") (display i) (newline)
+                    (set! ok #f)))))
+        (set! i (+ i 1))))
+    ok))
+
+(define (join-scale n)
+  (let* ((part "abcdefghij")
+         (sep ",")
+         (joined (string-join (copies n) sep))
+         (want (+ (* n 10) (* (- n 1) 1)))
+         (label (number->string n)))
+    (if (not (string? joined))
+        (begin
+          (display "  joined=") (display joined) (newline)
+          (check #f (string-append "string? n=" label))
+          (check #f (string-append "length n=" label))
+          (check #f (string-append "content n=" label)))
+        (begin
+          (check #t (string-append "string? n=" label))
+          (if (not (= (string-length joined) want))
+              (begin
+                (display "  got-len ") (display (string-length joined))
+                (display " want-len ") (display want) (newline)))
+          (check (= (string-length joined) want)
+                 (string-append "length n=" label))
+          (check (parts-match? joined n part sep)
+                 (string-append "content n=" label))))))
+
+(join-scale 1)
+(join-scale 1000)
+(join-scale 8000)
+(join-scale 32000)
+
+(if (and (= *fails* 0) (= *passes* 27))
+    (display "OK-5185\n")
+    (begin
+      (display "FAIL-5185 fails=") (display *fails*)
+      (display " passes=") (display *passes*) (newline)
+      (exit 1)))
