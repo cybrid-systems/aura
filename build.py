@@ -14251,13 +14251,17 @@ def test_suite_runner(*, s0: bool = False):
     # 120s per file dies when this cheap wave overlaps the issue-farm
     # ninja. CI run 6021: suite/multiframe_named_let_2873.aura (quadratic
     # named-let fill) hit the cap with every other case green.
+    # 240s -> 360s (2026-11-12): the runner itself swings ~1.5x run to run
+    # (ci/p0 415.8s -> 623.3s on the same wave shape), and suite/qd_4941.aura
+    # (5000 map-elites evaluations, ~100s on a fast box) sat right on 240s:
+    # it passed at 12:21 and timed out at 15:51 on otherwise unchanged code.
     rc = run_aura_file_suite(
         "Suite",
         found,
         aura_bin=AURA,
         env=env,
         mode="load",
-        timeout_s=240,
+        timeout_s=360,
         jobs=_suite_jobs(),
     )
     if s0:
