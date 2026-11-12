@@ -3704,6 +3704,27 @@ static std::optional<std::vector<std::string>> split_oneshot_forms(const std::st
     std::string current;
     int depth = 0;
     bool in_string = false;
+    // Issue #5199: every unmatched '(' / '['. The diagnostic names the
+    // opener, not EOF. "(;" is a real list whose rest-of-line is a comment.
+    struct OpenSite {
+        std::size_t line = 1;
+        std::size_t col = 1;
+        bool semi = false;
+    };
+    std::vector<OpenSite> opens;
+    auto line_col_at = [&](std::size_t index) {
+        std::size_t line = 1;
+        std::size_t col = 1;
+        for (std::size_t k = 0; k < index && k < all_input.size(); ++k) {
+            if (all_input[k] == '\n') {
+                ++line;
+                col = 1;
+            } else {
+                ++col;
+            }
+        }
+        return OpenSite{line, col, false};
+    };
 
     for (std::size_t i = 0; i < all_input.size(); ++i) {
         auto c = all_input[i];
@@ -3830,6 +3851,9 @@ static std::optional<std::vector<std::string>> split_oneshot_forms(const std::st
                 }
             }
             current += c;
+            auto site = line_col_at(i);
+            site.semi = c == '(' && i + 1 < all_input.size() && all_input[i + 1] == ';';
+            opens.push_back(site);
             ++depth;
             continue;
         }
@@ -3854,6 +3878,8 @@ static std::optional<std::vector<std::string>> split_oneshot_forms(const std::st
         if ((c == ')' || c == ']') && depth > 0) {
             current += c;
             --depth;
+            if (!opens.empty())
+                opens.pop_back();
             if (depth == 0) {
                 // Complete expression found
                 auto trimmed = current;
@@ -3889,19 +3915,24 @@ static std::optional<std::vector<std::string>> split_oneshot_forms(const std::st
                 // evaluate the complete prefix, exiting 0. Match --load:
                 // a missing ')' is a located parse error and no part of
                 // the file runs.
-                std::size_t line = 1, col = 1;
-                for (char ch : all_input) {
-                    if (ch == '\n') {
-                        ++line;
-                        col = 1;
-                    } else {
-                        ++col;
-                    }
+                // Issue #5199: name the opener. EOF alone sends people to
+                // the last line. "(;" is a real list, not a CL comment.
+                OpenSite site;
+                if (!opens.empty())
+                    site = opens.back();
+                else {
+                    site = line_col_at(all_input.size());
                 }
-                std::println(
-                    std::cerr,
-                    "error: {}:{}: parse error: unclosed list: missing ')' before end of file",
-                    line, col);
+                std::println(std::cerr,
+                             "error: {}:{}: parse error: unclosed list: missing ')' before end "
+                             "of file; unclosed list opened at line {}, column {}",
+                             site.line, site.col, site.line, site.col);
+                if (site.semi) {
+                    std::println(std::cerr,
+                                 "hint: '(' before ';' opened a real list and the rest of the "
+                                 "line was commented out; a file-header comment should be ';' "
+                                 "without the leading '('");
+                }
                 return std::nullopt;
             }
         }

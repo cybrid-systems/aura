@@ -94,6 +94,21 @@ namespace detail {
             auto t = lex.peek();
             deferred_line = t.line;
             deferred_column = t.column;
+            // Issue #5199: a missing ')' is the opener's problem. Point at
+            // that '(', not at EOF. "(;" is still a list — say so.
+            if (msg.find("missing ')' before end of file") != std::string::npos) {
+                if (auto open = lex.innermost_open_paren()) {
+                    deferred_line = open->line;
+                    deferred_column = open->column;
+                    msg += std::format("; unclosed list opened at line {}, column {}", open->line,
+                                       open->column);
+                    if (open->followed_by_semi) {
+                        msg += "; '(' before ';' opened a real list and the rest of the line "
+                               "was commented out";
+                        msg += "; a file-header comment should be ';' without the leading '('";
+                    }
+                }
+            }
             deferred_error = std::move(msg);
         }
         // Issue #4490: >0 while parsing a quoted datum. #( ... ) inside a

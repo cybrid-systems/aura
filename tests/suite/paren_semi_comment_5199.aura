@@ -1,0 +1,5 @@
+;; expect: body ok
+; file header comment (plain semicolon)
+(; comment about this form
+  display "body ok")
+(newline)

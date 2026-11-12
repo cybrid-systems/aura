@@ -2107,8 +2107,16 @@ void RegSplitParts::register_mutate_check_primitive(PrimRegistrar add, Evaluator
                 int depth = 0;
                 bool in_str = false, esc = false, in_comment = false;
                 std::string balance_err;
+                std::size_t line = 1;
+                struct Open {
+                    std::size_t line;
+                    bool semi;
+                };
+                std::vector<Open> opens;
                 for (std::size_t i = 0; i < candidate.size(); ++i) {
                     const char ch = candidate[i];
+                    if (ch == '\n')
+                        ++line;
                     if (in_comment) {
                         if (ch == 10)
                             in_comment = false; // newline
@@ -2135,9 +2143,13 @@ void RegSplitParts::register_mutate_check_primitive(PrimRegistrar add, Evaluator
                         in_str = true;
                         continue;
                     } // open quote
-                    if (ch == 40)
-                        ++depth;         // (
-                    else if (ch == 41) { // )
+                    if (ch == 40) { // (
+                        const bool semi = i + 1 < candidate.size() && candidate[i + 1] == ';';
+                        opens.push_back(Open{line, semi});
+                        ++depth;
+                    } else if (ch == 41) { // )
+                        if (!opens.empty())
+                            opens.pop_back();
                         if (--depth < 0) {
                             balance_err = "unexpected )";
                             break;
@@ -2146,8 +2158,20 @@ void RegSplitParts::register_mutate_check_primitive(PrimRegistrar add, Evaluator
                 }
                 if (balance_err.empty() && in_str)
                     balance_err = "unterminated string literal";
-                if (balance_err.empty() && depth != 0)
+                if (balance_err.empty() && depth != 0) {
+                    // Issue #5199: same face as the reader — name the opener.
                     balance_err = "unclosed list: missing ) before end of input";
+                    if (!opens.empty()) {
+                        balance_err +=
+                            "; unclosed list opened at line " + std::to_string(opens.back().line);
+                        if (opens.back().semi) {
+                            balance_err +=
+                                "; '(' before ';' opened a real list and the rest of the line "
+                                "was commented out; a file-header comment should be ';' without "
+                                "the leading '('";
+                        }
+                    }
+                }
                 if (!balance_err.empty())
                     return tagged("parse-error", balance_err);
             }
