@@ -288,8 +288,10 @@ public:
         : buf_(alloc)
         , hash_tbl_(alloc)
         , intern_epoch_(next_intern_epoch()) {
-        // Reserve 0 as invalid sentinel
-        buf_.push_back('\0');
+        // Reserve 0 as invalid sentinel: a zero-length entry (4-byte length
+        // prefix + its NUL). Issue #5197-class: entries carry an explicit
+        // length so a string literal may contain a NUL byte.
+        push_entry(std::string_view{});
         // Initialize hash table (power of 2, start small)
         rehash(64);
     }
@@ -335,9 +337,7 @@ public:
         }
 
         // Not found — intern
-        auto offset = static_cast<SymId>(buf_.size());
-        buf_.insert(buf_.end(), s.begin(), s.end());
-        buf_.push_back('\0'); // null terminator
+        auto offset = push_entry(s);
 
         hash_tbl_[idx] = offset;
 
@@ -354,9 +354,7 @@ public:
     std::string_view resolve(SymId id) const {
         std::shared_lock<std::shared_mutex> read_lock(mtx_.get());
         g_stringpool_intern_concurrent_readers_total.fetch_add(1, std::memory_order_relaxed);
-        if (id >= buf_.size())
-            return {};
-        return std::string_view(buf_.data() + id);
+        return resolve_unlocked(id);
     }
 
     // Issue #372: reverse name → SymId lookup.
@@ -411,13 +409,44 @@ public:
         return std::nullopt;
     }
 
+    // Issue #5195 residual: every entry carries an explicit 32-bit length
+    // before its bytes, so a string literal may hold a NUL and still resolve
+    // at full length. Layout: [u32 len][bytes][0]. SymId is the prefix
+    // offset; the trailing NUL keeps .data() usable as a C string for the
+    // (overwhelmingly common) NUL-free case.
+    static constexpr std::size_t kEntryHeader = sizeof(std::uint32_t);
+
+    [[nodiscard]] static std::uint32_t load_entry_len(const char* p) noexcept {
+        std::uint32_t n = 0;
+        std::memcpy(&n, p, sizeof n);
+        return n;
+    }
+
+    SymId push_entry(std::string_view s) {
+        auto offset = static_cast<SymId>(buf_.size());
+        const auto n = static_cast<std::uint32_t>(s.size());
+        const char* raw = reinterpret_cast<const char*>(&n);
+        buf_.insert(buf_.end(), raw, raw + sizeof n);
+        buf_.insert(buf_.end(), s.begin(), s.end());
+        buf_.push_back('\0');
+        return offset;
+    }
+
+    [[nodiscard]] std::string_view decode_entry(SymId id) const noexcept {
+        const char* p = buf_.data() + id;
+        const auto n = load_entry_len(p);
+        if (static_cast<std::size_t>(id) + kEntryHeader + n > buf_.size())
+            return {};
+        return std::string_view(p + kEntryHeader, n);
+    }
+
     // Issue #2062: resolve helper that bypasses the shared_mutex
     // (assumes the caller already holds the appropriate lock).
     // Used by find_by_name which holds a shared_lock.
     [[nodiscard]] std::string_view resolve_unlocked(SymId id) const noexcept {
-        if (id >= buf_.size())
+        if (static_cast<std::size_t>(id) + kEntryHeader > buf_.size())
             return {};
-        return std::string_view(buf_.data() + id);
+        return decode_entry(id);
     }
 
     // Total bytes used for string data
@@ -523,7 +552,7 @@ public:
     // Reset all state
     void reset() {
         buf_.clear();
-        buf_.push_back('\0');
+        push_entry(std::string_view{});
         hash_tbl_.clear();
         hash_capacity_ = 0;
         entry_count_ = 0;

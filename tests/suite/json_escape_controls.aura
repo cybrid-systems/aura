@@ -53,7 +53,7 @@
 ; Existing quote escape inside json-encode of a vector must stay put.
 (check "vector string" (json-encode (vector "a\"b")) "[\"a\\\"b\"]")
 
-(if (and (= *fails* 0) (= *passes* 16))
+(if (and (= *fails* 0) (= *passes* 17))
     (display "OK-json-escape-controls\n")
     (begin
       (display "FAIL-json-escape-controls fails=") (display *fails*)
