@@ -48,6 +48,11 @@
 #include <atomic>
 #include <thread>
 #include <vector>
+#include <chrono>
+#include <csignal>
+#include <string>
+#include <unistd.h>
+#include <sys/wait.h>
 
 #include "compiler/aura_jit.h"
 
@@ -280,6 +285,170 @@ bool test_aot_smoke_empty_state() {
     return true;
 }
 
+// Issue #5173: compare aura -e and aura --jit in separate processes.
+// A second eval inside one --jit run would display twice. The child
+// keeps the default Restricted face (no AURA_SANDBOX).
+struct AuraCli {
+    bool spawned = false;
+    int rc = -1;
+    std::string out;
+    std::string err;
+};
+
+static std::string read_fd(int fd) {
+    std::string s;
+    char buf[4096];
+    ssize_t n = 0;
+    while ((n = ::read(fd, buf, sizeof(buf))) > 0)
+        s.append(buf, static_cast<std::size_t>(n));
+    ::close(fd);
+    return s;
+}
+
+static std::string sibling_aura() {
+    char exe[4096];
+    const ssize_t n = ::readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    if (n <= 0)
+        return {};
+    exe[n] = '\0';
+    std::string path(exe);
+    const auto slash = path.find_last_of('/');
+    if (slash == std::string::npos)
+        return {};
+    return path.substr(0, slash) + "/aura";
+}
+
+static std::string repo_root_from_aura(const std::string& bin) {
+    const auto slash = bin.find_last_of('/');
+    if (slash == std::string::npos)
+        return {};
+    const std::string build_dir = bin.substr(0, slash);
+    const auto parent = build_dir.find_last_of('/');
+    if (parent == std::string::npos)
+        return {};
+    return build_dir.substr(0, parent);
+}
+
+static AuraCli run_aura_cli(const std::string& bin, const std::string& runtime,
+                            const std::vector<std::string>& args, const char* extra_key,
+                            const char* extra_val) {
+    AuraCli r;
+    char tmpl[] = "/tmp/aura5173XXXXXX";
+    char* dir = ::mkdtemp(tmpl);
+    if (dir == nullptr)
+        return r;
+    int outp[2] = {-1, -1};
+    int errp[2] = {-1, -1};
+    if (::pipe(outp) != 0 || ::pipe(errp) != 0) {
+        ::rmdir(dir);
+        return r;
+    }
+    std::vector<char*> argv;
+    argv.push_back(const_cast<char*>(bin.c_str()));
+    for (const auto& a : args)
+        argv.push_back(const_cast<char*>(a.c_str()));
+    argv.push_back(nullptr);
+    const pid_t pid = ::fork();
+    if (pid < 0) {
+        ::close(outp[0]);
+        ::close(outp[1]);
+        ::close(errp[0]);
+        ::close(errp[1]);
+        ::rmdir(dir);
+        return r;
+    }
+    if (pid == 0) {
+        ::dup2(outp[1], STDOUT_FILENO);
+        ::dup2(errp[1], STDERR_FILENO);
+        ::close(outp[0]);
+        ::close(outp[1]);
+        ::close(errp[0]);
+        ::close(errp[1]);
+        if (::chdir(dir) != 0)
+            _exit(127);
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_PRESET");
+        ::unsetenv("AURA_KEEP_GOING");
+        ::unsetenv("AURA_PIPELINE_STRICT");
+        ::setenv("AURA_RUNTIME_DIR", runtime.c_str(), 1);
+        if (extra_key != nullptr && extra_val != nullptr)
+            ::setenv(extra_key, extra_val, 1);
+        ::execv(bin.c_str(), argv.data());
+        _exit(127);
+    }
+    ::close(outp[1]);
+    ::close(errp[1]);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(45);
+    int status = 0;
+    bool timed_out = false;
+    for (;;) {
+        const pid_t w = ::waitpid(pid, &status, WNOHANG);
+        if (w == pid)
+            break;
+        if (std::chrono::steady_clock::now() > deadline) {
+            ::kill(pid, SIGKILL);
+            ::waitpid(pid, &status, 0);
+            timed_out = true;
+            break;
+        }
+        ::usleep(20000);
+    }
+    r.out = read_fd(outp[0]);
+    r.err = read_fd(errp[0]);
+    ::rmdir(dir);
+    r.spawned = true;
+    if (timed_out)
+        r.rc = -1;
+    else
+        r.rc = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    return r;
+}
+
+static void expect_match(const std::string& bin, const std::string& runtime, const char* program,
+                         const char* extra_key, const char* extra_val, const char* label,
+                         const char* expect) {
+    const std::vector<std::string> interp_args{"-e", program};
+    const std::vector<std::string> jit_args{"--jit", program};
+    const AuraCli interp = run_aura_cli(bin, runtime, interp_args, extra_key, extra_val);
+    const AuraCli jit = run_aura_cli(bin, runtime, jit_args, extra_key, extra_val);
+    CHECK(interp.spawned && jit.spawned, "aura -e and aura --jit both spawned");
+    CHECK(interp.rc == 0, label);
+    CHECK(jit.rc == 0, label);
+    if (interp.out != expect || jit.out != expect) {
+        std::println(std::cerr, "  mismatch {}: interp='{}' jit='{}' jit_err='{}'", label,
+                     interp.out, jit.out, jit.err);
+    }
+    CHECK(interp.out == expect, label);
+    CHECK(jit.out == expect, label);
+}
+
+// Factorial, fib, and a letrec accumulator are the #5173 regression
+// set. The countdown is the issue's headline program. AURA_JIT_L1=0
+// must still match (deopt is fine; a silent 0 is not).
+bool test_issue_5173_jit_matches_interpreter() {
+    std::println("\n--- Test: #5173 --jit matches the interpreter ---");
+    const std::string bin = sibling_aura();
+    CHECK(::access(bin.c_str(), X_OK) == 0, "aura binary sits beside this test");
+    if (::access(bin.c_str(), X_OK) != 0)
+        return true;
+    const std::string runtime = repo_root_from_aura(bin);
+    CHECK(!runtime.empty(), "repo root derived from the aura path");
+    const char* countdown =
+        "(display (letrec ((f (lambda (n) (if (= n 0) 0 (+ 1 (f (- n 1))))))) (f 10)))";
+    const char* fact = "(define (fact n) (if (= n 0) 1 (* n (fact (- n 1))))) (display (fact 5))";
+    const char* fib =
+        "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2))))) (display (fib 10))";
+    const char* acc =
+        "(display (letrec ((f (lambda (a b) (if (= a 0) b (+ a (f (- a 1) b)))))) (f 3 100)))";
+    expect_match(bin, runtime, countdown, nullptr, nullptr, "letrec countdown (f 10) == 10", "10");
+    expect_match(bin, runtime, fact, nullptr, nullptr, "factorial (fact 5) == 120", "120");
+    expect_match(bin, runtime, fib, nullptr, nullptr, "fib (fib 10) == 55", "55");
+    expect_match(bin, runtime, acc, nullptr, nullptr, "letrec accumulator (f 3 100) == 106", "106");
+    expect_match(bin, runtime, countdown, "AURA_JIT_L1", "0", "L1 off countdown still matches",
+                 "10");
+    return true;
+}
+
 int main() {
     std::println("═══ JIT consistency / observability tests (Issue #427) ═══");
 
@@ -290,6 +459,7 @@ int main() {
     test_format_under_concurrent_bumps();
     test_fresh_metrics_zero();
     test_aot_smoke_empty_state();
+    test_issue_5173_jit_matches_interpreter();
 
     std::println("\n──────────────────────────────────────");
     std::println("Total: {} passed, {} failed", g_passed, g_failed);

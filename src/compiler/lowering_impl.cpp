@@ -718,7 +718,10 @@ static std::uint32_t lower_flat_define(
     auto val_slot = lower_flat_expr(state, flat, pool, val_id, cache, cache_hits);
     if (stamp_feedback)
         state.feedback_define_name.clear();
-    state.emit(IROpcode::CellSet, ci, val_slot);
+    // Issue #5173: define init. operands[2] is outside CellSet's
+    // operand_count so DCE does not treat it as a slot. The JIT writes
+    // it through the bind entry (no user Mutate choke).
+    state.emit(IROpcode::CellSet, ci, val_slot, 0xFFFFFFFFu);
     return val_slot;
 }
 
@@ -744,7 +747,8 @@ lower_flat_let(LoweringState& state, const FlatAST& flat, StringPool& pool, Node
         // Issue #4588: an error init is not a binding. The body
         // stays in the continuation and does not run.
         auto val_slot = lower_data_operand(state, flat, pool, val_id, cache, cache_hits, true);
-        state.emit(IROpcode::CellSet, ci, val_slot);
+        // Issue #5173: letrec init (see define's CellSet flag).
+        state.emit(IROpcode::CellSet, ci, val_slot, 0xFFFFFFFFu);
         auto body_slot = lower_flat_expr(state, flat, pool, body_id, cache, cache_hits);
         state.scopes.pop_back();
         return body_slot;
@@ -758,7 +762,8 @@ lower_flat_let(LoweringState& state, const FlatAST& flat, StringPool& pool, Node
         state.emit(IROpcode::NewCell, ci);
         // Issue #4588: same as letrec. Do not run the body.
         auto val_slot = lower_data_operand(state, flat, pool, val_id, cache, cache_hits, true);
-        state.emit(IROpcode::CellSet, ci, val_slot);
+        // Issue #5173: let init (see define's CellSet flag).
+        state.emit(IROpcode::CellSet, ci, val_slot, 0xFFFFFFFFu);
         state.scopes.push_back({});
         auto& scope = state.scopes.back();
         scope[std::string(name)] = Binding{BindingKind::Cell, ci};

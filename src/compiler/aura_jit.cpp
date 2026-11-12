@@ -215,7 +215,7 @@ static_assert(PrimStringLe == 46, "PrimId drift: aura_jit.cpp vs ir.ixx");
 // Issue #157 — workspace_mtx_ bypass via JIT L2 specialization
 // The following opcodes generate code paths that call runtime bridges
 // (aura_alloc_pair_*, aura_pair_*_unchecked, aura_alloc_closure_*,
-// aura_closure_capture, aura_hash_*) which currently do NOT acquire
+// aura_closure_capture, aura_closure_capture_jit, aura_hash_*) which do NOT acquire
 // Evaluator::workspace_mtx_ or check defuse_version_. The high-level
 // evaluator primitives DO acquire the lock + yield, so concurrent
 // mutate + JIT execution races on shared heap structures.
@@ -1489,9 +1489,11 @@ struct LLVMBuilder {
                                                         llvm::Function::ExternalLinkage,
                                                         "aura_alloc_closure_arena", mod);
 
-        fn_closure_capture =
-            llvm::Function::Create(llvm::FunctionType::get(void_ty, {i64, i64, i64}, false),
-                                   llvm::Function::ExternalLinkage, "aura_closure_capture", mod);
+        // Issue #5173: lambda capture is loader plumbing, not the user
+        // Mutate choke on aura_closure_capture.
+        fn_closure_capture = llvm::Function::Create(
+            llvm::FunctionType::get(void_ty, {i64, i64, i64}, false),
+            llvm::Function::ExternalLinkage, "aura_closure_capture_jit", mod);
 
         fn_closure_call =
             llvm::Function::Create(llvm::FunctionType::get(i64, {i64, ptr_i64, i64}, false),
@@ -3343,10 +3345,10 @@ struct LLVMBuilder {
             // closures produce identical env values.
             //
             // The runtime bridge is the same as OpCapture
-            // (aura_closure_capture) — only the value written
-            // differs. This keeps the runtime ABI simple: one
-            // capture bridge, two encodings (raw value vs encoded
-            // cell-ref), differentiated by the sign of the env val.
+            // (aura_closure_capture_jit, #5173) — only the value
+            // written differs. One capture bridge, two encodings
+            // (raw value vs encoded cell-ref), split by the sign
+            // of the env val.
             case OpCaptureRef: {
                 // Issue #1917: critical CaptureRef — same linear fence as Capture.
                 // Issue #3759: skip body on typed-entry / elision fail.
@@ -3557,8 +3559,16 @@ struct LLVMBuilder {
                 // Issue #4600/#4606: the entry fn's define-cell binds (value
                 // freshly MakeClosure'd) are loader plumbing — use the bind
                 // entry so the session-less Mutate choke cannot drop them.
-                const bool is_entry_bind = fn.name && std::string_view(fn.name) == "__top__" &&
-                                           mc_value_slots.count(inst.ops[1]) != 0;
+                // Issue #5173: let / letrec / define inits stamp
+                // operands[2] == kCellSetBindInit (outside CellSet's
+                // operand_count, so DCE does not see a slot). A nested
+                // let's init is not a __top__ MakeClosure value, and
+                // dropping it left the cell at 0. set! leaves the operand
+                // 0 and keeps aura_cell_set's Mutate choke.
+                constexpr std::uint32_t kCellSetBindInit = 0xFFFFFFFFu;
+                const bool is_entry_bind = inst.ops[2] == kCellSetBindInit ||
+                                           (fn.name && std::string_view(fn.name) == "__top__" &&
+                                            mc_value_slots.count(inst.ops[1]) != 0);
                 irb->CreateCall(
                     llvm::FunctionCallee(is_entry_bind ? fn_cell_set_jit_bind : fn_cell_set),
                     llvm::ArrayRef<llvm::Value*>{load(inst.ops[0]), load(inst.ops[1])});
@@ -5050,6 +5060,8 @@ void run_escape_analysis(const std::vector<std::vector<FlatInstruction>>& flat_i
 extern "C" {
 int64_t aura_alloc_closure(int64_t);
 void aura_closure_capture(int64_t, int64_t, int64_t);
+// Issue #5173: OpCapture store without the user Mutate choke.
+void aura_closure_capture_jit(int64_t, int64_t, int64_t);
 int64_t aura_closure_call(int64_t, int64_t*, int64_t);
 int64_t aura_new_cell();
 int64_t aura_cell_get(int64_t);
@@ -5569,6 +5581,7 @@ struct AuraJIT::Impl {
         // Runtime functions
         reg("aura_alloc_closure", (void*)aura_alloc_closure);
         reg("aura_closure_capture", (void*)aura_closure_capture);
+        reg("aura_closure_capture_jit", (void*)aura_closure_capture_jit); // #5173
         reg("aura_closure_call", (void*)aura_closure_call);
         reg("aura_new_cell", (void*)aura_new_cell);
         reg("aura_cell_get", (void*)aura_cell_get);
