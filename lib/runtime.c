@@ -301,6 +301,19 @@ int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
     return ((int64_t)id << 2) | 1;
 }
 
+// Issue #5222: dotted rest parameter of an AOT-emitted variadic
+// function. locals[start..start+count-1] are the trailing actual
+// arguments (the frame already holds the env prefix below `start`).
+// No trailing arguments is the empty list (AURA_V_VOID), not fixnum 0.
+int64_t aura_pack_rest(int64_t* locals, int64_t start, int64_t count) {
+    int64_t list = AURA_V_VOID;
+    if (count < 0)
+        count = 0;
+    for (int64_t i = count - 1; i >= 0; --i)
+        list = aura_alloc_pair(locals[start + i], list);
+    return list;
+}
+
 int64_t aura_pair_car(int64_t pair_val) {
     uint64_t id = (uint64_t)(pair_val >> 2);
     if (id >= pair_count || !pairs[id].live)

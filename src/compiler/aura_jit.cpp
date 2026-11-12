@@ -2928,6 +2928,47 @@ struct LLVMBuilder {
                 store(inst.ops[0], load(inst.ops[1]));
                 return true;
             case OpArg: {
+                // Issue #5222: a dotted rest parameter binds a LIST of the
+                // trailing actual arguments, not the one value sitting at
+                // that buffer index. Lowering emits one Arg per parameter
+                // in source order (env prefix first), so the rest parameter
+                // is the last one and its buffer index is the highest Arg
+                // index in the function. Deriving it from the instruction
+                // stream keeps AOT correct where env_count is not carried.
+                // Without this an AOT/JIT variadic call saw only the first
+                // rest argument (or void when there were none), so
+                // std/sort's (sorted? seq . less) called less? = void and
+                // (sorted? (list 1 2 3)) returned #f.
+                std::uint32_t rest_buf = 0;
+                bool rest_buf_seen = false;
+                if (fn.variadic) {
+                    for (uint32_t bi = 0; bi < fn.num_blocks; ++bi) {
+                        const auto& blk = fn.blocks[bi];
+                        for (uint32_t ii = 0; ii < blk.num_instructions; ++ii) {
+                            const auto& in = blk.instructions[ii];
+                            if (in.opcode != OpArg)
+                                continue;
+                            if (!rest_buf_seen || in.ops[1] > rest_buf) {
+                                rest_buf = in.ops[1];
+                                rest_buf_seen = true;
+                            }
+                        }
+                    }
+                }
+                if (fn.variadic && fn.arg_count > 0 && rest_buf_seen && inst.ops[1] == rest_buf) {
+                    auto* i64ty = llvm::Type::getInt64Ty(ctx);
+                    auto* argc32 = func->getArg(1);
+                    auto* argc64 = irb->CreateSExt(argc32, i64ty);
+                    auto* count =
+                        irb->CreateSub(argc64, c64(static_cast<int64_t>(fn.arg_count) - 1));
+                    auto* pack_ty = llvm::FunctionType::get(
+                        i64ty, {llvm::PointerType::getUnqual(ctx), i64ty, i64ty}, false);
+                    llvm::FunctionCallee pack = mod->getOrInsertFunction("aura_pack_rest", pack_ty);
+                    auto* packed =
+                        irb->CreateCall(pack, {func->getArg(0), c64(inst.ops[1]), count});
+                    store(inst.ops[0], packed);
+                    return true;
+                }
                 auto gep = irb->CreateGEP(llvm::Type::getInt64Ty(ctx), func->arg_begin(),
                                           c64(inst.ops[1]));
                 store(inst.ops[0], irb->CreateLoad(llvm::Type::getInt64Ty(ctx), gep));
@@ -5199,6 +5240,8 @@ void aura_closure_capture(int64_t, int64_t, int64_t);
 // Issue #5173: OpCapture store without the user Mutate choke.
 void aura_closure_capture_jit(int64_t, int64_t, int64_t);
 int64_t aura_closure_call(int64_t, int64_t*, int64_t);
+// Issue #5222: dotted rest parameter packing for variadic functions.
+int64_t aura_pack_rest(int64_t*, int64_t, int64_t);
 int64_t aura_new_cell();
 int64_t aura_cell_get(int64_t);
 void aura_cell_set(int64_t, int64_t);
@@ -5720,6 +5763,7 @@ struct AuraJIT::Impl {
         reg("aura_closure_capture", (void*)aura_closure_capture);
         reg("aura_closure_capture_jit", (void*)aura_closure_capture_jit); // #5173
         reg("aura_closure_call", (void*)aura_closure_call);
+        reg("aura_pack_rest", (void*)aura_pack_rest); // #5222
         reg("aura_new_cell", (void*)aura_new_cell);
         reg("aura_cell_get", (void*)aura_cell_get);
         reg("aura_cell_set", (void*)aura_cell_set);

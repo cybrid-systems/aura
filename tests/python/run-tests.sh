@@ -753,6 +753,10 @@ run_emit_test "emit:named-let" "(let loop ((x 0)) (if (< x 3) (loop (+ x 1)) x))
 
 # Stdlib functions via import (source inlining)
 run_emit_test "emit:sorted?"   "(import \"std/algorithm\")(sorted? (list 1 2 3))" "#t"
+# Issue #5222: a dotted rest parameter binds a list of the trailing
+# actual arguments under AOT/JIT, not the first one (or void).
+run_emit_test "emit:rest-args"    "(define (f a . r) (length r)) (f 1 5 6)" "2"
+run_emit_test "emit:rest-empty"   "(define (f a . r) (null? r)) (f 1)" "#t"
 run_emit_test "emit:combine"   "(import \"std/algorithm\")(combinations 4 2)" "6"
 run_emit_test "emit:apply"     "(apply + (list 1 2 3))" "6"
 run_emit_test "emit:nested-car"  "(car (car (list (list 1 2) (list 3 4))))" "1"

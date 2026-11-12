@@ -6826,6 +6826,19 @@ void aura_cell_set(int64_t cell_id, int64_t val) {
 // NON_ESCAPING: PairSlot allocated from TL arena
 // ESCAPED: PairSlot allocated from global heap
 
+// Issue #5222: dotted rest parameter of a JIT/AOT-compiled variadic
+// function. locals[start..start+count-1] are the trailing actual
+// arguments; the frame's env prefix sits below `start`. Zero trailing
+// arguments is the empty list, not fixnum 0.
+extern "C" int64_t aura_pack_rest(int64_t* locals, int64_t start, int64_t count) {
+    int64_t list = aura::compiler::types::kSpecialVoid;
+    if (count < 0)
+        count = 0;
+    for (int64_t i = count - 1; i >= 0; --i)
+        list = aura_alloc_pair(locals[start + i], list);
+    return list;
+}
+
 int64_t aura_alloc_pair(int64_t car, int64_t cdr) {
     // Issue #898: thread-local slab (one malloc per 64 pairs) and a
     // release publish into the non-moving segment table. No workspace
