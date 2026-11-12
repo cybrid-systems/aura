@@ -26,6 +26,7 @@ module;
 // Issue #2883: resume_had_mismatch / g_current_fiber for hard principal deny.
 #include "serve/fiber.h"
 #include "mutation_hold_budget.h" // #4278: host-thread session mid lives on the hold snapshot
+#include "hash_meta.h"             // #5190: live hash slots while sealing a table
 
 module aura.compiler.evaluator;
 
@@ -1027,6 +1028,14 @@ bool Evaluator::kernel_self_workspace_mutate(std::string_view op,
 
 bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast::NodeId target_node,
                                std::uint64_t ref_tenant) noexcept {
+    // Issue #5190: hash-set! / hash-remove! on a hash that has not been
+    // stored in a workspace (and is not reachable from one) is a local
+    // table build. The caller pushed the target before dispatch. The
+    // primitive still runs the tenant gate, so a foreign table is not
+    // written. A published or unknown target falls through and needs Mutate.
+    if ((op == "hash-set!" || op == "hash-remove!") &&
+        aura_hash_mutate_operand_is_unpublished() != 0)
+        return true;
     // Issue #3526: NodeId + ref_tenant 0 routes through for_node_id (#2658).
     if (req_bits != 0 && target_node != 0 && ref_tenant == 0) {
         static thread_local bool redirecting = false;
@@ -3522,6 +3531,219 @@ bool Evaluator::restamp_read_ref(ast::FlatAST::StableNodeRef& ref, std::string_v
     }
     ref.tenant_id = existing;
     return true;
+}
+
+bool Evaluator::env_is_workspace_root(const Env* e) const noexcept {
+    if (e == nullptr)
+        return false;
+    if (e == &top_)
+        return true;
+    if (require_inject_env_ != nullptr && e == require_inject_env_)
+        return true;
+    for (const Env* m : modules_) {
+        if (m == e)
+            return true;
+    }
+    return false;
+}
+
+void Evaluator::mark_workspace_cell(std::size_t ci) {
+    std::scoped_lock lock(alloc_storage_lock_);
+    if (cell_workspace_root_.size() <= ci)
+        cell_workspace_root_.resize(ci + 1, 0);
+    cell_workspace_root_[ci] = 1;
+}
+
+bool Evaluator::vector_is_workspace_reachable(std::size_t idx) const noexcept {
+    std::scoped_lock lock(alloc_storage_lock_);
+    return idx < vector_workspace_reachable_.size() && vector_workspace_reachable_[idx] != 0;
+}
+
+bool Evaluator::pair_is_workspace_reachable(std::size_t idx) const noexcept {
+    std::scoped_lock lock(alloc_storage_lock_);
+    return idx < pair_workspace_reachable_.size() && pair_workspace_reachable_[idx] != 0;
+}
+
+void Evaluator::note_workspace_binding(const types::EvalValue& v) {
+    if (types::is_cell(v)) {
+        const auto ci = static_cast<std::size_t>(types::as_cell_id(v));
+        mark_workspace_cell(ci);
+        types::EvalValue inner = types::make_void();
+        bool have = false;
+        {
+            std::scoped_lock lock(alloc_storage_lock_);
+            if (ci < cells_.size()) {
+                inner = cells_[ci];
+                have = true;
+            }
+        }
+        if (have)
+            seal_workspace_value(inner);
+        return;
+    }
+    seal_workspace_value(v);
+}
+
+void Evaluator::seal_workspace_env(Env* env) {
+    if (env == nullptr)
+        return;
+    std::vector<types::EvalValue> vals;
+    {
+        auto guard = env->lock_bindings_shared();
+        for (const auto& b : env->bindings())
+            vals.push_back(b.second);
+        for (const auto& b : env->bindings_symid())
+            vals.push_back(b.second);
+    }
+    for (const auto& v : vals)
+        note_workspace_binding(v);
+}
+
+void Evaluator::seal_workspace_value(const types::EvalValue& root) {
+    std::vector<types::EvalValue> work;
+    work.push_back(root);
+    std::vector<std::uint8_t> seen_pair;
+    std::vector<std::uint8_t> seen_vec;
+    std::vector<std::uint8_t> seen_cell;
+    std::unordered_set<std::uint64_t> seen_hash;
+    std::unordered_set<std::uint64_t> seen_closure;
+    std::unordered_set<std::uint32_t> seen_frame;
+
+    auto consider_frame = [&](auto&& self, EnvId id, int hops) -> void {
+        if (hops > 32 || id == NULL_ENV_ID || !is_valid_env_id(id))
+            return;
+        if (!seen_frame.insert(static_cast<std::uint32_t>(id)).second)
+            return;
+        std::vector<types::EvalValue> bound;
+        EnvId parent = NULL_ENV_ID;
+        {
+            std::shared_lock<std::shared_mutex> lk(
+                env_frame_shard_mu(env_frame_shard_index(id)));
+            if (!is_valid_env_id(id))
+                return;
+            const EnvFrame& fr = env_frames_[id];
+            bound.reserve(fr.bindings_.size() + fr.bindings_symid_.size());
+            for (const auto& b : fr.bindings_)
+                bound.push_back(b.second);
+            for (const auto& b : fr.bindings_symid_)
+                bound.push_back(b.second);
+            parent = fr.parent_id;
+        }
+        for (const auto& b : bound)
+            work.push_back(b);
+        self(self, parent, hops + 1);
+    };
+
+    for (std::size_t i = 0; i < work.size(); ++i) {
+        const auto v = work[i];
+        if (types::is_hash(v)) {
+            const auto hidx = types::as_hash_idx(v);
+            if (!seen_hash.insert(hidx).second)
+                continue;
+            aura_hash_mark_workspace_reachable(hidx);
+            std::vector<types::EvalValue> vals;
+            {
+                std::scoped_lock hlock(hash_tables_mutex());
+                if (hidx < g_hash_tables.size() && g_hash_tables[hidx] != nullptr) {
+                    auto* ht = g_hash_tables[hidx];
+                    const auto* meta = ht->metadata();
+                    const auto* values = ht->values();
+                    vals.reserve(static_cast<std::size_t>(ht->size));
+                    for (std::uint64_t s = 0; s < ht->capacity; ++s) {
+                        if (aura::compiler::hash::hash_slot_is_live(meta[s]))
+                            vals.push_back(types::EvalValue{values[s]});
+                    }
+                }
+            }
+            for (const auto& child : vals)
+                work.push_back(child);
+            continue;
+        }
+        if (types::is_pair(v)) {
+            const auto idx = types::as_pair_idx(v);
+            types::EvalValue car = types::make_void();
+            types::EvalValue cdr = types::make_void();
+            bool have = false;
+            {
+                std::scoped_lock lock(alloc_storage_lock_);
+                if (seen_pair.size() <= idx)
+                    seen_pair.resize(idx + 1, 0);
+                if (seen_pair[idx] != 0)
+                    continue;
+                seen_pair[idx] = 1;
+                if (pair_workspace_reachable_.size() <= idx)
+                    pair_workspace_reachable_.resize(idx + 1, 0);
+                pair_workspace_reachable_[idx] = 1;
+                if (idx < pairs_.size()) {
+                    car = pairs_[idx].car;
+                    cdr = pairs_[idx].cdr;
+                    have = true;
+                }
+            }
+            if (have) {
+                work.push_back(car);
+                work.push_back(cdr);
+            }
+            continue;
+        }
+        if (types::is_vector(v)) {
+            const auto idx = types::as_vector_idx(v);
+            std::vector<types::EvalValue> elems;
+            {
+                std::scoped_lock lock(alloc_storage_lock_);
+                if (seen_vec.size() <= idx)
+                    seen_vec.resize(idx + 1, 0);
+                if (seen_vec[idx] != 0)
+                    continue;
+                seen_vec[idx] = 1;
+                if (vector_workspace_reachable_.size() <= idx)
+                    vector_workspace_reachable_.resize(idx + 1, 0);
+                vector_workspace_reachable_[idx] = 1;
+                if (idx < vector_heap_.size())
+                    elems = vector_heap_[idx];
+            }
+            for (const auto& el : elems)
+                work.push_back(el);
+            continue;
+        }
+        if (types::is_cell(v)) {
+            const auto ci = static_cast<std::size_t>(types::as_cell_id(v));
+            types::EvalValue inner = types::make_void();
+            bool have = false;
+            {
+                std::scoped_lock lock(alloc_storage_lock_);
+                if (seen_cell.size() <= ci)
+                    seen_cell.resize(ci + 1, 0);
+                if (seen_cell[ci] != 0)
+                    continue;
+                seen_cell[ci] = 1;
+                if (cell_workspace_root_.size() <= ci)
+                    cell_workspace_root_.resize(ci + 1, 0);
+                cell_workspace_root_[ci] = 1;
+                if (ci < cells_.size()) {
+                    inner = cells_[ci];
+                    have = true;
+                }
+            }
+            if (have)
+                work.push_back(inner);
+            continue;
+        }
+        if (types::is_closure(v)) {
+            const auto cid = types::as_closure_id(v);
+            if (!seen_closure.insert(cid).second)
+                continue;
+            EnvId env_id = NULL_ENV_ID;
+            {
+                auto& sh = closures_shards_[closures_shard_index(cid)];
+                std::shared_lock<std::shared_mutex> rl(sh.mu);
+                auto it = sh.map.find(cid);
+                if (it != sh.map.end())
+                    env_id = it->second.env_id;
+            }
+            consider_frame(consider_frame, env_id, 0);
+        }
+    }
 }
 
 } // namespace aura::compiler

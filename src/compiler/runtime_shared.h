@@ -153,6 +153,25 @@ extern std::vector<std::uint64_t> g_hash_tenants;
 // the pushed table. Definition in runtime_ssot.cpp (same link-order class).
 void aura_hash_stamp_new_table_owner();
 
+// Issue #5190: a hash minted for a local table starts unpublished. hash-set!
+// / hash-remove! on that table do not need the Mutate capability. Storing the
+// hash into a workspace root (top-level or module binding, a cell that is
+// already a root, a published container, a fiber result) marks it reachable;
+// in-place writes then need Mutate again. An index this vector has not been
+// told about is reachable (fail closed).
+extern "C" void aura_hash_mark_local(std::uint64_t hidx);
+extern "C" void aura_hash_mark_workspace_reachable(std::uint64_t hidx);
+extern "C" int aura_hash_is_workspace_reachable(std::uint64_t hidx);
+
+// The dispatch Mutate choke does not see the hash argument. Callers that
+// are about to invoke hash-set! / hash-remove! push the target value
+// (tagged ref or the JIT hidx<<6 form; the index is in the high bits).
+// Nested pushes restore the previous target. No pushed target, or a
+// target this vector calls reachable, keeps the normal Mutate check.
+extern "C" void aura_hash_mutate_operand_push(std::int64_t hash_val);
+extern "C" void aura_hash_mutate_operand_pop();
+extern "C" int aura_hash_mutate_operand_is_unpublished();
+
 // Issue #4036/#4093: owner-Evaluator principal hook (strong def in
 // service.ixx; weak stub in aura_jit_prim_dispatch_stub.cpp; unwired → 0).
 // Declared here for the hash-alloc stamp sites outside aura_jit_runtime.cpp
