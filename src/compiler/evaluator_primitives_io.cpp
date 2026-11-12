@@ -1380,7 +1380,9 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         // Optional second arg kept for call-site compatibility
         // (sys-open path [flags]) but is never applied to ::open.
         const int flags = O_RDONLY | O_NOFOLLOW | O_CLOEXEC;
-        int fd = ::open(resolved.c_str(), flags);
+        int fd = ev.host_path_policy_active()
+                     ? ev.open_tenant_host_fd(resolved, O_RDONLY | O_CLOEXEC, 0, "sys-open")
+                     : ::open(resolved.c_str(), flags);
         if (fd >= 0)
             stamp_minted_fd_tenant(ev, fd);
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))

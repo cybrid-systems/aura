@@ -20,10 +20,18 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdio.h> // popen / pclose (POSIX)
 #include <memory>
+#include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
+
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 namespace gsl {
 template <class T>
@@ -110,6 +118,64 @@ template <class T> [[nodiscard]] opaque_ptr adopt_opaque(std::unique_ptr<T> owne
 
 [[nodiscard]] inline unique_file open_file(const char* path, const char* mode) noexcept {
     return unique_file{static_cast<gsl::owner<std::FILE*>>(std::fopen(path, mode))};
+}
+
+// Issue #5212: open a single path component under a directory fd. A name
+// containing '/' is rejected so this cannot walk out of `dirfd`. O_NOFOLLOW
+// refuses a symlink leaf. "r*" is O_RDONLY; "a*" is O_RDWR|O_CREAT|O_APPEND
+// (the WAL "ab+" / "rb" modes). The FILE* owns the fd.
+[[nodiscard]] inline unique_file open_file_at(int dirfd, const char* name,
+                                              const char* mode) noexcept {
+    if (dirfd < 0 || name == nullptr || mode == nullptr || std::strlen(name) == 0 ||
+        std::strlen(mode) == 0 || std::strchr(name, '/') != nullptr)
+        return {};
+    const bool reading = std::strncmp(mode, "r", 1) == 0;
+    const bool appending = std::strncmp(mode, "a", 1) == 0;
+    if (!reading && !appending)
+        return {};
+    const unsigned base = static_cast<unsigned>(O_CLOEXEC) | static_cast<unsigned>(O_NOFOLLOW);
+    const unsigned flags =
+        base | (reading ? static_cast<unsigned>(O_RDONLY)
+                        : static_cast<unsigned>(O_RDWR) | static_cast<unsigned>(O_CREAT) |
+                              static_cast<unsigned>(O_APPEND));
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg): POSIX openat creation mode
+    const int opened = ::openat(dirfd, name, static_cast<int>(flags), 0644);
+    if (opened < 0)
+        return {};
+    std::FILE* stream = ::fdopen(opened, mode);
+    if (stream == nullptr) {
+        ::close(opened);
+        return {};
+    }
+    return unique_file{static_cast<gsl::owner<std::FILE*>>(stream)};
+}
+
+// Regular files in `dirfd`, not following symlinks. "." and ".." are skipped.
+// False when the directory cannot be listed (caller fail-closes).
+[[nodiscard]] inline bool list_regular_dirfd(int dirfd, std::vector<std::string>& out) noexcept {
+    out.clear();
+    if (dirfd < 0)
+        return false;
+    const int dup_fd = ::dup(dirfd);
+    if (dup_fd < 0)
+        return false;
+    DIR* directory = ::fdopendir(dup_fd);
+    if (directory == nullptr) {
+        ::close(dup_fd);
+        return false;
+    }
+    while (dirent* entry = ::readdir(directory)) {
+        const char* entry_name = static_cast<const char*>(entry->d_name);
+        if (std::strcmp(entry_name, ".") == 0 || std::strcmp(entry_name, "..") == 0)
+            continue;
+        struct stat file_stat{};
+        if (::fstatat(dirfd, entry_name, &file_stat, AT_SYMLINK_NOFOLLOW) != 0 ||
+            !S_ISREG(file_stat.st_mode))
+            continue;
+        out.emplace_back(entry_name);
+    }
+    ::closedir(directory);
+    return true;
 }
 
 // Flushes and closes `file`; reports whether every write reached the OS. The

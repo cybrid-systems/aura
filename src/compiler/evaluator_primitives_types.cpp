@@ -28,9 +28,12 @@ namespace {
 // Issue #4414: open of a path that already passed check_tenant_host_path.
 // O_NOFOLLOW fails the final component (ELOOP) so a swapped symlink is
 // not read. Missing files fail the same way the old ifstream did.
-[[nodiscard]] bool read_regular_nofollow(const std::string& path, std::string& out) {
+[[nodiscard]] bool read_regular_nofollow(const std::string& path, std::string& out,
+                                         aura::compiler::Evaluator& ev, std::string_view op) {
     out.clear();
-    const int fd = ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    const int fd = ev.host_path_policy_active()
+                       ? ev.open_tenant_host_fd(path, O_RDONLY | O_CLOEXEC, 0, op)
+                       : ::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0)
         return false;
     struct stat st{};
@@ -48,9 +51,12 @@ namespace {
 
 // Issue #4414: create/trunc of a checked .aura-type sibling. O_NOFOLLOW
 // refuses a final symlink, so the target is not truncated.
-[[nodiscard]] bool write_regular_nofollow(const std::string& path, std::string_view data) {
+[[nodiscard]] bool write_regular_nofollow(const std::string& path, std::string_view data,
+                                          aura::compiler::Evaluator& ev, std::string_view op) {
     const int fd =
-        ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+        ev.host_path_policy_active()
+            ? ev.open_tenant_host_fd(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644, op)
+            : ::open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
     if (fd < 0)
         return false;
     struct stat st{};
@@ -173,7 +179,7 @@ void RegSplitParts::register_generate_type_sigs_primitive(PrimRegistrar add, Eva
 
         // 读取并解析模块文件. Issue #4414: O_NOFOLLOW on the checked path.
         std::string content;
-        if (!read_regular_nofollow(path, content)) {
+        if (!read_regular_nofollow(path, content, ev, "generate-type-sigs")) {
             std::println(std::cerr, "generate-type-sigs: cannot open '{}'", path);
             return make_bool(false);
         }
@@ -299,7 +305,7 @@ void RegSplitParts::register_generate_type_sigs_primitive(PrimRegistrar add, Eva
             ev.bump_capability_denial();
             return make_bool(false);
         }
-        if (!write_regular_nofollow(type_gated, body)) {
+        if (!write_regular_nofollow(type_gated, body, ev, "generate-type-sigs")) {
             std::println(std::cerr, "generate-type-sigs: cannot write '{}'", type_gated);
             return make_bool(false);
         }
@@ -344,7 +350,7 @@ void RegSplitParts::register_check_module_signature_primitive(PrimRegistrar add,
 
         // 读取并解析模块文件. Issue #4414: O_NOFOLLOW on the checked path.
         std::string content;
-        if (!read_regular_nofollow(path, content)) {
+        if (!read_regular_nofollow(path, content, ev, "check-module-signature")) {
             std::println(std::cerr, "check-module-signature: cannot open '{}'", path);
             return make_bool(false);
         }
@@ -409,7 +415,7 @@ void RegSplitParts::register_check_module_signature_primitive(PrimRegistrar add,
         if (!ev.check_tenant_host_path(sig_path, sig_gated, "check-module-signature"))
             return make_bool(false);
         std::string sig_text;
-        if (read_regular_nofollow(sig_gated, sig_text)) {
+        if (read_regular_nofollow(sig_gated, sig_text, ev, "check-module-signature")) {
             std::istringstream tf(sig_text);
             std::string line;
             while (std::getline(tf, line)) {

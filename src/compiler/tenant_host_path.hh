@@ -20,13 +20,17 @@
 #ifndef AURA_COMPILER_TENANT_HOST_PATH_HH
 #define AURA_COMPILER_TENANT_HOST_PATH_HH
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 namespace aura::compiler::security {
 
@@ -317,6 +321,305 @@ resolve_tenant_host_path(std::string_view path, std::uint64_t tenant_id, bool po
     r.verdict = TenantHostPathVerdict::Resolved;
     r.resolved = std::move(abs);
     return r;
+}
+
+// Issue #5212: lstat-then-open is a TOCTOU. These helpers open, create, and
+// unlink strictly beneath an already-opened tenant-root directory fd.
+// Soft/Off and single-tenant Restricted never call them (the policy
+// predicate stays the zero-cost gate). Linux >= 5.6 uses openat2
+// RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS. Older
+// kernels walk with openat(O_PATH | O_NOFOLLOW | O_DIRECTORY) and
+// O_NOFOLLOW on the last component. Create uses mkdirat / openat from
+// that parent fd — a post-open readlink is too late once O_CREAT or
+// mkdir has already landed outside the jail.
+
+#ifdef SYS_openat2
+inline constexpr long kSysOpenat2 = SYS_openat2;
+#else
+inline constexpr long kSysOpenat2 = 437;
+#endif
+
+inline constexpr std::uint64_t kResolveNoMagiclinks = 0x02;
+inline constexpr std::uint64_t kResolveNoSymlinks = 0x04;
+inline constexpr std::uint64_t kResolveBeneath = 0x08;
+
+struct TenantOpenHow {
+    std::uint64_t flags = 0;
+    std::uint64_t mode = 0;
+    std::uint64_t resolve = 0;
+};
+static_assert(sizeof(TenantOpenHow) == 24, "openat2 how must match the kernel ABI");
+
+// ELOOP: symlink (RESOLVE_NO_SYMLINKS / O_NOFOLLOW). EXDEV: ".." or an
+// absolute component left the root (RESOLVE_BENEATH). EPERM: a component
+// this walk rejected ("..", empty, absolute). ENOTDIR is NOT an escape:
+// O_DIRECTORY on a regular file returns it, and so does O_DIRECTORY on a
+// final symlink — the lexical lstat fence still denies a stable symlink.
+[[nodiscard]] inline bool tenant_fd_errno_is_escape(int err) noexcept {
+    return err == ELOOP || err == EXDEV || err == EPERM;
+}
+
+[[nodiscard]] inline bool tenant_rel_has_dotdot(std::string_view rel) noexcept {
+    std::size_t i = 0;
+    while (i < rel.size()) {
+        if (rel[i] == '/') {
+            ++i;
+            continue;
+        }
+        const auto slash = rel.find('/', i);
+        const auto end = slash == std::string_view::npos ? rel.size() : slash;
+        const auto name = rel.substr(i, end - i);
+        if (name.empty() || name == "." || name == ".." ||
+            name.find('\0') != std::string_view::npos)
+            return true;
+        i = end;
+    }
+    return false;
+}
+
+// Relative remainder of `resolved` under `root`. "." means the root itself.
+// False when `resolved` is not under `root` (caller treats that as escape).
+[[nodiscard]] inline bool tenant_rel_under_root(std::string_view resolved, std::string_view root,
+                                                std::string& rel) {
+    rel.clear();
+    if (!path_is_under_root(resolved, root))
+        return false;
+    if (resolved.size() == root.size()) {
+        rel = ".";
+        return true;
+    }
+    rel.assign(resolved.substr(root.size() + 1));
+    return !rel.empty();
+}
+
+[[nodiscard]] inline int open_under_tenant_root_walk(int root_fd, std::string_view rel, int flags,
+                                                     mode_t mode) noexcept {
+    if (tenant_rel_has_dotdot(rel)) {
+        errno = EPERM;
+        return -1;
+    }
+    int dirfd = ::openat(root_fd, ".", O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dirfd < 0)
+        return -1;
+    std::size_t i = 0;
+    bool any = false;
+    while (i < rel.size()) {
+        if (rel[i] == '/') {
+            ++i;
+            continue;
+        }
+        const auto slash = rel.find('/', i);
+        const auto end = slash == std::string_view::npos ? rel.size() : slash;
+        const bool last = slash == std::string_view::npos;
+        const auto name = rel.substr(i, end - i);
+        if (name.size() > 255) {
+            ::close(dirfd);
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+        char leaf[256];
+        for (std::size_t n = 0; n < name.size(); ++n)
+            leaf[n] = name[n];
+        leaf[name.size()] = '\0';
+        any = true;
+        if (!last) {
+            const int next = ::openat(dirfd, leaf, O_PATH | O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC);
+            const int err = errno;
+            ::close(dirfd);
+            if (next < 0) {
+                // A symlink with O_DIRECTORY | O_NOFOLLOW is ENOTDIR. That
+                // intermediate is an escape, not a type mismatch on the leaf.
+                errno = err == ENOTDIR ? ELOOP : err;
+                return -1;
+            }
+            dirfd = next;
+            i = end;
+            continue;
+        }
+        const int fd = ::openat(dirfd, leaf, flags, mode);
+        const int err = errno;
+        ::close(dirfd);
+        if (fd < 0)
+            errno = err;
+        return fd;
+    }
+    if (!any) {
+        const int fd = ::openat(dirfd, ".", flags, mode);
+        const int err = errno;
+        ::close(dirfd);
+        if (fd < 0)
+            errno = err;
+        return fd;
+    }
+    ::close(dirfd);
+    errno = ENOENT;
+    return -1;
+}
+
+// Open `rel` beneath `root_fd`. Returns a fd, or -1 with errno. Does not
+// emit a security event — the caller does, on tenant_fd_errno_is_escape.
+// O_NOFOLLOW is forced. O_PATH is not used here: with RESOLVE_NO_SYMLINKS
+// the kernel still returns a symlink fd for O_PATH, which would report the
+// link as present instead of failing the escape.
+[[nodiscard]] inline int open_under_tenant_root(int root_fd, std::string_view rel, int flags,
+                                                mode_t mode) noexcept {
+    if (root_fd < 0) {
+        errno = EBADF;
+        return -1;
+    }
+    const int use = flags | O_CLOEXEC | O_NOFOLLOW;
+    // "." is the root directory itself (directory-list / unlink parent), not
+    // a component the walk rejects.
+    if (rel == ".") {
+        const int fd = ::openat(root_fd, ".", use, mode);
+        return fd;
+    }
+    if (rel.empty() || rel.front() == '/' || rel.find('\0') != std::string_view::npos ||
+        tenant_rel_has_dotdot(rel)) {
+        errno = EPERM;
+        return -1;
+    }
+    const std::string path(rel);
+    TenantOpenHow how{};
+    how.flags = static_cast<std::uint64_t>(use);
+    how.mode = (use & (O_CREAT | O_TMPFILE)) != 0 ? static_cast<std::uint64_t>(mode) : 0;
+    how.resolve = kResolveNoMagiclinks | kResolveNoSymlinks | kResolveBeneath;
+    const int fd =
+        static_cast<int>(::syscall(kSysOpenat2, root_fd, path.c_str(), &how, sizeof how));
+    if (fd >= 0 || (errno != ENOSYS && errno != EOPNOTSUPP))
+        return fd;
+    return open_under_tenant_root_walk(root_fd, rel, use, mode);
+}
+
+// Host base of `<base>/t-<id>` may be created by path (it is not inside a
+// tenant). The `t-<id>` leaf is mkdirat + O_NOFOLLOW, so a symlink planted
+// at the tenant root is not followed.
+[[nodiscard]] inline int open_tenant_root_dirfd(std::string_view root, bool create) noexcept {
+    const auto slash = root.rfind('/');
+    if (slash == std::string_view::npos || slash == 0 || slash + 1 >= root.size()) {
+        errno = EPERM;
+        return -1;
+    }
+    const std::string base(root.substr(0, slash));
+    const std::string leaf(root.substr(slash + 1));
+    if (create) {
+        std::string cur;
+        cur.reserve(base.size());
+        for (std::size_t i = 0; i < base.size(); ++i) {
+            cur.push_back(base[i]);
+            if (base[i] == '/' || i + 1 == base.size()) {
+                if (cur.size() > 1)
+                    ::mkdir(cur.c_str(), 0755);
+            }
+        }
+    }
+    const int base_fd = ::open(base.c_str(), O_PATH | O_DIRECTORY | O_CLOEXEC);
+    if (base_fd < 0)
+        return -1;
+    if (create && ::mkdirat(base_fd, leaf.c_str(), 0755) != 0 && errno != EEXIST) {
+        const int err = errno;
+        ::close(base_fd);
+        errno = err;
+        return -1;
+    }
+    const int fd = ::openat(base_fd, leaf.c_str(), O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    const int err = errno;
+    ::close(base_fd);
+    if (fd < 0) {
+        errno = (err == ENOTDIR) ? ELOOP : err;
+        return -1;
+    }
+    return fd;
+}
+
+// mkdir -p of `rel` beneath `root_fd`. 0 on success, -1 with errno.
+[[nodiscard]] inline int mkdir_under_tenant_root(int root_fd, std::string_view rel,
+                                                 mode_t mode) noexcept {
+    if (rel.empty() || rel == ".")
+        return 0;
+    if (tenant_rel_has_dotdot(rel) || rel.front() == '/') {
+        errno = EPERM;
+        return -1;
+    }
+    int dirfd = ::openat(root_fd, ".", O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dirfd < 0)
+        return -1;
+    std::size_t i = 0;
+    while (i < rel.size()) {
+        if (rel[i] == '/') {
+            ++i;
+            continue;
+        }
+        const auto slash = rel.find('/', i);
+        const auto end = slash == std::string_view::npos ? rel.size() : slash;
+        const auto name = rel.substr(i, end - i);
+        if (name.empty() || name == "." || name == ".." || name.size() > 255) {
+            ::close(dirfd);
+            errno = name.size() > 255 ? ENAMETOOLONG : EPERM;
+            return -1;
+        }
+        char leaf[256];
+        for (std::size_t n = 0; n < name.size(); ++n)
+            leaf[n] = name[n];
+        leaf[name.size()] = '\0';
+        if (::mkdirat(dirfd, leaf, mode) != 0 && errno != EEXIST) {
+            const int err = errno;
+            ::close(dirfd);
+            errno = err;
+            return -1;
+        }
+        const int next = ::openat(dirfd, leaf, O_PATH | O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC);
+        const int err = errno;
+        ::close(dirfd);
+        if (next < 0) {
+            errno = err == ENOTDIR ? ELOOP : err;
+            return -1;
+        }
+        dirfd = next;
+        i = end;
+    }
+    ::close(dirfd);
+    return 0;
+}
+
+// 1 = unlinked, 0 = directory or missing (not an escape), -1 = error.
+[[nodiscard]] inline int unlink_under_tenant_root(int root_fd, std::string_view rel) noexcept {
+    if (rel.empty() || rel == "." || rel == ".." || tenant_rel_has_dotdot(rel)) {
+        errno = EPERM;
+        return -1;
+    }
+    const auto slash = rel.rfind('/');
+    const std::string parent =
+        slash == std::string::npos ? std::string(".") : std::string(rel.substr(0, slash));
+    const std::string leaf =
+        slash == std::string::npos ? std::string(rel) : std::string(rel.substr(slash + 1));
+    if (leaf.empty() || leaf == "." || leaf == "..") {
+        errno = EPERM;
+        return -1;
+    }
+    const int parent_fd =
+        open_under_tenant_root(root_fd, parent, O_PATH | O_DIRECTORY | O_CLOEXEC, 0);
+    if (parent_fd < 0)
+        return -1;
+    struct stat st{};
+    if (::fstatat(parent_fd, leaf.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0) {
+        const int err = errno;
+        ::close(parent_fd);
+        errno = err;
+        return 0;
+    }
+    if (S_ISDIR(st.st_mode)) {
+        ::close(parent_fd);
+        return 0;
+    }
+    const int rc = ::unlinkat(parent_fd, leaf.c_str(), 0);
+    const int err = errno;
+    ::close(parent_fd);
+    if (rc != 0) {
+        errno = err;
+        return -1;
+    }
+    return 1;
 }
 
 } // namespace aura::compiler::security

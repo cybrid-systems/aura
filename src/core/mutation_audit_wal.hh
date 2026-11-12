@@ -144,6 +144,10 @@ struct MutationAuditWal : ::aura::core::NoCopy {
     mutable std::mutex mtx;
     bool enabled = false;
     std::string dir;
+    // Issue #5212: >= 0 means this WAL owns a tenant-root directory fd and
+    // creates, reads, and unlinks segment files with openat / unlinkat.
+    // -1 is the path open (byte-identical to the pre-anchor WAL).
+    int anchor_fd_ = -1;
     std::string current_path;
     // Issue #4641: stdio buffer owned by `fp` when the segment was opened
     // by the enable swap (open_segment_at). The rotate / retry path keeps
@@ -175,7 +179,11 @@ struct MutationAuditWal : ::aura::core::NoCopy {
     // fflush on rotate/disable for crash recovery of recent batch).
     static constexpr std::uint32_t kFlushEvery = 32;
 
-    ~MutationAuditWal() { close_unlocked(); }
+    ~MutationAuditWal() {
+        close_unlocked();
+        if (anchor_fd_ >= 0)
+            ::close(anchor_fd_);
+    }
 
     void close_typed_unlocked() noexcept {
         if (typed_fp) {
@@ -199,13 +207,18 @@ struct MutationAuditWal : ::aura::core::NoCopy {
     [[nodiscard]] bool open_segment_unlocked(std::uint32_t seg) noexcept {
         close_unlocked();
         namespace fs = std::filesystem;
-        std::error_code ec;
-        fs::create_directories(dir, ec);
-        if (ec)
-            return false;
-        current_path = (fs::path(dir) / ("audit-" + std::to_string(seg) + ".wal")).string();
-        // Append mode for crash-safe continue; create if missing.
-        fp = open_file(current_path.c_str(), "ab+");
+        const std::string leaf = "audit-" + std::to_string(seg) + ".wal";
+        current_path = (fs::path(dir) / leaf).string();
+        if (anchor_fd_ < 0) {
+            std::error_code ec;
+            fs::create_directories(dir, ec);
+            if (ec)
+                return false;
+            // Append mode for crash-safe continue; create if missing.
+            fp = open_file(current_path.c_str(), "ab+");
+        } else {
+            fp = ::aura::core::open_file_at(anchor_fd_, leaf.c_str(), "ab+");
+        }
         if (!fp)
             return false;
         // Larger stdio buffer for hot-path append amortization (#1567 AC6).
@@ -265,13 +278,16 @@ struct MutationAuditWal : ::aura::core::NoCopy {
     [[nodiscard]] bool open_segment_at(const std::string& dir_in, std::uint32_t seg,
                                        unique_file& out_fp, std::unique_ptr<char[]>& out_buf,
                                        std::string& out_path, std::uint64_t& out_bytes,
-                                       std::uint32_t& out_index) noexcept {
+                                       std::uint32_t& out_index, int dirfd = -1) noexcept {
         namespace fs = std::filesystem;
-        std::error_code ec;
-        fs::create_directories(dir_in, ec);
-        if (ec)
-            return false;
-        const auto path = (fs::path(dir_in) / ("audit-" + std::to_string(seg) + ".wal")).string();
+        const std::string leaf = "audit-" + std::to_string(seg) + ".wal";
+        const auto path = (fs::path(dir_in) / leaf).string();
+        if (dirfd < 0) {
+            std::error_code ec;
+            fs::create_directories(dir_in, ec);
+            if (ec)
+                return false;
+        }
         // Larger stdio buffer for hot-path append amortization (#1567 AC6).
         // #4936: `buf` is declared before `f`, so on every early return the
         // stream is closed (and flushed) before its buffer is freed.
@@ -279,7 +295,8 @@ struct MutationAuditWal : ::aura::core::NoCopy {
         if (!buf) {
             return false;
         }
-        unique_file f = open_file(path.c_str(), "ab+");
+        unique_file f = dirfd < 0 ? open_file(path.c_str(), "ab+")
+                                  : ::aura::core::open_file_at(dirfd, leaf.c_str(), "ab+");
         if (!f)
             return false;
         std::setvbuf(f.get(), buf.get(), _IOFBF, kSegmentBufferBytes);
@@ -312,7 +329,7 @@ struct MutationAuditWal : ::aura::core::NoCopy {
             (void)std::fseek(f.get(), 0, SEEK_END);
             if (marker != kAuditWalReasonTailMarker) {
                 return open_segment_at(dir_in, seg + 1, out_fp, out_buf, out_path, out_bytes,
-                                       out_index);
+                                       out_index, dirfd);
             }
         }
         // Buffer first: the stream that uses it must never outlive it.
@@ -329,12 +346,17 @@ struct MutationAuditWal : ::aura::core::NoCopy {
     [[nodiscard]] bool open_typed_segment_unlocked(std::uint32_t seg) noexcept {
         close_typed_unlocked();
         namespace fs = std::filesystem;
-        std::error_code ec;
-        fs::create_directories(dir, ec);
-        if (ec)
-            return false;
-        typed_path = (fs::path(dir) / ("typed-summary-" + std::to_string(seg) + ".wal")).string();
-        typed_fp = open_file(typed_path.c_str(), "ab+");
+        const std::string leaf = "typed-summary-" + std::to_string(seg) + ".wal";
+        typed_path = (fs::path(dir) / leaf).string();
+        if (anchor_fd_ < 0) {
+            std::error_code ec;
+            fs::create_directories(dir, ec);
+            if (ec)
+                return false;
+            typed_fp = open_file(typed_path.c_str(), "ab+");
+        } else {
+            typed_fp = ::aura::core::open_file_at(anchor_fd_, leaf.c_str(), "ab+");
+        }
         if (!typed_fp)
             return false;
         static char tbuf[16 * 1024];
@@ -380,15 +402,23 @@ struct MutationAuditWal : ::aura::core::NoCopy {
         std::error_code ec;
         for (std::uint32_t i = first; i < first_keep; ++i) {
             bool any = false;
-            const auto audit_p = (fs::path(dir) / ("audit-" + std::to_string(i) + ".wal")).string();
-            if (fs::remove(audit_p, ec))
-                any = true;
-            ec.clear();
-            const auto typed_p =
-                (fs::path(dir) / ("typed-summary-" + std::to_string(i) + ".wal")).string();
-            if (fs::remove(typed_p, ec))
-                any = true;
-            ec.clear();
+            const std::string audit_leaf = "audit-" + std::to_string(i) + ".wal";
+            const auto audit_p = (fs::path(dir) / audit_leaf).string();
+            const std::string typed_leaf = "typed-summary-" + std::to_string(i) + ".wal";
+            const auto typed_p = (fs::path(dir) / typed_leaf).string();
+            if (anchor_fd_ >= 0) {
+                if (::unlinkat(anchor_fd_, audit_leaf.c_str(), 0) == 0)
+                    any = true;
+                if (::unlinkat(anchor_fd_, typed_leaf.c_str(), 0) == 0)
+                    any = true;
+            } else {
+                if (fs::remove(audit_p, ec))
+                    any = true;
+                ec.clear();
+                if (fs::remove(typed_p, ec))
+                    any = true;
+                ec.clear();
+            }
             if (any) {
                 g_audit_wal_metrics().audit_wal_segment_prune_total.fetch_add(
                     1, std::memory_order_relaxed);
@@ -421,7 +451,7 @@ struct MutationAuditWal : ::aura::core::NoCopy {
     // Enable persist under `persist_dir`. Replays existing WAL into `out_records`
     // (last `max_replay` records, oldest→newest). Returns true if enabled.
     bool enable(std::string_view persist_dir, std::vector<AuditWalRecord>* out_replay = nullptr,
-                std::size_t max_replay = 64) noexcept {
+                std::size_t max_replay = 64, int anchor_fd = -1) noexcept {
         std::scoped_lock<std::mutex> lock(mtx);
         // Issue #4641: the live segment survives a failed enable. The new
         // segment is opened FIRST and only a successful open closes the live
@@ -436,6 +466,11 @@ struct MutationAuditWal : ::aura::core::NoCopy {
         if (new_dir.empty()) {
             // Legacy empty-dir contract: no directory means no WAL.
             close_unlocked();
+            if (anchor_fd_ >= 0)
+                ::close(anchor_fd_);
+            if (anchor_fd >= 0 && anchor_fd != anchor_fd_)
+                ::close(anchor_fd);
+            anchor_fd_ = -1;
             dir.clear();
             enabled = false;
             pruned_upto_ = 0;
@@ -448,7 +483,29 @@ struct MutationAuditWal : ::aura::core::NoCopy {
         // Issue #4520: collected indices double as the enable-time upgrade
         // prune list (exact, hole-tolerant) — no extra directory pass.
         std::vector<std::uint32_t> seg_indices;
-        if (fs::exists(new_dir, ec)) {
+        if (anchor_fd >= 0) {
+            std::vector<std::string> names;
+            if (!::aura::core::list_regular_dirfd(anchor_fd, names)) {
+                if (anchor_fd != anchor_fd_)
+                    ::close(anchor_fd);
+                g_audit_wal_metrics().audit_wal_enabled.store(enabled ? 1 : 0,
+                                                              std::memory_order_relaxed);
+                return false;
+            }
+            for (const auto& name : names) {
+                if (name.rfind("audit-", 0) != 0 || !name.ends_with(".wal"))
+                    continue;
+                const auto mid = name.substr(6, name.size() - 6 - 4);
+                if (const auto parsed = aura::core::parse_leading_int<std::uint32_t>(mid)) {
+                    const auto seg_no = *parsed;
+                    seg_indices.push_back(seg_no);
+                    if (!any || seg_no > max_seg) {
+                        max_seg = seg_no;
+                        any = true;
+                    }
+                }
+            }
+        } else if (fs::exists(new_dir, ec)) {
             for (auto& ent : fs::directory_iterator(new_dir, ec)) {
                 if (!ent.is_regular_file(ec))
                     continue;
@@ -485,10 +542,10 @@ struct MutationAuditWal : ::aura::core::NoCopy {
             // seg_end-1 .. 0 were never read (seg_end==0 means every segment was read).
             std::uint32_t seg_end = max_seg + 1;
             for (; any && newest_first.size() < max_replay && seg_end > 0; --seg_end) {
-                const auto path =
-                    (fs::path(new_dir) / ("audit-" + std::to_string(seg_end - 1) + ".wal"))
-                        .string();
-                auto part = read_segment_file(path);
+                const std::string leaf = "audit-" + std::to_string(seg_end - 1) + ".wal";
+                const auto path = (fs::path(new_dir) / leaf).string();
+                auto part = anchor_fd >= 0 ? read_segment_anchored(anchor_fd, leaf)
+                                           : read_segment_file(path);
                 newest_first.insert(newest_first.end(), part.rbegin(), part.rend());
             }
             // Issue #4921: replay-window truncation marker, mirroring the
@@ -530,13 +587,19 @@ struct MutationAuditWal : ::aura::core::NoCopy {
         std::uint64_t new_bytes = 0;
         std::uint32_t new_index = 0;
         if (!open_segment_at(new_dir, any ? max_seg : 0, new_fp, new_buf, new_path, new_bytes,
-                             new_index)) {
+                             new_index, anchor_fd)) {
+            if (anchor_fd >= 0 && anchor_fd != anchor_fd_)
+                ::close(anchor_fd);
             g_audit_wal_metrics().audit_wal_enabled.store(enabled ? 1 : 0,
                                                           std::memory_order_relaxed);
             return false;
         }
         // Commit: close the live segment, install the new one.
+        // A failed open above left the previous anchor and the live WAL.
         close_unlocked();
+        if (anchor_fd_ >= 0 && anchor_fd_ != anchor_fd)
+            ::close(anchor_fd_);
+        anchor_fd_ = anchor_fd;
         dir = new_dir;
         fp_buf_ = std::move(new_buf);
         fp = std::move(new_fp);
@@ -559,17 +622,24 @@ struct MutationAuditWal : ::aura::core::NoCopy {
                     if (static_cast<std::uint64_t>(seg_no) >= floor64)
                         continue;
                     bool any_removed = false;
-                    const auto audit_p =
-                        (fs::path(dir) / ("audit-" + std::to_string(seg_no) + ".wal")).string();
-                    if (fs::remove(audit_p, ec))
-                        any_removed = true;
-                    ec.clear();
-                    const auto typed_p =
-                        (fs::path(dir) / ("typed-summary-" + std::to_string(seg_no) + ".wal"))
-                            .string();
-                    if (fs::remove(typed_p, ec))
-                        any_removed = true;
-                    ec.clear();
+                    const std::string audit_leaf = "audit-" + std::to_string(seg_no) + ".wal";
+                    const auto audit_p = (fs::path(dir) / audit_leaf).string();
+                    const std::string typed_leaf =
+                        "typed-summary-" + std::to_string(seg_no) + ".wal";
+                    const auto typed_p = (fs::path(dir) / typed_leaf).string();
+                    if (anchor_fd_ >= 0) {
+                        if (::unlinkat(anchor_fd_, audit_leaf.c_str(), 0) == 0)
+                            any_removed = true;
+                        if (::unlinkat(anchor_fd_, typed_leaf.c_str(), 0) == 0)
+                            any_removed = true;
+                    } else {
+                        if (fs::remove(audit_p, ec))
+                            any_removed = true;
+                        ec.clear();
+                        if (fs::remove(typed_p, ec))
+                            any_removed = true;
+                        ec.clear();
+                    }
                     if (any_removed) {
                         g_audit_wal_metrics().audit_wal_segment_prune_total.fetch_add(
                             1, std::memory_order_relaxed);
@@ -589,6 +659,10 @@ struct MutationAuditWal : ::aura::core::NoCopy {
     void disable() noexcept {
         std::scoped_lock<std::mutex> lock(mtx);
         close_unlocked();
+        if (anchor_fd_ >= 0) {
+            ::close(anchor_fd_);
+            anchor_fd_ = -1;
+        }
         enabled = false;
         rotate_open_fail_ = false;
         pruned_upto_ = 0;
@@ -688,25 +762,34 @@ struct MutationAuditWal : ::aura::core::NoCopy {
         return true;
     }
 
-    static std::vector<TypedSummaryWalRecord>
-    read_typed_segment_file(const std::string& path) noexcept {
+    static std::vector<TypedSummaryWalRecord> read_typed_segment_fp(std::FILE* fp) noexcept {
         std::vector<TypedSummaryWalRecord> out;
-        const unique_file f = open_file(path.c_str(), "rb");
-        if (!f)
+        if (fp == nullptr)
             return out;
         char magic[8]{};
-        if (std::fread(magic, 1, 8, f.get()) != 8 ||
-            std::memcmp(magic, kTypedSummaryWalMagic, 8) != 0) {
+        if (std::fread(magic, 1, 8, fp) != 8 || std::memcmp(magic, kTypedSummaryWalMagic, 8) != 0) {
             return out;
         }
         std::uint32_t ver = 0;
-        if (std::fread(&ver, sizeof(ver), 1, f.get()) != 1 || ver != kTypedSummaryWalVersion) {
+        if (std::fread(&ver, sizeof(ver), 1, fp) != 1 || ver != kTypedSummaryWalVersion) {
             return out;
         }
         TypedSummaryWalRecord rec{};
-        while (std::fread(&rec, 1, sizeof(rec), f.get()) == sizeof(rec))
+        while (std::fread(&rec, 1, sizeof(rec), fp) == sizeof(rec))
             out.push_back(rec);
         return out;
+    }
+
+    static std::vector<TypedSummaryWalRecord>
+    read_typed_segment_file(const std::string& path) noexcept {
+        const unique_file f = open_file(path.c_str(), "rb");
+        return read_typed_segment_fp(f.get());
+    }
+
+    [[nodiscard]] std::vector<TypedSummaryWalRecord>
+    read_typed_segment_anchored(int dirfd, const std::string& leaf) noexcept {
+        const unique_file f = ::aura::core::open_file_at(dirfd, leaf.c_str(), "rb");
+        return read_typed_segment_fp(f.get());
     }
 
     // Issue #3242: current + prior rotate segments. Disabled / mid==0 → nullopt.
@@ -725,9 +808,10 @@ struct MutationAuditWal : ::aura::core::NoCopy {
         const std::uint32_t n = std::min(max_segments, segment_index + 1);
         for (std::uint32_t i = 0; i < n; ++i) {
             const auto seg = segment_index - i;
-            const auto path =
-                (fs::path(dir) / ("typed-summary-" + std::to_string(seg) + ".wal")).string();
-            auto recs = read_typed_segment_file(path);
+            const std::string leaf = "typed-summary-" + std::to_string(seg) + ".wal";
+            const auto path = (fs::path(dir) / leaf).string();
+            auto recs = anchor_fd_ >= 0 ? read_typed_segment_anchored(anchor_fd_, leaf)
+                                        : read_typed_segment_file(path);
             for (auto it = recs.rbegin(); it != recs.rend(); ++it) {
                 if (it->mutation_id == mid)
                     return *it;
@@ -753,8 +837,10 @@ struct MutationAuditWal : ::aura::core::NoCopy {
         const std::uint32_t n = std::min(max_segments, segment_index + 1);
         for (std::uint32_t i = 0; i < n; ++i) {
             const auto seg = segment_index - i;
-            const auto path = (fs::path(dir) / ("audit-" + std::to_string(seg) + ".wal")).string();
-            auto recs = read_segment_file(path);
+            const std::string leaf = "audit-" + std::to_string(seg) + ".wal";
+            const auto path = (fs::path(dir) / leaf).string();
+            auto recs =
+                anchor_fd_ >= 0 ? read_segment_anchored(anchor_fd_, leaf) : read_segment_file(path);
             for (auto it = recs.rbegin(); it != recs.rend(); ++it) {
                 if (it->provenance_mutation_id == mid)
                     return *it;
@@ -779,41 +865,50 @@ struct MutationAuditWal : ::aura::core::NoCopy {
             mid, ::aura::core::wal_slo::kWalFullScanAllSegments);
     }
 
-    static std::vector<AuditWalRecord> read_segment_file(const std::string& path) noexcept {
+    static std::vector<AuditWalRecord> read_segment_fp(std::FILE* fp) noexcept {
         std::vector<AuditWalRecord> out;
-        const unique_file f = open_file(path.c_str(), "rb");
-        if (!f)
+        if (fp == nullptr)
             return out;
         char magic[8]{};
-        if (std::fread(magic, 1, 8, f.get()) != 8 || std::memcmp(magic, kAuditWalMagic, 8) != 0) {
+        if (std::fread(magic, 1, 8, fp) != 8 || std::memcmp(magic, kAuditWalMagic, 8) != 0) {
             return out;
         }
         std::uint32_t ver = 0;
-        if (std::fread(&ver, sizeof(ver), 1, f.get()) != 1 || ver != kAuditWalVersion) {
+        if (std::fread(&ver, sizeof(ver), 1, fp) != 1 || ver != kAuditWalVersion) {
             return out;
         }
         // Issue #3465: version stays 1. Size is selected from reserved0 of
         // the first record — marker means reason tail is present; missing
         // tail (old segments) is left empty → wal-replay-legacy.
         std::uint16_t marker = 0;
-        const auto data_start = std::ftell(f.get());
+        const auto data_start = std::ftell(fp);
         if (data_start >= 0 &&
-            std::fseek(f.get(), data_start + static_cast<long>(kAuditWalReserved0Offset),
-                       SEEK_SET) == 0)
-            (void)!std::fread(&marker, sizeof(marker), 1, f.get()); // short read OK; marker stays 0
+            std::fseek(fp, data_start + static_cast<long>(kAuditWalReserved0Offset), SEEK_SET) == 0)
+            (void)!std::fread(&marker, sizeof(marker), 1, fp); // short read OK; marker stays 0
         if (data_start >= 0)
-            (void)std::fseek(f.get(), data_start, SEEK_SET);
+            (void)std::fseek(fp, data_start, SEEK_SET);
         const bool has_reason_tail = marker == kAuditWalReasonTailMarker;
         const std::size_t rec_size =
             has_reason_tail ? sizeof(AuditWalRecord) : kAuditWalRecordV1Size;
         AuditWalRecord rec{};
-        while (std::fread(&rec, 1, rec_size, f.get()) == rec_size) {
+        while (std::fread(&rec, 1, rec_size, fp) == rec_size) {
             if (!has_reason_tail)
                 rec.reason[0] = '\0';
             out.push_back(rec);
             rec = AuditWalRecord{};
         }
         return out;
+    }
+
+    static std::vector<AuditWalRecord> read_segment_file(const std::string& path) noexcept {
+        const unique_file f = open_file(path.c_str(), "rb");
+        return read_segment_fp(f.get());
+    }
+
+    [[nodiscard]] std::vector<AuditWalRecord>
+    read_segment_anchored(int dirfd, const std::string& leaf) noexcept {
+        const unique_file f = ::aura::core::open_file_at(dirfd, leaf.c_str(), "rb");
+        return read_segment_fp(f.get());
     }
 
     void set_rotate_bytes(std::uint64_t n) noexcept {

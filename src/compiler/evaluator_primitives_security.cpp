@@ -2,6 +2,9 @@
 
 module;
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #include "runtime_shared.h"
 #include "compiler/observability_metrics.h"
 #include "primitives_detail.h"
@@ -5341,6 +5344,17 @@ void register_query_shape_value_pass_stats(PrimRegistrar add, Evaluator& ev) {
             std::string resolved;
             if (!ev.check_tenant_host_path(path, resolved, "security:set-audit-persist-dir!"))
                 return make_bool(false);
+            // Issue #5212: the WAL directory is a create. mkdirat + a
+            // directory fd, then both WALs open segments with openat.
+            if (ev.host_path_policy_active()) {
+                if (ev.mkdir_tenant_host(resolved, "security:set-audit-persist-dir!") != 0)
+                    return make_bool(false);
+                const int fd = ev.open_tenant_host_fd(resolved, O_RDONLY | O_DIRECTORY | O_CLOEXEC,
+                                                      0, "security:set-audit-persist-dir!");
+                if (fd < 0)
+                    return make_bool(false);
+                return make_bool(ev.enable_mutation_audit_wal(resolved, fd));
+            }
             return make_bool(ev.enable_mutation_audit_wal(resolved));
         }
         if (path.empty()) {

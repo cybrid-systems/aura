@@ -1415,11 +1415,24 @@ bool Evaluator::probe_multi_tenant_env_active_for_test() const noexcept {
 }
 
 // Issue #1567: enable WAL under persist_dir; replay prior records into ring.
-bool Evaluator::enable_mutation_audit_wal(std::string_view persist_dir) noexcept {
+bool Evaluator::enable_mutation_audit_wal(std::string_view persist_dir, int anchor_fd) noexcept {
     using namespace ::aura::core::audit_wal;
+    // The security WAL owns its own fd. Dup before the mutation enable,
+    // which takes ownership of anchor_fd and closes it on failure.
+    int se_fd = -1;
+    if (anchor_fd >= 0) {
+        se_fd = ::dup(anchor_fd);
+        if (se_fd < 0) {
+            ::close(anchor_fd);
+            return false;
+        }
+    }
     std::vector<AuditWalRecord> replayed;
-    if (!g_mutation_audit_wal().enable(persist_dir, &replayed, kMutationAuditRingSize))
+    if (!g_mutation_audit_wal().enable(persist_dir, &replayed, kMutationAuditRingSize, anchor_fd)) {
+        if (se_fd >= 0)
+            ::close(se_fd);
         return false;
+    }
     // Install recovered records into ring (preserve seq continuity).
     // Issue #2054: do NOT skip rec.seq==0 — the first emit uses seq 0
     // (fetch_add starts at 0); skipping dropped the first allow on replay.
@@ -1462,15 +1475,25 @@ bool Evaluator::enable_mutation_audit_wal(std::string_view persist_dir) noexcept
     // enable can fail to open an existing segment (read-only file) after the
     // first enable already disarmed fail-closed; the recovery counter must
     // never be read as replay success in that case.
-    const bool se_ok = enable_security_event_wal(persist_dir);
-    if (!se_ok) {
-        // The enable-fail posture is only clear because an earlier enable
-        // succeeded and disarmed it (#3965 / #4005). Re-arm it so deny keeps
-        // the force_wal posture (wal-enable-failed + schedule deny) and the
-        // existing overflow / se-wal-enable-miss accounting stays reachable
-        // instead of the mutation sliding through on the 1024-entry ring.
-        // Soft / WAL-off (never force_wal-defaulted) and an already-armed
-        // process stay untouched; arm honours AURA_WAL_APPEND_FAIL_OPEN.
+    // Issue #5212: path mode keeps that one-arg enable. An anchored directory
+    // fd (dup'd above) is handed to the sidecar so it does not reopen the
+    // persist dir by path. Both arms consume the result the same way.
+    if (se_fd < 0) {
+        const bool se_ok = enable_security_event_wal(persist_dir);
+        if (!se_ok) {
+            // The enable-fail posture is only clear because an earlier enable
+            // succeeded and disarmed it (#3965 / #4005). Re-arm it so deny keeps
+            // the force_wal posture (wal-enable-failed + schedule deny) and the
+            // existing overflow / se-wal-enable-miss accounting stays reachable
+            // instead of the mutation sliding through on the 1024-entry ring.
+            // Soft / WAL-off (never force_wal-defaulted) and an already-armed
+            // process stay untouched; arm honours AURA_WAL_APPEND_FAIL_OPEN.
+            if (::aura::core::wal_slo::wal_fail_closed_defaulted_by_force_wal() != 0 &&
+                ::aura::core::wal_slo::force_wal_enable_failed() == 0)
+                ::aura::core::wal_slo::arm_force_wal_enable_fail();
+            return false;
+        }
+    } else if (!enable_security_event_wal(persist_dir, se_fd)) {
         if (::aura::core::wal_slo::wal_fail_closed_defaulted_by_force_wal() != 0 &&
             ::aura::core::wal_slo::force_wal_enable_failed() == 0)
             ::aura::core::wal_slo::arm_force_wal_enable_fail();
@@ -1541,10 +1564,10 @@ bool Evaluator::mutation_audit_wal_enabled() const noexcept {
 // empty (fresh dir or old-format-only WAL), enable_mutation_audit_wal
 // falls back to a mutation-WAL rebuild (#3465: stored reason or
 // wal-replay-legacy; never seq/1 as mid).
-bool Evaluator::enable_security_event_wal(std::string_view persist_dir) noexcept {
+bool Evaluator::enable_security_event_wal(std::string_view persist_dir, int anchor_fd) noexcept {
     using namespace ::aura::core::security_event_wal;
     std::vector<SecurityEventWalRecord> replayed;
-    if (!g_security_event_wal().enable(persist_dir, &replayed, kSecurityEventRingSize))
+    if (!g_security_event_wal().enable(persist_dir, &replayed, kSecurityEventRingSize, anchor_fd))
         return false;
     // Issue #3500: shared hydrate (same as force_wal process-wide enable).
     hydrate_security_event_ring_from_wal_replay(replayed);
@@ -2774,6 +2797,122 @@ bool Evaluator::check_tenant_host_path(std::string_view path, std::string& out_r
     typed_audit::capture_security_correlated_audit(mid, op, epoch, /*denied=*/true,
                                                    /*target_node=*/0, fiber, capability_tenant_id_);
     return false;
+}
+
+// Issue #5212: same IsolationDeny row as the lexical fence above. Kept as
+// its own function so an openat2 / mkdirat refusal (the lstat/open race)
+// audits without moving the tokens the #4380 gate body cites.
+void Evaluator::note_tenant_path_escape(std::string_view op) noexcept {
+    using ::aura::compiler::security::kEffectWrite;
+    using ::aura::compiler::security::kTenantPathEscapeReason;
+    using ::aura::core::security_event::SecurityEventKind;
+    using ::aura::core::security_event_wal::emit_security_event_durable;
+
+    bump_capability_denial();
+    last_mutate_error_ = std::string(op) + ": " + kTenantPathEscapeReason;
+    const auto epoch = ::aura::core::current_mutation_epoch();
+    const auto mid = production_deny_se_mid();
+    const auto fiber = static_cast<std::int64_t>(aura_fiber_current_id());
+    emit_security_event_durable(SecurityEventKind::IsolationDeny, capability_tenant_id_, mid, epoch,
+                                static_cast<std::uint16_t>(kEffectWrite), op,
+                                kTenantPathEscapeReason,
+                                /*denied=*/true, fiber);
+    typed_audit::capture_security_correlated_audit(mid, op, epoch, /*denied=*/true,
+                                                   /*target_node=*/0, fiber, capability_tenant_id_);
+}
+
+int Evaluator::open_tenant_host_fd(std::string_view resolved, int flags, unsigned mode,
+                                   std::string_view op) noexcept {
+    using ::aura::compiler::security::open_tenant_root_dirfd;
+    using ::aura::compiler::security::open_under_tenant_root;
+    using ::aura::compiler::security::tenant_fd_errno_is_escape;
+    using ::aura::compiler::security::tenant_host_root_for;
+    using ::aura::compiler::security::tenant_rel_under_root;
+
+    const auto root = tenant_host_root_for(capability_tenant_id_);
+    std::string rel;
+    if (!tenant_rel_under_root(resolved, root, rel)) {
+        note_tenant_path_escape(op);
+        errno = EPERM;
+        return -1;
+    }
+    const int root_fd = open_tenant_root_dirfd(root, /*create=*/false);
+    if (root_fd < 0) {
+        const int err = errno;
+        if (tenant_fd_errno_is_escape(err))
+            note_tenant_path_escape(op);
+        errno = err;
+        return -1;
+    }
+    const int fd = open_under_tenant_root(root_fd, rel, flags, static_cast<mode_t>(mode));
+    const int err = errno;
+    ::close(root_fd);
+    if (fd < 0 && tenant_fd_errno_is_escape(err))
+        note_tenant_path_escape(op);
+    errno = err;
+    return fd;
+}
+
+int Evaluator::mkdir_tenant_host(std::string_view resolved, std::string_view op) noexcept {
+    using ::aura::compiler::security::mkdir_under_tenant_root;
+    using ::aura::compiler::security::open_tenant_root_dirfd;
+    using ::aura::compiler::security::tenant_fd_errno_is_escape;
+    using ::aura::compiler::security::tenant_host_root_for;
+    using ::aura::compiler::security::tenant_rel_under_root;
+
+    const auto root = tenant_host_root_for(capability_tenant_id_);
+    std::string rel;
+    if (!tenant_rel_under_root(resolved, root, rel)) {
+        note_tenant_path_escape(op);
+        errno = EPERM;
+        return -1;
+    }
+    const int root_fd = open_tenant_root_dirfd(root, /*create=*/true);
+    if (root_fd < 0) {
+        const int err = errno;
+        if (tenant_fd_errno_is_escape(err))
+            note_tenant_path_escape(op);
+        errno = err;
+        return -1;
+    }
+    const int rc = mkdir_under_tenant_root(root_fd, rel, 0755);
+    const int err = errno;
+    ::close(root_fd);
+    if (rc != 0 && tenant_fd_errno_is_escape(err))
+        note_tenant_path_escape(op);
+    errno = err;
+    return rc;
+}
+
+int Evaluator::unlink_tenant_host(std::string_view resolved, std::string_view op) noexcept {
+    using ::aura::compiler::security::open_tenant_root_dirfd;
+    using ::aura::compiler::security::tenant_fd_errno_is_escape;
+    using ::aura::compiler::security::tenant_host_root_for;
+    using ::aura::compiler::security::tenant_rel_under_root;
+    using ::aura::compiler::security::unlink_under_tenant_root;
+
+    const auto root = tenant_host_root_for(capability_tenant_id_);
+    std::string rel;
+    if (!tenant_rel_under_root(resolved, root, rel)) {
+        note_tenant_path_escape(op);
+        errno = EPERM;
+        return -1;
+    }
+    const int root_fd = open_tenant_root_dirfd(root, /*create=*/false);
+    if (root_fd < 0) {
+        const int err = errno;
+        if (tenant_fd_errno_is_escape(err))
+            note_tenant_path_escape(op);
+        errno = err;
+        return -1;
+    }
+    const int rc = unlink_under_tenant_root(root_fd, rel);
+    const int err = errno;
+    ::close(root_fd);
+    if (rc < 0 && tenant_fd_errno_is_escape(err))
+        note_tenant_path_escape(op);
+    errno = err;
+    return rc;
 }
 
 // Issue #4233: exec-face tenant FS jail for shell / command-output — mirror

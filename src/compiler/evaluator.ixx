@@ -10129,7 +10129,11 @@ public:
                                            std::string_view op, ast::NodeId target_node) noexcept;
     // Issue #1567: optional mutation audit WAL (append + crash recovery).
     // Returns true if persist enabled (and replay applied when dir has data).
-    bool enable_mutation_audit_wal(std::string_view persist_dir) noexcept;
+    // anchor_fd >= 0: the directory was opened beneath the tenant root
+    // (#5212). The WAL takes ownership and creates segment files with
+    // openat. -1 keeps the path open (Soft/Off / single-tenant Restricted
+    // and the process-default dir).
+    bool enable_mutation_audit_wal(std::string_view persist_dir, int anchor_fd = -1) noexcept;
     void disable_mutation_audit_wal() noexcept;
     [[nodiscard]] bool mutation_audit_wal_enabled() const noexcept;
     // Issue #2225: durable side-car WAL for the unified SecurityEvent
@@ -10139,7 +10143,7 @@ public:
     // forensically durable after restart. Replay restores
     // g_security_event_ring() (reset + repopulate from disk, seq
     // monotonic). Independent of mutation_audit_wal file format.
-    bool enable_security_event_wal(std::string_view persist_dir) noexcept;
+    bool enable_security_event_wal(std::string_view persist_dir, int anchor_fd = -1) noexcept;
     void disable_security_event_wal() noexcept;
     [[nodiscard]] bool security_event_wal_enabled() const noexcept;
     // Issue #4322: single-tenant Restricted CLI (tenant 0, not Strict,
@@ -10742,6 +10746,19 @@ public:
     [[nodiscard]] bool host_path_policy_active() const noexcept;
     [[nodiscard]] bool check_tenant_host_path(std::string_view path, std::string& out_resolved,
                                               std::string_view op = "write-file") noexcept;
+    // Issue #5212: open / mkdir / unlink beneath the tenant root fd.
+    // Call only when host_path_policy_active(). Escape (ELOOP / EXDEV /
+    // rejected "..") emits the same IsolationDeny tenant-path-escape row
+    // as the lexical fence. Ordinary errno (ENOENT) does not. Inactive
+    // policy keeps the path syscall and does not call these.
+    [[nodiscard]] int open_tenant_host_fd(std::string_view resolved, int flags, unsigned mode,
+                                          std::string_view op) noexcept;
+    [[nodiscard]] int mkdir_tenant_host(std::string_view resolved, std::string_view op) noexcept;
+    // 1 = unlinked, 0 = directory or missing, -1 = error (escape audited).
+    [[nodiscard]] int unlink_tenant_host(std::string_view resolved, std::string_view op) noexcept;
+    // Same IsolationDeny row as check_tenant_host_path. Separate so an
+    // openat2 refusal audits without moving the #4380 gate body.
+    void note_tenant_path_escape(std::string_view op) noexcept;
     // Issue #4233: Restricted+MT / Strict exec-face jail for shell /
     // command-output (#3836 siblings). Same policy predicate as
     // check_tenant_host_path: Soft/Off / single-tenant Restricted →
