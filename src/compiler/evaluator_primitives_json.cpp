@@ -718,9 +718,8 @@ void RegSplitParts::register_json_codec_primitives(
 
     // json-encode: convert Aura value to JSON string
     // (json-encode value) → string
-    // Supports: Int, Float, String, Bool, Void→null, Pair→array, Hash→obj
-    // json-encode: convert Aura value to JSON string
-    // (json-encode value) → string
+    // Supports: Int, Float, String, Bool, Void→null, Pair→array,
+    // Hash→obj, Vector→array (#5160).
     // Issue #2916: soft string quota on result interning under multi-fiber loops.
     register_prim(
         add, ev, "json-encode",
@@ -829,6 +828,28 @@ void RegSplitParts::register_json_codec_primitives(
                     r += "}";
                     return r;
                 }
+                // Issue #5160: a vector is a JSON array, same as a list.
+                // The old fall-through wrote null and dropped the elements,
+                // including when the vector sat inside a list or a hash.
+                if (types::is_vector(v)) {
+                    std::vector<EvalValue> elems;
+                    {
+                        std::scoped_lock lock(ev.cells_storage_mutex());
+                        const auto idx = types::as_vector_idx(v);
+                        const auto heap = ev.vector_heap();
+                        if (idx >= heap.size())
+                            return "null";
+                        elems = heap[idx];
+                    }
+                    std::string r = "[";
+                    for (std::size_t i = 0; i < elems.size(); ++i) {
+                        if (i > 0)
+                            r += ",";
+                        r += to_json(elems[i]);
+                    }
+                    r += "]";
+                    return r;
+                }
                 return "null";
             };
 
@@ -842,7 +863,8 @@ void RegSplitParts::register_json_codec_primitives(
             auto sid = string_heap.mint(result);
             return types::make_string(sid);
         },
-        pure_general(1, "(any) -> string", "Encode an Aura value as a JSON string."));
+        pure_general(1, "(any) -> string",
+                     "Encode an Aura value as a JSON string. Vectors encode as arrays."));
     // json-get-string: extract string value of a JSON field
     // (json-get-string json-str field-name) → string
     register_prim(

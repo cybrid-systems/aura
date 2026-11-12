@@ -6,6 +6,7 @@
 
 ; json-parse / json-encode stay engine prims (available without require).
 ; json-parse refuses nesting deeper than 512 (json-parse: nesting too deep).
+; A vector encodes as a JSON array, the same shape as a list (#5160).
 ; This module adds product helpers + (json-stringify) alias.
 (export json-stringify json-escape json-value c2s json-arr-items json-obj-items)
 
