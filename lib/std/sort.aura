@@ -52,9 +52,13 @@
       (vector-sort! less? seq)
       (list-sort seq less?)))
 
-(define (sorted? seq less?)
-  (let ((lst (if (vector? seq) (vector->list seq) seq)))
-    (let loop ((xs lst))
-      (cond ((or (null? xs) (null? (cdr xs))) #t)
-            ((less? (car (cdr xs)) (car xs)) #f)
-            (else (loop (cdr xs)))))))
+; (sorted? seq [less?]) — #t when each next element is not less? than the
+; previous. less? defaults to <, the same comparator as (sort seq) and as
+; std/algorithm's one-argument sorted?.
+(define (sorted? seq . less)
+  (let ((less? (if (null? less) < (car less))))
+    (let ((lst (if (vector? seq) (vector->list seq) seq)))
+      (let loop ((xs lst))
+        (cond ((or (null? xs) (null? (cdr xs))) #t)
+              ((less? (car (cdr xs)) (car xs)) #f)
+              (else (loop (cdr xs))))))))

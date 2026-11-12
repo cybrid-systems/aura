@@ -9,7 +9,7 @@
 | `std/INDEX` | `stdlib:list` `stdlib:help` `stdlib:examples` `stdlib:by-prefix` `stdlib:by-tag` | lib/std/INDEX.aura — Stdlib discoverability index (Issue #565) |
 | `std/abc` | `abc:init` `abc:init-hash` `abc:step!` `abc:best` `abc:population` `abc:report` `abc:export` `abc:help` … (+7) | lib/std/abc.aura — Issue #2878 Artificial Bee Colony surface |
 | `std/adaptive` | `string-index` `string-contains?` `string-trim` `measure-distance` `structured-diagnosis` `pid:analyze` `get-api-ref` `get-full-api-ref` | lib/std/adaptive.aura -- adaptive intend decision module |
-| `std/agent` | `auto-grow` `edsl-fix` `safe-eval` `llm-ask` `extract-code` `agent:decision-metrics` `agent:decide` `agent:loop-stats` … (+13) | lib/std/agent.aura — one closed loop, six phases (#5004) |
+| `std/agent` | `auto-grow` `edsl-fix` `safe-eval` `llm-ask` `llm:extract-code` `agent:decision-metrics` `agent:decide` `agent:loop-stats` … (+13) | lib/std/agent.aura — one closed loop, six phases (#5004) |
 | `std/algo-select` | `select:make` `select:features-fn!` `select:offline` `select:choose` `select:feedback!` `select:report` `select:drift?` `select:drift-score` … (+2) | lib/std/algo-select.aura — Issue #4945 (v0.2 P8): choose the algorithm |
 | `std/algorithm` | `sort-stable` `sort-by` `binary-search` `merge-sorted` `merge` `sorted?` `unique` `min-by` … (+3) | Aura standard algorithm library |
 | `std/ant` | `pheromone:init` `pheromone:update` `pheromone:rank` `pheromone:score` `pheromone:export` `pheromone:evaporate!` `pheromone:types` `colony:search` | lib/std/ant.aura -- mutation-type pheromone ranking + colony:search |

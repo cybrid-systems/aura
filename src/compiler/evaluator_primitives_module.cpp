@@ -53,6 +53,85 @@ using types::make_string;
 using types::make_vector;
 using types::make_void;
 
+std::string import_module_label(std::string_view path) {
+    std::string s(path);
+    if (s.size() >= 5 && s.ends_with(".aura"))
+        s.erase(s.size() - 5);
+    const auto slash_std = s.rfind("/std/");
+    if (slash_std != std::string::npos)
+        return s.substr(slash_std + 1);
+    const auto rel = s.rfind("std/");
+    if (rel != std::string::npos && (rel == 0 || s[rel - 1] == '/'))
+        return s.substr(rel);
+    return s;
+}
+
+} // namespace aura::compiler::primitives_detail
+
+namespace aura::compiler {
+
+void Evaluator::forget_import_bind_origin(const Env* env) noexcept {
+    if (env != nullptr)
+        import_bind_origin_.erase(env);
+}
+
+void Evaluator::warn_import_overwrite(Env* env, const std::string& name,
+                                      const types::EvalValue& val, std::string_view module_path) {
+    if (env == nullptr || name.empty())
+        return;
+    const std::string label = primitives_detail::import_module_label(module_path);
+    // Bindings are cells. A re-export may be a fresh cell holding the same
+    // closure (module-get) or the original cell (import). Compare the value
+    // inside the cell so only a distinct definition warns.
+    auto unwrap = [this](types::EvalValue v) {
+        if (types::is_cell(v)) {
+            const auto ci = types::as_cell_id(v);
+            if (ci < cells_.size())
+                return cells_[ci];
+        }
+        return v;
+    };
+    std::optional<types::EvalValue> local;
+    {
+        auto guard = env->lock_bindings_shared();
+        const auto binds = env->bindings();
+        for (auto it = binds.rbegin(); it != binds.rend(); ++it) {
+            if (it->first == name) {
+                local = it->second;
+                break;
+            }
+        }
+    }
+    auto& by_name = import_bind_origin_[env];
+    const auto found = by_name.find(name);
+    const bool tracked = found != by_name.end();
+    const auto incoming = unwrap(val);
+    const bool same_installed = tracked && local && unwrap(*local) == unwrap(found->second.value);
+    if (tracked && local && found->second.module != label && same_installed &&
+        unwrap(*local) != incoming) {
+        std::println(std::cerr,
+                     "warning: {} was already defined by {}; {}'s definition will overwrite it.",
+                     name, found->second.module, label);
+    }
+    // A true re-export is the same object. Keep the module that first
+    // installed it so a later distinct definition names that module.
+    const bool same_object =
+        tracked && local && found->second.module != label && unwrap(*local) == incoming;
+    if (!same_object) {
+        ImportBindOrigin origin;
+        origin.module = label;
+        origin.value = val;
+        if (tracked)
+            found->second = std::move(origin);
+        else
+            by_name.emplace(name, std::move(origin));
+    }
+}
+
+} // namespace aura::compiler
+
+namespace aura::compiler::primitives_detail {
+
 void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // (module? v) — Check if value is a module object
@@ -173,6 +252,11 @@ void register_module_primitives(PrimRegistrar add, Evaluator& ev) {
         auto* loaded_env = ev.modules_[mod_idx];
         Env* inject = ev.require_inject_env_ ? ev.require_inject_env_ : &ev.top_;
         auto inject_one = [&](const std::string& name, const EvalValue& val) {
+            // Issue #5198: warn when this require overwrites a name a
+            // different module already installed here. The bind still
+            // happens. The top_ mirror of a nested require is not a second
+            // warning (the caller's require is the direct inject below).
+            ev.warn_import_overwrite(inject, name, val, path);
             inject->bind(name, val);
             // Nested module load: also publish on top_ so top-level after
             // (require "m" all:) can still resolve shared std names if the
