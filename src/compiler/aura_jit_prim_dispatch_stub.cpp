@@ -60,6 +60,16 @@ aura_jit_owner_check_isolation(std::uint64_t, std::uint64_t, std::uint16_t, cons
     return 0;
 }
 
+// Issue #5175: light-link fallback. The strong body in service.ixx runs the
+// hash-ref primitive. Here the inline scan's miss stays the #4855 error
+// (void 11 when that hook is unwired).
+extern "C" std::int64_t aura_hash_ref_miss_error(std::int64_t key_val);
+extern "C" __attribute__((weak)) std::int64_t aura_jit_eval_hash_ref(std::int64_t hash_val,
+                                                                     std::int64_t key_val) {
+    (void)hash_val;
+    return aura_hash_ref_miss_error(key_val);
+}
+
 // Do not stub aura_set/get_storm_eval_context here. This TU is in
 // aura_jit_test_objects (DT_NEEDED first for full-JIT tests); a weak
 // no-op in the first DSO wins ELF search over the strong TLS in

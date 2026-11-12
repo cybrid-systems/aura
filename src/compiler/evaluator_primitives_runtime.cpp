@@ -9,6 +9,8 @@ module;
 #include "runtime_shared.h"
 #include "float_repr.hh"                   // Issue #4468
 #include "compiler/generic_error_words.hh" // #4936 B4 constexpr error tokens
+#include "core/sandbox.hh"                 // Issue #5175: JIT pair face for apply
+#include "core/provenance_tracker.hh"      // Issue #5175: multi_tenant_env_active()
 
 module aura.compiler.evaluator;
 
@@ -865,8 +867,33 @@ void RegSplitParts::register_apply_primitive(PrimRegistrar add, Evaluator& ev) {
         auto current = arg_list;
         while (is_pair(current)) {
             auto idx = as_pair_idx(current);
-            if (idx >= ev.pairs_.size())
-                break;
+            if (idx >= ev.pairs_.size()) {
+                // Issue #5175 / #4567: JIT cons lives in g_pair_slots. Stopping
+                // here used to call + with no args, so (apply + (list 1 2 3))
+                // returned 0. Same #4111 face as car before the car is copied.
+                if (idx >= g_pair_slots.size() || g_pair_slots[idx] == nullptr)
+                    break;
+                const bool prod_pair_face =
+                    ev.effect_sandbox_mode() != 0 &&
+                    (ev.effect_sandbox_mode() == 2 || ::aura::core::sandbox::is_strict() ||
+                     ::aura::core::provenance::multi_tenant_env_active());
+                if (prod_pair_face) {
+                    const std::uint64_t slot_tenant = (idx < g_pair_slot_tenants.size())
+                                                          ? g_pair_slot_tenants[idx]
+                                                          : std::uint64_t{0};
+                    if (slot_tenant != ev.capability_tenant_id()) {
+                        (void)ev.check_workspace_isolation(ev.capability_tenant_id(), slot_tenant,
+                                                           /*required_effects=*/0, "apply");
+                        return make_primitive_error(
+                            ev.string_heap_, ev.error_values_,
+                            "apply: cross-tenant pair slot read denied (#4111)",
+                            ev.primitive_error_counter_ptr());
+                    }
+                }
+                args.push_back(EvalValue{g_pair_slots[idx]->car});
+                current = EvalValue{g_pair_slots[idx]->cdr};
+                continue;
+            }
             // Issue #4518: apply copies pairs_[idx].car into the callee arg
             // vector, but infer_required_effects_from_name infers kEffectNone
             // for it, so dispatch never choked a foreign mailbox ref. Compare
