@@ -1,0 +1,42 @@
+; Issue #5161 — channel:try-recv on an empty channel is #f, not "".
+; "" is truthy, so a missing message used to look like a message.
+; A queued empty string is still that string. channel:recv on a closed
+; channel stays "".
+(define *fails* 0)
+(define (assert! pred msg)
+  (if pred
+      (begin (display "  pass: ") (display msg) (newline))
+      (begin
+        (set! *fails* (+ *fails* 1))
+        (display "  FAIL: ")
+        (display msg)
+        (newline))))
+
+(define c (channel:create 1))
+(define v (channel:try-recv c))
+(assert! (eq? v #f) "empty channel is #f")
+(assert! (not (string? v)) "empty channel is not a string")
+(assert! (equal? (if v "truthy" "falsy") "falsy") "empty channel is falsy")
+
+(assert! (eq? #t (channel:send c "")) "send an empty string")
+(define empty (channel:try-recv c))
+(assert! (and (string? empty) (equal? empty "")) "queued empty string stays \"\"")
+(assert! (equal? (if empty "truthy" "falsy") "truthy") "queued empty string is truthy")
+(assert! (eq? #f (channel:try-recv c)) "drained channel is #f again")
+
+(assert! (eq? #t (channel:send c "hi")) "send a text message")
+(assert! (equal? (channel:try-recv c) "hi") "try-recv returns the text")
+(assert! (eq? #f (channel:try-recv c)) "no second message")
+
+(assert! (eq? #f (channel:try-recv 999999)) "unknown channel is #f")
+(assert! (eq? #t (channel:close c)) "close")
+(assert! (eq? #f (channel:try-recv c)) "try-recv on a closed empty channel is #f")
+(assert! (equal? (channel:recv c) "") "blocking recv on a closed channel stays \"\"")
+
+(if (= *fails* 0)
+    (begin (display "OK-5161 channel:try-recv\n"))
+    (begin
+      (display "FAIL-5161 fails=")
+      (display *fails*)
+      (newline)
+      (error "5161 suite failed")))
