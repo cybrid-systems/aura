@@ -24,9 +24,13 @@
   (list next (cons next 0)))
 
 ; (random-integer gen) → (list 0..2^31-1 updated-gen)
+; Issue #5194: the argument is a generator from (make-random), not a bound.
+; Passing a number used to fail as "car: not a pair" from inside random-next.
 (define (random-integer gen)
-  (let ((result (random-next gen)))
-    (list (car result) (cadr result))))
+  (if (not (and (pair? gen) (integer? (car gen))))
+      (error "random-integer: expected a generator, e.g. (random-integer (make-random))")
+      (let ((result (random-next gen)))
+        (list (car result) (cadr result)))))
 
 ; (random-float gen) → (list 0.0..1.0 updated-gen)
 (define (random-float gen)
@@ -39,6 +43,8 @@
     (list (+ lo (modulo (car result) (- hi lo))) (cadr result))))
 
 ; (random-vector n gen) → (list (vector of n floats) updated-gen)
+; Constant stack (the iter loop is tail-recursive). Needs mutate for the
+; vector-set! writes, so it is a dev/off-preset call until #5195 lands.
 (define (random-vector n gen)
   (let ((v (make-vector n)))
     (let iter ((i 0) (g gen))
@@ -48,29 +54,33 @@
           (iter (+ i 1) (cadr r)))))))
 
 ; (shuffle lst gen) → (list shuffled-list updated-gen)
+; Issue #5194: the previous Fisher-Yates-via-recursion recursed once per
+; element (stack overflow above ~512 elements) and located + rebuilt the list
+; for every pick, so it was O(n^2). In-place Fisher-Yates needs vector-set!,
+; which a fresh vector cannot do under the default (Restricted) preset
+; (#5195), so decorate each element with two LCG draws and sort by them
+; instead: O(n log n) through the native list-sort, constant stack, no
+; mutation. Two draws per element make a key collision negligible (~n^2/2^62);
+; a collision only keeps the pair's relative order, never drops an element.
 (define (shuffle lst gen)
-  (let ((n (length lst)))
-    (if (<= n 1) (list lst gen)
-      (let* ((idx-result (random-range 0 n gen))
-             (idx (car idx-result))
-             (g2 (cadr idx-result))
-             (picked (list-ref lst idx))
-             (rest (remove-at lst idx)))
-        (let ((shuffled (shuffle rest g2)))
-          (list (cons picked (car shuffled)) (cadr shuffled)))))))
+  (let decorate ((xs lst) (g gen) (acc (list)))
+    (if (null? xs)
+        (let ((sorted (list-sort acc
+                                 (lambda (a b)
+                                   (let ((ka (car a)) (kb (car b)))
+                                     (or (< (car ka) (car kb))
+                                         (and (= (car ka) (car kb))
+                                              (< (cdr ka) (cdr kb)))))))))
+          (list (map cdr sorted) g))
+        (let* ((r1 (random-next g))
+               (r2 (random-next (cadr r1))))
+          (decorate (cdr xs)
+                    (cadr r2)
+                    (cons (cons (cons (car r1) (car r2)) (car xs)) acc))))))
 
-; remove-at: remove element at index from list
-(define (remove-at lst i)
-  (let iter ((n 0) (rest lst) (acc (list)))
-    (if (null? rest) (reverse acc)
-      (if (= n i) (append (reverse acc) (cdr rest))
-        (iter (+ n 1) (cdr rest) (cons (car rest) acc))))))
-
-; list-ref: get element at index
-(define (list-ref lst i)
-  (if (= i 0) (car lst)
-    (list-ref (cdr lst) (- i 1))))
-
-; Seed from current generator's state
+; (random-seed gen) → current seed of the generator (an integer)
+; Issue #5194: the module header documents every export's shape now; this one
+; takes exactly one argument (the generator) and returns its seed, it does not
+; set a seed.
 (define (random-seed gen)
   (car gen))

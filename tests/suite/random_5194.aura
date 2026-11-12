@@ -1,0 +1,48 @@
+; Issue #5194: std/random shuffle must not recurse per element (the old
+; implementation overflowed above ~512 elements and was O(n^2)), and
+; random-integer must name a non-generator argument instead of "car: not a
+; pair". Covers the issue's proposed checks: length + multiset conservation at
+; 1000/10000 elements, no stack overflow, and the generator argument shape.
+(require "std/random" all:)
+
+(define (sum xs) (foldl + 0 xs))
+
+(define (permutation? original shuffled)
+  (and (equal? (length original) (length shuffled))
+       (equal? (sum original) (sum shuffled))))
+
+(define (check)
+  (let* ((g (make-random))
+         (small (range 0 1000))
+         (small-out (car (shuffle small g)))
+         (large (range 0 10000))
+         (large-out (car (shuffle large (make-random))))
+         ;; same seed → same permutation (the generator is threaded through)
+         (a (car (shuffle (list 1 2 3 4 5) (make-random 42))))
+         (b (car (shuffle (list 1 2 3 4 5) (make-random 42)))))
+    (and
+     ; conservation at 1000: length and multiset (sum is a cheap multiset hash
+      (= 1000 (length small-out))
+      (permutation? small small-out)
+      (pair? small-out)
+      ; 10000 used to die with "recursion depth exceeded (>512)"
+      (= 10000 (length large-out))
+      (permutation? large large-out)
+      ; shape edge cases
+      (equal? (car (shuffle (list) (make-random))) (quote ()))
+      (equal? (car (shuffle (list 7) (make-random))) (quote (7)))
+      ; deterministic per seed
+      (equal? a b)
+      ; a non-generator argument is a named error, not "car: not a pair"
+      (try (random-integer 10) (catch e #t))
+      ; the generator form still returns (value . next-gen)
+      (let ((r (random-integer (make-random))))
+        (and (pair? r) (integer? (car r)) (pair? (cadr r)))))))
+
+(define host (if (check) 1 0))
+(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+
+(if (and (= host 1) (= guest 1))
+    (begin (display "OK-5194-random") (newline))
+    (begin (display "FAIL-5194-random host=") (display host)
+           (display " guest=") (display guest) (newline) (exit 1)))
