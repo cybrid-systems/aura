@@ -1,41 +1,97 @@
-; csv.aura — CSV parsing and generation
+; csv.aura — CSV parsing and generation (RFC 4180)
 ; Characters are represented as integers in Aura.
-; 10 = newline, 44 = comma, 34 = double-quote.
-(export csv-parse csv->rows csv->table csv-select csv-filter csv-header column-names)
+; 9 = tab, 10 = LF, 13 = CR, 34 = double-quote, 44 = comma.
+(export csv-parse csv->rows csv->table csv-select csv-filter csv-header column-names
+        rows->csv)
 
-(define (split-lines text)
-  (let loop ((chars (string->list text)) (current '()) (result '()))
-    (if (null? chars)
-        ;; Drop the trailing empty line that a final \n produces. Without
-        ;; this, "a\nb\n" parses to ["a" "b" ""] (3 lines) instead of
-        ;; ["a" "b"] (2 lines) — off-by-one that broke every csv test.
-        (if (null? current)
-            result
-            (append result (list (list->string (reverse current)))))
-        (let ((c (car chars)) (rest (cdr chars)))
-          (if (= c 10)
-              (loop rest '() (append result (list (list->string (reverse current)))))
-              (loop rest (cons c current) result))))))
-
-(define (csv-split-line line)
-  (let loop ((chars (string->list line)) (current '()) (fields '()) (in-quotes #f))
-    (if (null? chars)
-        (append fields (list (list->string (reverse current))))
-        (let ((c (car chars)) (rest (cdr chars)))
-          (cond
-            ((and (not in-quotes) (= c 44))
-             (loop rest '() (append fields (list (list->string (reverse current)))) #f))
-            ((= c 34)
-             (loop rest current fields (not in-quotes)))
-            (else
-             (loop rest (cons c current) fields in-quotes)))))))
-
+; Issue #5196: parsing used to split the text on \n first and only then look
+; for quotes per line, so a quoted field containing a newline was cut in two,
+; "" was dropped instead of becoming a literal quote, and a CRLF row kept a
+; stray \r on its last field. One state machine fixes all three:
+;   - \n / \r\n / lone \r outside quotes end the record,
+;   - inside quotes everything (comma, newline) is data,
+;   - "" inside a quoted field is one literal quote,
+;   - a quote is only special at the start of a field; elsewhere it is data.
+; Trailing terminators do not produce a trailing empty record, and an empty
+; input is ().
 (define (csv-parse text)
-  (map csv-split-line (split-lines text)))
+  (let loop ((cs (string->list text))
+             (cur '())      ; reversed chars of the field being built
+             (fields '())   ; reversed completed fields of this record
+             (rows '())     ; reversed completed records
+             (in-q #f)
+             (row? #f))     ; anything seen since the last terminator
+    (cond
+      ((null? cs)
+       (if (not row?)
+           (reverse rows)
+           (reverse (cons (reverse (cons (list->string (reverse cur)) fields)) rows))))
+      ((and in-q (= (car cs) 34))
+       (if (and (pair? (cdr cs)) (= (car (cdr cs)) 34))
+           (loop (cddr cs) (cons 34 cur) fields rows #t #t) ; "" -> literal quote
+           (loop (cdr cs) cur fields rows #f row?)))       ; closing quote
+      (in-q
+       (loop (cdr cs) (cons (car cs) cur) fields rows #t row?))
+      ((= (car cs) 34)
+       (if (null? cur)
+           (loop (cdr cs) cur fields rows #t #t)           ; opening quote
+           (loop (cdr cs) (cons 34 cur) fields rows #f row?))) ; mid-field quote
+      ((= (car cs) 44)                                     ; comma
+       (loop (cdr cs) '() (cons (list->string (reverse cur)) fields) rows #f #t))
+      ((or (= (car cs) 10) (= (car cs) 13))                ; LF / CR / CRLF
+       (let ((rest (if (and (= (car cs) 13) (pair? (cdr cs)) (= (car (cdr cs)) 10))
+                       (cddr cs)
+                       (cdr cs))))
+         (loop rest '() '()
+               (cons (reverse (cons (list->string (reverse cur)) fields)) rows) #f #f)))
+      (else
+       (loop (cdr cs) (cons (car cs) cur) fields rows in-q #t)))))
 
+; csv->rows / csv->table are aliases of csv-parse (text -> rows). They are not
+; converters between rows and tables; the generator is rows->csv below.
 (define (csv->rows text) (csv-parse text))
 
 (define (csv->table text) (csv-parse text))
+
+; Issue #5196: the missing write side. A field is quoted when it contains a
+; comma, a quote, CR or LF, and every internal quote is doubled (RFC 4180).
+(define (csv-needs-quote? field)
+  (let loop ((cs (string->list field)))
+    (cond ((null? cs) #f)
+          ((let ((c (car cs)))
+             (or (= c 44) (= c 34) (= c 10) (= c 13))) #t)
+          (else (loop (cdr cs))))))
+
+(define (csv-quote field)
+  ; leading quote in the accumulator, closing quote appended at the end
+  (let loop ((cs (string->list field)) (acc (list 34)))
+    (if (null? cs)
+        (list->string (reverse (cons 34 acc)))
+        (if (= (car cs) 34)
+            (loop (cdr cs) (cons 34 (cons 34 acc)))
+            (loop (cdr cs) (cons (car cs) acc))))))
+
+(define (csv-escape-field field)
+  (if (csv-needs-quote? field) (csv-quote field) field))
+
+(define (csv-row->line row)
+  (if (null? row)
+      ""
+      (let loop ((fs (cdr row)) (acc (csv-escape-field (car row))))
+        (if (null? fs)
+            acc
+            (loop (cdr fs) (string-append acc "," (csv-escape-field (car fs))))))))
+
+; (rows->csv rows) -> text. Records are joined with \n (parsing accepts \n,
+; \r\n and lone \r); an empty row list is "".
+(define (rows->csv rows)
+  (if (null? rows)
+      ""
+      (let loop ((rs (cdr rows)) (acc (csv-row->line (car rows))))
+        (if (null? rs)
+            acc
+            (loop (cdr rs) (string-append acc "\n" (csv-row->line (car rs))))))))
+
 
 (define (csv-select cols rows)
   (map (lambda (row) (map (lambda (c) (list-ref row c)) cols)) rows))

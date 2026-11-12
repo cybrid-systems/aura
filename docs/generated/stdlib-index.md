@@ -28,7 +28,7 @@
 | `std/combinators` | `compose` `curry` `rcurry` `partial2` `const` `identity` `flip` `complement` … (+1) | combinators.aura — Functional programming utilities |
 | `std/compat` | `query:siblings` `query:find-by-name` `query:nodes-with-marker` `query:subtree` | lib/std/compat.aura — temporary compatibility shims for demoted query:* |
 | `std/core` | `core:any` `core:all` `core:zip-with` `core:group-by` `core:chunk` `core:running-sum` `core:safe-div` `core:format-currency` … (+2) | lib/std/core.aura — Core builtin high-level helpers (Issue #564) |
-| `std/csv` | `csv-parse` `csv->rows` `csv->table` `csv-select` `csv-filter` `csv-header` `column-names` | csv.aura — CSV parsing and generation |
+| `std/csv` | `csv-parse` `csv->rows` `csv->table` `csv-select` `csv-filter` `csv-header` `column-names` `rows->csv` | csv.aura — CSV parsing and generation (RFC 4180) |
 | `std/data` | `make-trie` `trie-insert` `trie-search` `trie-prefix?` `trie-keys` | Aura standard data structures library |
 | `std/datetime` | `;` `Core` `timestamp` `timestamp-ms` `steady-ms` `timestamp->year` `timestamp->month` `timestamp->day` … (+20) | datetime.aura — Date and time utilities |
 | `std/diagnose` | `diagnose` | lib/std/diagnose.aura — error-string → fix plan (#5006) |

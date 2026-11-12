@@ -1,0 +1,47 @@
+; Issue #5196: std/csv must follow RFC 4180. The three silent-data-loss cases
+; (quoted newline, doubled quote, CRLF) plus the empty-field shapes, and the
+; rows->csv round trip. std/csv had no tests before this file.
+(require "std/csv" all:)
+
+(define (check)
+  (and
+   ; quoted comma
+   (equal? (csv-parse "a,\"x,y\",b") (list (list "a" "x,y" "b")))
+   ; quoted newline stays inside the field (was split into two records)
+   (equal? (csv-parse "a,\"line
+break\",b") (list (list "a" "line
+break" "b")))
+   ; "" inside a quoted field is one literal quote (was dropped)
+   (equal? (csv-parse "a,\"say \"\"hi\"\"\",b") (list (list "a" "say \"hi\"" "b")))
+   ; CRLF rows leave no stray \r (Excel default export)
+   (equal? (csv-parse "a,b
+1,2
+") (list (list "a" "b") (list "1" "2")))
+   ; LF-only and a final row without a terminator
+   (equal? (csv-parse "a,b
+1,2") (list (list "a" "b") (list "1" "2")))
+   ; empty fields, quoted empty field, empty input, blank record
+   (equal? (csv-parse "a,,c") (list (list "a" "" "c")))
+   (equal? (csv-parse "a,") (list (list "a" "")))
+   (equal? (csv-parse "\"\",b") (list (list "" "b")))
+   (equal? (csv-parse "") (quote ()))
+   (equal? (csv-parse "a
+
+b") (list (list "a") (list "") (list "b")))
+   ; a lone CR is a terminator too
+   (equal? (csv-parse "a1") (list (list "a") (list "1")))
+   ; write side: quoting only when needed, internal quotes doubled
+   (equal? (rows->csv (list (list "a" "x,y" "say \"hi\""))) "a,\"x,y\",\"say \"\"hi\"\"\"")
+   (equal? (rows->csv (list)) "")
+   ; parse(rows->csv(rows)) == rows, with the shapes that need escaping
+   (let ((rows (list (list "a" "x,y" "say \"hi\"")
+                     (list "1" "2" ""))))
+     (equal? (csv-parse (rows->csv rows)) rows))))
+
+(define host (if (check) 1 0))
+(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+
+(if (and (= host 1) (= guest 1))
+    (begin (display "OK-5196-csv") (newline))
+    (begin (display "FAIL-5196-csv host=") (display host)
+           (display " guest=") (display guest) (newline) (exit 1)))

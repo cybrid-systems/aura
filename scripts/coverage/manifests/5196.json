@@ -1,0 +1,35 @@
+{
+  "issue": 5196,
+  "title": "std/csv violates RFC 4180: quoted newline splits records, doubled quotes dropped, CRLF leaves a stray CR",
+  "checks": [
+    {
+      "ac": "AC1-state-machine",
+      "path": "lib/std/csv.aura",
+      "contains": [
+        "Issue #5196",
+        "csv-parse",
+        "closing quote",
+        "lone \\r"
+      ]
+    },
+    {
+      "ac": "AC2-generator",
+      "path": "lib/std/csv.aura",
+      "contains": [
+        "rows->csv",
+        "csv-needs-quote?",
+        "every internal quote is doubled"
+      ]
+    },
+    {
+      "ac": "AC3-suite",
+      "path": "tests/suite/csv_rfc4180_5196.aura",
+      "contains": [
+        "#5196",
+        "OK-5196-csv",
+        "rows->csv",
+        "quoted newline"
+      ]
+    }
+  ]
+}
