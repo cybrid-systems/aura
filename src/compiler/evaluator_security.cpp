@@ -554,6 +554,30 @@ namespace {
             return {};
         return ring.ring[(s - 1) % kSecurityEventRingSize].reason;
     }
+
+    // Issue #5163: in-place slot updates, not AST edits. string-fill! and
+    // mw:closure-free stay on the workspace-scoped grant (#4036). The
+    // names match infer_required_effects_from_name's heap groups
+    // (#3720 / #4874 / #4036) minus those two.
+    [[nodiscard]] bool ordinary_heap_update_op(std::string_view op) noexcept {
+        return op == "hash-set!" || op == "hash-remove!" || op == "vector-set!" ||
+               op == "vector-fill!" || op == "set-car!" || op == "set-cdr!";
+    }
+
+    // Issue #5163: evo:trial's child used to refuse these with
+    // "mutate not granted". The Soft row still holds Mutate; isolation's
+    // unset-principal deny (#2385) and the workspace filter hid it.
+    // set-code is not in this set (#4575). A foreign ref does not inherit.
+    // Zero-grant Restricted has no row (#3720 / #4874).
+    [[nodiscard]] bool slot_ok(const Evaluator* ev, std::string_view op, std::uint64_t ref_tenant,
+                               std::uint16_t req_bits) noexcept {
+        if (ev == nullptr || ref_tenant != 0 || !ev->kernel_self_single_tenant() ||
+            !ordinary_heap_update_op(op))
+            return false;
+        return ::aura::core::capability::g_capability_registry()
+            .soft_session_grant_workspace(ev->capability_tenant_id(), req_bits)
+            .has_value();
+    }
 } // namespace
 
 // Issue #1565 / #1876 / #2706: private capability effect check + audit.
@@ -671,6 +695,16 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     const bool kernel_self = required_effect_bits == aura::compiler::security::kEffectMutate &&
                              kernel_self_workspace_mutate(op, /*ref_tenant=*/0);
     const bool sb_active = !kernel_self && (sandbox_mode_ || is_strict() || is_sandbox_active());
+    // Issue #5163: the Soft row is minted for workspace 0. A child layer
+    // still uses that Mutate grant for a local hash / vector / pair slot.
+    // The audit row keeps prov.workspace_id (the child). Zero-grant
+    // Restricted has no row, so the check stays a deny (#3720 / #4874).
+    std::optional<std::uint32_t> grant_workspace;
+    if (kernel_self_single_tenant() && ordinary_heap_update_op(op)) {
+        grant_workspace =
+            ::aura::core::capability::g_capability_registry().soft_session_grant_workspace(
+                tenant, required_effect_bits);
+    }
 
     // Issue #2388: CapabilityRegistry::record_audit dual-writes SecurityEvent
     // + WAL (single path). fiber-grant-mismatch reason is stamped there via
@@ -690,7 +724,7 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
             .security_event_wal_append_fail_total.load(std::memory_order_relaxed);
     const bool ok = aura::core::capability::check_and_record_effect(
         static_cast<Effect>(required_effect_bits), static_cast<Effect>(actual_effect_bits), prov,
-        tenant, op, wildcard, sb_active);
+        tenant, op, wildcard, sb_active, grant_workspace);
     const bool se_wal_miss =
         ::aura::core::security_event_wal::se_wal_append_miss_count() != se_wal_miss_before ||
         ::aura::core::security_event_wal::g_security_event_wal_metrics()
@@ -1026,9 +1060,10 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
         // Issue #4575: Soft self skips unset-principal isolation.
         const bool soft_self = soft_session_skips_isolation(req_bits, capability_tenant_id_,
                                                             ref_tenant, workspace_tree_);
+        const bool heap_ok = slot_ok(this, op, ref_tenant, req_bits);
         if ((req_bits != aura::compiler::security::kEffectMutate ||
              !kernel_self_workspace_mutate(op, ref_tenant)) &&
-            !soft_self &&
+            !soft_self && !heap_ok &&
             !check_workspace_isolation(
                 /*target=*/iso_target,
                 /*ref_tenant=*/ref_tenant || target_node ? ref_tenant : capability_tenant_id_,
