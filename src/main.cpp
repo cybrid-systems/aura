@@ -1140,6 +1140,8 @@ static void print_top_help_4935() {
     std::println("  -e, --eval EXPR    evaluate EXPR");
     std::println("  --preset dev|ci|prod, --grant CAPS, --deny CAPS   capabilities");
     std::println("  --fmt, --typecheck, --query Q, --inspect           tools");
+    std::println("  A tool positional that exists as a file is that file;");
+    std::println("  any other positional is source text.");
     std::println("  -V, --version      print version");
     std::println("");
     std::println("'aura help <command>' for details; 'aura help --all' for every option.");
@@ -3039,11 +3041,13 @@ static void print_denseness_usage(const char*, std::ostream& out = std::cerr) {
     std::println(out, "  --preset P, --grant CAPS, --deny CAPS, --quiet   capabilities "
                       "(below)");
     std::println(out, "  --no-arena, --worker-threads N, --health-port N");
-    std::println(out, "Tools (read code from the argument or stdin):");
-    std::println(out, "  --fmt [--check] | --unparse   format; --check exits 1 when not "
+    std::println(out, "Tools (one rule: file, source text, or stdin):");
+    std::println(out, "  An existing file is read. Any other positional is source text.");
+    std::println(out, "  A missing path (a slash, or a .aura name) is an error.");
+    std::println(out, "  --fmt [--check] [-i] | --unparse   format; --check exits 1 when not "
                       "formatted");
-    std::println(out, "  --typecheck | --auto-fix      type diagnostics / suggested fixes");
-    std::println(out, "  --query Q | --query-and-fix   structural queries over the code");
+    std::println(out, "  --typecheck | --auto-fix | --ir    diagnostics, fixes, evaluation");
+    std::println(out, "  --query Q | --query-and-fix        queries over that same program");
     std::println(out, "  --evo-explain                 explain an evolution step (AURA_OBS=1)");
     std::println(out, "  --inspect [ir|…], --ir, --jit, --jit-session   compiler views");
     std::println(out, "  --env, --env-json             runtime environment report");
@@ -4690,29 +4694,79 @@ static int run_cli_serve_async_bench(int argc, char** argv, int num_workers) {
     return 0;
 }
 
+// Issue #5171: --fmt/--unparse read a positional as a path, while
+// --typecheck/--auto-fix/--ir/--query read it as source text. One rule:
+// an existing file is that file; a missing path-shaped token is a read
+// error; anything else is source text. No positional still means stdin.
+struct CliToolProgram5171 {
+    bool from_file = false;
+    bool missing = false;
+    std::string path;
+    std::string text;
+};
+
+static bool cli_tool_path_shaped_5171(std::string_view a) {
+    if (a.empty())
+        return false;
+    // A source form is never a missing path, even when it contains a slash.
+    const char c = a.front();
+    if (c == '(' || c == '#' || c == '"' || c == '\'' || c == '`' || c == ';')
+        return false;
+    if (a.find('/') != std::string_view::npos)
+        return true;
+    return a.ends_with(".aura") || a.ends_with(".scm") || a.ends_with(".ss");
+}
+
+static CliToolProgram5171 cli_tool_program_5171(const char* arg) {
+    CliToolProgram5171 out;
+    const std::filesystem::path path(arg);
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(path, ec) && !ec) {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) {
+            out.missing = true;
+            out.path = arg;
+            return out;
+        }
+        out.from_file = true;
+        out.path = arg;
+        out.text.assign(std::istreambuf_iterator<char>(in), {});
+        return out;
+    }
+    if (cli_tool_path_shaped_5171(arg)) {
+        out.missing = true;
+        out.path = arg;
+        return out;
+    }
+    out.text = arg;
+    return out;
+}
+
+static int cli_tool_missing_5171(const CliToolProgram5171& prog) {
+    std::println(std::cerr, "error: cannot read {}", prog.path);
+    return 1;
+}
+
 static int run_cli_ir(int argc, char** argv) {
     aura::compiler::CompilerService cs;
+    std::string source;
     if (argc > 2) {
-        auto source = argv[2];
-        auto result = cs.eval_ir(source);
-        if (!result) {
-            std::println(std::cerr, "error: {}", result.error().format_with_source(source));
-            return 1;
-        }
-        if (!is_void(*result))
-            std::println("{}", fmt_val(*result, cs));
+        const CliToolProgram5171 prog = cli_tool_program_5171(argv[2]);
+        if (prog.missing)
+            return cli_tool_missing_5171(prog);
+        source = prog.text;
     } else {
         std::ostringstream buf;
         buf << std::cin.rdbuf();
-        auto source = buf.str();
-        auto result = cs.eval_ir(source);
-        if (!result) {
-            std::println(std::cerr, "error: {}", result.error().format_with_source(source));
-            return 1;
-        }
-        if (!is_void(*result))
-            std::println("{}", fmt_val(*result, cs));
+        source = buf.str();
     }
+    auto result = cs.eval_ir(source);
+    if (!result) {
+        std::println(std::cerr, "error: {}", result.error().format_with_source(source));
+        return 1;
+    }
+    if (!is_void(*result))
+        std::println("{}", fmt_val(*result, cs));
     return 0;
 }
 
@@ -4848,7 +4902,10 @@ static int run_cli_query(int argc, char** argv) {
     aura::ast::FlatAST flat(alloc);
     std::string input;
     if (argc > 3) {
-        input = argv[3];
+        const CliToolProgram5171 prog = cli_tool_program_5171(argv[3]);
+        if (prog.missing)
+            return cli_tool_missing_5171(prog);
+        input = prog.text;
     } else {
         std::getline(std::cin, input);
     }
@@ -4929,7 +4986,10 @@ static int run_cli_typecheck(int argc, char** argv) {
     aura::compiler::CompilerService cs;
     std::string input;
     if (argc > 2) {
-        input = argv[2];
+        const CliToolProgram5171 prog = cli_tool_program_5171(argv[2]);
+        if (prog.missing)
+            return cli_tool_missing_5171(prog);
+        input = prog.text;
     } else {
         // Issue #4911: the whole program, not just its first line.
         input.assign(std::istreambuf_iterator<char>(std::cin), {});
@@ -4948,10 +5008,14 @@ static int run_cli_auto_fix(int argc, char** argv) {
     aura::ast::StringPool pool(alloc);
     aura::ast::FlatAST flat(alloc);
     std::string input;
-    if (argc > 2)
-        input = argv[2];
-    else
+    if (argc > 2) {
+        const CliToolProgram5171 prog = cli_tool_program_5171(argv[2]);
+        if (prog.missing)
+            return cli_tool_missing_5171(prog);
+        input = prog.text;
+    } else {
         std::getline(std::cin, input);
+    }
     auto pr = aura::parser::parse_to_flat(input, flat, pool);
     if (!pr.success || pr.root == aura::ast::NULL_NODE) {
         std::println(std::cerr, "parse error{}", pr.error.empty() ? "" : ": " + pr.error);
@@ -4978,25 +5042,26 @@ static int run_cli_fmt(int argc, char** argv) {
     bool in_place = false;
     bool check_only = false;
     std::string in_path, input;
+    const char* program = nullptr;
 
     for (int i = 2; i < argc; ++i) {
-        if (std::string_view(argv[i]) == "-i")
+        const std::string_view a(argv[i]);
+        if (a == "-i")
             in_place = true;
-        else if (std::string_view(argv[i]) == "--check")
+        else if (a == "--check")
             check_only = true;
-        else if (argv[i][0] != '-') {
-            in_path = argv[i];
-        }
+        else if (!a.empty() && a.front() != '-')
+            program = argv[i];
     }
 
-    if (!in_path.empty()) {
-        // Read from file
-        std::ifstream f(in_path);
-        if (!f) {
-            std::println(std::cerr, "error: cannot read {}", in_path);
-            return 1;
-        }
-        input = std::string((std::istreambuf_iterator<char>(f)), {});
+    if (program) {
+        // Issue #5171: same file-or-source rule as --typecheck.
+        const CliToolProgram5171 prog = cli_tool_program_5171(program);
+        if (prog.missing)
+            return cli_tool_missing_5171(prog);
+        input = prog.text;
+        if (prog.from_file)
+            in_path = prog.path;
     } else {
         // Read from stdin
         std::getline(std::cin, input);
