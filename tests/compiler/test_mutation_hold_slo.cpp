@@ -11,6 +11,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/mutation_hold_budget.h"
+#include "compiler/typed_mutation_audit.h"
 #include "compiler/observability_metrics.h"
 
 #include <chrono>
@@ -211,6 +212,59 @@ static void ac5_source_cite() {
           "AC5: no second timer");
 }
 
+// ── AC6 (#5275): the SLO refusal names its gate; success clears it ──
+static void ac6_deny_gate_named() {
+    std::println("\n--- AC6: hold-SLO deny is named, not anonymous (#5275) ---");
+    unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
+    unsetenv("AURA_SANDBOX");
+    setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2ms SLO
+    aura::compiler::typed_audit::clear_boundary_deny_op();
+    aura::compiler::typed_audit::clear_last_boundary_deny_op();
+
+    CompilerService cs;
+    CompilerMetrics metrics;
+    cs.evaluator().set_compiler_metrics(&metrics);
+
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        spin_us(5'000); // > SLO
+    }
+    CHECK(!ok, "AC6: SLO breaker still fails closed");
+    // The gate token is first-wins and consumed by exit_mutation_boundary;
+    // the consumed copy is what the mutate:* wrapper names in its error.
+    CHECK(std::string_view(aura::compiler::typed_audit::last_boundary_deny_op()) == "hold-slo",
+          "AC6: refused boundary reports gate=hold-slo (was anonymous 'rollback')");
+
+    // A committed boundary must not leave a token for the next one: the
+    // wrapper would otherwise label an unrelated refusal with this gate.
+    setenv("AURA_MUTATION_HOLD_SLO_US", "50000", 1); // 50ms, stay under
+    ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+    }
+    CHECK(ok, "AC6: fast boundary commits");
+    CHECK(std::string_view(aura::compiler::typed_audit::take_boundary_deny_op()) == "rollback",
+          "AC6: a committed boundary leaves no deny token behind");
+
+    cs.evaluator().set_compiler_metrics(nullptr);
+    unsetenv("AURA_MUTATION_HOLD_SLO_US");
+}
+
+// ── AC7 (#5275): the wrapper names the gate in the returned error ──
+static void ac7_wrapper_names_gate() {
+    std::println("\n--- AC7: mutate wrapper surfaces the gate (#5275) ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto prim = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(emb.find("note_boundary_deny_op(\"hold-slo\")") != std::string::npos,
+          "AC7: the hold-SLO arm names its gate");
+    CHECK(prim.find("last_boundary_deny_op()") != std::string::npos,
+          "AC7: the mutate wrapper reads the consumed gate");
+    CHECK(prim.find("\"; topology restored\"") != std::string::npos ||
+              prim.find("topology restored") != std::string::npos,
+          "AC7: legacy message tail kept");
+}
+
 } // namespace
 
 int run_test_mutation_hold_slo() {
@@ -220,6 +274,8 @@ int run_test_mutation_hold_slo() {
     ac3_under_slo_no_force();
     ac4_disable_and_query();
     ac5_source_cite();
+    ac6_deny_gate_named();
+    ac7_wrapper_names_gate();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

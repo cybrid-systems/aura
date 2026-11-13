@@ -5265,12 +5265,39 @@ inline void clear_boundary_deny_op() noexcept {
     g_tls_boundary_deny_op = nullptr;
 }
 
+// Issue #5275: the last gate name a boundary actually consumed. The
+// mutate:* wrapper (mutate_wrapper_commit) runs AFTER the Guard dtor, so by
+// then the first-wins token is gone and every engine-side refusal used to
+// surface as the generic "persist-reject: <op> aborted; topology restored".
+// That hid the real gate (e.g. the #2349 hold-SLO breaker) from the caller
+// and from the game, which then retried an unchanged mutate forever. The
+// wrapper reads this copy to name the gate in the returned error text.
+inline thread_local const char* g_tls_last_boundary_deny_op = nullptr;
+
 [[nodiscard]] inline const char* take_boundary_deny_op() noexcept {
     const char* op = g_tls_boundary_deny_op;
     g_tls_boundary_deny_op = nullptr;
+    if (op == nullptr || op[0] == '\0') {
+        g_tls_last_boundary_deny_op = "rollback";
+        return "rollback";
+    }
+    g_tls_last_boundary_deny_op = op;
+    return op;
+}
+
+// Issue #5275: gate name the most recent boundary exited on ("rollback" when
+// the refusal was unnamed). Read-only for the mutate wrapper.
+[[nodiscard]] inline const char* last_boundary_deny_op() noexcept {
+    const char* op = g_tls_last_boundary_deny_op;
     if (op == nullptr || op[0] == '\0')
         return "rollback";
     return op;
+}
+
+// Issue #5275: drop the consumed copy so the next unrelated mutate cannot
+// read a gate from an earlier, already-finished boundary.
+inline void clear_last_boundary_deny_op() noexcept {
+    g_tls_last_boundary_deny_op = nullptr;
 }
 
 inline void emit_invariant_deny_se(std::uint64_t mid, std::uint64_t tenant_id,
@@ -6111,6 +6138,7 @@ inline void snapshot_global(std::uint64_t& considered, std::uint64_t& skipped,
 // Full (#2818) until this or apply_dev is called.
 inline void reset_for_test() noexcept {
     clear_boundary_deny_op();
+    clear_last_boundary_deny_op();
     drop_deferred_outermost_green_proof();
     // Issue #4650: drop a pending remount-last-zero green veto.
     g_tls_remount_latched_green_veto = 0;
