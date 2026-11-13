@@ -14,6 +14,7 @@ module;
 #include "typed_mutation_audit.h" // Issue #3612: densify pairing fail shares the #3548 green-face strip
 #include "serve/fiber.h"          // Issue #2498: orphan_root_release registration on fiber context
 #include "env_frame_arena.hh"     // Issue #4790: loud EnvFrame arena exhaustion
+#include "compiler/linear_frame_sweep_budget.hh" // Issue #5274: bounded frame sweep
 
 #include <cstdlib> // Issue #2930: getenv AURA_BRIDGE_EPOCH_LEGACY_TRUST
 
@@ -2916,15 +2917,53 @@ Evaluator::LinearPostMutateSweepResult Evaluator::linear_post_mutate_enforce_all
         for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
             rlock[ef_i] =
                 std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu); // Issue #3900
-        ids.reserve(env_frames_.size());
-        for (EnvId id = 0; id < env_frames_.size(); ++id) {
-            if (env_frames_[id].version_ == INVALID_VERSION)
-                continue;
-            ids.push_back(id);
+        // Issue #5274: bounded slice + exact pre-filter.
+        //
+        // The arena is append-only: a slot is only reused through the GC
+        // sweeper's env_frame_reuse_ freelist, and that sweep stands down
+        // whenever a foreign tree-walker body is parked (a long-lived serve
+        // program that keeps one spawned thread waiting does exactly that).
+        // Walking the whole extent per boundary made every mutate cost grow
+        // with the process's allocation history (65ms -> 973ms holds in the
+        // 240s game repro), which tripped the #2349 hold-SLO breaker.
+        //
+        // Two bounds, neither of which changes the answer:
+        //   * a frame with an empty bindings_linear_ownership_state_ has no
+        //     Moved entry to find — linear_post_mutate_enforce() can only
+        //     return false from that array — so it is skipped without
+        //     taking its shard lock (the #4459 per-slot lock was the actual
+        //     cost, not the scan);
+        //   * the slot walk is sliced and round-robin (kLinearFrameSweepSlice
+        //     slots per call), so one boundary pays a fixed budget and every
+        //     slot is still re-examined within one full pass of the extent.
+        // Deferred: slot coverage of THIS sweep only, by at most
+        // ceil(extent / slice) boundaries. The per-closure linear capture
+        // scan (scan_live_closures_for_linear_captures) stays exact and
+        // complete on every boundary, and apply / materialize_call_env keep
+        // their per-frame linear_post_mutate_enforce intercepts.
+        const std::size_t n = env_frames_.size();
+        if (n != 0) {
+            const std::size_t take = n <= kLinearFrameSweepSlice ? n : kLinearFrameSweepSlice;
+            const std::size_t start =
+                n <= kLinearFrameSweepSlice
+                    ? 0
+                    : linear_frame_sweep_cursor_.load(std::memory_order_relaxed) % n;
+            ids.reserve(take);
+            for (std::size_t k = 0; k < take; ++k) {
+                const std::size_t i = start + k < n ? start + k : start + k - n;
+                const EnvFrame& fr = env_frames_[i];
+                if (fr.version_ == INVALID_VERSION)
+                    continue;
+                ++out.frames_checked;
+                if (fr.bindings_linear_ownership_state_.empty())
+                    continue;
+                ids.push_back(static_cast<EnvId>(i));
+            }
+            if (n > kLinearFrameSweepSlice)
+                linear_frame_sweep_cursor_.store((start + take) % n, std::memory_order_relaxed);
         }
     }
     for (EnvId id : ids) {
-        ++out.frames_checked;
         if (!linear_post_mutate_enforce(id))
             out.all_safe = false;
     }

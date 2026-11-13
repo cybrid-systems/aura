@@ -3937,6 +3937,7 @@ add_executable(test_mutation_hold_boundary_batch
     tests/compiler/test_mutation_hold_hard_timeout.cpp
     tests/compiler/test_mutation_hold_live.cpp
     tests/compiler/test_mutation_hold_slo.cpp
+    tests/compiler/test_linear_frame_sweep_budget.cpp
     tests/compiler/test_mutation_log_pressure.cpp
     tests/compiler/test_mutation_memory_blame.cpp
     tests/compiler/test_outermost_exit_order.cpp
