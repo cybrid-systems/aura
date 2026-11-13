@@ -11,6 +11,7 @@ module;
 module aura.compiler.evaluator;
 
 import std;
+#define AURA_HAVE_STD_MODULE 1 // Issue #5269: headers below skip std includes
 import aura.core.ast;
 import aura.compiler.value;
 

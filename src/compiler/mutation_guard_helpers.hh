@@ -25,7 +25,9 @@
 
 #include "compiler/mutate_dispatch.hh"
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <concepts>
+#endif
 
 namespace aura::compiler {
 

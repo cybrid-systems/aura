@@ -34,12 +34,24 @@
 
 #pragma once
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstddef>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <functional>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <memory>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <string>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <string_view>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <unordered_map>
+#endif
 
 namespace aura::core {
 

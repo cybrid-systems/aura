@@ -31,10 +31,8 @@
 
 module;
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
-#include <utility>
 
 export module aura.core.cxx26_invariants;
 

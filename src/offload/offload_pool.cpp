@@ -1,10 +1,7 @@
 // offload/offload_pool.cpp — bounded, ownership-safe offload pool (#4881/#4882)
 #include "offload_pool.h"
 
-#include <algorithm>
 #include <cstdlib>
-#include <exception>
-#include <utility>
 
 namespace aura::offload {
 namespace {

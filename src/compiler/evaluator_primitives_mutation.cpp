@@ -14,11 +14,11 @@ module;
 #include "core/provenance_tracker.hh" // #3792: occupancy stamp resolve (existing/collision-borrow)
 #include "core/sandbox.hh"            // #3792: is_strict() consult-regime predicate
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
-#include <algorithm>                       // std::min
 
 module aura.compiler.evaluator;
 
 import std;
+#define AURA_HAVE_STD_MODULE 1 // Issue #5269: headers below skip std includes
 import aura.core.ast;
 import aura.compiler.value;
 

@@ -14,16 +14,12 @@
 
 #include "runtime_shared.h"
 
-#include <array>
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <memory>
-#include <new>
-#include <thread>
-#include <vector>
 #include "core/ownership.hh" // #4936 c_alloc / c_free
+
+import std;
 
 // JIT runtime registers the real lock/top-cell clearer. Null when JIT
 // SOs are not loaded — ~CompilerService still resolves this symbol from

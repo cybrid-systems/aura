@@ -39,16 +39,12 @@ module;
 #include "core/densify_consistency_report.h"
 #include "core/transparent_string_hash.hh"
 
-#include <algorithm>
-#include <array>
 #include <cstdio>
-#include <filesystem>
-#include <fstream>
-#include <mutex>
 
 module aura.compiler.evaluator;
 
 import std;
+#define AURA_HAVE_STD_MODULE 1 // Issue #5269: headers below skip std includes
 import aura.core.ast;
 import aura.core.type;
 import aura.compiler.coercion_map;

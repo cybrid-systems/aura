@@ -11,14 +11,14 @@ module;
 #include "core/provenance_tracker.hh" // Issue #2960: query_stable_ref_stamped counters
 #include "serve/fiber.h"              // Issue #1630: aura_fiber_current_id for query:stable-ref
 #include "typed_mutation_audit.h"     // Issue #1892: hygiene skip audit trail
-#include <array>
-#include "reflect/node_tag_names.hh" // Issue #4345: shared NodeTag names
-#include "core/ownership.hh"         // Issue #4936: NoCopy
-#include "core/lifetime_pin.hh"      // GENERAL_OBJECT_PIN_EXEMPT (#2709)
+#include "reflect/node_tag_names.hh"  // Issue #4345: shared NodeTag names
+#include "core/ownership.hh"          // Issue #4936: NoCopy
+#include "core/lifetime_pin.hh"       // GENERAL_OBJECT_PIN_EXEMPT (#2709)
 
 module aura.compiler.evaluator;
 
 import std;
+#define AURA_HAVE_STD_MODULE 1 // Issue #5269: headers below skip std includes
 import aura.core.ast;
 import aura.core.type;
 import aura.core.mutation;

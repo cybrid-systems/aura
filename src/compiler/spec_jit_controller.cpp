@@ -6,11 +6,10 @@
 #include "shape_profiler.h"       // Issue #2276: current_global_shape_version()
 #include "hot_update_registry.hh" // Issue #2370: StormIsolation mode
 #include "value_tags.h"
-#include <algorithm>
-#include <atomic>
 #include <cstdint>
 #include <cstdio>
-#include <limits>
+
+import std;
 
 // Issue #2370: TLS current eval context for PerEval storm isolation.
 // CompilerService sets this when wiring SpecJIT / on eval entry.

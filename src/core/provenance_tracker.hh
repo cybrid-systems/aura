@@ -17,10 +17,18 @@
 #ifndef AURA_CORE_PROVENANCE_TRACKER_HH
 #define AURA_CORE_PROVENANCE_TRACKER_HH
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <atomic>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstdint>
-#include <cstdlib>                 // getenv — Issue #2404 AURA_STABLE_REF_EXPORT_HARD_REJECT
-#include <string_view>             // Issue #2705 AURA_HARD_CAPTURE_TENANT env parse
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
+#include <cstdlib> // getenv — Issue #2404 AURA_STABLE_REF_EXPORT_HARD_REJECT
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
+#include <string_view> // Issue #2705 AURA_HARD_CAPTURE_TENANT env parse
+#endif
 #include "compiler/basis_points.h" // Issue #905: basis-point rate helpers
 
 namespace aura::core::provenance {

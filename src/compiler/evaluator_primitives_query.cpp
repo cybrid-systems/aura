@@ -39,21 +39,17 @@ module;
 #include "compiler/lock_order_audit.h"             // Issue #2557: lock-order soft audit query
 #include "core/densify_consistency_report.h"       // Issue #2379: densify fail / last-call axes
 
-#include <algorithm>
-#include <array>
 #include <cerrno>
 #include <cstdio>
 #include <fcntl.h>
-#include <filesystem>
 #include <sys/stat.h>
-#include <fstream>
-#include <mutex>
 #include <unistd.h>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 module aura.compiler.evaluator;
 
 import std;
+#define AURA_HAVE_STD_MODULE 1 // Issue #5269: headers below skip std includes
 import aura.core.ast;
 import aura.core.type;
 import aura.compiler.coercion_map; // Issue #2024: provenance completeness counters

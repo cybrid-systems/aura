@@ -2,13 +2,11 @@ module;
 // Issue #3352: parse these in the GMF so mutate_dispatch.hh's <atomic>
 // include is skipped in the purview (does not redeclare std after
 // `import std`). Same pattern as evaluator_primitives_mutate.cpp GMF.
-#include <atomic>
 #include <cstdint>
-#include <memory>
-#include <string_view>
 
 module aura.compiler.query;
 import std;
+#define AURA_HAVE_STD_MODULE 1 // Issue #5269: headers below skip std includes
 import aura.core;
 import aura.compiler.evaluator;
 
