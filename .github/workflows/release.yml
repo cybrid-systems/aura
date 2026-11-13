@@ -34,6 +34,21 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           ./scripts/tools/release.sh "$VERSION"  # #4907: was ./scripts/release.sh (missing)
 
+      # Issue #5203: install the 4.5 export set, assert the native SPDX
+      # document, and prove a consumer can find_package + link the targets.
+      - name: Install + native SPDX smoke (#5203)
+        run: |
+          PREFIX="$RUNNER_TEMP/aura-install"
+          cmake --install build_repro --prefix "$PREFIX" >/dev/null
+          SPDX="$PREFIX/lib/sbom/aura-targets/aura-targets-RelWithDebInfo.spdx.json"
+          test -f "$SPDX"
+          grep -q 'spdx.org/rdf/3.0.1' "$SPDX"
+          mkdir -p "$RUNNER_TEMP/aura-consumer"
+          printf '%s\n' 'cmake_minimum_required(VERSION 4.5)' 'project(c LANGUAGES CXX)' 'find_package(aura CONFIG REQUIRED)' 'add_executable(c main.cpp)' 'target_link_libraries(c PRIVATE aura::core aura::fiber_rt)' > "$RUNNER_TEMP/aura-consumer/CMakeLists.txt"
+          printf '%s\n' 'int main(){return 0;}' > "$RUNNER_TEMP/aura-consumer/main.cpp"
+          cmake -S "$RUNNER_TEMP/aura-consumer" -B "$RUNNER_TEMP/aura-consumer/build" -DCMAKE_PREFIX_PATH="$PREFIX" >/dev/null
+          cmake --build "$RUNNER_TEMP/aura-consumer/build" >/dev/null
+
       # release.sh configures build_repro/ for the tarball. The chaos SOAK
       # hard gate builds and runs test_chaos_mutate_steal_gc_mailbox from
       # the default build directory. Configure that tree here, in Release,

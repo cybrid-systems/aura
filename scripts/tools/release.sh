@@ -23,6 +23,9 @@ export AURA_BUILD_TYPE=Release
 echo "═══ Aura release $VERSION (SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH) ═══"
 
 python3 build.py repro build
+# Issue #5203: produce the runnable bundle before the SBOM so the CycloneDX
+# document can hash the artifact that actually ships (rt/ loader + libc).
+scripts/tools/bundle.sh build_repro "$VERSION"
 python3 build.py sbom --version "$VERSION"
 
 STAGE="$ROOT/dist/stage-aura-$VERSION"
@@ -40,8 +43,6 @@ mkdir -p "$ROOT/dist"
 tar -C "$STAGE/.." -czf "$TARBALL" "stage-aura-$VERSION"
 rm -rf "$STAGE"
 
-# Issue #4907: the runnable per-arch bundle (own loader + libc; any host glibc).
-scripts/tools/bundle.sh build_repro "$VERSION"
 
 echo "✓ Release tarball: $TARBALL"
 echo "✓ SBOM: $ROOT/dist/aura-sbom.json"
