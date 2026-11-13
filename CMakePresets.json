@@ -71,6 +71,7 @@
             "binaryDir": "${sourceDir}/build_repro",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_INSTALL_SBOM_FORMATS": "spdx",
                 "CMAKE_C_FLAGS": "-ffile-prefix-map=${sourceDir}=. -fdebug-prefix-map=${sourceDir}=. -fmacro-prefix-map=${sourceDir}=. -ffile-prefix-map=${sourceDir}/build_repro=build -fdebug-prefix-map=${sourceDir}/build_repro=build -fmacro-prefix-map=${sourceDir}/build_repro=build -frandom-seed=aura-repro-675 -fno-ident -g0",
                 "CMAKE_CXX_FLAGS": "-ffile-prefix-map=${sourceDir}=. -fdebug-prefix-map=${sourceDir}=. -fmacro-prefix-map=${sourceDir}=. -ffile-prefix-map=${sourceDir}/build_repro=build -fdebug-prefix-map=${sourceDir}/build_repro=build -fmacro-prefix-map=${sourceDir}/build_repro=build -frandom-seed=aura-repro-675 -fno-ident -g0",
                 "CMAKE_EXE_LINKER_FLAGS": "-Wl,--build-id=none",

@@ -59,10 +59,30 @@ def _read_requirements(path: Path) -> list[dict]:
     return comps
 
 
-def build_sbom(*, version: str) -> dict:
-    aura_bin = ROOT / "build" / "aura"
+def _release_binary() -> Path:
+    """Issue #5203: release.sh builds build_repro/aura, not build/aura.
+
+    Hash the artifact that is actually shipped; fall back to the developer
+    build only when no reproducible build exists.
+    """
+    for candidate in (ROOT / "build_repro" / "aura", ROOT / "build" / "aura"):
+        if candidate.is_file():
+            return candidate
+    return ROOT / "build" / "aura"
+
+
+def _sbom_timestamp() -> str:
+    """Issue #5203: SOURCE_DATE_EPOCH keeps release SBOMs reproducible."""
+    epoch = os.environ.get("SOURCE_DATE_EPOCH", "").strip()
+    if epoch.isdigit():
+        return datetime.fromtimestamp(int(epoch), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def build_sbom(*, version: str, binary: Path | None = None) -> dict:
+    aura_bin = binary if binary is not None else _release_binary()
     runtime_c = ROOT / "lib" / "runtime.c"
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = _sbom_timestamp()
 
     components: list[dict] = [
         {
@@ -77,6 +97,23 @@ def build_sbom(*, version: str) -> dict:
     aura_hash = _sha256_file(aura_bin)
     if aura_hash:
         components[0]["hashes"] = [{"alg": "SHA-256", "content": aura_hash}]
+        components[0]["properties"] = [{"name": "artifact:path", "value": str(aura_bin.relative_to(ROOT))}]
+
+    # Issue #5203: the runnable bundle carries the rt/ loader + libc. Hash the
+    # published tarball when release.sh has produced it, so the release SBOM
+    # covers more than the compile-tree binary.
+    for bundle in sorted((ROOT / "dist").glob(f"aura-{version}-linux-*.tar.gz")):
+        bundle_hash = _sha256_file(bundle)
+        if bundle_hash:
+            components.append(
+                {
+                    "type": "file",
+                    "name": bundle.name,
+                    "version": version,
+                    "bom-ref": "aura-bundle",
+                    "hashes": [{"alg": "SHA-256", "content": bundle_hash}],
+                }
+            )
 
     runtime_hash = _sha256_file(runtime_c)
     if runtime_hash:
@@ -128,9 +165,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Generate CycloneDX SBOM for Aura")
     parser.add_argument("--output", "-o", type=Path, default=ROOT / "dist" / "aura-sbom.json")
     parser.add_argument("--version", default=os.environ.get("AURA_VERSION", "dev"))
+    parser.add_argument(
+        "--binary",
+        type=Path,
+        default=None,
+        help="artifact to hash (default: build_repro/aura, else build/aura)",
+    )
     args = parser.parse_args()
 
-    sbom = build_sbom(version=args.version)
+    sbom = build_sbom(version=args.version, binary=args.binary)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(sbom, indent=2) + "\n", encoding="utf-8")
     print(f"SBOM written: {args.output} ({len(sbom['components'])} components)")
