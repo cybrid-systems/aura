@@ -1,6 +1,6 @@
 name: Link libgit2 Kerberos libraries
 description: >-
-  aura-ci:v0.1.0's libgit2 CMake target lists unversioned
+  The aura-ci image's libgit2 CMake target lists unversioned
   libgssapi_krb5.so paths. libkrb5-dev provides those names, and
   the current image already ships them. apt runs only when one is
   missing. The runtime image ghcr.io/cybrid-systems/aura is not involved.
@@ -15,7 +15,7 @@ runs:
         export DEBIAN_FRONTEND=noninteractive
 
         # Unversioned linker names (not the SONAMEs). libgit2's CMake
-        # target points at these. aura-ci:v0.1.0 already has them via
+        # target points at these. The aura-ci image already has them via
         # libkrb5-dev; apt-get update is only the fallback.
         patterns=(
           '/usr/lib/*/libgssapi_krb5.so'

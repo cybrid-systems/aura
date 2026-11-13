@@ -121,7 +121,7 @@ jobs:
   tsan-smoke:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
     steps:
     - uses: actions/checkout@v7
 
@@ -158,7 +158,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     container:
-      image: ghcr.io/cybrid-systems/aura-ci:v0.1.0
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
     steps:
     - uses: actions/checkout@v7
 
