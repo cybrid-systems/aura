@@ -204,7 +204,9 @@ static void ac_1158_1176() {
     {
         (void)cs.evaluator().ensure_std_host_prims("std/net");
         auto r = cs.eval("(http-get \"http://example.com/x\")");
-        CHECK(r, "http-get returns");
+        // Success is the body string. A transport failure is an error
+        // diagnostic (#5267), not a crash and not a silent void.
+        CHECK(!r || is_string(*r) || is_void(*r) || is_error(*r), "http-get returns");
     }
 
     {

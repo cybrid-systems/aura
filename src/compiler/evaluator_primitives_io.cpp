@@ -25,6 +25,7 @@ module;
 #include <fcntl.h>
 #include <dlfcn.h>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <cstdio>
 #include "runtime_shared.h"
@@ -117,6 +118,7 @@ namespace {
         void (*easy_cleanup)(CURL*) = nullptr;
         struct curl_slist* (*slist_append)(struct curl_slist*, const char*) = nullptr;
         void (*slist_free_all)(struct curl_slist*) = nullptr;
+        const char* (*easy_strerror)(CURLcode) = nullptr;
 
         bool load() {
             if (handle)
@@ -161,6 +163,7 @@ namespace {
                     easy_cleanup = ec;
                     slist_append = sa;
                     slist_free_all = sf;
+                    easy_strerror = (const char* (*)(CURLcode))::dlsym(h, "curl_easy_strerror");
                     return true;
                 }
             }
@@ -175,12 +178,81 @@ namespace {
         static CurlAPI c;
         return c;
     }
-    auto& curl_writer_fn() {
-        static auto writer = [](char* ptr, size_t size, size_t nmemb, void* ud) -> size_t {
-            static_cast<std::string*>(ud)->append(ptr, size * nmemb);
-            return size * nmemb;
+    // Issue #5267: CURLOPT_WRITEFUNCTION must be the write callback.
+    // Passing this accessor itself makes libcurl call the accessor as the
+    // writer. That call does not append bytes, and the value it returns is
+    // not the byte count, so curl aborts with a write error after the
+    // request has already left. The buffer stays empty and the primitive
+    // used to answer void.
+    using CurlWriteFn = std::size_t (*)(char*, std::size_t, std::size_t, void*);
+    CurlWriteFn curl_write_callback() {
+        return [](char* ptr, std::size_t size, std::size_t nmemb, void* userdata) -> std::size_t {
+            if (ptr == nullptr || userdata == nullptr)
+                return 0;
+            const std::size_t nbytes = size * nmemb;
+            static_cast<std::string*>(userdata)->append(ptr, nbytes);
+            return nbytes;
         };
-        return writer;
+    }
+
+    // Issue #5268: the total transfer budget defaults to 120s so a reasoning
+    // model can finish. AURA_HTTP_TIMEOUT (whole seconds, 1..86400) is the
+    // process default. An explicit argument wins over the variable.
+    // The connect budget stays short: 10s, or the total when that is shorter.
+    constexpr long kHttpTimeoutDefaultSec = 120;
+    constexpr long kHttpTimeoutMaxSec = 86400;
+    constexpr long kHttpConnectTimeoutSec = 10;
+
+    long http_default_timeout_sec() {
+        if (const char* env = std::getenv("AURA_HTTP_TIMEOUT")) {
+            char* end = nullptr;
+            errno = 0;
+            const long v = std::strtol(env, &end, 10);
+            if (end != env && *end == '\0' && errno == 0 && v >= 1 && v <= kHttpTimeoutMaxSec)
+                return v;
+        }
+        return kHttpTimeoutDefaultSec;
+    }
+
+    long http_connect_timeout_sec(long total) {
+        if (total < 1)
+            return 1;
+        return total < kHttpConnectTimeoutSec ? total : kHttpConnectTimeoutSec;
+    }
+
+    enum class TimeoutArgKind { Absent, Ok, Bad };
+
+    struct TimeoutArg {
+        TimeoutArgKind kind = TimeoutArgKind::Absent;
+        long seconds = 0;
+    };
+
+    TimeoutArg timeout_from_value(const EvalValue& v) {
+        TimeoutArg out;
+        double raw = 0;
+        if (types::is_int(v))
+            raw = static_cast<double>(types::as_int(v));
+        else if (types::is_float(v))
+            raw = types::as_float(v);
+        else
+            return out;
+        out.kind = TimeoutArgKind::Bad;
+        if (!(raw >= 1.0) || raw > static_cast<double>(kHttpTimeoutMaxSec))
+            return out;
+        out.kind = TimeoutArgKind::Ok;
+        out.seconds = static_cast<long>(raw);
+        return out;
+    }
+
+    std::string http_transport_error(const char* op, CURLcode code) {
+        if (code == CURLE_OPERATION_TIMEDOUT)
+            return std::string(op) + ": timeout";
+        if (get_curl().easy_strerror != nullptr) {
+            if (const char* text = get_curl().easy_strerror(code);
+                text != nullptr && text[0] != '\0')
+                return std::string(op) + ": " + text;
+        }
+        return std::string(op) + ": curl error " + std::to_string(static_cast<int>(code));
     }
 } // namespace
 
@@ -844,6 +916,11 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     };
 
     // ── HTTP primitives (libcurl preferred; shell fallback is quoted) ─
+    // The registrar is the friend that can touch the private heap. A macro
+    // keeps the defer_std_host_prim lines in the shape the #4382/#4559
+    // source checks locate, and expands inside the lambdas that capture ev.
+#define HTTP_FAIL(msg)                                                                             \
+    make_primitive_error(ev.string_heap_, ev.error_values_, (msg), ev.primitive_error_counter_ptr())
     ev.defer_std_host_prim(
         "http-get", [&ev, shell_single_quote](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0]))
@@ -862,41 +939,56 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             // tenant-path-escape with zero perform.
             if (!ev.check_tenant_http_scheme(url, "http-get"))
                 return make_void();
-
-            std::string result;
-            // Prefer libcurl (no shell) when available.
-            if (get_curl().load()) {
-                CURL* curl = get_curl().easy_init();
-                if (curl) {
-                    get_curl().easy_setopt(curl, CURLOPT_URL, url.c_str());
-                    get_curl().easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_writer_fn);
-                    get_curl().easy_setopt(curl, CURLOPT_WRITEDATA, &result);
-                    get_curl().easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
-                    get_curl().easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-                    get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-                    get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-                    get_curl().easy_setopt(curl, CURLOPT_USERAGENT, "aura/1.0");
-                    get_curl().easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-                    // Issue #4382: restrict protocols to http/https —
-                    // redirects onto file:// or other schemes are refused
-                    // by the library (REDIR_PROTOCOLS).
-                    get_curl().easy_setopt(curl, CURLOPT_PROTOCOLS,
-                                           static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
-                    get_curl().easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS,
-                                           static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
-                    CURLcode res = get_curl().easy_perform(curl);
-                    get_curl().easy_cleanup(curl);
-                    if (res != CURLE_OK && result.empty())
-                        return make_void();
-                    auto sidx = ev.string_heap_.mint(std::move(result));
-                    return types::make_string(sidx);
-                }
+            // Optional second argument: total timeout in seconds.
+            // Absent uses AURA_HTTP_TIMEOUT, then 120.
+            long timeout_sec = 0;
+            if (a.size() >= 2) {
+                const TimeoutArg parsed = timeout_from_value(a[1]);
+                if (parsed.kind != TimeoutArgKind::Ok)
+                    return HTTP_FAIL("http-get: bad timeout");
+                timeout_sec = parsed.seconds;
+            } else {
+                timeout_sec = http_default_timeout_sec();
             }
+            const long connect_sec = http_connect_timeout_sec(timeout_sec);
+            const std::string url_copy(url);
 
-            // Issue #1160: no shell fallback. Without libcurl, refuse rather
-            // than interpolate the URL into popen/curl (command injection).
+            // Prefer libcurl (no shell) when available.
+            if (!get_curl().load()) {
+                // Issue #1160: no shell fallback. Without libcurl, refuse
+                // rather than interpolate the URL into popen/curl.
+                (void)shell_single_quote;
+                return HTTP_FAIL("http-get: libcurl unavailable");
+            }
             (void)shell_single_quote;
-            return make_void();
+            CURL* curl = get_curl().easy_init();
+            if (!curl)
+                return HTTP_FAIL("http-get: curl init failed");
+            std::string result;
+            get_curl().easy_setopt(curl, CURLOPT_URL, url_copy.c_str());
+            get_curl().easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_callback());
+            get_curl().easy_setopt(curl, CURLOPT_WRITEDATA, &result);
+            get_curl().easy_setopt(curl, CURLOPT_TIMEOUT, timeout_sec);
+            get_curl().easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, connect_sec);
+            get_curl().easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+            get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+            get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+            get_curl().easy_setopt(curl, CURLOPT_USERAGENT, "aura/1.0");
+            get_curl().easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+            // Issue #4382: restrict protocols to http/https —
+            // redirects onto file:// or other schemes are refused
+            // by the library (REDIR_PROTOCOLS).
+            get_curl().easy_setopt(curl, CURLOPT_PROTOCOLS,
+                                   static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+            get_curl().easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS,
+                                   static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+            const CURLcode res = get_curl().easy_perform(curl);
+            get_curl().easy_cleanup(curl);
+            if (res != CURLE_OK)
+                return HTTP_FAIL(http_transport_error("http-get", res));
+            // CURLE_OK with an empty body is a successful empty string.
+            auto sidx = ev.string_heap_.mint(std::move(result));
+            return types::make_string(sidx);
         });
 
     ev.defer_std_host_prim("http-post", [&ev](std::span<const EvalValue> a) -> EvalValue {
@@ -936,6 +1028,25 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!ev.check_tenant_http_scheme(curl_url, "http-post"))
             return make_void();
 
+        // Optional timeout: a number in the 3rd slot (no auth) or the 4th
+        // slot (after the bearer). Absent uses AURA_HTTP_TIMEOUT, then 120.
+        TimeoutArg explicit_timeout;
+        bool saw_timeout = false;
+        if (a.size() >= 3 && (types::is_int(a[2]) || types::is_float(a[2]))) {
+            explicit_timeout = timeout_from_value(a[2]);
+            saw_timeout = true;
+        }
+        if (a.size() >= 4) {
+            explicit_timeout = timeout_from_value(a[3]);
+            saw_timeout = true;
+        }
+        if (saw_timeout && explicit_timeout.kind != TimeoutArgKind::Ok)
+            return HTTP_FAIL("http-post: bad timeout");
+        const long timeout_sec = explicit_timeout.kind == TimeoutArgKind::Ok
+                                     ? explicit_timeout.seconds
+                                     : http_default_timeout_sec();
+        const long connect_sec = http_connect_timeout_sec(timeout_sec);
+
         // Async HTTP via thread (fiber-friendly, serve mode only).
         // Issue #4053: copy URL/body before unlocking denseness body mutex
         // (Soft Ready #4048 holds it for the whole denseness apply_closure).
@@ -948,7 +1059,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             std::string result;
             {
                 aura::messaging::DensenessBodyLockWaitGuard body_http_guard;
-                result = aura::messaging::g_http_post_async(url_copy, body_copy, auth);
+                result = aura::messaging::g_http_post_async(url_copy, body_copy, auth, timeout_sec);
             }
             if (!result.empty()) {
                 auto sidx = ev.string_heap_.mint(std::move(result));
@@ -959,6 +1070,9 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         // Try native libcurl (synchronous, default path).
         // Issue #5214: a loaded libcurl that fails, returns an empty body,
         // or whose easy_init fails must not POST again through the CLI.
+        // Issue #5267: CURLE_OK with an empty body is a successful empty
+        // string. A transport failure is an error value, still with no
+        // CLI fallback.
         std::string result;
         const bool curl_loaded = get_curl().load();
         if (curl_loaded) {
@@ -966,44 +1080,45 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             auto& curl_body = ev.mutable_string_at(types::as_string_idx(a[1]));
 
             CURL* curl = get_curl().easy_init();
-            if (curl) {
-                struct curl_slist* headers = nullptr;
-                headers = get_curl().slist_append(headers, "Content-Type: application/json");
-                if (a.size() >= 3 && types::is_string(a[2])) {
-                    auto& auth = ev.mutable_string_at(types::as_string_idx(a[2]));
-                    headers = get_curl().slist_append(
-                        headers, (std::string("Authorization: Bearer ") + auth).c_str());
-                }
-
-                std::string response;
-                get_curl().easy_setopt(curl, CURLOPT_URL, curl_url.c_str());
-                get_curl().easy_setopt(curl, CURLOPT_POST, 1L);
-                get_curl().easy_setopt(curl, CURLOPT_POSTFIELDS, curl_body.c_str());
-                get_curl().easy_setopt(curl, CURLOPT_POSTFIELDSIZE,
-                                       static_cast<long>(curl_body.size()));
-                get_curl().easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-                get_curl().easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_writer_fn);
-                get_curl().easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-                get_curl().easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
-                get_curl().easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-                get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-                get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-                get_curl().easy_setopt(curl, CURLOPT_USERAGENT, "aura/1.0");
-                // Issue #4382: restrict protocols to http/https — the
-                // scheme fence already denied non-http(s) URLs; this
-                // keeps redirects and libcurl default schemes in line.
-                get_curl().easy_setopt(curl, CURLOPT_PROTOCOLS,
-                                       static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
-                get_curl().easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS,
-                                       static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
-
-                CURLcode res = get_curl().easy_perform(curl);
-                get_curl().slist_free_all(headers);
-                get_curl().easy_cleanup(curl);
-
-                if (res == CURLE_OK && !response.empty())
-                    result = std::move(response);
+            if (!curl)
+                return HTTP_FAIL("http-post: curl init failed");
+            struct curl_slist* headers = nullptr;
+            headers = get_curl().slist_append(headers, "Content-Type: application/json");
+            if (a.size() >= 3 && types::is_string(a[2])) {
+                auto& auth = ev.mutable_string_at(types::as_string_idx(a[2]));
+                headers = get_curl().slist_append(
+                    headers, (std::string("Authorization: Bearer ") + auth).c_str());
             }
+
+            std::string response;
+            get_curl().easy_setopt(curl, CURLOPT_URL, curl_url.c_str());
+            get_curl().easy_setopt(curl, CURLOPT_POST, 1L);
+            get_curl().easy_setopt(curl, CURLOPT_POSTFIELDS, curl_body.c_str());
+            get_curl().easy_setopt(curl, CURLOPT_POSTFIELDSIZE,
+                                   static_cast<long>(curl_body.size()));
+            get_curl().easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            get_curl().easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_callback());
+            get_curl().easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+            get_curl().easy_setopt(curl, CURLOPT_TIMEOUT, timeout_sec);
+            get_curl().easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, connect_sec);
+            get_curl().easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+            get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+            get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+            get_curl().easy_setopt(curl, CURLOPT_USERAGENT, "aura/1.0");
+            // Issue #4382: restrict protocols to http/https — the
+            // scheme fence already denied non-http(s) URLs; this
+            // keeps redirects and libcurl default schemes in line.
+            get_curl().easy_setopt(curl, CURLOPT_PROTOCOLS,
+                                   static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+            get_curl().easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS,
+                                   static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+
+            const CURLcode res = get_curl().easy_perform(curl);
+            get_curl().slist_free_all(headers);
+            get_curl().easy_cleanup(curl);
+            if (res != CURLE_OK)
+                return HTTP_FAIL(http_transport_error("http-post", res));
+            result = std::move(response);
         }
 
         // CLI only when libcurl cannot be loaded. The bearer is written to
@@ -1015,7 +1130,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             // Soft scheme fence is a pass-through. A leading '-' would be
             // a curl option if it were a positional URL. Reject before exec.
             if (!url.empty() && url.front() == '-')
-                return make_void();
+                return HTTP_FAIL("http-post: url rejected");
             std::string auth_line;
             if (a.size() >= 3 && types::is_string(a[2])) {
                 const auto aidx = types::as_string_idx(a[2]);
@@ -1027,18 +1142,18 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             std::array<int, 2> out_pipe{-1, -1};
             std::array<int, 2> hdr_pipe{-1, -1};
             if (::pipe2(in_pipe.data(), O_CLOEXEC) != 0)
-                return make_void();
+                return HTTP_FAIL("http-post: pipe failed");
             if (::pipe2(out_pipe.data(), O_CLOEXEC) != 0) {
                 ::close(in_pipe[0]);
                 ::close(in_pipe[1]);
-                return make_void();
+                return HTTP_FAIL("http-post: pipe failed");
             }
             if (want_auth && ::pipe2(hdr_pipe.data(), O_CLOEXEC) != 0) {
                 ::close(in_pipe[0]);
                 ::close(in_pipe[1]);
                 ::close(out_pipe[0]);
                 ::close(out_pipe[1]);
-                return make_void();
+                return HTTP_FAIL("http-post: pipe failed");
             }
             // dup2 in the child clears CLOEXEC on this kept fd so curl can
             // read the header after exec. The number is chosen here, before
@@ -1063,9 +1178,9 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             argv_store.emplace_back("-H");
             argv_store.emplace_back("Content-Type: application/json");
             argv_store.emplace_back("--max-time");
-            argv_store.emplace_back("30");
+            argv_store.emplace_back(std::to_string(timeout_sec));
             argv_store.emplace_back("--connect-timeout");
-            argv_store.emplace_back("10");
+            argv_store.emplace_back(std::to_string(connect_sec));
             // Issue #4382: restrict protocols to http/https (and
             // redirects onto them) — mirrors the libcurl face.
             argv_store.emplace_back("--proto");
@@ -1093,7 +1208,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                     ::close(hdr_pipe[0]);
                     ::close(hdr_pipe[1]);
                 }
-                return make_void();
+                return HTTP_FAIL("http-post: fork failed");
             }
             if (pid == 0) {
                 ::close(in_pipe[1]);
@@ -1157,13 +1272,23 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             do {
                 waited = ::waitpid(pid, &cstat, 0);
             } while (waited < 0 && errno == EINTR);
+            if (waited < 0 || !WIFEXITED(cstat))
+                return HTTP_FAIL("http-post: curl failed");
+            const int code = WEXITSTATUS(cstat);
+            if (code == static_cast<int>(CURLE_OPERATION_TIMEDOUT))
+                return HTTP_FAIL("http-post: timeout");
+            if (code == 127)
+                return HTTP_FAIL("http-post: curl unavailable");
+            if (code != 0)
+                return HTTP_FAIL("http-post: curl exit " + std::to_string(code));
         }
 
-        if (result.empty())
-            return make_void();
+        // Empty body on success stays a string. Failure returned above.
         auto sidx = ev.string_heap_.mint(std::move(result));
         return types::make_string(sidx);
     });
+
+#undef HTTP_FAIL
 
 #if AURA_ENABLE_TCP
     // ── TCP socket primitives ────────────────────────────────

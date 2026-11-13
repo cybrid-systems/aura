@@ -1739,7 +1739,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_opcode_info_align_a3.cpp` (—) [small, domain_suite, theme_reflect] — Wave A3: IROpcode PascalCase (P2996) ↔ display kebab table alignment.
 - `tests/reflect/test_opcode_reflect.cpp` (—) [domain_suite, theme_reflect] — Issue #2289: GCC 16.1 reflection workaround cleanup.
 - `tests/compiler/test_pre_scan_quote_boundary.cpp` (—) [domain_suite, theme_compiler] — AC1: pre_scan returns without descending into NodeTag::Quote children
-- `tests/compiler/test_production_safety_p2.cpp` (—) [domain_suite, theme_compiler] — Issue #1097/#1104/#1122 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_production_safety_p2.cpp` (—) [large, domain_suite, theme_compiler] — Issue #1097/#1104/#1122 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_prompt2_6_impact_scope_quote_lambda_bridge_env.cpp` (—) [domain_suite, theme_compiler] — test_prompt2_6_impact_scope_quote_lambda_bridge_env.cpp — Issue #741:
 - `tests/compiler/test_qq_unwrap_targeted_restamp.cpp` (—) [domain_suite, theme_compiler] — AC1: expand_inner_macros cites #2809; restamp_after_qq_unwrap; no full
 - `tests/compiler/test_query_hygiene_default.cpp` (—) [domain_suite, theme_compiler] — AC1: Default query:pattern / query:filter skip MacroIntroduced; include

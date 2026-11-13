@@ -14,6 +14,7 @@
 #include "runtime_production_abi.h"
 #include "compiler/chunk_io.hh" // #4936 std::array stdout drain
 
+#include <cstdlib>
 #include <csignal>
 #include <cstdio>
 #include <cstring>
@@ -127,6 +128,7 @@ namespace {
     constexpr CURLoption CURLOPT_WRITEDATA = 10001;
     constexpr CURLoption CURLOPT_TIMEOUT = 13;
     constexpr CURLoption CURLOPT_CONNECTTIMEOUT = 78;
+    constexpr CURLoption CURLOPT_NOSIGNAL = 99;
     constexpr CURLoption CURLOPT_SSL_VERIFYPEER = 64;
     constexpr CURLoption CURLOPT_SSL_VERIFYHOST = 81;
     constexpr CURLoption CURLOPT_USERAGENT = 10018;
@@ -190,9 +192,26 @@ namespace {
 
 } // anonymous namespace
 
+// Issue #5268: the primitive resolves the budget (argument, then
+// AURA_HTTP_TIMEOUT, then 120) and passes it here. A non-positive
+// value falls back to that same default so a serve-mode caller that
+// has not been updated still waits long enough for a reasoning model.
+// Connect stays short.
+static long serve_http_timeout_sec(long requested) {
+    if (requested >= 1 && requested <= 86400)
+        return requested;
+    if (const char* env = ::getenv("AURA_HTTP_TIMEOUT")) {
+        char* end = nullptr;
+        const long v = ::strtol(env, &end, 10);
+        if (end != env && *end == '\0' && v >= 1 && v <= 86400)
+            return v;
+    }
+    return 120;
+}
+
 // Issue #473 §8: in-process HTTP POST — never puts auth on cmdline.
 static std::string http_post_in_process(const std::string& url, const std::string& body,
-                                        const std::string& auth) {
+                                        const std::string& auth, long timeout_sec) {
     auto& c = get_curl_async();
     if (!c.load())
         return {};
@@ -206,6 +225,8 @@ static std::string http_post_in_process(const std::string& url, const std::strin
         headers = c.slist_append(headers, h.c_str());
     }
     std::string response;
+    const long total = serve_http_timeout_sec(timeout_sec);
+    const long connect = total < 10 ? total : 10;
     c.easy_setopt(curl, CURLOPT_URL, url.c_str());
     c.easy_setopt(curl, CURLOPT_POST, 1L);
     c.easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
@@ -213,8 +234,9 @@ static std::string http_post_in_process(const std::string& url, const std::strin
     c.easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     c.easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_writer_buf);
     c.easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    c.easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
-    c.easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    c.easy_setopt(curl, CURLOPT_TIMEOUT, total);
+    c.easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, connect);
+    c.easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     c.easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     c.easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
     c.easy_setopt(curl, CURLOPT_USERAGENT, "aura/1.0");
@@ -742,7 +764,8 @@ namespace {
         // drain eventfd after wake so a leftover counter cannot confuse the next
         // wait on this denseness fiber / recycled wake path.
         aura::messaging::g_http_post_async = [](const std::string& url, const std::string& body,
-                                                const std::string& auth) -> std::string {
+                                                const std::string& auth,
+                                                long timeout_sec) -> std::string {
             auto* fiber = aura::serve::g_current_fiber;
             if (!fiber)
                 return {};
@@ -751,8 +774,8 @@ namespace {
                 return {};
 
             auto result = std::make_shared<std::string>();
-            std::thread t([evfd, url, body, auth, result]() {
-                *result = http_post_in_process(url, body, auth);
+            std::thread t([evfd, url, body, auth, timeout_sec, result]() {
+                *result = http_post_in_process(url, body, auth, timeout_sec);
                 uint64_t v = 1;
                 ::write(evfd, &v, sizeof(v));
             });
@@ -1556,7 +1579,8 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
     // drain eventfd after wake so a leftover counter cannot confuse the next
     // wait on this denseness fiber / recycled wake path.
     aura::messaging::g_http_post_async = [](const std::string& url, const std::string& body,
-                                            const std::string& auth) -> std::string {
+                                            const std::string& auth,
+                                            long timeout_sec) -> std::string {
         auto* fiber = aura::serve::g_current_fiber;
         if (!fiber)
             return {};
@@ -1565,8 +1589,8 @@ void run_serve_async_bench(const std::string& file_path, int num_workers) {
             return {};
 
         auto result = std::make_shared<std::string>();
-        std::thread t([evfd, url, body, auth, result]() {
-            *result = http_post_in_process(url, body, auth);
+        std::thread t([evfd, url, body, auth, timeout_sec, result]() {
+            *result = http_post_in_process(url, body, auth, timeout_sec);
             uint64_t v = 1;
             ::write(evfd, &v, sizeof(v));
         });
