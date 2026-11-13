@@ -7,6 +7,7 @@
 
 #include "test_harness.hpp"
 
+#include "core/crash_handler.hh"
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
 #include "serve/worker.h"
@@ -98,8 +99,7 @@ void test_worker_alt_stack() {
 }
 
 // AC4: overflow inside a fiber faults on the guard instead of walking into
-// the adjacent mapping. (The AURA CRASH banner itself is installed by
-// main.cpp, which this unit binary does not link.)
+// the adjacent mapping. The AURA CRASH banner itself is covered by AC5.
 void test_overflow_faults_on_guard() {
     const pid_t pid = ::fork();
     if (pid == 0) {
@@ -121,6 +121,49 @@ void test_overflow_faults_on_guard() {
           "overflow probe hit SIGSEGV on the PROT_NONE guard");
 }
 
+// AC5: the real crash handler (installed through the shared core header)
+// reports a fiber guard fault from a worker thread, on that worker's
+// alternate stack, without a second SIGSEGV.
+void test_crash_banner_on_worker_fiber_overflow() {
+    int fds[2];
+    CHECK(::pipe(fds) == 0, "crash banner pipe");
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        ::close(fds[0]);
+        (void)::dup2(fds[1], 2);
+        ::close(fds[1]);
+        aura::core::install_fatal_signal_handlers();
+        aura::serve::Scheduler sched(1);
+        sched.spawn([]() {
+            g_overflow_next = &overflow_go;
+            (void)overflow_go(0);
+        });
+        ::alarm(15);
+        std::thread runner([&sched]() { sched.run(); });
+        runner.join();
+        ::_exit(0);
+    }
+    CHECK(pid > 0, "forked crash banner probe");
+    ::close(fds[1]);
+    std::string out;
+    char buf[512];
+    for (;;) {
+        const ssize_t n = ::read(fds[0], buf, sizeof(buf));
+        if (n <= 0)
+            break;
+        out.append(buf, static_cast<std::size_t>(n));
+    }
+    ::close(fds[0]);
+    int status = 0;
+    ::waitpid(pid, &status, 0);
+    CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV,
+          "crash banner probe still dies by SIGSEGV");
+    CHECK(out.find("=== AURA CRASH: SIGSEGV") != std::string::npos,
+          "AURA CRASH banner reaches stderr from the worker fiber");
+    CHECK(out.find("stack exhaustion") != std::string::npos,
+          "banner classifies the fiber guard fault as stack exhaustion");
+}
+
 } // namespace
 
 int main() {
@@ -128,6 +171,7 @@ int main() {
     test_mprotect_failure_is_fatal();
     test_worker_alt_stack();
     test_overflow_faults_on_guard();
+    test_crash_banner_on_worker_fiber_overflow();
     std::printf("\n%d passed, %d failed\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

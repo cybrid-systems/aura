@@ -22,6 +22,33 @@ env:
   CCACHE_DISABLE: 1
 
 jobs:
+  # Issue #5211: the fiber guard overflow test must run on arm64, where the
+  # guard is 64 KiB (GCC's default stack-clash probe assumption) and the
+  # worker alternate signal stack is what keeps the AURA CRASH banner from
+  # taking a second SIGSEGV.
+  fiber-guard-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: ./.github/actions/ci-krb5
+
+    - name: Install Python CI deps
+      run: pip install --break-system-packages -r requirements-dev.txt
+
+    - name: Build and run fiber guard hardening (#5211)
+      env:
+        AURA_DEBUG_LEVEL: "1"
+      run: |
+        cmake -S . -B build -G Ninja -Wno-author \
+          -Werror=experimental -Wpolicy -Wdeprecated -Wstrict -Wnon-target-directive \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        ninja -C build -j 4 test_fiber_guard_hardening
+        ./build/test_fiber_guard_hardening
+
   # Issue #2931: steal×mutate×GC×mailbox chaos soak as nightly hard gate.
   # Fail-closed: residual_defer_after_exit without matching clears,
   # resume_fence_fail / ticket-mismatch hard surplus, residual_defer_steal
