@@ -167,74 +167,13 @@ producer_key="$(basename "$per_target_dir")"
 PRODUCER_CACHE="$SHARED_GCM_ROOT/$producer_key"
 mkdir -p "$PRODUCER_CACHE"
 
-# Targets that should symlink to aura_test_objects's BMIs. Every
-# test_issue_* (and friends) link against aura_test_objects and
-# `import aura.compiler.X` in their test_X.cpp, so they need the
-# .gcm aura_test_objects produced. Crucially: the .gcm is keyed by
-# the producer's compile flags, and aura_test_objects's flags are
-# the ones the test_issue_* consumers see when they look up
-# `import` (their own compile flags match aura_test_objects's on
-# the diagnostics that affect BMI content).
-#
-# Other producers (aura, test_ir, etc.) have different flags
-# (e.g. -DAURA_HAVE_LLVM=1, -I.../compiler) and produce BMIs that
-# would CRC-mismatch against the test_issue_* consumers. So those
-# producers only symlink into their own per-target dir.
-if [ "$producer_key" = "aura_test_objects.dir" ]; then
-    # aura_test_objects is the canonical module producer for the
-    # benchmark / unit-test binaries (test_issue_*, issue_*, cycle*,
-    # and most other test_* that link libaura_test_objects).
-    # They all `import aura.compiler.X` (or aura.core.X) and rely
-    # on the BMIs aura_test_objects produced. The launcher's symlinks
-    # let their test_X.cpp find the BMIs at <their-cwd>/<name>.gcm.
-    #
-    # IMPORTANT: do NOT symlink into standalone module producers
-    # that compile their own .ixx tree with different flags
-    # (AURA_HAVE_LLVM, extra -I paths). That clobbering causes
-    # "import 'std' has CRC mismatch" when those targets rebuild
-    # (test_ir / test_gc_evaluator_integration after a recent
-    # aura_test_objects compile).
-    consumers=()
-    # Optional: AURA_MODULE_LAUNCHER_LIMIT_CONSUMERS=a.dir,b.dir limits
-    # post-compile BMI symlink fan-out (default: all test_*/issue_*/cycle_*).
-    # Speeds single-target rebuilds when 600+ consumers would each get ~N .gcm
-    # symlinks after every aura_test_objects object.
-    if [ -n "${AURA_MODULE_LAUNCHER_LIMIT_CONSUMERS:-}" ]; then
-        IFS=',' read -r -a _limit_names <<< "${AURA_MODULE_LAUNCHER_LIMIT_CONSUMERS}"
-        for name in "${_limit_names[@]}"; do
-            name="${name// /}"
-            [ -n "$name" ] || continue
-            d="$BUILD_DIR/CMakeFiles/$name"
-            # Cold CI: CMakeFiles/<tgt>.dir may not exist until that
-            # target compiles. mkdir so BMI symlinks land before then.
-            mkdir -p "$d" 2>/dev/null || true
-            [ -d "$d" ] && consumers+=("$d")
-        done
-    else
-    # NOTE: bash doesn't expand globs inside variable values
-    # (e.g. "$BUILD_DIR/CMakeFiles/$pat"*.dir keeps the `*` from
-    # $pat as a literal). Use find with -name, which handles
-    # wildcards in the pattern argument.
-    while IFS= read -r d; do
-        [ -d "$d" ] || continue
-        case "$(basename "$d")" in
-            # Full module re-producers (aura_target_cxx_modules of their own).
-            test_ir.dir|test_gc_evaluator_integration.dir)
-                continue
-                ;;
-        esac
-        consumers+=("$d")
-    done < <(find "$BUILD_DIR/CMakeFiles" -maxdepth 1 \
-                  \( -name 'test_*.dir' -o -name 'issue_*.dir' \
-                     -o -name 'cycle_*.dir' \) -type d 2>/dev/null)
-    fi
-else
-    # Other producers (aura, test_ir, etc.) have different flags
-    # (e.g. -DAURA_HAVE_LLVM=1, -I.../compiler) and their BMIs
-    # would CRC-mismatch against the test/issue/cycle consumers.
-    # They only symlink into their own per-target dir.
-    consumers=("$per_target_dir")
-fi
+# CMake 4.5 already generates a synthetic BMI target per module provider
+# and its -fmodule-mapper points every consumer at that .bmi file
+# (CMakeFiles/<producer>@synth_<n>.dir/<hash>.bmi). The old per-consumer
+# .gcm symlink farm is therefore redundant: a test TU compiles with zero
+# .gcm links (verified on #5202), while the 308-dir find + ~17k symlinks
+# were pure build overhead. Keep only the producer's own dir link.
+consumers=("$per_target_dir")
 
 sync_gcm() {
     local gcm_name="$1"
