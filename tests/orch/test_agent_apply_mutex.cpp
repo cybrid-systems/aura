@@ -382,9 +382,11 @@ int run_test_agent_apply_mutex() {
         // across runners: one 4M-iteration body is already >1.8 s on an idle
         // box (about 50 s through orch:spawn-agent here), so a fixed join
         // timeout expires inside a parallel pair and the join reports not-ok.
-        // Measure one body here. Each pair join waits 1.5x that long, the
-        // same bound as the wall check: a parallel pair finishes, a
-        // serialized pair (about 2x) still fails the wall check.
+        // Measure one body here. Shared CI runners add CPU contention on top
+        // of interpreter speed: a genuinely parallel pair measures 1.43-1.62x
+        // the solo body (run 131793586548: 36.7 s vs 25.7 s), so the old 1.5x
+        // gate flaked. Joins wait 2.2x and the wall gate is 1.75x: a parallel
+        // pair still passes under load, a serialized pair (about 2x) fails.
         const auto solo_t0 = std::chrono::steady_clock::now();
         auto solo = cs.eval(R"(
             (begin
@@ -399,7 +401,7 @@ int run_test_agent_apply_mutex() {
                                  .count();
         CHECK(solo && is_int(*solo) && as_int(*solo) == 1, "3728 AC1: solo agent baseline");
         std::println("  3728 AC1 solo={}ms", solo_ms);
-        const auto join_ms = std::max<std::int64_t>(solo_ms * 3 / 2, 1000);
+        const auto join_ms = std::max<std::int64_t>(solo_ms * 11 / 5, 3000);
         const auto t0 = std::chrono::steady_clock::now();
         auto sp = cs.eval(
             std::format("(begin"
@@ -421,7 +423,7 @@ int run_test_agent_apply_mutex() {
             g_orch_module_stats.agent_apply_lock_acquisitions_total.load(std::memory_order_relaxed);
         CHECK(acq_sp1 == acq_sp0,
               "3728 AC1: ScopedParallel distinct keys did not take agent_apply_mu_");
-        CHECK(wall_ms < solo_ms * 3 / 2,
+        CHECK(wall_ms < std::max<std::int64_t>(solo_ms * 7 / 4, 1500),
               "3728 AC1: ScopedParallel wall is not a serialized join timeout");
         std::println("  3728 AC1 scoped wall={}ms solo={}ms acq {}→{}", wall_ms, solo_ms, acq_sp0,
                      acq_sp1);
