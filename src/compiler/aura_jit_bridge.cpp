@@ -21,23 +21,14 @@
 #include "core/workspace_epoch.hh"            // Issue #2039: dual-write WorkspaceEpoch::Bridge
 #include "compiler/bridge_epoch_zero_stats.h" // Issue #2930: zero-epoch counters
 
-#include <algorithm> // Issue #3373: std::min for ring entry name length
-#include <array>     // Issue #3373: std::array for production dirty ring entries
-#include <atomic>
 #include <cstdarg>
 #include <cstdio>
 #include <cerrno>  // Issue #2982: dlopen errno class
 #include <cstdlib> // Issue #2165: getenv AURA_AOT_RELOAD_AUTO_RETRY
 #include <cstring>
-#include <format>
 #include <sys/stat.h> // Issue #2095: private reemit directory
 #include <stdlib.h>   // mkdtemp
-#include <fstream>
 #include <limits>
-#include <mutex>
-#include <unordered_map>
-#include <vector> // Issue #3539: deferred old-.so handle list
-#include <print>
 #include <poll.h>
 #include <sys/wait.h>
 #include <fcntl.h>                         // pipe2 / O_CLOEXEC (#5214)

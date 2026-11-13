@@ -21,15 +21,10 @@
 #include "compiler/security_capabilities.h"
 #include "compiler/security_defaults.hh"
 
-#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <string_view>
 
 import std;
 import aura.compiler.service;
