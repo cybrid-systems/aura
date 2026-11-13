@@ -25,6 +25,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <inplace_vector> // Issue #5204: fixed-capacity scratch with a runtime size
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -352,19 +353,21 @@ inline void note_render_allowed_cascade() noexcept {
     const auto n = m.present_us_samples.load(std::memory_order_relaxed);
     if (n == 0)
         return 0;
-    std::uint64_t buf[FrameBudgetMetrics::kHistCap];
-    std::size_t count = 0;
+    // Issue #5204: capacity is the fixed histogram bound (256) and the
+    // populated count is runtime, so std::inplace_vector replaces the
+    // hand-rolled array + count with no heap allocation.
+    std::inplace_vector<std::uint64_t, FrameBudgetMetrics::kHistCap> buf;
     const std::size_t take = n < FrameBudgetMetrics::kHistCap ? static_cast<std::size_t>(n)
                                                               : FrameBudgetMetrics::kHistCap;
-    for (std::size_t i = 0; i < FrameBudgetMetrics::kHistCap && count < take; ++i) {
+    for (std::size_t i = 0; i < FrameBudgetMetrics::kHistCap && buf.size() < take; ++i) {
         const auto v = m.present_hist[i].load(std::memory_order_relaxed);
         if (v != 0 || n >= FrameBudgetMetrics::kHistCap)
-            buf[count++] = v;
+            buf.push_back(v);
     }
-    if (count == 0)
+    if (buf.empty())
         return 0;
     // Insertion sort (small N).
-    for (std::size_t i = 1; i < count; ++i) {
+    for (std::size_t i = 1; i < buf.size(); ++i) {
         auto key = buf[i];
         std::size_t j = i;
         while (j > 0 && buf[j - 1] > key) {
@@ -373,8 +376,8 @@ inline void note_render_allowed_cascade() noexcept {
         }
         buf[j] = key;
     }
-    const auto idx = (count * 99) / 100;
-    return buf[idx < count ? idx : count - 1];
+    const auto idx = (buf.size() * 99) / 100;
+    return buf[idx < buf.size() ? idx : buf.size() - 1];
 }
 
 [[nodiscard]] inline std::uint64_t present_avg_us() noexcept {
