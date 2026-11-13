@@ -307,6 +307,31 @@ def main() -> int:
         for (path, check), count in counts.items():
             total[key(path, check)] = total.get(key(path, check), 0) + count
 
+    if args.module:
+        # Issue #5269: misc-include-cleaner does not model C++ module imports.
+        # In a module TU it reports every std/project declaration that arrives
+        # via `import std;` / `import x;` as "no header providing ...".
+        # Drop that check for files that contain an import; the non-module
+        # gate keeps it (there, includes are the only source of declarations).
+        _import_cache: dict[str, bool] = {}
+
+        def _has_import(rel: str) -> bool:
+            if rel not in _import_cache:
+                try:
+                    text = (ROOT / rel).read_text(errors="ignore")
+                except OSError:
+                    text = ""
+                _import_cache[rel] = re.search(r"^\s*(?:export\s+)?import\s", text, re.MULTILINE) is not None
+            return _import_cache[rel]
+
+        for k in list(total):
+            path, _, check = k.partition("|")
+            if check == "misc-include-cleaner" and _has_import(path):
+                del total[k]
+        all_samples = [
+            s for s in all_samples if not (s[2] == "misc-include-cleaner" and _has_import(s[0].rsplit(":", 2)[0]))
+        ]
+
     if args.update_baseline:
         payload = {
             "generated_with": clang_tidy_version(),

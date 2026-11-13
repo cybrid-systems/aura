@@ -7,9 +7,15 @@
 #ifndef AURA_COMPILER_BOUNDED_LRU_H
 #define AURA_COMPILER_BOUNDED_LRU_H
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstddef>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstdint>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <unordered_map>
+#endif
 
 namespace aura::compiler::util {
 

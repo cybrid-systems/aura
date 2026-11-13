@@ -26,11 +26,21 @@
 
 #pragma once
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <atomic>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstdint>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <string>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <unordered_map>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <vector>
+#endif
 #include "hash_meta.h"                     // FNV constants (#901)
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 

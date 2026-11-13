@@ -23,13 +23,27 @@
 #ifndef AURA_COMPILER_OWNERSHIP_ESCAPE_LOWERING_GATE_H
 #define AURA_COMPILER_OWNERSHIP_ESCAPE_LOWERING_GATE_H
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <atomic>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstddef>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstdint>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <string>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <string_view>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <unordered_set>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <vector>
+#endif
 
 // Issue #2286: scope the OwnershipEscapeSummary / MoveOp elision gate per
 // (Evaluator*, workspace_cow_gen) so multi-eval / multi-workspace hosts
