@@ -29,6 +29,15 @@ def _read(rel: str) -> str:
     return p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
 
 
+def _body(src: str, start: str, end: str, fallback: int) -> str:
+    """Slice from `start` to the next `end` marker (or a char fallback)."""
+    i = src.find(start)
+    if i < 0:
+        return ""
+    j = src.find(end, i)
+    return src[i : j if j > i else i + fallback]
+
+
 def main() -> int:
     fails: list[str] = []
 
@@ -46,8 +55,15 @@ def main() -> int:
     must("steal_safety_production_residual_zero_v_read", "AC1 sticky arm", fc)
     must("kMutationHoldBudgetEdgeFreeLatchGateIssue = 3826", "AC1 stamp", mhb)
 
-    busy = fc.find("aura_hold_budget_poll_busy_path(void) noexcept")
-    busy_win = fc[busy : busy + 2800] if busy >= 0 else ""
+    # Scope to the helper body: the #3619 probe declaration follows it.
+    # A fixed char budget kept failing whenever the helper grew (#3620
+    # added the non-fiber owner arm); the end marker is structural.
+    busy_win = _body(
+        fc,
+        "aura_hold_budget_poll_busy_path(void) noexcept",
+        'extern "C" int aura_mutation_hold_no_edge_still_held',
+        fallback=2800,
+    )
     must("Issue #3826", "AC1 busy cite", busy_win)
     must("steal_safety_production_residual_zero_v_read", "AC1 busy sticky", busy_win)
     must("dispose_no_edge_holder", "AC1 busy dispose", busy_win)

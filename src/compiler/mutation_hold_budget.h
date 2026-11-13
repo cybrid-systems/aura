@@ -211,6 +211,18 @@ inline std::uint64_t& mutation_hold_tls_owner_key() noexcept {
     return key;
 }
 
+// Issue #3620: a cancel for an owner above this base cannot be routed
+// through the scheduler fiber registry — scheduler fibers allocate from 1
+// (Fiber::next_id_), while CLI thread-fiber bodies use 0x40000000|seq and
+// host-thread keys set bit 61. For those owners the owner token
+// (g_mutation_hold_cancel_owner_key) is the only channel, and the owner
+// observes it on its own poll / Guard dtor (#5274).
+inline constexpr std::uint64_t kMutationHoldNonFiberOwnerBase = 0x40000000ull;
+
+[[nodiscard]] inline bool mutation_hold_owner_is_non_fiber(std::uint64_t owner_key) noexcept {
+    return owner_key >= kMutationHoldNonFiberOwnerBase;
+}
+
 // Stable key for a host thread that is not a scheduler fiber and not
 // inside a CLI thread-fiber body. Bit 61 keeps it out of the fiber-id
 // space and inside the fixnum range the live-probe query prints.
@@ -703,14 +715,22 @@ inline std::atomic<std::uint32_t> g_hold_budget_cancel_escalated{0};
     return slo * 2ULL; // default 2× hold SLO
 }
 
-inline void mutation_hold_budget_note_cancel_armed(std::uint64_t fiber_id) noexcept {
+// Issue #3620: stamp the inbody window from a caller-supplied arm time.
+// The scheduler-fiber arm path stores the hold start (the holder is already
+// inside its body); the host/CLI owner path does the same so both owner
+// classes measure the 2×SLO bound from the same instant.
+inline void mutation_hold_budget_note_cancel_armed_at(std::uint64_t fiber_id,
+                                                      std::uint64_t armed_ns) noexcept {
     std::uint64_t expected = 0;
-    const auto now = mutation_hold_steady_ns_now();
     if (g_hold_budget_cancel_armed_ns.compare_exchange_strong(
-            expected, now, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+            expected, armed_ns, std::memory_order_acq_rel, std::memory_order_relaxed)) {
         g_hold_budget_cancel_armed_fiber.store(fiber_id, std::memory_order_release);
         g_hold_budget_cancel_escalated.store(0, std::memory_order_release);
     }
+}
+
+inline void mutation_hold_budget_note_cancel_armed(std::uint64_t fiber_id) noexcept {
+    mutation_hold_budget_note_cancel_armed_at(fiber_id, mutation_hold_steady_ns_now());
 }
 
 inline void mutation_hold_budget_note_cancel_consumed(std::uint64_t fiber_id) noexcept {
