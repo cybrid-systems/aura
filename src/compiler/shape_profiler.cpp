@@ -15,6 +15,7 @@
 #include <contracts>
 #include <cstdint>
 #include <cstdlib>
+#include <inplace_vector> // Issue #5204: fixed-capacity flush scratch
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
@@ -713,16 +714,18 @@ void ShapeProfiler::flush_tls_records() noexcept {
         ShapeID shape;
         std::uint32_t count;
     };
-    Snap snaps[kShapeTlsRecordSlots];
-    std::size_t n = 0;
+    // Issue #5204: capacity is kShapeTlsRecordSlots (8) and the populated
+    // count is runtime; std::inplace_vector carries both without a heap
+    // allocation, replacing the array + separate counter.
+    std::inplace_vector<Snap, kShapeTlsRecordSlots> snaps;
     for (auto& s : g_shape_tls_merge.slots) {
         if (s.fn == 0 || s.count == 0)
             continue;
-        snaps[n++] = Snap{s.fn, s.shape, s.count};
+        snaps.push_back(Snap{s.fn, s.shape, s.count});
         s.count = 0;
     }
-    for (std::size_t i = 0; i < n; ++i) {
-        (void)record_shape_apply_locked_(snaps[i].fn, snaps[i].shape, snaps[i].count);
+    for (const auto& snap : snaps) {
+        (void)record_shape_apply_locked_(snap.fn, snap.shape, snap.count);
         tls_merge_batches_total_.fetch_add(1, std::memory_order_relaxed);
     }
 }
