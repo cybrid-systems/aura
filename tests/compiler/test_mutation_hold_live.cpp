@@ -221,6 +221,99 @@ static void ac5_cas_stress() {
     CHECK(bud.find("mutation_hold_live_note_exit") != std::string::npos, "AC5: exit API");
 }
 
+// Issue #5274: host / thread-fiber holds must not alias to fiber id 1,
+// and a local hash-set! must not take that hold's budget (or poison the
+// holder's success flag). Sleep stands in for a slow llm:chat / rebind.
+extern "C" std::uint64_t aura_mutation_hold_owner_key_now() noexcept;
+
+static void ac_5274_hold_budget_local_hash() {
+    std::println("\n--- #5274: owner key, probe identity, local hash-set! ---");
+    mutation_hold_live_reset_for_test();
+    aura::compiler::mutation_hold_clear_cancel(
+        aura::compiler::g_mutation_hold_cancel_owner_key.load(std::memory_order_relaxed));
+
+    const auto key_main = aura_mutation_hold_owner_key_now();
+    std::uint64_t key_other = 0;
+    std::thread([&] { key_other = aura_mutation_hold_owner_key_now(); }).join();
+    CHECK(key_main != 0 && key_other != 0, "5274: owner keys non-zero");
+    CHECK(key_main != key_other, "5274: host threads do not share one owner key");
+    CHECK(key_main != 1 && key_other != 1, "5274: owner key is not the fiber-id-1 alias");
+
+    // note_exit(0) used to CAS fiber 1 and drop a real holder.
+    const auto start = mutation_hold_steady_ns_now();
+    mutation_hold_live_note_enter(1, start, 1);
+    mutation_hold_live_note_exit(0);
+    auto aliased = mutation_hold_live_snapshot();
+    CHECK(aliased.held && aliased.fiber_id == 1, "5274: exit of id 0 does not clear fiber 1");
+    mutation_hold_live_note_exit(1);
+    CHECK(!mutation_hold_live_snapshot().held, "5274: the real owner still clears");
+
+    const bool prev_prod = aura::compiler::typed_audit::production_defaults_active();
+    aura::compiler::typed_audit::note_production_defaults_active(true);
+    CompilerService cs;
+    CompilerMetrics metrics;
+    cs.evaluator().set_compiler_metrics(&metrics);
+    std::atomic<int> stage{0};
+    std::atomic<bool> holder_ok{false};
+    std::thread holder([&] {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard guard(cs.evaluator(), &ok);
+            auto snap = mutation_hold_live_snapshot();
+            CHECK(snap.held, "5274: holder publishes the live probe");
+            CHECK(snap.fiber_id != 1, "5274: holder probe is not fiber id 1");
+            stage.store(1, std::memory_order_release);
+            // Fixed hold, long enough to pass the 100ms budget. The peer
+            // hash-set! must finish with 9; it must not wait on this thread
+            // forever (the old admit rejected it, or blocked if the probe
+            // was cleared while the lock stayed taken).
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            holder_ok.store(ok, std::memory_order_release);
+        }
+        stage.store(3, std::memory_order_release);
+    });
+    const auto wait_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (stage.load(std::memory_order_acquire) < 1 &&
+           std::chrono::steady_clock::now() < wait_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CHECK(stage.load() >= 1, "5274: holder entered");
+    const auto budget_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (mutation_hold_live_snapshot().duration_us < 120000 &&
+           std::chrono::steady_clock::now() < budget_deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    CHECK(mutation_hold_live_snapshot().duration_us >= 100000,
+          "5274: live hold is over the default 100ms budget");
+    const auto t_eval = std::chrono::steady_clock::now();
+    auto r = cs.eval("(try"
+                     "  (let ((st (hash \"a\" 1)))"
+                     "    (hash-set! st \"event\" 9)"
+                     "    (hash-ref st \"event\"))"
+                     "  (catch (e) (if (string? e) e \"caught-non-string\")))");
+    const auto eval_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - t_eval)
+                             .count();
+    if (!r)
+        std::println(std::cerr, "5274 diag: {}", r.error().message);
+    else if (aura::compiler::types::is_string(*r)) {
+        const auto idx = aura::compiler::types::as_string_idx(*r);
+        std::println(std::cerr, "5274 caught: {}", cs.evaluator().string_at(idx));
+    } else if (!is_int(*r))
+        std::println(std::cerr, "5274 value is not an int (error={})",
+                     aura::compiler::types::is_error(*r));
+    stage.store(2, std::memory_order_release);
+    holder.join();
+    CHECK(r.has_value() && is_int(*r) && as_int(*r) == 9,
+          "5274: local hash-set! during an over-budget hold returns 9");
+    CHECK(eval_ms < 500, "5274: local hash-set! did not block on the holder's lock");
+    CHECK(holder_ok.load(), "5274: peer hash-set! did not fail the holder's guard");
+    CHECK(!mutation_hold_live_snapshot().held, "5274: probe cleared when the holder exited");
+    aura::compiler::typed_audit::note_production_defaults_active(prev_prod);
+    cs.evaluator().set_compiler_metrics(nullptr);
+    mutation_hold_live_reset_for_test();
+}
+
 } // namespace
 
 int run_test_mutation_hold_live() {
@@ -229,6 +322,7 @@ int run_test_mutation_hold_live() {
     ac1_ac2_enter_exit_query();
     ac4_coexist_2405();
     ac5_cas_stress();
+    ac_5274_hold_budget_local_hash();
     mutation_hold_live_reset_for_test();
     std::println("\n=== #2517: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

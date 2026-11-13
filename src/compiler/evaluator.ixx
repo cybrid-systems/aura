@@ -11203,7 +11203,13 @@ public:
                         if (typed_audit::production_defaults_active()) {
                             m->naked_mutate_fail_closed_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
-                            mark_outermost_mutation_failed();
+                            // Issue #5274: do NOT mark_outermost_mutation_failed
+                            // here. try_acquire failed, so this thread owns no
+                            // guard. The evaluator's success-flag slot points at
+                            // whoever published last — a peer mutate:rebind —
+                            // and flipping it rolled that rebind back as
+                            // "topology restored" (#5275). The refusal is the
+                            // error value below; callers can catch it.
                         }
                     }
                     return primitives_detail::make_primitive_error(

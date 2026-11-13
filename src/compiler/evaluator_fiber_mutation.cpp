@@ -1664,13 +1664,17 @@ extern "C" int aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcep
 // helper (expand poll edges under outermost Guard). Exotic C++ bodies
 // that never hit any poll edge remain unsupported — Ready sticky / join
 // Reclaimed; no second unlock / no foreign unlock.
+extern "C" int aura_mutation_hold_poll_host_thread() noexcept;
+
 extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept {
     using namespace aura::compiler;
     if (!mutation_hold_budget_reject_enabled())
         return 0;
     auto* cur = aura::serve::g_current_fiber;
+    // Issue #5274: CLI thread-fibers and the host have no g_current_fiber.
+    // The old early return left a hold past budget with nobody to cancel.
     if (!cur)
-        return 0;
+        return aura_mutation_hold_poll_host_thread();
     if (!cur->is_force_safepoint_requested() && !cur->peek_hold_budget_cancel() &&
         !cur->peek_urgent_inbody_poll())
         return 0;
