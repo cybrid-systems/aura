@@ -1,0 +1,70 @@
+;; One process. `sum` starts as a loop over 1..n. Each candidate is written
+;; into the live definition, trialed, and kept only when the result matches
+;; the loop. A wrong result is rolled back from the snapshot taken before
+;; the rewrite. The process does not restart.
+;;
+;;   aura --preset dev examples/sum-evolve.aura
+;;
+;; scripts/record_demo.sh records this run. Pauses are part of the run so a
+;; person can read each line; the trial times are measured around `(sum N)`
+;; only.
+
+(define N 500000)
+;; Default pause is long enough to read. AURA_SUM_EVOLVE_PACE=0 skips it.
+(define pace-ms
+  (let ((v (getenv "AURA_SUM_EVOLVE_PACE")))
+    (if (string? v) (string->number v) 900)))
+
+(define (pause ms)
+  (let ((end (+ (monotonic-ms) ms)))
+    (while (< (monotonic-ms) end) 0)))
+
+(define (say line)
+  (display line)
+  (newline)
+  (pause pace-ms))
+
+(set-code "(define (sum n) (let lp ((i n) (s 0)) (if (= i 0) s (lp (- i 1) (+ s i)))))")
+(eval-current)
+
+(define (live) (current-source :workspace :define-fn-sugar))
+
+(define (trial)
+  (let ((t0 (monotonic-ms)))
+    (let ((v (sum N)))
+      (cons v (- (monotonic-ms) t0)))))
+
+(say (format "sum of 1..~a" N))
+(say "live")
+(say (live))
+(display "trial")
+(newline)
+(define base (trial))
+(define want (car base))
+(say (format "~a  ~a ms" want (cdr base)))
+
+(define (step body)
+  (let* ((src (format "(define (sum n) ~a)" body))
+         (snap (mutate :snapshot "step"))
+         (ok (mutate :rebind "sum" src "evolve")))
+    (say "")
+    (say (string-append "propose " src))
+    (display "trial")
+    (newline)
+    (let* ((got (trial))
+           (v (car got))
+           (keep (and (eq? ok #t) (= v want))))
+      (say (format "~a  want ~a  ~a ms" v want (cdr got)))
+      (if keep
+          (say "KEEP")
+          (begin
+            (mutate :restore snap)
+            (eval-current)
+            (say "ROLLBACK")))
+      (say "live")
+      (say (live)))))
+
+(step "(* n n)")
+(step "(quotient (* n (+ n 1)) 2)")
+(say "")
+(say (format "(sum ~a) => ~a" N (sum N)))

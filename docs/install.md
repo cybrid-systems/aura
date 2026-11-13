@@ -18,7 +18,8 @@ live definition:
 ```
 
 `install.sh` picks the tarball for `uname -m`, checks its sha256, unpacks it
-under `~/.aura/<version>` and links `~/.local/bin/aura`. Settings:
+under `~/.aura/<version>` and links `~/.local/bin/aura`. Put `~/.local/bin` on
+`PATH`. Settings:
 
 | variable | default | meaning |
 |---|---|---|

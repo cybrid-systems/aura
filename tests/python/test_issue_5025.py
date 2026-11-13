@@ -3,8 +3,10 @@ r"""Regression for #5025: the first screen is the terminal record.
 
 Before: README, getting-started and install sent a new reader to
 out/report.html, and \`aura new --help\` called evolve a "self-evolving program +
-evo report". Now every first screen names \`aura demo\` and the KEEP / ROLLBACK
-record; the help text and its snapshot move together.
+evo report". getting-started and install still name \`aura demo\` and the
+KEEP / ROLLBACK record. The README first screen is the sum-evolve recording
+(propose, trial, KEEP or ROLLBACK, live source). The help text and its
+snapshot move together.
 """
 
 from __future__ import annotations
@@ -39,10 +41,14 @@ def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
 
 RECORD = "1 ROLLBACK  (define (guess) 10)   live (define (guess) 0)"
 POINTERS = (
-    ROOT / "README.md",
     ROOT / "docs" / "getting-started.md",
     ROOT / "docs" / "install.md",
 )
+SLOW = (
+    "(define (sum n) (letrec ((lp (lambda (i s) "
+    "(if (= i 0) s (lp (- i 1) (+ s i)))))) (lp n 0)))"
+)
+FAST = "(define (sum n) (quotient (* n (+ n 1)) 2))"
 
 
 class FirstScreen(unittest.TestCase):
@@ -60,6 +66,44 @@ class FirstScreen(unittest.TestCase):
             self.assertIn(RECORD, text, doc)
             self.assertNotIn("out/report.html", text, doc)
             self.assertNotIn("aura new evolve demo\ncd demo\naura run", text, doc)
+
+    def test_readme_is_the_recording(self) -> None:
+        text = (ROOT / "README.md").read_text()
+        self.assertIn("aura --preset dev examples/sum-evolve.aura", text)
+        self.assertIn("docs/assets/sum-evolve.gif", text)
+        self.assertIn("docs/assets/sum-evolve.cast", text)
+        self.assertIn(
+            "curl -fsSL https://raw.githubusercontent.com/cybrid-systems/aura/main/install.sh | sh",
+            text,
+        )
+        self.assertIn("KEEP", text)
+        self.assertIn("ROLLBACK", text)
+        self.assertNotIn("out/report.html", text)
+        self.assertNotIn(RECORD, text)
+        self.assertNotIn("aura new evolve demo\ncd demo\naura run", text)
+
+    def test_sum_evolve_keeps_only_a_matching_result(self) -> None:
+        os.environ["AURA_SUM_EVOLVE_PACE"] = "0"
+        try:
+            r = run(
+                ["--preset", "dev", str(ROOT / "examples" / "sum-evolve.aura")],
+                ROOT,
+            )
+        finally:
+            os.environ.pop("AURA_SUM_EVOLVE_PACE", None)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        text = r.stdout
+        self.assertLess(text.index("ROLLBACK"), text.index("KEEP"))
+        self.assertIn("propose (define (sum n) (* n n))", text)
+        self.assertIn(f"propose {FAST}", text)
+        after_rollback = text.split("ROLLBACK", 1)[1].split("propose", 1)[0]
+        self.assertIn(SLOW, after_rollback)
+        self.assertNotIn(FAST, after_rollback)
+        self.assertTrue(text.split("live\n")[-1].startswith(FAST))
+        self.assertIn("(sum 500000) => 125000250000", text)
+        self.assertIn("250000000000  want 125000250000", text)
+        self.assertIn("125000250000  want 125000250000", text)
+        self.assertIn("preset=dev", r.stderr)
 
     def test_new_help_describes_keep_rollback(self) -> None:
         r = run(["new", "--help"], self.d)
