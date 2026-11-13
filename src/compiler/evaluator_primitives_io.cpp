@@ -66,6 +66,9 @@ module aura.compiler.evaluator;
 import std;
 import aura.compiler.value;
 
+// Issue #5274: drop an outermost mutation hold before blocking HTTP.
+extern "C" int aura_mutation_hold_release_before_block() noexcept;
+
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
@@ -956,6 +959,9 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             const long connect_sec = http_connect_timeout_sec(timeout_sec);
             const std::string url_copy(url);
+            // Issue #5274: libcurl blocks on this thread. Do not keep the
+            // mutation hold across that wait. url_copy outlives the abort.
+            (void)aura_mutation_hold_release_before_block();
 
             // Prefer libcurl (no shell) when available.
             if (!get_curl().load()) {
@@ -1061,6 +1067,9 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             std::string url_copy = curl_url;
             std::string body_copy = curl_body;
             std::string result;
+            // Issue #5274: copies are already off the heap. Drop the hold
+            // before yield/curl so a 20–60s chat cannot pin the budget.
+            (void)aura_mutation_hold_release_before_block();
             {
                 aura::messaging::DensenessBodyLockWaitGuard body_http_guard;
                 result = aura::messaging::g_http_post_async(url_copy, body_copy, auth, timeout_sec);
@@ -1095,11 +1104,16 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             }
 
             std::string response;
-            get_curl().easy_setopt(curl, CURLOPT_URL, curl_url.c_str());
+            // Issue #5274: POSTFIELDS is not copied by libcurl. Snapshot
+            // first, then drop the hold, so an abort cannot free the buffer
+            // perform is about to read.
+            const std::string url_io(curl_url);
+            const std::string body_io(curl_body);
+            (void)aura_mutation_hold_release_before_block();
+            get_curl().easy_setopt(curl, CURLOPT_URL, url_io.c_str());
             get_curl().easy_setopt(curl, CURLOPT_POST, 1L);
-            get_curl().easy_setopt(curl, CURLOPT_POSTFIELDS, curl_body.c_str());
-            get_curl().easy_setopt(curl, CURLOPT_POSTFIELDSIZE,
-                                   static_cast<long>(curl_body.size()));
+            get_curl().easy_setopt(curl, CURLOPT_POSTFIELDS, body_io.c_str());
+            get_curl().easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body_io.size()));
             get_curl().easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
             get_curl().easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_callback());
             get_curl().easy_setopt(curl, CURLOPT_WRITEDATA, &response);
@@ -1129,8 +1143,11 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         // a pipe and passed as `-H @/dev/fd/N`, never as an argv element.
         // `--config -` would steal stdin from the body, so it is not used.
         if (!curl_loaded) {
-            auto& url = ev.mutable_string_at(types::as_string_idx(a[0]));
-            auto& body = ev.mutable_string_at(types::as_string_idx(a[1]));
+            // Issue #5274: own the bytes before fork/wait. A hold released
+            // here must not leave the child reading a restored heap.
+            const std::string url = ev.string_at(types::as_string_idx(a[0]));
+            const std::string body = ev.string_at(types::as_string_idx(a[1]));
+            (void)aura_mutation_hold_release_before_block();
             // Soft scheme fence is a pass-through. A leading '-' would be
             // a curl option if it were a positional URL. Reject before exec.
             if (!url.empty() && url.front() == '-')

@@ -289,7 +289,8 @@ extern "C" int aura_jit_poll_hold_budget_safepoint() noexcept;
                     ? "eval-budget: interrupted"                                                   \
                     : "eval-budget: fuel exhausted"});                                             \
         }                                                                                          \
-        if (aura::serve::g_current_fiber != nullptr) {                                             \
+        if (aura::serve::g_current_fiber != nullptr ||                                             \
+            aura::compiler::mutation_hold_cancel_targets_tls()) {                                  \
             if (auto _hb3693 = eval_flat_hold_budget_safepoint_poll())                             \
                 return std::unexpected(*_hb3693);                                                  \
         }                                                                                          \
