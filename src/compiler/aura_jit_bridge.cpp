@@ -38,6 +38,9 @@
 #include <unordered_map>
 #include <vector> // Issue #3539: deferred old-.so handle list
 #include <print>
+#include <poll.h>
+#include <sys/wait.h>
+#include <fcntl.h>                         // pipe2 / O_CLOEXEC (#5214)
 #include <unistd.h>                        // Issue #237 v4: readlink for /proc/self/exe lookup
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "core/ownership.hh" // #4936 unique_file / immortal<T>
@@ -6139,6 +6142,232 @@ static std::string find_runtime_c() {
     return ""; // not found
 }
 
+// #5214: $CC and the pic-flag string are whitespace-separated argv
+// prefixes, not shell commands. A token such as "gcc;id" is one argv
+// element, so execvp looks for that binary and fails. "gcc; id" becomes
+// the argv elements "gcc;" and "id", and id is not executed.
+static void append_ws_argv(std::string_view text, std::vector<std::string>& out) {
+    std::string current;
+    for (const char unit : text) {
+        if (unit == ' ' || unit == '\t' || unit == '\n' || unit == '\r') {
+            if (!current.empty()) {
+                out.push_back(std::move(current));
+                current.clear();
+            }
+        } else {
+            current.push_back(unit);
+        }
+    }
+    if (!current.empty())
+        out.push_back(std::move(current));
+}
+
+static std::vector<std::string> cc_argv_prefix() {
+    const char* env = ::getenv("CC");
+    std::vector<std::string> prefix;
+    if (env != nullptr && env[0] != '\0')
+        append_ws_argv(env, prefix);
+    if (prefix.empty())
+        prefix.emplace_back("gcc");
+    return prefix;
+}
+
+struct AotCompileIns {
+    std::string_view pic_flags;
+    std::string_view src_path;
+    std::string_view obj_path;
+};
+
+static std::vector<std::string> compile_argv(const std::vector<std::string>& cc_prefix,
+                                             AotCompileIns ins) {
+    std::vector<std::string> argv = cc_prefix;
+    argv.emplace_back("-c");
+    append_ws_argv(ins.pic_flags, argv);
+    argv.emplace_back(ins.src_path);
+    argv.emplace_back("-o");
+    argv.emplace_back(ins.obj_path);
+    return argv;
+}
+
+// Run argv with no shell. The child's stderr is inherited, so gcc/clang
+// diagnostics still reach the caller. Returns the exit status, or a
+// non-zero code on signal, fork failure, or exec failure (_exit 127).
+static int run_argv(const std::vector<std::string>& args) {
+    if (args.empty() || args.front().empty())
+        return 127;
+    std::vector<std::vector<char>> storage;
+    storage.reserve(args.size());
+    std::vector<char*> argv;
+    argv.reserve(args.size() + 1);
+    for (const auto& arg : args) {
+        storage.emplace_back(arg.begin(), arg.end());
+        storage.back().push_back('\0');
+        argv.push_back(storage.back().data());
+    }
+    argv.push_back(nullptr);
+    const pid_t pid = ::fork();
+    if (pid < 0)
+        return 127;
+    if (pid == 0) {
+        ::execvp(argv[0], argv.data());
+        ::_exit(127);
+    }
+    int status = 0;
+    pid_t waited = -1;
+    do {
+        waited = ::waitpid(pid, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    if (waited < 0)
+        return 127;
+    if (WIFEXITED(status))
+        return WEXITSTATUS(status);
+    return 127;
+}
+
+// Pipe ends created with pipe2(O_CLOEXEC). The destructor closes whatever
+// the parent still owns; the child execs and does not run it.
+struct ExecPipes {
+    int read_fd = -1;
+    int write_fd = -1;
+    ExecPipes() = default;
+    ExecPipes(const ExecPipes&) = delete;
+    ExecPipes& operator=(const ExecPipes&) = delete;
+    ~ExecPipes() { close_both(); }
+    bool open() {
+        std::array<int, 2> ends{-1, -1};
+        if (::pipe2(ends.data(), O_CLOEXEC) != 0)
+            return false;
+        read_fd = ends[0];
+        write_fd = ends[1];
+        return true;
+    }
+    void close_read() noexcept {
+        if (read_fd >= 0) {
+            ::close(read_fd);
+            read_fd = -1;
+        }
+    }
+    void close_write() noexcept {
+        if (write_fd >= 0) {
+            ::close(write_fd);
+            write_fd = -1;
+        }
+    }
+    void close_both() noexcept {
+        close_read();
+        close_write();
+    }
+};
+
+struct AuraEvalRequest {
+    std::string_view executable;
+    std::string_view source_text;
+};
+
+// `echo <src> | aura | head -1` without a shell. The source is written to
+// the child's stdin; stdout is kept through the first newline.
+static std::string first_stdout_line(AuraEvalRequest request) {
+    if (request.executable.empty())
+        return {};
+    ExecPipes in_pipe;
+    ExecPipes out_pipe;
+    if (!in_pipe.open() || !out_pipe.open())
+        return {};
+    std::vector<char> exe_storage(request.executable.begin(), request.executable.end());
+    exe_storage.push_back('\0');
+    std::vector<char*> child_argv;
+    child_argv.push_back(exe_storage.data());
+    child_argv.push_back(nullptr);
+    const pid_t pid = ::fork();
+    if (pid < 0)
+        return {};
+    if (pid == 0) {
+        if (::dup2(in_pipe.read_fd, STDIN_FILENO) < 0 ||
+            ::dup2(out_pipe.write_fd, STDOUT_FILENO) < 0)
+            ::_exit(127);
+        const int child_fds[] = {in_pipe.read_fd, in_pipe.write_fd, out_pipe.read_fd,
+                                 out_pipe.write_fd};
+        for (const int child_fd : child_fds) {
+            if (child_fd > STDERR_FILENO)
+                ::close(child_fd);
+        }
+        ::execvp(child_argv[0], child_argv.data());
+        ::_exit(127);
+    }
+    in_pipe.close_read();
+    out_pipe.close_write();
+    std::string payload(request.source_text);
+    if (payload.empty() || payload.back() != '\n')
+        payload.push_back('\n');
+    std::string_view pending(payload);
+    std::string gathered;
+    bool input_open = true;
+    bool output_open = true;
+    while (output_open && gathered.find('\n') == std::string::npos) {
+        std::array<pollfd, 2> slots{};
+        nfds_t slot_count = 0;
+        int input_slot = -1;
+        if (input_open) {
+            slots[slot_count].fd = in_pipe.write_fd;
+            slots[slot_count].events = POLLOUT;
+            input_slot = static_cast<int>(slot_count);
+            ++slot_count;
+        }
+        slots[slot_count].fd = out_pipe.read_fd;
+        slots[slot_count].events = POLLIN;
+        const int output_slot = static_cast<int>(slot_count);
+        ++slot_count;
+        const int polled = ::poll(slots.data(), slot_count, -1);
+        if (polled < 0) {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        const short output_events = slots[static_cast<std::size_t>(output_slot)].revents;
+        if ((output_events & (POLLIN | POLLHUP | POLLERR)) != 0) {
+            std::array<char, 4096> buf{};
+            const ssize_t got = ::read(out_pipe.read_fd, buf.data(), buf.size());
+            if (got > 0)
+                gathered.append(buf.data(), static_cast<std::size_t>(got));
+            else if (got == 0 || errno != EINTR)
+                output_open = false;
+        }
+        if (input_open && input_slot >= 0) {
+            const short input_events = slots[static_cast<std::size_t>(input_slot)].revents;
+            if ((input_events & (POLLOUT | POLLERR | POLLHUP)) != 0) {
+                const bool input_fail = (input_events & (POLLERR | POLLHUP)) != 0;
+                if (pending.empty() || input_fail) {
+                    in_pipe.close_write();
+                    input_open = false;
+                } else {
+                    const ssize_t wrote = ::write(in_pipe.write_fd, pending.data(), pending.size());
+                    if (wrote > 0)
+                        pending.remove_prefix(static_cast<std::size_t>(wrote));
+                    else if (wrote < 0 && errno != EINTR) {
+                        in_pipe.close_write();
+                        input_open = false;
+                    }
+                    if (pending.empty()) {
+                        in_pipe.close_write();
+                        input_open = false;
+                    }
+                }
+            }
+        }
+    }
+    in_pipe.close_write();
+    out_pipe.close_read();
+    int status = 0;
+    pid_t waited = -1;
+    do {
+        waited = ::waitpid(pid, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    const auto newline = gathered.find('\n');
+    if (newline != std::string::npos)
+        gathered.resize(newline + 1);
+    return gathered;
+}
+
 // Issue #360: get_aot_pic_flag — return the appropriate compile
 // flags for the current target architecture so the AOT pipeline
 // works on both x86_64 Linux (CI default) and aarch64 Linux
@@ -6230,7 +6459,13 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
 
     // Step 2: Compile runtime.c (contains main(), bump allocator, closures,
     //          cells, pairs, I/O, strings — the complete standalone runtime)
-    std::string cc = ::getenv("CC") ? ::getenv("CC") : "gcc";
+    const char* cc_env = ::getenv("CC");
+    const std::string cc_display =
+        (cc_env != nullptr && cc_env[0] != '\0') ? std::string(cc_env) : std::string("gcc");
+    // #5214: $CC is a whitespace-separated argv prefix, not a shell
+    // command. See append_ws_argv. An empty CC falls back to gcc.
+    const std::vector<std::string> cc_prefix = cc_argv_prefix();
+    const std::vector<std::string> clang_prefix{"clang"};
     // Issue #62 hardening: -fPIC + -fno-pie so the runtime.o links cleanly
     // with the LLVM-generated .o on x86_64 modern gcc (which defaults to
     // PIE for executables; without these flags the link fails with
@@ -6243,22 +6478,18 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
     std::string pic_flag = get_aot_pic_flag();
     std::string runtime_o = out_path + ".runtime.o";
     {
-        // Issue #237: removed `2>/dev/null` so the actual compile error
-        // reaches stderr. The previous silent-failure mode meant the
-        // aura binary returned rc=1 from `--emit-binary` on CI x86_64
-        // with NO diagnostic information to debug the failure.
-        std::string cmd =
-            cc + " -c " + pic_flag + " " + runtime_c_path + " -o " + runtime_o + " 2>&1";
-        int rc = ::system(cmd.c_str());
-        if (rc != 0) {
-            cmd = "clang -c " + pic_flag + " " + runtime_c_path + " -o " + runtime_o + " 2>&1";
-            rc = ::system(cmd.c_str());
-        }
+        // Issue #237: the compiler's stderr is inherited, so the actual
+        // gcc/clang error reaches the caller. Each path is one argv slot.
+        int rc =
+            run_argv(compile_argv(cc_prefix, AotCompileIns{pic_flag, runtime_c_path, runtime_o}));
+        if (rc != 0)
+            rc = run_argv(
+                compile_argv(clang_prefix, AotCompileIns{pic_flag, runtime_c_path, runtime_o}));
         if (rc != 0) {
             fprintf(
                 stderr,
                 "AOT: cannot compile runtime '%s' (cc=%s). Check above for the gcc/clang error.\n",
-                runtime_c_path.c_str(), cc.c_str());
+                runtime_c_path.c_str(), cc_display.c_str());
             for (auto& p : obj_files)
                 std::remove(p.c_str());
             return false;
@@ -6279,16 +6510,15 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
     if (generate_registration_c(functions, func_ids.data(), num_functions, reg_c_path)) {
         // Issue #237: surface the actual cc/clang error instead of
         // swallowing it. CI x86_64 was failing silently here.
-        std::string cmd = cc + " -c " + pic_flag + " " + reg_c_path + " -o " + reg_o_path + " 2>&1";
-        int rc = ::system(cmd.c_str());
-        if (rc != 0) {
-            cmd = "clang -c " + pic_flag + " " + reg_c_path + " -o " + reg_o_path + " 2>&1";
-            rc = ::system(cmd.c_str());
-        }
+        int rc = run_argv(compile_argv(cc_prefix, AotCompileIns{pic_flag, reg_c_path, reg_o_path}));
+        if (rc != 0)
+            rc = run_argv(
+                compile_argv(clang_prefix, AotCompileIns{pic_flag, reg_c_path, reg_o_path}));
         if (rc == 0) {
             obj_files.push_back(reg_o_path);
         } else {
-            fprintf(stderr, "AOT: cannot compile _reg.c (cc=%s). Check above.\n", cc.c_str());
+            fprintf(stderr, "AOT: cannot compile _reg.c (cc=%s). Check above.\n",
+                    cc_display.c_str());
         }
         std::remove(reg_c_path.c_str());
     }
@@ -6303,13 +6533,11 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
         if (f) {
             std::fputs(g_prim_reg_c_code.c_str(), f.get());
             f.reset();
-            std::string cmd =
-                cc + " -c " + pic_flag + " " + prim_reg_path + " -o " + prim_reg_o + " 2>&1";
-            int rc = ::system(cmd.c_str());
-            if (rc != 0) {
-                cmd = "clang -c " + prim_reg_path + " -o " + prim_reg_o + " 2>&1";
-                rc = ::system(cmd.c_str());
-            }
+            int rc = run_argv(
+                compile_argv(cc_prefix, AotCompileIns{pic_flag, prim_reg_path, prim_reg_o}));
+            if (rc != 0)
+                rc = run_argv(
+                    compile_argv(clang_prefix, AotCompileIns{pic_flag, prim_reg_path, prim_reg_o}));
             if (rc == 0)
                 obj_files.push_back(prim_reg_o);
             std::remove(prim_reg_path.c_str());
@@ -6327,11 +6555,20 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
     // forces the linker-side PIE flag off regardless of driver behavior.
     // Combined with the Reloc::Static change in aura_jit.cpp's
     // TargetMachine setup, this should make the x86_64 link reliable.
-    std::string link_cmd = cc;
-    for (auto& p : obj_files)
-        link_cmd += " " + p;
-    link_cmd += " -o " + out_path + " -no-pie -Wl,--no-pie -lm 2>&1";
-    int rc = ::system(link_cmd.c_str());
+    //
+    // #5214: each object and the output path is one argv element. Emitted
+    // binaries stay -no-pie. LLVM emits static relocations (#62 / #237);
+    // get_aot_pic_flag is "-fPIC -fno-pie" and the TargetMachine uses
+    // Reloc::Static. #5210 covers the aura binary, not products emitted here.
+    std::vector<std::string> link_argv = cc_prefix;
+    for (const auto& obj_path : obj_files)
+        link_argv.push_back(obj_path);
+    link_argv.emplace_back("-o");
+    link_argv.push_back(out_path);
+    link_argv.emplace_back("-no-pie");
+    link_argv.emplace_back("-Wl,--no-pie");
+    link_argv.emplace_back("-lm");
+    int rc = run_argv(link_argv);
 
     // Cleanup temp .o files
     for (auto& p : obj_files)
@@ -6901,25 +7138,10 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
             aura_exe.assign(exe_buf.data(), static_cast<std::size_t>(n));
         }
     }
-    // Single-quote escape for the shell: ' -> '\''
-    std::string sh_src;
-    sh_src.reserve(src.size() + 8);
-    for (char c : src) {
-        if (c == '\'')
-            sh_src += "'\\''";
-        else
-            sh_src += c;
-    }
-    std::string cmd = "echo '" + sh_src + "' | " + aura_exe + " 2>/dev/null | head -1";
-    std::string result;
-    if (const ::aura::core::unique_pipe pipe{::popen(cmd.c_str(), "r")}) {
-        std::array<char, 4096> buf{};
-        std::string line;
-        while (::fgets(buf.data(), static_cast<int>(buf.size()), pipe.get()))
-            line += buf.data();
-        if (!line.empty())
-            result = line;
-    }
+    // Pipe the source to this aura binary and keep the first stdout line
+    // (`echo | aura | head -1`, with no shell). Empty eval still refuses
+    // to emit a silent () binary.
+    std::string result = first_stdout_line(AuraEvalRequest{aura_exe, src});
     // Trim whitespace
     while (!result.empty() && (result.back() == '\n' || result.back() == '\r' ||
                                result.back() == ' ' || result.back() == '\t'))
@@ -6988,14 +7210,18 @@ extern "C" bool aura_emit_native_file(const char* source, const char* out_path,
        << "}\n";
 
     std::string out_binary(out_path);
-    std::string cc = ::getenv("CC") ? ::getenv("CC") : "gcc";
-    // Issue #62 hardening: -no-pie for the shell-wrapper fallback's link
-    // (consistent with the main AOT link command).
-    cmd = cc + " " + c_path + " -o " + out_binary + " -no-pie 2>/dev/null";
-    int rc = ::system(cmd.c_str());
+    // Issue #62 hardening: -no-pie for the fallback link (consistent with
+    // the main AOT link). #5214: the output path is one argv element.
+    // Emitted binaries stay -no-pie because LLVM emits static relocations.
+    std::vector<std::string> link_argv = cc_argv_prefix();
+    link_argv.push_back(c_path);
+    link_argv.emplace_back("-o");
+    link_argv.push_back(out_binary);
+    link_argv.emplace_back("-no-pie");
+    int rc = run_argv(link_argv);
     if (rc != 0) {
-        cmd = "clang " + c_path + " -o " + out_binary + " -no-pie 2>/dev/null";
-        rc = ::system(cmd.c_str());
+        link_argv = {"clang", c_path, "-o", out_binary, "-no-pie"};
+        rc = run_argv(link_argv);
     }
 
     std::remove(c_path.c_str());

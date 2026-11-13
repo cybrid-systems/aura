@@ -198,7 +198,7 @@ namespace {
     int run_git_jailed(const std::vector<std::string>& args, const std::string& jail_root,
                        bool capture, std::string* out) {
         int pfd[2] = {-1, -1};
-        if (capture && ::pipe(pfd) != 0)
+        if (capture && ::pipe2(pfd, O_CLOEXEC) != 0)
             return -1;
         int jail_sv[2] = {-1, -1};
         if (!jail_root.empty() &&
@@ -305,12 +305,11 @@ void RegSplitParts::register_git_inspect_primitives(Evaluator& ev) {
         if (result.empty()) {
             // Fallback: popen
             std::array<char, 4096> buf;
-            auto* fp = ::popen("git status --short 2>/dev/null", "r");
-            if (!fp)
+            const ::aura::core::unique_pipe pipe{::popen("git status --short 2>/dev/null", "r")};
+            if (!pipe)
                 return make_void();
-            while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+            while (::fgets(buf.data(), buf.size(), pipe.get()) != nullptr)
                 result += buf.data();
-            ::pclose(fp);
             if (!result.empty() && result.back() == '\n')
                 result.pop_back();
         }
@@ -361,14 +360,13 @@ void RegSplitParts::register_git_inspect_primitives(Evaluator& ev) {
 #endif
         if (result.empty()) {
             // Fallback: popen
-            std::string cmd = staged ? "git diff --staged 2>/dev/null" : "git diff 2>/dev/null";
+            const char* cmd = staged ? "git diff --staged 2>/dev/null" : "git diff 2>/dev/null";
             std::array<char, 4096> buf;
-            auto* fp = ::popen(cmd.c_str(), "r");
-            if (!fp)
+            const ::aura::core::unique_pipe pipe{::popen(cmd, "r")};
+            if (!pipe)
                 return make_void();
-            while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+            while (::fgets(buf.data(), buf.size(), pipe.get()) != nullptr)
                 result += buf.data();
-            ::pclose(fp);
         }
         auto sid = ev.string_heap_.mint(std::move(result));
         return make_string(sid);
@@ -408,12 +406,11 @@ void RegSplitParts::register_git_inspect_primitives(Evaluator& ev) {
             // Fallback: popen
             std::string cmd = "git log --oneline -n " + std::to_string(n) + " 2>/dev/null";
             std::array<char, 4096> buf;
-            auto* fp = ::popen(cmd.c_str(), "r");
-            if (!fp)
+            const ::aura::core::unique_pipe pipe{::popen(cmd.c_str(), "r")};
+            if (!pipe)
                 return make_void();
-            while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+            while (::fgets(buf.data(), buf.size(), pipe.get()) != nullptr)
                 result += buf.data();
-            ::pclose(fp);
             if (!result.empty() && result.back() == '\n')
                 result.pop_back();
         }
@@ -530,12 +527,12 @@ void RegSplitParts::register_git_index_primitives(Evaluator& ev) {
 #endif
         if (result.empty()) {
             std::array<char, 256> buf;
-            auto* fp = ::popen("git rev-parse --abbrev-ref HEAD 2>/dev/null", "r");
-            if (!fp)
+            const ::aura::core::unique_pipe pipe{
+                ::popen("git rev-parse --abbrev-ref HEAD 2>/dev/null", "r")};
+            if (!pipe)
                 return make_void();
-            while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+            while (::fgets(buf.data(), buf.size(), pipe.get()) != nullptr)
                 result += buf.data();
-            ::pclose(fp);
             if (!result.empty() && result.back() == '\n')
                 result.pop_back();
         }
@@ -654,12 +651,12 @@ void RegSplitParts::register_git_rev_parse_primitive(Evaluator& ev) {
 #endif
         if (result.empty()) {
             std::array<char, 64> buf;
-            auto* fp = ::popen("git rev-parse --short HEAD 2>/dev/null", "r");
-            if (!fp)
+            const ::aura::core::unique_pipe pipe{
+                ::popen("git rev-parse --short HEAD 2>/dev/null", "r")};
+            if (!pipe)
                 return make_void();
-            while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+            while (::fgets(buf.data(), buf.size(), pipe.get()) != nullptr)
                 result += buf.data();
-            ::pclose(fp);
             if (!result.empty() && result.back() == '\n')
                 result.pop_back();
         }
@@ -911,7 +908,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         if (uidx >= ev.string_heap_.size() || bidx >= ev.string_heap_.size())
             return make_void();
         // Issue #4559: URL / body / auth all leave the heap (wire or the
-        // CLI fallback's argv) — in-range each before any copy.
+        // CLI fallback's header pipe) — in-range each before any copy.
         if (!ev.inrange_string_tenant_allows(uidx, aura::compiler::security::kEffectNetwork,
                                              "http-post"))
             return make_void();
@@ -959,9 +956,12 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             }
         }
 
-        // Try native libcurl (synchronous, default path)
+        // Try native libcurl (synchronous, default path).
+        // Issue #5214: a loaded libcurl that fails, returns an empty body,
+        // or whose easy_init fails must not POST again through the CLI.
         std::string result;
-        if (get_curl().load()) {
+        const bool curl_loaded = get_curl().load();
+        if (curl_loaded) {
             auto& curl_url = ev.mutable_string_at(types::as_string_idx(a[0]));
             auto& curl_body = ev.mutable_string_at(types::as_string_idx(a[1]));
 
@@ -1006,72 +1006,157 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             }
         }
 
-        if (result.empty()) {
-            // ── fallback: pipe+fork+exec curl CLI ──
+        // CLI only when libcurl cannot be loaded. The bearer is written to
+        // a pipe and passed as `-H @/dev/fd/N`, never as an argv element.
+        // `--config -` would steal stdin from the body, so it is not used.
+        if (!curl_loaded) {
             auto& url = ev.mutable_string_at(types::as_string_idx(a[0]));
             auto& body = ev.mutable_string_at(types::as_string_idx(a[1]));
-            std::string auth_hdr;
-            if (a.size() >= 3 && types::is_string(a[2]))
-                auth_hdr = std::string("Authorization: Bearer ") +
-                           ev.string_at(types::as_string_idx(a[2]));
-            int in[2], out[2];
-            if (::pipe(in) < 0 || ::pipe(out) < 0)
+            // Soft scheme fence is a pass-through. A leading '-' would be
+            // a curl option if it were a positional URL. Reject before exec.
+            if (!url.empty() && url.front() == '-')
                 return make_void();
-            pid_t pid = ::fork();
+            std::string auth_line;
+            if (a.size() >= 3 && types::is_string(a[2])) {
+                const auto aidx = types::as_string_idx(a[2]);
+                if (aidx < ev.string_heap_.size())
+                    auth_line = std::string("Authorization: Bearer ") + ev.string_at(aidx) + "\n";
+            }
+            const bool want_auth = !auth_line.empty();
+            std::array<int, 2> in_pipe{-1, -1};
+            std::array<int, 2> out_pipe{-1, -1};
+            std::array<int, 2> hdr_pipe{-1, -1};
+            if (::pipe2(in_pipe.data(), O_CLOEXEC) != 0)
+                return make_void();
+            if (::pipe2(out_pipe.data(), O_CLOEXEC) != 0) {
+                ::close(in_pipe[0]);
+                ::close(in_pipe[1]);
+                return make_void();
+            }
+            if (want_auth && ::pipe2(hdr_pipe.data(), O_CLOEXEC) != 0) {
+                ::close(in_pipe[0]);
+                ::close(in_pipe[1]);
+                ::close(out_pipe[0]);
+                ::close(out_pipe[1]);
+                return make_void();
+            }
+            // dup2 in the child clears CLOEXEC on this kept fd so curl can
+            // read the header after exec. The number is chosen here, before
+            // fork, and is not one of the pipe ends.
+            int hdr_keep = 100;
+            const auto pipe_taken = [&](int fd) {
+                return fd == in_pipe[0] || fd == in_pipe[1] || fd == out_pipe[0] ||
+                       fd == out_pipe[1] || fd == hdr_pipe[0] || fd == hdr_pipe[1];
+            };
+            if (pipe_taken(hdr_keep))
+                hdr_keep = 101;
+            if (pipe_taken(hdr_keep))
+                hdr_keep = 102;
+            const std::string hdr_arg = std::string("@/dev/fd/") + std::to_string(hdr_keep);
+            std::vector<std::string> argv_store;
+            argv_store.emplace_back("curl");
+            argv_store.emplace_back("-s");
+            argv_store.emplace_back("-X");
+            argv_store.emplace_back("POST");
+            argv_store.emplace_back("--data-binary");
+            argv_store.emplace_back("@-");
+            argv_store.emplace_back("-H");
+            argv_store.emplace_back("Content-Type: application/json");
+            argv_store.emplace_back("--max-time");
+            argv_store.emplace_back("30");
+            argv_store.emplace_back("--connect-timeout");
+            argv_store.emplace_back("10");
+            // Issue #4382: restrict protocols to http/https (and
+            // redirects onto them) — mirrors the libcurl face.
+            argv_store.emplace_back("--proto");
+            argv_store.emplace_back("=http,https");
+            argv_store.emplace_back("--proto-redir");
+            argv_store.emplace_back("=http,https");
+            if (want_auth) {
+                argv_store.emplace_back("-H");
+                argv_store.push_back(hdr_arg);
+            }
+            argv_store.emplace_back("--url");
+            argv_store.push_back(url);
+            std::vector<char*> argv_ptrs;
+            argv_ptrs.reserve(argv_store.size() + 1);
+            for (auto& word : argv_store)
+                argv_ptrs.push_back(word.data());
+            argv_ptrs.push_back(nullptr);
+            const pid_t pid = ::fork();
             if (pid < 0) {
-                ::close(in[0]);
-                ::close(in[1]);
-                ::close(out[0]);
-                ::close(out[1]);
+                ::close(in_pipe[0]);
+                ::close(in_pipe[1]);
+                ::close(out_pipe[0]);
+                ::close(out_pipe[1]);
+                if (want_auth) {
+                    ::close(hdr_pipe[0]);
+                    ::close(hdr_pipe[1]);
+                }
                 return make_void();
             }
             if (pid == 0) {
-                ::close(in[1]);
-                ::close(out[0]);
-                ::dup2(in[0], STDIN_FILENO);
-                ::dup2(out[1], STDOUT_FILENO);
-                ::close(in[0]);
-                ::close(out[1]);
-                const char* argv[24]{};
-                int i = 0;
-                argv[i++] = "curl";
-                argv[i++] = "-s";
-                argv[i++] = "-X";
-                argv[i++] = "POST";
-                argv[i++] = "--data-binary";
-                argv[i++] = "@-";
-                argv[i++] = "-H";
-                argv[i++] = "Content-Type: application/json";
-                if (!auth_hdr.empty()) {
-                    argv[i++] = "-H";
-                    argv[i++] = auth_hdr.c_str();
+                ::close(in_pipe[1]);
+                ::close(out_pipe[0]);
+                if (want_auth)
+                    ::close(hdr_pipe[1]);
+                if (::dup2(in_pipe[0], STDIN_FILENO) < 0 || ::dup2(out_pipe[1], STDOUT_FILENO) < 0)
+                    ::_exit(127);
+                if (in_pipe[0] != STDIN_FILENO)
+                    ::close(in_pipe[0]);
+                if (out_pipe[1] != STDOUT_FILENO)
+                    ::close(out_pipe[1]);
+                if (want_auth) {
+                    if (::dup2(hdr_pipe[0], hdr_keep) < 0)
+                        ::_exit(127);
+                    if (hdr_pipe[0] != hdr_keep)
+                        ::close(hdr_pipe[0]);
                 }
-                argv[i++] = "--max-time";
-                argv[i++] = "30";
-                argv[i++] = "--connect-timeout";
-                argv[i++] = "10";
-                // Issue #4382: restrict protocols to http/https (and
-                // redirects onto them) — mirrors the libcurl face.
-                argv[i++] = "--proto";
-                argv[i++] = "=http,https";
-                argv[i++] = "--proto-redir";
-                argv[i++] = "=http,https";
-                argv[i++] = url.c_str();
-                argv[i] = nullptr;
-                ::execvp("curl", const_cast<char* const*>(argv));
-                ::_exit(1);
+                ::execvp(argv_ptrs[0], argv_ptrs.data());
+                ::_exit(127);
             }
-            ::close(in[0]);
-            ::close(out[1]);
-            ::write(in[1], body.data(), body.size());
-            ::close(in[1]);
-            std::array<char, 4096> fbuf;
-            ssize_t nr = 0;
-            while ((nr = ::read(out[0], fbuf.data(), fbuf.size())) > 0)
-                result.append(fbuf.data(), static_cast<std::size_t>(nr));
-            ::close(out[0]);
+            ::close(in_pipe[0]);
+            ::close(out_pipe[1]);
+            if (want_auth)
+                ::close(hdr_pipe[0]);
+            auto write_full = [](int dest, std::string_view bytes) {
+                while (!bytes.empty()) {
+                    const ssize_t wrote = ::write(dest, bytes.data(), bytes.size());
+                    if (wrote < 0) {
+                        if (errno == EINTR)
+                            continue;
+                        return false;
+                    }
+                    if (wrote == 0)
+                        return false;
+                    bytes.remove_prefix(static_cast<std::size_t>(wrote));
+                }
+                return true;
+            };
+            if (want_auth) {
+                (void)write_full(hdr_pipe[1], auth_line);
+                ::close(hdr_pipe[1]);
+            }
+            (void)write_full(in_pipe[1], body);
+            ::close(in_pipe[1]);
+            std::array<char, 4096> fbuf{};
+            while (true) {
+                const ssize_t got = ::read(out_pipe[0], fbuf.data(), fbuf.size());
+                if (got < 0) {
+                    if (errno == EINTR)
+                        continue;
+                    break;
+                }
+                if (got == 0)
+                    break;
+                result.append(fbuf.data(), static_cast<std::size_t>(got));
+            }
+            ::close(out_pipe[0]);
             int cstat = 0;
-            ::waitpid(pid, &cstat, 0);
+            pid_t waited = -1;
+            do {
+                waited = ::waitpid(pid, &cstat, 0);
+            } while (waited < 0 && errno == EINTR);
         }
 
         if (result.empty())
