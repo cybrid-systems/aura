@@ -13815,11 +13815,40 @@ void Evaluator::rebind_workspace_defines_on_switch() noexcept {
     if (root == aura::ast::NULL_NODE || !flat->is_live_node(root))
         return;
     try {
+        // Issue #5282: eval_flat below installs tree-walker closures, and
+        // a restored snap puts the previous publication's ids back.
+        // eval-current specialises those defines when AURA_SANDBOX=off.
+        // A discarded evo:trial switches back through here, so the live
+        // fingerprint stays put and the old algorithm still runs, but a
+        // named-let loop that used to inline its callees pays a closure
+        // call per step. Re-specialise this flat and store those
+        // closures. A restored id may already have been retired by the
+        // child rebind; a retired id runs the current publication, which
+        // is still the child body until this pass replaces it.
+        // Production returns immediately.
+        auto publish_switch_ir = [&]() {
+            bind_workspace_lambda_via_ir("");
+            for (auto& snap : switch_define_snaps_) {
+                if (snap.flat != flat)
+                    continue;
+                for (auto& e : snap.entries) {
+                    auto existing = top_env().lookup(e.name);
+                    if (!existing || !is_cell(*existing))
+                        continue;
+                    const auto ci = as_cell_id(*existing);
+                    if (ci >= cells().size())
+                        continue;
+                    e.value = cells()[static_cast<std::size_t>(ci)];
+                }
+            }
+        };
         // Issue #4632: same flat content as the last switch — put the
         // captured closures back in the shared cells. No eval, no
         // set_pool, no new binding.
-        if (try_restore_switch_define_snap())
+        if (try_restore_switch_define_snap()) {
+            publish_switch_ir();
             return;
+        }
         // The stamp missed (or this flat has never been evaluated).
         // Drop the stale row before the walk so a partial eval cannot
         // leave the old closures installed as if they were current.
@@ -13917,6 +13946,7 @@ void Evaluator::rebind_workspace_defines_on_switch() noexcept {
             else
                 switch_define_snaps_.push_back(std::move(snap));
         }
+        publish_switch_ir();
     } catch (...) {
         // [SILENCE-PRIM-#615] noexcept: a throw here would terminate the
         // switch primitive. Leave the cells unchanged.
