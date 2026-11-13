@@ -1610,9 +1610,7 @@ set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLA
 # a full benchmark suite. Returns 0 iff the AC is met.
 add_executable(issue_508_bench tests/compiler/bench_dead_coercion_elim.cpp)
 target_include_directories(issue_508_bench PRIVATE src)
-target_compile_options(issue_508_bench PRIVATE -Wall
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter)
+aura_test_compile_options(issue_508_bench)
 target_link_libraries(issue_508_bench PRIVATE stdc++ aura_test_objects aura-reflect
     aura_jit_test_objects)
 
@@ -1626,9 +1624,7 @@ target_link_libraries(issue_508_bench PRIVATE stdc++ aura_test_objects aura-refl
 # benchmark file) is the deliverable.
 add_executable(issue_307_bench tests/compiler/bench_ir_relower.cpp)
 target_include_directories(issue_307_bench PRIVATE src)
-target_compile_options(issue_307_bench PRIVATE -Wall
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter)
+aura_test_compile_options(issue_307_bench)
 target_link_libraries(issue_307_bench PRIVATE stdc++ aura_test_objects aura-reflect
     aura_jit_test_objects)
 
@@ -1637,9 +1633,7 @@ target_link_libraries(issue_307_bench PRIVATE stdc++ aura_test_objects aura-refl
 # Formerly four near-duplicate drivers under tests/bench/.
 add_executable(ast_hotpath_bench tests/bench/ast_hotpath_bench.cpp)
 target_include_directories(ast_hotpath_bench PRIVATE src)
-target_compile_options(ast_hotpath_bench PRIVATE -Wall
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter)
+aura_test_compile_options(ast_hotpath_bench)
 target_link_libraries(ast_hotpath_bench PRIVATE stdc++ aura_test_objects aura-reflect
     aura_jit_test_objects)
 add_test(NAME ast_hotpath_bench COMMAND ./ast_hotpath_bench)
