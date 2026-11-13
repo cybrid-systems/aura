@@ -36,10 +36,10 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 282 | 282 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 110 | 110 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 28 | 28 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 61 | 61 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 56 | 56 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 134 | 134 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 133 | 133 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 67 | 67 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -1693,13 +1693,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_walk_runtime.cpp` (—) [domain_suite, theme_compiler] — AC1: a Let whose value is Linear is discovered by name, including when
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (61)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (62)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (61)
+#### domain/ (62)
 
 - `tests/reflect/test_ast_pod_reflect_b3.cpp` (—) [domain_suite, theme_reflect] — Wave B3: small AST public PODs via auto_serialize / to_json.
 - `tests/core/test_aura_core_embed.cpp` (—) [domain_suite, theme_core] — fiber_context) — no aura_test_objects, no evaluator, no reflect. It proves
@@ -1737,6 +1737,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_opcode_info_align_a3.cpp` (—) [small, domain_suite, theme_reflect] — Wave A3: IROpcode PascalCase (P2996) ↔ display kebab table alignment.
 - `tests/reflect/test_opcode_reflect.cpp` (—) [domain_suite, theme_reflect] — Issue #2289: GCC 16.1 reflection workaround cleanup.
 - `tests/compiler/test_pre_scan_quote_boundary.cpp` (—) [domain_suite, theme_compiler] — AC1: pre_scan returns without descending into NodeTag::Quote children
+- `tests/compiler/test_production_safety_p2.cpp` (—) [domain_suite, theme_compiler] — Issue #1097/#1104/#1122 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_prompt2_6_impact_scope_quote_lambda_bridge_env.cpp` (—) [domain_suite, theme_compiler] — test_prompt2_6_impact_scope_quote_lambda_bridge_env.cpp — Issue #741:
 - `tests/compiler/test_qq_unwrap_targeted_restamp.cpp` (—) [domain_suite, theme_compiler] — AC1: expand_inner_macros cites #2809; restamp_after_qq_unwrap; no full
 - `tests/compiler/test_query_hygiene_default.cpp` (—) [domain_suite, theme_compiler] — AC1: Default query:pattern / query:filter skip MacroIntroduced; include
@@ -1925,13 +1926,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (134)
+### `observability` — Observability / metrics / query:*-stats (133)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (134)
+#### domain/ (133)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_exhaustiveness_production_hard.cpp` (—) [domain_suite, theme_compiler] — test_adt_exhaustiveness_production_hard.cpp -- source-cite AC for Issue #3559
@@ -2023,7 +2024,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_production_roadmap_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #441/#514/#520/#634/#635 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_production_safety.cpp` (—) [domain_suite, theme_compiler] — test_production_safety.cpp — Merged #1047-#1071 + #1097-#1122 (#1978).
 - `tests/compiler/test_production_safety_p1.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1047/#1050/#1054/#1071 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_production_safety_p2.cpp` (—) [domain_suite, theme_compiler] — Issue #1097/#1104/#1122 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_production_stability.cpp` (—) [domain_suite, theme_compiler] — Issue #1014/#1015/#1020/#1036/#1039/#1046 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_production_sweep.cpp` (—) [large, domain_suite, theme_compiler] — test_production_sweep.cpp — Merged #1123-#1343 (#1978).
 - `tests/compiler/test_query_dispatch.cpp` (—) [small, domain_suite, theme_compiler] — Issue #1435 (query :op) unified dispatcher

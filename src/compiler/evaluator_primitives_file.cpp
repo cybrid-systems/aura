@@ -742,7 +742,7 @@ void RegSplitParts::register_exec_primitives(PrimRegistrar add, Evaluator& ev) {
         if (!ev.check_tenant_exec_jail(cmd, jail_root, "command-output"))
             return make_void();
         int pfd[2];
-        if (::pipe(pfd) != 0)
+        if (::pipe2(pfd, O_CLOEXEC) != 0)
             return make_void();
         int jail_sv[2] = {-1, -1};
         if (!jail_root.empty() &&

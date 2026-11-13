@@ -120,7 +120,7 @@ def main() -> int:
         "AC2: jail fence precedes the exec child fork (zero exec on deny)",
     )
     must("::popen(" not in co_body, "AC2: popen is gone from the jailed capture body")
-    must("::pipe(" in co_body and "::dup2(" in co_body, "AC2: capture runs through the fork+pipe pattern")
+    must("::pipe2(" in co_body and "::dup2(" in co_body, "AC2: capture runs through the fork+pipe pattern")
     must("result.back() == " + chr(39) + "\\n" + chr(39) in co_body, "AC2: trailing-newline trim stays contract")
 
     # ── AC3: both exec children chdir under the tenant root ──

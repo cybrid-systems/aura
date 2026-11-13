@@ -137,7 +137,7 @@ def main() -> int:
         body = stripped[helper : helper + 4000]
         must("::chdir(jail_root.c_str())" in body, "AC2: child chdir under the tenant root")
         must("::fork()" in body and "::execvp(" in body, "AC2: fork+execvp (no shell)")
-        must("::pipe(" in body, "AC2: stdout capture pipe")
+        must("::pipe2(" in body, "AC2: stdout capture pipe")
     jailed_uses = (
         stripped.count("run_git_jailed({")
         + stripped.count("run_git_jailed(args,")
