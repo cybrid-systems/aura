@@ -3,8 +3,10 @@
 ;
 ; Issue #2770: string-split (and length-walk siblings) were non-tail
 ; recursive over every character → recursion depth exceeded (>700) on
-; ~400-char / multi-line mailbox inputs (Hermes Phase 5). All hot
-; walks below use `while` + mutable accumulators so stack is O(1).
+; ~400-char / multi-line mailbox inputs (Hermes Phase 5). Walks that
+; remain use `while` + mutable accumulators so stack is O(1).
+; string-split's hot path is regex-split (#5283); its walk is only
+; the fallback when that primitive refuses the input.
 
 (export string-split string-split-words string-join string-trim
         string-upcase string-downcase
@@ -19,42 +21,75 @@
 ; Note: string.aura intentionally avoids requiring std/list internally.
 ; Module evaluation runs in isolated env; internal imports would pollute top_.
 
-; Split string by a separator — O(n·m) time, O(1) stack (#2770).
+; Split string by a separator — O(1) stack (#2770).
 ; sep can be: a string (split on the whole substring, any length), or a
 ; char code (integer).
 ; Issue #4795: a multi-char string separator used to be silently truncated
 ; to its first char ("a::b" / "::" → ("a" "" "b")). It now splits on the
 ; full substring ("a::b::c" / "::" → ("a" "b" "c")); an empty string
 ; separator is an error instead of a silent (string-ref "" 0) failure.
-; Uses substring ranges (no per-char reverse of character lists).
+; Issue #5283: the per-character walk below is correct, but an 800-line
+; body spent ~100ms in the interpreter while regex-split of the same
+; bytes was ~1ms. Quote the separator (so "." stays a dot) and split
+; with that primitive. regex-split omits one trailing empty; put it
+; back when the subject ends with the separator, so "a\n" stays
+; ("a" "") and 2000 newlines stay 2001 pieces. A regex error (size
+; cap, timeout) falls back to the walk, which has no size cap.
 (define (string-split s sep)
   (define n (string-length s))
-  (define m (if (string? sep) (string-length sep) 1))
+  (define sep-str (if (string? sep) sep (list->string (list sep))))
+  (define m (string-length sep-str))
+  ; ECMAScript metacharacters. The quote is the separator only, not s.
+  (define (quote-sep)
+    (let ((i 0)
+          (parts (list)))
+      (while (lambda () (< i m))
+        (lambda ()
+          (let ((c (string-ref sep-str i)))
+            (if (or (= c 92) (= c 94) (= c 36) (= c 46) (= c 42)
+                    (= c 43) (= c 63) (= c 40) (= c 41) (= c 91)
+                    (= c 93) (= c 123) (= c 125) (= c 124))
+              (set! parts (cons (substring sep-str i (+ i 1)) (cons "\\" parts)))
+              (set! parts (cons (substring sep-str i (+ i 1)) parts))))
+          (set! i (+ i 1))))
+      (apply string-append (reverse parts))))
+  ; #2770 / #4795: code-point walk, full separator, O(1) stack.
+  (define (scan)
+    (define sep-code (string-ref sep-str 0))
+    (define (sep-at? i)
+      (if (= (string-ref s i) sep-code)
+        (if (= m 1)
+          #t
+          (if (> (+ i m) n)
+            #f
+            (string=? (substring s i (+ i m)) sep-str)))
+        #f))
+    (let ((i 0)
+          (start 0)
+          (result (list)))
+      (while (lambda () (< i n))
+        (lambda ()
+          (if (sep-at? i)
+            (begin
+              (set! result (cons (substring s start i) result))
+              (set! start (+ i m))
+              (set! i (+ i m)))
+            (set! i (+ i 1)))))
+      (set! result (cons (substring s start n) result))
+      (reverse result)))
   (if (and (string? sep) (= m 0))
-    (error "string-split: empty separator string"))
-  (define sep-code (if (string? sep) (string-ref sep 0) sep))
-  ; #4795: does the full separator occur at position i?
-  (define (sep-at? i)
-    (if (= (string-ref s i) sep-code)
-      (if (= m 1)
-        #t
-        (if (> (+ i m) n)
-          #f
-          (string=? (substring s i (+ i m)) sep)))
-      #f))
-  (let ((i 0)
-        (start 0)
-        (result (list)))
-    (while (lambda () (< i n))
-      (lambda ()
-        (if (sep-at? i)
-          (begin
-            (set! result (cons (substring s start i) result))
-            (set! start (+ i m))
-            (set! i (+ i m)))
-          (set! i (+ i 1)))))
-    (set! result (cons (substring s start n) result))
-    (reverse result)))
+    (error "string-split: empty separator string")
+    (if (= m 0)
+      (list (substring s 0 n))
+      ; A size-cap or timeout is caught as the message string.
+      ; A successful split is a list, so string? tells them apart.
+      (let ((parts (try (regex-split (quote-sep) s)
+                        (catch (e) e))))
+        (if (string? parts)
+          (scan)
+          (if (string-suffix? s sep-str)
+            (append parts (list ""))
+            parts))))))
 
 ; Split by any whitespace (space, tab, newline) — O(1) stack (#2770).
 (define (string-split-words s)
