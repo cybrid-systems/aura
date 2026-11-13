@@ -1225,6 +1225,27 @@ void Fiber::check_gc_safepoint() {
 
 // ── Constructor ───────────────────────────────────────
 
+namespace {
+
+    // Issue #5211: the guard must cover the compiler's stack-clash probe
+    // assumption, not just one page.  GCC probes frames larger than
+    // stack-clash-protection-guard-size; on AArch64 that default is 64 KiB, so a
+    // 4 KiB PROT_NONE page lets a 4-63 KiB frame walk straight into the next
+    // mapping.  x86-64 assumes 4 KiB.  On 16K/64K-page arm64 kernels sysconf is
+    // larger and wins, so stack_ never lands inside the protected page.
+    std::size_t fiber_guard_size() {
+#if defined(__aarch64__)
+        constexpr std::size_t probe = 64u * 1024u;
+#else
+        constexpr std::size_t probe = 4u * 1024u;
+#endif
+        const long page = ::sysconf(_SC_PAGESIZE);
+        const std::size_t page_sz = page > 0 ? static_cast<std::size_t>(page) : probe;
+        return page_sz > probe ? page_sz : probe;
+    }
+
+} // namespace
+
 Fiber::Fiber(Func func, size_t stack_size)
     : id_(next_id_++)
     , stack_size_(stack_size)
@@ -1237,10 +1258,9 @@ Fiber::Fiber(Func func, size_t stack_size)
         assigned_tenant_id_.store(parent == 0 ? kUnsetTenant : parent, std::memory_order_relaxed);
     }
 
-    // 1. Allocate stack via mmap with guard page
-    // Guard page is the first page (PROT_NONE)
-    size_t guard_size = 4096;
-    size_t alloc_size = guard_size + stack_size_;
+    // 1. Allocate stack via mmap with guard region (Issue #5211)
+    guard_size_ = fiber_guard_size();
+    const size_t alloc_size = guard_size_ + stack_size_;
 
     void* base =
         ::mmap(nullptr, alloc_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -1249,9 +1269,17 @@ Fiber::Fiber(Func func, size_t stack_size)
         throw std::system_error(errno, std::generic_category(), "fiber mmap stack");
     }
 
-    // Guard page at the bottom (to catch stack underflow from overflow)
-    ::mprotect(base, guard_size, PROT_NONE);
-    stack_ = static_cast<char*>(base) + guard_size; // usable starts after guard
+    // Guard at the bottom (catches overflow from below).  A failed mprotect
+    // used to be ignored: the fiber then ran with no guard and overflow
+    // silently rewrote a neighbouring fiber's stack (Issue #5211).
+    const bool injected = std::getenv("AURA_TEST_FIBER_MPROTECT_FAIL") != nullptr;
+    if (injected || ::mprotect(base, guard_size_, PROT_NONE) != 0) {
+        const int err = injected ? ENOMEM : errno;
+        ::munmap(base, alloc_size);
+        g_fiber_init_aura_result_err.fetch_add(1, std::memory_order_relaxed);
+        throw std::system_error(err, std::generic_category(), "fiber mprotect guard");
+    }
+    stack_ = static_cast<char*>(base) + guard_size_; // usable starts after guard
 
     // 2. Create eventfd
 #if AURA_HAVE_EVENTFD
@@ -1478,8 +1506,8 @@ void Fiber::unmap_stack() noexcept {
     if (!stack_)
         return;
     // stack_ is the usable start. The mmap base is the guard page before it.
-    auto* base = static_cast<char*>(stack_) - 4096;
-    ::munmap(base, 4096 + stack_size_);
+    auto* base = static_cast<char*>(stack_) - guard_size_;
+    ::munmap(base, guard_size_ + stack_size_);
     stack_ = nullptr;
     ctx_.uc_stack.ss_sp = nullptr;
     ctx_.uc_stack.ss_size = 0;
