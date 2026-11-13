@@ -10,7 +10,6 @@
 
 module;
 
-#include <span>
 
 export module aura.core.ast_mutation_pipeline;
 
