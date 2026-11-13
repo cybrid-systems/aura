@@ -1,23 +1,11 @@
 module;
 #include "core/ownership.hh" // Issue #4936: immortal<T>
-#include <algorithm>
-#include <array>
-#include <atomic>
-#include <chrono>
+// Issue #5269 pilot: std declarations come from the module import below;
+// keep only headers whose macros/types are needed in the GMF.
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <functional>
-#include <optional>
-#include <span>
-#include <sstream>
-#include <string>
-#include <string_view>
-#include <unordered_map>
-#include <unordered_set>
-#include <utility>
-#include <vector>
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "compiler/typed_mutation_audit.h" // Issue #2277: typed_audit namespace + g_typed_mutation_audit_counters (C++20 modules do NOT transit .ixx purview includes to .cpp impl units, so include directly here).
 #include "compiler/mutate_type_gate.hh"    // Issue #4363: GMF so is_hard() shares the process gate
@@ -26,6 +14,9 @@ module;
 #include "hash_meta.h" // FNV constants (#901)
 module aura.compiler.type_checker;
 import std;
+// Issue #5269: headers included below (in the module purview) must not
+// re-include std headers; they honour this macro.
+#define AURA_HAVE_STD_MODULE 1
 import aura.core.mutation;
 import aura.compiler.dirty_propagation; // Issue #2191: type cone ↔ DepGraph
 // Issue #411 fu1 follow-up #3: per-DefUseIndex tracker
