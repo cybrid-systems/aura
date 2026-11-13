@@ -37,6 +37,7 @@ extern int run_test_mutation_hold_estimate();
 extern int run_test_mutation_hold_hard_timeout();
 extern int run_test_mutation_hold_live();
 extern int run_test_mutation_hold_slo();
+extern int run_test_linear_frame_sweep_budget();
 extern int run_test_mutation_log_pressure();
 extern int run_test_mutation_memory_blame();
 extern int run_test_outermost_exit_order();
@@ -139,6 +140,18 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK test_mutation_hold_live");
+    }
+
+    std::println("\n──── test_linear_frame_sweep_budget ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_linear_frame_sweep_budget() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL test_linear_frame_sweep_budget");
+    } else {
+        ++members_passed;
+        std::println("OK test_linear_frame_sweep_budget");
     }
 
     std::println("\n──── test_mutation_hold_slo ────");

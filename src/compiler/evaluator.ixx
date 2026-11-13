@@ -7853,6 +7853,11 @@ private:
     std::atomic<std::uint64_t> env_frame_reuse_hits_{0};
     std::atomic<std::uint64_t> env_frame_reuse_misses_{0};
     std::atomic<std::uint64_t> env_frame_reclaimed_total_{0};
+    // Issue #5274: round-robin cursor for the sliced linear post-mutate
+    // frame sweep (linear_post_mutate_enforce_all). The sweep examines at
+    // most kLinearFrameSweepSlice slots per boundary and resumes here, so a
+    // boundary's cost no longer scales with the append-only arena extent.
+    mutable std::atomic<std::size_t> linear_frame_sweep_cursor_{0};
 
 public:
     std::vector<EnvId> env_frame_reuse_;
