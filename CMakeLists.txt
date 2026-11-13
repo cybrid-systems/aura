@@ -1091,8 +1091,6 @@ endif()
 # OrcJIT / emit_native_object / SpecJIT paths (see
 # cmake/issue_tests_need_full_llvm.txt or tests/README.md · link profiles).
 # P2: SHARED — one light ABI .so for all non-JIT issue tests.
-# Issue #5202: the JIT stub sources below have no module syntax (they
-# include headers only). Skip CMake's P1689 scan for this target.
 add_library(aura_jit_light_test_objects SHARED
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1105,7 +1103,6 @@ set_target_properties(aura_jit_light_test_objects PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
     BUILD_RPATH "${CMAKE_BINARY_DIR}"
-    CXX_SCAN_FOR_MODULES OFF
 )
 target_include_directories(aura_jit_light_test_objects PUBLIC
     ${CMAKE_SOURCE_DIR}/src
