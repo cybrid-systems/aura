@@ -12144,6 +12144,36 @@ public:
         // (was the inline DefineFinder struct in cache_define).
         auto finder = aura::compiler::find_top_level_defines(flat, pool, expanded);
 
+        // Issue #5281: export filtering removes an unexported define from
+        // the importer's env, so the tree walker still sees the primitive.
+        // The global IR cache is keyed by bare name and does not. std/hash
+        // (and std/rule) define a private for-each; caching it made a
+        // workspace lambda specialized under AURA_SANDBOX=off call that
+        // helper. The helper returned #t and never applied the callback,
+        // so set! of a let inside for-each was a no-op after set-code /
+        // rebind. An exported shadow stays cached — the importer binds it
+        // too. A module with no export form publishes every define.
+        std::unordered_set<std::string> module_exports;
+        bool module_has_export = false;
+        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
+            if (flat.is_free_slot(id))
+                continue;
+            auto ev = flat.get(id);
+            if (ev.tag != aura::ast::NodeTag::Export)
+                continue;
+            module_has_export = true;
+            for (auto cid : ev.children) {
+                if (cid == aura::ast::NULL_NODE || cid >= flat.size() || flat.is_free_slot(cid))
+                    continue;
+                auto cv = flat.get(cid);
+                if (cv.tag != aura::ast::NodeTag::Variable || cv.sym_id == aura::ast::INVALID_SYM)
+                    continue;
+                auto en = pool.resolve(cv.sym_id);
+                if (!en.empty())
+                    module_exports.emplace(en);
+            }
+        }
+
         // Cache each define (IR only — tree-walker already evaluated the module)
         for (auto& [name, node_id] : finder) {
             if (ir_cache_.count(name))
@@ -12157,6 +12187,13 @@ public:
             auto body_node = flat.get(define_node.child(0));
             if (body_node.tag != aura::ast::NodeTag::Lambda)
                 continue;
+
+            // Issue #5281: private primitive shadow. See the export scan above.
+            if (module_has_export && module_exports.count(name) == 0 &&
+                evaluator_.primitives().slot_for_name(name) <
+                    evaluator_.primitives().slot_count()) {
+                continue;
+            }
 
             // Check: can this function be lowered to IR?
             // We skip functions where any variable reference in the body

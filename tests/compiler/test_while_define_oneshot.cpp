@@ -623,6 +623,81 @@ static void ac4690_closure_while_keeps_diagnostic() {
     CHECK(ok, "4690: closure-form while reports the unbound name and stops");
 }
 
+// Issue #5281: AURA_SANDBOX=off specializes a set-code / rebind lambda.
+// std/hash's unexported for-each used to occupy the global IR cache, so
+// the specialized body called that helper (returns #t, callback never
+// runs) instead of the primitive. set! of the outer let then left the
+// accumulator empty. File load and the production face stay on the
+// tree walker and were already correct.
+static void ac5281_foreach_set_after_set_code() {
+    std::println("\n--- #5281: for-each set! after set-code, sandbox off ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+
+    const char* src = R"((define (collect xs)
+  (let ((out (quote ())))
+    (for-each (lambda (x) (set! out (cons x out))) xs)
+    (reverse out)))
+(define (collect-named xs)
+  (let ((out (quote ()))
+        (add (lambda (x) (set! out (cons x out)))))
+    (for-each add xs)
+    (reverse out)))
+(define (probe xs)
+  (for-each (lambda (x) x) xs)))";
+    std::string escaped;
+    escaped.reserve(std::char_traits<char>::length(src) + 8);
+    for (char c : std::string_view(src)) {
+        if (c == '\\' || c == '"')
+            escaped += '\\';
+        if (c == '\n')
+            escaped += "\\n";
+        else
+            escaped += c;
+    }
+
+    CompilerService cs;
+    CHECK(cs.eval("(require \"std/list\" all:)").has_value(), "5281: require std/list");
+    CHECK(cs.eval("(require \"std/hash\" all:)").has_value(), "5281: require std/hash");
+    CHECK(cs.eval(std::format("(set-code \"{}\")", escaped)).has_value(), "5281: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "5281: eval-current");
+    eval_int_eq(cs, R"((if (equal? (collect '(1 2 3)) '(1 2 3)) 1 0))", 1,
+                "5281: set-code for-each set! is (1 2 3)");
+    eval_int_eq(cs, R"((if (equal? (collect-named '(1 2 3)) '(1 2 3)) 1 0))", 1,
+                "5281: named callback set! is (1 2 3)");
+    eval_int_eq(cs, R"((if (eq? (probe '()) #t) 0 1))", 1,
+                "5281: workspace for-each is not the hash helper");
+    eval_int_eq(cs,
+                R"((begin
+  (define (file-collect xs)
+    (let ((out (quote ())))
+      (for-each (lambda (x) (set! out (cons x out))) xs)
+      (reverse out)))
+  (if (equal? (file-collect '(1 2 3)) '(1 2 3)) 1 0)))",
+                1, "5281: file-mode for-each set! is (1 2 3)");
+
+    CompilerService rebind_cs;
+    CHECK(rebind_cs.eval("(require \"std/list\" all:)").has_value(), "5281: rebind require list");
+    CHECK(rebind_cs.eval("(require \"std/hash\" all:)").has_value(), "5281: rebind require hash");
+    CHECK(rebind_cs.eval("(set-code \"(define (collect xs) xs)\\n\")").has_value(),
+          "5281: rebind stub");
+    CHECK(rebind_cs.eval("(eval-current)").has_value(), "5281: rebind eval stub");
+    const char* body = "(lambda (xs) (let ((out (quote ()))) "
+                       "(for-each (lambda (x) (set! out (cons x out))) xs) (reverse out)))";
+    auto reb = rebind_cs.eval(std::format("(mutate :rebind \"collect\" \"{}\" \"5281\")", body));
+    CHECK(reb.has_value(), "5281: rebind returns");
+    eval_int_eq(rebind_cs, R"((if (equal? (collect '(1 2 3)) '(1 2 3)) 1 0))", 1,
+                "5281: rebind for-each set! is (1 2 3)");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("Issue #5281") != std::string::npos, "5281: cite");
+}
+
 } // namespace
 
 int run_test_while_define_oneshot() {
@@ -636,6 +711,7 @@ int run_test_while_define_oneshot() {
     ac4379_ir_while_lambda_set();
     ac4466_while_multi_body();
     ac4690_closure_while_keeps_diagnostic();
+    ac5281_foreach_set_after_set_code();
     std::println("\n=== #2571: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
