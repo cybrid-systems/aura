@@ -698,6 +698,78 @@ static void ac5281_foreach_set_after_set_code() {
     CHECK(svc.find("Issue #5281") != std::string::npos, "5281: cite");
 }
 
+// Issue #5282: a discarded evo:trial must not leave the live defines on
+// the tree walker. hot inlines inc; the candidate returns 0 and is not
+// committed. The same call stays on the original result, and the time
+// stays in the pre-trial band (the walker path was about 1.6x).
+static void ac5282_discarded_trial_keeps_inline() {
+    std::println("\n--- #5282: discarded evo:trial keeps the inlined loop ---");
+    setenv("AURA_SANDBOX", "off", 1);
+    setenv("AURA_PIPELINE_STRICT", "0", 1);
+    struct RestoreEnv {
+        ~RestoreEnv() {
+            unsetenv("AURA_SANDBOX");
+            unsetenv("AURA_PIPELINE_STRICT");
+        }
+    } restore_env;
+
+    const char* src = "(define (inc n) (+ n 1))\n"
+                      "(define (hot n) (let loop ((i 0) (s 0)) "
+                      "(if (< i n) (loop (+ i 1) (inc s)) s)))\n";
+    std::string escaped;
+    escaped.reserve(std::char_traits<char>::length(src) + 8);
+    for (char c : std::string_view(src)) {
+        if (c == '\\' || c == '"')
+            escaped += '\\';
+        if (c == '\n')
+            escaped += "\\n";
+        else
+            escaped += c;
+    }
+
+    CompilerService cs;
+    CHECK(cs.eval("(require \"std/evo-core\" all:)").has_value(), "5282: require evo-core");
+    CHECK(cs.eval(std::format("(set-code \"{}\")", escaped)).has_value(), "5282: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "5282: eval-current");
+    const char* time_src = R"((let ((t0 (monotonic-ms))
+                                    (u (hot 40000)))
+                               (if (= u 40000) (- (monotonic-ms) t0) -1)))";
+    auto millis = [&](const char* label) -> std::int64_t {
+        auto r = cs.eval(time_src);
+        if (!r || !is_int(*r)) {
+            CHECK(false, label);
+            return -1;
+        }
+        return as_int(*r);
+    };
+    const auto before = millis("5282: before time");
+    auto trial = cs.eval(
+        R"ev((let ((cand (evo:candidate "(lambda (n) 0)"
+                                        (hash "id" "discard-1" "target" "hot")))
+                   (trial (evo:trial cand
+                            (hash "timeout-ms" 20000
+                                  "apply" (lambda (c)
+                                            (eq? (mutate :rebind "hot"
+                                                         (evo:candidate-genome c)
+                                                         "discard-1")
+                                                #t))
+                                  "evaluate" (lambda (c)
+                                               (hash "objectives" (hash "ms" 1)
+                                                     "constraints"
+                                                     (hash "checksum" 1.0)))))))
+              (if (and (string=? (hash-ref trial "status") "ok")
+                       (eq? (hash-ref trial "live-unchanged") #t)
+                       (eq? (hash-ref trial "trial-applied") #t))
+                  1 0)))ev");
+    CHECK(trial && is_int(*trial) && as_int(*trial) == 1, "5282: trial discarded, live unchanged");
+    const auto after = millis("5282: after time");
+    std::println("5282: before {}ms after {}ms", before, after);
+    CHECK(before > 0 && after > 0 && after * 2 <= before * 3,
+          "5282: discarded trial stays in the same time band");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("Issue #5282") != std::string::npos, "5282: cite");
+}
+
 } // namespace
 
 int run_test_while_define_oneshot() {
@@ -712,6 +784,7 @@ int run_test_while_define_oneshot() {
     ac4466_while_multi_body();
     ac4690_closure_while_keeps_diagnostic();
     ac5281_foreach_set_after_set_code();
+    ac5282_discarded_trial_keeps_inline();
     std::println("\n=== #2571: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
