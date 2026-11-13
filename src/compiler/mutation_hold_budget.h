@@ -117,11 +117,19 @@ mutation_hold_steady_ns_of(std::chrono::steady_clock::time_point tp) noexcept {
         std::chrono::duration_cast<std::chrono::nanoseconds>(tp.time_since_epoch()).count());
 }
 
+// Issue #5274: host threads and CLI thread-fibers have no scheduler
+// Fiber (g_current_fiber == nullptr). Mapping every one of them onto
+// fiber id 1 made a peer's note_exit clear the real holder, and made
+// note_exit miss when the id observed at exit differed from enter —
+// the probe then stayed "held" forever and every later admit was
+// AdmissionRejected: mutation-hold-budget. Id 0 means "no owner":
+// do not publish and do not clear someone else's probe.
+//
 // Outermost Guard enter: install or upgrade process-wide max-hold probe.
 inline void mutation_hold_live_note_enter(std::uint64_t fiber_id, std::uint64_t start_ns,
                                           std::uint32_t depth) noexcept {
     if (fiber_id == 0)
-        fiber_id = 1; // never store 0 as live id (0 = no holder)
+        return;
     // Claim empty slot (fiber_id == 0).
     std::uint64_t expected_fid = 0;
     if (g_mutation_hold_live_fiber_id.compare_exchange_strong(
@@ -144,9 +152,10 @@ inline void mutation_hold_live_note_enter(std::uint64_t fiber_id, std::uint64_t 
 }
 
 // Outermost Guard exit: clear if we are the recorded max holder.
+// Issue #5274: fiber_id 0 must not CAS the aliased id 1.
 inline void mutation_hold_live_note_exit(std::uint64_t fiber_id) noexcept {
     if (fiber_id == 0)
-        fiber_id = 1;
+        return;
     std::uint64_t expected = fiber_id;
     if (g_mutation_hold_live_fiber_id.compare_exchange_strong(
             expected, 0, std::memory_order_acq_rel, std::memory_order_relaxed)) {
@@ -192,6 +201,80 @@ inline void mutation_hold_live_reset_for_test() noexcept {
     g_mutation_hold_live_depth.store(0, std::memory_order_relaxed);
     g_mutation_hold_live_session_mid.store(0, std::memory_order_relaxed);
 }
+
+// Issue #5274: owner key of the outermost guard on THIS thread.
+// Scheduler fiber id, CLI thread-fiber id (0x40000000|seq), or a
+// per-host-thread key with bit 61 set (fits a 62-bit fixnum, disjoint
+// from both). 0 = this thread holds no outermost guard.
+inline std::uint64_t& mutation_hold_tls_owner_key() noexcept {
+    thread_local std::uint64_t key = 0;
+    return key;
+}
+
+// Stable key for a host thread that is not a scheduler fiber and not
+// inside a CLI thread-fiber body. Bit 61 keeps it out of the fiber-id
+// space and inside the fixnum range the live-probe query prints.
+inline std::uint64_t mutation_hold_host_thread_key() noexcept {
+    thread_local std::uint64_t host = 0;
+    if (host == 0) {
+        static std::atomic<std::uint64_t> seq{1};
+        host = (1ull << 61) | seq.fetch_add(1, std::memory_order_relaxed);
+    }
+    return host;
+}
+
+// Peer admit asks the recorded owner to drop the hold. The owner
+// observes this from its own thread (opcode poll, blocking-IO edge,
+// guard dtor). A foreign thread never unlocks workspace_mtx_.
+inline std::atomic<std::uint64_t> g_mutation_hold_cancel_owner_key{0};
+
+inline void mutation_hold_request_cancel(std::uint64_t owner_key) noexcept {
+    if (owner_key != 0)
+        g_mutation_hold_cancel_owner_key.store(owner_key, std::memory_order_release);
+}
+
+[[nodiscard]] inline bool mutation_hold_cancel_targets(std::uint64_t owner_key) noexcept {
+    return owner_key != 0 &&
+           g_mutation_hold_cancel_owner_key.load(std::memory_order_acquire) == owner_key;
+}
+
+inline void mutation_hold_clear_cancel(std::uint64_t owner_key) noexcept {
+    std::uint64_t expected = owner_key;
+    g_mutation_hold_cancel_owner_key.compare_exchange_strong(expected, 0, std::memory_order_acq_rel,
+                                                             std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline bool mutation_hold_cancel_targets_tls() noexcept {
+    return mutation_hold_cancel_targets(mutation_hold_tls_owner_key());
+}
+
+// Why the outermost guard was fail-closed. mutate:rebind's wrapper
+// reads this so a hold-budget abort is not rewritten as the generic
+// "topology restored" (#5275). One-shot: take() clears the slot.
+inline const char*& mutation_hold_fail_reason_slot() noexcept {
+    thread_local const char* slot = nullptr;
+    return slot;
+}
+
+inline void mutation_hold_set_fail_reason(const char* reason) noexcept {
+    if (mutation_hold_fail_reason_slot() == nullptr)
+        mutation_hold_fail_reason_slot() = reason;
+}
+
+[[nodiscard]] inline const char* mutation_hold_take_fail_reason() noexcept {
+    const char* r = mutation_hold_fail_reason_slot();
+    mutation_hold_fail_reason_slot() = nullptr;
+    return r;
+}
+
+// Defined in evaluator_mutation_boundary.cpp. Host / thread-fiber
+// owner key (scheduler fiber id when g_current_fiber is set).
+extern "C" std::uint64_t aura_mutation_hold_owner_key_now() noexcept;
+// Drop this thread's outermost guard before a blocking wait. 0 if none.
+extern "C" int aura_mutation_hold_release_before_block() noexcept;
+// If a peer requested cancel of this thread's hold, force-release it.
+// 1 when the hold was dropped.
+extern "C" int aura_mutation_hold_poll_host_thread() noexcept;
 
 // Issue #2701: Mutation hold-budget timeout → force degrade / reject new
 // mutate admit. Closes the loop: under sustained AI agent load a single

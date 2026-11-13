@@ -6798,6 +6798,12 @@ EvalValue RegSplitParts::mutate_wrapper_commit(Evaluator& ev, const MakeErrorVal
             }();
             if (body_merr || no_workspace)
                 return result;
+            // Issue #5274 / #5275: a hold-budget cancel or a blocking-io
+            // release already fail-closed this boundary. Keep that reason.
+            // The generic "topology restored" hid it, so later numeric
+            // rebinds looked like the same structural refusal.
+            if (const char* why = aura::compiler::mutation_hold_take_fail_reason())
+                return mev("persist-reject", std::string(op) + " aborted; " + why);
             return mev("persist-reject", std::string(op) + " aborted; topology restored");
         }
     }
@@ -6843,6 +6849,8 @@ EvalValue RegSplitParts::mutate_wrapped_call(Evaluator& ev, const MakeErrorVal& 
 
     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
         m->mutate_force_effect_check_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #5274: a reason belongs to the boundary that is about to run.
+    (void)aura::compiler::mutation_hold_take_fail_reason();
 
     const auto target = RegSplitParts::mutate_effect_target(ev, mev, op, a);
     if (target.error)
