@@ -35,6 +35,14 @@
     (check= "quota" (hash-ref r2 "error")))
   (let ((r3 (llm:parse-response "")))
     (check (not (hash-ref r3 "ok"))))
+  ; #5268: content 为空但有 reasoning_content（max_tokens 截断）
+  (let ((r4 (llm:parse-response "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\",\"reasoning_content\":\"thinking\"}}]}")))
+    (check (not (hash-ref r4 "ok")))
+    (check= "truncated/finish=length" (hash-ref r4 "error")))
+  (let ((r5 (llm:parse-response "{\"choices\":[{\"message\":{\"reasoning_content\":\"only-thought\"}}]}")))
+    (check= "truncated/finish=unknown" (hash-ref r5 "error")))
+  (let ((r6 (llm:parse-response "{\"choices\":[{\"message\":{}}]}")))
+    (check= "no-content" (hash-ref r6 "error")))
   (check (> (hash-ref (llm:call-stats) "parse-ok" 0) 0))
   (check (> (hash-ref (llm:call-stats) "parse-err" 0) 0)))
 
@@ -61,3 +69,11 @@
 (test-suite "llm:http-post-installed"
   (check (procedure? http-post))
   (check (string? (aura-llm-call "{\"model\":\"x\",\"messages\":[]}"))))
+
+; Load-time oracle (#5268). test-suite bodies stay quoted until run-tests,
+; so these forms actually execute under --load.
+(let ((r (llm:parse-response "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"\",\"reasoning_content\":\"thinking\"}}]}")))
+  (check (equal? (hash-ref r "error") "truncated/finish=length")))
+(let ((ok (llm:parse-response "{\"choices\":[{\"message\":{\"content\":\"(seq ok)\"}}]}")))
+  (check (hash-ref ok "ok"))
+  (check (equal? (hash-ref ok "content") "(seq ok)")))

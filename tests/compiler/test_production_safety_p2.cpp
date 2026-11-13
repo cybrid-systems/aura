@@ -12,10 +12,12 @@
 #include "reflect/cache_format.h"
 
 #include <arpa/inet.h>
+#include <csignal>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -25,9 +27,13 @@ import aura.compiler.value;
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_string_idx;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_string;
+using aura::compiler::types::is_void;
+using aura::compiler::types::make_int;
 using aura::compiler::types::make_string;
 
 namespace {
@@ -304,7 +310,10 @@ void check_5214_http_post_once() {
             const auto auth_idx = heap.mint(std::string("sekret-token-5214"));
             const auto value =
                 (*http_post)({make_string(url_idx), make_string(body_idx), make_string(auth_idx)});
-            CHECK(!is_string(value), "5214: empty body stays void");
+            CHECK(is_string(value) && !is_error(value),
+                  "5214: empty body is an empty string, still one POST");
+            if (is_string(value))
+                CHECK(ev.string_at(as_string_idx(value)).empty(), "5214: empty body stays empty");
         }
     }
     aura::core::sandbox::set_mode(static_cast<aura::core::sandbox::SandboxMode>(saved));
@@ -351,6 +360,510 @@ void check_5214_emit_metacharacters() {
     ::unlink(out.c_str());
     ::unlink(semi.c_str());
     ::unlink(subst.c_str());
+    ::rmdir(dir.c_str());
+}
+
+struct EnvGuard {
+    std::string key;
+    bool had = false;
+    std::string old;
+    explicit EnvGuard(const char* k)
+        : key(k) {
+        if (const char* v = std::getenv(k)) {
+            had = true;
+            old = v;
+        }
+    }
+    void set(const char* v) const { ::setenv(key.c_str(), v, 1); }
+    void clear() const { ::unsetenv(key.c_str()); }
+    ~EnvGuard() {
+        if (had)
+            ::setenv(key.c_str(), old.c_str(), 1);
+        else
+            ::unsetenv(key.c_str());
+    }
+};
+
+struct SandboxOff {
+    int saved;
+    SandboxOff()
+        : saved(static_cast<int>(
+              aura::core::sandbox::snapshot_sandbox_authority_stats().current_mode)) {
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    }
+    ~SandboxOff() {
+        aura::core::sandbox::set_mode(static_cast<aura::core::sandbox::SandboxMode>(saved));
+    }
+};
+
+int listen_loopback(int& port) {
+    const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0)
+        return -1;
+    int yes = 1;
+    ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0 || ::listen(fd, 8) != 0) {
+        ::close(fd);
+        return -1;
+    }
+    sockaddr_in bound{};
+    socklen_t len = sizeof(bound);
+    if (::getsockname(fd, reinterpret_cast<sockaddr*>(&bound), &len) != 0) {
+        ::close(fd);
+        return -1;
+    }
+    port = ntohs(bound.sin_port);
+    return fd;
+}
+
+std::size_t http_content_length(std::string_view head) {
+    auto pos = head.find("Content-Length:");
+    if (pos == std::string_view::npos)
+        pos = head.find("content-length:");
+    if (pos == std::string_view::npos)
+        return 0;
+    pos = head.find(':', pos);
+    if (pos == std::string_view::npos)
+        return 0;
+    std::size_t n = 0;
+    for (std::size_t i = pos + 1; i < head.size(); ++i) {
+        const char c = head[i];
+        if (c == ' ' || c == '\t')
+            continue;
+        if (c < '0' || c > '9')
+            break;
+        n = n * 10 + static_cast<std::size_t>(c - '0');
+    }
+    return n;
+}
+
+std::string read_http_request(int fd) {
+    std::string req;
+    while (req.size() < (1u << 20)) {
+        std::array<char, 4096> buf{};
+        const ssize_t n = ::recv(fd, buf.data(), buf.size(), 0);
+        if (n < 0) {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        if (n == 0)
+            break;
+        req.append(buf.data(), static_cast<std::size_t>(n));
+        const auto hdr = req.find("\r\n\r\n");
+        if (hdr == std::string::npos)
+            continue;
+        const auto need = hdr + 4 + http_content_length(std::string_view(req).substr(0, hdr));
+        if (req.size() >= need)
+            break;
+    }
+    return req;
+}
+
+struct HttpCapture {
+    std::atomic<int> hits{0};
+    std::mutex mu;
+    std::string request;
+    std::string body;
+    int delay_ms = 0;
+};
+
+void run_http_server(int listener, const std::shared_ptr<HttpCapture>& cap) {
+    for (int turn = 0; turn < 2; ++turn) {
+        pollfd ready{};
+        ready.fd = listener;
+        ready.events = POLLIN;
+        if (::poll(&ready, 1, turn == 0 ? 15000 : 400) <= 0)
+            break;
+        const int client = ::accept(listener, nullptr, nullptr);
+        if (client < 0)
+            break;
+        timeval tv{};
+        tv.tv_sec = 5;
+        ::setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        cap->hits.fetch_add(1);
+        const std::string req = read_http_request(client);
+        {
+            std::scoped_lock lock(cap->mu);
+            if (cap->request.empty())
+                cap->request = req;
+        }
+        if (cap->delay_ms > 0)
+            std::this_thread::sleep_for(std::chrono::milliseconds(cap->delay_ms));
+        const std::string resp =
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " +
+            std::to_string(cap->body.size()) + "\r\nConnection: close\r\n\r\n" + cap->body;
+        (void)::send(client, resp.data(), resp.size(), MSG_NOSIGNAL);
+        ::close(client);
+    }
+    ::close(listener);
+}
+
+template <class Fn> void with_http(std::string body, int delay_ms, Fn&& fn) {
+    auto cap = std::make_shared<HttpCapture>();
+    cap->body = std::move(body);
+    cap->delay_ms = delay_ms;
+    int port = 0;
+    const int listener = listen_loopback(port);
+    CHECK(listener >= 0, "5267: localhost listener");
+    if (listener < 0)
+        return;
+    std::thread server(run_http_server, listener, cap);
+    fn(port, *cap);
+    server.join();
+}
+
+template <class Ev> std::string heap_string(Ev& ev, const aura::compiler::types::EvalValue& v) {
+    if (!is_string(v))
+        return {};
+    return std::string(ev.string_at(as_string_idx(v)));
+}
+
+std::string eval_string(CompilerService& cs, std::string_view expr, const char* what) {
+    auto r = cs.eval(expr);
+    if (!r || !is_string(*r)) {
+        if (!r)
+            std::println(stderr, "{}: {}", what, r.error().message);
+        CHECK(false, what);
+        return {};
+    }
+    return heap_string(cs.evaluator(), *r);
+}
+
+void check_http_body_and_timeout() {
+    std::println("\n--- #5267/#5268: http body, timeout, llm ---");
+    const std::string io = slurp_repo("src/compiler/evaluator_primitives_io.cpp");
+    CHECK(io.find("curl_write_callback()") != std::string::npos,
+          "5267: WRITEFUNCTION is the callback pointer");
+    CHECK(io.find("CURLOPT_WRITEFUNCTION, curl_writer_fn") == std::string::npos,
+          "5267: the accessor is not passed as the writer");
+    CHECK(io.find("CURLOPT_TIMEOUT, 30L") == std::string::npos, "5268: 30s timeout is gone");
+    CHECK(io.find("AURA_HTTP_TIMEOUT") != std::string::npos, "5268: AURA_HTTP_TIMEOUT");
+    CHECK(io.find("kHttpTimeoutDefaultSec = 120") != std::string::npos, "5268: default 120s");
+    const std::string llm = slurp_repo("lib/std/llm.aura");
+    CHECK(llm.find("LLM_TIMEOUT") != std::string::npos, "5268: LLM_TIMEOUT");
+    CHECK(llm.find("truncated/finish=") != std::string::npos, "5268: truncated finish");
+
+    EnvGuard runtime("AURA_RUNTIME_DIR");
+    runtime.set((std::string(AURA_SOURCE_DIR) + "/lib").c_str());
+    EnvGuard http_to("AURA_HTTP_TIMEOUT");
+    http_to.clear();
+    EnvGuard llm_to("LLM_TIMEOUT");
+    llm_to.clear();
+    EnvGuard llm_key("LLM_API_KEY");
+    llm_key.clear();
+    EnvGuard llm_base("LLM_BASE_URL");
+    llm_base.clear();
+    EnvGuard llm_model("LLM_MODEL");
+    llm_model.clear();
+
+    const std::string json =
+        "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"(seq ok)\"}}]}";
+    SandboxOff sandbox;
+    {
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0);
+        (void)ev.ensure_std_host_prims("std/net");
+        auto http_post = ev.primitives().lookup("http-post");
+        auto http_get = ev.primitives().lookup("http-get");
+        CHECK(http_post.has_value() && http_get.has_value(),
+              "5267: http-get and http-post installed");
+        if (http_post && http_get) {
+            with_http(json, 0, [&](int port, HttpCapture& cap) {
+                auto& heap = ev.string_heap_mut();
+                const auto url = heap.mint(std::string("http://127.0.0.1:") + std::to_string(port) +
+                                           "/chat/completions");
+                const auto body = heap.mint(std::string("{\"model\":\"x\",\"messages\":[]}"));
+                const auto auth = heap.mint(std::string("TESTKEY_NOT_REAL"));
+                const auto posted =
+                    (*http_post)({make_string(url), make_string(body), make_string(auth)});
+                CHECK(is_string(posted) && !is_error(posted), "5267: http-post returns the body");
+                CHECK(heap_string(ev, posted) == json, "5267: http-post body is the JSON");
+                const auto got = (*http_get)({make_string(url)});
+                CHECK(is_string(got) && heap_string(ev, got) == json,
+                      "5267: http-get returns the body");
+                CHECK(cap.hits.load() == 2, "5267: one GET and one POST");
+                CHECK(cap.request.find("aura/1.0") != std::string::npos,
+                      "5267: libcurl user agent");
+                CHECK(cap.request.find("TESTKEY_NOT_REAL") != std::string::npos, "5267: bearer");
+            });
+
+            with_http(json, 2000, [&](int port, HttpCapture& cap) {
+                auto& heap = ev.string_heap_mut();
+                const auto url =
+                    heap.mint(std::string("http://127.0.0.1:") + std::to_string(port) + "/slow");
+                const auto body = heap.mint(std::string("{}"));
+                const auto auth = heap.mint(std::string("k"));
+                const auto slow = (*http_post)(
+                    {make_string(url), make_string(body), make_string(auth), make_int(1)});
+                CHECK(is_error(slow) && !is_string(slow), "5268: 1s timeout is an error");
+                const auto msg = ev.soft_error_message(slow);
+                CHECK(msg.find("timeout") != std::string::npos, "5268: timeout text: " + msg);
+                CHECK(cap.hits.load() == 1, "5268: timed-out POST is not retried via CLI");
+            });
+
+            with_http(json, 2000, [&](int port, HttpCapture& cap) {
+                auto& heap = ev.string_heap_mut();
+                const auto url =
+                    heap.mint(std::string("http://127.0.0.1:") + std::to_string(port) + "/ok");
+                const auto body = heap.mint(std::string("{}"));
+                const auto auth = heap.mint(std::string("k"));
+                const auto slow = (*http_post)(
+                    {make_string(url), make_string(body), make_string(auth), make_int(5)});
+                CHECK(is_string(slow) && heap_string(ev, slow) == json,
+                      "5268: 5s timeout accepts a 2s response");
+                CHECK(cap.hits.load() == 1, "5268: widened timeout is a single POST");
+            });
+
+            http_to.set("1");
+            with_http(json, 2000, [&](int port, HttpCapture& cap) {
+                auto& heap = ev.string_heap_mut();
+                const auto url =
+                    heap.mint(std::string("http://127.0.0.1:") + std::to_string(port) + "/env");
+                const auto body = heap.mint(std::string("{}"));
+                const auto denied = (*http_post)({make_string(url), make_string(body)});
+                CHECK(is_error(denied), "5268: AURA_HTTP_TIMEOUT=1 times out");
+                CHECK(ev.soft_error_message(denied).find("timeout") != std::string::npos,
+                      "5268: env timeout text");
+                CHECK(cap.hits.load() == 1, "5268: env timeout is a single POST");
+            });
+            with_http(json, 2000, [&](int port, HttpCapture&) {
+                auto& heap = ev.string_heap_mut();
+                const auto url =
+                    heap.mint(std::string("http://127.0.0.1:") + std::to_string(port) + "/over");
+                const auto body = heap.mint(std::string("{}"));
+                const auto overridden =
+                    (*http_post)({make_string(url), make_string(body), make_int(5)});
+                CHECK(is_string(overridden) && heap_string(ev, overridden) == json,
+                      "5268: explicit timeout overrides AURA_HTTP_TIMEOUT");
+            });
+            http_to.clear();
+
+            int closed_port = 0;
+            const int closed = listen_loopback(closed_port);
+            CHECK(closed >= 0, "5267: refused-port listener");
+            if (closed >= 0)
+                ::close(closed);
+            if (closed_port > 0) {
+                auto& heap = ev.string_heap_mut();
+                const auto url = heap.mint(std::string("http://127.0.0.1:") +
+                                           std::to_string(closed_port) + "/nope");
+                const auto body = heap.mint(std::string("{}"));
+                const auto refused = (*http_post)({make_string(url), make_string(body)});
+                CHECK(is_error(refused) && !is_void(refused), "5267: connect failure is an error");
+                CHECK(ev.soft_error_message(refused).find("http-post:") == 0,
+                      "5267: connect failure names http-post");
+                const auto get_refused = (*http_get)({make_string(url)});
+                CHECK(is_error(get_refused), "5267: http-get connect failure is an error");
+            }
+
+            {
+                auto& heap = ev.string_heap_mut();
+                const auto url = heap.mint(std::string("http://127.0.0.1:9/bad-timeout"));
+                const auto body = heap.mint(std::string("{}"));
+                const auto bad = (*http_post)({make_string(url), make_string(body), make_int(0)});
+                CHECK(is_error(bad), "5268: timeout 0 is an error");
+                CHECK(ev.soft_error_message(bad).find("bad timeout") != std::string::npos,
+                      "5268: bad timeout text");
+            }
+        }
+    }
+
+    {
+        CompilerService cs;
+        cs.evaluator().set_effect_sandbox_mode(0);
+        auto loaded = cs.eval("(require \"std/llm\" all:)");
+        CHECK(static_cast<bool>(loaded), "5268: require std/llm");
+        const auto truncated = eval_string(
+            cs,
+            "(hash-ref (llm:parse-response "
+            "\"{\\\"choices\\\":[{\\\"finish_reason\\\":\\\"length\\\",\\\"message\\\":{"
+            "\\\"content\\\":\\\"\\\",\\\"reasoning_content\\\":\\\"thinking\\\"}}]}\") "
+            "\"error\")",
+            "5268: truncated parse");
+        CHECK(truncated == "truncated/finish=length", "5268: finish=length: " + truncated);
+        const auto content = eval_string(
+            cs,
+            "(hash-ref (llm:parse-response "
+            "\"{\\\"choices\\\":[{\\\"message\\\":{\\\"content\\\":\\\"(seq ok)\\\"}}]}\") "
+            "\"content\")",
+            "5267: parse content");
+        CHECK(content == "(seq ok)", "5267: parse extracts content");
+        const auto missing = eval_string(cs,
+                                         "(hash-ref (llm:parse-response "
+                                         "\"{\\\"choices\\\":[{\\\"message\\\":{}}]}\") \"error\")",
+                                         "5268: no-content");
+        CHECK(missing == "no-content", "5268: missing content stays no-content");
+        const auto compat = eval_string(cs, "(hash-ref (llm:chat \"sys\" \"user\") \"error\")",
+                                        "5268: two-arg chat");
+        CHECK(compat == "empty", "5268: two-arg llm:chat without a key is empty");
+    }
+
+    llm_key.set("TESTKEY_NOT_REAL");
+    llm_model.set("unit-model");
+    with_http(json, 0, [&](int port, HttpCapture& cap) {
+        llm_base.set((std::string("http://127.0.0.1:") + std::to_string(port) + "/v1").c_str());
+        CompilerService cs;
+        cs.evaluator().set_effect_sandbox_mode(0);
+        CHECK(static_cast<bool>(cs.eval("(require \"std/llm\" all:)")), "5268: llm for chat");
+        const auto content =
+            eval_string(cs,
+                        "(hash-ref (llm:chat \"sys\" \"user\" (hash \"max_tokens\" 32 "
+                        "\"reasoning_effort\" \"minimal\")) \"content\")",
+                        "5268: llm:chat extra fields");
+        CHECK(content == "(seq ok)", "5268: llm:chat returns content");
+        CHECK(cap.request.find("\"max_tokens\":32") != std::string::npos,
+              "5268: max_tokens merged");
+        CHECK(cap.request.find("\"reasoning_effort\":\"minimal\"") != std::string::npos,
+              "5268: reasoning_effort merged");
+        CHECK(cap.request.find("\"model\":\"unit-model\"") != std::string::npos, "5268: model");
+        CHECK(cap.request.find("TESTKEY_NOT_REAL") != std::string::npos, "5268: chat bearer");
+    });
+    with_http(json, 0, [&](int port, HttpCapture& cap) {
+        llm_base.set((std::string("http://127.0.0.1:") + std::to_string(port) + "/v1").c_str());
+        CompilerService cs;
+        cs.evaluator().set_effect_sandbox_mode(0);
+        CHECK(static_cast<bool>(cs.eval("(require \"std/llm\" all:)")), "5268: llm alist");
+        const auto content =
+            eval_string(cs,
+                        "(hash-ref (llm:chat \"sys\" \"user\" (list (cons \"max_tokens\" 7) "
+                        "(cons \"reasoning_effort\" \"low\")) 5) \"content\")",
+                        "5268: llm:chat alist");
+        CHECK(content == "(seq ok)", "5268: alist chat returns content");
+        CHECK(cap.request.find("\"max_tokens\":7") != std::string::npos, "5268: alist max_tokens");
+        CHECK(cap.request.find("\"reasoning_effort\":\"low\"") != std::string::npos,
+              "5268: alist reasoning_effort");
+    });
+    llm_to.set("1");
+    with_http(json, 2000, [&](int port, HttpCapture& cap) {
+        llm_base.set((std::string("http://127.0.0.1:") + std::to_string(port) + "/v1").c_str());
+        CompilerService cs;
+        cs.evaluator().set_effect_sandbox_mode(0);
+        CHECK(static_cast<bool>(cs.eval("(require \"std/llm\" all:)")),
+              "5268: llm timeout require");
+        const auto err = eval_string(cs, "(hash-ref (llm:chat \"sys\" \"user\") \"error\")",
+                                     "5268: LLM_TIMEOUT");
+        CHECK(err.find("timeout") != std::string::npos, "5268: LLM_TIMEOUT error: " + err);
+        CHECK(cap.hits.load() == 1, "5268: LLM_TIMEOUT does not fall back to a second POST");
+    });
+    llm_to.clear();
+}
+
+// libcurl dlopen is blocked. http-get has no CLI fallback and must say so.
+// http-post may still use the jailed curl CLI (#5214) and then the body
+// comes back; if that binary is missing the error has to name the failure.
+void check_libcurl_unavailable() {
+    std::println("\n--- #5267: libcurl unavailable ---");
+    const std::string bin = find_aura_bin();
+    CHECK(!bin.empty(), "5267: aura binary for the libcurl-unavailable case");
+    if (bin.empty())
+        return;
+    const std::string dir = "/tmp/aura5267-" + std::to_string(::getpid());
+    if (::mkdir(dir.c_str(), 0700) != 0) {
+        CHECK(false, "5267: mkdir interposer dir");
+        return;
+    }
+    const std::string src = dir + "/nocurl.c";
+    const std::string so = dir + "/nocurl.so";
+    {
+        const int fd = ::open(src.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0644);
+        const char text[] =
+            "#define _GNU_SOURCE\n"
+            "#include <dlfcn.h>\n"
+            "#include <string.h>\n"
+            "void *dlopen(const char *filename, int flags) {\n"
+            "  static void *(*real_dlopen)(const char *, int) = 0;\n"
+            "  if (!real_dlopen)\n"
+            "    real_dlopen = (void *(*)(const char *, int))dlsym(RTLD_NEXT, \"dlopen\");\n"
+            "  if (filename && strstr(filename, \"libcurl\")) return 0;\n"
+            "  return real_dlopen(filename, flags);\n"
+            "}\n";
+        CHECK(fd >= 0, "5267: write interposer source");
+        if (fd >= 0) {
+            (void)::write(fd, text, sizeof(text) - 1);
+            ::close(fd);
+        }
+    }
+    const pid_t cc = ::fork();
+    if (cc == 0) {
+        ::execlp("g++", "g++", "-shared", "-fPIC", "-o", so.c_str(), src.c_str(), "-ldl", nullptr);
+        ::_exit(127);
+    }
+    int cc_status = 1;
+    ::waitpid(cc, &cc_status, 0);
+    if (cc < 0 || !WIFEXITED(cc_status) || WEXITSTATUS(cc_status) != 0) {
+        CHECK(false, "5267: compile dlopen interposer");
+        return;
+    }
+    with_http("FROM_CLI", 0, [&](int port, HttpCapture& cap) {
+        std::array<int, 2> out_pipe{-1, -1};
+        if (::pipe2(out_pipe.data(), O_CLOEXEC) != 0) {
+            CHECK(false, "5267: pipe for aura");
+            return;
+        }
+        const pid_t pid = ::fork();
+        if (pid == 0) {
+            ::dup2(out_pipe[1], STDOUT_FILENO);
+            ::dup2(out_pipe[1], STDERR_FILENO);
+            ::setenv("LD_PRELOAD", so.c_str(), 1);
+            ::setenv("AURA_SANDBOX", "off", 1);
+            ::setenv("AURA_RUNTIME_DIR", (std::string(AURA_SOURCE_DIR) + "/lib").c_str(), 1);
+            const std::string expr =
+                "(begin (require \"std/net\") (display (try (http-get \"http://127.0.0.1:" +
+                std::to_string(port) +
+                "/g\") (catch (e) e))) (newline) (display (try (http-post "
+                "\"http://127.0.0.1:" +
+                std::to_string(port) + "/p\" \"{\\\"a\\\":1}\") (catch (e) e))) (newline))";
+            ::execl(bin.c_str(), bin.c_str(), "-e", expr.c_str(), nullptr);
+            ::_exit(127);
+        }
+        ::close(out_pipe[1]);
+        std::string out;
+        std::array<char, 1024> buf{};
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (std::chrono::steady_clock::now() < deadline) {
+            pollfd ready{};
+            ready.fd = out_pipe[0];
+            ready.events = POLLIN;
+            if (::poll(&ready, 1, 100) > 0) {
+                const ssize_t n = ::read(out_pipe[0], buf.data(), buf.size());
+                if (n > 0)
+                    out.append(buf.data(), static_cast<std::size_t>(n));
+                else if (n == 0)
+                    break;
+            }
+            int st = 0;
+            if (::waitpid(pid, &st, WNOHANG) == pid && (ready.revents & POLLIN) == 0) {
+                const ssize_t n = ::read(out_pipe[0], buf.data(), buf.size());
+                if (n > 0)
+                    out.append(buf.data(), static_cast<std::size_t>(n));
+                break;
+            }
+        }
+        ::kill(pid, SIGKILL);
+        int st = 0;
+        ::waitpid(pid, &st, 0);
+        ::close(out_pipe[0]);
+        if (out.find("libcurl unavailable") == std::string::npos)
+            std::println(stderr, "5267 libcurl-unavailable output:\n{}", out);
+        CHECK(out.find("libcurl unavailable") != std::string::npos,
+              "5267: http-get reports libcurl unavailable");
+        const bool cli_body = out.find("FROM_CLI") != std::string::npos;
+        const bool cli_err = out.find("http-post:") != std::string::npos;
+        CHECK(cli_body || cli_err, "5267: http-post without libcurl is a body or a named error");
+        if (cli_body) {
+            CHECK(cap.request.find("aura/1.0") == std::string::npos,
+                  "5267: CLI fallback is not the in-process user agent");
+            CHECK(cap.hits.load() == 1, "5267: CLI fallback posts once");
+        }
+    });
+    ::unlink(so.c_str());
+    ::unlink(src.c_str());
     ::rmdir(dir.c_str());
 }
 
@@ -428,6 +941,8 @@ int run_test_production_safety_p2() {
     check_5214_source();
     check_5214_http_post_once();
     check_5214_emit_metacharacters();
+    check_http_body_and_timeout();
+    check_libcurl_unavailable();
 
     if (::aura::test::g_failed)
         return 1;
