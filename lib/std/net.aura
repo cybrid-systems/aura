@@ -16,17 +16,24 @@
 (require std/json all:)
 
 
+;; A transport failure is an error value (#5267). These wrappers keep the
+;; documented () / "" failure shape; the primitive's message stays available
+;; to a caller that uses http-get / http-post directly.
+(define (net-body-or-empty thunk)
+  (let ((body (try (thunk) (catch (e) ""))))
+    (if (and (string? body) (> (string-length body) 0)) body "")))
+
 ;; GET JSON
 (define (http-get-json url)
-  (let ((body (http-get url)))
+  (let ((body (net-body-or-empty (lambda () (http-get url)))))
     (if (string=? body "") ()
-      (try (json-parse body) (catch ())))))
+      (try (json-parse body) (catch (e) ())))))
 
 ;; POST JSON
 (define (http-post-json url body)
-  (let ((resp (http-post url body)))
+  (let ((resp (net-body-or-empty (lambda () (http-post url body)))))
     (if (string=? resp "") ()
-      (try (json-parse resp) (catch ())))))
+      (try (json-parse resp) (catch (e) ())))))
 
 ;; URL-encode
 (define (url-encode s)
@@ -82,7 +89,7 @@
 (define (fetch-try url max-a)
   (let loop ((attempt 1))
     (if (> attempt max-a) ""
-      (let ((body (http-get url)))
+      (let ((body (net-body-or-empty (lambda () (http-get url)))))
         (if (string=? body "")
           (loop (+ attempt 1))
           body)))))

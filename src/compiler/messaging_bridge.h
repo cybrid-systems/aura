@@ -128,9 +128,12 @@ extern ResetArenaFn g_reset_arena;
 
 // Async HTTP callback — set by serve_async.cpp, used by http-post primitive.
 // When set, http-post uses thread + eventfd for non-blocking HTTP.
-// Returns the response string (or "" on failure).
+// timeout_sec is the total transfer budget in seconds (already resolved).
+// Returns the response body, or "" when the hook cannot run, the body is
+// empty, or the transfer fails. An empty return falls through to the
+// synchronous path.
 using HttpPostAsyncFn = std::string (*)(const std::string& url, const std::string& body,
-                                        const std::string& auth);
+                                        const std::string& auth, long timeout_sec);
 extern HttpPostAsyncFn g_http_post_async;
 
 // Issue #4053 / #2869 / #4054: denseness body mutex unlock across wait/yield.
