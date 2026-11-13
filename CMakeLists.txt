@@ -4154,6 +4154,18 @@ if(TARGET all_test_issue_targets)
     add_dependencies(all_test_issue_targets test_fibers_serve_ir_sibling_collector)
 endif()
 
+# Issue #5274: the CLI thread-backend body class (no attached tree-walker
+# segment) that sits parked in a channel wait forever in a --serve-async game.
+# tests/compiler/test_tw_plain_park_reclaim.cpp parks that body, then proves a
+# sweep from the main thread runs (query:tw-root-reclaims grows) while the park
+# bracket (query:tw-plain-parks) is engaged, and that the parked body's frames
+# survive it.
+aura_add_issue_test(test_tw_plain_park_reclaim)
+aura_issue_test_link_light(test_tw_plain_park_reclaim)
+if(TARGET all_test_issue_targets)
+    add_dependencies(all_test_issue_targets test_tw_plain_park_reclaim)
+endif()
+
 
 # Domain batch: StableNodeRef / validate / tenant / wire ACs (Stream A6) (8 members + driver). Stream S2.
 add_executable(test_stable_ref_validate_batch

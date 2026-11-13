@@ -17,6 +17,7 @@ module;
 #include "hash_meta.h"
 #include "channel_id.hh"         // Issue #4854: tagged channel ids for GC reclaim
 #include "fiber_result_roots.hh" // Issue #4710: fiber:join result roots
+#include "tw_plain_park.h"       // Issue #5274: certified park across a blocking wait
 
 #include <pthread.h>
 #include <unistd.h>
@@ -29,6 +30,10 @@ import aura.compiler.value;
 
 // Issue #5274: a channel wait must not keep the mutation hold.
 extern "C" int aura_mutation_hold_release_before_block() noexcept;
+
+// Issue #5274: the tree-walker segment of a thread parked in one of the waits
+// below is certified markable for the length of the wait (tw_plain_park.h).
+using aura::compiler::TwPlainPark;
 
 // Issue #4768: body-liveness for the file-heap sweep gate (runtime_ssot.cpp).
 extern "C" void aura_fiber_body_enter() noexcept;
@@ -856,6 +861,7 @@ namespace {
                 // on the channel while owning workspace_mtx_ deadlocks the
                 // peer that needs the lock to produce the message (#5274).
                 (void)aura_mutation_hold_release_before_block();
+                TwPlainPark park_5274; // Issue #5274: certified park across the wait
                 std::unique_lock ul(ch.mtx);
                 ch.cv.wait(ul, [&]() { return ch.closed || !ch.queue.empty(); });
                 --ch.waiting_receivers;
@@ -926,6 +932,7 @@ namespace {
                 // before the host wait so the peer is not stuck on
                 // workspace_mtx_ (#5274).
                 (void)aura_mutation_hold_release_before_block();
+                TwPlainPark park_5274; // Issue #5274: certified park across the wait
                 std::unique_lock ul(ch.mtx);
                 ch.cv.wait(ul, [&]() {
                     if (ch.closed)
@@ -2864,6 +2871,7 @@ void RegSplitParts::register_messaging_channel_primitives(PrimRegistrar add, Eva
                                                     ev.primitive_error_counter_ptr());
             return make_bool(sent);
         }
+        TwPlainPark park_5274; // Issue #5274: certified park across the wait
         std::unique_lock ul(ch.mtx);
         ch.cv.wait(ul, [&]() {
             if (ch.closed)
@@ -2920,6 +2928,10 @@ void RegSplitParts::register_messaging_channel_primitives(PrimRegistrar add, Eva
             // Issue #4744: an immediate payload is returned as itself.
             return channel_recv_value_4763(std::move(*msg));
         }
+        // Issue #5274: certifiably parked for the whole wait — the segment
+        // keeps this body's live frames markable, so a sibling's sweep is not
+        // frozen out for the lifetime of a long-lived server.
+        TwPlainPark park_5274;
         std::unique_lock ul(ch.mtx);
         // Issue #2483: announce waiting receiver so rendezvous send can proceed.
         ++ch.waiting_receivers;

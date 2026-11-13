@@ -71,6 +71,12 @@ import aura.core.arena;             // Issue #2500: g_force_compact_blocked_* + 
 extern "C" std::uint64_t aura_gc_reclaim_off_skips_ir_total() noexcept;
 extern "C" std::uint64_t aura_gc_reclaim_off_skips_tw_total() noexcept;
 
+// Issue #5274: certified plain parks (see tw_plain_park.h). The total only
+// moves when a BLOCKED walker actually published its segment, so it is the
+// probe that the park path — not merely the counter — is live.
+extern "C" std::uint64_t aura_tw_plain_park_total() noexcept;
+extern "C" int aura_tw_plain_parked_now() noexcept;
+
 // Issue #1610: IR stamp + JIT hygiene counters (C linkage; avoid module cycles).
 extern "C" std::uint64_t aura_hygiene_ir_macro_marker_total();
 extern "C" std::uint64_t aura_hygiene_ir_provenance_stamped_total();
@@ -2710,6 +2716,21 @@ void register_query_lifecycle_stats_parts(PrimRegistrar add, std::pmr::vector<Pa
         "query:reclaim-off-skips-tw", [](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             return make_int(static_cast<std::int64_t>(aura_gc_reclaim_off_skips_tw_total()));
+        });
+    // Issue #5274: a plain walker blocked in a primitive publishes its segment
+    // so the sweeps can run while it waits (tw_plain_park.h). `parks` counts
+    // the brackets that engaged, `parked-now` how many plain segments are
+    // markable at this instant — the pair a test reads to prove a parked body
+    // is certified instead of frozen.
+    ObservabilityPrims::register_stats_impl(
+        "query:tw-plain-parks", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(aura_tw_plain_park_total()));
+        });
+    ObservabilityPrims::register_stats_impl(
+        "query:tw-plain-parked-now", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(aura_tw_plain_parked_now()));
         });
 }
 
