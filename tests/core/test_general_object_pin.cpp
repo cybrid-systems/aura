@@ -35,6 +35,13 @@ import aura.core.lifetime_pin;
 import aura.compiler.service;
 import aura.compiler.value;
 
+// Issue #5208: the pin operations are deleted with a reason; the type must
+// stay non-copyable so the registry slot cannot be released twice.
+static_assert(!std::is_copy_constructible_v<aura::core::lifetime::LifetimePin>);
+static_assert(!std::is_copy_assignable_v<aura::core::lifetime::LifetimePin>);
+static_assert(!std::is_copy_constructible_v<aura::core::lifetime::GeneralObjectPin>);
+static_assert(!std::is_copy_assignable_v<aura::core::lifetime::GeneralObjectPin>);
+
 namespace {
 
 using aura::ast::ASTArena;
