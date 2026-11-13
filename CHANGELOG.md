@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.2.2)
+## 0.2.2
 
 Patch release on the 0.2 channel. This version hardens what 0.2.0 shipped; it adds no new surface. The API is still not stable.
 
@@ -11,6 +11,10 @@ Patch release on the 0.2 channel. This version hardens what 0.2.0 shipped; it ad
 - Orchestration surface (#5131): `orch:metrics` moved to `std/orch` (the kernel body was already a forward to the stats surface) and the `orch:parallel-intend` alias is gone; callers use `parallel-intend`. The remaining 22 `orch:*` names stay kernel-resident: each body reads scheduler or fiber session state (`find_agent_scope`, `agent_poll`'s forced yield, `wait_reclaimed_body`, the handoff token pairs), which Aura code cannot own atomically. They are the live orchestration surface, not forwarders, and `std/orch` builds on the same five primitives.
 - Build: the tag SOAK gate gets a wall that fits the release runner (3x the soak plus a fixed margin). The v0.2.1 tag build died on the old 900 s cap while every residual gate had already printed PASS.
 - Install and smoke coverage is unchanged: Ubuntu 24.04, Ubuntu 26.10, Debian 12, Rocky Linux 9, and openEuler 24.03 LTS SP4, on x86_64 and arm64.
+- Security (#5212, #5213, #5214): a tenant host path is opened through a directory fd (`openat2` with `RESOLVE_BENEATH` and `RESOLVE_NO_SYMLINKS`, or an `openat` walk on kernels without it), closing the lstat-then-open window in which another fiber could swap an intermediate directory for a symlink; the module disk cache is treated as untrusted input (the leaf directory must be owned by this euid with no group/other write, the cache key carries the build SHA, and every IR module loaded from disk passes a structural validation before it executes); and AOT emit / `http-post` token paths no longer shell out to the CLI.
+- Performance (#5190, #5194, #4940): a top-level `set!` no longer re-walks a value graph that was already sealed, so a closure-capture loop is linear again instead of O(n^2): the 1.2M-closure regression used to sit past the 900 s test cap without ever reaching arena exhaustion. `std/random` shuffles in place, `string-replace` and `string-join` are linear in their input, and the 3-objective Pareto hypervolume sweep is off its quadratic path.
+- Primitive surface (#5142, #5144): the 43 `mw:` aliases moved to the dispatch-only table. They still answer when called, but they no longer take a slot or appear in the public catalog, and a dispatch-only body keeps its `PrimMeta` for the gates.
+- Stdlib and CLI fixes: `json-escape` escapes every control character; `read-line` / `read-byte` return the R7RS eof object at EOF; `std/csv` parses RFC 4180 in one state machine and adds `rows->csv`; `string-ref` / `substring` reject a non-integer index; integer results and `inexact->exact` saturate to the fixnum range; vectors encode as JSON arrays; `channel:try-recv` returns `#f` when nothing is waiting; `orch:ask` honours its timeout on the local path; a dotted rest parameter binds to a list of the trailing args under AOT; `--serve-async` accepts the sync line protocol; `--preset` / `--grant` reach a serve session; and a tool positional that names a file is read as one.
 
 Not in this version:
 
