@@ -431,8 +431,10 @@ public:
         owner_ = PinOwner::None; // Issue #2270: terminal None on dtor.
         ++g_lifetime_pin_stats.unpins;
     }
-    LifetimePin(const LifetimePin&) = delete;
-    LifetimePin& operator=(const LifetimePin&) = delete;
+    LifetimePin(const LifetimePin&) =
+        delete ("a LifetimePin owns one registry slot; copying would release it twice");
+    LifetimePin& operator=(const LifetimePin&) =
+        delete ("a pin cannot be rebound by assignment; move it instead");
 
     LifetimePin(LifetimePin&& o) noexcept
         : ptr_(o.ptr_)
@@ -1472,8 +1474,10 @@ class GeneralObjectPin {
 public:
     GeneralObjectPin() = default;
     ~GeneralObjectPin() = default;
-    GeneralObjectPin(const GeneralObjectPin&) = delete;
-    GeneralObjectPin& operator=(const GeneralObjectPin&) = delete;
+    GeneralObjectPin(const GeneralObjectPin&) =
+        delete ("a GeneralObjectPin owns one registry slot; copying would release it twice");
+    GeneralObjectPin& operator=(const GeneralObjectPin&) =
+        delete ("a pin cannot be rebound by assignment; move it instead");
     // LifetimePin's move transfers the registry slot and is noexcept.
     // The defaulted move is therefore non-throwing; spelling noexcept
     // keeps that part of the type. A later throwing member deletes it.
