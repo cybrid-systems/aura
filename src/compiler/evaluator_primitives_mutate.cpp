@@ -6804,7 +6804,19 @@ EvalValue RegSplitParts::mutate_wrapper_commit(Evaluator& ev, const MakeErrorVal
             // rebinds looked like the same structural refusal.
             if (const char* why = aura::compiler::mutation_hold_take_fail_reason())
                 return mev("persist-reject", std::string(op) + " aborted; " + why);
-            return mev("persist-reject", std::string(op) + " aborted; topology restored");
+            // Issue #5275: name the engine gate that refused this boundary.
+            // The dtor consumed the #4403 token already, so read the copy it
+            // published. "rollback" means the refusal was unnamed; keep the
+            // legacy message shape for that case (the #4652 contract).
+            const char* gate_5275 = aura::compiler::typed_audit::last_boundary_deny_op();
+            std::string why_5275 = std::string(op) + " aborted";
+            if (std::string_view(gate_5275) != "rollback") {
+                why_5275 += " (";
+                why_5275 += gate_5275;
+                why_5275 += ")";
+            }
+            why_5275 += "; topology restored";
+            return mev("persist-reject", std::move(why_5275));
         }
     }
     // Issue #4357: the rebind body guard is nested, so it does

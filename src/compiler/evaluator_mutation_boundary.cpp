@@ -4870,6 +4870,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         boundary_prep_batch.fn = &ev_->boundary_prep_batch_fn_;
         ev_->boundary_prep_batch_fn_(true);
     }
+    // Issue #5275: gate provenance is per boundary. A new outermost boundary
+    // must not let the mutate:* wrapper read the gate name of an earlier,
+    // already-finished boundary when THIS one refuses for its own reason.
+    if (is_outermost_)
+        typed_audit::clear_last_boundary_deny_op();
     if (g_tls_outermost_guard == this)
         g_tls_outermost_guard = nullptr;
     if (!ev_ || inert_) {
@@ -5370,6 +5375,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     if (!mutation_hold_slo_soft_mode()) {
                         // Production default: fail mutation so agents cannot ship
                         // while spinning a long Guard (GC/steal tail bound).
+                        // Issue #5275: name the gate. This refusal flips success
+                        // without a #4403 token, so the boundary used to exit as
+                        // the anonymous "rollback" and the mutate:* wrapper
+                        // reported only "persist-reject" — the caller could not
+                        // tell a slow boundary from a type/linear deny.
+                        typed_audit::note_boundary_deny_op("hold-slo");
                         success_flag_store(flag_, false);
                         success = false;
                     }
@@ -6021,6 +6032,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // after that exit so it cannot name a later boundary.
         typed_audit::clear_boundary_deny_op();
     }
+    // Issue #5275: the #4403 token is per-boundary, first-wins. A boundary
+    // that commits must not leave its token behind: the next unrelated
+    // mutate that refuses would then be labelled with this boundary's gate
+    // (and the mutate:* wrapper would name the wrong reason).
+    if (success)
+        typed_audit::clear_boundary_deny_op();
     // Issue #3517: Full/hard-gate force-rollback inside exit already
     // restored AST; consume the TLS note so local success matches
     // persist-reject (dtor `!success` tail drops grant / proof).
