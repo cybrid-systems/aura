@@ -65,6 +65,11 @@ extern "C" void aura_gc_sweep_publish_closure_hi(std::uint64_t v) noexcept;
 extern "C" bool aura_gc_sweep_try_begin() noexcept;
 extern "C" void aura_gc_sweep_end() noexcept;
 extern "C" int aura_fiber_bodies_running_other() noexcept;
+// Issue #5274: park half of the body counter + the sweep fence a parked
+// walker resumes under (runtime_ssot.cpp; tw_plain_park.h).
+extern "C" int aura_fiber_body_park() noexcept;
+extern "C" void aura_fiber_body_unpark() noexcept;
+extern "C" void aura_gc_sweep_wait_parked_walker() noexcept;
 // Issue #4078: production expand deny must not eval the require import form.
 extern "C" int aura_hygiene_expand_deny_blocks_eval(void) noexcept;
 extern "C" const char* aura_macro_hygiene_last_limit_reason_string(void) noexcept;
@@ -1007,11 +1012,25 @@ struct TwRootSet {
     // not dereference frame pointers into gone memory.
     std::atomic<bool> dead{false};
     bool fiber_owned = false;
+    // Issue #5274: a PLAIN segment (no fiber attached) whose owner is blocked
+    // in a primitive wait has certified its contents stable (tw_plain_park.h).
+    // A collector cross-marks it exactly like a parked fiber segment; the
+    // owner clears the marker only after waiting out any sweep that could
+    // still be reading it.
+    std::atomic<bool> plain_parked{false};
 
     [[nodiscard]] bool empty() const noexcept {
         return frames.empty() && results.empty() && vecs.empty() && spans.empty();
     }
 };
+
+// Issue #5274: may a collector read and mark this segment right now? A fiber
+// segment certifies through the STW epoch (parked_epoch); a PLAIN segment has
+// no park hook of its own and certifies only through a bracketed park
+// (tw_plain_park.h), so it is markable exactly while plain_parked is set.
+[[nodiscard]] inline bool tw_segment_markable(const TwRootSet* set) noexcept {
+    return set->fiber_owned || set->plain_parked.load(std::memory_order_acquire);
+}
 
 namespace {
 
@@ -1027,6 +1046,11 @@ namespace {
     // #2738 conservative skip — they never reach a fiber park hook, so a
     // collector cannot certify their segment.
     std::atomic<int> g_tw_plain_walkers{0};
+    // Issue #5274: certified plain parks. `parks` is the lifetime probe (it
+    // only moves when a blocked walker actually published its segment), the
+    // gauge is how many plain segments are markable right now.
+    std::atomic<std::uint64_t> g_tw_plain_parks{0};
+    std::atomic<int> g_tw_plain_parked_now{0};
     std::atomic<std::uint64_t> g_tw_registry_reclaims{0};
     std::atomic<std::uint64_t> g_tw_registry_cross_marks{0};
 
@@ -1039,6 +1063,10 @@ namespace {
         ~TwThreadDefaultSeg() {
             if (!seg)
                 return;
+            // Issue #5274: a plain segment is now cross-marked while its owner
+            // is parked, so it needs the same "frames point into a stack that
+            // is gone" fence aura_tw_roots_free sets for a fiber segment.
+            seg->dead.store(true, std::memory_order_release);
             std::scoped_lock<std::mutex> lk(g_tw_reg_mu);
             std::erase_if(g_tw_registry, [s = seg](const std::shared_ptr<TwRootSet>& sp) {
                 return sp.get() == s;
@@ -1050,6 +1078,11 @@ namespace {
     thread_local TwThreadDefaultSeg t_tw_default;
     thread_local std::vector<TwRootSet*> t_tw_prev;
     thread_local bool t_tw_stw_owner = false;
+    // Issue #5274: certified plain park state of this thread (park depth so a
+    // nested blocking primitive collapses onto the outermost bracket).
+    thread_local int t_tw_plain_park_depth = 0;
+    thread_local bool t_tw_plain_parked = false;
+    thread_local bool t_tw_plain_body_parked = false;
 
     TwRootSet& tw_new_segment(bool fiber_owned) {
         auto sp = std::make_shared<TwRootSet>();
@@ -1475,7 +1508,7 @@ namespace {
         bool ready = true;
         for (const auto& sp : h.snapshot) {
             TwRootSet* set = sp.get();
-            if (set == self_cur || set == self_def || !set->fiber_owned)
+            if (set == self_cur || set == self_def || !tw_segment_markable(set))
                 continue;
             if (set->dead.load(std::memory_order_acquire))
                 continue;
@@ -1600,8 +1633,83 @@ extern "C" void aura_tw_safepoint() noexcept {
 // define back as Void ("expected Int, got Void") or spun forever on spliced
 // cells. Same rule, one count, both sweeps.
 extern "C" int aura_tw_plain_walkers_other() noexcept {
-    const int self_plain = (t_tw_cur == nullptr && t_tw_default.walking) ? 1 : 0;
+    // Issue #5274: a plain walker inside a certified park already left the
+    // counter, so it must not be subtracted a second time.
+    const int self_plain =
+        (t_tw_cur == nullptr && t_tw_default.walking && !t_tw_plain_parked) ? 1 : 0;
     return g_tw_plain_walkers.load(std::memory_order_acquire) - self_plain;
+}
+
+// Issue #5274: how many plain segments were certified parked so far, and how
+// many are markable right now (query:tw-plain-parks / the park gauge).
+extern "C" std::uint64_t aura_tw_plain_park_total() noexcept {
+    return g_tw_plain_parks.load(std::memory_order_relaxed);
+}
+
+extern "C" int aura_tw_plain_parked_now() noexcept {
+    return g_tw_plain_parked_now.load(std::memory_order_relaxed);
+}
+
+// Issue #5274: the control arm for this certification. With it set the park is
+// a no-op — the pre-fix behaviour, where a parked body keeps both stand-down
+// counters — so one binary can show that the park (and not some other change)
+// is what lets the sweeps run. Read once, like AURA_GC_RECLAIM_OFF.
+static bool tw_plain_park_disabled() noexcept {
+    static const bool off = [] {
+        const char* e = std::getenv("AURA_TW_PLAIN_PARK_OFF");
+        return e != nullptr && *e != 0 && *e != '0';
+    }();
+    return off;
+}
+
+// Issue #5274: certify this thread's plain segment for the span of a blocking
+// primitive. See tw_plain_park.h for why only a blocked walker may call this.
+extern "C" int aura_tw_plain_park_begin() noexcept {
+    if (tw_plain_park_disabled())
+        return 0;
+    if (t_tw_plain_park_depth++ > 0)
+        return 1; // nested wait: the outermost bracket already parked us
+    // A fiber segment parks through the STW epoch, and a thread with no live
+    // frame has nothing a sweep could free. Both are "nothing to certify".
+    if (t_tw_cur != nullptr || !t_tw_default.walking || t_tw_default.seg == nullptr) {
+        t_tw_plain_park_depth = 0;
+        return 0;
+    }
+    TwRootSet* set = t_tw_default.seg;
+    // Order matters: publish the marker BEFORE leaving the counters. A
+    // collector that reads the counters as "all parked" must also read this
+    // marker (release store / seq_cst decrement), so it cross-marks the
+    // segment instead of skipping it, and the release below waits that sweep
+    // out before the owner touches the segment again.
+    set->plain_parked.store(true, std::memory_order_release);
+    g_tw_plain_walkers.fetch_sub(1, std::memory_order_seq_cst);
+    t_tw_plain_parked = true;
+    t_tw_plain_body_parked = aura_fiber_body_park() != 0;
+    g_tw_plain_parked_now.fetch_add(1, std::memory_order_relaxed);
+    g_tw_plain_parks.fetch_add(1, std::memory_order_relaxed);
+    return 1;
+}
+
+extern "C" void aura_tw_plain_park_end(int parked) noexcept {
+    if (parked == 0)
+        return;
+    if (--t_tw_plain_park_depth > 0)
+        return;
+    // Become visible as an uncertified walker again BEFORE the fence: a sweep
+    // that starts from here stands down on the counter, and one that had
+    // already decided to mark this segment is waited out by the body/unpark
+    // half (gate_wait_held_sweep) before the marker is cleared.
+    g_tw_plain_walkers.fetch_add(1, std::memory_order_seq_cst);
+    if (t_tw_plain_body_parked) {
+        t_tw_plain_body_parked = false;
+        aura_fiber_body_unpark();
+    } else {
+        aura_gc_sweep_wait_parked_walker();
+    }
+    if (t_tw_default.seg != nullptr)
+        t_tw_default.seg->plain_parked.store(false, std::memory_order_release);
+    t_tw_plain_parked = false;
+    g_tw_plain_parked_now.fetch_sub(1, std::memory_order_relaxed);
 }
 
 // Issue #4713: observability — reclaims that ran with registered fiber
@@ -1717,7 +1825,7 @@ bool Evaluator::reclaim_tw_unreachable_now() {
     // fiber is covered too.
     for (const auto& sp : stw.snapshot) {
         TwRootSet* set = sp.get();
-        if (set == self_cur || set == self_def || !set->fiber_owned)
+        if (set == self_cur || set == self_def || !tw_segment_markable(set))
             continue;
         if (set->dead.load(std::memory_order_acquire))
             continue;
@@ -1812,7 +1920,7 @@ void Evaluator::collect_tw_inflight_roots(std::vector<types::EvalValue>& out) {
             TwRootSet* self_def = t_tw_default.seg;
             for (const auto& sp : stw.snapshot) {
                 TwRootSet* set = sp.get();
-                if (set == self_cur || set == self_def || !set->fiber_owned)
+                if (set == self_cur || set == self_def || !tw_segment_markable(set))
                     continue;
                 if (set->dead.load(std::memory_order_acquire))
                     continue;
@@ -1845,7 +1953,7 @@ void Evaluator::collect_tw_inflight_envs(std::vector<const Env*>& out) {
     if (tw_stw_begin(stw, kTwStwInflightBudget)) {
         for (const auto& sp : stw.snapshot) {
             TwRootSet* set = sp.get();
-            if (set == self_cur || set == self_def || !set->fiber_owned)
+            if (set == self_cur || set == self_def || !tw_segment_markable(set))
                 continue;
             if (set->dead.load(std::memory_order_acquire))
                 continue;

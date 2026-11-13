@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 924 | Preferred destination suites |
-| **Total scanned** | **924** | |
+| `tests/core/test_*.cpp` | 925 | Preferred destination suites |
+| **Total scanned** | **925** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 96 | 96 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 282 | 282 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 111 | 111 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 112 | 112 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 29 | 29 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 62 | 62 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 88 | 88 | P2 — link-profile heavy; migrate AC smoke first |
@@ -1055,6 +1055,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_truncate_commit_gate.cpp`
 - `tests/compiler/test_try_catch_bind.cpp`
 - `tests/core/test_try_lock_workspace_lock_order.cpp`
+- `tests/compiler/test_tw_plain_park_reclaim.cpp`
 - `tests/compiler/test_tweak_literal_audit_consistency.cpp`
 - `tests/core/test_type_cache_stats_snapshot.cpp`
 - `tests/compiler/test_type_dep_epoch_prune.cpp`
@@ -1539,13 +1540,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_rollback_latest.cpp` (—) [domain_suite, theme_compiler] — AC1: source has no second all_mutations() ID walk inside rollback-latest
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004), retargeted
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (111)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (112)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (111)
+#### domain/ (112)
 
 - `tests/orch/test_agent_apply_mutex.cpp` (—) [large, domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_failure_policy.cpp` (—) [large, domain_suite, theme_orch] — AC1: AgentFailurePolicy available under aura::orch; StallPolicy
@@ -1655,6 +1656,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_tcp_listen_accept.cpp` (—) [domain_suite, theme_compiler] — membership per #81967 (no test_issue_2771.cpp).
 - `tests/compiler/test_tenant_scope_fiber_mandate.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Fiber with assigned_tenant_id=42 → body capability_tenant_id()
 - `tests/core/test_transaction_guard.cpp` (—) [domain_suite, theme_core] — AC1: Scaffold simulation removed; host try_acquire/release required
+- `tests/compiler/test_tw_plain_park_reclaim.cpp` (—) [domain_suite, theme_compiler] — AC1: while the body is blocked, the park bracket engaged
 - `tests/compiler/test_type_freshness_steal_densify.cpp` (—) [domain_suite, theme_compiler] — AC1: Steal success + old-epoch goals → stale_vs_epoch(new)==0 after fence
 - `tests/compiler/test_workspace_swap_guard.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_swap_guard.cpp — Issue #1717: synthesize:optimize swap-guard test.
 - `tests/serve/test_yield_while_mutation_held.cpp` (—) [domain_suite, theme_serve] — AC1: Under live outermost Guard, yield() / yield(reason) do not

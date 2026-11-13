@@ -60,6 +60,7 @@ module;
 #endif
 #include "messaging_bridge.h"
 #include "core/ownership.hh" // Issue #4936: NoCopy
+#include "tw_plain_park.h"   // Issue #5274: certified park across a blocking recv/accept
 
 module aura.compiler.evaluator;
 
@@ -68,6 +69,10 @@ import aura.compiler.value;
 
 // Issue #5274: drop an outermost mutation hold before blocking HTTP.
 extern "C" int aura_mutation_hold_release_before_block() noexcept;
+
+// Issue #5274: a thread blocked in accept/recv holds live tree-walker frames;
+// certify the segment for the wait so a sibling's sweep is not frozen out.
+using aura::compiler::TwPlainPark;
 
 namespace aura::compiler::primitives_detail {
 
@@ -992,7 +997,14 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                                    static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
             get_curl().easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS,
                                    static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
-            const CURLcode res = get_curl().easy_perform(curl);
+            CURLcode res;
+            {
+                // Issue #5274: perform blocks for up to the whole timeout with
+                // this body's frames live. Certify the segment so a sibling's
+                // sweep is not frozen out for the length of a slow request.
+                TwPlainPark park_5274;
+                res = get_curl().easy_perform(curl);
+            }
             get_curl().easy_cleanup(curl);
             if (res != CURLE_OK)
                 return HTTP_FAIL(http_transport_error("http-get", res));
@@ -1072,6 +1084,9 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             (void)aura_mutation_hold_release_before_block();
             {
                 aura::messaging::DensenessBodyLockWaitGuard body_http_guard;
+                // Issue #5274: the async hand-off still parks THIS body until
+                // the worker answers; certify its frames for that span.
+                TwPlainPark park_5274;
                 result = aura::messaging::g_http_post_async(url_copy, body_copy, auth, timeout_sec);
             }
             if (!result.empty()) {
@@ -1131,7 +1146,13 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             get_curl().easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS,
                                    static_cast<long>(CURLPROTO_HTTP | CURLPROTO_HTTPS));
 
-            const CURLcode res = get_curl().easy_perform(curl);
+            CURLcode res;
+            {
+                // Issue #5274: see the http-get perform above — a chat request
+                // can block for 20-60 s with this body's frames live.
+                TwPlainPark park_5274;
+                res = get_curl().easy_perform(curl);
+            }
             get_curl().slist_free_all(headers);
             get_curl().easy_cleanup(curl);
             if (res != CURLE_OK)
@@ -1457,7 +1478,13 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_void();
         sockaddr_in peer{};
         socklen_t plen = sizeof(peer);
-        int cfd = ::accept(lfd, reinterpret_cast<sockaddr*>(&peer), &plen);
+        int cfd;
+        {
+            // Issue #5274: a blocking accept can last for the whole lifetime of
+            // a server. Certify this thread's frames for the wait.
+            TwPlainPark park_5274;
+            cfd = ::accept(lfd, reinterpret_cast<sockaddr*>(&peer), &plen);
+        }
         if (cfd < 0)
             return make_void();
         struct timeval tv;
@@ -1532,7 +1559,13 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         if (maxlen > 65536)
             maxlen = 65536;
         std::string buf(maxlen, '\0');
-        auto n = ::recv(fd, buf.data(), maxlen, 0);
+        ssize_t n;
+        {
+            // Issue #5274: the receive blocks (up to SO_RCVTIMEO) with live
+            // frames; certify the segment so a sibling's sweep can run.
+            TwPlainPark park_5274;
+            n = ::recv(fd, buf.data(), maxlen, 0);
+        }
         if (n <= 0)
             return make_void();
         buf.resize(static_cast<std::size_t>(n));

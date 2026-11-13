@@ -2614,7 +2614,10 @@ int run_test_hold_budget_dispatch_force_release_4407() {
         const auto fr =
             emb.find("void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_");
         CHECK(fr != std::string::npos, "4407: force_release helper present");
-        const auto frwin = fr == std::string::npos ? std::string{} : emb.substr(fr, 2200);
+        // Issue #5275 pushed the lock_order pair past the old 2200-char
+        // window (on_release now sits at ~2410). Widen to the next
+        // definition (3050) so the pin still scopes the helper alone.
+        const auto frwin = fr == std::string::npos ? std::string{} : emb.substr(fr, 2800);
         CHECK(frwin.find("Issue #4407") != std::string::npos,
               "4407: force_release cites the issue");
         CHECK(frwin.find("workspace_lock_adopt_depth_tls") != std::string::npos,

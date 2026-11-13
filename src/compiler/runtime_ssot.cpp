@@ -245,6 +245,8 @@ std::atomic<int> g_fiber_bodies_running{0};
 std::atomic<bool> g_file_heap_sweep_active{false};
 namespace {
 thread_local int t_fiber_body_depth = 0;
+// Issue #5274: this body is inside a certified park (aura_fiber_body_park).
+thread_local int t_fiber_body_parked = 0;
 thread_local bool t_sweep_gate_owner = false;
 } // namespace
 
@@ -350,6 +352,42 @@ extern "C" void aura_fiber_body_exit() noexcept {
 extern "C" int aura_fiber_bodies_running_other() noexcept {
     const int self = t_fiber_body_depth > 0 ? 1 : 0;
     return g_fiber_bodies_running.load(std::memory_order_seq_cst) - self;
+}
+
+// Issue #5274: a body that BLOCKS in a primitive wait is certifiably parked —
+// its tree-walker segment is published quiescent (tw_plain_park.h) and this
+// counter stops claiming it as uncertifiable for that span. The body counter
+// exists to cover a body whose live roots no collector can mark (#4768); a
+// parked body's roots ARE markable through the segment registry, so keeping it
+// in the count only froze every sweep for the lifetime of a long-lived
+// --serve-async game (RSS ~850 MB, ~0.4-1.5 s per outermost mutate).
+//
+// The pair is asserted on the body's own thread, so t_fiber_body_depth needs
+// no extra atomicity; a nested park keeps the outermost one authoritative
+// (the caller collapses them). Release increments FIRST and then waits out a
+// held sweep: a sweep that starts after the increment stands down on the
+// counter, and one that already decided to mark this body is waited out before
+// the segment is handed back to the owner.
+extern "C" int aura_fiber_body_park() noexcept {
+    if (t_fiber_body_depth <= 0 || t_fiber_body_parked != 0)
+        return 0;
+    t_fiber_body_parked = 1;
+    g_fiber_bodies_running.fetch_sub(1, std::memory_order_seq_cst);
+    return 1;
+}
+
+extern "C" void aura_fiber_body_unpark() noexcept {
+    g_fiber_bodies_running.fetch_add(1, std::memory_order_seq_cst);
+    t_fiber_body_parked = 0;
+    gate_wait_held_sweep(/*may_skip=*/false);
+}
+
+// Issue #5274: the same wait for a plain walker that is NOT a body (the CLI /
+// serve main thread blocked in accept / recv). AURA_GC_GATE_DRAIN_NOWAIT is a
+// measurement arm for a different window (#4791); a parked walker may not skip
+// this fence, or it resumes under a release that already marked its segment.
+extern "C" void aura_gc_sweep_wait_parked_walker() noexcept {
+    gate_wait_held_sweep(/*may_skip=*/false);
 }
 
 // Issue #4057: owner-principal stamps parallel to g_pair_slots — same SSOT
