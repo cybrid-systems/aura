@@ -1,5 +1,7 @@
 module;
 #include <cstdint>
+#include <span>
+#include <vector>
 
 export module aura.compiler.compute_kind;
 import std;

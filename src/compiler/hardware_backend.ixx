@@ -4,6 +4,7 @@
 module;
 
 #include <cstdint>
+#include <functional>
 
 export module aura.compiler.hardware_backend;
 import std;

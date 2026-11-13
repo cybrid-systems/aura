@@ -9,7 +9,10 @@
 //   and reverse workspace edits without parsing free-form logs
 module;
 
+#include <chrono>
 #include <cstring>
+#include <expected>
+#include <unordered_map>
 
 export module aura.core.mutation;
 import std;
