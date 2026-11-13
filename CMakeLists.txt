@@ -827,7 +827,12 @@ add_test(NAME offload_pool COMMAND ./test_offload_pool)
 #   - .ixx modules (C++ modules don't share BMIs cleanly across
 #     targets in CMake's FILE_SET model; module dep chain is
 #     compiled per-binary. This is a known limitation; see
-#     https://gitlab.kitware.com/cmake/cmake/-/issues/25845)
+#     https://gitlab.kitware.com/cmake/cmake/-/issues/25845).
+#     CMake 4.4+ sharpens this: each module provider gets synthetic
+#     BMI-only targets (CMakeFiles/<tgt>@synth_<n>.dir) per compatible
+#     usage, because a BMI "cannot be shared between arbitrary import
+#     instances" (cmake-cxxmodules(7), CMake 4.5). 4.5 did not remove
+#     the need for the producer-keyed launcher below.
 #   - aura_jit.cpp / aura_jit_runtime.cpp / aura_jit_bridge.cpp
 #     (need -fno-rtti + LLVM; shared via aura_jit_test_objects below)
 #   - Per-test observability headers (h-only; not compiled)
