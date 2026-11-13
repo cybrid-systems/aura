@@ -241,10 +241,18 @@ sync_gcm() {
 # dirs. This is idempotent — ln -sfn overwrites the same
 # symlink with the same target.
 shopt -s nullglob
+# Issue #5202: the per-target dir and the producer cache normally hold the
+# same module names; the old loop ran sync_gcm (and its readlink -f) twice
+# per module. Keep one pass per module name.
+declare -A _aura_seen_gcm=()
 for gcm in "$per_target_dir"/*.gcm "$PRODUCER_CACHE"/*.gcm; do
     [ -e "$gcm" ] || continue
-    sync_gcm "$(basename "$gcm")"
+    _aura_gcm_name="$(basename "$gcm")"
+    [ -n "${_aura_seen_gcm[$_aura_gcm_name]:-}" ] && continue
+    _aura_seen_gcm["$_aura_gcm_name"]=1
+    sync_gcm "$_aura_gcm_name"
 done
+unset _aura_seen_gcm _aura_gcm_name
 shopt -u nullglob
 
 # After the per-file sync, ensure every consumer per-target dir
