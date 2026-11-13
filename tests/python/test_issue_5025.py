@@ -3,8 +3,10 @@ r"""Regression for #5025: the first screen is the terminal record.
 
 Before: README, getting-started and install sent a new reader to
 out/report.html, and \`aura new --help\` called evolve a "self-evolving program +
-evo report". Now every first screen names \`aura demo\` and the KEEP / ROLLBACK
-record; the help text and its snapshot move together.
+evo report". getting-started and install still name \`aura demo\` and the
+KEEP / ROLLBACK record. The README shows that record as a cast of
+examples/sum-to.aura (one ROLLBACK, one KEEP, same process). The help text
+and its snapshot move together.
 """
 
 from __future__ import annotations
@@ -38,8 +40,7 @@ def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
 
 
 RECORD = "1 ROLLBACK  (define (guess) 10)   live (define (guess) 0)"
-POINTERS = (
-    ROOT / "README.md",
+DOCS = (
     ROOT / "docs" / "getting-started.md",
     ROOT / "docs" / "install.md",
 )
@@ -54,12 +55,22 @@ class FirstScreen(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_docs_start_with_demo_and_the_record(self) -> None:
-        for doc in POINTERS:
+        for doc in DOCS:
             text = doc.read_text()
             self.assertIn("aura demo", text, doc)
             self.assertIn(RECORD, text, doc)
             self.assertNotIn("out/report.html", text, doc)
             self.assertNotIn("aura new evolve demo\ncd demo\naura run", text, doc)
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn("docs/assets/sum-to.gif", readme)
+        self.assertIn("docs/assets/sum-to.cast", readme)
+        self.assertIn("aura --preset dev examples/sum-to.aura", readme)
+        self.assertIn(
+            "curl -fsSL https://raw.githubusercontent.com/cybrid-systems/aura/main/install.sh | sh",
+            readme,
+        )
+        self.assertNotIn("out/report.html", readme)
+        self.assertNotIn("aura new evolve demo\ncd demo\naura run", readme)
 
     def test_new_help_describes_keep_rollback(self) -> None:
         r = run(["new", "--help"], self.d)

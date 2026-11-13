@@ -18,7 +18,9 @@ live definition:
 ```
 
 `install.sh` picks the tarball for `uname -m`, checks its sha256, unpacks it
-under `~/.aura/<version>` and links `~/.local/bin/aura`. Settings:
+under `~/.aura/<version>` and links `~/.local/bin/aura`. Add `~/.local/bin` to
+`PATH` if it is not there; the script prints that directory when it is missing.
+Settings:
 
 | variable | default | meaning |
 |---|---|---|
@@ -102,7 +104,9 @@ docker run --rm -v "$PWD:/w" -w /w ghcr.io/cybrid-systems/aura:nightly main.aura
 `ghcr.io/cybrid-systems/aura` is a multi-arch image (linux/amd64, linux/arm64)
 holding only the bundle on `ubuntu:24.04`. Tags: `nightly` (newest `main`),
 the 9-character commit id, and for each `vX.Y.Z` release `X.Y.Z`, `X.Y` and
-`latest` (`latest` is only ever set by a release tag). Compiling aura from
+`latest` (`latest` is only ever set by a release tag). To reproduce a run, pin
+that commit id (`ghcr.io/cybrid-systems/aura:<sha9>`) or the image digest;
+`nightly` is replaced on every push to `main`. Compiling aura from
 source uses the toolchain image `ghcr.io/cybrid-systems/aura-ci:v0.1.1`.
 Building from source requires CMake 4.5.0 or newer (the image pins 4.5.0);
 older CMake, including 4.4.5, cannot configure this tree because `import std`

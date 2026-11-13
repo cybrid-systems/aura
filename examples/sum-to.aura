@@ -1,0 +1,90 @@
+;; One process. sum-to adds 1..n. A proposal is kept only when every sample
+;; still matches and the call is faster; anything else is restored.
+;;
+;;   aura --preset dev examples/sum-to.aura
+
+(define (pause ms)
+  (let ((end (+ (monotonic-ms) ms)))
+    (let loop ()
+      (if (< (monotonic-ms) end) (loop) #t))))
+
+(define slow
+  "(define (sum-to n) (let loop ((i 1) (s 0)) (if (> i n) s (loop (+ i 1) (+ s i)))))")
+(define wrong "(define (sum-to n) (* n n))")
+(define right "(define (sum-to n) (/ (* n (+ n 1)) 2))")
+
+(define N 1000000)
+
+(set-code slow)
+(eval-current)
+
+(define (live) (current-source :workspace :define-fn-sugar))
+(define (show-live)
+  (display "live\n")
+  (display (live))
+  (display "\n"))
+
+(show-live)
+(display "\n")
+(pause 1600)
+
+(define e1 (sum-to 1))
+(define e10 (sum-to 10))
+(define e100 (sum-to 100))
+(define t0 (monotonic-ms))
+(define base-v (sum-to N))
+(define base-ms (- (monotonic-ms) t0))
+(display (format "(sum-to ~a) => ~a    ~a ms\n" N base-v base-ms))
+(pause 1400)
+
+(define (unchanged? big)
+  (and (= big base-v) (= (sum-to 1) e1) (= (sum-to 10) e10) (= (sum-to 100) e100)))
+
+(define (step src)
+  (let ((snap (mutate :snapshot "proposal")))
+    (display "\npropose\n")
+    (display src)
+    (display "\n")
+    (pause 1200)
+    (let ((ok (mutate :rebind "sum-to" src "sum-to")))
+      (if (not (eq? ok #t))
+          (begin
+            (display "       rebind refused\n")
+            (mutate :restore snap)
+            (eval-current)
+            (display "ROLLBACK\n")
+            (show-live)
+            (pause 1600))
+          (begin
+            (eval-current)
+            (let* ((u0 (monotonic-ms))
+                   (big (sum-to N))
+                   (dt (- (monotonic-ms) u0)))
+              (display (format "trial  (sum-to ~a) => ~a    ~a ms\n" N big dt))
+              (pause 800)
+              (if (and (unchanged? big) (> base-ms 0) (< (* dt 3) base-ms))
+                  (begin
+                    (display (format "       same result on 1, 10, 100, ~a; ~a ms vs ~a ms\n"
+                                     N dt base-ms))
+                    (display "KEEP\n")
+                    (show-live)
+                    (pause 1400))
+                  (begin
+                    (if (unchanged? big)
+                        (display "       not faster\n")
+                        (display (format "       result changed, want ~a\n" base-v)))
+                    (mutate :restore snap)
+                    (eval-current)
+                    (display "ROLLBACK\n")
+                    (show-live)
+                    (pause 1600)))))))))
+
+(step wrong)
+(step right)
+
+(let* ((u0 (monotonic-ms))
+       (v (sum-to N))
+       (dt (- (monotonic-ms) u0)))
+  (display (format "\n(sum-to ~a) => ~a    ~a ms\n" N v dt)))
+(pause 600)
+(display "")
