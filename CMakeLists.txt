@@ -3,6 +3,23 @@ cmake_minimum_required(VERSION 4.5)
 # with CXX_SCAN_FOR_MODULES, so the experimental UUID gate is gone.  The
 # toolchain image provides CMake 4.5.0; older local CMake cannot configure.
 project(aura LANGUAGES CXX C SPDX_LICENSE "Apache-2.0")
+
+# Issue #5202: make fast linking a property of the CMake build, not only of
+# build.py. Raw cmake / presets / dist.yml previously fell back to ld.bfd.
+# The probe is required: GCC 16's libatomic_asneeded.so breaks some mold.
+option(AURA_USE_MOLD "Use mold/lld when the linker probe succeeds" ON)
+if(AURA_USE_MOLD AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    include(CheckLinkerFlag)
+    check_linker_flag(CXX "-fuse-ld=mold" AURA_HAVE_MOLD)
+    if(AURA_HAVE_MOLD)
+        add_link_options(-fuse-ld=mold)
+    else()
+        check_linker_flag(CXX "-fuse-ld=lld" AURA_HAVE_LLD)
+        if(AURA_HAVE_LLD)
+            add_link_options(-fuse-ld=lld)
+        endif()
+    endif()
+endif()
 # Issue #4837: Clang has no -fcontracts / -freflection (GCC 16 features).
 # The GCC build is unchanged. The Clang build exists to produce module BMIs
 # and a compile_commands.json for clang-tidy, so it drops the GCC-only
@@ -32,6 +49,19 @@ include(${CMAKE_SOURCE_DIR}/cmake/AuraCoverage.cmake) # Issue #1933 llvm-cov
 include(${CMAKE_SOURCE_DIR}/cmake/AuraTest.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraModules.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraIssueBundles.cmake)
+
+# Issue #5202: opt-in CMake 4.5 instrumentation (configure/build/test wall +
+# processMetrics for each command). Off by default: it is a measurement
+# tool, not a build-speed change.
+option(AURA_BUILD_INSTRUMENTATION "Emit CMake instrumentation data" OFF)
+if(AURA_BUILD_INSTRUMENTATION)
+    cmake_instrumentation(
+        API_VERSION 1
+        DATA_VERSION 1.2
+        HOOKS postCMakeBuild
+        OPTIONS processMetrics trace
+    )
+endif()
 
 # aarch64 PIE + C++-module inlines that touch SHARED-lib globals need -fPIC.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -860,6 +890,9 @@ set_target_properties(aura_tl_arena PROPERTIES
 )
 target_include_directories(aura_tl_arena PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_features(aura_tl_arena PUBLIC cxx_std_26)
+# Issue #5202: runtime_ssot.cpp / tl_arena_tls.cpp have no module syntax;
+# skip CMake's P1689 scan for this target.
+set_property(TARGET aura_tl_arena PROPERTY CXX_SCAN_FOR_MODULES OFF)
 # runtime_ssot.cpp uses std::vector — need libstdc++.
 target_link_libraries(aura_tl_arena PUBLIC stdc++)
 
@@ -1058,6 +1091,8 @@ endif()
 # OrcJIT / emit_native_object / SpecJIT paths (see
 # cmake/issue_tests_need_full_llvm.txt or tests/README.md · link profiles).
 # P2: SHARED — one light ABI .so for all non-JIT issue tests.
+# Issue #5202: the JIT stub sources below have no module syntax (they
+# include headers only). Skip CMake's P1689 scan for this target.
 add_library(aura_jit_light_test_objects SHARED
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
@@ -1070,6 +1105,7 @@ set_target_properties(aura_jit_light_test_objects PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
     BUILD_RPATH "${CMAKE_BINARY_DIR}"
+    CXX_SCAN_FOR_MODULES OFF
 )
 target_include_directories(aura_jit_light_test_objects PUBLIC
     ${CMAKE_SOURCE_DIR}/src
