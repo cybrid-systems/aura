@@ -16,22 +16,52 @@
 #ifndef AURA_CORE_OWNERSHIP_HH
 #define AURA_CORE_OWNERSHIP_HH
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <concepts>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstddef>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstdio>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstdlib>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstring>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <stdio.h> // popen / pclose (POSIX)
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <memory>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <string>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <type_traits>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <utility>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <vector>
+#endif
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <dirent.h>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <fcntl.h>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <sys/stat.h>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <unistd.h>
+#endif
 
 namespace gsl {
 template <class T>

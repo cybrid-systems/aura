@@ -2,7 +2,9 @@
 #ifndef AURA_COMPILER_BASIS_POINTS_H
 #define AURA_COMPILER_BASIS_POINTS_H
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstdint>
+#endif
 
 namespace aura::compiler {
 
