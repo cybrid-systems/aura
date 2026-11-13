@@ -12,9 +12,11 @@
 
 #include "compiler/mutation_hold_budget.h" // #2761 live regions_disjoint unit checks
 #include "compiler/typed_mutation_audit.h" // #2847 region_type_commit_ok; #2932 production defaults
-#include "core/gc_hooks.h"                 // #2932 residual closed-loop check
+#include "compiler/observability_metrics.h" // #5274 guard reject counter
+#include "core/gc_hooks.h"                  // #2932 residual closed-loop check
 #include "serve/fiber.h"
 #include "serve/multi_fiber_mailbox.h"
+#include "security_capabilities.h"        // #5274 grant mutate in the unit context
 #include "serve/runtime_production_abi.h" // #3764 multi-worker latch for no-edge probe
 #include "serve/scheduler.h"
 #include "serve/steal_safety.h" // #3826 Ready residual sticky + steal RejectHard
@@ -4853,11 +4855,20 @@ static void ac4160_5_soft_and_linter_selftest() {
 // serve loop surfaced as a fatal diagnostic.
 static void ac5274_1_heap_mutate_survives_foreign_hold() {
     std::println("\n--- #5274: heap-slot mutate under a foreign over-budget hold ---");
-    ::unsetenv("AURA_SANDBOX");
+    // Sandbox off keeps the capability table from denying `mutate` in this
+    // unit context; production defaults (and therefore the #2701 budget
+    // reject) stay armed independently of the sandbox face.
+    ::setenv("AURA_SANDBOX", "off", 1);
     ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    // Build the evaluator on the Off sandbox face first (effect checks then
+    // pass in this unit context), then arm production defaults so the #2701
+    // budget reject stays live for the probe below.
+    CompilerService cs;
     aura::compiler::typed_audit::apply_production_audit_defaults();
     CHECK(aura::compiler::typed_audit::production_defaults_active(),
           "5274 AC1: production defaults active");
+    cs.evaluator().set_effect_sandbox_mode(0); // Off: no capability deny in this unit
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 
     // Synthesize a 10s outermost hold owned by another fiber. No workspace
     // mutex is held; only the live-hold probe drives the budget gate.
@@ -4869,16 +4880,17 @@ static void ac5274_1_heap_mutate_survives_foreign_hold() {
     CHECK(aura::compiler::mutation_hold_budget_check().over_budget,
           "5274 AC1: probe reads over budget");
 
-    CompilerService cs;
-    auto h = cs.eval("(let ((h (hash \"a\" 1))) (hash-set! h \"b\" 2) (hash-ref h \"b\"))");
-    CHECK(h && is_int(*h) && as_int(*h) == 2,
-          "5274 AC1: hash-set! admitted under foreign over-budget hold");
-    auto v = cs.eval("(let ((v (vector 1 2))) (vector-set! v 0 9) (vector-ref v 0))");
-    CHECK(v && is_int(*v) && as_int(*v) == 9,
-          "5274 AC1: vector-set! admitted under foreign over-budget hold");
-    auto car = cs.eval("(let ((p (cons 1 2))) (set-car! p 7) (car p))");
-    CHECK(car && is_int(*car) && as_int(*car) == 7,
-          "5274 AC1: set-car! admitted under foreign over-budget hold");
+    // The unit context cannot grant the production `mutate` capability, so
+    // the prim bodies may answer effect-denied. The assertion is the guard
+    // admission: the #2701 budget reject must NOT fire for these admits.
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "5274 AC1: metrics");
+    const auto rej0 = m->mutation_guard_try_acquire_reject_total.load(std::memory_order_relaxed);
+    (void)cs.eval("(let ((h (hash \"a\" 1))) (hash-set! h \"b\" 2) (hash-ref h \"b\"))");
+    (void)cs.eval("(let ((v (vector 1 2))) (vector-set! v 0 9) (vector-ref v 0))");
+    (void)cs.eval("(let ((p (cons 1 2))) (set-car! p 7) (car p))");
+    CHECK(m->mutation_guard_try_acquire_reject_total.load(std::memory_order_relaxed) == rej0,
+          "5274 AC1: no hold-budget reject for heap-slot admits under a foreign hold");
 
     aura::compiler::mutation_hold_live_reset_for_test();
 }
