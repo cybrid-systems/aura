@@ -735,9 +735,15 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         // legitimately empty fingerprint; rejecting it leaves a bare Reject
         // outcome that the depth==0 typed-entry gate then applies to the
         // NEXT unrelated warm eval (mass eval refusal after Full mutates).
+        // Issue #5279: freeze_proof_goal_truth forces a non-zero fingerprint
+        // whenever live goals exist. The process-global last proof stays 0
+        // until this helper stamps it, so a solved first commit (car/cdr
+        // if, list recursion) must not be treated as an empty snapshot.
+        // Goals whose own fingerprint is still 0 keep the reject.
         if (aura::compiler::typed_audit::production_hard_face_active() &&
             live_truth.live_goal_count > 0 &&
-            aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read() == 0) {
+            aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read() == 0 &&
+            live_truth.goal_fingerprint == 0) {
             // Issue #4666: #3102 coercion / type-cone rewind on the reject path.
             rollback_type_state_after_reject(ev);
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);

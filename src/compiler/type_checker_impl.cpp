@@ -4952,8 +4952,17 @@ TypeId InferenceEngine::lub(TypeId a, TypeId b) {
         b = cs_.normalize(b);
         if (a == b)
             return a;
-        if (reg_.is_var(a) || reg_.is_var(b))
+        if (reg_.is_var(a) || reg_.is_var(b)) {
+            // Issue #5279: car/cdr results are named list-elem vars. Joining
+            // one with a ground must stay a variable, or the outer if sees
+            // Dynamic and trips the #4684 gate. A lambda parameter is not
+            // named list-elem and still returns Dynamic (#4684 AC4).
+            const bool elem_a = reg_.is_var(a) && reg_.name_of(a) == "list-elem";
+            const bool elem_b = reg_.is_var(b) && reg_.name_of(b) == "list-elem";
+            if (elem_a || elem_b)
+                return cs_.fresh_var();
             return reg_.dynamic_type(); // later unify binds the variable
+        }
         // Issue #4684: a branch whose synthesized TypeId is already
         // dynamic_type() used to leave this gate above (the pre-normalize
         // early return) and publish a solved Dynamic for e.g.
@@ -5771,9 +5780,20 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             result = synthesize_flat_define_type(flat, pool, v);
             break;
         case Tag::Define: {
+            // Issue #5279: pre-bind a lambda define the way letrec does
+            // (#5052). Otherwise `(walk (cdr xs))` is UnboundVariable and
+            // the call returns Any into the production join.
             auto def_name = pool.resolve(v.sym_id);
             if (!v.children.empty()) {
+                TypeId rec_fwd{};
+                const bool rec_fn = !def_name.empty() && flat.get(v.child(0)).tag == Tag::Lambda;
+                if (rec_fn) {
+                    rec_fwd = cs_.fresh_var();
+                    env_.bind(std::string(def_name), rec_fwd);
+                }
                 auto val_type = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
+                if (rec_fn)
+                    (void)cs_.consistent_unify(rec_fwd, val_type);
                 if (def_name.size() > 0)
                     env_.bind(std::string(def_name), val_type);
             }
@@ -6345,8 +6365,10 @@ TypeId InferenceEngine::synthesize_flat_var(FlatAST& flat, StringPool& pool, Nod
 
 // Issue #5052 / #4316: true when the callee names a letrec binding whose
 // value (child 0) is still being synthesized above this call — the recursive
-// forward-reference shape. Every other variable callee (lambda parameter,
-// let-bound type var) keeps the gradual Dynamic return of #4316 AC2.
+// forward-reference shape. Issue #5279: `(define (walk xs) …)` is a Define
+// whose child 0 is that lambda, so the same child-0 test covers it. Every
+// other variable callee (lambda parameter, let-bound type var) keeps the
+// gradual Dynamic return of #4316 AC2.
 static bool call_is_letrec_forward_ref(const FlatAST& flat, const StringPool& pool, NodeId call_id,
                                        NodeId callee_id) {
     const auto callee_v = flat.get(callee_id);
@@ -6362,9 +6384,12 @@ static bool call_is_letrec_forward_ref(const FlatAST& flat, const StringPool& po
         if (pv.sym_id != INVALID_SYM &&
             (pv.tag == NodeTag::LetRec || pv.tag == NodeTag::Let || pv.tag == NodeTag::Define) &&
             pool.resolve(pv.sym_id) == cname) {
-            // Nearest same-named binder decides: only its own letrec value
-            // (the definition still in progress) is a forward reference.
-            return pv.tag == NodeTag::LetRec && !pv.children.empty() && pv.child(0) == cur;
+            // Nearest same-named binder decides. A Let is not a forward
+            // reference. LetRec and Define are, when this node is the
+            // value still being synthesized (child 0).
+            if (pv.tag == NodeTag::Let)
+                return false;
+            return !pv.children.empty() && pv.child(0) == cur;
         }
         cur = par;
     }
@@ -6644,7 +6669,18 @@ TypeId InferenceEngine::synthesize_flat_call(FlatAST& flat, StringPool& pool, No
             }
         }
 
-
+        // Issue #5279: the primitive table binds car/cdr to a forall whose
+        // instantiated return is a fresh var (the earlier Dyn registration
+        // is overwritten). That var joins a ground as Dynamic, and the
+        // outer if then reports Bool/Int ~ Any. A named list-elem var keeps
+        // the nested join gradual. A ground return (a user car of Int) stays.
+        if (callee_v.tag == NodeTag::Variable && callee_v.sym_id != INVALID_SYM) {
+            const auto callee_name = pool.resolve(callee_v.sym_id);
+            const auto ret_now = cs_.find(ft.ret);
+            if ((callee_name == "car" || callee_name == "cdr") &&
+                (ret_now == reg_.dynamic_type() || reg_.is_var(ret_now)))
+                return cs_.fresh_var_named("list-elem");
+        }
         return ft.ret;
     }
 
@@ -9102,6 +9138,16 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
         // expected. Soft unannotated: synthesize-only.
         if (v.children.size() >= 1 && v.child(0) != NULL_NODE) {
             auto val_id = v.child(0);
+            auto def_name = pool.resolve(v.sym_id);
+            // Issue #5279: check-mode must pre-bind too. A rebind that
+            // reaches check_flat otherwise types the recursive call as
+            // unbound and returns Any.
+            TypeId rec_fwd{};
+            const bool rec_fn = !def_name.empty() && flat.get(val_id).tag == NodeTag::Lambda;
+            if (rec_fn) {
+                rec_fwd = cs_.fresh_var();
+                env_.bind(std::string(def_name), rec_fwd);
+            }
             TypeId val_expected = annotation_type_of(reg_, flat, pool, val_id);
             if (!val_expected.valid() && expected.valid() && expected != reg_.void_type())
                 val_expected = expected;
@@ -9114,7 +9160,8 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             } else {
                 val_type = synthesize_flat(flat, pool, val_id, flat.get(val_id));
             }
-            auto def_name = pool.resolve(v.sym_id);
+            if (rec_fn)
+                (void)cs_.consistent_unify(rec_fwd, val_type);
             if (def_name.size() > 0)
                 env_.bind(std::string(def_name), val_type);
         }

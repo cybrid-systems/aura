@@ -17,6 +17,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/mutate_type_gate.hh"
+#include "compiler/typed_mutation_audit.h"
 #include "compiler/jit_assumptions.hh"
 #include "compiler/shape_profiler.h"  // Issue #4600: mark_megamorphic storm mark
 #include "compiler/aura_jit_bridge.h" // Issue #4600 §1/§2: frame-deopt stub ABI
@@ -1208,6 +1209,150 @@ int run_test_mutate_type_gate() {
         auto val = cs.eval("(mutate :rebind \"c79\" \"42\" \"4579\")");
         CHECK(val.has_value() && is_bool(*val) && as_bool(*val),
               "4579: value define to literal still commits");
+    }
+
+    // Issue #5279: a running car/cdr join or list recursion must not
+    // fail-close as Int/Bool ~ Any, and (sort xs less?) must take the
+    // optional comparator std/list declares. Typecheck uses the production
+    // face. Rebind below restores the harness face.
+    {
+        std::println("\n--- #5279: car/cdr join and sort arity ---");
+        const auto list_sigs = read_file("lib/std/list.aura-type");
+        CHECK(list_sigs.find("sort: Any Any ... -> Any") != std::string::npos,
+              "list.aura-type sort optional comparator");
+
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        struct ProdFace {
+            ProdFace() { apply_production_audit_defaults(); }
+            ~ProdFace() { apply_dev_audit_defaults(); }
+        } prod_face;
+        (void)prod_face;
+
+        auto typecheck_clean = [](std::string_view src, const char* label) {
+            CompilerService host;
+            auto checked = host.typecheck_full(src);
+            const bool join = checked.output.find("incompatible ground types") != std::string::npos;
+            const bool unbound_walk =
+                checked.output.find("unbound variable: walk") != std::string::npos;
+            if (checked.has_errors || join || unbound_walk)
+                std::println("  {} typecheck:\n{}", label, checked.output);
+            CHECK(!checked.has_errors && !join && !unbound_walk, label);
+        };
+        typecheck_clean("(define (second xs)\n"
+                        "  (if (null? xs)\n"
+                        "      #f\n"
+                        "      (if (null? (cdr xs))\n"
+                        "          #f\n"
+                        "          (car (cdr xs)))))\n",
+                        "5279 second typecheck");
+        typecheck_clean("(define (walk xs)\n"
+                        "  (if (null? xs) 0 (+ 1 (walk (cdr xs)))))\n",
+                        "5279 walk typecheck");
+        typecheck_clean("(lambda (x) (if #t x 1))", "5279 lambda param join stays gradual");
+
+        {
+            CompilerService host;
+            auto checked = host.typecheck_full("(if p 1 \"a\")");
+            CHECK(checked.has_errors, "5279 two grounds still an error");
+            CHECK(checked.output.find("incompatible ground types") != std::string::npos,
+                  "5279 two grounds name the join");
+        }
+        {
+            CompilerService host;
+            auto checked =
+                host.typecheck_full("(let ((d (mutate :rebind \"a\" \"b\"))) (if #t d 1))");
+            CHECK(checked.output.find("incompatible ground types") != std::string::npos,
+                  checked.output);
+        }
+    }
+    // Rebind runs with the harness face restored. A Full exit audit in this
+    // process rolls a solved production commit back; `aura --preset dev`
+    // commits these same bodies. ArityMismatch still rejects in either face.
+    {
+        auto commit = [](const char* set_code, const char* rebind, const char* label,
+                         const auto& follow, const char* prelude = nullptr) {
+            CompilerService host;
+            if (prelude)
+                CHECK(host.eval(prelude).has_value(), std::string(label) + " prelude");
+            CHECK(host.eval(set_code).has_value(), std::string(label) + " set-code");
+            CHECK(host.eval("(eval-current)").has_value(), std::string(label) + " eval-current");
+            auto committed = host.eval(rebind);
+            const bool yes = committed && is_bool(*committed) && as_bool(*committed);
+            if (!yes) {
+                std::string detail = host.evaluator().last_mutate_error();
+                if (committed && aura::compiler::types::is_pair(*committed)) {
+                    const auto& pairs = host.evaluator().pairs();
+                    const auto idx = aura::compiler::types::as_pair_idx(*committed);
+                    if (idx < pairs.size() && is_string(pairs[idx].car)) {
+                        const auto sidx = as_string_idx(pairs[idx].car);
+                        if (sidx < host.evaluator().string_heap().size())
+                            detail += " car=" + host.evaluator().string_heap()[sidx];
+                    }
+                    if (idx < pairs.size() && aura::compiler::types::is_pair(pairs[idx].cdr)) {
+                        const auto midx = aura::compiler::types::as_pair_idx(pairs[idx].cdr);
+                        if (midx < pairs.size() && is_string(pairs[midx].car)) {
+                            const auto sidx = as_string_idx(pairs[midx].car);
+                            if (sidx < host.evaluator().string_heap().size())
+                                detail += " reason=" + host.evaluator().string_heap()[sidx];
+                        }
+                    }
+                }
+                std::println("  {} detail={}", label, detail);
+            }
+            CHECK(yes, label);
+            if (yes)
+                follow(host);
+        };
+
+        commit(
+            R"aura((set-code "(define (second xs) #f)"))aura",
+            R"aura((mutate :rebind "second" "(lambda (xs) (if (null? xs) #f (if (null? (cdr xs)) #f (car (cdr xs)))))" "5279"))aura",
+            "5279 second rebind", [](CompilerService& host) {
+                auto value = host.eval("(eq? (second '(a b c)) 'b)");
+                CHECK(value && is_bool(*value) && as_bool(*value), "5279 second returns b");
+            });
+        commit(
+            R"aura((set-code "(define (walk xs) 0)"))aura",
+            R"aura((mutate :rebind "walk" "(lambda (xs) (if (null? xs) 0 (+ 1 (walk (cdr xs)))))" "5279"))aura",
+            "5279 walk rebind", [](CompilerService& host) {
+                auto value = host.eval("(walk '(a b c d e))");
+                CHECK(value && is_int(*value) && as_int(*value) == 5, "5279 walk counts 5");
+            });
+        commit(
+            R"aura((set-code "(define (rank xs) xs)"))aura",
+            R"aura((mutate :rebind "rank" "(lambda (xs) (sort xs (lambda (a b) (< (string-length a) (string-length b)))))" "sort-cmp"))aura",
+            "5279 sort comparator rebind",
+            [](CompilerService& host) {
+                auto value =
+                    host.eval("(equal? (rank '(\"ccc\" \"a\" \"bb\")) '(\"a\" \"bb\" \"ccc\"))");
+                CHECK(value && is_bool(*value) && as_bool(*value), "5279 sort comparator orders");
+            },
+            "(require \"std/list\" all:)");
+        commit(
+            R"aura((set-code "(define (rank xs) xs)"))aura",
+            R"aura((mutate :rebind "rank" "(lambda (xs) (sort xs))" "sort-1"))aura",
+            "5279 sort one argument",
+            [](CompilerService& host) {
+                auto value = host.eval("(equal? (rank '(3 1 2)) '(1 2 3))");
+                CHECK(value && is_bool(*value) && as_bool(*value), "5279 sort one argument orders");
+            },
+            "(require \"std/list\" all:)");
+        {
+            CompilerService host;
+            CHECK(host.eval("(require \"std/list\" all:)").has_value(), "5279 sort zero prelude");
+            CHECK(host.eval(R"aura((set-code "(define (rank xs) xs)"))aura").has_value(),
+                  "5279 sort zero set-code");
+            CHECK(host.eval("(eval-current)").has_value(), "5279 sort zero eval-current");
+            auto committed =
+                host.eval(R"aura((mutate :rebind "rank" "(lambda () (sort))" "sort-0"))aura");
+            CHECK(!(committed && is_bool(*committed) && as_bool(*committed)),
+                  "5279 sort zero arguments is not #t");
+            const auto& err = host.evaluator().last_mutate_error();
+            CHECK(err.find("sort") != std::string::npos &&
+                      err.find("arguments") != std::string::npos,
+                  err);
+        }
     }
 
     reset_for_test();
