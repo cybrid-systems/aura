@@ -13,10 +13,10 @@ or rolled back, and the live source after each decision.
     4 KEEP      (define (guess) 42)   live (define (guess) 42)
     (guess) => 42
 
-The same keep-or-rollback gate, on a loop that is replaced only when the
-result matches, is [examples/sum-evolve.aura](../examples/sum-evolve.aura):
+A checkout that keeps printing while a bad fix is rejected and a good one
+is swapped in, without stopping, is [examples/live-fix.aura](../examples/live-fix.aura):
 
-    aura --preset dev --quiet examples/sum-evolve.aura
+    aura --preset dev --quiet examples/live-fix.aura
 
 `aura demo agent` prints the two-role dialogue. The same evolve program is a
 project you can edit:

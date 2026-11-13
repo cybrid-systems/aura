@@ -2,9 +2,9 @@
 
 Let AI rewrite your running program — safely. Bad changes are undone instantly; good ones go live without a restart.
 
-![A slow function is rewritten. A wrong change is undone. A faster one with the same answer goes live. The program never stopped.](docs/assets/sum-evolve.gif)
+![A cart keeps printing the wrong total. A bad fix is rejected. The next lines show the right price, with no restart.](docs/assets/live-fix.gif)
 
-[cast](docs/assets/sum-evolve.cast)
+[cast](docs/assets/live-fix.cast)
 
 ## Install
 
@@ -15,7 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/cybrid-systems/aura/main/install.sh
 ## Try
 
 ```sh
-aura --preset dev --quiet examples/sum-evolve.aura
+aura --preset dev --quiet examples/live-fix.aura
 ```
 
 [Getting started](docs/getting-started.md) · [Install](docs/install.md) · [Editor](docs/editor.md)

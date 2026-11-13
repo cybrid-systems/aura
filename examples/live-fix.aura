@@ -1,0 +1,161 @@
+;; A checkout that keeps printing while a fix is tried and then swapped in.
+;; The live function adds the 10% instead of taking it off, so $30.00 becomes
+;; $33.00. Each proposal is run with evo:trial in a child workspace. A wrong
+;; total is rejected and the live function is left alone. A total that matches
+;; the 10%-off price is written into the live definition with mutate:rebind.
+;; The printer fiber never stops, so the next line is already the new price.
+;;
+;;   aura --preset dev --quiet examples/live-fix.aura
+;;
+;; scripts/record_demo.sh records this run. AURA_LIVE_FIX_PACE=0 skips the waits.
+
+(require "std/evo-core")
+
+(define PRICE 3000)
+(define WANT 2700)
+
+(define pace
+  (let ((v (getenv "AURA_LIVE_FIX_PACE")))
+    (if (string? v) (string->number v) 1000)))
+
+(define ticks 0)
+(define stop #f)
+(define paused #f)
+(define parked 0)
+
+(define (delay-ms ms)
+  (if (or (<= ms 0) stop)
+      (fiber:yield)
+      (let ((t0 (monotonic-ms)))
+        (let loop ()
+          (if stop #t
+              (if (< (- (monotonic-ms) t0) ms)
+                  (begin (fiber:yield) (loop))
+                  #t))))))
+
+(define (hold)
+  (delay-ms (if (<= pace 0) 0 2500)))
+
+(define esc (list->string (list 27)))
+(define (paint n text)
+  (string-append esc "[" n "m" text esc "[0m"))
+
+(define (money cents)
+  (let* ((neg (< cents 0))
+         (a (if neg (- 0 cents) cents))
+         (d (quotient a 100))
+         (c (modulo a 100))
+         (cs (if (< c 10)
+                 (string-append "0" (number->string c))
+                 (number->string c))))
+    (string-append (if neg "-$" "$") (number->string d) "." cs)))
+
+;; Bug: the discount is added, so 10% off makes the cart more expensive.
+(set-code "(define (checkout price) (+ price (quotient price 10)))")
+(eval-current)
+
+(define (cart-line)
+  (let ((cents (checkout PRICE)))
+    (paint (if (= cents WANT) "92" "91")
+           (string-append "10% off " (money PRICE) " → " (money cents)))))
+
+(define (printer)
+  (let loop ()
+    (cond (stop #t)
+          (paused
+           (begin
+             (set! parked (+ parked 1))
+             (fiber:yield)
+             (loop)))
+          (else
+           (begin
+             (display (cart-line))
+             (newline)
+             (set! ticks (+ ticks 1))
+             (delay-ms pace)
+             (loop))))))
+
+;; Wait until the printer has noticed `paused`, so it cannot call checkout
+;; while evo:trial is inside a child workspace.
+(define (pause-printer)
+  (set! paused #t)
+  (let ((seen parked))
+    (let loop ()
+      (if (= parked seen)
+          (begin (fiber:yield) (loop))
+          #t))))
+
+(define (resume-printer)
+  (set! paused #f))
+
+(define (wait-ticks n)
+  (let ((goal (+ ticks n)))
+    (let loop ()
+      (if (< ticks goal)
+          (begin (delay-ms (if (<= pace 0) 0 50)) (loop))
+          #t))))
+
+(define (say line)
+  (display line)
+  (newline)
+  (hold))
+
+(define (trial genome)
+  (evo:trial (evo:candidate genome (hash "target" "checkout"))
+             (hash "apply" (lambda (c)
+                             (eq? (mutate :rebind "checkout"
+                                          (evo:candidate-genome c)
+                                          "demo")
+                                  #t))
+                   "evaluate" (lambda (c)
+                                (let ((got (checkout PRICE)))
+                                  (hash "objectives" (hash "bad" (if (= got WANT) 0 1))
+                                        "constraints" (hash "ok" (if (= got WANT) 0.0 1.0))
+                                        "behavior" (hash "total" got))))
+                   "timeout-ms" 2000)))
+
+(define (tested-total result)
+  (hash-ref (hash-ref result "behavior") "total"))
+
+(define (passes? result)
+  (and (eq? (hash-ref result "ok") #t)
+       (eq? (hash-ref result "live-unchanged") #t)
+       (= (tested-total result) WANT)))
+
+(define fid (fiber:spawn printer))
+(wait-ticks 2)
+
+(say "🤖 AI proposes fix #1")
+(say "🧪 testing…")
+(pause-printer)
+(define bad (trial "(lambda (price) (- (- price price) 300))"))
+(display (paint "91"
+                (string-append "✗ breaks a test (total = "
+                               (money (tested-total bad))
+                               ") → rejected, nothing changed")))
+(newline)
+(resume-printer)
+(hold)
+(wait-ticks 2)
+
+(say "🤖 AI proposes fix #2")
+(say "🧪 testing…")
+(pause-printer)
+(define good (trial "(lambda (price) (- price (quotient price 10)))"))
+(if (passes? good)
+    (if (eq? (mutate :rebind "checkout"
+                     "(lambda (price) (- price (quotient price 10)))"
+                     "live")
+             #t)
+        (begin
+          (display (paint "92" "✓ all tests pass → applied live"))
+          (newline)
+          (resume-printer)
+          (hold))
+        (begin (display "rebind failed\n") (exit 1)))
+    (begin (display "good fix did not pass\n") (exit 1)))
+(wait-ticks 2)
+(say "No restart. No downtime.")
+(set! stop #t)
+(fiber:join fid)
+(display "")
