@@ -272,6 +272,10 @@ sync_gcm() {
             # Never fail the compile on a concurrent gcm restat race.
             link_bmi_atomic "$dst" "$src" || true
             for c in "${consumers[@]}"; do
+                # Fast path: a live link (or file) already resolves. The
+                # shared cache path is stable, so a republish does not
+                # need a fresh ln/mv pair per consumer.
+                [ -e "$c/$gcm_name" ] && continue
                 link_bmi_atomic "$dst" "$c/$gcm_name" || true
             done
         fi
@@ -309,6 +313,13 @@ if [ -d "$PRODUCER_CACHE" ]; then
         for c in "${consumers[@]}"; do
             # Skip the producer's own dir; that's already handled.
             [ "$c" = "$per_target_dir" ] && continue
+            # Issue #5202: this safety net runs on every compile. A live
+            # link already points at PRODUCER_CACHE/$name (the path is
+            # stable across republish), so skip the ln/mv pair; only
+            # fill gaps for consumers added after the producer compiled.
+            # 308 consumers × 53 BMIs of ln+mv forks dominated clean
+            # test builds (~20 min); an existence test is a stat(2).
+            [ -e "$c/$name" ] && continue
             link_bmi_atomic "$gcm_file" "$c/$name" || true
         done
     done
