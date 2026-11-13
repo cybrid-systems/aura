@@ -644,8 +644,10 @@ static void ac3919_4_source_cite() {
     const auto llm = read_file("lib/std/llm.aura");
     CHECK(llm.find("#3919") != std::string::npos, "AC4: llm.aura cites #3919");
     CHECK(llm.find("no-http-post") != std::string::npos, "AC4: structured no-http-post");
-    CHECK(llm.find("(catch (e) \"no-http-post\")") != std::string::npos,
-          "AC4: aura-llm-call catches unbound http-post");
+    CHECK(llm.find("(procedure? http-post)") != std::string::npos,
+          "AC4: aura-llm-call probes unbound http-post");
+    CHECK(llm.find("(catch (e) (llm-http-error-text e))") != std::string::npos,
+          "AC4: aura-llm-call catches http-post errors");
 }
 
 static void ac3919_5_gate() {
