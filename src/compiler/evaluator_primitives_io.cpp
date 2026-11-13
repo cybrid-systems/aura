@@ -148,13 +148,16 @@ namespace {
                     candidates.push_back(h);
             }
             for (auto* h : candidates) {
-                auto* ei = (CURL * (*)())::dlsym(h, "curl_easy_init");
-                auto* es = (CURLcode (*)(CURL*, CURLoption, ...))::dlsym(h, "curl_easy_setopt");
-                auto* ep = (CURLcode (*)(CURL*))::dlsym(h, "curl_easy_perform");
-                auto* ec = (void (*)(CURL*))::dlsym(h, "curl_easy_cleanup");
-                auto* sa = (struct curl_slist *
-                            (*)(struct curl_slist*, const char*))::dlsym(h, "curl_slist_append");
-                auto* sf = (void (*)(struct curl_slist*))::dlsym(h, "curl_slist_free_all");
+                auto* ei = reinterpret_cast<CURL* (*)()>(::dlsym(h, "curl_easy_init"));
+                auto* es = reinterpret_cast<CURLcode (*)(CURL*, CURLoption, ...)>(
+                    ::dlsym(h, "curl_easy_setopt"));
+                auto* ep = reinterpret_cast<CURLcode (*)(CURL*)>(::dlsym(h, "curl_easy_perform"));
+                auto* ec = reinterpret_cast<void (*)(CURL*)>(::dlsym(h, "curl_easy_cleanup"));
+                auto* sa =
+                    reinterpret_cast<struct curl_slist* (*)(struct curl_slist*, const char*)>(
+                        ::dlsym(h, "curl_slist_append"));
+                auto* sf = reinterpret_cast<void (*)(struct curl_slist*)>(
+                    ::dlsym(h, "curl_slist_free_all"));
                 if (ei && es && ep && ec && sa && sf) {
                     handle = h;
                     easy_init = ei;
@@ -163,7 +166,8 @@ namespace {
                     easy_cleanup = ec;
                     slist_append = sa;
                     slist_free_all = sf;
-                    easy_strerror = (const char* (*)(CURLcode))::dlsym(h, "curl_easy_strerror");
+                    easy_strerror = reinterpret_cast<const char* (*)(CURLcode)>(
+                        ::dlsym(h, "curl_easy_strerror"));
                     return true;
                 }
             }
