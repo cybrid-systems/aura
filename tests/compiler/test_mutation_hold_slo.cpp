@@ -265,6 +265,32 @@ static void ac7_wrapper_names_gate() {
           "AC7: legacy message tail kept");
 }
 
+// ── AC8 (#5275): an observe boundary is not force-failed ──
+static void ac8_rebind_observe_not_failed() {
+    std::println("\n--- AC8: observe boundary past SLO is not failed (#5275) ---");
+    unsetenv("AURA_MUTATION_HOLD_SLO_SOFT");
+    unsetenv("AURA_SANDBOX");
+    setenv("AURA_MUTATION_HOLD_SLO_US", "2000", 1); // 2ms SLO
+
+    CompilerService cs;
+    CompilerMetrics metrics;
+    cs.evaluator().set_compiler_metrics(&metrics);
+    const auto viol0 = metrics.mutation_hold_slo_violation_total.load();
+
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        g.set_hold_slo_observe(true); // what the mutate:rebind wrapper does
+        spin_us(5'000);               // > SLO
+    }
+    CHECK(ok, "AC8: observe boundary keeps success past SLO");
+    CHECK(metrics.mutation_hold_slo_violation_total.load() > viol0,
+          "AC8: the slow commit is still counted");
+
+    cs.evaluator().set_compiler_metrics(nullptr);
+    unsetenv("AURA_MUTATION_HOLD_SLO_US");
+}
+
 } // namespace
 
 int run_test_mutation_hold_slo() {
@@ -276,6 +302,7 @@ int run_test_mutation_hold_slo() {
     ac5_source_cite();
     ac6_deny_gate_named();
     ac7_wrapper_names_gate();
+    ac8_rebind_observe_not_failed();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
