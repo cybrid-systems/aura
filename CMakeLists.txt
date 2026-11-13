@@ -890,9 +890,8 @@ set_target_properties(aura_tl_arena PROPERTIES
 )
 target_include_directories(aura_tl_arena PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_features(aura_tl_arena PUBLIC cxx_std_26)
-# Issue #5202: runtime_ssot.cpp / tl_arena_tls.cpp have no module syntax;
-# skip CMake's P1689 scan for this target.
-set_property(TARGET aura_tl_arena PROPERTY CXX_SCAN_FOR_MODULES OFF)
+# Issue #5269: runtime_ssot.cpp now imports std, so scanning is required.
+# (Was CXX_SCAN_FOR_MODULES OFF under #5202; the scan cost is two TUs.)
 # runtime_ssot.cpp uses std::vector — need libstdc++.
 target_link_libraries(aura_tl_arena PUBLIC stdc++)
 
