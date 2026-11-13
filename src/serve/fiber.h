@@ -882,6 +882,8 @@ public:
 
     // Accessors
     uint64_t id() const { return id_; }
+    // Issue #5211: actual PROT_NONE guard region before stack_.
+    std::size_t guard_size() const noexcept { return guard_size_; }
     FiberState state() const { return state_.load(std::memory_order_acquire); }
 
     // Issue #4883: offload wait generation. A completion carries the
@@ -1521,6 +1523,7 @@ private:
     ucontext_t ctx_;
     void* stack_ = nullptr;
     size_t stack_size_ = 0;
+    size_t guard_size_ = 0; // Issue #5211: page/arch-sized, used by unmap
     // Issue #4443: 0 idle, 1 unmap in progress, 2 stack and func_ dropped.
     std::atomic<std::uint8_t> done_release_state_{0};
     void unmap_stack() noexcept;

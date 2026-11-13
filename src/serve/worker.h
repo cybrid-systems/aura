@@ -352,6 +352,10 @@ private:
     mutable std::mutex fiber_registry_mutex_;
 };
 
+// Issue #5211: true while the calling thread is inside WorkerThread::run()
+// with a usable alternate signal stack. Test/diagnostic hook.
+bool worker_alt_stack_installed() noexcept;
+
 } // namespace aura::serve
 
 #endif // AURA_SERVE_WORKER_H

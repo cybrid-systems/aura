@@ -8,6 +8,7 @@
 #include "serve/steal_safety.h" // Issue #2752/#2844: steal_safety_transaction sole enqueue gate
 
 #include <cstdio>
+#include <signal.h>
 #include <unistd.h>
 
 import std;
@@ -16,6 +17,25 @@ import std;
 #endif
 
 namespace aura::serve {
+
+// Issue #5211: a fiber that hits its guard page while running on a worker
+// must let the process crash handler run on an alternate stack.  main.cpp
+// installs one for the main thread only, so a handler on an overflowed 2 MiB
+// fiber stack re-faulted and the process died without the AURA CRASH report.
+namespace {
+#if defined(__linux__)
+    thread_local bool t_worker_alt_stack = false;
+    thread_local std::array<char, 64 * 1024> t_worker_alt_stack_buf{};
+#endif
+} // namespace
+
+bool worker_alt_stack_installed() noexcept {
+#if defined(__linux__)
+    return t_worker_alt_stack;
+#else
+    return false;
+#endif
+}
 
 // Evaluator hooks are weak so non-evaluator link units (test_concurrent,
 // test_spec_jit) succeed without evaluator_fiber_mutation.cpp. Strong
@@ -650,6 +670,15 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
 //   5. Wake when new fibers arrive (enqueue/eventfd)
 
 void WorkerThread::run() {
+#if defined(__linux__)
+    // Issue #5211: worker-side alternate signal stack (see main.cpp for the
+    // main-thread one).  Removed again before the thread exits.
+    stack_t alt_ss{};
+    alt_ss.ss_sp = t_worker_alt_stack_buf.data();
+    alt_ss.ss_size = t_worker_alt_stack_buf.size();
+    alt_ss.ss_flags = 0;
+    t_worker_alt_stack = ::sigaltstack(&alt_ss, nullptr) == 0;
+#endif
     // Set up thread-local worker context for fiber yield/resume
     g_worker_ctx = &ctx_;
     ctx_.gc_state = &gc_state_; // link GC state for safepoint check
@@ -948,6 +977,14 @@ void WorkerThread::run() {
     // down TLS on return from run(), and nothing after this point may
     // yield/resume on this worker.
     ctx_.gc_state = nullptr;
+#if defined(__linux__)
+    if (t_worker_alt_stack) {
+        stack_t off{};
+        off.ss_flags = SS_DISABLE;
+        (void)::sigaltstack(&off, nullptr);
+        t_worker_alt_stack = false;
+    }
+#endif
 }
 
 } // namespace aura::serve

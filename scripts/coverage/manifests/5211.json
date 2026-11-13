@@ -1,0 +1,42 @@
+{
+  "issue": 5211,
+  "title": "Issue #5211: fiber guard covers the probe assumption, mprotect failure fails the spawn, workers get an alternate signal stack.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "fiber_guard_size",
+        "64u * 1024u",
+        "return page_sz > probe ? page_sz : probe;",
+        "guard_size_ + stack_size_"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "AURA_TEST_FIBER_MPROTECT_FAIL",
+        "fiber mprotect guard",
+        "g_fiber_init_aura_result_err.fetch_add"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/serve/worker.cpp",
+      "contains": [
+        "t_worker_alt_stack_buf",
+        "::sigaltstack(&alt_ss, nullptr)",
+        "SS_DISABLE"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/serve/test_fiber_guard_hardening.cpp",
+      "contains": [
+        "worker thread had an alternate signal stack installed",
+        "overflow probe hit SIGSEGV on the PROT_NONE guard"
+      ]
+    }
+  ]
+}
