@@ -20,15 +20,11 @@
 #include "core/lifetime_pin.hh"  // Issue #3023: post-join linear_roots unpin
 #include "core/fiber_context.hh" // Issue #4716: per-fiber evaluator execution context
 #include "core/ownership.hh"     // Issue #4936: immortal<T>
-#include <unordered_map> // Issue #2726: process-wide Fiber* registry for cross-fiber cancel lookup
 
 #include <sys/mman.h>
 #include <cassert> // Issue #354 / #2200: assert for yield-during-boundary check
 #include <unistd.h>
-#include <atomic>
-#include <chrono>
 #include <cstdlib>
-#include <thread>
 
 import std;
 #if AURA_HAVE_EVENTFD
