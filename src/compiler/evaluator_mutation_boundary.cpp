@@ -156,6 +156,41 @@ extern "C" void aura_pure_anon_maybe_heal_starved(void) noexcept;
 // unlock is UB). Nested / inert never publish.
 static thread_local aura::compiler::Evaluator::MutationBoundaryGuard* g_tls_outermost_guard =
     nullptr;
+
+// Issue #5274: CLI thread-fiber body id lives in primitives_detail
+// (evaluator_primitives_messaging.cpp). Same module, that namespace.
+namespace aura::compiler::primitives_detail {
+std::int64_t fiber_body_id_4778() noexcept;
+} // namespace aura::compiler::primitives_detail
+
+extern "C" std::uint64_t aura_mutation_hold_owner_key_now() noexcept {
+    if (auto* f = aura::serve::g_current_fiber) {
+        const auto id = f->id();
+        return id == 0 ? 1ull : id;
+    }
+    const auto body = aura::compiler::primitives_detail::fiber_body_id_4778();
+    if (body > 0)
+        return static_cast<std::uint64_t>(body);
+    return aura::compiler::mutation_hold_host_thread_key();
+}
+
+// Defined after force_release_hold_budget_inbody (needs the guard method).
+extern "C" int aura_mutation_hold_poll_host_thread() noexcept;
+extern "C" int aura_mutation_hold_release_before_block() noexcept;
+
+// Issue #5274: a new admit that is over budget must name the recorded
+// owner. Scheduler fibers still get the registry cancel. Host and
+// thread-fiber owners are not in that registry — the cancel token is
+// what their own poll / dtor observes. Same-thread: drop it now.
+static void admit_over_budget_degrade_holder(std::uint64_t fiber_id) noexcept {
+    if (fiber_id == 0)
+        return;
+    aura::compiler::mutation_hold_request_cancel(fiber_id);
+    if (fiber_id < 0x40000000ull)
+        aura_evaluator_force_degrade_outermost_holder(fiber_id);
+    if (aura::compiler::mutation_hold_tls_owner_key() == fiber_id)
+        (void)aura_mutation_hold_poll_host_thread();
+}
 // Issue #3780: outermost pre-persist structural WAL append succeeded —
 // skip the post-success duplicate emit in exit_mutation_boundary.
 // Nested boundaries never set this (they still late-emit). Soft/WAL-off
@@ -1572,9 +1607,21 @@ types::EvalValue Evaluator::abort_after_insert_child_for_test(ast::NodeId parent
 // failed as "naked mutate", while sandbox=off ran the same program.
 static thread_local bool t_heap_auto_guard_admit_4908 = false;
 
+extern "C" int aura_hash_mutate_operand_is_unpublished();
+extern "C" int aura_vector_mutate_operand_is_unpublished();
+
 Evaluator::HeapMutateGuardHandle Evaluator::maybe_auto_guard_heap_mutate(bool& ok) noexcept {
     ok = true;
     if (any_active_mutation_boundary())
+        return {};
+    // Issue #5274: a hash/vector this evaluator has not published into a
+    // workspace is a local table (#5190/#5195). It must not take the
+    // process-wide hold-budget admit. A peer's long mutate:rebind used to
+    // refuse (hash-set! st "event" …) and, on the production path, flip
+    // that peer's success flag so the rebind came back "topology restored".
+    // The primitive still takes alloc_storage_lock_ / the hash mutex.
+    if (aura_hash_mutate_operand_is_unpublished() != 0 ||
+        aura_vector_mutate_operand_is_unpublished() != 0)
         return {};
     // Issue #4272: (eval-current) already holds exclusive workspace
     // (WorkspaceUniqueIfNeeded) and stamps eval_current_holds_shared_pin
@@ -3498,7 +3545,15 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
     // read + compare; security-schedule is the last line of defense
     // (multiple live signals). Putting budget BEFORE schedule means
     // over-budget requests never reach the schedule evaluation.
-    {
+    // Issue #5274: a language-level hash-set! / vector-set! / set-car!
+    // (t_heap_auto_guard_admit_4908) only writes a heap slot. Let-binding
+    // the fresh table marks it workspace-reachable, so the #5190
+    // unpublished exemption does not cover (let ((st (hash))) (hash-set! …)).
+    // Refusing that admit killed the process and, via
+    // mark_outermost_mutation_failed, rolled back a peer rebind. The slot
+    // write still takes the workspace lock below when the budget is not
+    // what is being consulted; it must not be rejected for the budget.
+    if (!t_heap_auto_guard_admit_4908) {
         const auto check = mutation_hold_budget_check();
         // Issue #5274: a language-level heap-slot write (set-car! /
         // vector-set! / hash-set!) never relocates the AST. An over-budget
@@ -3517,9 +3572,8 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
                 // try_acquire already rejected *this* admit; this also
                 // unblocks steal/GC by retiring the over-budget holder.
                 const auto hold_snap = mutation_hold_live_snapshot();
-                if (hold_snap.fiber_id != 0) {
-                    aura_evaluator_force_degrade_outermost_holder(hold_snap.fiber_id);
-                }
+                if (hold_snap.fiber_id != 0)
+                    admit_over_budget_degrade_holder(hold_snap.fiber_id);
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
                     m->mutation_guard_try_acquire_reject_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
@@ -3938,7 +3992,8 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
     // new mutate admit. Same order as try_acquire: #2587 mailbox-hold
     // -starvation → #4158 edge-free quarantine → #2701 budget →
     // #2630/#2660 security-schedule.
-    {
+    // Issue #5274: heap-slot admits are not rejected for this budget.
+    if (!t_heap_auto_guard_admit_4908) {
         const auto check = mutation_hold_budget_check();
         if (check.over_budget) {
             if (mutation_hold_budget_reject_enabled()) {
@@ -3948,9 +4003,8 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
                 // g_current_fiber + mark_outermost_mutation_failed;
                 // cross-fiber pending-cancel + urgent inbody poll (#3223).
                 const auto hold_snap = mutation_hold_live_snapshot();
-                if (hold_snap.fiber_id != 0) {
-                    aura_evaluator_force_degrade_outermost_holder(hold_snap.fiber_id);
-                }
+                if (hold_snap.fiber_id != 0)
+                    admit_over_budget_degrade_holder(hold_snap.fiber_id);
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_)) {
                     m->mutation_guard_try_acquire_reject_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
@@ -4452,7 +4506,12 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
             const auto start_ns = aura::compiler::mutation_hold_steady_ns_of(*enter_ts_);
             // *slot already incremented for this outermost enter (prev==1).
             const auto depth = static_cast<std::uint32_t>(*slot);
-            aura::compiler::mutation_hold_live_note_enter(aura_fiber_current_id(), start_ns, depth);
+            // Issue #5274: record THIS thread's owner key. aura_fiber_current_id()
+            // is 0 on the host and on CLI thread-fibers; folding those onto
+            // id 1 made the probe stick or get cleared by the wrong thread.
+            const auto owner_key = aura_mutation_hold_owner_key_now();
+            aura::compiler::mutation_hold_tls_owner_key() = owner_key;
+            aura::compiler::mutation_hold_live_note_enter(owner_key, start_ns, depth);
         }
         // Issue #1523: Workspace level in #1388 order (after Mutate).
         aura::compiler::lock_order::on_acquire(aura::compiler::lock_order::Level::Workspace);
@@ -4668,7 +4727,13 @@ void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_() noexce
     }
     ev_->mutation_boundary_held_.store(false, std::memory_order_release);
     aura_process_mutation_boundary_held_exit();
-    aura::compiler::mutation_hold_live_note_exit(aura_fiber_current_id());
+    {
+        const auto owner_key = aura::compiler::mutation_hold_tls_owner_key();
+        aura::compiler::mutation_hold_live_note_exit(owner_key);
+        if (owner_key != 0)
+            aura::compiler::mutation_hold_clear_cancel(owner_key);
+        aura::compiler::mutation_hold_tls_owner_key() = 0;
+    }
     aura::gc_hooks::release_mutation_hold_defer();
     bool released_physical = false;
     if (region_mode_) {
@@ -4716,6 +4781,37 @@ void Evaluator::MutationBoundaryGuard::force_release_hold_budget_inbody() noexce
         inbody_force_exited_ = true;
     }
     force_release_hold_after_cancel_();
+}
+
+extern "C" int aura_mutation_hold_poll_host_thread() noexcept {
+    using namespace aura::compiler;
+    if (!mutation_hold_budget_reject_enabled())
+        return 0;
+    const auto key = mutation_hold_tls_owner_key();
+    if (!mutation_hold_cancel_targets(key))
+        return 0;
+    auto* g = Evaluator::MutationBoundaryGuard::this_fiber_outermost();
+    if (g == nullptr)
+        return 0;
+    mutation_hold_clear_cancel(key);
+    mutation_hold_set_fail_reason("AdmissionRejected: mutation-hold-budget");
+    g->force_release_hold_budget_inbody();
+    g_mutation_hold_budget_forced_unlock_total.fetch_add(1, std::memory_order_relaxed);
+    g_mutation_hold_budget_forced_fail_closed_total.fetch_add(1, std::memory_order_relaxed);
+    return 1;
+}
+
+extern "C" int aura_mutation_hold_release_before_block() noexcept {
+    auto* g = aura::compiler::Evaluator::MutationBoundaryGuard::this_fiber_outermost();
+    if (g == nullptr)
+        return 0;
+    // A network or channel wait must not keep workspace_mtx_ or the
+    // hold-budget probe. The in-flight mutation fail-closes; the wait
+    // itself proceeds without the lock (the body must not keep writing
+    // the workspace after this returns).
+    aura::compiler::mutation_hold_set_fail_reason("blocking-io-released-hold");
+    g->force_release_hold_budget_inbody();
+    return 1;
 }
 
 // Issue #3194 / #3222: same-fiber inbody-window force-release. Reuses
@@ -4895,6 +4991,26 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 }
             } else if (f->peek_hold_budget_cancel()) {
                 g_mutation_hold_budget_soft_observe_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        } else if (mutation_hold_budget_reject_enabled()) {
+            // Issue #5274: host and CLI thread-fibers have no g_current_fiber,
+            // so the scheduler cancel flag was never consumed and the hold
+            // stayed until the body happened to return. The owner-key token
+            // is the same signal. Keep the specific reason for the wrapper
+            // (#5275 must not read this as a bare topology restore).
+            const auto key = aura::compiler::mutation_hold_tls_owner_key();
+            if (aura::compiler::mutation_hold_cancel_targets(key)) {
+                aura::compiler::mutation_hold_clear_cancel(key);
+                aura::compiler::mutation_hold_set_fail_reason(
+                    "AdmissionRejected: mutation-hold-budget");
+                cancel_forced_fail = true;
+                g_mutation_hold_budget_forced_fail_closed_dtor_consume_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                g_mutation_hold_budget_forced_unlock_total.fetch_add(1, std::memory_order_relaxed);
+                if (success_flag_exchange_false(flag_)) {
+                    g_mutation_hold_budget_forced_fail_closed_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
             }
         }
     }
@@ -6262,7 +6378,16 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Issue #2517: clear process-wide live max probe if this fiber owns it.
         // Simplified exit: only clear when we are the recorded max holder
         // (next enter rebuilds; best-effort under multi-eval contention).
-        aura::compiler::mutation_hold_live_note_exit(aura_fiber_current_id());
+        {
+            // Issue #5274: exit with the key captured at enter, not a fresh
+            // aura_fiber_current_id() (0 on this backend, or a fiber that
+            // appeared mid-hold).
+            const auto owner_key = aura::compiler::mutation_hold_tls_owner_key();
+            aura::compiler::mutation_hold_live_note_exit(owner_key);
+            if (owner_key != 0)
+                aura::compiler::mutation_hold_clear_cancel(owner_key);
+            aura::compiler::mutation_hold_tls_owner_key() = 0;
+        }
         // Issue #2204: release MutationHold when logical hold ends (paired
         // with held_ clear, after exit probes / reemit / flush). Abort
         // (strict force-fail) still reaches here via dtor — bit always

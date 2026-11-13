@@ -27,6 +27,9 @@ module aura.compiler.evaluator;
 import std;
 import aura.compiler.value;
 
+// Issue #5274: a channel wait must not keep the mutation hold.
+extern "C" int aura_mutation_hold_release_before_block() noexcept;
+
 // Issue #4768: body-liveness for the file-heap sweep gate (runtime_ssot.cpp).
 extern "C" void aura_fiber_body_enter() noexcept;
 extern "C" void aura_fiber_body_exit() noexcept;
@@ -849,8 +852,10 @@ namespace {
             channel_wake_waiters(key, /*sender=*/true);
             if (!channel_can_park_fiber()) {
                 // The fiber cannot suspend (Fiber::yield is rejected while a
-                // mutation boundary is live) — fall back to the host-thread
-                // wait so the channel still makes progress.
+                // mutation boundary is live). Drop that hold first: waiting
+                // on the channel while owning workspace_mtx_ deadlocks the
+                // peer that needs the lock to produce the message (#5274).
+                (void)aura_mutation_hold_release_before_block();
                 std::unique_lock ul(ch.mtx);
                 ch.cv.wait(ul, [&]() { return ch.closed || !ch.queue.empty(); });
                 --ch.waiting_receivers;
@@ -917,8 +922,10 @@ namespace {
                 ul.unlock();
             }
             if (!channel_can_park_fiber()) {
-                // Cannot suspend (live mutation boundary) — fall back to the
-                // host-thread wait.
+                // Cannot suspend (live mutation boundary). Release the hold
+                // before the host wait so the peer is not stuck on
+                // workspace_mtx_ (#5274).
+                (void)aura_mutation_hold_release_before_block();
                 std::unique_lock ul(ch.mtx);
                 ch.cv.wait(ul, [&]() {
                     if (ch.closed)
@@ -2845,6 +2852,8 @@ void RegSplitParts::register_messaging_channel_primitives(PrimRegistrar add, Eva
         // whole worker, so a peer fiber on that worker (the receiver) could
         // never run → deadlock. Park cooperatively instead.
         aura::serve::Fiber* fiber = aura::serve::g_current_fiber;
+        if (!channel_can_park_fiber())
+            (void)aura_mutation_hold_release_before_block();
         if (fiber && channel_can_park_fiber()) {
             ChannelView view{
                 &ch, ch.mtx, ch.cv, ch.queue, ch.buffer_size, ch.waiting_receivers, ch.closed};
@@ -2896,6 +2905,8 @@ void RegSplitParts::register_messaging_channel_primitives(PrimRegistrar add, Eva
         // whole worker, so a peer fiber on that worker (the sender) could
         // never run → deadlock. Park cooperatively instead.
         aura::serve::Fiber* fiber = aura::serve::g_current_fiber;
+        if (!channel_can_park_fiber())
+            (void)aura_mutation_hold_release_before_block();
         if (fiber && channel_can_park_fiber()) {
             ChannelView view{
                 &ch, ch.mtx, ch.cv, ch.queue, ch.buffer_size, ch.waiting_receivers, ch.closed};
