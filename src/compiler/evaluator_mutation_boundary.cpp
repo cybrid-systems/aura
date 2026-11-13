@@ -4730,8 +4730,16 @@ void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_() noexce
     {
         const auto owner_key = aura::compiler::mutation_hold_tls_owner_key();
         aura::compiler::mutation_hold_live_note_exit(owner_key);
-        if (owner_key != 0)
+        if (owner_key != 0) {
             aura::compiler::mutation_hold_clear_cancel(owner_key);
+            // Issue #3620: drop the armed inbody window with the hold for
+            // non-fiber owners — their key is stable across holds on that
+            // thread, so a window left stamped would force-release the next
+            // Guard the instant it enters. Fiber ids are unique per fiber;
+            // the inbody poll's holder-mismatch branch retires those.
+            if (mutation_hold_owner_is_non_fiber(owner_key))
+                aura::compiler::mutation_hold_budget_note_cancel_consumed(owner_key);
+        }
         aura::compiler::mutation_hold_tls_owner_key() = 0;
     }
     aura::gc_hooks::release_mutation_hold_defer();
@@ -6405,8 +6413,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // appeared mid-hold).
             const auto owner_key = aura::compiler::mutation_hold_tls_owner_key();
             aura::compiler::mutation_hold_live_note_exit(owner_key);
-            if (owner_key != 0)
+            if (owner_key != 0) {
                 aura::compiler::mutation_hold_clear_cancel(owner_key);
+                // Issue #3620: same-thread non-fiber owner keys recur —
+                // retire the armed inbody window with this hold (see the
+                // cancel-force release path above).
+                if (mutation_hold_owner_is_non_fiber(owner_key))
+                    aura::compiler::mutation_hold_budget_note_cancel_consumed(owner_key);
+            }
             aura::compiler::mutation_hold_tls_owner_key() = 0;
         }
         // Issue #2204: release MutationHold when logical hold ends (paired

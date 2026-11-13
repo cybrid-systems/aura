@@ -407,7 +407,15 @@ static void ac2720_1_force_degrade_production() {
         }
         return n;
     };
-    CHECK(count_occurrences(emb, "aura_evaluator_force_degrade_outermost_holder") >= 2,
+    // Issue #5274 folded the two ABI call sites behind the
+    // admit_over_budget_degrade_holder helper (host/CLI owner split), so the
+    // wiring pin follows the helper's two call sites and still proves the
+    // ABI is reached from both admit paths.
+    CHECK(emb.find("static void admit_over_budget_degrade_holder") != std::string::npos,
+          "AC1: emb defines the admit_over_budget_degrade_holder split helper");
+    CHECK(emb.find("aura_evaluator_force_degrade_outermost_holder(fiber_id)") != std::string::npos,
+          "AC1: helper still calls the degrade ABI");
+    CHECK(count_occurrences(emb, "admit_over_budget_degrade_holder(hold_snap.fiber_id)") >= 2,
           "AC1: emb wires call in try_acquire AND try_acquire_for_region");
     CHECK(emb.find("mutation_hold_live_snapshot()") != std::string::npos,
           "AC1: emb reads live snapshot to get holder fiber_id");
@@ -3395,7 +3403,11 @@ static void ac3764_4_soft_no_force() {
     const auto fc = read_file("src/serve/fiber.cpp");
     const auto busy = fc.find("aura_hold_budget_poll_busy_path(void) noexcept");
     CHECK(busy != std::string::npos, "3764 AC4: busy-path helper");
-    const auto win = fc.substr(busy, 1800);
+    // Scope the window to the helper body (the #3619 probe declaration
+    // follows it) so later additions do not push the anchors out.
+    const auto busy_end = fc.find("extern \"C\" int aura_mutation_hold_no_edge_still_held", busy);
+    CHECK(busy_end != std::string::npos && busy_end > busy, "3764 AC4: busy-path end marker");
+    const auto win = fc.substr(busy, busy_end == std::string::npos ? 1800 : busy_end - busy);
     CHECK(win.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
           "3764 AC4: Soft skip inside reject_enabled");
     CHECK(win.find("dispose_no_edge_holder") != std::string::npos,
@@ -3577,7 +3589,11 @@ static void ac3826_3_soft_and_source() {
     CHECK(mhb.find("g_3826_") == std::string::npos, "3826 AC3: no g_3826_*");
     const auto busy = fc.find("aura_hold_budget_poll_busy_path(void) noexcept");
     CHECK(busy != std::string::npos, "3826 AC3: busy-path helper");
-    const auto win = fc.substr(busy, 2200);
+    // Scope the window to the helper body (see ac3764_4): the helper grew
+    // with the #3620 non-fiber owner arm.
+    const auto busy_end = fc.find("extern \"C\" int aura_mutation_hold_no_edge_still_held", busy);
+    CHECK(busy_end != std::string::npos && busy_end > busy, "3826 AC3: busy-path end marker");
+    const auto win = fc.substr(busy, busy_end == std::string::npos ? 2200 : busy_end - busy);
     CHECK(win.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
           "3826 AC3: Soft skip before sticky/dispose");
     CHECK(win.find("Issue #3826") != std::string::npos, "3826 AC3: busy-path cites #3826");

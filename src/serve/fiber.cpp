@@ -618,11 +618,34 @@ extern "C" int aura_hold_budget_poll_busy_path(void) noexcept {
     if (!snap.held || slo == 0 || snap.duration_us <= slo * 2ULL)
         return 0;
     if (g_hold_budget_cancel_armed_ns.load(std::memory_order_acquire) == 0 && snap.fiber_id != 0) {
-        // Registry miss leaves armed_fiber at 0. Do not stamp start_ns or
-        // the next real Guard looks past 2×SLO and is force-released.
         const int armed = aura_fiber_request_hold_budget_cancel(snap.fiber_id);
-        if (armed != 0 && snap.start_ns != 0)
-            g_hold_budget_cancel_armed_ns.store(snap.start_ns, std::memory_order_release);
+        if (armed != 0) {
+            // Registry hit: re-stamp the arm from the hold start so the
+            // 2×SLO inbody window is measured from the instant the holder
+            // entered (request_hold_budget_cancel stamped "now").
+            if (snap.start_ns != 0)
+                g_hold_budget_cancel_armed_ns.store(snap.start_ns, std::memory_order_release);
+        } else if (snap.start_ns != 0 && mutation_hold_owner_is_non_fiber(snap.fiber_id)) {
+            // Issue #3620: host-thread / CLI thread-fiber owner — outside
+            // the scheduler fiber registry, so the registry arm above is a
+            // no-op and an edge-free hold owned by it never armed a
+            // residual (GC/steal/admit could not fail closed on it). Arm
+            // the owner token + window directly; the owner observes the
+            // token on its own poll / Guard dtor and a foreign thread still
+            // never unlocks (#3826/#5274).
+            mutation_hold_request_cancel(snap.fiber_id);
+            mutation_hold_budget_note_cancel_armed_at(snap.fiber_id, snap.start_ns);
+            // The hold can exit between the snapshot and the stamp. The
+            // owner key is stable across holds on the same thread, so a
+            // stale window would force-release the NEXT Guard instantly —
+            // drop it if this hold is already gone.
+            const auto live = mutation_hold_live_snapshot();
+            if (!live.held || live.fiber_id != snap.fiber_id || live.start_ns != snap.start_ns)
+                mutation_hold_budget_note_cancel_consumed(snap.fiber_id);
+        }
+        // Registry miss for a retired fiber id: leave armed_fiber at 0. Do
+        // not stamp start_ns or the next real Guard looks past 2×SLO and is
+        // force-released.
     }
     const int exceeded = aura_hold_budget_poll_inbody_window();
     if (aura_mutation_hold_no_edge_still_held() == 0)
