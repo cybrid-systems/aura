@@ -44,10 +44,7 @@
 
 module;
 
-#include <concepts>
 #include <cstddef>
-#include <ranges>
-#include <type_traits>
 
 export module aura.core.concepts;
 
