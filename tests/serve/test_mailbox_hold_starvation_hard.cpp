@@ -4846,6 +4846,43 @@ static void ac4160_5_soft_and_linter_selftest() {
     CHECK(rc == 0, "4160 AC5: linter --self-test passes");
 }
 
+// ── Issue #5274: a foreign over-budget hold must not refuse heap-slot
+// language mutators (set-car! / vector-set! / hash-set!). They never
+// relocate the AST; the budget gate used to answer an ordinary
+// (hash-set! ...) with AdmissionRejected: mutation-hold-budget, which the
+// serve loop surfaced as a fatal diagnostic.
+static void ac5274_1_heap_mutate_survives_foreign_hold() {
+    std::println("\n--- #5274: heap-slot mutate under a foreign over-budget hold ---");
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::typed_audit::production_defaults_active(),
+          "5274 AC1: production defaults active");
+
+    // Synthesize a 10s outermost hold owned by another fiber. No workspace
+    // mutex is held; only the live-hold probe drives the budget gate.
+    const auto start_ns =
+        aura::compiler::mutation_hold_steady_ns_now() - 10ULL * 1000ULL * 1000ULL * 1000ULL;
+    aura::compiler::g_mutation_hold_live_fiber_id.store(999);
+    aura::compiler::g_mutation_hold_live_start_ns.store(start_ns);
+    aura::compiler::g_mutation_hold_live_depth.store(1);
+    CHECK(aura::compiler::mutation_hold_budget_check().over_budget,
+          "5274 AC1: probe reads over budget");
+
+    CompilerService cs;
+    auto h = cs.eval("(let ((h (hash \"a\" 1))) (hash-set! h \"b\" 2) (hash-ref h \"b\"))");
+    CHECK(h && is_int(*h) && as_int(*h) == 2,
+          "5274 AC1: hash-set! admitted under foreign over-budget hold");
+    auto v = cs.eval("(let ((v (vector 1 2))) (vector-set! v 0 9) (vector-ref v 0))");
+    CHECK(v && is_int(*v) && as_int(*v) == 9,
+          "5274 AC1: vector-set! admitted under foreign over-budget hold");
+    auto car = cs.eval("(let ((p (cons 1 2))) (set-car! p 7) (car p))");
+    CHECK(car && is_int(*car) && as_int(*car) == 7,
+          "5274 AC1: set-car! admitted under foreign over-budget hold");
+
+    aura::compiler::mutation_hold_live_reset_for_test();
+}
+
 int run_test_mailbox_hold_starvation_hard() {
     std::println("=== Issue #2551: mailbox hold starvation hard + Agent throttle ===");
     ac1_production_hard_signal();
@@ -4868,6 +4905,8 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2720_4_query_keys();
     ac2720_5_source_and_linter();
     ac2720_6_no_docs_design();
+    std::println("\n=== Issue #5274: heap-slot mutate under a foreign hold ===");
+    ac5274_1_heap_mutate_survives_foreign_hold();
     std::println("\n=== Issue #2724: region concurrent admit (disjoint multi-agent) ===");
     ac2724_1_disjoint_concurrent_admit();
     ac2724_2_overlap_reject_production();
