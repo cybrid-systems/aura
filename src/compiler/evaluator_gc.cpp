@@ -698,6 +698,43 @@ Evaluator::enforce_linear_boundary_consistency(std::uint8_t path, bool mark_all_
     if (m)
         m->linear_boundary_consistency_total.fetch_add(1, std::memory_order_relaxed);
 
+    // Issue #5274: with no linear ownership column anywhere in the arena,
+    // every pass below is provably a no-op for a non-bulk boundary:
+    //   * step 1 skips a closure whose frame column is empty and, with
+    //     only_if_moved=true, has no other mark source (the NULL/OOB
+    //     force-drop arm is gated on !only_if_moved, i.e. the bulk paths);
+    //   * step 2's frame sweep finds nothing to enforce;
+    //   * the step 3 epoch fence and the step 5 provenance walk only read
+    //     that same column.
+    // The probe is one lock-free pass of pointer compares over the arena.
+    // It matters because the arena and the closure registry cannot be
+    // reclaimed while a foreign tree-walker body is parked, so these
+    // otherwise-empty walks grew with the process's allocation history and
+    // dominated the outermost mutate hold (the 240s game repro). Bulk
+    // callers (mark_all_linear: invalidate / compact / steal) keep the
+    // exact path unchanged.
+    if (!mark_all_linear) {
+        std::array<std::shared_lock<std::shared_mutex>, kEnvFramesShardCount> probe_lock;
+        for (std::size_t ef_i = 0; ef_i < kEnvFramesShardCount; ++ef_i)
+            probe_lock[ef_i] = std::shared_lock<std::shared_mutex>(env_frame_shards_[ef_i].mu);
+        bool any_linear = false;
+        for (std::size_t i = 0; i < env_frames_.size(); ++i) {
+            const EnvFrame& fr = env_frames_[i];
+            if (fr.version_ == INVALID_VERSION)
+                continue;
+            if (!fr.bindings_linear_ownership_state_.empty()) {
+                any_linear = true;
+                break;
+            }
+        }
+        if (!any_linear) {
+            // Still run the monotonicity/balance audit so its ring and the
+            // #1543 counters keep advancing; nothing to mark or enforce.
+            (void)run_linear_gc_root_audit(path);
+            return out;
+        }
+    }
+
     // 1) Scan live closures; force Drop (bridge_epoch=0) on linear / Moved.
     const auto scan = scan_live_closures_for_linear_captures(
         /*mark_invalid=*/true, /*only_if_moved=*/!mark_all_linear);
