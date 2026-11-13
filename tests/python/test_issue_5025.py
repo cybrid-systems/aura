@@ -4,14 +4,15 @@ r"""Regression for #5025: the first screen is the terminal record.
 Before: README, getting-started and install sent a new reader to
 out/report.html, and \`aura new --help\` called evolve a "self-evolving program +
 evo report". getting-started and install still name \`aura demo\` and the
-KEEP / ROLLBACK record. The README first screen is the sum-evolve recording
-(propose, trial, KEEP or ROLLBACK, live source). The help text and its
-snapshot move together.
+KEEP / ROLLBACK record. The README first screen is the sum-evolve recording:
+plain English, a wrong change undone, a same-answer change kept. The help
+text and its snapshot move together.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -44,11 +45,9 @@ POINTERS = (
     ROOT / "docs" / "getting-started.md",
     ROOT / "docs" / "install.md",
 )
-SLOW = (
-    "(define (sum n) (letrec ((lp (lambda (i s) "
-    "(if (= i 0) s (lp (- i 1) (+ s i)))))) (lp n 0)))"
-)
+SLOW = "(define (sum n) (slow-sum n))"
 FAST = "(define (sum n) (quotient (* n (+ n 1)) 2))"
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 class FirstScreen(unittest.TestCase):
@@ -69,15 +68,18 @@ class FirstScreen(unittest.TestCase):
 
     def test_readme_is_the_recording(self) -> None:
         text = (ROOT / "README.md").read_text()
-        self.assertIn("aura --preset dev examples/sum-evolve.aura", text)
+        self.assertIn("aura --preset dev --quiet examples/sum-evolve.aura", text)
         self.assertIn("docs/assets/sum-evolve.gif", text)
         self.assertIn("docs/assets/sum-evolve.cast", text)
+        self.assertIn(
+            "Let AI rewrite your running program — safely. "
+            "Bad changes are undone instantly; good ones go live without a restart.",
+            text,
+        )
         self.assertIn(
             "curl -fsSL https://raw.githubusercontent.com/cybrid-systems/aura/main/install.sh | sh",
             text,
         )
-        self.assertIn("KEEP", text)
-        self.assertIn("ROLLBACK", text)
         self.assertNotIn("out/report.html", text)
         self.assertNotIn(RECORD, text)
         self.assertNotIn("aura new evolve demo\ncd demo\naura run", text)
@@ -86,24 +88,29 @@ class FirstScreen(unittest.TestCase):
         os.environ["AURA_SUM_EVOLVE_PACE"] = "0"
         try:
             r = run(
-                ["--preset", "dev", str(ROOT / "examples" / "sum-evolve.aura")],
+                ["--preset", "dev", "--quiet", str(ROOT / "examples" / "sum-evolve.aura")],
                 ROOT,
             )
         finally:
             os.environ.pop("AURA_SUM_EVOLVE_PACE", None)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        text = r.stdout
-        self.assertLess(text.index("ROLLBACK"), text.index("KEEP"))
-        self.assertIn("propose (define (sum n) (* n n))", text)
-        self.assertIn(f"propose {FAST}", text)
-        after_rollback = text.split("ROLLBACK", 1)[1].split("propose", 1)[0]
-        self.assertIn(SLOW, after_rollback)
-        self.assertNotIn(FAST, after_rollback)
-        self.assertTrue(text.split("live\n")[-1].startswith(FAST))
-        self.assertIn("(sum 500000) => 125000250000", text)
-        self.assertIn("250000000000  want 125000250000", text)
-        self.assertIn("125000250000  want 125000250000", text)
-        self.assertIn("preset=dev", r.stderr)
+        text = ANSI.sub("", r.stdout)
+        self.assertIn("A program is running. It has a slow function.", text)
+        self.assertLess(text.index("Wrong answer"), text.index("Same answer"))
+        self.assertIn("AI suggests a change…", text)
+        self.assertIn("AI suggests another change…", text)
+        self.assertIn("Testing in a sandbox…", text)
+        self.assertIn("(define (sum n) (* n n))", text)
+        self.assertIn(FAST, text)
+        after_wrong = text.split("Wrong answer", 1)[1].split("AI suggests another", 1)[0]
+        self.assertIn(f"before  {SLOW}", after_wrong)
+        self.assertNotIn(FAST, after_wrong)
+        self.assertIn(f"after   {FAST}", text)
+        self.assertIn("The program never stopped.", text)
+        self.assertNotIn("letrec", text)
+        timed = re.search(r"Same answer, (\d+) ms → (\d+) ms → kept, swapped in live", text)
+        self.assertIsNotNone(timed, text)
+        self.assertGreaterEqual(int(timed.group(1)), int(timed.group(2)))
 
     def test_new_help_describes_keep_rollback(self) -> None:
         r = run(["new", "--help"], self.d)

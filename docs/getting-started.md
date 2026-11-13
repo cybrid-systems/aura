@@ -16,7 +16,7 @@ or rolled back, and the live source after each decision.
 The same keep-or-rollback gate, on a loop that is replaced only when the
 result matches, is [examples/sum-evolve.aura](../examples/sum-evolve.aura):
 
-    aura --preset dev examples/sum-evolve.aura
+    aura --preset dev --quiet examples/sum-evolve.aura
 
 `aura demo agent` prints the two-role dialogue. The same evolve program is a
 project you can edit:

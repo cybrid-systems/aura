@@ -17,14 +17,14 @@ if ! command -v agg >/dev/null 2>&1; then
   exit 1
 fi
 mkdir -p docs/assets
-cols=96
-rows=24
+cols=80
+rows=22
 cast=docs/assets/sum-evolve.cast
 gif=docs/assets/sum-evolve.gif
 # The shell line is the command a reader runs. aura's own stdout/stderr follow.
 asciinema rec --overwrite --quiet \
   --cols "$cols" --rows "$rows" \
-  -c "sh -c 'printf \"%s\\n\" \"\$ aura --preset dev examples/sum-evolve.aura\"; exec aura --preset dev examples/sum-evolve.aura'" \
+  -c "sh -c 'printf \"%s\\n\" \"\$ aura --preset dev --quiet examples/sum-evolve.aura\"; exec aura --preset dev --quiet examples/sum-evolve.aura'" \
   "$cast"
 # fps-cap keeps the GIF small: the run pauses on each line, so 8 fps is enough.
 agg --font-size 14 --fps-cap 8 --theme github-dark --speed 1 "$cast" "$gif"

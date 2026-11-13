@@ -1,8 +1,8 @@
 # Aura
 
-AI-native Lisp. Your running code evolves itself — every change is trialed, gated, and kept or rolled back.
+Let AI rewrite your running program — safely. Bad changes are undone instantly; good ones go live without a restart.
 
-![A definition is proposed, trialed, then KEEP or ROLLBACK, and the live source changes without restarting](docs/assets/sum-evolve.gif)
+![A slow function is rewritten. A wrong change is undone. A faster one with the same answer goes live. The program never stopped.](docs/assets/sum-evolve.gif)
 
 [cast](docs/assets/sum-evolve.cast)
 
@@ -15,7 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/cybrid-systems/aura/main/install.sh
 ## Try
 
 ```sh
-aura --preset dev examples/sum-evolve.aura
+aura --preset dev --quiet examples/sum-evolve.aura
 ```
 
 [Getting started](docs/getting-started.md) · [Install](docs/install.md) · [Editor](docs/editor.md)

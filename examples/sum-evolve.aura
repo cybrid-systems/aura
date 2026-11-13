@@ -1,19 +1,17 @@
-;; One process. `sum` starts as a loop over 1..n. Each candidate is written
-;; into the live definition, trialed, and kept only when the result matches
-;; the loop. A wrong result is rolled back from the snapshot taken before
-;; the rewrite. The process does not restart.
+;; One process. `sum` starts as a slow loop. Each suggestion is written into
+;; that live definition, trialed, and kept only when the answer matches.
+;; A wrong answer is restored from the snapshot taken before the rewrite.
+;; The process does not restart. Times are measured around `(sum N)` only.
 ;;
-;;   aura --preset dev examples/sum-evolve.aura
+;;   aura --preset dev --quiet examples/sum-evolve.aura
 ;;
 ;; scripts/record_demo.sh records this run. Pauses are part of the run so a
-;; person can read each line; the trial times are measured around `(sum N)`
-;; only.
+;; person can read each line. AURA_SUM_EVOLVE_PACE=0 skips them.
 
 (define N 500000)
-;; Default pause is long enough to read. AURA_SUM_EVOLVE_PACE=0 skips it.
 (define pace-ms
   (let ((v (getenv "AURA_SUM_EVOLVE_PACE")))
-    (if (string? v) (string->number v) 900)))
+    (if (string? v) (string->number v) 1800)))
 
 (define (pause ms)
   (let ((end (+ (monotonic-ms) ms)))
@@ -24,7 +22,19 @@
   (newline)
   (pause pace-ms))
 
-(set-code "(define (sum n) (let lp ((i n) (s 0)) (if (= i 0) s (lp (- i 1) (+ s i)))))")
+(define (gap)
+  (newline)
+  (pause (quotient pace-ms 3)))
+
+(define esc (list->string (list 27)))
+(define (paint n text)
+  (string-append esc "[" n "m" text esc "[0m"))
+
+(define (slow-sum n)
+  (let lp ((i n) (s 0))
+    (if (= i 0) s (lp (- i 1) (+ s i)))))
+
+(set-code "(define (sum n) (slow-sum n))")
 (eval-current)
 
 (define (live) (current-source :workspace :define-fn-sugar))
@@ -34,37 +44,46 @@
     (let ((v (sum N)))
       (cons v (- (monotonic-ms) t0)))))
 
-(say (format "sum of 1..~a" N))
-(say "live")
-(say (live))
-(display "trial")
+(display "A program is running. It has a slow function.")
 (newline)
 (define base (trial))
 (define want (car base))
-(say (format "~a  ~a ms" want (cdr base)))
+(define base-ms (cdr base))
+(pause pace-ms)
+(say (string-append "before  " (live)))
 
-(define (step body)
+(define (step first? body)
   (let* ((src (format "(define (sum n) ~a)" body))
          (snap (mutate :snapshot "step"))
          (ok (mutate :rebind "sum" src "evolve")))
-    (say "")
-    (say (string-append "propose " src))
-    (display "trial")
-    (newline)
+    (gap)
+    (say (if first? "AI suggests a change…" "AI suggests another change…"))
+    (say src)
+    (say "Testing in a sandbox…")
     (let* ((got (trial))
            (v (car got))
+           (ms (cdr got))
            (keep (and (eq? ok #t) (= v want))))
-      (say (format "~a  want ~a  ~a ms" v want (cdr got)))
       (if keep
-          (say "KEEP")
+          (begin
+            (say (paint "92"
+                        (format "✓ Same answer, ~a ms → ~a ms → kept, swapped in live"
+                                base-ms ms)))
+            (say (string-append "after   " (live))))
           (begin
             (mutate :restore snap)
             (eval-current)
-            (say "ROLLBACK")))
-      (say "live")
-      (say (live)))))
+            (say (paint "91" "✗ Wrong answer → undone, program untouched"))
+            (say (string-append "before  " (live))))))))
 
-(step "(* n n)")
-(step "(quotient (* n (+ n 1)) 2)")
-(say "")
-(say (format "(sum ~a) => ~a" N (sum N)))
+(step #t "(* n n)")
+(step #f "(quotient (* n (+ n 1)) 2)")
+
+(let ((final (sum N)))
+  (if (= final want)
+      (begin
+        (gap)
+        (say "The program never stopped."))
+      (begin
+        (display "answer changed\n")
+        (exit 1))))
