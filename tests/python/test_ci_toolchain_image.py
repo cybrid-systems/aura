@@ -23,7 +23,7 @@ RUNTIME = "ghcr.io/cybrid-systems/aura:"
 PINNED = {
     ".github/workflows/ci.yml": 9,
     ".github/workflows/dist.yml": 1,
-    ".github/workflows/nightly.yml": 6,
+    ".github/workflows/nightly.yml": 7,
     ".github/workflows/release.yml": 1,
 }
 # Compile jobs also install libkrb5-dev. deployment-health only runs a
@@ -32,7 +32,7 @@ KRB5_ACTION = "uses: ./.github/actions/ci-krb5"
 KRB5_USES = {
     ".github/workflows/ci.yml": 8,
     ".github/workflows/dist.yml": 1,
-    ".github/workflows/nightly.yml": 6,
+    ".github/workflows/nightly.yml": 7,
     ".github/workflows/release.yml": 1,
 }
 

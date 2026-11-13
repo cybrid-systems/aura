@@ -37,6 +37,15 @@
         "worker thread had an alternate signal stack installed",
         "overflow probe hit SIGSEGV on the PROT_NONE guard"
       ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/serve/test_fiber_guard_hardening.cpp",
+      "contains": [
+        "AURA CRASH banner reaches stderr from the worker fiber",
+        "banner classifies the fiber guard fault as stack exhaustion",
+        "aura::core::install_fatal_signal_handlers()"
+      ]
     }
   ]
 }
