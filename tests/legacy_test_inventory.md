@@ -2144,7 +2144,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_try_lock_workspace_lock_order.cpp` (—) [domain_suite, theme_core] — Issue #1768 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_type_txn_misc_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_type_txn_misc_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_value_tag_hotpath_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_value_tag_hotpath_batch.cpp — thematic multi-TU batch
-- `tests/compiler/test_while_define_oneshot.cpp` (—) [domain_suite, theme_compiler] — AC1: issue repro — nested while with (define x 0) yields count=6
+- `tests/compiler/test_while_define_oneshot.cpp` (—) [large, domain_suite, theme_compiler] — AC1: issue repro — nested while with (define x 0) yields count=6
 - `tests/compiler/test_workspace_delete_subtree.cpp` (—) [domain_suite, theme_compiler] — AC1: delete_child source cites #2789; recursive parent_layer_idx walk
 - `tests/compiler/test_workspace_dispatch.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_dispatch.cpp — Issue #1437: workspace :op dispatch contract test.
 - `tests/compiler/test_workspace_rollback_to.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2788; WorkspaceUniqueIfNeeded; make_merr kinds
