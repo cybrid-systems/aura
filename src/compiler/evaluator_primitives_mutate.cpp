@@ -2,10 +2,6 @@
 // aura.compiler.evaluator module partition; registered via evaluator_primitives_registry.cpp.
 
 module;
-#include <atomic>
-#include <optional>
-#include <unordered_set>
-#include <bit>
 #include <cstdio>
 #include <cstdlib> // #2988 AURA_MUTATE_INVALIDATE_COARSE
 
@@ -36,6 +32,7 @@ module;
 module aura.compiler.evaluator;
 
 import std;
+#define AURA_HAVE_STD_MODULE 1 // Issue #5269: headers below skip std includes
 import aura.core.ast;
 import aura.core.type;
 import aura.compiler.value;

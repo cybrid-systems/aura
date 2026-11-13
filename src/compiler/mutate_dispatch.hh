@@ -23,9 +23,15 @@
 #ifndef AURA_COMPILER_MUTATE_DISPATCH_HH
 #define AURA_COMPILER_MUTATE_DISPATCH_HH
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <atomic>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstdint>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <string_view>
+#endif
 
 namespace aura::compiler {
 
