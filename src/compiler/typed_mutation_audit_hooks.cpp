@@ -15,13 +15,9 @@
 #include "compiler/ownership_escape_lowering_gate.h"
 #include "core/lifetime_pin.hh" // #3294 CI: disarm GeneralObjectPin required pref on dev reset
 
-#include <atomic>
 #include <cstdint>
-#include <map>
-#include <mutex>
-#include <string>
-#include <string_view>
-#include <unordered_set>
+
+import std;
 
 extern "C" void aura_pcv_set_stale_span_exclusive(int on) noexcept {
     aura::ast::pcv_set_stale_span_exclusive_enabled(on != 0);
