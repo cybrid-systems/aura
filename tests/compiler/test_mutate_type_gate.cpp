@@ -26,9 +26,12 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
+#include <sys/wait.h>
+#include <unistd.h>
 
 import std;
 import aura.compiler.service;
@@ -64,6 +67,98 @@ static std::string read_file(const char* path) {
         return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     }
     return {};
+}
+
+// Issue #5280: a production type-gate refusal must roll the workspace back.
+// The refused binding keeps its old body, and the next rebind of a different
+// name commits. The call after that rebind must not report a stale node id.
+static std::string aura_sibling_binary() {
+    if (const char* env = std::getenv("AURA_BIN")) {
+        if (::access(env, X_OK) == 0)
+            return env;
+    }
+    char link_buf[4096];
+    const auto link_len = ::readlink("/proc/self/exe", link_buf, sizeof(link_buf) - 1);
+    if (link_len > 0) {
+        link_buf[link_len] = '\0';
+        std::string dir(link_buf);
+        const auto slash = dir.rfind('/');
+        if (slash != std::string::npos) {
+            auto cand = dir.substr(0, slash + 1) + "aura";
+            if (::access(cand.c_str(), X_OK) == 0)
+                return cand;
+        }
+    }
+    for (const char* cand : {"./aura", "./build/aura", "../aura", "../build/aura"}) {
+        if (::access(cand, X_OK) == 0)
+            return cand;
+    }
+    return {};
+}
+
+static void rejection_leaves_sibling_callable_5280() {
+    const auto binary = aura_sibling_binary();
+    CHECK(!binary.empty(), "5280 aura binary");
+    if (binary.empty())
+        return;
+    const char* path = "/tmp/aura-5280-rebind.aura";
+    {
+        std::ofstream script(path);
+        script << R"aura((define SRC
+  (string-append
+    "(define (second xs) (if (null? xs) #f (car xs)))\n"
+    "(define (walk-pairs xs) (if (null? xs) (quote ()) (list (car xs))))\n"))
+(set-code SRC)
+(eval-current)
+(define r1
+  (mutate :rebind "second"
+          "(lambda (xs) (if (null? xs) 1 \"no\"))"
+          "grounds"))
+(display r1)
+(newline)
+(display (second '(a b c)))
+(newline)
+(display (walk-pairs '(a b)))
+(newline)
+(eval-current)
+(display (second '(a b c)))
+(newline)
+(define r2
+  (mutate :rebind "walk-pairs"
+          "(lambda (xs) (if (null? xs) 0 (+ 1 (walk-pairs (cdr xs)))))"
+          "count"))
+(display r2)
+(newline)
+(display (walk-pairs '(a b c d)))
+(newline)
+(eval-current)
+(display (walk-pairs '(a b c d)))
+(newline)
+(display (second '(a b)))
+(newline)
+)aura";
+    }
+    // The batch harness exports AURA_SANDBOX=off. Drop it so --preset dev
+    // keeps the production type gate that refused the first rebind.
+    const std::string command = "timeout 30 env -u AURA_SANDBOX -u AURA_HOT_HARDEN '" + binary +
+                                "' --preset dev --quiet '" + path +
+                                "' > /tmp/aura-5280-out.txt 2> /tmp/aura-5280-err.txt";
+    const int status = std::system(command.c_str());
+    std::ifstream out_file("/tmp/aura-5280-out.txt");
+    const std::string output((std::istreambuf_iterator<char>(out_file)), {});
+    std::ifstream err_file("/tmp/aura-5280-err.txt");
+    const std::string error((std::istreambuf_iterator<char>(err_file)), {});
+    const bool clean_exit = status >= 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    CHECK(clean_exit, "5280 cli exit");
+    CHECK(error.find("SIGABRT") == std::string::npos &&
+              error.find("AURA CRASH") == std::string::npos,
+          "5280 cli did not crash");
+    CHECK(output.find("stale") == std::string::npos, "5280 no stale workspace");
+    CHECK(output.find("persist-reject") == std::string::npos, "5280 no persist-reject");
+    CHECK(output.find("solve_delta not SOLVED") != std::string::npos,
+          "5280 type gate refused the first rebind");
+    CHECK(output.find("\na\n(a)\na\n#t\n4\n4\na\n") != std::string::npos,
+          "5280 old body stays and the next rebind commits");
 }
 
 // Issue #4557: register_* dedup goes through an intern index instead of a
@@ -1354,6 +1449,8 @@ int run_test_mutate_type_gate() {
                   err);
         }
     }
+
+    rejection_leaves_sibling_callable_5280();
 
     reset_for_test();
     std::println("=== #2219 + #2279 done: {} passed, {} failed ===", g_passed, g_failed);

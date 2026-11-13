@@ -739,7 +739,11 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         // whenever live goals exist. The process-global last proof stays 0
         // until this helper stamps it, so a solved first commit (car/cdr
         // if, list recursion) must not be treated as an empty snapshot.
-        // Goals whose own fingerprint is still 0 keep the reject.
+        // Issue #5280: a refused rebind does not stamp that proof either, so
+        // the next solved rebind of a different name is also a first stamp.
+        // Rejecting it abort-restores a body the primitive already linked,
+        // and the following call reports a stale node id. Goals whose own
+        // fingerprint is still 0 keep the reject.
         if (aura::compiler::typed_audit::production_hard_face_active() &&
             live_truth.live_goal_count > 0 &&
             aura::compiler::typed_audit::last_proof_goal_fingerprint_v_read() == 0 &&
