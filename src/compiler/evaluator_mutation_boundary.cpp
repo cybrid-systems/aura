@@ -3500,7 +3500,14 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
     // over-budget requests never reach the schedule evaluation.
     {
         const auto check = mutation_hold_budget_check();
-        if (check.over_budget) {
+        // Issue #5274: a language-level heap-slot write (set-car! /
+        // vector-set! / hash-set!) never relocates the AST. An over-budget
+        // hold owned by an unrelated AST mutate must not refuse it, and
+        // force-degrading that holder would abort a legitimate rebuild.
+        // Skip both here; the admit still takes the boundary and waits.
+        if (check.over_budget && t_heap_auto_guard_admit_4908) {
+            // fall through to quota / lock admission
+        } else if (check.over_budget) {
             if (mutation_hold_budget_reject_enabled()) {
                 // Issue #2720: P0 holder-degrade path (#2701 residual).
                 // Force-degrade the recorded holder fiber — same-fiber
