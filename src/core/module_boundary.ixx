@@ -28,6 +28,7 @@
 module;
 
 #include <cstdint>
+#include <string_view>
 
 export module aura.core.module_boundary;
 

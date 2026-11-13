@@ -1,6 +1,11 @@
 module;
 #include <cstddef>
 #include <cstdint>
+#include <format>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 export module aura.parser.parser;
 import std;

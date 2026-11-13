@@ -42,6 +42,7 @@
 module;
 
 #include <cstdint>
+#include <format>
 
 export module aura.core.mutators;
 

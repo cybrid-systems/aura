@@ -1,5 +1,7 @@
 module;
 #include <cstdint>
+#include <string>
+#include <vector>
 
 export module aura.compiler.arity;
 import std;
