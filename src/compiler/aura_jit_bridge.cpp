@@ -28,7 +28,6 @@
 #include <cstring>
 #include <sys/stat.h> // Issue #2095: private reemit directory
 #include <stdlib.h>   // mkdtemp
-#include <limits>
 #include <poll.h>
 #include <sys/wait.h>
 #include <fcntl.h>                         // pipe2 / O_CLOEXEC (#5214)
