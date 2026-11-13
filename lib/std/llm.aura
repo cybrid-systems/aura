@@ -143,6 +143,19 @@
   (llm-stat-bump! "parse-ok")
   (hash "ok" #t "error" "" "content" content))
 
+(define (llm-nonempty-string? s)
+  (and (string? s) (> (string-length s) 0)))
+
+(define (llm-finish-reason choice msg)
+  (let ((from-choice (if (hash? choice) (hash-ref choice "finish_reason" "") "")))
+    (if (llm-nonempty-string? from-choice)
+      from-choice
+      (let ((from-msg (if (hash? msg) (hash-ref msg "finish_reason" "") "")))
+        (if (llm-nonempty-string? from-msg) from-msg "")))))
+
+; content 为空但带 reasoning_content（常见于 max_tokens 把额度用在思考上，
+; finish=length）时给出 truncated/finish=<reason>，而不是笼统的 no-content。
+; 缺省用 hash-ref 的第三参，避免成功响应里没有 "error" 键时直接抛错。
 (define (llm:parse-response json-str)
   (cond
     ((not (string? json-str))
@@ -153,18 +166,32 @@
      (let ((data (json-parse json-str)))
        (if (not (hash? data))
          (llm-parse-fail "json-parse-failed" json-str)
-         (let ((err (hash-ref data "error")))
-           (if (and (hash? err) (string? (hash-ref err "message")))
-             (llm-parse-fail (hash-ref err "message") "")
-             (let ((choices (hash-ref data "choices")))
+         (let ((err (hash-ref data "error" #f)))
+           (if (and (hash? err) (llm-nonempty-string? (hash-ref err "message" #f)))
+             (llm-parse-fail (hash-ref err "message" "") "")
+             (let ((choices (hash-ref data "choices" #f)))
                (if (not (pair? choices))
                  (llm-parse-fail "no-choices" "")
                  (let* ((first (car choices))
-                        (msg (if (hash? first) (hash-ref first "message") #f))
-                        (content (if (hash? msg) (hash-ref msg "content") #f)))
-                   (if (string? content)
-                     (llm-parse-ok content)
-                     (llm-parse-fail "no-content" ""))))))))))))
+                        (msg (if (hash? first) (hash-ref first "message" #f) #f))
+                        (content (if (hash? msg) (hash-ref msg "content" #f) #f))
+                        (reasoning (if (hash? msg)
+                                     (hash-ref msg "reasoning_content" #f)
+                                     #f))
+                        (finish (llm-finish-reason first msg)))
+                   (cond
+                     ((llm-nonempty-string? content)
+                      (llm-parse-ok content))
+                     ((llm-nonempty-string? reasoning)
+                      (llm-parse-fail
+                        (string-append "truncated/finish="
+                                       (if (llm-nonempty-string? finish)
+                                         finish
+                                         "unknown"))
+                        ""))
+                     ((string? content)
+                      (llm-parse-ok content))
+                     (else (llm-parse-fail "no-content" "")))))))))))))
 
 (define (llm:extract-content json-str)
   (let ((r (llm:parse-response json-str)))
@@ -180,7 +207,83 @@
 ;   - exported helpers (llm:injection-risk?, llm:sanitize-prompt)
 ;   - primitives (getenv, http-post, string?)
 ; Rate-limit / stats free-vars are best-effort via try — never block call.
-(define (aura-llm-call body)
+;
+; #5268: optional second argument is the http-post timeout in seconds.
+; (aura-llm-call body) stays the one-argument call.
+
+(define (llm-positive-number? n)
+  (and (number? n) (> n 0)))
+
+(define (llm-env-timeout name)
+  (let ((env (try (getenv name) (catch (e) #f))))
+    (if (llm-nonempty-string? env)
+      (let ((n (string->number env)))
+        (if (llm-positive-number? n) n #f))
+      #f)))
+
+(define (llm-alist-ref al key)
+  (let loop ((xs al))
+    (cond
+      ((not (pair? xs)) #f)
+      ((and (pair? (car xs)) (equal? (car (car xs)) key)) (cdr (car xs)))
+      (else (loop (cdr xs))))))
+
+(define (llm-extra-timeout extra)
+  (cond
+    ((hash? extra)
+     (let ((n (hash-ref extra "timeout" #f)))
+       (if (llm-positive-number? n) n #f)))
+    ((pair? extra)
+     (let ((n (llm-alist-ref extra "timeout")))
+       (if (llm-positive-number? n) n #f)))
+    (else #f)))
+
+(define (llm-resolve-timeout explicit extra)
+  (cond
+    ((llm-positive-number? explicit) explicit)
+    (else
+     (let ((from-extra (llm-extra-timeout extra)))
+       (if (llm-positive-number? from-extra)
+         from-extra
+         (let ((from-env (llm-env-timeout "LLM_TIMEOUT")))
+           (if (llm-positive-number? from-env) from-env #f)))))))
+
+; rest is () | (timeout) | (extra) | (extra timeout).
+; A number in the first slot is a timeout and not a JSON field.
+(define (llm-split-rest rest)
+  (if (null? rest)
+    (cons #f #f)
+    (if (number? (car rest))
+      (cons #f (car rest))
+      (cons (car rest)
+            (if (and (pair? (cdr rest)) (number? (car (cdr rest))))
+              (car (cdr rest))
+              #f)))))
+
+; "timeout" is a transport budget, not a chat-completions field.
+(define (llm-merge-extra! base extra)
+  (cond
+    ((hash? extra)
+     (for-each
+       (lambda (k)
+         (if (not (equal? k "timeout"))
+           (hash-set! base k (hash-ref extra k))))
+       (hash-keys extra))
+     base)
+    ((pair? extra)
+     (let loop ((al extra))
+       (if (pair? al)
+         (begin
+           (if (and (pair? (car al)) (not (equal? (car (car al)) "timeout")))
+             (hash-set! base (car (car al)) (cdr (car al))))
+           (loop (cdr al)))
+         base)))
+    (else base)))
+
+(define (llm-http-error-text e)
+  (if (llm-nonempty-string? e) e "no-http-post"))
+
+(define (aura-llm-call body . rest)
   (cond
     ((not (string? body)) "bad-arg")
     ((llm:injection-risk? body) "injection-blocked")
@@ -220,12 +323,16 @@
                     (url (if (string? base)
                            (string-append base "/chat/completions")
                            "https://api.deepseek.com/v1/chat/completions"))
+                    (timeout (if (and (pair? rest) (llm-positive-number? (car rest)))
+                               (car rest)
+                               #f))
                     (r (try
-                         (http-post url clean key)
-                         (catch (e) "no-http-post"))))
+                         (if (llm-positive-number? timeout)
+                           (http-post url clean key timeout)
+                           (http-post url clean key))
+                         (catch (e) (llm-http-error-text e)))))
                (cond
                  ((error? r) "no-http-post")
-                 ((and (string? r) (> (string-length r) 0)) r)
                  ((string? r) r)
                  (else ""))))))))))
 
@@ -234,23 +341,38 @@
     (begin (llm-stat-bump! "fail") "bad-arg")
     (aura-llm-call body)))
 
-(define (llm:chat system-prompt user-prompt)
+; (llm:chat system user)
+; (llm:chat system user timeout-seconds)
+; (llm:chat system user extra)
+; (llm:chat system user extra timeout-seconds)
+; extra is a hash or an alist of fields merged into the request JSON
+; (max_tokens, reasoning_effort, …). A "timeout" entry is the transport
+; budget and is not sent. LLM_TIMEOUT is the env default; an explicit
+; number wins. http-post still applies AURA_HTTP_TIMEOUT when neither is set.
+(define (llm:chat system-prompt user-prompt . rest)
   (if (llm:injection-risk? (if (string? user-prompt) user-prompt ""))
     (begin
       (llm-stat-bump! "injection-blocked")
       (hash "ok" #f "error" "injection-blocked" "content" ""))
     (let* ((sys (llm:sanitize-prompt (if (string? system-prompt) system-prompt "")))
            (usr (llm:sanitize-prompt (if (string? user-prompt) user-prompt "")))
+           (parts (llm-split-rest rest))
+           (extra (car parts))
+           (explicit (cdr parts))
            (model-env (try (getenv "LLM_MODEL") (catch (e) #f)))
            (model (if (and (string? model-env) (> (string-length model-env) 0))
                     model-env
                     "deepseek-chat"))
-           (body (json-encode
-                   (hash "model" model
-                         "messages"
-                         (list (hash "role" "system" "content" sys)
-                               (hash "role" "user" "content" usr)))))
-           (raw (aura-llm-call body)))
+           (body-hash (hash "model" model
+                            "messages"
+                            (list (hash "role" "system" "content" sys)
+                                  (hash "role" "user" "content" usr))))
+           (merged (llm-merge-extra! body-hash extra))
+           (timeout (llm-resolve-timeout explicit extra))
+           (body (json-encode merged))
+           (raw (if (llm-positive-number? timeout)
+                  (aura-llm-call body timeout)
+                  (aura-llm-call body))))
       (cond
         ((equal? raw "rate-limited")
          (hash "ok" #f "error" "rate-limited" "content" ""))
@@ -260,6 +382,10 @@
          (hash "ok" #f "error" "bad-arg" "content" ""))
         ((equal? raw "no-http-post")
          (hash "ok" #f "error" "no-http-post" "content" ""))
+        ((and (string? raw) (string-prefix? raw "http-post:"))
+         (hash "ok" #f "error" raw "content" ""))
+        ((and (string? raw) (string-prefix? raw "http-get:"))
+         (hash "ok" #f "error" raw "content" ""))
         ((equal? raw "")
          (hash "ok" #f "error" "empty" "content" ""))
         (else (llm:parse-response raw))))))

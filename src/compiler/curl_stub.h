@@ -15,9 +15,11 @@ constexpr CURLoption CURLOPT_WRITEFUNCTION = 20011;
 constexpr CURLoption CURLOPT_WRITEDATA = 10001;
 constexpr CURLoption CURLOPT_TIMEOUT = 13;
 constexpr CURLoption CURLOPT_CONNECTTIMEOUT = 78;
+constexpr CURLoption CURLOPT_NOSIGNAL = 99;
 constexpr CURLoption CURLOPT_SSL_VERIFYPEER = 64;
 constexpr CURLoption CURLOPT_SSL_VERIFYHOST = 81;
 constexpr CURLoption CURLOPT_USERAGENT = 10018;
 constexpr CURLoption CURLOPT_FOLLOWLOCATION = 52;
 constexpr CURLcode CURLE_OK = 0;
+constexpr CURLcode CURLE_OPERATION_TIMEDOUT = 28;
 #endif
