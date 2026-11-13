@@ -150,6 +150,17 @@ per_target_dir="$BUILD_DIR/$per_target_dir"
 # status, before any sync or fan-out.
 [ "$RC" -eq 0 ] || exit "$RC"
 
+# Issue #5202: only module-interface compiles produce BMIs. A plain .cpp
+# compile has no new .gcm to publish, and its consumer dirs already got
+# their symlinks from the producer's .ixx compile (target dirs are created
+# at configure time, before any build). Skipping the cache scan + fan-out
+# here removes ~0.8 s of readlink/stat per ordinary TU. Keep an escape
+# hatch for a target added without a reconfigure.
+case "$out_path" in
+    *.ixx.o|*.cppm.o|*.bmi|*.gcm) ;;
+    *) [ -n "${AURA_MODULE_LAUNCHER_ALWAYS_SYNC:-}" ] || exit "$RC" ;;
+esac
+
 # Producer key = per-target dir basename (e.g. aura_test_objects.dir).
 # The shared cache for this producer is module_cache/<producer-key>/.
 producer_key="$(basename "$per_target_dir")"
