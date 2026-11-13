@@ -16,7 +16,6 @@
 #include "core/gc_hooks.h"                  // #2932 residual closed-loop check
 #include "serve/fiber.h"
 #include "serve/multi_fiber_mailbox.h"
-#include "security_capabilities.h"        // #5274 grant mutate in the unit context
 #include "serve/runtime_production_abi.h" // #3764 multi-worker latch for no-edge probe
 #include "serve/scheduler.h"
 #include "serve/steal_safety.h" // #3826 Ready residual sticky + steal RejectHard
