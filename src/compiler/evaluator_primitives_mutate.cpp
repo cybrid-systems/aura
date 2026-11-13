@@ -6911,6 +6911,12 @@ EvalValue RegSplitParts::mutate_wrapped_call(Evaluator& ev, const MakeErrorVal& 
         return *err;
     admit_session.armed = admit_armed;
     contract_assert(guard_exempt || wrapper_guard != nullptr);
+    // Issue #5275: an explicit rebind is the app's commit path. A hold past
+    // the SLO perf threshold is observed, not failed (the #2701 budget and
+    // every type/linear gate stay hard). Large scene installs were being
+    // rolled back as "persist-reject" for being slow.
+    if (wrapper_guard && std::string_view(op).ends_with(":rebind"))
+        wrapper_guard->set_hold_slo_observe(true);
     auto result = fn(a);
     if (auto err = RegSplitParts::mutate_post_body_belt(ev, mev, op, guard_exempt, wrapper_guard,
                                                         wraps_before, token_before))

@@ -19820,6 +19820,10 @@ public:
         // (any non-zero nesting → atomic_batch_active).
         bool atomic_batch_active_ = false;
         bool suppress_bump_ = false;
+        // Issue #5275: explicit app commit (mutate:rebind) — the hold-SLO
+        // circuit-breaker observes only. The #2701 hold budget stays hard;
+        // a large rebind is a slow commit, not an unsafe agent spin.
+        bool hold_slo_observe_ = false;
         // Issue #1253: outermost mutation hold-time tracking.
         bool is_outermost_ = false;
         // Issue #3552: fiber_id captured at ctor (Fiber::id() if g_current_fiber,
@@ -20046,6 +20050,10 @@ public:
         // bumps for N ops in a batch).
         void suppress_generation_bump(bool v) noexcept { suppress_bump_ = v; }
         [[nodiscard]] bool is_suppress_bump_set() const noexcept { return suppress_bump_; }
+        // Issue #5275: mark this boundary as an explicit app commit whose
+        // hold > SLO is observed, not failed (mutate:rebind).
+        void set_hold_slo_observe(bool v) noexcept { hold_slo_observe_ = v; }
+        [[nodiscard]] bool hold_slo_observe() const noexcept { return hold_slo_observe_; }
 
         // Issue #1767: move transfers full RAII ownership.
         // Depth slot is NOT double-incremented: source ctor already

@@ -5372,7 +5372,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 const auto slo = mutation_hold_slo_us();
                 if (slo > 0 && uus > slo) {
                     m->mutation_hold_slo_violation_total.fetch_add(1, std::memory_order_relaxed);
-                    if (!mutation_hold_slo_soft_mode()) {
+                    // Issue #5275: an explicit app commit (mutate:rebind) is
+                    // observed, not failed. A large rebind is a slow commit,
+                    // not an agent spinning a Guard; the #2701 hold budget
+                    // still degrades/refuses new admits.
+                    if (!mutation_hold_slo_soft_mode() && !hold_slo_observe_) {
                         // Production default: fail mutation so agents cannot ship
                         // while spinning a long Guard (GC/steal tail bound).
                         // Issue #5275: name the gate. This refusal flips success
@@ -7986,6 +7990,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , fine_rollback_(o.fine_rollback_)
     , atomic_batch_active_(o.atomic_batch_active_)
     , suppress_bump_(o.suppress_bump_)
+    , hold_slo_observe_(o.hold_slo_observe_) // #5275 before is_outermost (decl order)
     , is_outermost_(o.is_outermost_)
     , fiber_id_(o.fiber_id_) // Issue #3552: before session_mid (declaration order)
     , session_mid_at_enter_(o.session_mid_at_enter_) // #2944
