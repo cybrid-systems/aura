@@ -7,7 +7,7 @@ zip3: Any Any Any -> Any
 take-while: Any Any -> Any
 drop-while: Any Any -> Any
 partition: Any Any -> Any
-sort: Any -> Any
+sort: Any Any ... -> Any
 range: Any Any -> Any
 take: Any Any -> Any
 skip: Any Any -> Any
