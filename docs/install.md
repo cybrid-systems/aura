@@ -104,6 +104,9 @@ holding only the bundle on `ubuntu:24.04`. Tags: `nightly` (newest `main`),
 the 9-character commit id, and for each `vX.Y.Z` release `X.Y.Z`, `X.Y` and
 `latest` (`latest` is only ever set by a release tag). Compiling aura from
 source uses the toolchain image `ghcr.io/cybrid-systems/aura-ci:v0.1.1`.
+Building from source requires CMake 4.5.0 or newer (the image pins 4.5.0);
+older CMake, including 4.4.5, cannot configure this tree because `import std`
+is a standard CMake 4.5 feature without the experimental UUID gate.
 
 ## Building a bundle yourself
 

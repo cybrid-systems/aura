@@ -278,7 +278,6 @@ def cmake_batch_block(batch_name: str, title: str, rel_sources: list[str]) -> st
 add_executable({batch_name}
 {srcs}
 )
-set_property(TARGET {batch_name} PROPERTY CXX_MODULE_STD ON)
 target_include_directories({batch_name} PRIVATE src tests)
 target_compile_definitions({batch_name} PRIVATE
     AURA_SOURCE_DIR="${{CMAKE_SOURCE_DIR}}"

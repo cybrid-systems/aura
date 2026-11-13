@@ -66,7 +66,7 @@ extern int run_test_subtree_dirty_bounds();
 extern int run_test_transaction_guard();
 // Reflect members (test_ir_pod_phase4 / test_opcode_reflect /
 // test_reflect_isolation) run as standalone -freflection binaries —
-// they cannot live in this CXX_MODULE_STD batch (P2996 + import std).
+// they cannot live in this std-module batch (P2996 + import std).
 
 int main() {
     using aura::test::g_failed;

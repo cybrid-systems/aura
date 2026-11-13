@@ -1,21 +1,8 @@
-cmake_minimum_required(VERSION 4.3)
-# Experimental `import std` gate UUID is CMake-version-specific: 4.3
-# shipped 451f2fe2-a8a2-47c3-bc32-94786d8fc91b, 4.4+ ships
-# f35a9ac6-8463-4d38-8eec-5d6008153e7d. Select by the RUNNING version
-# (CMAKE_VERSION is available before project()) — nightly sanitizer
-# images (aura-ci:v1.0.1) carry a different CMake than the main CI
-# image, and a mismatched hard-coded UUID is silently ignored at
-# toolchain detection, then every CXX_MODULE_STD target fails at
-# generate time ("Experimental import std support not enabled when
-# detecting toolchain") — the tsan-smoke nightly failure mode.
-if(CMAKE_VERSION VERSION_GREATER_EQUAL 4.4)
-    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
-        "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
-else()
-    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
-        "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
-endif()
-project(aura LANGUAGES CXX C)
+cmake_minimum_required(VERSION 4.5)
+# Issue #5201: CMake 4.5 makes "import std" available to every C++20+ source
+# with CXX_SCAN_FOR_MODULES, so the experimental UUID gate is gone.  The
+# toolchain image provides CMake 4.5.0; older local CMake cannot configure.
+project(aura LANGUAGES CXX C SPDX_LICENSE "Apache-2.0")
 # Issue #4837: Clang has no -fcontracts / -freflection (GCC 16 features).
 # The GCC build is unchanged. The Clang build exists to produce module BMIs
 # and a compile_commands.json for clang-tidy, so it drops the GCC-only
@@ -220,7 +207,6 @@ set_property(SOURCE src/compiler/service.ixx APPEND PROPERTY COMPILE_DEFINITIONS
 # `aura --version`, so the REPL TU needs the same definition.
 set_property(SOURCE src/repl/repl.cppm APPEND PROPERTY COMPILE_DEFINITIONS
     "AURA_BUILD_VERSION=\"${AURA_BUILD_VERSION}\"")
-set_property(TARGET aura PROPERTY CXX_MODULE_STD ON)
 
 aura_target_cxx_modules(aura WITH_REPL)
 
@@ -529,7 +515,7 @@ target_link_libraries(aura PRIVATE stdc++ stdc++exp)
 
 # ── aura-reflect: P2996 placement (Issue #2290, g++ 16.1.0) ─────
 # Hard limit is NOT "any module file cannot touch <meta>". Measured:
-#   PASS  non-module (or CXX_MODULE_STD without import std) + -freflection
+#   PASS  non-module (or non-std) + -freflection
 #         + #include <meta> / reflect.hh
 #   PASS  module GMF includes <meta> + -freflection → object builds
 #         (e.g. src/reflect/reflect.ixx)
@@ -558,6 +544,10 @@ set_target_properties(aura-reflect PROPERTIES
 )
 target_include_directories(aura-reflect PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_options(aura-reflect PRIVATE ${AURA_REFLECTION_FLAG})
+# Issue #5201: this library deliberately does not import std (P2996 + <meta>
+# cannot share a TU with import std).  Do not let CMake 4.5's automatic std
+# module scanning build a second, -freflection-flavoured std BMI for it.
+set_property(TARGET aura-reflect PROPERTY CXX_SCAN_FOR_MODULES OFF)
 target_compile_features(aura-reflect PUBLIC cxx_std_26)
 target_link_libraries(aura-reflect PRIVATE stdc++)
 
@@ -620,7 +610,6 @@ add_library(aura_serve_fiber_objects OBJECT
     src/exec/execution_adapter.cpp
     src/exec/combinators.cpp
 )
-set_property(TARGET aura_serve_fiber_objects PROPERTY CXX_MODULE_STD ON)
 set_target_properties(aura_serve_fiber_objects PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(aura_serve_fiber_objects PRIVATE src src/compiler)
 aura_test_compile_options(aura_serve_fiber_objects)
@@ -663,7 +652,6 @@ install(FILES src/compiler/lock_order_audit.h
 
 # ── IR tests ─────────────────────────────────────────────────────
 add_executable(test_ir tests/compiler/test_ir.cpp)
-set_property(TARGET test_ir PROPERTY CXX_MODULE_STD ON)
 aura_target_cxx_modules(test_ir)
 target_sources(test_ir PRIVATE
     src/core/contract_handler.cpp
@@ -731,7 +719,6 @@ target_link_libraries(test_ir PRIVATE stdc++ stdc++exp aura-reflect)
 # ── Concurrent model tests ────────────────────────────
 # Tests fiber lifecycle, worker scheduling, and eventfd wakeup
 add_executable(test_concurrent tests/serve/test_concurrent.cpp)
-set_property(TARGET test_concurrent PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_concurrent PRIVATE src)
 target_sources(test_concurrent PRIVATE
     src/compiler/test_concurrent_stubs.cpp # Issue #2858 / #2370: steal + storm TLS stubs
@@ -949,7 +936,6 @@ add_library(aura_test_objects SHARED
     # shared runtime so an embedder links the evaluator it already drives
     # instead of forking `aura --serve`.
     src/eval/aura_eval.cpp)
-set_property(TARGET aura_test_objects PROPERTY CXX_MODULE_STD ON)
 set_target_properties(aura_test_objects PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
@@ -1023,7 +1009,6 @@ if(LLVM_FOUND)
         src/core/contract_handler.cpp
         src/core/contract_stub.cpp
     )
-    set_property(TARGET aura_jit_test_objects PROPERTY CXX_MODULE_STD ON)
     set_target_properties(aura_jit_test_objects PROPERTIES
         POSITION_INDEPENDENT_CODE ON
         LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
@@ -1076,7 +1061,6 @@ add_library(aura_jit_light_test_objects SHARED
     src/core/contract_handler.cpp
     src/core/contract_stub.cpp
 )
-set_property(TARGET aura_jit_light_test_objects PROPERTY CXX_MODULE_STD ON)
 set_target_properties(aura_jit_light_test_objects PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
@@ -1127,7 +1111,6 @@ function(aura_add_issue_test NAME)
     # Inventory: tests/legacy_test_inventory.md (#1957)
     aura_resolve_test_cpp(${NAME} _aura_test_src)
     add_executable(${NAME} ${_aura_test_src})
-    set_property(TARGET ${NAME} PROPERTY CXX_MODULE_STD ON)
     # tests/ for test_harness.hpp and domain/cases/* includes
     target_include_directories(${NAME} PRIVATE src tests)
     # Source-cite ACs (e.g. #2340/#2360/#2342 wave) resolve repo-root
@@ -1187,7 +1170,6 @@ endfunction()
 #   - Stress test: 100 mutate+typecheck cycles
 #   - Performance: incremental vs full typecheck cache behavior
 add_executable(test_gc_evaluator_integration tests/core/test_gc_evaluator_integration.cpp)
-set_property(TARGET test_gc_evaluator_integration PROPERTY CXX_MODULE_STD ON)
 # Issue #278 follow-up: pre-existing build fix. Without this
 # FILE_SET, the C++ module scanner produces empty modmap files
 # (e.g. `ast_impl.cpp.o.modmap` has only `$root .`), causing
@@ -1580,7 +1562,6 @@ target_link_libraries(aura PRIVATE linenoise)
 # the basic analysis correctness on hand-crafted IRFunctions.
 # Phase 2 pilot-24: converted using early helper. Base covers core + value/diag/value_impl; append heavy parser/serve/evaluator/JIT/LLVM + observability headers + rtti/LLVM bits.
 add_executable(issue_212_bench tests/compiler/bench_refactor_surfaces.cpp)
-set_property(TARGET issue_212_bench PROPERTY CXX_MODULE_STD ON)
 # Issue #278 follow-up: contract_handler.cpp link fix.
 target_sources(issue_212_bench PRIVATE src/core/contract_handler.cpp)
 set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLAGS "${AURA_CONTRACT_INCLUDE_FLAGS}")
@@ -1590,7 +1571,6 @@ set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLA
 # coercion reduction in gradual workloads" without needing
 # a full benchmark suite. Returns 0 iff the AC is met.
 add_executable(issue_508_bench tests/compiler/bench_dead_coercion_elim.cpp)
-set_property(TARGET issue_508_bench PROPERTY CXX_MODULE_STD ON)
 target_include_directories(issue_508_bench PRIVATE src)
 target_compile_options(issue_508_bench PRIVATE -Wall
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
@@ -1607,7 +1587,6 @@ target_link_libraries(issue_508_bench PRIVATE stdc++ aura_test_objects aura-refl
 # AC5 (no perf regression on full recompile). AC3 (this
 # benchmark file) is the deliverable.
 add_executable(issue_307_bench tests/compiler/bench_ir_relower.cpp)
-set_property(TARGET issue_307_bench PROPERTY CXX_MODULE_STD ON)
 target_include_directories(issue_307_bench PRIVATE src)
 target_compile_options(issue_307_bench PRIVATE -Wall
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
@@ -1619,7 +1598,6 @@ target_link_libraries(issue_307_bench PRIVATE stdc++ aura_test_objects aura-refl
 #   stable-ref (1k + 10k), children-stable, mark-dirty
 # Formerly four near-duplicate drivers under tests/bench/.
 add_executable(ast_hotpath_bench tests/bench/ast_hotpath_bench.cpp)
-set_property(TARGET ast_hotpath_bench PROPERTY CXX_MODULE_STD ON)
 target_include_directories(ast_hotpath_bench PRIVATE src)
 target_compile_options(ast_hotpath_bench PRIVATE -Wall
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
@@ -1643,7 +1621,6 @@ add_test(NAME counter_shard_bench COMMAND ./ast_hotpath_bench counter-shard)
 # and outputs JSON to tests/bench_results/cycle14_reflect_bench.json
 # for data-driven design decisions.
 add_executable(cycle14_reflect_bench tests/reflect/bench_reflect.cpp)
-set_property(TARGET cycle14_reflect_bench PROPERTY CXX_MODULE_STD ON)
 target_include_directories(cycle14_reflect_bench PRIVATE src)
 target_compile_options(cycle14_reflect_bench PRIVATE ${AURA_REFLECTION_FLAG} -Wall
     -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
@@ -1846,7 +1823,6 @@ add_test(NAME test_error_kind_names_wire_verification COMMAND ./test_error_kind_
 # on the reflect TU only — import std / aura.core.ast must not mix with <meta>
 # (g++ 16.1.0; hard errors, not silent ICE). Bridge: test_issue_178_bridge.h
 add_executable(test_issue_178 tests/reflect/test_issue_178.cpp tests/reflect/test_issue_178_reflect.cpp)
-set_property(TARGET test_issue_178 PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_issue_178 PRIVATE src tests)
 aura_test_compile_options(test_issue_178)
 set_source_files_properties(tests/reflect/test_issue_178_reflect.cpp
@@ -3563,7 +3539,6 @@ add_executable(test_flatast_atomic_lock_batch
     tests/core/test_tag_arity_key_hash.cpp
     tests/core/test_verification_dirty_bits_lock.cpp
 )
-set_property(TARGET test_flatast_atomic_lock_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_flatast_atomic_lock_batch PRIVATE src tests)
 target_compile_definitions(test_flatast_atomic_lock_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -3624,7 +3599,6 @@ add_executable(test_security_capability_batch
     tests/core/test_grant_effect_wildcard_write_fence.cpp
     tests/core/test_restricted_unset_principal.cpp
 )
-set_property(TARGET test_security_capability_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_security_capability_batch PRIVATE src tests)
 target_compile_definitions(test_security_capability_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -3664,7 +3638,6 @@ add_executable(test_densify_pin_batch
     tests/core/test_moving_compact.cpp
     tests/core/test_moving_densify_fail_closed.cpp
 )
-set_property(TARGET test_densify_pin_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_densify_pin_batch PRIVATE src tests)
 target_compile_definitions(test_densify_pin_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -3709,7 +3682,6 @@ add_executable(test_aot_jit_stamp_batch
     tests/compiler/test_specjit_pereval_storm_e2e.cpp
     tests/compiler/test_workload_adaptive_relower.cpp
 )
-set_property(TARGET test_aot_jit_stamp_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_aot_jit_stamp_batch PRIVATE src tests)
 target_compile_definitions(test_aot_jit_stamp_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -3761,7 +3733,6 @@ add_executable(test_mailbox_fiber_batch
     tests/serve/test_steal_snapshot_soft_production_lock.cpp
     tests/serve/chaos_soak_production_gate.cpp
 )
-set_property(TARGET test_mailbox_fiber_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_mailbox_fiber_batch PRIVATE src tests)
 target_compile_definitions(test_mailbox_fiber_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -3823,7 +3794,6 @@ add_executable(test_occurrence_coercion_batch
     tests/compiler/test_type_system_health_next_action.cpp
     tests/compiler/test_type_timeout_repair.cpp
 )
-set_property(TARGET test_occurrence_coercion_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_occurrence_coercion_batch PRIVATE src tests)
 target_compile_definitions(test_occurrence_coercion_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -3853,7 +3823,6 @@ add_executable(test_linear_misc_batch
     tests/compiler/test_linear_synth_violation.cpp
     tests/compiler/test_linear_three_layer_wire.cpp
 )
-set_property(TARGET test_linear_misc_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_linear_misc_batch PRIVATE src tests)
 target_compile_definitions(test_linear_misc_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -3889,7 +3858,6 @@ add_executable(test_orch_agent_batch
     tests/orch/test_security_schedule_gate.cpp
     tests/orch/test_scope_join_tree_visibility.cpp
 )
-set_property(TARGET test_orch_agent_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_orch_agent_batch PRIVATE src tests)
 target_compile_definitions(test_orch_agent_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -3911,7 +3879,6 @@ add_executable(test_obs_misc_batch
     tests/compiler/test_mutation_concurrency_health.cpp
     tests/compiler/test_orch_hot_update_health_throttle.cpp
 )
-set_property(TARGET test_obs_misc_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_obs_misc_batch PRIVATE src tests)
 target_compile_definitions(test_obs_misc_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -3953,7 +3920,6 @@ add_executable(test_mutation_hold_boundary_batch
     tests/serve/test_orch_soft_boundary_unified.cpp
     tests/serve/test_yield_while_mutation_held.cpp
 )
-set_property(TARGET test_mutation_hold_boundary_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_mutation_hold_boundary_batch PRIVATE src tests)
 target_compile_definitions(test_mutation_hold_boundary_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -3986,7 +3952,6 @@ add_executable(test_shape_soa_storm_batch
     tests/core/test_hot_children_columnar.cpp
     tests/core/test_validate_post_restore_soa.cpp
 )
-set_property(TARGET test_shape_soa_storm_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_shape_soa_storm_batch PRIVATE src tests)
 target_compile_definitions(test_shape_soa_storm_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4031,7 +3996,6 @@ add_executable(test_ir_closure_jit_misc_batch
     tests/compiler/test_source_to_ir_map_consistency.cpp
     tests/compiler/test_tree_walker_fallback_strict.cpp
 )
-set_property(TARGET test_ir_closure_jit_misc_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_ir_closure_jit_misc_batch PRIVATE src tests)
 target_compile_definitions(test_ir_closure_jit_misc_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4060,7 +4024,6 @@ endif()
 add_executable(test_pack_pipeline_strict
     tests/compiler/test_pack_pipeline_strict.cpp
     src/compiler/messaging_bridge_impl.cpp)
-set_property(TARGET test_pack_pipeline_strict PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_pack_pipeline_strict PRIVATE src)
 target_compile_definitions(test_pack_pipeline_strict PRIVATE AURA_PRODUCTION_PACK=1)
 aura_test_compile_options(test_pack_pipeline_strict)
@@ -4103,7 +4066,6 @@ add_executable(test_module_query_batch
     tests/compiler/test_query_pattern_default_hygiene.cpp
     tests/compiler/test_setcode_rebind_survive.cpp
 )
-set_property(TARGET test_module_query_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_module_query_batch PRIVATE src tests)
 target_compile_definitions(test_module_query_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4134,7 +4096,6 @@ add_executable(test_json_io_cap_batch
     tests/compiler/test_write_string_escape.cpp
     tests/compiler/test_tcp_listen_accept.cpp
 )
-set_property(TARGET test_json_io_cap_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_json_io_cap_batch PRIVATE src tests)
 target_compile_definitions(test_json_io_cap_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4174,7 +4135,6 @@ add_executable(test_stable_ref_validate_batch
     tests/core/test_stable_ref_wire_endian.cpp
     tests/core/test_validate_node_no_abort.cpp
 )
-set_property(TARGET test_stable_ref_validate_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_stable_ref_validate_batch PRIVATE src tests)
 target_compile_definitions(test_stable_ref_validate_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4200,7 +4160,6 @@ add_executable(test_production_hardening_batch
     tests/compiler/test_production_stability.cpp
     tests/compiler/test_stdlib_production_review.cpp
 )
-set_property(TARGET test_production_hardening_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_production_hardening_batch PRIVATE src tests)
 target_compile_definitions(test_production_hardening_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4225,7 +4184,6 @@ add_executable(test_pcv_workspace_batch
     tests/core/test_pcv_unique_hotpath.cpp
     tests/core/test_workspace_isolation_wire.cpp
 )
-set_property(TARGET test_pcv_workspace_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_pcv_workspace_batch PRIVATE src tests)
 target_compile_definitions(test_pcv_workspace_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4287,7 +4245,6 @@ add_executable(test_arena_compact_hooks_batch
     tests/core/test_has_on_compact_hook_lock.cpp
     tests/core/test_incremental_restamp.cpp
 )
-set_property(TARGET test_arena_compact_hooks_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_arena_compact_hooks_batch PRIVATE src tests)
 target_compile_definitions(test_arena_compact_hooks_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4309,7 +4266,6 @@ add_executable(test_epoch_invariant_misc_batch
     tests/compiler/test_epoch_invariant_soft_prod.cpp
     tests/compiler/test_epoch_invariant_walk.cpp
 )
-set_property(TARGET test_epoch_invariant_misc_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_epoch_invariant_misc_batch PRIVATE src tests)
 target_compile_definitions(test_epoch_invariant_misc_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4332,7 +4288,6 @@ add_executable(test_gc_misc_batch
     tests/serve/test_atomic_mark_bitvector.cpp
     tests/serve/test_gc_mark_size_inject.cpp
 )
-set_property(TARGET test_gc_misc_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_gc_misc_batch PRIVATE src tests)
 target_compile_definitions(test_gc_misc_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4355,7 +4310,6 @@ add_executable(test_hot_pass_contract_batch
     tests/compiler/test_hot_pass_pure_wrap.cpp
     tests/compiler/test_hot_strategy.cpp
 )
-set_property(TARGET test_hot_pass_contract_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_hot_pass_contract_batch PRIVATE src tests)
 target_compile_definitions(test_hot_pass_contract_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4379,7 +4333,6 @@ add_executable(test_macro_hygiene_batch
     tests/compiler/test_rest_param_hygiene.cpp
     tests/compiler/test_rest_param_nested_qq_hygiene.cpp
 )
-set_property(TARGET test_macro_hygiene_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_macro_hygiene_batch PRIVATE src tests)
 target_compile_definitions(test_macro_hygiene_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4405,7 +4358,6 @@ add_executable(test_cascade_impact_batch
     tests/compiler/test_instr_impact_minimal_dirty.cpp
     tests/compiler/test_instruction_level_impact_partial.cpp
 )
-set_property(TARGET test_cascade_impact_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_cascade_impact_batch PRIVATE src tests)
 target_compile_definitions(test_cascade_impact_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4425,7 +4377,6 @@ add_executable(test_cross_cow_batch
     tests/compiler/test_cross_cow_drift_contract.cpp
     tests/compiler/test_cross_cow_soft_migrate.cpp
 )
-set_property(TARGET test_cross_cow_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_cross_cow_batch PRIVATE src tests)
 target_compile_definitions(test_cross_cow_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4445,7 +4396,6 @@ add_executable(test_lock_order_audit_batch
     tests/compiler/test_lock_order_audit.cpp
     tests/compiler/test_lock_order_audit_hard.cpp
 )
-set_property(TARGET test_lock_order_audit_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_lock_order_audit_batch PRIVATE src tests)
 target_compile_definitions(test_lock_order_audit_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4468,7 +4418,6 @@ add_executable(test_reemit_defer_batch
     tests/compiler/test_reemit_production_default_defer_v2.cpp
     tests/compiler/test_reemit_production_provider_wired.cpp
 )
-set_property(TARGET test_reemit_defer_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_reemit_defer_batch PRIVATE src tests)
 target_compile_definitions(test_reemit_defer_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4496,7 +4445,6 @@ add_executable(test_type_txn_misc_batch
     tests/compiler/test_timeout_repair_rich_roots.cpp
     tests/compiler/test_type_dirty_txn_order.cpp
 )
-set_property(TARGET test_type_txn_misc_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_type_txn_misc_batch PRIVATE src tests)
 target_compile_definitions(test_type_txn_misc_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4520,7 +4468,6 @@ add_executable(test_serve_legacy_issue_batch
     tests/serve/test_mutate_mailbox_starvation_throttle.cpp
     tests/serve/test_spawn_quota_no_leak.cpp
 )
-set_property(TARGET test_serve_legacy_issue_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_serve_legacy_issue_batch PRIVATE src tests)
 target_compile_definitions(test_serve_legacy_issue_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4543,7 +4490,6 @@ add_executable(test_value_tag_hotpath_batch
     tests/compiler/test_value_tag_hot_path.cpp
     tests/compiler/test_value_tag_hotpath_ban.cpp
 )
-set_property(TARGET test_value_tag_hotpath_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_value_tag_hotpath_batch PRIVATE src tests)
 target_compile_definitions(test_value_tag_hotpath_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
@@ -4587,9 +4533,8 @@ add_executable(test_misc_issue_fold_batch
     tests/core/test_transaction_guard.cpp
     # Reflect TUs stay on standalone -freflection targets (test_ir_pod_phase4 /
     # test_opcode_reflect / test_reflect_isolation). Folding them into this
-    # CXX_MODULE_STD batch compiles without -freflection and breaks P2996.
+    # std-module batch compiles without -freflection and breaks P2996.
 )
-set_property(TARGET test_misc_issue_fold_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_misc_issue_fold_batch PRIVATE src tests)
 target_compile_definitions(test_misc_issue_fold_batch PRIVATE
     AURA_SOURCE_DIR="${CMAKE_SOURCE_DIR}"

@@ -334,7 +334,6 @@ def render_cmake(profiles: dict[str, list[str]], all_extras: dict[str, dict]) ->
         "    endforeach()",
         "",
         "    add_executable(${_target} ${_sources})",
-        "    set_property(TARGET ${_target} PROPERTY CXX_MODULE_STD ON)",
         "    target_include_directories(${_target} PRIVATE src tests tests/bundles)",
         "    aura_test_compile_options(${_target})",
         "    target_link_libraries(${_target} PRIVATE aura_test_objects pthread stdc++ stdc++exp aura-reflect)",

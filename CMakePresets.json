@@ -1,6 +1,18 @@
 {
-    "version": 6,
+    "version": 13,
     "configurePresets": [
+        {
+            "name": "aura-base",
+            "hidden": true,
+            "generator": "Ninja",
+            "warnings": {
+                "strict": true,
+                "nonTargetDirective": true
+            },
+            "cacheVariables": {
+                "AURA_CONFIGURE_PRESET": "${configurePresetName}"
+            }
+        },
         {
             "name": "default",
             "displayName": "Debug (Ninja, GCC 16)",
@@ -8,7 +20,8 @@
             "binaryDir": "${sourceDir}/build",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
-            }
+            },
+            "inherits": "aura-base"
         },
         {
             "name": "release",
@@ -17,7 +30,8 @@
             "binaryDir": "${sourceDir}/build",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
-            }
+            },
+            "inherits": "aura-base"
         },
         {
             "name": "asan",
@@ -31,7 +45,8 @@
                 "CMAKE_CXX_FLAGS": "-fsanitize=address -fno-omit-frame-pointer",
                 "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address",
                 "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=address"
-            }
+            },
+            "inherits": "aura-base"
         },
         {
             "name": "ubsan",
@@ -45,7 +60,8 @@
                 "CMAKE_CXX_FLAGS": "-fsanitize=undefined -fno-omit-frame-pointer",
                 "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=undefined",
                 "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=undefined"
-            }
+            },
+            "inherits": "aura-base"
         },
         {
             "name": "repro",
@@ -55,15 +71,16 @@
             "binaryDir": "${sourceDir}/build_repro",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_C_FLAGS": "-ffile-prefix-map=${sourceDir}=. -fdebug-prefix-map=${sourceDir}=. -frandom-seed=aura-repro-675 -g0",
-                "CMAKE_CXX_FLAGS": "-ffile-prefix-map=${sourceDir}=. -fdebug-prefix-map=${sourceDir}=. -frandom-seed=aura-repro-675 -g0",
+                "CMAKE_C_FLAGS": "-ffile-prefix-map=${sourceDir}=. -fdebug-prefix-map=${sourceDir}=. -fmacro-prefix-map=${sourceDir}=. -ffile-prefix-map=${sourceDir}/build_repro=build -fdebug-prefix-map=${sourceDir}/build_repro=build -fmacro-prefix-map=${sourceDir}/build_repro=build -frandom-seed=aura-repro-675 -fno-ident -g0",
+                "CMAKE_CXX_FLAGS": "-ffile-prefix-map=${sourceDir}=. -fdebug-prefix-map=${sourceDir}=. -fmacro-prefix-map=${sourceDir}=. -ffile-prefix-map=${sourceDir}/build_repro=build -fdebug-prefix-map=${sourceDir}/build_repro=build -fmacro-prefix-map=${sourceDir}/build_repro=build -frandom-seed=aura-repro-675 -fno-ident -g0",
                 "CMAKE_EXE_LINKER_FLAGS": "-Wl,--build-id=none",
                 "CMAKE_SHARED_LINKER_FLAGS": "-Wl,--build-id=none"
             },
             "environment": {
                 "SOURCE_DATE_EPOCH": "1704067200",
                 "CCACHE_DISABLE": "1"
-            }
+            },
+            "inherits": "aura-base"
         },
         {
             "name": "tsan",
@@ -73,11 +90,12 @@
             "binaryDir": "${sourceDir}/build_tsan",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_C_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
-                "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer",
+                "CMAKE_C_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer -Wno-error=mismatched-new-delete -Wno-error=tsan",
+                "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer -Wno-error=mismatched-new-delete -Wno-error=tsan",
                 "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
                 "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=thread"
-            }
+            },
+            "inherits": "aura-base"
         },
         {
             "name": "coverage",
@@ -90,7 +108,8 @@
                 "CMAKE_C_COMPILER": "clang",
                 "CMAKE_CXX_COMPILER": "clang++",
                 "AURA_ENABLE_COVERAGE": "ON"
-            }
+            },
+            "inherits": "aura-base"
         }
     ],
     "buildPresets": [
