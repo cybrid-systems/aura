@@ -13031,12 +13031,21 @@ def _phase(label: str, t0: float) -> None:
 
 
 def _cmake_configure_args() -> list[str]:
-    args = ["cmake", "-B", str(BUILD), "-G", "Ninja", "-Wno-author"]
-    # `import std` gate UUID is owned by CMakeLists.txt (version-selected
-    # before project(); the 4.3 / 4.4+ UUIDs differ). Never hard-code a -D
-    # here: a wrong UUID is silently ignored at toolchain detection and
-    # every CXX_MODULE_STD target then fails at generate time
-    # (tsan-smoke nightly failure mode).
+    args = [
+        "cmake",
+        "-B",
+        str(BUILD),
+        "-G",
+        "Ninja",
+        "-Wno-author",
+        "-Werror=experimental",
+        "-Wpolicy",
+        "-Wdeprecated",
+        "-Wstrict",
+        "-Wnon-target-directive",
+    ]
+    # Issue #5201: CMake 4.5 supports "import std" without an experimental
+    # UUID gate or per-target opt-in; nothing to hard-code here.
     build_type = os.environ.get("AURA_BUILD_TYPE", "").strip()
     if build_type:
         args.append(f"-DCMAKE_BUILD_TYPE={build_type}")

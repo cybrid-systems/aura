@@ -51,7 +51,9 @@ jobs:
       - name: Build aura
         run: |
           git config --global --add safe.directory '*'
-          cmake -S . -B build -G Ninja -Wno-author -DCMAKE_BUILD_TYPE=Release "-DAURA_BUILD_VERSION=${VER#v}" "-DAURA_BUILD_GIT_SHA=${GITHUB_SHA}"
+          cmake -S . -B build -G Ninja -Wno-author \
+            -Werror=experimental -Wpolicy -Wdeprecated -Wstrict -Wnon-target-directive \
+            -DCMAKE_BUILD_TYPE=Release "-DAURA_BUILD_VERSION=${VER#v}" "-DAURA_BUILD_GIT_SHA=${GITHUB_SHA}"
           ninja -C build -j3 aura
       - name: Test
         run: |

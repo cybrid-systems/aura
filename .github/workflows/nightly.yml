@@ -30,9 +30,11 @@ jobs:
   chaos-steal-gc-nightly:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.5
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
     steps:
     - uses: actions/checkout@v7
+
+    - uses: ./.github/actions/ci-krb5
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -59,9 +61,11 @@ jobs:
   production-concurrency:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.5
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
     steps:
     - uses: actions/checkout@v7
+
+    - uses: ./.github/actions/ci-krb5
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -86,9 +90,11 @@ jobs:
   fuzz-extended:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.5
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
     steps:
     - uses: actions/checkout@v7
+
+    - uses: ./.github/actions/ci-krb5
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -179,9 +185,11 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.5
+      image: ghcr.io/cybrid-systems/aura-ci:v0.1.1
     steps:
     - uses: actions/checkout@v7
+
+    - uses: ./.github/actions/ci-krb5
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt

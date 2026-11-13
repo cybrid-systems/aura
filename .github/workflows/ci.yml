@@ -324,10 +324,20 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-aura-ci-v0.1.0-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-ci-v0.1.1-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
+
+    # Issue #5201: text pins alone cannot prove the container. Assert the
+    # running toolchain is CMake 4.5.0 with the instrumentation API that the
+    # performance work (#5202) measures against.
+    - name: Toolchain image assertion (#5201)
+      run: |
+        python3 -c "import json, subprocess; d = json.loads(subprocess.check_output(['cmake', '-E', 'capabilities'])); v = d['version']; assert (v['major'], v['minor']) == (4, 5), v; assert d['instrumentation']['apiVersion'] >= 1, d['instrumentation']; print('cmake', v['string'], 'instrumentation', d['instrumentation']['apiVersion'])"
+
+    - name: Toolchain pins (#5201)
+      run: python3 tests/python/test_ci_toolchain_image.py -v
 
     # gate = docs --check + ruff + clang-format + fixtures + surface audits.
     - name: Static checks (docs + lint + format + fixtures)
@@ -340,6 +350,7 @@ jobs:
     - name: Configure compile_commands.json (clang-tidy)
       run: >
         cmake -S . -B build -G Ninja -Wno-author
+        -Werror=experimental -Wpolicy -Wdeprecated -Wstrict -Wnon-target-directive
         -DCMAKE_BUILD_TYPE=RelWithDebInfo
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
@@ -353,6 +364,7 @@ jobs:
     - name: Configure Clang module build (#4837)
       run: >
         cmake -S . -B build_clang -G Ninja -Wno-author
+        -Werror=experimental -Wpolicy -Wdeprecated -Wstrict -Wnon-target-directive
         -DCMAKE_CXX_COMPILER=clang++
         -DCMAKE_CXX_COMPILER_CLANG_SCAN_DEPS=${{ steps.clang-scan-deps.outputs.path }}
         -DCMAKE_BUILD_TYPE=RelWithDebInfo
@@ -413,7 +425,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-aura-ci-v0.1.0-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-ci-v0.1.1-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -538,7 +550,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-aura-ci-v0.1.0-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-ci-v0.1.1-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -609,7 +621,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-aura-ci-v0.1.0-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-ci-v0.1.1-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -805,6 +817,7 @@ jobs:
     - name: Configure Clang module build (#4837)
       run: >
         cmake -S . -B build_clang -G Ninja -Wno-author
+        -Werror=experimental -Wpolicy -Wdeprecated -Wstrict -Wnon-target-directive
         -DCMAKE_CXX_COMPILER=clang++
         -DCMAKE_CXX_COMPILER_CLANG_SCAN_DEPS=${{ steps.clang-scan-deps.outputs.path }}
         -DCMAKE_BUILD_TYPE=RelWithDebInfo
@@ -1026,7 +1039,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-aura-ci-v0.1.0-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-ci-v0.1.1-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -1075,7 +1088,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-aura-ci-v0.1.0-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-ci-v0.1.1-${{ hashFiles('requirements-dev.txt') }}
 
     - uses: actions/cache@v6
       with:
@@ -1148,7 +1161,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-aura-ci-v0.1.0-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-aura-ci-v0.1.1-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt

@@ -8,7 +8,7 @@
 //   - test_issue_178.cpp         — import std / aura.core.ast
 //   - test_issue_178_reflect.cpp — -freflection, implements entries
 // Include this header from the reflect TU only. Module TU redeclares
-// by hand (include after import std also fights CXX_MODULE_STD).
+// by hand (include after import std also fights the std module).
 
 #include <cstddef>
 #include <cstdint>
