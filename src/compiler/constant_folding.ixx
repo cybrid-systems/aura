@@ -29,7 +29,6 @@
 module;
 #include <cstddef>
 #include <cstdint>
-#include <unordered_map>
 
 export module aura.compiler.constant_folding;
 import std;
