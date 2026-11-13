@@ -3,6 +3,23 @@ cmake_minimum_required(VERSION 4.5)
 # with CXX_SCAN_FOR_MODULES, so the experimental UUID gate is gone.  The
 # toolchain image provides CMake 4.5.0; older local CMake cannot configure.
 project(aura LANGUAGES CXX C SPDX_LICENSE "Apache-2.0")
+
+# Issue #5202: make fast linking a property of the CMake build, not only of
+# build.py. Raw cmake / presets / dist.yml previously fell back to ld.bfd.
+# The probe is required: GCC 16's libatomic_asneeded.so breaks some mold.
+option(AURA_USE_MOLD "Use mold/lld when the linker probe succeeds" ON)
+if(AURA_USE_MOLD AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    include(CheckLinkerFlag)
+    check_linker_flag(CXX "-fuse-ld=mold" AURA_HAVE_MOLD)
+    if(AURA_HAVE_MOLD)
+        add_link_options(-fuse-ld=mold)
+    else()
+        check_linker_flag(CXX "-fuse-ld=lld" AURA_HAVE_LLD)
+        if(AURA_HAVE_LLD)
+            add_link_options(-fuse-ld=lld)
+        endif()
+    endif()
+endif()
 # Issue #4837: Clang has no -fcontracts / -freflection (GCC 16 features).
 # The GCC build is unchanged. The Clang build exists to produce module BMIs
 # and a compile_commands.json for clang-tidy, so it drops the GCC-only
@@ -32,6 +49,19 @@ include(${CMAKE_SOURCE_DIR}/cmake/AuraCoverage.cmake) # Issue #1933 llvm-cov
 include(${CMAKE_SOURCE_DIR}/cmake/AuraTest.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraModules.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraIssueBundles.cmake)
+
+# Issue #5202: opt-in CMake 4.5 instrumentation (configure/build/test wall +
+# processMetrics for each command). Off by default: it is a measurement
+# tool, not a build-speed change.
+option(AURA_BUILD_INSTRUMENTATION "Emit CMake instrumentation data" OFF)
+if(AURA_BUILD_INSTRUMENTATION)
+    cmake_instrumentation(
+        API_VERSION 1
+        DATA_VERSION 1.2
+        HOOKS postCMakeBuild
+        OPTIONS processMetrics trace
+    )
+endif()
 
 # aarch64 PIE + C++-module inlines that touch SHARED-lib globals need -fPIC.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -860,6 +890,8 @@ set_target_properties(aura_tl_arena PROPERTIES
 )
 target_include_directories(aura_tl_arena PUBLIC ${CMAKE_SOURCE_DIR}/src)
 target_compile_features(aura_tl_arena PUBLIC cxx_std_26)
+# Issue #5269: runtime_ssot.cpp now imports std, so scanning is required.
+# (Was CXX_SCAN_FOR_MODULES OFF under #5202; the scan cost is two TUs.)
 # runtime_ssot.cpp uses std::vector — need libstdc++.
 target_link_libraries(aura_tl_arena PUBLIC stdc++)
 
@@ -1577,9 +1609,7 @@ set_source_files_properties(src/core/contract_handler.cpp PROPERTIES COMPILE_FLA
 # a full benchmark suite. Returns 0 iff the AC is met.
 add_executable(issue_508_bench tests/compiler/bench_dead_coercion_elim.cpp)
 target_include_directories(issue_508_bench PRIVATE src)
-target_compile_options(issue_508_bench PRIVATE -Wall
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter)
+aura_test_compile_options(issue_508_bench)
 target_link_libraries(issue_508_bench PRIVATE stdc++ aura_test_objects aura-reflect
     aura_jit_test_objects)
 
@@ -1593,9 +1623,7 @@ target_link_libraries(issue_508_bench PRIVATE stdc++ aura_test_objects aura-refl
 # benchmark file) is the deliverable.
 add_executable(issue_307_bench tests/compiler/bench_ir_relower.cpp)
 target_include_directories(issue_307_bench PRIVATE src)
-target_compile_options(issue_307_bench PRIVATE -Wall
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter)
+aura_test_compile_options(issue_307_bench)
 target_link_libraries(issue_307_bench PRIVATE stdc++ aura_test_objects aura-reflect
     aura_jit_test_objects)
 
@@ -1604,9 +1632,7 @@ target_link_libraries(issue_307_bench PRIVATE stdc++ aura_test_objects aura-refl
 # Formerly four near-duplicate drivers under tests/bench/.
 add_executable(ast_hotpath_bench tests/bench/ast_hotpath_bench.cpp)
 target_include_directories(ast_hotpath_bench PRIVATE src)
-target_compile_options(ast_hotpath_bench PRIVATE -Wall
-    -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-function
-    -Wno-unused-but-set-variable -Wno-unused-parameter)
+aura_test_compile_options(ast_hotpath_bench)
 target_link_libraries(ast_hotpath_bench PRIVATE stdc++ aura_test_objects aura-reflect
     aura_jit_test_objects)
 add_test(NAME ast_hotpath_bench COMMAND ./ast_hotpath_bench)

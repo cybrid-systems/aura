@@ -7,13 +7,23 @@
 #ifndef AURA_COMPILER_OBSERVABILITY_METRICS_H
 #define AURA_COMPILER_OBSERVABILITY_METRICS_H
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <algorithm>
+#endif
 #include "core/atomic_fence_port.h"
 #include "core/sharded_counter.h"
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <array>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <atomic>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstdint>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <string>
+#endif
 #include "core/ownership.hh" // Issue #4936: NoCopy
 
 namespace aura::compiler {

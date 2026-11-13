@@ -5,8 +5,12 @@
 #ifndef AURA_COMPILER_HASH_META_H
 #define AURA_COMPILER_HASH_META_H
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstdint>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <string_view>
+#endif
 
 namespace aura::compiler::hash {
 

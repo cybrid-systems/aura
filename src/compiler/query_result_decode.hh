@@ -19,11 +19,21 @@
 #ifndef AURA_COMPILER_QUERY_RESULT_DECODE_HH
 #define AURA_COMPILER_QUERY_RESULT_DECODE_HH
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstdint>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <optional>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <span>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <string>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <string_view>
+#endif
 
 #include "hash_meta.h" // Issue #4612: kTombstoneSlot (deleted hash slot)
 

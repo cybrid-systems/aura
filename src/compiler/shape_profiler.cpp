@@ -11,15 +11,13 @@
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h" // Issue #1621: shape churn → arena policy
 #include "core/workspace_epoch.hh" // Issue #1964 cycle 2b: aura::core::current_mutation_epoch()
-#include <algorithm>
 #include <contracts>
 #include <cstdint>
 #include <cstdlib>
 #include <inplace_vector> // Issue #5204: fixed-capacity flush scratch
-#include <span>
-#include <unordered_map>
-#include <unordered_set>
-#include "hash_meta.h" // FNV constants (#901)
+#include "hash_meta.h"    // FNV constants (#901)
+
+import std;
 
 // Issue #2370 / #2433: C bridges into HotUpdateRegistry.
 // Weak defaults let standalone ShapeProfiler unit tests link without

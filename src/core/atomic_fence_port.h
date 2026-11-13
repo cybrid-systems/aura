@@ -15,7 +15,9 @@
 //     authoritative by definition.
 #pragma once
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <atomic>
+#endif
 
 #if defined(__SANITIZE_THREAD__)
 #define AURA_THREAD_SANITIZER 1

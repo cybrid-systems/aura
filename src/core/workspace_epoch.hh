@@ -26,9 +26,15 @@
 #ifndef AURA_CORE_WORKSPACE_EPOCH_HH
 #define AURA_CORE_WORKSPACE_EPOCH_HH
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <atomic>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstdint>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstdlib> // std::getenv — AURA_QUERY_EPOCH_STRICT (#2192)
+#endif
 
 namespace aura::core {
 

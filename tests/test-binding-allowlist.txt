@@ -140,3 +140,13 @@ src/compiler/evaluator_primitives_fiber_cow.cpp
 # unformatted (CI gate Static checks). Whitespace/layout only — no
 # behavior or primitive-surface change, so no test pairing applies.
 src/compiler/evaluator_primitives_security.cpp
+# Issue #5269: include-only std-module cleanup (AURA_HAVE_STD_MODULE) on
+# primitive TUs; no behavior change, so no functional test pairing applies.
+src/compiler/evaluator_primitives_compile.cpp
+src/compiler/evaluator_primitives_mutate.cpp
+src/compiler/evaluator_primitives_mutation.cpp
+src/compiler/evaluator_primitives_query.cpp
+src/compiler/evaluator_primitives_query_defuse.cpp
+src/compiler/evaluator_primitives_query_lifecycle.cpp
+src/compiler/evaluator_primitives_query_workspace.cpp
+src/compiler/query_impl.cpp

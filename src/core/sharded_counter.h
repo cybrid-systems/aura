@@ -15,11 +15,21 @@
 // text-based hot-path linters are unchanged.
 #pragma once
 
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <array>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <atomic>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstddef>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <cstdint>
+#endif
+#if !defined(AURA_HAVE_STD_MODULE)
 #include <type_traits>
+#endif
 
 namespace aura::core {
 

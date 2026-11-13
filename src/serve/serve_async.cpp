@@ -14,18 +14,13 @@
 #include "runtime_production_abi.h"
 #include "compiler/chunk_io.hh" // #4936 std::array stdout drain
 
-#include <array>
-#include <atomic>
 #include <cstdlib>
 #include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
-#include <memory>
 #include <poll.h>
-#include <stop_token>
 #include <sys/wait.h>
-#include <thread>
 #include <unistd.h>
 
 import std;
