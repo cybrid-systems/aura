@@ -9202,13 +9202,12 @@ private:
         // the vector under the other writer and operator[] aborts.
         // lookup() copies the box out so a concurrent set()/clear() cannot
         // free the returned slot.
-        mutable std::shared_mutex mutex;
         std::vector<types::EvalValue> vals;
         std::vector<double> bits;
         std::vector<std::uint8_t> hit;
         [[nodiscard]] bool lookup(std::uint32_t id, double raw,
                                   types::EvalValue& out) const noexcept {
-            std::shared_lock<std::shared_mutex> guard(mutex);
+            const std::shared_lock<std::shared_mutex> guard(mutex);
             if (id >= hit.size() || !hit[id])
                 return false;
             if (bits[id] != raw) // bit-exact: mutation, -0.0 vs 0.0, NaN bits
@@ -9217,7 +9216,7 @@ private:
             return true;
         }
         void set(std::uint32_t id, double raw, types::EvalValue v) {
-            std::unique_lock<std::shared_mutex> guard(mutex);
+            const std::unique_lock<std::shared_mutex> guard(mutex);
             if (id >= vals.size()) {
                 vals.resize(id + 1);
                 bits.resize(id + 1);
@@ -9228,11 +9227,16 @@ private:
             hit[id] = 1;
         }
         void clear() noexcept {
-            std::unique_lock<std::shared_mutex> guard(mutex);
+            const std::unique_lock<std::shared_mutex> guard(mutex);
             vals.clear();
             bits.clear();
             hit.clear();
         }
+
+    private:
+        // Issue #4719: the mutex is the intern's private contract, not part
+        // of the table surface the enclosing Evaluator reads directly.
+        mutable std::shared_mutex mutex;
     };
     FloatLiteralIntern float_intern_by_node_;
     // Issue #4717: which pool/flat this BODY is bound to is per-body state
