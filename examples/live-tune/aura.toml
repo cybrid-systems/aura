@@ -1,0 +1,7 @@
+name = "live-tune"
+entry = "server.aura"
+preset = "dev"
+out = "out"
+
+[dependencies]
+aura = "nightly"
