@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""frequencies and fresh-table builders under the default Restricted preset.
+"""Issue #5188 and #5190: frequencies under the default Restricted preset.
 
 hash-set! on a hash that has not been published to a workspace does not
 need Mutate. A hash stored with define has been published: in-place

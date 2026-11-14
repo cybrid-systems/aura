@@ -1,40 +1,15 @@
-; Issue #5160 — json-encode writes a vector as a JSON array.
+; Issue #5160: json-encode writes a vector as a JSON array.
 ; A vector used to become null, including inside a list or a hash.
-(define *fails* 0)
-(define (assert! pred msg)
-  (if pred
-      (begin (display "  pass: ") (display msg) (newline))
-      (begin
-        (set! *fails* (+ *fails* 1))
-        (display "  FAIL: ")
-        (display msg)
-        (newline))))
+(require "std/test" all:)
+(test-file "json_encode_vector_5160.aura")
 
-(define (expect encoded want label)
-  (if (equal? encoded want)
-      (assert! #t label)
-      (begin
-        (display "    want ")
-        (display want)
-        (display " got ")
-        (display encoded)
-        (newline)
-        (assert! #f label))))
+(test-case "encode vectors" (hash "issue" 5160)
+  (check= "[1,2.5]" (json-encode (vector 1 2.5)))
+  (check= "{\"pieces\":[[1,2]]}"
+          (json-encode (hash "pieces" (list (vector 1 2)))))
+  (check= "[]" (json-encode (vector)))
+  (check= "[1,[2,3]]" (json-encode (list 1 (vector 2 3))))
+  (check= "[[1],[2]]" (json-encode (vector (vector 1) (list 2))))
+  (check= "[\"a\\\"b\"]" (json-encode (vector "a\"b"))))
 
-(expect (json-encode (vector 1 2.5)) "[1,2.5]" "int and float")
-(expect (json-encode (hash "pieces" (list (vector 1 2))))
-        "{\"pieces\":[[1,2]]}"
-        "vector inside a list inside a hash")
-(expect (json-encode (vector)) "[]" "empty vector")
-(expect (json-encode (list 1 (vector 2 3))) "[1,[2,3]]" "vector inside a list")
-(expect (json-encode (vector (vector 1) (list 2))) "[[1],[2]]" "nested vector and list")
-(expect (json-encode (list 1 2)) "[1,2]" "a list stays an array")
-(expect (json-encode (vector "a\"b")) "[\"a\\\"b\"]" "string escape inside a vector")
-
-(if (= *fails* 0)
-    (begin (display "OK-5160 json-encode vector\n"))
-    (begin
-      (display "FAIL-5160 fails=")
-      (display *fails*)
-      (newline)
-      (error "5160 suite failed")))
+(test-finish)

@@ -1,31 +1,68 @@
-; #5133: pin the SRFI-133 / R7RS vector surface that INDEX claims.
+; #5133: SRFI-133 / R7RS vector surface. The same predicates run on the
+; host and inside a guest fiber.
+(require "std/test" all:)
 (require "std/vector" all:)
+(test-file "vector_srfi_5133.aura")
 
 (define v (vector 1 2 3))
-(define (check)
+
+(define (vector-ok?)
   (and
    (= (vector-length v) 3)
    (= (vector-ref v 1) 2)
    (equal? (vector->list v) (list 1 2 3))
    (equal? (list->vector (list 4 5)) (vector 4 5))
-   ; vector-copy honours start and optional end
    (equal? (vector-copy v 0 2) (vector 1 2))
    (equal? (vector-copy v 1) (vector 2 3))
-   ; vector-map returns a new vector and stops at the shortest input
    (equal? (vector-map (lambda (x) (* x 2)) v) (vector 2 4 6))
    (equal? (vector-map + (vector 1 2 3) (vector 10 20)) (vector 11 22))
-   ; vector-fill! mutates in place
    (let ((w (vector 0 0 0))) (vector-fill! w 7) (equal? w (vector 7 7 7)))
-   ; SRFI-133 vector-append is not R7RS but is claimed by the module
    (let ((a (vector-append (vector 1) (vector 2)))) (equal? a (vector 1 2)))
-   ; out-of-range reads raise a catchable error rather than aborting
    (eq? (try (vector-ref v 9) (catch (e) 'raised)) 'raised)
+   (eq? (try (vector-ref v -1) (catch (e) 'raised)) 'raised)
    (eq? (try (vector-ref (vector) 0) (catch (e) 'raised)) 'raised)))
 
-(define host (if (check) 1 0))
-(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+(test-case "srfi vector host" (hash "issue" 5133)
+  (check (vector-ok?)))
 
-(if (and (= host 1) (= guest 1))
-    (begin (display "OK-5133-vector") (newline))
-    (begin (display "FAIL-5133-vector host=") (display host)
-           (display " guest=") (display guest) (newline) (exit 1)))
+(test-case "srfi vector guest" (hash "issue" 5133)
+  (check= 1 (fiber:join (fiber:spawn (lambda () (if (vector-ok?) 1 0))))))
+
+; Issue #5198: vector-map stops at the shortest input, including the
+; historical one-argument procedure over two vectors.
+(test-case "vector-map zip" (hash "issue" 5198)
+  (check= (vector 11 22) (vector-map + (vector 1 2) (vector 10 20 30))))
+
+(test-case "vector-map one" (hash "issue" 5198)
+  (check= (vector 2 3) (vector-map (lambda (x) (+ x 1)) (vector 1 2))))
+
+(test-case "vector-map repro" (hash "issue" 5198)
+  (check= (vector '() '())
+          (vector-map (lambda (x) x) (make-vector 2 0) (make-vector 3 1))))
+
+(test-case "vector builders" (hash)
+  (check= (vector 1 2 3) (vector-concatenate (list (vector 1) (vector 2 3))))
+  (check (vector-empty? (vector)))
+  (check= 6 (vector-fold (lambda (acc x) (+ acc x)) 0 (vector 1 2 3)))
+  (check= (list 1 2 3)
+          (vector-fold-right (lambda (acc x) (cons x acc)) (list) (vector 1 2 3)))
+  (check= 2 (vector-count even? (vector 1 2 3 4)))
+  (check= 2 (vector-index even? (vector 1 3 4)))
+  (check (not (vector-index even? (vector 1 3 5))))
+  (check (vector-any odd? (vector 2 4 5)))
+  (check (vector-every odd? (vector 1 3 5)))
+  (check= (vector 3 2 1) (vector-reverse-copy (vector 1 2 3)))
+  (check= 1 (vector-binary-search (vector 10 20 30) 20 (lambda (a b) (- a b)))))
+
+(test-case "vector-for-each counts" (hash)
+  (let ((n (vector 0)))
+    (vector-for-each (lambda (x) (vector-set! n 0 (+ (vector-ref n 0) 1)))
+                     (vector 1 2 3))
+    (check= 3 (vector-ref n 0))))
+
+(test-case "vector-copy! returns the target" (hash)
+  (let ((to (vector 0 0 0)))
+    (vector-copy! to 0 (vector 7 8))
+    (check= (vector 7 8 0) to)))
+
+(test-finish)

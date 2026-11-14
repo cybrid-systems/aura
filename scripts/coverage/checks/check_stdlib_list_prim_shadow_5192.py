@@ -101,8 +101,7 @@ def _check(lib: str, prims: str) -> list[str]:
     # AC4: the take arm that makes the stdlib define unnecessary.
     if "take: list shorter than count" not in prims:
         fails.append(
-            "AC4: take lost the SRFI-1 short-list error arm - the contract "
-            "tests/suite/srfi_collections_5003.aura pins (#5192)"
+            "AC4: take lost the SRFI-1 short-list error arm - the contract tests/suite/list_srfi_5133.aura pins (#5192)"
         )
     if "if (n > len)" not in prims:
         fails.append("AC4: take lost the n > len guard that arms the short-list error (#5192)")

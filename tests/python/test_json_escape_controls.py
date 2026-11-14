@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""json-escape / json-obj-items / json-arr-items must be strict JSON.
+"""Issue #5189: json-escape / json-obj-items / json-arr-items must be strict JSON.
 
 Aura's json-parse accepts raw control characters, so a round-trip through
 it is not evidence. These snippets are checked with Python's json.loads.

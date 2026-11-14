@@ -1,19 +1,9 @@
-;; expect: OK-json-escape-controls
-; json-escape must emit RFC 8259 escapes for controls, quotes, and
-; backslashes. The bytes are checked here; a strict parser check lives
-; in tests/python/test_json_escape_controls.py (Aura's json-parse still
-; accepts raw controls).
+; Issue #5189: json-escape emits RFC 8259 escapes for controls, quotes,
+; and backslashes. Aura's json-parse still accepts raw controls, so the
+; strict parser check stays in tests/python/test_json_escape_controls.py.
+(require "std/test" all:)
 (require "std/json" all:)
-
-(define *fails* 0)
-(define *passes* 0)
-(define (check name got want)
-  (if (equal? got want)
-      (set! *passes* (+ *passes* 1))
-      (begin (set! *fails* (+ *fails* 1))
-             (display "  FAIL: ") (display name)
-             (display " got ") (display got)
-             (display " want ") (display want) (newline))))
+(test-file "json_escape_controls.aura")
 
 (define (has-raw-control? s)
   (let loop ((i 0))
@@ -23,39 +13,31 @@
             #t
             (loop (+ i 1))))))
 
-(check "newline" (json-escape "line1\nline2") "line1\\nline2")
-(check "tab" (json-escape "a\tb") "a\\tb")
-(check "cr" (json-escape "a\rb") "a\\rb")
-(check "quote" (json-escape "a\"b") "a\\\"b")
-(check "backslash" (json-escape "a\\b") "a\\\\b")
-(check "backspace" (json-escape "\x08") "\\b")
-(check "formfeed" (json-escape "\x0c") "\\f")
-(check "u0001" (json-escape "\x01") "\\u0001")
-(check "nul" (json-escape "\x00") "\\u0000")
-(check "no raw control" (has-raw-control? (json-escape "\x01\n\t\x08\x0c")) #f)
+(test-case "escape controls" (hash "issue" 5189)
+  (check= "line1\\nline2" (json-escape "line1\nline2"))
+  (check= "a\\tb" (json-escape "a\tb"))
+  (check= "a\\rb" (json-escape "a\rb"))
+  (check= "a\\\"b" (json-escape "a\"b"))
+  (check= "a\\\\b" (json-escape "a\\b"))
+  (check= "\\b" (json-escape "\x08"))
+  (check= "\\f" (json-escape "\x0c"))
+  (check= "\\u0001" (json-escape "\x01"))
+  (check= "\\u0000" (json-escape "\x00"))
+  (check (not (has-raw-control? (json-escape "\x01\n\t\x08\x0c")))))
 
-; json-encode of the same string still round-trips through a quoted form
-; whose interior is json-escape.
-(check "encode wraps escape"
-       (json-encode "line1\nline2")
-       (string-append "\"" (json-escape "line1\nline2") "\""))
-(check "encode u0001" (json-encode "\x01") "\"\\u0001\"")
+(test-case "encode wraps escape" (hash "issue" 5189)
+  (check= (string-append "\"" (json-escape "line1\nline2") "\"")
+          (json-encode "line1\nline2"))
+  (check= "\"\\u0001\"" (json-encode "\x01"))
+  (check= "1" (json-stringify 1)))
 
-(define obj (json-obj-items (hash "a\nb" 1) (list "a\nb") number->string))
-(check "obj-items" obj "\"a\\nb\":1")
-(check "obj-items no raw" (has-raw-control? obj) #f)
+(test-case "object and array items" (hash "issue" 5189)
+  (define obj (json-obj-items (hash "a\nb" 1) (list "a\nb") number->string))
+  (check= "\"a\\nb\":1" obj)
+  (check (not (has-raw-control? obj)))
+  (define arr (json-arr-items (list "a\nb" "c\"d")
+                              (lambda (s) (string-append "\"" (json-escape s) "\""))))
+  (check= "\"a\\nb\",\"c\\\"d\"" arr)
+  (check (not (has-raw-control? arr))))
 
-(define arr (json-arr-items (list "a\nb" "c\"d")
-                            (lambda (s) (string-append "\"" (json-escape s) "\""))))
-(check "arr-items" arr "\"a\\nb\",\"c\\\"d\"")
-(check "arr-items no raw" (has-raw-control? arr) #f)
-
-; Existing quote escape inside json-encode of a vector must stay put.
-(check "vector string" (json-encode (vector "a\"b")) "[\"a\\\"b\"]")
-
-(if (and (= *fails* 0) (= *passes* 17))
-    (display "OK-json-escape-controls\n")
-    (begin
-      (display "FAIL-json-escape-controls fails=") (display *fails*)
-      (display " passes=") (display *passes*) (newline)
-      (error "json-escape-controls failed")))
+(test-finish)

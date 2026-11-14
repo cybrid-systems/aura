@@ -1,49 +1,35 @@
-;; expect: OK-frequencies-hash
-; std/hash:frequencies and std/iter:frequencies are one hash-shaped
-; function. Requiring both modules must not turn the result into an alist.
-; frequencies-alist is the explicit list form.
+; Issue #5188: std/hash frequencies and std/iter frequencies are one
+; hash-shaped function. The Restricted preset matrix stays in
+; tests/python/test_frequencies_restricted.py.
+(require "std/test" all:)
 (require "std/list" all:)
+(test-file "frequencies_hash.aura")
 
-(define *fails* 0)
-(define (check name got want)
-  (if (equal? got want)
-      #t
-      (begin
-        (set! *fails* (+ *fails* 1))
-        (display "  FAIL: ") (display name)
-        (display " got ") (display got)
-        (display " want ") (display want) (newline))))
+(test-case "frequencies from hash" (hash "issue" 5188)
+  (require "std/hash" all:)
+  (define honly (frequencies (list "a" "b" "a")))
+  (test-check (hash? honly))
+  (test-check (not (pair? honly)))
+  (test-check= 2 (hash-length honly))
+  (test-check= 2 (hash-ref honly "a" 0))
+  (test-check= 1 (hash-ref honly "b" 0)))
 
-; Hash-only shape, measured on a hash-only require: <hash[2]>, length 2,
-; "a" -> 2, "b" -> 1. The issue text's 3 was not what the primitive returns.
-(require "std/hash" all:)
-(define honly (frequencies (list "a" "b" "a")))
-(check "hash? " (hash? honly) #t)
-(check "not a pair" (pair? honly) #f)
-(check "length" (hash-length honly) 2)
-(check "a" (hash-ref honly "a" 0) 2)
-(check "b" (hash-ref honly "b" 0) 1)
+(test-case "frequencies after iter" (hash "issue" 5188)
+  (require "std/iter" all:)
+  (define both (frequencies (list "a" "b" "a")))
+  (test-check (hash? both))
+  (test-check (not (pair? both)))
+  (test-check= 2 (hash-length both))
+  (test-check= 2 (hash-ref both "a" 0))
+  (test-check= 1 (hash-ref both "b" 0))
+  (test-check (pair? (frequencies-alist (list "a" "a")))))
 
-(require "std/iter" all:)
-(define both (frequencies (list "a" "b" "a")))
-(check "after iter hash?" (hash? both) #t)
-(check "after iter not pair" (pair? both) #f)
-(check "after iter length" (hash-length both) 2)
-(check "after iter a" (hash-ref both "a" 0) 2)
-(check "after iter b" (hash-ref both "b" 0) 1)
-(check "alist explicit" (pair? (frequencies-alist (list "a" "a"))) #t)
+(test-case "hash-set is copy-on-write" (hash "issue" 5188)
+  (define src (hash "a" 1))
+  (define grown (hash-set src "b" 2))
+  (test-check= 1 (hash-length src))
+  (test-check= 2 (hash-length grown))
+  (define from-alist (alist->hash (list (cons "a" 2) (cons "b" 1))))
+  (test-check= 2 (hash-ref from-alist "a" 0)))
 
-; Builders that hash-set! a fresh table: alist->hash and the copy-on-write
-; hash-set. The source table stays unchanged.
-(define src (hash "a" 1))
-(define grown (hash-set src "b" 2))
-(check "cow source" (hash-length src) 1)
-(check "cow result" (hash-length grown) 2)
-(define from-alist (alist->hash (list (cons "a" 2) (cons "b" 1))))
-(check "alist->hash a" (hash-ref from-alist "a" 0) 2)
-
-(if (= *fails* 0)
-    (display "OK-frequencies-hash\n")
-    (begin
-      (display "FAIL-frequencies-hash fails=") (display *fails*) (newline)
-      (error "frequencies-hash failed")))
+(test-finish)

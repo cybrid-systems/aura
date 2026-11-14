@@ -1,17 +1,19 @@
-;; Issue #5032: json registration and the json-parse parser moved into
-;; RegSplitParts / JsonParser helpers. Names, order and values must not move.
-(define fails 0)
-(define (check pred msg)
-  (if pred
-      #t
-      (begin (set! fails (+ fails 1)) (display (format "FAIL ~a\n" msg)))))
-(check (equal? "hi" (json-parse "\"hi\"")) "parse string")
-(check (= 42 (json-parse "42")) "parse int")
-(check (equal? (list 1 2 3) (json-parse "[1,2,3]")) "parse array")
-(check (equal? #t (json-parse "true")) "parse true")
-(check (= 1 (hash-ref (json-parse "{\"a\":1}") "a")) "parse object")
-(check (equal? "[1,2]" (json-encode (list 1 2))) "encode list")
-(check (equal? "b" (json-get-string "{\"a\":\"b\"}" "a")) "get-string")
-(if (> fails 0)
-    (error "json split regression")
-    (begin (display "json split ok") (newline)))
+; Issue #5032: json registration and the json-parse parser moved into
+; RegSplitParts / JsonParser helpers. Names, order and values must not move.
+(require "std/test" all:)
+(test-file "json_reg_split_5032.aura")
+
+(test-case "json registration" (hash "issue" 5032)
+  (check= "hi" (json-parse "\"hi\""))
+  (check (= 42 (json-parse "42")))
+  (check= (list 1 2 3) (json-parse "[1,2,3]"))
+  (check= #t (json-parse "true"))
+  (check (= 1 (hash-ref (json-parse "{\"a\":1}") "a")))
+  (check= "[1,2]" (json-encode (list 1 2)))
+  (check= "b" (json-get-string "{\"a\":\"b\"}" "a")))
+
+; JSON false is #f. check would treat that value as a failure.
+(test-case "json false" (hash)
+  (check= #f (json-parse "false")))
+
+(test-finish)

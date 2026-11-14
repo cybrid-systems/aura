@@ -1,0 +1,42 @@
+; Wall-clock band for string-split against regex-split.
+; Kept out of the default suite: the bound is a machine-local ratio.
+; The piece counts live in tests/suite/string_split_fast_5283.aura.
+(require "std/string" all:)
+
+(define (repeat s n)
+  (let ((out "")
+        (bit s)
+        (k n))
+    (while (lambda () (> k 0))
+      (lambda ()
+        (if (= (modulo k 2) 1)
+            (set! out (string-append out bit)))
+        (set! bit (string-append bit bit))
+        (set! k (quotient k 2))))
+    out))
+
+(define (time-ms thunk)
+  (let ((t0 (monotonic-ms)))
+    (thunk)
+    (- (monotonic-ms) t0)))
+
+(define (min-ms thunk n)
+  (let ((best 999999)
+        (i 0))
+    (while (lambda () (< i n))
+      (lambda ()
+        (let ((dt (time-ms thunk)))
+          (if (< dt best) (set! best dt)))
+        (set! i (+ i 1))))
+    best))
+
+(define text4 (repeat "a\n" 4000))
+(string-split text4 "\n")
+(define ss-ms (min-ms (lambda () (string-split text4 "\n")) 3))
+(define re-ms (min-ms (lambda () (regex-split "\n" text4)) 3))
+(if (<= ss-ms (* (max re-ms 1) 4))
+    (begin (display "OK-split-band ") (display ss-ms)
+           (display " ") (display re-ms) (newline))
+    (begin (display "FAIL-split-band ") (display ss-ms)
+           (display " ") (display re-ms) (newline)
+           (exit 1)))

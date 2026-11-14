@@ -1,51 +1,23 @@
-;; expect: OK-5198-contracts
-; Issue #5198: iota, sorted?, and vector-map keep one contract no matter
-; which of the defining modules was required last. extract-code stays the
-; text extractor; the agent extractor is llm:extract-code.
-
-(define *fails* 0)
-(define (check name got want)
-  (if (equal? got want)
-      #t
-      (begin
-        (set! *fails* (+ *fails* 1))
-        (display "  FAIL: ") (display name)
-        (display " got ") (display got)
-        (display " want ") (display want) (newline))))
-
-(require "std/iter" all:)
-(require "std/list" all:)
-(require "std/vector" all:)
-(check "iota iter-then-list" (iota 5 1) (list 1 2 3 4 5))
-(check "iota one arg" (iota 5) (list 0 1 2 3 4))
-(check "iota step" (iota 3 1 2) (list 1 3 5))
-(check "vector-map zip" (vector-map + (vector 1 2) (vector 10 20 30)) (vector 11 22))
-(check "vector-map one" (vector-map (lambda (x) (+ x 1)) (vector 1 2)) (vector 2 3))
-; Exact issue repro. A one-argument procedure applied to two vectors yields
-; one empty list per index of the shortest vector (the historical result).
-(check "vector-map repro" (vector-map (lambda (x) x) (make-vector 2 0) (make-vector 3 1))
-       (vector '() '()))
-
-(require "std/algorithm" all:)
-(require "std/sort" all:)
-(check "sorted? one" (sorted? (list 1 2 3)) #t)
-(check "sorted? comparator" (sorted? (list 1 2 3) <) #t)
-(check "sorted? descending" (sorted? (list 3 1) >) #t)
-(check "sorted? false" (sorted? (list 3 1) <) #f)
-(check "sorted? vector" (sorted? (vector 1 2 4)) #t)
-
+; Issue #5198: extract-code is the text extractor. llm:extract-code is
+; the agent extractor. iota, vector-map, and sorted? live in the list,
+; vector, and sort homes. Require order and overwrite warnings stay in
+; tests/python/test_issue_5198_export_contracts.py.
+(require "std/test" all:)
 (require "std/agent" all:)
 (require "std/extract" all:)
-(check "text extract" (extract-code "x") "x")
-; #5224: llm:parse-response keeps the raw body when the JSON does not
-; parse, so extract-code answers a plain body unchanged.
-(check "llm keeps a plain body" (llm:extract-code "x") "x")
-; "error" must be present: llm:parse-response hash-refs that key.
-(define fenced "{\"error\":false,\"choices\":[{\"message\":{\"content\":\"(lambda (x) x)\"}}]}")
-(check "llm extract" (llm:extract-code fenced) "(lambda (x) x)")
+(test-file "export_contracts_5198.aura")
 
-(if (= *fails* 0)
-    (display "OK-5198-contracts\n")
-    (begin
-      (display "FAIL-5198-contracts fails=") (display *fails*) (newline)
-      (error "export contracts failed")))
+(define fenced "{\"error\":false,\"choices\":[{\"message\":{\"content\":\"(lambda (x) x)\"}}]}")
+
+(test-case "text extract" (hash "issue" 5198)
+  (check= "x" (extract-code "x")))
+
+; llm:parse-response keeps the raw body when the JSON does not parse.
+(test-case "llm keeps a plain body" (hash "issue" 5198)
+  (check= "x" (llm:extract-code "x")))
+
+; "error" must be present: llm:parse-response hash-refs that key.
+(test-case "llm extract" (hash "issue" 5198)
+  (check= "(lambda (x) x)" (llm:extract-code fenced)))
+
+(test-finish)

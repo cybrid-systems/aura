@@ -1,0 +1,24 @@
+; Wall-clock band for string-ref at the start and near the end of a
+; long ASCII string. Kept out of the default suite. The code-point
+; results live in tests/suite/string_index_o1_4548.aura.
+(define (dbl s k) (if (= k 0) s (dbl (string-append s s) (- k 1))))
+(define a10 "abcdefghij")
+(define big (dbl (string-append a10 a10 a10) 13))
+
+(define (refs s off n)
+  (let l ((i 0) (acc 0))
+    (if (< i n) (l (+ i 1) (+ acc (string-ref s (+ off i)))) acc)))
+
+(define (time-ms th)
+  (let ((t0 (current-time-ms)))
+    (th)
+    (- (current-time-ms) t0)))
+
+(define t-lo (time-ms (lambda () (refs big 0 3000))))
+(define t-hi (time-ms (lambda () (refs big 240000 3000))))
+(if (<= t-hi (+ 20 (* 4 t-lo)))
+    (begin (display "OK-ref-flat ") (display t-lo)
+           (display " ") (display t-hi) (newline))
+    (begin (display "FAIL-ref-flat ") (display t-lo)
+           (display " ") (display t-hi) (newline)
+           (exit 1)))
