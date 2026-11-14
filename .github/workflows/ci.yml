@@ -337,7 +337,7 @@ jobs:
         python3 -c "import json, subprocess; d = json.loads(subprocess.check_output(['cmake', '-E', 'capabilities'])); v = d['version']; assert (v['major'], v['minor']) == (4, 5), v; assert d['instrumentation']['apiVersion'] >= 1, d['instrumentation']; print('cmake', v['string'], 'instrumentation', d['instrumentation']['apiVersion'])"
 
     - name: Toolchain pins (#5201)
-      run: python3 tests/python/test_ci_toolchain_image.py -v
+      run: python3 tests/python/process/test_ci_toolchain_image.py -v
 
     # gate = docs --check + ruff + clang-format + fixtures + surface audits.
     - name: Static checks (docs + lint + format + fixtures)
