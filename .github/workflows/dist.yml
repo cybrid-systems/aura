@@ -59,9 +59,7 @@ jobs:
         run: |
           pip install --break-system-packages -r requirements-dev.txt
           AURA_TEST_JOBS=4 python3 build.py test bash
-          for t in 4912 4913 4914 4909_first_error 4908_cross_mode 4934_version 4948_help; do
-            python3 tests/python/test_issue_$t.py
-          done
+          python3 tests/run.py process --tier fast
       - name: Bundle
         run: scripts/tools/bundle.sh build "${VER#v}"
       - uses: actions/upload-artifact@v7

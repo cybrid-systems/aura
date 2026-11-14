@@ -103,7 +103,7 @@ class TestQueryAndRefusal(unittest.TestCase):
             "tests/suite/string_join_5185.aura": "tests/suite/string_join.aura",
             "tests/suite/iota_5192.aura": "tests/suite/list_srfi_5133.aura",
             "tests/suite/fiber_cancel_5064.aura": "tests/suite/issue_5064_fiber_cancel_text.aura",
-            "tests/python/test_help_5226.py": "tests/python/test_issue_4935_help.py",
+            "tests/python/test_help_5226.py": "tests/python/process/test_cli_help.py",
         }
         for path, home in cases.items():
             text = self.m.format_refusal([path])
@@ -196,7 +196,7 @@ class TestCollectAdded(unittest.TestCase):
             path.unlink(missing_ok=True)
 
     def test_modified_existing_numbered_file_is_not_added(self) -> None:
-        rel = "tests/python/test_issue_5198_export_contracts.py"
+        rel = "tests/suite/issue_5064_fiber_cancel_text.aura"
         status = subprocess.run(
             [*GIT, "status", "--porcelain", "--", rel],
             cwd=ROOT,

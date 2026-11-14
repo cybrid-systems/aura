@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-TEST = ROOT / "tests" / "python" / "test_ci_toolchain_image.py"
+TEST = ROOT / "tests" / "python" / "process" / "test_ci_toolchain_image.py"
 
 
 def main() -> int:

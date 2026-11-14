@@ -55,7 +55,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/python/test_issue_5057.py",
+      "path": "tests/python/process/test_env_frame_exhaustion.py",
       "contains": [
         "test_file_mode_reports_an_error_instead_of_sigabrt",
         "test_an_aura_handler_can_catch_it",

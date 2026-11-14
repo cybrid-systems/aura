@@ -3,7 +3,7 @@
 ; file: export_set_nested_require.aura, export_set_after_require.aura,
 ; export_set_require_order.aura, bench_exports.aura, and
 ; issue_5062_stats_export.aura. Overwrite warnings are stderr, so they
-; stay in tests/python/test_issue_5198_export_contracts.py.
+; stay in tests/python/process/export_contracts.py.
 (require "std/test" all:)
 (test-file "module.aura")
 

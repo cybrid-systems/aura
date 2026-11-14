@@ -16,6 +16,7 @@ Usage:
   python3 tests/run.py home "<query>"
   python3 tests/run.py cover --issue N
   python3 tests/run.py cover --name <symbol>
+  python3 tests/run.py process [--tier fast|l2]
 
   python3 tests/run.py issues --json          # machine-readable summary
   python3 tests/run.py --json fixtures        # JSON wrap for simple categories
@@ -31,9 +32,12 @@ See tests/README.md § Running tests.
 from __future__ import annotations
 
 import argparse
+import ast
 import os
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # Issue #1932: this file lives under tests/python/ (thin entry: tests/run.py).
@@ -195,6 +199,194 @@ def _cmd_cover(args: argparse.Namespace) -> int:
     return code
 
 
+_PROCESS_FIELDS = ("PROCESS_THEME", "PROCESS_TIMEOUT", "PROCESS_TIER", "CASES", "PARTS")
+
+
+def _assigned_literals(path: Path) -> dict[str, object]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found: dict[str, object] = {}
+    for node in tree.body:
+        targets: list[ast.expr] = []
+        value: ast.expr | None = None
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+            value = node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+            value = node.value
+        if value is None:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id in _PROCESS_FIELDS:
+                found[target.id] = ast.literal_eval(value)
+    return found
+
+
+def _is_testcase(node: ast.ClassDef) -> bool:
+    for base in node.bases:
+        if isinstance(base, ast.Name) and base.id == "TestCase":
+            return True
+        if isinstance(base, ast.Attribute) and base.attr == "TestCase":
+            return True
+    return False
+
+
+def _test_methods(path: Path) -> list[tuple[str, str]]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    found: list[tuple[str, str]] = []
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
+            raise ValueError(f"module-level {node.name}")
+        if not isinstance(node, ast.ClassDef) or not _is_testcase(node):
+            continue
+        for item in node.body:
+            if isinstance(item, ast.FunctionDef) and item.name.startswith("test_"):
+                found.append((node.name, item.name))
+    return found
+
+
+def _validate_process(proc: Path) -> tuple[list[str], list[tuple[Path, int, str]]]:
+    """Return (errors, [(theme path, timeout seconds, tier)]). Does not import."""
+    errors: list[str] = []
+    themes: list[tuple[Path, int, str]] = []
+    referenced: set[str] = set()
+    for path in sorted(proc.glob("test_*.py")):
+        try:
+            meta = _assigned_literals(path)
+        except (SyntaxError, ValueError) as exc:
+            errors.append(f"{path.name}: {exc}")
+            continue
+        theme = meta.get("PROCESS_THEME")
+        tier = meta.get("PROCESS_TIER")
+        timeout = meta.get("PROCESS_TIMEOUT")
+        cases = meta.get("CASES")
+        parts = meta.get("PARTS", ())
+        if not isinstance(theme, str) or not theme:
+            errors.append(f"{path.name}: missing PROCESS_THEME")
+            continue
+        if tier not in ("fast", "l2"):
+            errors.append(f"{path.name}: PROCESS_TIER must be fast or l2")
+            continue
+        if not isinstance(timeout, int) or timeout <= 0:
+            errors.append(f"{path.name}: PROCESS_TIMEOUT must be a positive int")
+            continue
+        if not isinstance(parts, tuple) or not all(isinstance(part, str) for part in parts):
+            errors.append(f"{path.name}: PARTS must be a tuple of module names")
+            continue
+        if not isinstance(cases, tuple):
+            errors.append(f"{path.name}: CASES must be a tuple")
+            continue
+        try:
+            own = _test_methods(path)
+        except (SyntaxError, ValueError) as exc:
+            errors.append(f"{path.name}: {exc}")
+            continue
+        part_methods: dict[str, set[tuple[str, str]]] = {}
+        for part in parts:
+            if part.startswith("test_") or not part.isidentifier():
+                errors.append(f"{path.name}: bad part name {part}")
+                continue
+            part_path = proc / f"{part}.py"
+            if not part_path.is_file():
+                errors.append(f"{path.name}: missing part {part}.py")
+                continue
+            referenced.add(part)
+            try:
+                part_methods[part] = set(_test_methods(part_path))
+            except (SyntaxError, ValueError) as exc:
+                errors.append(f"{part}.py: {exc}")
+        specs: set[tuple[str, str, str]] = set()
+        listed_own: set[tuple[str, str]] = set()
+        listed_part: dict[str, set[tuple[str, str]]] = {part: set() for part in part_methods}
+        for row in cases:
+            if (
+                not isinstance(row, tuple)
+                or len(row) != 3
+                or not isinstance(row[0], int)
+                or not isinstance(row[1], str)
+                or not isinstance(row[2], str)
+            ):
+                errors.append(f"{path.name}: bad CASES row {row!r}")
+                continue
+            bits = row[2].split(".")
+            if len(bits) == 2:
+                key = (bits[0], bits[1])
+                if key in listed_own:
+                    errors.append(f"{path.name}: duplicate {row[2]}")
+                listed_own.add(key)
+            elif len(bits) == 3:
+                spec = (bits[0], bits[1], bits[2])
+                if spec in specs:
+                    errors.append(f"{path.name}: duplicate {row[2]}")
+                specs.add(spec)
+                if bits[0] not in part_methods:
+                    errors.append(f"{path.name}: {row[2]} is not in PARTS")
+                else:
+                    listed_part[bits[0]].add((bits[1], bits[2]))
+            else:
+                errors.append(f"{path.name}: bad spec {row[2]}")
+        for cls, method in own:
+            if (cls, method) not in listed_own:
+                errors.append(f"{path.name}: {cls}.{method} missing from CASES")
+        for cls, method in listed_own:
+            if (cls, method) not in own:
+                errors.append(f"{path.name}: CASES lists missing {cls}.{method}")
+        for part, methods in part_methods.items():
+            for cls, method in methods:
+                if (cls, method) not in listed_part.get(part, set()):
+                    errors.append(f"{path.name}: {part}.{cls}.{method} missing from CASES")
+            for cls, method in listed_part.get(part, set()):
+                if (cls, method) not in methods:
+                    errors.append(f"{path.name}: CASES lists missing {part}.{cls}.{method}")
+        themes.append((path, timeout, tier))
+    for part in sorted(proc.glob("*.py")):
+        if part.name.startswith("test_"):
+            continue
+        if part.stem not in referenced:
+            errors.append(f"orphan part {part.name}")
+    return errors, themes
+
+
+def _cmd_process(args: argparse.Namespace) -> int:
+    proc = _PYTHON / "process"
+    if not proc.is_dir():
+        print("missing tests/python/process", file=sys.stderr)
+        return 1
+    errors, themes = _validate_process(proc)
+    if errors:
+        for line in errors:
+            print(line, file=sys.stderr)
+        return 1
+    selected = [(path, timeout) for path, timeout, tier in themes if tier == args.tier]
+    failed: list[tuple[str, int]] = []
+    for path, timeout in selected:
+        rel = path.relative_to(ROOT).as_posix()
+        print(f"process {rel} timeout={timeout}s", flush=True)
+        started = time.monotonic()
+        child = subprocess.Popen(
+            [sys.executable, str(path)],
+            cwd=str(ROOT),
+            start_new_session=True,
+        )
+        try:
+            rc = child.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.wait()
+            rc = 124
+            print(f"TIMEOUT {rel} after {timeout}s", file=sys.stderr)
+        elapsed = time.monotonic() - started
+        print(f"process {rel} rc={rc} {elapsed:.1f}s", flush=True)
+        if rc != 0:
+            failed.append((rel, rc))
+    if failed:
+        for rel, rc in failed:
+            print(f"FAIL {rel} rc={rc}", file=sys.stderr)
+        return 1
+    print(f"process: {len(selected)} theme(s) passed ({args.tier})")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="tests/run.py",
@@ -263,6 +455,13 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--issue", type=int, help="issue number")
     group.add_argument("--name", help="symbol or phrase")
     p_cov.set_defaults(func=_cmd_cover)
+
+    p_proc = sub.add_parser(
+        "process",
+        help="Run tests/python/process themes (default tier: fast; l2 is the soak tier)",
+    )
+    p_proc.add_argument("--tier", choices=("fast", "l2"), default="fast")
+    p_proc.set_defaults(func=_cmd_process)
 
     return ap
 

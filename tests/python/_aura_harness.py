@@ -194,5 +194,6 @@ CATEGORIES: dict[str, str] = {
     "e2e": "commercial_readiness .aura E2E + golden PASS labels (#1934)",
     "home": "Theme file and std/test append snippet for a query (#5225)",
     "cover": "Cases covering an issue number or a symbol (#5225)",
+    "process": "Python process themes under tests/python/process (#5230)",
     "list": "List categories (this help)",
 }

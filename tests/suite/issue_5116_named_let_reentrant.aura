@@ -1,7 +1,7 @@
 ; #5116: a named-let called twice on the same thread must see each call's
 ; captured frame. The integer fast path used to freeze the first call's
 ; free var for the rest of the thread. The --serve-async-bench face stays
-; in tests/python/test_issue_5116_named_let.py.
+; in tests/python/process/fiber_named_let.py.
 (require "std/test" all:)
 (test-file "issue_5116_named_let_reentrant.aura")
 

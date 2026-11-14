@@ -44,7 +44,7 @@ def main() -> int:
     hh = _read("src/compiler/mutate_dispatch.hh")
     guard_lint = _read("scripts/coverage/checks/check_mutation_guard_coverage.py")
     t = _read("tests/compiler/test_mutation_guard_try_acquire_unit.cpp")
-    t1964 = _read("tests/python/test_architectural_simplification_1964.py")
+    t1964 = _read("tests/python/process/test_arch_simplify.py")
     build = _read("build.py")
 
     must("mutate_dispatch_try_acquire", "AC1", hh)

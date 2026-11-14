@@ -194,28 +194,28 @@ HOMES: tuple[Home, ...] = (
     _h(
         "cli/help",
         "python",
-        "tests/python/test_issue_4935_help.py",
+        "tests/python/process/test_cli_help.py",
         ("--help", "cli help", "help"),
         note="CLI / help process checks. Behavior assertions do not go in this file.",
     ),
     _h(
         "diagnostic-location",
         "python",
-        "tests/python/test_issue_4864.py",
+        "tests/python/process/test_diagnostic_location.py",
         ("--load", "oneshot", "file face", "diagnostic location"),
         note=("Process faces only: --load vs the file face vs oneshot. Behavior assertions do not go in this file."),
     ),
     _h(
         "cross-mode",
         "python",
-        "tests/python/test_issue_4908_cross_mode.py",
+        "tests/python/process/test_cross_mode.py",
         ("cross-mode", "cross mode"),
         note=("Cross-mode process gate (tests/cross_mode/). Behavior assertions do not go in this file."),
     ),
     _h(
         "sandbox",
         "python",
-        "tests/python/test_issue_4870_production_sandbox.py",
+        "tests/python/process/test_sandbox.py",
         ("Restricted", "AURA_SANDBOX", "sandbox", "production sandbox"),
         note=("Production sandbox / Restricted process checks. Behavior assertions do not go in this file."),
     ),
@@ -420,9 +420,7 @@ def _python_snippet(home: Home, query: str) -> str:
     return (
         f"# Append a process check to {home.path}.\n"
         "# Behavior assertions do not go in this file.\n"
-        "class Case(unittest.TestCase):\n"
-        f"    def test_{name}(self) -> None:\n"
-        "        ...\n"
+        f'# (0, "{name}", "part.Case.test_{name}")\n'
     )
 
 
