@@ -17,6 +17,7 @@ Usage:
   python3 tests/run.py cover --issue N
   python3 tests/run.py cover --name <symbol>
   python3 tests/run.py process [--tier fast|l2]
+  python3 tests/run.py affected [paths…]   # L1 home + std/test + smoke; no issue-farm
 
   python3 tests/run.py issues --json          # machine-readable summary
   python3 tests/run.py --json fixtures        # JSON wrap for simple categories
@@ -48,6 +49,7 @@ if str(_PYTHON) not in sys.path:
     sys.path.insert(0, str(_PYTHON))
 
 from _aura_harness import (  # noqa: E402
+    AFFECTED_DOC,
     AURA_BIN,
     BUILD,
     CATEGORIES,
@@ -197,6 +199,12 @@ def _cmd_cover(args: argparse.Namespace) -> int:
     code, text = render_cover(issue=args.issue, name=args.name)
     print(text, end="")
     return code
+
+
+def _cmd_affected(args: argparse.Namespace) -> int:
+    from affected import main_affected
+
+    return main_affected(list(args.paths), plan_only=args.plan)
 
 
 _PROCESS_FIELDS = ("PROCESS_THEME", "PROCESS_TIMEOUT", "PROCESS_TIER", "CASES", "PARTS")
@@ -462,6 +470,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_proc.add_argument("--tier", choices=("fast", "l2"), default="fast")
     p_proc.set_defaults(func=_cmd_process)
+
+    p_aff = sub.add_parser("affected", help=AFFECTED_DOC)
+    p_aff.add_argument(
+        "--plan",
+        action="store_true",
+        help="print the genealogy selection and do not run it",
+    )
+    p_aff.add_argument(
+        "paths",
+        nargs="*",
+        help="repo-relative paths to map; omit to use the workspace git diff",
+    )
+    p_aff.set_defaults(func=_cmd_affected)
 
     return ap
 
