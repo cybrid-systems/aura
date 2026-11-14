@@ -29,7 +29,7 @@
     },
     {
       "ac": "AC1",
-      "path": "tests/python/test_issue_5056.py",
+      "path": "tests/python/process/repl_soft.py",
       "contains": [
         "test_if_and_or_conditions_are_quiet",
         "test_format_into_rebind_is_quiet",

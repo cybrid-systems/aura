@@ -1,9 +1,9 @@
 # Cross-mode consistency gate
 
 A program gives the same result however aura runs it. The gate
-`tests/python/test_issue_4908_cross_mode.py` enforces that (#4908). It
+`tests/python/process/xmode_corpus.py` enforces that (#4908). It
 runs in the CI `build-test` job, in the step "Cross-mode gate + DX
-contracts".
+contracts" (`python3 tests/run.py process --tier fast`).
 
 ## What it compares
 
@@ -40,8 +40,8 @@ for this, not the `AURA_PIN` the kits use.
 ## Run it locally
 
 ```sh
-python3 tests/python/test_issue_4908_cross_mode.py
-AURA_STARTER_KITS=../aura-starter-kits python3 tests/python/test_issue_4908_cross_mode.py
+python3 tests/python/process/xmode_corpus.py
+AURA_STARTER_KITS=../aura-starter-kits python3 tests/python/process/xmode_corpus.py
 ```
 
 ## Allowlist: intended differences

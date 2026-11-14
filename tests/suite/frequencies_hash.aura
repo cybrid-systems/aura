@@ -1,6 +1,6 @@
 ; Issue #5188: std/hash frequencies and std/iter frequencies are one
 ; hash-shaped function. The Restricted preset matrix stays in
-; tests/python/test_frequencies_restricted.py.
+; tests/python/process/sand_frequencies.py.
 (require "std/test" all:)
 (require "std/list" all:)
 (test-file "frequencies_hash.aura")

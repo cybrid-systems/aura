@@ -1,7 +1,7 @@
 ; file header comment (plain semicolon)
 ; Issue #5199: a closed "(;" is still a list. The opener's line is a
 ; comment and the body runs. Row, column, the "(;" hint, and the file
-; face versus --load stay in tests/python/test_issue_5199_unclosed_list.py.
+; face versus --load stay in tests/python/process/export_unclosed.py.
 (require "std/test" all:)
 (test-file "paren_semi_comment_5199.aura")
 

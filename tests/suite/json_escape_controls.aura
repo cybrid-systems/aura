@@ -1,6 +1,6 @@
 ; Issue #5189: json-escape emits RFC 8259 escapes for controls, quotes,
 ; and backslashes. Aura's json-parse still accepts raw controls, so the
-; strict parser check stays in tests/python/test_json_escape_controls.py.
+; strict parser check stays in tests/python/process/json_escape.py.
 (require "std/test" all:)
 (require "std/json" all:)
 (test-file "json_escape_controls.aura")

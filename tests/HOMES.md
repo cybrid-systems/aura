@@ -68,10 +68,10 @@ These compare processes, faces, and grants. Behavior assertions do not go here.
 
 | Surface | Home now | Ask with |
 |---|---|---|
-| CLI / help | `tests/python/test_issue_4935_help.py` | `--help` |
-| Diagnostic location (`--load` vs file face vs oneshot) | `tests/python/test_issue_4864.py` | `--load`, `oneshot` |
-| cross-mode | `tests/python/test_issue_4908_cross_mode.py` | `cross-mode` |
-| sandbox / Restricted | `tests/python/test_issue_4870_production_sandbox.py` | `Restricted`, `AURA_SANDBOX` |
+| CLI / help | `tests/python/process/test_cli_help.py` | `--help` |
+| Diagnostic location (`--load` vs file face vs oneshot) | `tests/python/process/test_diagnostic_location.py` | `--load`, `oneshot` |
+| cross-mode | `tests/python/process/test_cross_mode.py` | `cross-mode` |
+| sandbox / Restricted | `tests/python/process/test_sandbox.py` | `Restricted`, `AURA_SANDBOX` |
 
 ## C++ query homes
 

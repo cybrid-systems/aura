@@ -12,7 +12,7 @@
     },
     {
       "ac": "AC2",
-      "path": "tests/python/test_issue_5052.py",
+      "path": "tests/python/process/evo_recursive.py",
       "contains": [
         "#5052",
         "the recursive rebind must not be fail-closed",

@@ -1,7 +1,7 @@
 ; Issue #5198: extract-code is the text extractor. llm:extract-code is
 ; the agent extractor. iota, vector-map, and sorted? live in the list,
 ; vector, and sort homes. Require order and overwrite warnings stay in
-; tests/python/test_issue_5198_export_contracts.py.
+; tests/python/process/export_contracts.py.
 (require "std/test" all:)
 (require "std/agent" all:)
 (require "std/extract" all:)

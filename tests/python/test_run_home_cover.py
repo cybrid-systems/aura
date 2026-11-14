@@ -36,7 +36,7 @@ class TestHome(unittest.TestCase):
             "(;": "tests/suite/paren_semi_comment_5199.aura",
             "extract-code": "tests/suite/export_contracts_5198.aura",
             "fiber cancel": "tests/suite/issue_5064_fiber_cancel_text.aura",
-            "--help": "tests/python/test_issue_4935_help.py",
+            "--help": "tests/python/process/test_cli_help.py",
         }
         for query, path in expect.items():
             code, text = render_home(query)
@@ -111,7 +111,7 @@ class TestHome(unittest.TestCase):
         self.assertIn("home: tests/core/test_capability_sandbox_batch.cpp", text)
         code, text = render_home("sandbox")
         self.assertEqual(code, 0)
-        self.assertIn("home: tests/python/test_issue_4870_production_sandbox.py", text)
+        self.assertIn("home: tests/python/process/test_sandbox.py", text)
 
     def test_keywords_do_not_share_a_surface(self) -> None:
         owners: dict[tuple[str, ...], set[str]] = {}
@@ -162,13 +162,13 @@ class TestCover(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertIn("tests/suite/export_contracts_5198.aura", text)
         self.assertIn("iota iter-then-list", text)
-        self.assertIn("tests/python/test_issue_5198_export_contracts.py", text)
+        self.assertIn("tests/python/process/export_contracts.py", text)
         self.assertIn("#5198", text)
 
         code, text = render_cover(issue=5199)
         self.assertEqual(code, 0, text)
         self.assertIn("tests/suite/paren_semi_comment_5199.aura", text)
-        self.assertIn("tests/python/test_issue_5199_unclosed_list.py", text)
+        self.assertIn("tests/python/process/export_unclosed.py", text)
         self.assertIn("#5199", text)
 
         code, text = render_cover(issue=5185)

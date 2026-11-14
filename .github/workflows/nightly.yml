@@ -207,7 +207,7 @@ jobs:
       env:
         AURA_SANDBOX: "off"
         AURA_OFFLOAD_SOAK_ROUNDS: "20000"
-      run: python3 tests/python/test_issue_4889_offload_soak.py -v
+      run: python3 tests/python/process/test_offload_soak.py -v
 
   coverage:
     runs-on: ubuntu-latest

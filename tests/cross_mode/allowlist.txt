@@ -1,6 +1,6 @@
 # Cross-mode consistency gate allowlist (#4908).
 #
-# tests/python/test_issue_4908_cross_mode.py runs every tests/cross_mode/*.aura
+# tests/python/process/xmode_corpus.py runs every tests/cross_mode/*.aura
 # program under {default, AURA_PIPELINE_STRICT=0, force-soa} x {direct, --load}
 # (AURA_SANDBOX=off) and requires stdout, exit code and the first error's
 # line:col to match the default/direct face. An intended difference is listed
