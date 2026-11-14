@@ -1058,8 +1058,6 @@ MessagingChannelCodec RegSplitParts::messaging_channel_codec(Evaluator& ev) {
                                       std::string& why) -> bool {
         auto vref = ev.primitives_.lookup("vector-ref");
         auto vlen = ev.primitives_.lookup("vector-length");
-        auto hkeys = ev.primitives_.lookup("hash-keys");
-        auto href = ev.primitives_.lookup("hash-ref");
         std::size_t nodes = 0;
         auto put_u64 = [&out](std::uint64_t x) {
             char b[8];
@@ -1123,20 +1121,38 @@ MessagingChannelCodec RegSplitParts::messaging_channel_codec(Evaluator& ev) {
                         return false;
                 return true;
             }
-            if (is_hash(v) && hkeys && href) {
-                std::vector<EvalValue> keys;
-                EvalValue cur = (*hkeys)({v});
-                while (is_pair(cur)) {
-                    Pair p;
-                    if (!pair_at(cur, p))
-                        break;
-                    keys.push_back(p.car);
-                    cur = p.cdr;
+            if (is_hash(v)) {
+                // Issue #5154: hash-keys built a fresh pair list in the
+                // SENDER's heap on every send. That list was held only in
+                // this C++ frame, so a concurrent file-heap sweep could
+                // reclaim it mid-encode and the receiver rebuilt an EMPTY
+                // hash (e.g. op=call lost). Copy the live slots straight
+                // from the table, under the hash lock, instead: every entry
+                // stays reachable through the rooted hash, so the encode
+                // introduces no unrooted heap temporary at all.
+                std::vector<std::pair<EvalValue, EvalValue>> entries;
+                const std::uint64_t hidx = as_hash_idx(v);
+                {
+                    std::scoped_lock hlock(ev.hash_tables_mutex());
+                    std::scoped_lock slock(ev.alloc_storage_lock_);
+                    if (hidx < g_hash_tables.size() && g_hash_tables[hidx] != nullptr &&
+                        !aura_hash_gate_checked(hidx, ev.capability_tenant_id(),
+                                                ev.effect_sandbox_mode(), "channel:send")) {
+                        auto* ht = g_hash_tables[hidx];
+                        const auto* meta = ht->metadata();
+                        const auto* keys = ht->keys();
+                        const auto* vals = ht->values();
+                        for (std::size_t i = ht->capacity; i > 0; --i) {
+                            if (!::aura::compiler::hash::hash_slot_is_live(meta[i - 1]))
+                                continue;
+                            entries.emplace_back(EvalValue{keys[i - 1]}, EvalValue{vals[i - 1]});
+                        }
+                    }
                 }
                 out.push_back('H');
-                put_u64(keys.size());
-                for (const auto& k : keys)
-                    if (!self(self, k, depth + 1) || !self(self, (*href)({v, k}), depth + 1))
+                put_u64(entries.size());
+                for (const auto& entry : entries)
+                    if (!self(self, entry.first, depth + 1) || !self(self, entry.second, depth + 1))
                         return false;
                 return true;
             }

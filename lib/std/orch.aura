@@ -62,6 +62,9 @@
 
 (define *orch-agents* (quote ()))
 (define *orch-epoch* 0)
+; #5154: per-ask reply tag. A late answer must never be taken for the
+; next caller's answer when a channel slot is recycled.
+(define *orch-ask-seq* 0)
 (define orch:default-timeout 30)
 
 (define (orch:registry-epoch) *orch-epoch*)
@@ -140,6 +143,13 @@
 (define (orch-worker name inbox outbox handler)
   ; Blocking recv is cooperative: the fiber parks and lets the caller run.
   ; A poll+sleep loop would block the whole scheduler thread instead.
+  ; #5154: a caller that timed out must not wedge the worker. The outbox
+  ; is a rendezvous channel, so a reply sent after the caller stopped
+  ; waiting used to block here forever, and every later ask to this agent
+  ; timed out too. An ask sends a list that names a private (buffered)
+  ; reply channel and a tag; the reply goes there and this loop keeps
+  ; serving. List payloads also avoid the hash-key copy that the channel
+  ; codec builds from the sender's heap during channel:send.
   (let loop ()
     (let ((msg (channel:recv inbox)))
       (cond
@@ -148,6 +158,19 @@
          (channel:send outbox
                        (try (handler (hash-ref msg "value" #f))
                             (catch (e) (list "agent-error" name e))))
+         (loop))
+        ((and (pair? msg) (string=? (car msg) "stop")) 'stopped)
+        ((and (pair? msg) (string=? (car msg) "call"))
+         (channel:send outbox
+                       (try (handler (car (cdr msg)))
+                            (catch (e) (list "agent-error" name e))))
+         (loop))
+        ((and (pair? msg) (string=? (car msg) "ask"))
+         (let ((result (try (handler (car (cdr msg)))
+                            (catch (e) (list "agent-error" name e))))
+               (reply-to (car (cdr (cdr msg))))
+               (tag (car (cdr (cdr (cdr msg))))))
+           (channel:send reply-to (list "result" tag result)))
          (loop))
         (else (loop))))))
 
@@ -201,7 +224,7 @@
       ((not h) #f)
       ((equal? (orch:status name) "stopped") "stopped")
       ((and (hash? h) (orch-channel? (hash-ref h "inbox" #f)))
-       (try (channel:send (hash-ref h "inbox") (hash "op" "stop")) (catch (e) #f))
+       (try (channel:send (hash-ref h "inbox") (list "stop")) (catch (e) #f))
        (try (fiber:join (hash-ref h "fiber")) (catch (e) #f))
        (orch-set-status! name "stopped"))
       (else (orch-set-status! name "stopped")))))
@@ -230,7 +253,7 @@
   (let ((h (orch:handle-of target)))
     (cond
       ((and (hash? h) (orch-channel? (hash-ref h "inbox" #f)))
-       (channel:send (hash-ref h "inbox") (hash "op" "call" "value" value)))
+       (channel:send (hash-ref h "inbox") (list "call" value)))
       ((string? target)
        (try (send target (json-encode value)) (catch (e) #f)))
       (else #f))))
@@ -267,34 +290,31 @@
                        (number->string timeout)
                        "s waiting for " who)))
 
-; #5154: the outbox is a rendezvous channel, so try-recv never unblocks
-; the handler's send. Race one blocking recv against a timer on a private
-; bridge; whichever arrives first is the result. Both racers are cancelled
-; when the race ends.
-(define (orch-bridge-reply? msg)
-  (and (pair? msg) (string? (car msg)) (string=? (car msg) "reply")))
+; #5154: the ask carries a private buffered reply channel instead of
+; racing a watcher against a timer on the shared rendezvous outbox. The
+; old race could leave the handler's reply send blocked on the outbox
+; (no receiver) and hand a late answer to the next caller. The tag keeps
+; an answer that outlived a recycled channel slot out of this ask.
+(define (orch-next-ask-tag)
+  (set! *orch-ask-seq* (+ *orch-ask-seq* 1))
+  *orch-ask-seq*)
 
 (define (orch-ask-local h target input timeout)
-  (orch:send target input)
-  (let* ((outbox (hash-ref h "outbox"))
-         (who (orch-ask-who target h))
-         (bridge (channel:create 2))
-         (watcher (fiber:spawn
-                    (lambda ()
-                      (let ((reply (channel:recv outbox)))
-                        (channel:send bridge (list "reply" reply))))))
-         (timer (fiber:spawn
-                  (lambda ()
-                    (orch-wait-sec timeout)
-                    (channel:send bridge (list "timeout")))))
-         (first (channel:recv bridge))
-         (second (channel:try-recv bridge))
-         (msg (if (orch-bridge-reply? second) second first)))
-    (try (fiber:cancel watcher) (catch (e) #f))
-    (try (fiber:cancel timer) (catch (e) #f))
-    (if (orch-bridge-reply? msg)
-        (car (cdr msg))
-        (orch-ask-timeout-record who timeout))))
+  (let* ((who (orch-ask-who target h))
+         (tag (orch-next-ask-tag))
+         (reply-ch (channel:create 1))
+         (deadline (+ (monotonic-ms) (* timeout 1000))))
+    (channel:send (hash-ref h "inbox") (list "ask" input reply-ch tag))
+    (let loop ()
+      (let ((msg (channel:try-recv reply-ch)))
+        (if msg
+            (if (and (pair? msg) (string=? (car msg) "result")
+                     (equal? (car (cdr msg)) tag))
+                (car (cdr (cdr msg)))
+                (loop))
+            (if (>= (monotonic-ms) deadline)
+                (orch-ask-timeout-record who timeout)
+                (begin (fiber:yield) (loop))))))))
 
 ; ── orch:ask — send one task, wait for its result ──
 ; A stopped local agent is refused with a record: {status:"agent-stopped",
