@@ -99,6 +99,9 @@ tests/
 Aura L1 cases live in `lib/std/test.aura` (`test-case` / `test-finish`).
 `;; expect-status:` and `;; expect-err:` on a suite file are judged like
 `SnippetSpec`. `std/edsl-test-harness` is a compatibility shim.
+`python3 tests/run.py home "<query>"` prints the theme file and an append
+snippet. `cover --issue N` and `cover --name <symbol>` list cases that
+already cover it. See [`HOMES.md`](HOMES.md).
 
 ## 命名约定
 
