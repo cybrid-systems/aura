@@ -14001,14 +14001,41 @@ public:
                 return std::nullopt;
             if (slot.calls.fetch_add(1, std::memory_order_relaxed) + 1 < tier_jit_hot_4682_())
                 return std::nullopt;
-            auto job = tier_snapshot_4682_(b.module, b.bound_closure, slot, name);
+            // Issue #4682: the IR body names its own recursion with a
+            // MakeClosure of its function id, so the snapshot needs a private
+            // cell holding this binding's closure word to rewrite it into a
+            // top-cell load (same one-self-cell-per-name contract as the
+            // walker path). A stable index keeps a rebind back to an earlier
+            // body byte-identical; only the current top binding runs native
+            // (tw_tier_self_bound_4682_).
+            auto& cells = evaluator_.cells();
+            auto sc = tw_self_cell_4682_.find(name);
+            const bool cell_reuse = sc != tw_self_cell_4682_.end() &&
+                                    sc->second.first < cells.size() &&
+                                    cells[sc->second.first] == sc->second.second;
+            const auto ci =
+                cell_reuse ? sc->second.first : static_cast<std::uint32_t>(cells.size());
+            types::EvalValue cell_prev{};
+            if (cell_reuse) {
+                cell_prev = cells[ci];
+                cells[ci] = b.bound_closure;
+            } else {
+                cells.push_back(b.bound_closure);
+            }
+            auto job = tier_snapshot_4682_(b.module, b.bound_closure, slot, name, ci);
             if (!job) {
+                if (cell_reuse) {
+                    cells[ci] = cell_prev;
+                } else if (cells.size() == ci + 1u) {
+                    cells.pop_back();
+                }
                 slot.state.store(3, std::memory_order_release);
                 tier_stats_4682_.ineligible.fetch_add(1, std::memory_order_relaxed);
                 if (tier_jit_trace_4682_())
                     std::fprintf(stderr, "[tier4682] %s ineligible\n", name.c_str());
                 return std::nullopt;
             }
+            tw_self_cell_4682_[name] = {ci, b.bound_closure};
             job->slot = b.tier;
             slot.state.store(1, std::memory_order_release);
             tier_stats_4682_.queued.fetch_add(1, std::memory_order_relaxed);
