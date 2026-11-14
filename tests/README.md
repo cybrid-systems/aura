@@ -1,55 +1,12 @@
 # tests/
 
-How and where to add tests in Aura.
+How to run tests. How to add a test is [`HOMES.md`](HOMES.md) only.
+Do not add new `test_issue_*` files. `python3 build.py gate` rejects a newly added one.
 
-**Strategy & hot-path coverage:** [`STRATEGY.md`](STRATEGY.md) (#1887).
-**Issue contracts (runtime / manifest / check_*.py):** [`COVERAGE.md`](COVERAGE.md).
-**Live layout detail:** [`legacy_test_inventory.md`](legacy_test_inventory.md) (#1957).
+**Hot-path matrix:** [`STRATEGY.md`](STRATEGY.md) (#1887).
+**Manifest policy:** [`COVERAGE.md`](COVERAGE.md).
+**Generated inventory:** [`legacy_test_inventory.md`](legacy_test_inventory.md) (#1957).
 **Fixture shard format:** [`fixtures/README.md`](fixtures/README.md).
-
----
-
-## ⛔ STOP — Before you write a test, follow this decision tree
-
-**Canonical home map + agent rules:** [`HOMES.md`](HOMES.md) (read first).
-
-```
-═══════════════════════════════════════════════════════════════════════════
- STOP — extend an existing thematic suite; do NOT invent test_*_<issue>.cpp
-═══════════════════════════════════════════════════════════════════════════
-
-1. New query:*-stats / engine:* schema gate?
-   └─ YES → tests/compiler/obs_schema_cases.hpp 加一行
-            (tests/compiler/production_sweep_cases.hpp if production flag)
-            跑 ninja -C build test_obs_schema_matrix && ./build/test_obs_schema_matrix. STOP.
-
-2. Same feature family already has a suite? (see HOMES.md)
-   └─ YES → open that file, add AC + wire into main/run_all. STOP.
-   └─ Examples: test_linear_cross_closure, test_arena_batch,
-                test_mutation_occurrence_dirty_batch, test_obs_schema_matrix
-
-3. Fits a batch / matrix suite?
-   └─ YES → extend tests/<module>/test_<theme>_batch.cpp (or unit_batch). STOP.
-
-4. Truly new feature surface (no home)?
-   └─ copy scaffolds/module_test_scaffold.cpp →
-      tests/<src-module>/test_<module>_<feature>.cpp
-      (module + feature ONLY — NO trailing issue number)
-   └─ CMake: aura_add_issue_test + link_light + all_test_issue_targets
-   └─ Issue #N goes in the file banner comment only.
-
-5. HARD BANS (pre-commit rejects new files matching these):
-   ✗ tests/issues/test_issue_N.cpp
-   ✗ tests/**/test_issue_*.cpp
-   ✗ tests/**/test_*_<3–5 digit>.cpp   e.g. test_foo_2622.cpp
-   ✗ new tests/test_*.cpp at repo root
-```
-
-**Templates:** [`scaffolds/module_test_scaffold.cpp`](scaffolds/module_test_scaffold.cpp) · [`HOMES.md`](HOMES.md)
-
-**Why?** `tests/<module>/` mirrors `src/<module>/`. Issue numbers in filenames
-spawn one binary per ticket and block consolidation. Coverage stays in
-`scripts/coverage/manifests/<N>.json` + banner comments.
 
 ---
 
@@ -116,13 +73,9 @@ already cover it. See [`HOMES.md`](HOMES.md).
 `scripts/coverage/manifests/<N>.json`。历史遗留的 `test_*_NNNN.cpp` 按
 [`HOMES.md`](HOMES.md) 分波并入主题套件；**禁止新增**。
 
-## 添加新测试 (展开)
+## 添加新测试
 
-见 [`HOMES.md`](HOMES.md)。短版：
-
-1. schema → `obs_schema_cases.hpp`
-2. 有主题家 → **改那个文件**
-3. 没有家 → `test_<module>_<feature>.cpp`（无 issue 号）+ CMake light link
+见 [`HOMES.md`](HOMES.md)。先跑 `python3 tests/run.py home "<query>"`。
 
 ## Harness
 
@@ -201,8 +154,8 @@ ninja -C build test_arena_batch test_gc_compact_batch  # EXCLUDE_FROM_ALL 目标
 
 ## 不要做
 
-- 不要再开 `tests/domain/`、`tests/arena/`、`tests/edsl/`、`tests/compiler_core/`、`tests/jit/`、`tests/fiber/`、`tests/mutation/`、`tests/observability/`、`tests/linear/`、`tests/shape/`、`tests/misc/`、`tests/stdlib/`、`tests/suite/` 等 theme-named dir
-- 不要再写 `tests/test_issue_NNNN.cpp` / `tests/**/test_*_NNNN.cpp`（pre-commit hard fail）
+- 不要再开 `tests/domain/`、`tests/arena/`、`tests/edsl/`、`tests/compiler_core/`、`tests/jit/`、`tests/fiber/`、`tests/mutation/`、`tests/observability/`、`tests/linear/`、`tests/shape/`、`tests/misc/`、`tests/stdlib/` 等已经废弃的 theme 目录。Aura 行为用例追加到已有的 `tests/suite/`（见 HOMES.md）
+- 不要再写带 issue 号的新文件（`test_issue_*`、`*_<数字>.py`、`tests/suite/*_<数字>.aura`、`check_*_<数字>.py`）。`python3 build.py gate` 会拒绝新增；改已有文件可以。
 - 不要再写 `docs/design/NNNN-*.md` (per Anqi #1655 哲学:agent 仓库 plan 走 chat)
 - 顶层 `tests/<NAME>.cpp` 只在 fallback 时用 (老测试未迁移完),新代码必须放 `tests/<module>/` 下
 - 新 AC **先搜再写**：`rg` 主题关键词 → 扩现有 suite，不要新开 issue 号文件
@@ -211,14 +164,14 @@ ninja -C build test_arena_batch test_gc_compact_batch  # EXCLUDE_FROM_ALL 目标
 
 | Doc | Purpose |
 |-----|---------|
-| [`HOMES.md`](HOMES.md) | **Agent 必读** — theme → suite map + hard bans + consolidation waves |
-| [`CONSOLIDATION_PLAN.md`](CONSOLIDATION_PLAN.md) | Issue 后缀测试全量扫描 + Stream A–D 合并/改名计划 |
-| [`STRATEGY.md`](STRATEGY.md) | Hot-path coverage matrix + SLO goals (#1887) |
-| [`legacy_test_inventory.md`](legacy_test_inventory.md) | #1957 inventory + migration waves |
+| [`HOMES.md`](HOMES.md) | **How to add a test** — the one decision tree and the genealogy |
+| [`CONSOLIDATION_PLAN.md`](CONSOLIDATION_PLAN.md) | Historical snapshot of C++ issue-suffix renames |
+| [`STRATEGY.md`](STRATEGY.md) | Hot-path matrix only (#1887), not the how-to |
+| [`legacy_test_inventory.md`](legacy_test_inventory.md) | #1957 generated inventory, not the how-to |
 | [`root_test_classification.md`](root_test_classification.md) | Theme → module map + near-dups |
 | [`fixtures/README.md`](fixtures/README.md) | Sharded fixture format + 12 KB / 50-case rule |
 | [`core/arena_pilot_notes.md`](core/arena_pilot_notes.md) | #1959 arena pilot 笔记 (历史参考) |
-| [`scaffolds/module_test_scaffold.cpp`](scaffolds/module_test_scaffold.cpp) | R17 rewrite, 5-step decision tree + copy-paste checklist |
+| [`scaffolds/module_test_scaffold.cpp`](scaffolds/module_test_scaffold.cpp) | C++ copy-paste scaffold. The decision tree is HOMES.md |
 | [`scaffolds/legacy_test_redirect.cpp`](scaffolds/legacy_test_redirect.cpp) | Legacy redirect (STOP banner + 5-step tree) |
 | [`../docs/test_harness_pattern.md`](../docs/test_harness_pattern.md) | CMake resolve order + harness policy |
 | [`../docs/contributing.md`](../docs/contributing.md) | Repo entry → testing + workflow |

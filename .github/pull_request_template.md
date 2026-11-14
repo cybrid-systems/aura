@@ -6,7 +6,7 @@
 
 - [ ] No new public `*-stats` / convenience prefixes (or intentional `--update-baseline` + justification)
 - [ ] Ran `(primitive:validate-new "…")` for any proposed new public name
-- [ ] **Tests updated** under `tests/` (C++ issue test and/or `edsl_self_test.aura`) — required when touching `evaluator_primitives*` / evaluator core
+- [ ] **Tests updated** by appending a case to the theme home (`python3 tests/run.py home "<query>"`, [`tests/HOMES.md`](../tests/HOMES.md)) — required when touching `evaluator_primitives*` / evaluator core. Do not add a new issue-numbered filename.
 - [ ] Observability via `(stats:get)` / `(engine:metrics)` only
 - [ ] TUI / terminal paths marked **protected** if touched
 - [ ] If TUI / `examples/{cyber_cat,snake,tetris}` / `lib/std/tui/*` changed: `./build.py test pets` (#1454)
@@ -25,13 +25,13 @@
 
 ## Test strategy (#1887)
 
-- [ ] Hot-path / AI self-mod changes reference [`tests/STRATEGY.md`](../tests/STRATEGY.md) (stamp `note_strategy_scenario` or extend a domain suite)
-- [ ] Prefer domain suites over new `test_issue_*` binaries
+- [ ] Hot-path / AI self-mod changes reference the matrix in [`tests/STRATEGY.md`](../tests/STRATEGY.md) (stamp `note_strategy_scenario` or extend a theme suite)
+- [ ] Append to the theme home. Do not add a new issue-numbered test file ([`tests/HOMES.md`](../tests/HOMES.md))
 
 ## Test plan
 
 - [ ] `./build.py gate`
-- [ ] Relevant `./build/test_issue_*` or `./build/aura < tests/edsl_self_test.aura`
+- [ ] The home from `python3 tests/run.py home "<query>"`. Process-level checks go in the Python theme files. Do not add a new `test_issue_*` binary or a new `edsl_self_test.aura` case file.
 - [ ] TUI: `./build.py test pets` when touching terminal / pets demos
 - [ ] Linked issue(s): #
 

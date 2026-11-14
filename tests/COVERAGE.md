@@ -22,8 +22,13 @@ decision tree. Gate enforces it (`check_coverage_policy.py`).
 
 4. Static check that needs control flow (window around a function,
    regex, AST, order of two statements, subprocess)?
-   → scripts/coverage/checks/check_<feature>_<N>.py with real logic.
+   → scripts/coverage/checks/check_<feature>.py with real logic.
+     No issue digits in the filename. Put the issue number in a comment
+     or in scripts/coverage/manifests/<N>.json.
      Gate auto-discovers check_*.py. STOP.
+
+Where a behavior test goes is tests/HOMES.md, not this file.
+`python3 build.py gate` rejects a newly added issue-numbered test file.
 
 NEVER:
   ✗ new scripts/coverage/checks/check_*.py that only do `needle in file`
@@ -31,6 +36,9 @@ NEVER:
   ✗ new scripts/check_*.py (that directory is frozen)
   ✗ new named ./build.py <foo>-coverage command
   ✗ C++ CHECK(src.find("Issue #N")) as a substitute for (1) or (3)
+  ✗ new check_*_<3–5 digits>.py or check_<3–5 digits>_*.py
+  ✗ new tests/**/test_issue_*.py or tests/**/test_*_<3–5 digits>.py
+  ✗ new tests/suite/*_<3–5 digits>.aura or tests/suite/issue_<3–5 digits>*.aura
   ✗ tests/issues/test_issue_N.cpp, test_*_<N>.cpp, docs/design/<N>-*
 ```
 

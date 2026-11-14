@@ -56,6 +56,21 @@ class TestBindingClassify(unittest.TestCase):
         code, msg = self.m.evaluate_binding(["src/compiler/evaluator_primitives_memory.cpp"])
         self.assertEqual(code, 1, msg)
         self.assertIn("FAIL", msg)
+        self.assertIn("HOMES.md", msg)
+        self.assertIn('python3 tests/run.py home "<feature>"', msg)
+        self.assertNotIn("test_issue_", msg)
+        self.assertNotIn("edsl_self_test.aura", msg)
+        self.assertNotIn("testing-framework-v1.md", msg)
+
+    def test_existing_suite_pairs_without_a_new_file(self):
+        code, msg = self.m.evaluate_binding(
+            [
+                "src/compiler/evaluator_primitives_memory.cpp",
+                "tests/suite/stdlib.aura",
+            ]
+        )
+        self.assertEqual(code, 0, msg)
+        self.assertIn("paired", msg)
 
     def test_no_prod_ok(self):
         code, msg = self.m.evaluate_binding(["docs/contributing.md"])

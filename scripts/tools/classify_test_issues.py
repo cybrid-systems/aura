@@ -156,6 +156,8 @@ def main() -> int:
     report_lines = [
         "# Phase 2 migration classification (tests/issues/ → 5 domain files)",
         "",
+        "**Status:** historical snapshot. Not the how-to-add-a-test policy.",
+        "New cases follow [`HOMES.md`](HOMES.md). Do not create a new `test_issue_*.cpp`.",
         "**Generated:** auto by `scripts/tools/classify_test_issues.py`",
         f"**Total test_issue files:** {total}",
         "",
@@ -193,8 +195,7 @@ def main() -> int:
             "//",
             f"// {len(files)} test_issue_NNN.cpp files in this domain.",
             "//",
-            "// Phase 3 habit change: new {d} tests should add AURA_ISSUE_TEST(NNN, ...)",
-            "// here instead of creating new tests/issues/test_issue_NNN.cpp files.",
+            "// New cases follow tests/HOMES.md. Do not create tests/issues/test_issue_NNN.cpp.",
             "",
             '#include "test_harness.hpp"',
             "",

@@ -1,5 +1,9 @@
 # Issue-suffix test consolidation plan
 
+**Status:** historical snapshot (scan 2026-08-04). Not the how-to-add-a-test policy.
+Where a new case goes: [`HOMES.md`](HOMES.md). This file only records how the
+historical C++ renames were planned. Do not treat the counts below as current.
+
 **Scan date:** 2026-08-04  
 **Scope:** `tests/**/test_*_<3–5 digit>.cpp` + `test_issue_*.cpp`  
 **Authority:** [`HOMES.md`](HOMES.md) (where new ACs go) · this doc (how to finish historical renames/merges)

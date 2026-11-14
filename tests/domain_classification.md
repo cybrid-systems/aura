@@ -1,5 +1,7 @@
 # Phase 2 migration classification (tests/issues/ → 5 domain files)
 
+**Status:** historical snapshot. Not the how-to-add-a-test policy.
+New cases follow [`HOMES.md`](HOMES.md). Do not create a new `test_issue_*.cpp`.
 **Generated:** auto by `scripts/tools/classify_test_issues.py`
 **Total test_issue files:** 635
 

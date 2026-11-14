@@ -33,3 +33,7 @@ logic (window / regex / AST). Gate (`run_checks.py`) runs remaining Python
 checks **and** all manifests. `fold_simple_checks.py` folds leftover
 substring scripts. `check_coverage_policy.py` rejects new substring-only
 scripts and thin wrappers.
+
+New `checks/check_*_<issue>.py` filenames are banned. Issue numbers go in
+`manifests/<N>.json` or a comment. Where a behavior test goes:
+[tests/HOMES.md](../tests/HOMES.md).

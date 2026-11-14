@@ -6,14 +6,15 @@
 //
 // This file is NOT a CMake target. Do not add_executable it.
 //
-// Policy: tests/README.md (R1 src/-aligned layout)
+// Policy: tests/HOMES.md (the one decision tree). tests/README.md is how to run suites.
 //
 // ── BEFORE YOU CREATE A NEW FILE ──────────────────────────────────────────
-// 1. Read tests/HOMES.md — prefer an existing thematic suite.
+// 1. python3 tests/run.py home "<query>" — append to that file. STOP when it hits.
 // 2. Schema-only? → obs_schema_cases.hpp row, STOP.
 // 3. Same family already has a file? → extend it (add AC + run_all), STOP.
 // 4. Only then copy this template to tests/<src-module>/test_<module>_<feature>.cpp
-// 5. NEVER: test_issue_N.cpp or test_*_<issue_number>.cpp (pre-commit hard-fails).
+// 5. NEVER a new issue-numbered name (test_issue_*, *_<digits>.py/.aura/.cpp,
+//    check_*_<digits>.py). python3 build.py gate rejects the add.
 //
 // ── COPY-PASTE CHECKLIST ──────────────────────────────────────────────────
 //  [ ] Name: tests/<src-module>/test_<module>_<feature>.cpp  (NO issue suffix)

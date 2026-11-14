@@ -255,27 +255,11 @@ if [ -n "$test_registry_files" ]; then
 fi
 
 # ── Test naming policy (HARD) — tests/HOMES.md ──
-# Reject NEW issue-numbered / per-issue test files. Extend thematic suites.
-new_banned_tests=$(git diff --cached --name-only --diff-filter=A \
-    | grep -E '^tests/.+\.cpp$' \
-    | grep -E '(^tests/(issues/)?test_issue_[0-9])|(^tests/.*/test_issue_[0-9])|(^tests/.+/test_.+_[0-9]{3,5}\.cpp$)|(^tests/test_.+_[0-9]{3,5}\.cpp$)' \
-    || true)
-if [ -n "$new_banned_tests" ]; then
-    echo "❌ pre-commit: new issue-numbered test file(s) blocked:" >&2
-    echo "$new_banned_tests" | sed 's/^/      /' >&2
-    echo "   Policy: tests/HOMES.md + tests/README.md" >&2
-    echo "   Do: extend an existing thematic suite (rg theme under tests/<module>/)." >&2
-    echo "   Or: tests/<module>/test_<module>_<feature>.cpp  (NO trailing issue digits)." >&2
-    echo "   Issue #N goes in the file banner + scripts/coverage/manifests/<N>.json only." >&2
-    exit 1
-fi
-
-new_root_tests=$(git diff --cached --name-only --diff-filter=A \
-    | grep -E '^tests/test_[a-z].*\.cpp$' || true)
-if [ -n "$new_root_tests" ]; then
-    echo "❌ pre-commit: new tests/test_*.cpp at repo root blocked:" >&2
-    echo "$new_root_tests" | sed 's/^/      /' >&2
-    echo "   Put new suites under tests/<src-module>/ (see tests/HOMES.md)." >&2
+# Same classifier as `python3 build.py gate` (scripts/tools/check_new_test_files.py).
+# Staged adds only. The gate also sees branch adds and untracked files, so this
+# hook is not the only enforcement point.
+if ! python3 "$ROOT/scripts/tools/check_new_test_files.py" --cached; then
+    echo "❌ pre-commit: new issue-numbered test file blocked (see tests/HOMES.md)" >&2
     exit 1
 fi
 

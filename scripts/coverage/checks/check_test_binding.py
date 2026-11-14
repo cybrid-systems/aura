@@ -172,9 +172,11 @@ def evaluate_binding(
             "(Issue #1453 test binding).\n"
             "Production files:\n"
             + "".join(f"  + {f}\n" for f in prod)
-            + "Add or update tests under tests/ (C++ issue test or EDSL suite).\n"
+            + "Add or update a case in an existing theme suite under tests/.\n"
+            'Ask with: python3 tests/run.py home "<feature>"\n'
+            "A new file is allowed only when its name has no issue number.\n"
             "Exceptional allowlist: tests/test-binding-allowlist.txt\n"
-            "Policy: docs/design/testing-framework-v1.md"
+            "Policy: tests/HOMES.md"
         )
         return 1, msg
 
@@ -205,7 +207,8 @@ def evaluate_binding(
                 "FAIL: new public primitive name(s) not mentioned in changed tests "
                 "(--require-name-mention):\n"
                 + "".join(f"  + {m}\n" for m in missing[:20])
-                + "Reference the name in a test_issue_*.cpp or edsl_self_test.aura.\n"
+                + "Reference the name in the paired tests/ change "
+                + "(append a case; see tests/HOMES.md).\n"
             )
             return 1, msg
         lines.append("OK: --require-name-mention (new add() names referenced in tests)")
