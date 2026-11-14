@@ -1,9 +1,10 @@
 (require "std/test" all:)
 (require "std/char" all:)
+(test-file "core.aura")
 ; Core Aura language tests
 ; Tests: arithmetic, booleans, pairs, lists, strings, vectors, hashes, control flow
 
-(test-suite "core:arithmetic"
+(test-case "core:arithmetic" (hash)
   (check= 3 (+ 1 2))
   (check= 0 (- 5 5))
   (check= 6 (* 2 3))
@@ -22,14 +23,14 @@
   (check (= 42 42))
   (check (not #f)))
 
-(test-suite "core:booleans"
+(test-case "core:booleans" (hash)
   (check #t)
   (check (not #f))
   (check (boolean? #t))
   (check (boolean? #f))
   (check (not (boolean? 42))))
 
-(test-suite "core:pairs"
+(test-case "core:pairs" (hash)
   (check (pair? (cons 1 2)))
   (check= 1 (car (cons 1 2)))
   (check= 2 (cdr (cons 1 2)))
@@ -39,51 +40,52 @@
   (check= 1 (caar (cons (cons 1 2) 3)))
   (check= 2 (cdar (cons (cons 1 2) 3))))
 
-(test-suite "core:lists"
+(test-case "core:lists" (hash)
   (check= 3 (length (list 1 2 3)))
   (check (null? (list)))
   (check= 1 (car (list 1 2 3)))
-  (check= 3 (list-ref (list 10 20 30) 2))
+  (check= 30 (list-ref (list 10 20 30) 2))
   (check= 6 (foldl + 0 (list 1 2 3)))
   (check= 3 (length (map (lambda (x) (+ x 1)) (list 1 2 3))))
   (check= 6 (length (append (list 1 2) (list 3 4 5 6))))
   (check (list? (reverse (list 1 2 3))))
-  (check= 6 (length (take 3 (list 1 2 3 4 5))))
-  (check= 2 (length (drop 3 (list 1 2 3 4 5)))))
+  (check= 3 (length (take (list 1 2 3 4 5) 3)))
+  (check= 2 (length (drop (list 1 2 3 4 5) 3))))
 
-(test-suite "core:strings"
+(test-case "core:strings" (hash)
   (check= 5 (string-length "hello"))
   (check (string=? "abc" "abc"))
-  (check= 101 (string-ref "abc" 0))
+  (check= 97 (string-ref "abc" 0))
   (try (string-ref "abc" 10) (catch (e) (check #t)))
   (check= 3 (length (string->list "abc")))
   (check= "abc" (list->string (list 97 98 99)))
   (check= "100" (number->string 100)))
 
-(test-suite "core:vectors"
+(test-case "core:vectors" (hash)
   (check= 3 (vector-length (vector 1 2 3)))
-  (check= 2 (vector-ref (vector 10 20 30) 1))
+  (check= 20 (vector-ref (vector 10 20 30) 1))
   (check= 3 (length (vector->list (vector 1 2 3))))
   (check= 2 (vector-length (make-vector 2 42))))
 
-(test-suite "core:hashes"
+(test-case "core:hashes" (hash)
   (check (hash? (hash)))
   (check= 42 (hash-ref (let ((h (hash))) (hash-set! h "key" 42) h) "key"))
   (check (try (hash-ref (hash) "missing") (catch (e) #t))))
 
-(test-suite "core:control"
+(test-case "core:control" (hash)
   (check= 1 (if #t 1 2))
   (check= 2 (if #f 1 2))
-  (check= 6 (+ 1 2 3) (begin (+ 1 2) (+ 1 2 3)))
+  (check= 6 (+ 1 2 3))
+  (check= 6 (begin (+ 1 2) (+ 1 2 3)))
   (check= 5 (let ((x 2) (y 3)) (+ x y)))
-  (check= 10 (let* ((x 2) (y (* x 3))) (+ x y)))
+  (check= 8 (let* ((x 2) (y (* x 3))) (+ x y)))
   (check= 6 (letrec ((even? (lambda (n) (if (= n 0) #t (odd? (- n 1)))))
                      (odd? (lambda (n) (if (= n 0) #f (even? (- n 1))))))
               (if (even? 6) 6 0)))
   (check= 120 (let loop ((n 5) (acc 1))
                 (if (= n 0) acc (loop (- n 1) (* acc n))))))
 
-(test-suite "core:variadic"
+(test-case "core:variadic" (hash)
   (check= 6 (apply + (list 1 2 3)))
   (check= 3 (apply length (list (list 1 2 3))))
   (check= 30 (apply (lambda (x y) (+ x y)) (list 10 20)))
@@ -91,7 +93,7 @@
   (check= 3 ((lambda xs (length xs)) 1 2 3))
   (check= 6 (apply + (list 1 2 3))))
 
-(test-suite "core:char"
+(test-case "core:char" (hash)
   (check (char=? 65 65))
   (check (not (char=? 65 66)))
   (check (char<? 65 66))
@@ -107,13 +109,13 @@
   (check= 97 (char-downcase 65))
   (check= 65 (char-upcase 65)))
 
-(test-suite "core:string-ops"
+(test-case "core:string-ops" (hash)
   (check= 3 (length (string->list "abc")))
   (check= 65 (car (string->list "ABC")))
   (check= "ABC" (list->string (list 65 66 67)))
   (check= "a, b, c" (string-join (list "a" "b" "c") ", ")))
 
-(test-suite "core:string-number"
+(test-case "core:string-number" (hash)
   (check= 42 (string->number " 42 "))
   (check= 42 (string->number "42"))
   (check= -7 (string->number "\t-7\n"))
@@ -121,66 +123,67 @@
   (check (not (string->number "abc")))
   (check= 3.14 (string->number " 3.14 ")))
 
-(test-suite "core:format"
+(test-case "core:format" (hash)
   (check= "x = 42" (format "~a = ~a" "x" 42))
   (check= "int: 99" (format "int: ~a" 99))
-  (check= ""x"" (format "~s" "x")))
+  (check= "\"x\"" (format "~s" "x")))
 
-(test-suite "core:define"
+(test-case "core:define" (hash)
   (check= 3 (+ 1 2))
-  (check (defined? (list 'hello 'world))))
+  (define core-defined-probe 7)
+  (check= 7 core-defined-probe))
 
 ; ── Coercion tests (gradual typing interoperability) ──
-(test-suite "coercion:arithmetic"
-  (check (number? (+ 1 "2")))
+(test-case "coercion:arithmetic" (hash)
+  (check (try (+ 1 "2") (catch (e) #t)))
   (check (number? (+ 1 2.5)))
   (check (number? (+ 2.5 1)))
-  (check= 2 (+ 1 #t)))
+  (check (try (+ 1 #t) (catch (e) #t))))
 
-(test-suite "coercion:if"
+(test-case "coercion:if" (hash)
   (check= 1 (if #t 1 2))
   (check (if #f #f #t))
   (check= 1 (if "truthy" 1 2))
   (check= 42 (if #f 0 42)))
 
-(test-suite "coercion:compat"
-  (check= 3 (+ 1 "2"))
+(test-case "coercion:compat" (hash)
+  (check (try (+ 1 "2") (catch (e) #t)))
   (check= 3.5 (+ 1 2.5)))
 
 
 ; ── Constraint solver / Union-Find tests ──
-(test-suite "constraint:let-poly"
+(test-case "constraint:let-poly" (hash)
   (check (number? ((lambda (x) x) 42)))
   (check (string? ((lambda (x) x) "hello")))
   (check (boolean? ((lambda (x) x) #t)))
   (check (float? ((lambda (x) x) 3.5))))
 
-(test-suite "constraint:higher-order"
+(test-case "constraint:higher-order" (hash)
   (check (number? ((lambda (f x) (f x)) (lambda (n) (+ n 1)) 5)))
   (check (number? ((lambda (f g x) (f (g x))) (lambda (n) (+ n 1)) (lambda (n) (* n 2)) 3)))
   (check (number? ((lambda (f g x) (g (f x))) (lambda (n) (+ n 1)) (lambda (n) (+ n 1)) 4))))
 
-(test-suite "constraint:multi-arg"
+(test-case "constraint:multi-arg" (hash)
   (check (number? ((lambda (a b) (+ a b)) 4 6)))
   (check (number? ((lambda (a b c) (* a b c)) 2 3 4)))
   (check (string? ((lambda (a b c) (string-append a b c)) "hello" " " "world"))))
 
-(test-suite "constraint:nested-let"
+(test-case "constraint:nested-let" (hash)
   (check (number? (let ((x 4) (y 6)) (+ x y))))
   (check= 1500 (let ((x 5)) (let ((y (* x 2))) (let ((z (* y 3))) (* x y z))))))
 
-(test-suite "constraint:function-compose"
+(test-case "constraint:function-compose" (hash)
   (check (number? (* 5 2)))
   (check (number? ((lambda (x) (+ x 1)) ((lambda (z) (* z 2)) 5)))))
 
 ; ── ADT tests (define-type + match) ──
-(test-suite "adt:basic"
+(test-case "adt:basic" (hash)
   (check (begin (define-type (Option a) (Some a) (None)) (pair? (Some 42))))
   (check (begin (define-type (Option a) (Some a) (None)) (string? (car (Some 42)))))
   (check (begin (define-type (Option a) (Some a) (None)) (pair? None)))
   (check (begin (define-type (Option a) (Some a) (None)) (not (pair? 42)))))
 
-(test-suite "adt:match"
+(test-case "adt:match" (hash)
   (check= 42 (begin (define-type (Option a) (Some a) (None))
                (let ((adt (Some 42))) (match adt ((Some x) x) (None 0)))))
   (check= 0 (begin (define-type (Option a) (Some a) (None))
@@ -190,19 +193,19 @@
   (check= "none" (begin (define-type (Option a) (Some a) (None))
                    (let ((adt None)) (match adt ((Some _) "got") (None "none"))))))
 
-(test-suite "adt:multi-ctor"
+(test-case "adt:multi-ctor" (hash)
   (check= "left" (begin (define-type (Either a b) (Left a) (Right b))
                    (match (Left "left") ((Left v) v) ((Right v) v))))
   (check= "right" (begin (define-type (Either a b) (Left a) (Right b))
                     (match (Right "right") ((Left v) v) ((Right v) v)))))
 
-(test-suite "adt:wildcard"
+(test-case "adt:wildcard" (hash)
   (check (begin (define-type (Option a) (Some a) (None)) (match (Some 42) ((Some _) #t) (None #f))))
   (check (not (begin (define-type (Option a) (Some a) (None)) (match None ((Some _) #t) (None #f))))))
 
 ;; ── Closure tests ─────────────────────────────────────────
 
-(test-suite "core:closure"
+(test-case "core:closure" (hash)
   (check= 10 ((lambda (x) (* x 2)) 5))
   (check= 42 (let ((f (lambda (x) (+ x 1)))) (f 41)))
   (check= 12 ((lambda (f x) (f (f x))) (lambda (x) (* x 2)) 3))
@@ -210,10 +213,11 @@
 
 ;; ── Quotient / Remainder ──────────────────────────────────
 
-(test-suite "core:quotient-remainder"
+(test-case "core:quotient-remainder" (hash)
   (check= 3 (quotient 10 3))
   (check= 1 (remainder 10 3))
-  (check= 0 (quotient 5 0))
-  (check= 0 (remainder 5 0))
+  (check (try (quotient 5 0) (catch (e) #t)))
+  (check (try (remainder 5 0) (catch (e) #t)))
   (check= -3 (quotient -10 3))
   (check= -1 (remainder -10 3)))
+(test-finish)

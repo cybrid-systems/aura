@@ -1,0 +1,5 @@
+;; expect-status: 1
+;; expect-err: demo-stderr-5224
+;; Process judgment matches SnippetSpec (#5224). The file is not a
+;; std/test suite: a non-zero exit plus this stderr needle is success.
+(error "demo-stderr-5224")

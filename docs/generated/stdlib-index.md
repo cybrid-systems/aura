@@ -32,7 +32,7 @@
 | `std/data` | `make-trie` `trie-insert` `trie-search` `trie-prefix?` `trie-keys` | Aura standard data structures library |
 | `std/datetime` | `;` `Core` `timestamp` `timestamp-ms` `steady-ms` `timestamp->year` `timestamp->month` `timestamp->day` … (+20) | datetime.aura — Date and time utilities |
 | `std/diagnose` | `diagnose` | lib/std/diagnose.aura — error-string → fix plan (#5006) |
-| `std/edsl-test-harness` | `section` `it` `describe` `report` `summary` `total-pass` `total-fail` `reset-totals` … (+2) | Declarative-ish helpers for pure-Aura self-tests without quoting |
+| `std/edsl-test-harness` | `section` `it` `describe` `report` `summary` `total-pass` `total-fail` `reset-totals` … (+2) | Compatibility shim for std/test (#5224). New cases use test-case. |
 | `std/encoding` | `hex-encode` `hex-decode` `base64-encode` `base64-decode` | lib/std/encoding.aura — Encoding utilities |
 | `std/engine-metrics` | `engine-metrics:get` `engine-metrics:list` `engine-metrics:group` `engine-metrics:prefix` `engine-metrics:all` `engine-metrics:count` | lib/std/engine-metrics.aura — Issue #1433 thin wrappers around (engine:metrics) |
 | `std/evo-core` | `evo:help` `evo:schema` `evo:candidate` `evo:candidate?` `evo:child` `evo:candidate-id` `evo:candidate-genome` `evo:candidate-parents` … (+38) | lib/std/evo-core.aura — Issue #4939 (v0.2 P0): the shared base every |
@@ -103,7 +103,7 @@
 | `std/swarm` | `swarm:init` `swarm:step!` `swarm:best` `swarm:population` `swarm:report` `swarm:export` `swarm:kind` `swarm:gen` … (+6) | lib/std/swarm.aura — Issue #2874 / #2875 pluggable swarm control family |
 | `std/synthesize-v2` | `synthesize:test-driven` `synthesize:debug` `synthesize:project` `synthesize:compose` `synthesize:run-tests` `synthesize:eval-test` | lib/std/synthesize-v2.aura -- Synthesize Pipeline v2 |
 | `std/synthesize` | `synthesize:list-templates` `synthesize:list-help` | lib/std/synthesize.aura — synthesize: namespace stdlib wrappers |
-| `std/test` | `check-success` `test-suite` | Aura Testing Framework |
+| `std/test` | `check-success` `test-suite` `test-file` `test-case` `test-case-run` `test-finish` `test-record` `check` … (+3) | Aura Testing Framework |
 | `std/time` | `current-second` `current-jiffy` `jiffies-per-second` | lib/std/time.aura — R7RS (scheme time) (Issue #5005) |
 | `std/uuid` | `uuid` `uuid-compact` `uuid-nil` | lib/std/uuid.aura — UUID v4 generation |
 | `std/validate` | `json-type` `err` `check` `validate` `valid?` `error-count` | Aura JSON Schema Validator — 纯函数式 |

@@ -4,6 +4,8 @@
 File cases (suite / regression):
   tests/suite/*.aura        --load file, default expect = exit 0
   tests/regression/*.aura   stdin (header ;; comments stripped), ``;; expect:``
+  ``;; expect-status: N`` / ``;; expect-err:`` / ``;; expect-err-regex:``
+  judge the process the same way as SnippetSpec (status + stderr needle).
 
 Snippet cases (integ / p0 / typecheck fixtures):
   stdin + optional extra argv (--ir / --typecheck / --serve)
@@ -121,6 +123,9 @@ class AuraFileCase:
     path: Path
     expect: str | None
     rel: str
+    expect_status: int | None = None
+    expect_err: str = ""
+    err_regex: bool = False
 
 
 @dataclass(frozen=True)
@@ -135,6 +140,58 @@ def first_expect(text: str) -> str | None:
             value = line[len(";; expect:") :].strip()
             return value or None
     return None
+
+
+def file_process_directives(text: str) -> tuple[int | None, str, bool]:
+    """``;; expect-status`` / ``;; expect-err`` / ``;; expect-err-regex``.
+
+    Absent directives keep the legacy exit-0 judge. A present directive
+    uses the same rules as ``judge_snippet`` (SnippetSpec).
+    """
+    status: int | None = None
+    err = ""
+    err_regex = False
+    for line in text.splitlines():
+        if status is None and line.startswith(";; expect-status:"):
+            raw = line[len(";; expect-status:") :].strip()
+            if raw:
+                try:
+                    status = int(raw)
+                except ValueError:
+                    status = None
+        elif not err and line.startswith(";; expect-err-regex:"):
+            err = line[len(";; expect-err-regex:") :].strip()
+            err_regex = True
+        elif not err and line.startswith(";; expect-err:"):
+            err = line[len(";; expect-err:") :].strip()
+    return status, err, err_regex
+
+
+def judge_aura_file(
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+    case: AuraFileCase,
+) -> tuple[bool, str]:
+    """Legacy ``judge`` unless the file opted into SnippetSpec status/err."""
+    if case.expect_status is None and not case.expect_err:
+        return judge(exit_code, stdout, stderr, case.expect)
+    # expect-err alone still requires exit 0, matching a snippet whose
+    # expect_status stays at the default. expect-status replaces that.
+    status = 0 if case.expect_status is None else case.expect_status
+    spec = SnippetSpec(
+        name=case.rel,
+        code="",
+        expect_err=case.expect_err,
+        expect_status=status,
+        err_regex=case.err_regex,
+    )
+    ok_case, detail = judge_snippet(exit_code, stdout, stderr, spec)
+    if case.expect and case.expect not in {"no-crash", "no-error", "no-timeout"} and case.expect not in (stdout or ""):
+        extra = f"expected {case.expect!r} in stdout"
+        detail = f"{detail}; {extra}" if detail else extra
+        ok_case = False
+    return ok_case, detail
 
 
 def stdin_payload(text: str) -> str:
@@ -418,7 +475,17 @@ def discover_aura_files(
         if allow is not None and name not in allow:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
-        cases.append(AuraFileCase(path=path, expect=first_expect(text), rel=f"{rel_root}/{name}"))
+        status, err, err_regex = file_process_directives(text)
+        cases.append(
+            AuraFileCase(
+                path=path,
+                expect=first_expect(text),
+                rel=f"{rel_root}/{name}",
+                expect_status=status,
+                expect_err=err,
+                err_regex=err_regex,
+            )
+        )
     return DiscoverResult(cases, skipped)
 
 
@@ -463,7 +530,7 @@ def run_aura_file_suite(
                 )
         except subprocess.TimeoutExpired:
             return case.rel, False, f"timeout {timeout_s:g}s"
-        ok_case, detail = judge(proc.returncode, proc.stdout or "", proc.stderr or "", case.expect)
+        ok_case, detail = judge_aura_file(proc.returncode, proc.stdout or "", proc.stderr or "", case)
         if ok_case:
             return case.rel, True, ""
         return case.rel, False, format_failure_detail(detail, stdout=proc.stdout or "", stderr=proc.stderr or "")
