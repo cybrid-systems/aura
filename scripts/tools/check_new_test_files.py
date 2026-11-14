@@ -119,10 +119,16 @@ def format_refusal(paths: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
+# Container jobs check out as one uid and run git as another; --global
+# safe.directory is not set there. The refusals below stay strict, but the
+# ownership check must not read as "no refs".
+GIT = ["git", "-c", "safe.directory=*"]
+
+
 def _git(args: list[str]) -> list[str] | None:
     try:
         proc = subprocess.run(
-            ["git", *args],
+            [*GIT, *args],
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -143,7 +149,7 @@ def _git(args: list[str]) -> list[str] | None:
 def _ref_exists(ref: str) -> bool:
     try:
         proc = subprocess.run(
-            ["git", "rev-parse", "--verify", "--quiet", ref],
+            [*GIT, "rev-parse", "--verify", "--quiet", ref],
             cwd=ROOT,
             capture_output=True,
             check=False,
