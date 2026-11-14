@@ -44,6 +44,41 @@ def run(face_env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+LLM_CHAT = """(require "std/llm" all:)
+(define r (llm:chat "sys" "ping"))
+(display "ok=")
+(display (hash-ref r "ok" 'missing))
+(newline)
+(display "error=")
+(display (hash-ref r "error" 'missing))
+(newline)
+"""
+
+NETWORK_GRANT = (
+    "sandbox has not granted network: pass --grant net or --grant network, "
+    "or set AURA_SANDBOX=off in a controlled environment"
+)
+
+
+def run_llm_chat(*args: str, **extra: str) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if not k.startswith("AURA_")}
+    for key in ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL", "LLM_TIMEOUT"):
+        env.pop(key, None)
+    env["AURA_PATH"] = str(ROOT / "lib")
+    env.update(extra)
+    with tempfile.NamedTemporaryFile("w", suffix=".aura", delete=False) as fh:
+        fh.write(LLM_CHAT)
+        path = fh.name
+    return subprocess.run(
+        [str(AURA_BIN), *args, path],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+        cwd=str(ROOT),
+    )
+
+
 class StdSandboxPreset(unittest.TestCase):
     def test_default_face_denies_and_stays_catchable(self) -> None:
         r = run({"AURA_PATH": str(ROOT / "lib")})
@@ -56,6 +91,37 @@ class StdSandboxPreset(unittest.TestCase):
         r = run({"AURA_PATH": str(ROOT / "lib"), "AURA_SANDBOX": "off"})
         self.assertEqual(r.returncode, 0, r.stderr[-800:])
         self.assertIn("ok", r.stdout)
+
+
+class LlmChatNetworkGrant(unittest.TestCase):
+    """Issue #5287: llm:chat names the network grant when http-post is absent."""
+
+    def test_missing_network_names_the_grant(self) -> None:
+        faces = (
+            ("--quiet",),
+            ("--quiet", "--preset", "prod"),
+            ("--quiet", "--deny", "network"),
+        )
+        for args in faces:
+            r = run_llm_chat(*args)
+            self.assertEqual(r.returncode, 0, args + (r.stdout, r.stderr[-800:]))
+            self.assertIn("ok=#f", r.stdout)
+            self.assertIn("error=" + NETWORK_GRANT, r.stdout)
+            self.assertNotIn("error=no-http-post", r.stdout)
+            self.assertNotIn("http-post:", r.stdout)
+
+    def test_grant_or_sandbox_off_does_not_ask_for_network(self) -> None:
+        faces = (
+            (("--quiet", "--grant", "net"), {}),
+            (("--quiet", "--grant", "network"), {}),
+            (("--quiet",), {"AURA_SANDBOX": "off"}),
+        )
+        for args, extra in faces:
+            r = run_llm_chat(*args, **extra)
+            self.assertEqual(r.returncode, 0, args + (r.stdout, r.stderr[-800:]))
+            self.assertIn("ok=#f", r.stdout)
+            self.assertIn("error=empty", r.stdout)
+            self.assertNotIn("sandbox has not granted network", r.stdout)
 
 
 if __name__ == "__main__":
