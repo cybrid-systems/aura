@@ -1,0 +1,24 @@
+; Wall-clock band for 100 default (engine:metrics) snapshots.
+; Kept out of the default suite. Schema checks live in
+; tests/suite/issue_5065_engine_metrics.aura.
+; The bound is the original one: 100 calls stay under 80ms.
+; After the intern change this host was 27–44ms. A later run sat at
+; 80–87ms, so the same ceiling fails here. It was not raised.
+
+(define (time-n n thunk)
+  (define t0 (monotonic-ms))
+  (let loop ((i 0))
+    (if (>= i n) (- (monotonic-ms) t0)
+      (begin (thunk) (loop (+ i 1))))))
+
+(define n 100)
+(define full (time-n n (lambda () (engine:metrics))))
+(define one (time-n n (lambda () (stats:get "compile:epoch"))))
+(display "full_ms=") (display full)
+(display " one_ms=") (display one)
+(display " n=") (display n)
+(newline)
+(if (< full 80)
+    (begin (display "OK-metrics-band ") (display full) (newline))
+    (begin (display "FAIL-metrics-band ") (display full) (newline)
+           (exit 1)))

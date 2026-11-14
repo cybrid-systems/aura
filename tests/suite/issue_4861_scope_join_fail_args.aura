@@ -1,78 +1,54 @@
-; Issue #4861 regression suite: the scope-join-all failure-policy arguments
-; are validated instead of being silently ignored.
-;
-; Before this fix:
-;   :on-join-fail accepted only a string, so a quoted symbol ('cancel) was
-;   IGNORED and the policy degraded to report-only - the caller never learned
-;   the cancel strategy was not armed.
-;   :timeout-ms / :max-restarts clamped a negative value to 0, so a typo
-;   silently changed the deadline (or turned the restart fuel into a no-op).
-
-(define *fails* 0)
-(define (check pred msg)
-  (if pred
-      (begin (display "  pass: ") (display msg) (newline))
-      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+; Issue #4861: scope-join-all failure-policy arguments are validated
+; instead of being silently ignored. A negative timeout or restart budget
+; is an error. A quoted symbol policy is honoured. A recovered child is
+; not a final failure.
+(require "std/test" all:)
+(test-file "issue_4861_scope_join_fail_args.aura")
 
 (define (caught thunk) (try (thunk) (catch (e) e)))
 
-; ── a negative :timeout-ms names the argument ─────────────────────────────
-(orch:scope-spawn "s-neg-timeout" (lambda () 1))
-(check (equal? (caught (lambda () (orch:scope-join-all :timeout-ms -5)))
-           "orch:scope-join-all: :timeout-ms must not be negative")
-       "#4861 a negative :timeout-ms is a parameter error")
+(test-case "negative timeout is a parameter error" (hash "issue" 4861)
+  (orch:scope-spawn "s-neg-timeout" (lambda () 1))
+  (check= "orch:scope-join-all: :timeout-ms must not be negative"
+          (caught (lambda () (orch:scope-join-all :timeout-ms -5)))))
 
-; ── a negative :max-restarts names the argument ────────────────────────────
-(orch:scope-spawn "s-neg-restarts" (lambda () 1))
-(check (equal? (caught (lambda () (orch:scope-join-all :max-restarts -1)))
-           "orch:scope-join-all: :max-restarts must not be negative")
-       "#4861 a negative :max-restarts is a parameter error")
+(test-case "negative restart budget is a parameter error" (hash "issue" 4861)
+  (orch:scope-spawn "s-neg-restarts" (lambda () 1))
+  (check= "orch:scope-join-all: :max-restarts must not be negative"
+          (caught (lambda () (orch:scope-join-all :max-restarts -1)))))
 
-; ── a non-string / non-symbol policy name is a parameter error ─────────────
-(orch:scope-spawn "s-bad-policy" (lambda () 1))
-(check (equal? (caught (lambda () (orch:scope-join-all :on-join-fail 42)))
-           "orch:scope-join-all: :on-join-fail expects a policy name (string or symbol: cancel / restart-n / throttle / report-only)")
-       "#4861 a non-string policy name is a parameter error")
+(test-case "a non-name policy is a parameter error" (hash "issue" 4861)
+  (orch:scope-spawn "s-bad-policy" (lambda () 1))
+  (check= "orch:scope-join-all: :on-join-fail expects a policy name (string or symbol: cancel / restart-n / throttle / report-only)"
+          (caught (lambda () (orch:scope-join-all :on-join-fail 42)))))
 
-; ── a quoted symbol policy is honored, not degraded to report-only ─────────
-(orch:scope-spawn "s-symbol-policy" (lambda () (error "bad")))
-(define r (orch:scope-join-all :timeout-ms 2000 :on-join-fail 'cancel))
-(check (equal? (hash-ref r "on-join-fail-effective") "cancel")
-       "#4861 a quoted symbol :on-join-fail arms the cancel policy")
+(test-case "a symbol policy arms cancel" (hash "issue" 4861)
+  (orch:scope-spawn "s-symbol-policy" (lambda () (error "bad")))
+  (define r-symbol (orch:scope-join-all :timeout-ms 2000 :on-join-fail 'cancel))
+  (check= "cancel" (hash-ref r-symbol "on-join-fail-effective")))
 
-; the string spelling still works
-(orch:scope-spawn "s-string-policy" (lambda () (error "bad")))
-(define r2 (orch:scope-join-all :timeout-ms 2000 :on-join-fail "cancel"))
-(check (equal? (hash-ref r2 "on-join-fail-effective") "cancel")
-       "#4861 the string :on-join-fail spelling is unchanged")
+(test-case "a string policy arms cancel" (hash "issue" 4861)
+  (orch:scope-spawn "s-string-policy" (lambda () (error "bad")))
+  (define r-string (orch:scope-join-all :timeout-ms 2000 :on-join-fail "cancel"))
+  (check= "cancel" (hash-ref r-string "on-join-fail-effective")))
 
-; -- #4861 the report fields: a recovered child is NOT a failure ----------
-(define n 0)
-(orch:scope-spawn "flaky" (lambda ()
-  (set! n (+ n 1))
-  (if (< n 3) (error "attempt failed") 'finally)))
-(define rr (orch:scope-join-all :timeout-ms 5000 :on-join-fail "restart-n" :max-restarts 3))
-(check (equal? (hash-ref rr "ok") #t)
-       "#4861 a child that recovers via restart-n reports ok #t")
-(check (equal? (hash-ref rr "status") "ok")
-       "#4861 a recovered child does not force status partial")
-(check (equal? (hash-ref rr "err-count") 0)
-       "#4861 err-count counts the FINAL failures only")
-(check (equal? (hash-ref rr "attempt-errors") 2)
-       "#4861 attempt-errors counts the recovered attempts")
-(check (equal? (hash-ref rr "body-ok-count") 1)
-       "#4861 body-ok-count still counts the successful body")
+(test-case "a recovered child is not a final failure" (hash "issue" 4861)
+  (define n 0)
+  (orch:scope-spawn "flaky" (lambda ()
+    (set! n (+ n 1))
+    (if (< n 3) (error "attempt failed") 'finally)))
+  (define rr (orch:scope-join-all :timeout-ms 5000 :on-join-fail "restart-n" :max-restarts 3))
+  (check= #t (hash-ref rr "ok"))
+  (check= "ok" (hash-ref rr "status"))
+  (check= 0 (hash-ref rr "err-count"))
+  (check= 2 (hash-ref rr "attempt-errors"))
+  (check= 1 (hash-ref rr "body-ok-count")))
 
-; -- #4861 restart-exhausted counts the children that ran out of fuel -----
-(orch:scope-spawn "bad" (lambda () (error "always")))
-(define r2 (orch:scope-join-all :timeout-ms 3000 :on-join-fail "restart-n" :max-restarts 2))
-(check (equal? (hash-ref r2 "err-count") 1)
-       "#4861 err-count is 1 for the single failing child")
-(check (equal? (hash-ref r2 "restart-attempted") 2)
-       "#4861 restart-attempted is the restart budget actually spent")
-(check (equal? (hash-ref r2 "restart-exhausted") 1)
-       "#4861 restart-exhausted counts the child that ran out of restarts")
+(test-case "restart exhaustion is counted" (hash "issue" 4861)
+  (orch:scope-spawn "bad" (lambda () (error "always")))
+  (define r-spent (orch:scope-join-all :timeout-ms 3000 :on-join-fail "restart-n" :max-restarts 2))
+  (check= 1 (hash-ref r-spent "err-count"))
+  (check= 2 (hash-ref r-spent "restart-attempted"))
+  (check= 1 (hash-ref r-spent "restart-exhausted")))
 
-(if (= *fails* 0)
-    (display "OK-4861\n")
-    (begin (display "FAIL-4861 fails=") (display *fails*) (newline) (exit 1)))
+(test-finish)

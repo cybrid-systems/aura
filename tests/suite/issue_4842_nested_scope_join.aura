@@ -1,98 +1,78 @@
-; Issue #4842 — orch:scope-spawn + orch:scope-join-all inside an
-; orch:spawn-agent body must run the child DURING the join and return
-; status "ok" in milliseconds. Before the fix the child could only start
-; after the parent body returned: the join waited out :timeout-ms, reported
-; "timeout", and the child's error never reached err-count.
-;
-; The fiber:spawn arm is the same bug across the CLI thread-backend body
-; boundary: a scope-spawn from that body inherited no agent-body context,
-; so the child queued on the per-Evaluator apply gate the parent body held
-; for its whole lifetime. The empty reading before the fix is
-; ((inner-ms 1003 status timeout) ) with the child never running.
+; Issue #4842: orch:scope-spawn + orch:scope-join-all inside an
+; orch:spawn-agent body must run the child during the join and return
+; status "ok" in milliseconds. The 900ms ceiling is the original bound:
+; the join must not wait out its 1000ms timeout. The serve-async face
+; is issue_4842_nested_scope_join_async.aura.
+(require "std/test" all:)
+(test-file "issue_4842_nested_scope_join.aura")
 
-(define *fails4842* 0)
-(define (check4842 pred msg)
-  (if pred
-      (begin (display "  pass: ") (display msg) (newline))
-      (begin (set! *fails4842* (+ *fails4842* 1)) (display "  FAIL: ") (display msg) (newline))))
+(test-case "nested child runs during the join" (hash "issue" 4842)
+  (define out1 (channel:create 16))
+  (orch:spawn-agent "par-4842" (lambda ()
+    (orch:scope-spawn "k1-4842" (lambda () (channel:send out1 'k1-ran) 10))
+    (let* ((t0 (monotonic-ms)) (r (orch:scope-join-all :timeout-ms 1000)))
+      (channel:send out1 (list 'inner-ms (- (monotonic-ms) t0)
+                               'status (hash-ref r "status")))
+      (channel:send out1 'after-join))))
+  (define jp (orch:agent-join "par-4842" :timeout-ms 4000))
+  (define m1 (channel:try-recv out1))
+  (define m2 (channel:try-recv out1))
+  (define m3 (channel:try-recv out1))
+  (check= "ok" (hash-ref jp "status"))
+  (check= 'k1-ran m1)
+  (check (pair? m2))
+  (check= 'status (list-ref m2 2))
+  (check= "ok" (list-ref m2 3))
+  (check (< (list-ref m2 1) 900))
+  (check= 'after-join m3))
 
-; ── 1. nested child runs during the join, in send order ────────────────────
-(define out1 (channel:create 16))
-(orch:spawn-agent "par-4842" (lambda ()
-  (orch:scope-spawn "k1-4842" (lambda () (channel:send out1 'k1-ran) 10))
+(test-case "a failing nested child is counted" (hash "issue" 4842)
+  (define out2 (channel:create 16))
+  (orch:spawn-agent "par2-4842" (lambda ()
+    (orch:scope-spawn "kid2-4842" (lambda () (error "kid failed")))
+    (let* ((t0 (monotonic-ms)) (r (orch:scope-join-all :timeout-ms 1000)))
+      (channel:send out2 (list 'inner-ms (- (monotonic-ms) t0)
+                               'status (hash-ref r "status")
+                               'err (hash-ref r "err-count")
+                               'errors (hash-ref r "errors"))))))
+  (orch:agent-join "par2-4842" :timeout-ms 4000)
+  (define e1 (channel:try-recv out2))
+  (check (pair? e1))
+  (check (< (list-ref e1 1) 900))
+  (check= "partial" (list-ref e1 3))
+  (check= 1 (list-ref e1 5))
+  ; One pair of strings: child name, error text.
+  (check= (list (cons "kid2-4842" "kid failed")) (list-ref e1 7)))
+
+(test-case "fiber body inside an agent runs its scope child" (hash "issue" 4842)
+  (define out3 (channel:create 16))
+  (orch:spawn-agent "par3-4842" (lambda ()
+    (fiber:join
+     (fiber:spawn
+      (lambda ()
+        (orch:scope-spawn "kid3-4842" (lambda () (channel:send out3 'kid3-ran) 10))
+        (let* ((t0 (monotonic-ms)) (r (orch:scope-join-all :timeout-ms 1000)))
+          (channel:send out3 (list 'inner-ms (- (monotonic-ms) t0)
+                                   'status (hash-ref r "status")))))))))
+  (orch:agent-join "par3-4842" :timeout-ms 4000)
+  (define f1 (channel:try-recv out3))
+  (define f2 (channel:try-recv out3))
+  (check= 'kid3-ran f1)
+  (check (pair? f2))
+  (check (< (list-ref f2 1) 900))
+  (check= "ok" (list-ref f2 3)))
+
+(test-case "top-level scope join is unchanged" (hash "issue" 4842)
+  (define out4 (channel:create 16))
+  (orch:scope-spawn "kid4-4842" (lambda () (channel:send out4 'kid4-ran) 10))
   (let* ((t0 (monotonic-ms)) (r (orch:scope-join-all :timeout-ms 1000)))
-    (channel:send out1 (list 'inner-ms (- (monotonic-ms) t0)
-                             'status (hash-ref r "status")))
-    (channel:send out1 'after-join))))
-(define jp (orch:agent-join "par-4842" :timeout-ms 4000))
-(define m1 (channel:try-recv out1))
-(define m2 (channel:try-recv out1))
-(define m3 (channel:try-recv out1))
-(check4842 (equal? (hash-ref jp "status") "ok")
-           "#4842 outer agent-join returns ok")
-(check4842 (equal? m1 'k1-ran)
-           "#4842 the scope child ran during the inner join (message order)")
-(check4842 (and (pair? m2) (equal? (list-ref m2 2) 'status)
-                (equal? (list-ref m2 3) "ok"))
-           "#4842 inner scope-join-all returns status ok")
-(check4842 (and (pair? m2) (< (list-ref m2 1) 900))
-           "#4842 inner join returns in milliseconds, not the full timeout")
-(check4842 (equal? m3 'after-join)
-           "#4842 the join returned before the body continued")
+    (channel:send out4 (list 'inner-ms (- (monotonic-ms) t0)
+                             'status (hash-ref r "status"))))
+  (define g1 (channel:try-recv out4))
+  (define g2 (channel:try-recv out4))
+  (check= 'kid4-ran g1)
+  (check (pair? g2))
+  (check (< (list-ref g2 1) 900))
+  (check= "ok" (list-ref g2 3)))
 
-; ── 2. a nested child that fails bubbles err-count / errors ────────────────
-(define out2 (channel:create 16))
-(orch:spawn-agent "par2-4842" (lambda ()
-  (orch:scope-spawn "kid2-4842" (lambda () (error "kid failed")))
-  (let* ((t0 (monotonic-ms)) (r (orch:scope-join-all :timeout-ms 1000)))
-    (channel:send out2 (list 'inner-ms (- (monotonic-ms) t0)
-                             'status (hash-ref r "status")
-                             'err (hash-ref r "err-count")
-                             'errors (hash-ref r "errors"))))))
-(orch:agent-join "par2-4842" :timeout-ms 4000)
-(define e1 (channel:try-recv out2))
-(check4842 (and (pair? e1) (< (list-ref e1 1) 900))
-           "#4842 failing child does not cost the timeout")
-(check4842 (and (pair? e1) (equal? (list-ref e1 3) "partial"))
-           "#4842 a failing nested child reports status partial")
-(check4842 (and (pair? e1) (equal? (list-ref e1 5) 1))
-           "#4842 err-count counts the nested child failure")
-(check4842 (and (pair? e1)
-                (equal? (list-ref e1 7) '((kid2-4842 . kid failed))))
-           "#4842 errors names the failing nested child")
-
-; ── 3. the same through a fiber:spawn body (thread backend) ────────────────
-(define out3 (channel:create 16))
-(orch:spawn-agent "par3-4842" (lambda ()
-  (fiber:join
-   (fiber:spawn
-    (lambda ()
-      (orch:scope-spawn "kid3-4842" (lambda () (channel:send out3 'kid3-ran) 10))
-      (let* ((t0 (monotonic-ms)) (r (orch:scope-join-all :timeout-ms 1000)))
-        (channel:send out3 (list 'inner-ms (- (monotonic-ms) t0)
-                                 'status (hash-ref r "status")))))))))
-(orch:agent-join "par3-4842" :timeout-ms 4000)
-(define f1 (channel:try-recv out3))
-(define f2 (channel:try-recv out3))
-(check4842 (equal? f1 'kid3-ran)
-           "#4842 fiber:spawn body inside an agent body runs its scope child")
-(check4842 (and (pair? f2) (< (list-ref f2 1) 900)
-                (equal? (list-ref f2 3) "ok"))
-           "#4842 fiber:spawn nested join returns status ok in milliseconds")
-
-; ── 4. top-level scope-spawn + join-all is unchanged ───────────────────────
-(define out4 (channel:create 16))
-(orch:scope-spawn "kid4-4842" (lambda () (channel:send out4 'kid4-ran) 10))
-(let* ((t0 (monotonic-ms)) (r (orch:scope-join-all :timeout-ms 1000)))
-  (channel:send out4 (list 'inner-ms (- (monotonic-ms) t0)
-                           'status (hash-ref r "status"))))
-(define g1 (channel:try-recv out4))
-(define g2 (channel:try-recv out4))
-(check4842 (equal? g1 'kid4-ran) "#4842 top-level child still runs")
-(check4842 (and (pair? g2) (< (list-ref g2 1) 900)
-                (equal? (list-ref g2 3) "ok"))
-           "#4842 top-level join-all is unchanged")
-
-(if (= *fails4842* 0)
-    (display "OK-4842\n")
-    (begin (display "FAIL-4842 fails=") (display *fails4842*) (newline) (exit 1)))
+(test-finish)

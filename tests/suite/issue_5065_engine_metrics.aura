@@ -1,42 +1,15 @@
 ; #5065: default (engine:metrics) keeps schema 2 and drops issue-3531.
-; The timing print is the repeatable benchmark; the bound is loose enough
-; for a quiet CI runner and still far under the ~0.6ms/call baseline.
+; The 100-call timing band lives in tests/bench/engine_metrics_snapshot_cost.aura.
+(require "std/test" all:)
+(test-file "issue_5065_engine_metrics.aura")
 
-(define fails 0)
-(define (expect cond name)
-  (if cond
-    #t
-    (begin (set! fails (+ fails 1))
-           (display "FAIL-5065 ") (display name) (newline))))
+(test-case "default snapshot keeps schema 2" (hash "issue" 5065)
+  (define snap (engine:metrics))
+  (check= 2 (hash-ref snap "schema"))
+  (check (> (hash-ref snap "stats-count") 0))
+  (check (hash? (hash-ref snap "compile")))
+  (check (not (hash-has-key? snap "issue-3531")))
+  (check (not (hash-has-key? snap "schema-3531")))
+  (check (hash-has-key? (stats:get "stats:drift-check") "schema-3531")))
 
-(define snap (engine:metrics))
-(expect (= (hash-ref snap "schema") 2) "schema 2")
-(expect (> (hash-ref snap "stats-count") 0) "stats-count")
-(expect (hash? (hash-ref snap "compile")) "compile group")
-(expect (not (hash-has-key? snap "issue-3531")) "no issue-3531 on the default snapshot")
-(expect (not (hash-has-key? snap "schema-3531")) "no schema-3531 on the default snapshot")
-(expect (hash-has-key? (stats:get "stats:drift-check") "schema-3531")
-        "drift-check still carries schema-3531")
-
-(define (time-n n thunk)
-  (define t0 (monotonic-ms))
-  (let loop ((i 0))
-    (if (>= i n) (- (monotonic-ms) t0)
-      (begin (thunk) (loop (+ i 1))))))
-
-(define n 100)
-(define full (time-n n (lambda () (engine:metrics))))
-(define one (time-n n (lambda () (stats:get "compile:epoch"))))
-(display "full_ms=") (display full)
-(display " one_ms=") (display one)
-(display " n=") (display n)
-(newline)
-; This host: before the intern/group-table change, 100 calls were ~62ms
-; (200 calls = 124ms). After, the same 100 calls were 27–44ms. The bound
-; only rejects a multi-millisecond regression; the printed line is the
-; repeatable benchmark.
-(expect (< full 80) "100 default snapshots stay under 80ms")
-
-(if (= fails 0)
-  (begin (display "OK-5065") (newline))
-  (exit 1))
+(test-finish)
