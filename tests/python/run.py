@@ -13,6 +13,9 @@ Usage:
   python3 tests/run.py bench [-- …benchmark.py args…]
   python3 tests/run.py mutation [-- …mutation_loop.py args…]
   python3 tests/run.py bash
+  python3 tests/run.py home "<query>"
+  python3 tests/run.py cover --issue N
+  python3 tests/run.py cover --name <symbol>
 
   python3 tests/run.py issues --json          # machine-readable summary
   python3 tests/run.py --json fixtures        # JSON wrap for simple categories
@@ -51,6 +54,7 @@ from _aura_harness import (  # noqa: E402
     print_json_report,
     timed_call,
 )
+from homes import render_cover, render_home  # noqa: E402
 
 
 def _cmd_list(_: argparse.Namespace) -> int:
@@ -179,6 +183,18 @@ def _cmd_bash(args: argparse.Namespace) -> int:
     return report.exit_code
 
 
+def _cmd_home(args: argparse.Namespace) -> int:
+    code, text = render_home(" ".join(args.query))
+    print(text, end="")
+    return code
+
+
+def _cmd_cover(args: argparse.Namespace) -> int:
+    code, text = render_cover(issue=args.issue, name=args.name)
+    print(text, end="")
+    return code
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="tests/run.py",
@@ -237,6 +253,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_e2e = sub.add_parser("e2e", help="commercial_readiness E2E + golden (#1934)")
     p_e2e.add_argument("rest", nargs=argparse.REMAINDER)
     p_e2e.set_defaults(func=lambda a: _cmd_script(a, "run_e2e.py", "e2e"))
+
+    p_home = sub.add_parser("home", help="Print the theme file and an append snippet (#5225)")
+    p_home.add_argument("query", nargs="+", help="natural language or symbol")
+    p_home.set_defaults(func=_cmd_home)
+
+    p_cov = sub.add_parser("cover", help="List cases that cover an issue or symbol (#5225)")
+    group = p_cov.add_mutually_exclusive_group(required=True)
+    group.add_argument("--issue", type=int, help="issue number")
+    group.add_argument("--name", help="symbol or phrase")
+    p_cov.set_defaults(func=_cmd_cover)
 
     return ap
 
