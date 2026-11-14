@@ -1133,8 +1133,10 @@ MessagingChannelCodec RegSplitParts::messaging_channel_codec(Evaluator& ev) {
                 std::vector<std::pair<EvalValue, EvalValue>> entries;
                 const std::uint64_t hidx = as_hash_idx(v);
                 {
+                    // Only the hash store is touched: the slots are copied
+                    // into a C++ vector, no pair is minted, so the pairs
+                    // lock the hash-keys path also takes is not needed.
                     std::scoped_lock hlock(ev.hash_tables_mutex());
-                    std::scoped_lock slock(ev.alloc_storage_lock_);
                     if (hidx < g_hash_tables.size() && g_hash_tables[hidx] != nullptr &&
                         !aura_hash_gate_checked(hidx, ev.capability_tenant_id(),
                                                 ev.effect_sandbox_mode(), "channel:send")) {
