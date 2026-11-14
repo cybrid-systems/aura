@@ -1345,6 +1345,20 @@ int run_test_mutate_type_gate() {
                         "  (if (null? xs) 0 (+ 1 (walk (cdr xs)))))\n",
                         "5279 walk typecheck");
         typecheck_clean("(lambda (x) (if #t x 1))", "5279 lambda param join stays gradual");
+        // asan-build emit-binary: safe-refactor:replace-rejects. The #5279
+        // naked forward var hid (: x Int), so (g "s") was applied.
+        typecheck_clean("(define (g (: x Int)) x)\n", "annotated identity stays clean");
+        typecheck_clean("(define (g (: x Int)) (g (+ x 1)))\n",
+                        "annotated recursive Int stays clean");
+        {
+            CompilerService host;
+            auto checked = host.typecheck_full("(define (g (: x Int)) (g \"s\"))");
+            if (!checked.has_errors)
+                std::println("  annotated recursive String:\n{}", checked.output);
+            CHECK(checked.has_errors, "annotated recursive String argument is rejected");
+            CHECK(checked.output.find("String") != std::string::npos,
+                  "annotated recursive String names the argument");
+        }
 
         {
             CompilerService host;
