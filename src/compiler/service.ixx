@@ -12155,22 +12155,26 @@ public:
         // too. A module with no export form publishes every define.
         std::unordered_set<std::string> module_exports;
         bool module_has_export = false;
-        for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
-            if (flat.is_free_slot(id))
+        // Names stay at least 3 characters and unchanged views stay const:
+        // the module clang-tidy ratchet allows only +2 per (file, check).
+        for (aura::ast::NodeId node_id = 0; node_id < flat.size(); ++node_id) {
+            if (flat.is_free_slot(node_id))
                 continue;
-            auto ev = flat.get(id);
-            if (ev.tag != aura::ast::NodeTag::Export)
+            const auto entry = flat.get(node_id);
+            if (entry.tag != aura::ast::NodeTag::Export)
                 continue;
             module_has_export = true;
-            for (auto cid : ev.children) {
-                if (cid == aura::ast::NULL_NODE || cid >= flat.size() || flat.is_free_slot(cid))
+            for (const auto child_id : entry.children) {
+                if (child_id == aura::ast::NULL_NODE || child_id >= flat.size() ||
+                    flat.is_free_slot(child_id))
                     continue;
-                auto cv = flat.get(cid);
-                if (cv.tag != aura::ast::NodeTag::Variable || cv.sym_id == aura::ast::INVALID_SYM)
+                const auto child = flat.get(child_id);
+                if (child.tag != aura::ast::NodeTag::Variable ||
+                    child.sym_id == aura::ast::INVALID_SYM)
                     continue;
-                auto en = pool.resolve(cv.sym_id);
-                if (!en.empty())
-                    module_exports.emplace(en);
+                const auto exported_name = pool.resolve(child.sym_id);
+                if (!exported_name.empty())
+                    module_exports.emplace(exported_name);
             }
         }
 
