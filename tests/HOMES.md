@@ -1,12 +1,19 @@
-# Test homes — where new ACs go
+# Test homes — where new cases go
 
-**Agents: read this before creating any new `tests/**/*.cpp`.**
+**Agents: read this before creating a test.** This file is the one decision
+tree and the genealogy. It covers Aura, Python, and C++.
 
-Issue numbers belong in comments (`// Issue #NNNN`) and coverage manifests —
-**not** in filenames. Do not create `test_foo_2622.cpp` or `test_issue_2622.cpp`.
+`python3 build.py gate` rejects a newly added issue-numbered file. The
+optional pre-commit hook runs the same check on staged adds. A missing
+`core.hooksPath` does not skip the gate. Modifying or deleting a historical
+numbered file is allowed.
 
-**Coverage (runtime vs manifest vs check_*.py):** [`COVERAGE.md`](COVERAGE.md).
-Do not add a substring-only `check_*.py` per issue.
+Issue numbers belong in case metadata, comments, and coverage manifests —
+not in a new filename.
+
+**Manifest policy:** [`COVERAGE.md`](COVERAGE.md). Do not add a substring-only
+`check_*.py`, and do not put an issue number in a new check filename.
+**Hot-path matrix only:** [`STRATEGY.md`](STRATEGY.md).
 
 ## Aura behavior suites (L1)
 
@@ -90,34 +97,72 @@ the words in this table. Schema-only rows still go in
 `lib/std/tests/` is not a home. Move a valid case into the suites above.
 Do not create `test_issue_N.py`, `*_N.aura`, or `test_*_NNNN.cpp`.
 
-## Decision tree (hard)
+## Decision tree
 
 ```
-1. Schema-only gate (query:*-stats / engine:* key)?
-   → add a row in tests/compiler/obs_schema_cases.hpp
-     (+ production_sweep_cases.hpp if production flag)
-   → STOP. No new .cpp.
+1. Ask. Do not guess a file.
 
-2. Same feature family already has a suite under tests/<src-module>/?
-   → open that file, add AC functions + call them from main / run_all.
-   → STOP.
+     python3 tests/run.py home "<query>"
+     python3 tests/run.py cover --issue N
+     python3 tests/run.py cover --name <symbol>
 
-3. Family has a *_batch / matrix suite (see map below)?
-   → extend the batch. STOP.
+   A hit prints `home: <path>` and an append snippet. A miss starts with
+   `not found:` and does not name an existing file. A tie lists both
+   paths and says not to guess.
 
-4. Truly new feature surface with no home?
-   → create tests/<src-module>/test_<module>_<feature>.cpp
-     (module + feature words only — NO trailing issue number)
-   → register once in CMakeLists.txt:
-        aura_add_issue_test(test_<module>_<feature>)
-        aura_issue_test_link_light(...)   # default
-        add_dependencies(all_test_issue_targets ...)
-   → Issue #N in the file banner only.
+2. Append in the language that hit prints.
 
-5. NEVER:
+   Aura
+     Append one (test-case ...) to that file. Keep a single (test-file ...)
+     and a single (test-finish). If the file still uses an older harness,
+     still append the std/test shape. Do not add another failure counter.
+     An unclosed program cannot sit inside test-case. Give it its own
+     tests/suite/<module>_<feature>.aura with ;; expect-status: and
+     ;; expect-err:.
+
+   Python
+     Process checks (CLI / help, diagnostic location, cross-mode,
+     sandbox / Restricted) append a unittest method on that home.
+     Behavior assertions do not go in those files.
+
+   C++
+     Add an AC function and call it from main / run_all.
+     Schema-only rows (query:*-stats / engine:* key) go in
+     tests/compiler/obs_schema_cases.hpp
+     (+ production_sweep_cases.hpp when the production flag is set).
+     Stop. No new .cpp for a schema row.
+
+3. No home yet? Create one theme file. No issue digits in the name.
+
+   Aura:  tests/suite/<module>_<feature>.aura
+   C++:   tests/<src-module>/test_<module>_<feature>.cpp
+          register once:
+            aura_add_issue_test(test_<module>_<feature>)
+            aura_issue_test_link_light(...)
+            add_dependencies(all_test_issue_targets ...)
+   Python behavior does not get a new test_issue_*.py.
+   The issue number goes in the case metadata, a comment, or
+   scripts/coverage/manifests/<N>.json.
+
+4. Never create these (the gate fails the add; editing an existing
+   file is allowed):
+
+   - tests/**/test_issue_*.py
+   - tests/**/test_*_<3–5 digits>.py
+   - tests/suite/*_<3–5 digits>.aura
+   - tests/suite/issue_<3–5 digits>_*.aura
+   - tests/suite/issue_<3–5 digits>.aura
+   - scripts/coverage/checks/check_*_<3–5 digits>*.py
+   - scripts/coverage/checks/check_<3–5 digits>_*.py
+   - scripts/coverage/checks/check_<3–5 digits>.py
    - tests/issues/test_issue_N.cpp
-   - tests/**/test_*_<3–5 digit issue>.cpp   (blocked by pre-commit)
-   - tests/test_*.cpp at repo root for new work
+   - tests/**/test_issue_*.cpp
+   - tests/**/test_*_<3–5 digits>.cpp
+   - new tests/test_*.cpp at the repo root
+
+   lib/std/tests/ is not a home. A new check script, when one is truly
+   required, has no issue digits. This refusal does not ask for a new
+   check script.
 ```
 
 ## Preferred homes (theme → file)
@@ -142,7 +187,7 @@ If unsure: `rg -n 'keyword' tests/compiler tests/core tests/serve tests/orch` an
 
 ## Consolidation waves (existing issue-suffixed files)
 
-**Detailed scan + merge plan:** [`CONSOLIDATION_PLAN.md`](CONSOLIDATION_PLAN.md).
+**Historical scan (not the how-to):** [`CONSOLIDATION_PLAN.md`](CONSOLIDATION_PLAN.md).
 
 
 **Status (2026-08-04):** multi-TU thematic batches done. Historical files keep
@@ -174,6 +219,12 @@ After further folds: regen `test-registry.json` + inventory.
 
 ## Enforcement
 
-- **pre-commit (hard):** rejects newly staged `test_issue_*.cpp` and `test_*_<NNNN>.cpp`
-- **Scaffold:** `tests/scaffolds/module_test_scaffold.cpp` — no issue suffix in name
-- **Policy authority:** this file + `tests/README.md`
+- **gate (hard):** `python3 build.py gate`, including `--changed` and the CI
+  gate job, runs `scripts/tools/check_new_test_files.py`. It fails paths
+  added versus `origin/main`, staged adds, and untracked files. It does not
+  read `core.hooksPath`.
+- **pre-commit:** the same script, staged adds only (`--cached`).
+- A modified or deleted historical numbered file passes. A rename that shows
+  up as delete + add fails when the new name is still on the never-create list.
+- **Scaffold:** `tests/scaffolds/module_test_scaffold.cpp` — no issue suffix in the name.
+- **Policy authority:** this file. Other docs point here.

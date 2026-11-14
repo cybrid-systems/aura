@@ -1,5 +1,9 @@
 # Aura test strategy — hot paths & AI self-mod
 
+**Scope:** hot-path matrix only (`kHotPathMatrix` / `HotPathScenario`).
+This is not the policy for where a new test goes. How to add a test:
+[`HOMES.md`](HOMES.md).
+
 **Authority (code):** [`src/test/test_strategy.h`](../src/test/test_strategy.h) ·
 [`src/test/test_strategy.ixx`](../src/test/test_strategy.ixx)  
 **Issue:** #1887  

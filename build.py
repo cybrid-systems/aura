@@ -13,6 +13,7 @@ Usage:
   ./build.py gate --serial    # coverage checks one-at-a-time (debug; default is parallel)
   ./build.py gate --jobs N    # coverage parallel workers (default min(16,nproc) / AURA_GATE_JOBS)
   ./build.py legacy-test-inventory  # #1957 inventory freshness (--fix to regen)
+  ./build.py new-test-files      # reject newly added issue-numbered test names
   ./build.py ci               # build + CI 测试矩阵
   ./build.py ci-issues        # issue 测试矩阵的一片 (AURA_ISSUE_SHARD=i/N, CI issue-farm #4819)
   ./build.py ci-issues --build-only   # 只编译这一片（CI 在测试前装入 aura 可执行文件）
@@ -14759,6 +14760,32 @@ def cmd_test_binding():
     return 0
 
 
+def cmd_new_test_files():
+    """Reject newly added issue-numbered test filenames.
+
+    Same classifier as ``.githooks/pre-commit`` (``--cached``). Gate mode also
+    sees commits versus origin/main and untracked files, so a missing
+    ``core.hooksPath`` does not skip the ban.
+    """
+    print(f"{B}═══ New test filenames ═══{N}")
+    ut = ROOT / "tests" / "python" / "test_new_test_files.py"
+    if ut.exists():
+        r0 = subprocess.run([sys.executable, str(ut)], cwd=ROOT)
+        if r0.returncode != 0:
+            fail("test_new_test_files unit tests failed")
+            return 1
+    script = TOOLS / "check_new_test_files.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("new issue-numbered test file blocked — append to the home in tests/HOMES.md")
+        return 1
+    ok("new test filenames OK")
+    return 0
+
+
 def cmd_side_effect_security():
     """Issue #2057: effectful prims must use require_effect / add_mutate / exempt."""
     print(f"{B}═══ Side-effect security coverage (#2057) ═══{N}")
@@ -26133,6 +26160,7 @@ def cmd_gate():
         or cmd_primitive_surface()
         or cmd_test_registry()
         or cmd_test_binding()
+        or cmd_new_test_files()
         or cmd_side_effect_security()
         or cmd_naming_convention()
         or cmd_dead_heap_push()
@@ -27175,6 +27203,7 @@ def main():
         "workflow-failure-policy-2756-coverage": cmd_workflow_failure_policy_2756_coverage,
         "aot-env-linear-stamp": cmd_aot_env_linear_stamp,
         "legacy-test-inventory": cmd_legacy_test_inventory,
+        "new-test-files": cmd_new_test_files,
         "source-to-ir-strict": cmd_source_to_ir_strict,
         "cross-fn-impact-scope": cmd_cross_function_impact_scope_coverage,
         "dual-dep-graph-parity": cmd_dual_dep_graph_parity_coverage,

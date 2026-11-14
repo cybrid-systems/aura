@@ -1,12 +1,14 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-11-13 by `scripts/tools/inventory_legacy_tests.py`
-**Status:** living document — re-run the script after consolidations.
+**Generated:** 2026-11-14 by `scripts/tools/inventory_legacy_tests.py`
+**Status:** generated inventory, not the how-to-add-a-test policy. Policy is tests/HOMES.md. Re-run this script after consolidations.
 
 ## Purpose
 
 Categorize legacy per-issue regression tests so we can migrate them in batches into the preferred `tests/core/` structure (and existing family batch drivers under `tests/test_*_batch.cpp`).
+
+This file is not the decision tree for a new test. Ask `python3 tests/run.py home` and follow tests/HOMES.md.
 
 `tests/issues/` **removed** (#1957). Prefer theme/domain batches; do not reintroduce per-issue mains.
 
@@ -24,7 +26,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 - Coarser 5-bucket Phase-2 map: [`tests_classification.md`](domain_classification.md) (`scripts/tools/classify_test_issues.py`)
 - Link/bundle profiles: [`tests/fixtures/issue_link_profiles.json`](fixtures/issue_link_profiles.json)
 - Domain CMake: [`cmake/AuraDomainTests.cmake`](../cmake/AuraDomainTests.cmake)
-- Test layout rules: [`tests/README.md`](README.md)
+- How to add a test: [`tests/HOMES.md`](HOMES.md). This inventory is not that policy.
+- Runner index: [`tests/README.md`](README.md)
 
 ## Theme buckets (8 + uncategorized)
 

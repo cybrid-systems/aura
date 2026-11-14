@@ -3,6 +3,8 @@
 Shared Python harness, unified runner, and gate unit tests
 (Issues #1932 / #1939).
 
+New behavior goes in a theme file. See [`../HOMES.md`](../HOMES.md). Do not add `test_issue_N.py`.
+
 | File | Role |
 |------|------|
 | `run.py` | Primary CLI (`python3 tests/run.py …` thin entry at root) |

@@ -488,7 +488,10 @@ def render_markdown(entries: list[TestEntry]) -> str:
     a("")
     a("**Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)")
     a(f"**Generated:** {today} by `scripts/tools/inventory_legacy_tests.py`")
-    a("**Status:** living document — re-run the script after consolidations.")
+    a(
+        "**Status:** generated inventory, not the how-to-add-a-test policy. "
+        "Policy is tests/HOMES.md. Re-run this script after consolidations."
+    )
     a("")
     a("## Purpose")
     a("")
@@ -497,6 +500,8 @@ def render_markdown(entries: list[TestEntry]) -> str:
         "batches into the preferred `tests/core/` structure (and existing "
         "family batch drivers under `tests/test_*_batch.cpp`)."
     )
+    a("")
+    a("This file is not the decision tree for a new test. Ask `python3 tests/run.py home` and follow tests/HOMES.md.")
     a("")
     a("`tests/issues/` **removed** (#1957). Prefer theme/domain batches; do not reintroduce per-issue mains.")
     a("")
@@ -518,7 +523,8 @@ def render_markdown(entries: list[TestEntry]) -> str:
     )
     a("- Link/bundle profiles: [`tests/fixtures/issue_link_profiles.json`](fixtures/issue_link_profiles.json)")
     a("- Domain CMake: [`cmake/AuraDomainTests.cmake`](../cmake/AuraDomainTests.cmake)")
-    a("- Test layout rules: [`tests/README.md`](README.md)")
+    a("- How to add a test: [`tests/HOMES.md`](HOMES.md). This inventory is not that policy.")
+    a("- Runner index: [`tests/README.md`](README.md)")
     a("")
 
     # ── Theme distribution ────────────────────────────────────────────────

@@ -3,6 +3,8 @@
 These are **not** hand-written test suites. Each profile is one fat executable
 that links many `tests/issues/test_issue_*.cpp` (and a few domain pilots)
 together so CI does not link 200+ × ~200MB standalones.
+Do not add a new `tests/issues/test_issue_*.cpp`. New cases go in a theme home
+([`../HOMES.md`](../HOMES.md)).
 
 ## Layout
 
