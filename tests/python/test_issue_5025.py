@@ -38,8 +38,15 @@ def run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
 
 
 RECORD = "1 ROLLBACK  (define (guess) 10)   live (define (guess) 0)"
+# #5285: the README first screen is the live-tune terminal record now; the
+# `aura demo` record stays in the two entry docs it points at.
+README_RECORD = "## Watch a running service retune itself"
 POINTERS = (
     ROOT / "README.md",
+    ROOT / "docs" / "getting-started.md",
+    ROOT / "docs" / "install.md",
+)
+RECORD_DOCS = (
     ROOT / "docs" / "getting-started.md",
     ROOT / "docs" / "install.md",
 )
@@ -54,7 +61,13 @@ class FirstScreen(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_docs_start_with_demo_and_the_record(self) -> None:
-        for doc in POINTERS:
+        readme = (ROOT / "README.md").read_text()
+        self.assertIn("aura demo", readme, "README.md")
+        self.assertIn(README_RECORD, readme, "README.md")
+        self.assertIn("| Requests/s |", readme, "README.md")
+        self.assertNotIn("out/report.html", readme, "README.md")
+        self.assertNotIn("aura new evolve demo\ncd demo\naura run", readme, "README.md")
+        for doc in RECORD_DOCS:
             text = doc.read_text()
             self.assertIn("aura demo", text, doc)
             self.assertIn(RECORD, text, doc)
