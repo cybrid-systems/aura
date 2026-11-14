@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.3
+
+Patch release on the 0.2 channel. It fixes the orchestration/channel flake that failed `ci/suite`, the HTTP client's response body, and a set of long-running `--serve-async` regressions; the build is faster. No new public surface. The API is still not stable.
+
+- Orchestration and channels (#5154): `channel:send` built a hash payload's key list with `hash-keys` on the sender's heap; a concurrent sweep could reclaim that list and the receiver rebuilt an **empty** hash, so an `op=call` actor request arrived with no fields and `orch:ask` timed out at random. The encoder copies the live slots under the hash lock now, with no heap temporary. `orch:ask` also carries its own tagged, buffered reply channel instead of racing a timer against the shared rendezvous outbox: a timed-out ask no longer leaves the handler's late reply blocking the worker (which made every later ask to that agent time out), and a late answer is dropped instead of being handed to the next caller. `orch:send` / `orch:stop` control traffic is a list.
+- Type checking (#5279): an annotated parameter reaches a recursive call, so `(define (g (: x Int)) (g "s"))` is a type error instead of a silent accept. A `car`/`cdr` result joins a ground branch as a variable, so `(if (pair? r) (car r) r)` typechecks, and `(sort xs less?)` accepts its two-argument form.
+- HTTP client (#5268): `http-post` answers the response body. The write callback was installed through the accessor that returns it rather than the returned pointer, so a completed POST filled no buffer and answered void; a real empty body answers `""`, a transport failure is a primitive error, and the primitive takes an optional timeout in seconds (3rd slot, or 4th after a bearer).
+- Long-running serve (#5274, #5275): a CLI thread-backend body parked in `channel:recv` (the `fiber:spawn` fallback) stood both file-heap sweeps down for its whole lifetime, so a long `--serve-async` game grew to 583-858 MB and paid the full linear audit on every outermost mutate. A parked plain walker is certified now; the outermost boundary's linear frame sweep is bounded and skipped when no frame carries a linear column; a slow explicit `mutate:rebind` hold is observed instead of failing the hold-SLO breaker; and a heap-slot mutate is admitted under another fiber's over-budget hold instead of aborting the process.
+- JIT and eval: an IR-specialized recursive define is handed the self cell the tier needs, so a hot workspace define compiles instead of being dropped as ineligible. The shared float-literal intern is locked against a parallel resize, and a discarded `evo:trial` no longer leaves the live define unspecialised.
+- Stdlib: `string-split` splits through the regex primitive (a few thousand lines went from ~100 ms to a few milliseconds) and keeps its trailing-empty-segment and size-cap behaviour.
+- Fiber (#5211): the guard is sized to the architecture's stack-clash probe assumption (4 KiB x86-64, 64 KiB AArch64), workers get alternate stacks, and a failed `mprotect` unmaps and throws instead of running a fiber without a guard.
+- Build and release (#5201, #5202, #5203): CMake 4.5 is required and the import-std gate is gone; the module launcher drops the consumer BMI symlink farm and the per-consumer relinks (~16k link/mv pairs per TU), plain `.cpp` compiles skip the BMI fan-out, and raw cmake, presets, and dist probe the fast linker. The release SBOM hashes the published linux bundle, honors `SOURCE_DATE_EPOCH`, and `release.sh` builds the bundle before the SBOM.
+- Install and smoke coverage is unchanged: Ubuntu 24.04, Ubuntu 26.10, Debian 12, Rocky Linux 9, and openEuler 24.03 LTS SP4, on x86_64 and arm64.
+
+Not in this version:
+
+- macOS, Windows, and other Linux distributions.
+- `aura::eval` ships in the build tree only.
+
 ## 0.2.2
 
 Patch release on the 0.2 channel. This version hardens what 0.2.0 shipped; it adds no new surface. The API is still not stable.
