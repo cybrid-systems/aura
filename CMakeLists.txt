@@ -2642,10 +2642,11 @@ aura_issue_test_link_light(test_static_reflect_selfmod_validation_task6)
 # and tests/bundles/issue_bundle_runner.{hh,cpp}.
 aura_add_issue_bundle(light)
 aura_add_issue_bundle(jit_late1)
-# DISABLED (pre-existing bundle bug: bundle main calls aura_issue_*_run()
-# entry functions that aren't defined in any test file — gen_issue_bundles.py
-# referenced functions like aura_issue_dead_coercion_elision_narrow_evidence_run
-# that don't exist; needs source-side fixes per member) for CI green:
+# DISABLED (#5247, 65643af85): jit_late2 / jit_late3 mains call
+# aura_issue_*_run() entry points the member TUs do not define
+# (gen_issue_bundles.py emitted aura_issue_dead_coercion_elision_narrow_evidence_run
+# and the same shape for the other members). Do not add these bundles to
+# all_test_issue_targets until each member defines its entry.
 # aura_add_issue_bundle(jit_late2)
 # aura_add_issue_bundle(jit_late3)
 aura_add_issue_bundle(light_late)
@@ -2666,7 +2667,8 @@ add_dependencies(all_test_issue_targets test_chaos_steal_mutation_gc)
 # Issue #2381: concurrent compact_hook shape_inval atomic stress.
 # Issue #2382: ASTArena dtor clears hooks before teardown.
 # Issue #2383: has_on_compact_hook lock parity.
-# DISABLED (paired with disabled aura_add_issue_bundle above):
+# DISABLED (#5247): same missing aura_issue_*_run entry points as the
+# jit_late2 / jit_late3 bundles above. Not dependencies of the PR issue-farm.
 # add_dependencies(all_test_issue_targets test_issues_jit_late2)
 # add_dependencies(all_test_issue_targets test_issues_jit_late3)
 
@@ -2698,9 +2700,11 @@ add_dependencies(all_test_issue_targets test_rest_param_hygiene_self_evo)
 # stamping visibility (qq-aware pre_scan + stamp_rest_param_hygiene helper
 # at both rest-list allocation sites + per-rest + per-qq metrics + query
 # primitive hash upgrade).
-# DISABLED (pre-existing namespace mismatch: extern decls in aura::compiler::macro_exp,
-# but defs in aura::compiler::macro_expansion via inline namespace ABI tag — needs
-# test source fix or #ifdef AURA_ISSUE_BUNDLE_MEMBER in extern block) for CI green:
+# Standalone target stays off (#5247). The TU is a source of
+# test_macro_hygiene_batch, which is on all_test_issue_targets.
+# 65643af85 dropped the standalone link: extern decls were in
+# aura::compiler::macro_exp while the definitions lived in
+# aura::compiler::macro_expansion. Do not register a second binary.
 # aura_add_issue_test(test_rest_param_nested_qq_hygiene)
 # aura_issue_test_link_llvm_jit(test_rest_param_nested_qq_hygiene)
 # add_dependencies(all_test_issue_targets test_rest_param_nested_qq_hygiene)
@@ -3326,13 +3330,18 @@ add_test(NAME test_panic_checkpoint_aba COMMAND ./test_panic_checkpoint_aba)
 # Issue #2294: RootRemapPass real rewrite (registered near #2166 above).
 
 # Issue #2109: instruction-level impact + partial re-emit.
-# DISABLED (runtime crash/missing features) for CI green:
+# Standalone target stays off (#5247). The TU is a source of
+# test_cascade_impact_batch, which is on all_test_issue_targets.
+# 65643af85 had disabled the standalone after a crash or missing symbol.
+# Do not register a second binary.
 # aura_add_issue_test(test_instruction_level_impact_partial)
 # aura_issue_test_link_llvm_jit(test_instruction_level_impact_partial)
 # add_dependencies(all_test_issue_targets test_instruction_level_impact_partial)
 
 # Issue #2110: hybrid string dep_graph_ ↔ NodeId DepGraph cascade.
-# DISABLED (runtime crash/missing features) for CI green:
+# Standalone target stays off (#5247). The TU is a source of
+# test_cascade_impact_batch, which is on all_test_issue_targets.
+# 65643af85 had disabled the standalone after a crash or missing symbol.
 # aura_add_issue_test(test_dep_graph_hybrid_cascade)
 
 
@@ -3352,7 +3361,10 @@ add_test(NAME test_panic_checkpoint_aba COMMAND ./test_panic_checkpoint_aba)
 
 
 # Issue #2202: chaos multi-worker mutate × steal × GC × mailbox × panic.
-# DISABLED (runtime crash/hang) for CI green:
+# DISABLED (#5247, 65643af85): taken off the issue-farm after segfault,
+# double-free, or hang. #2324 re-enabled the yield-under-mutation tests
+# and did not re-enable this target. Listed in cmake/AuraUnbuiltTests.cmake.
+# Do not add it to all_test_issue_targets without a timeout.
 # aura_add_issue_test(test_chaos_fiber_mutation_gc_mailbox)
 
 # aura_issue_test_link_llvm_jit(test_chaos_fiber_mutation_gc_mailbox)
@@ -3383,7 +3395,9 @@ add_test(NAME test_panic_checkpoint_aba COMMAND ./test_panic_checkpoint_aba)
 
 
 # Issue #2223: ADT match exhaustiveness in TypedMutationAudit (adt_ok).
-# DISABLED (runtime crash/hang) for CI green:
+# Standalone target stays off (#5247). The TU is a source of
+# test_occurrence_coercion_batch, which is on all_test_issue_targets.
+# 65643af85 had disabled the standalone after a crash or hang.
 # aura_add_issue_test(test_adt_exhaustiveness_audit)
 
 # aura_issue_test_link_llvm_jit(test_adt_exhaustiveness_audit)
@@ -3405,7 +3419,8 @@ add_test(NAME test_panic_checkpoint_aba COMMAND ./test_panic_checkpoint_aba)
 
 
 
-# DISABLED (runtime crash/missing features) for CI green:
+# Link lines for the standalone stay off (#5247). The TU is compiled
+# by test_cascade_impact_batch. Do not add a second link.
 # aura_issue_test_link_llvm_jit(test_dep_graph_hybrid_cascade)
 # add_dependencies(all_test_issue_targets test_dep_graph_hybrid_cascade)
 
@@ -3414,7 +3429,9 @@ add_test(NAME test_panic_checkpoint_aba COMMAND ./test_panic_checkpoint_aba)
 
 
 # Issue #2115: unify is_at_safe_mutation_boundary with depth-safe steal API.
-# DISABLED (runtime crash/hang) for CI green:
+# Standalone target stays off (#5247). The TU is a source of
+# test_mutation_hold_boundary_batch, which is on all_test_issue_targets.
+# 65643af85 had disabled the standalone after a crash or hang.
 # aura_add_issue_test(test_depth_safe_mutation_boundary_steal)
 
 # aura_issue_test_link_llvm_jit(test_depth_safe_mutation_boundary_steal)
@@ -3423,7 +3440,9 @@ add_test(NAME test_panic_checkpoint_aba COMMAND ./test_panic_checkpoint_aba)
 
 
 # Issue #2184: MutationSafetySnapshot for steal decisions.
-# DISABLED (runtime crash/hang) for CI green:
+# Standalone target stays off (#5247). The TU is a source of
+# test_mutation_hold_boundary_batch, which is on all_test_issue_targets.
+# 65643af85 had disabled the standalone after a crash or hang.
 # aura_add_issue_test(test_mutation_safety_snapshot_steal)
 
 # aura_issue_test_link_llvm_jit(test_mutation_safety_snapshot_steal)
@@ -3478,7 +3497,9 @@ add_test(NAME test_panic_checkpoint_aba COMMAND ./test_panic_checkpoint_aba)
 
 
 # Issue #2119: MutationBoundary yield hold + steal starvation metrics + adaptive.
-# DISABLED (runtime crash/hang) for CI green:
+# Standalone target stays off (#5247). The TU is a source of
+# test_mutation_hold_boundary_batch, which is on all_test_issue_targets.
+# 65643af85 had disabled the standalone after a crash or hang.
 # aura_add_issue_test(test_boundary_yield_steal_metrics)
 
 # aura_issue_test_link_llvm_jit(test_boundary_yield_steal_metrics)
@@ -3505,7 +3526,10 @@ aura_add_issue_test(test_obs_schema_matrix)
 aura_issue_test_link_light(test_obs_schema_matrix)
 add_dependencies(all_test_issue_targets test_obs_schema_matrix)
 
-# DISABLED (runtime crash/hang) for CI green:
+# DISABLED (#5247, 65643af85): taken off the issue-farm after segfault,
+# double-free, or hang. #2324 re-enabled the yield-under-mutation tests
+# and did not re-enable this target. Listed in cmake/AuraUnbuiltTests.cmake.
+# Do not add it to all_test_issue_targets without a timeout.
 # aura_add_issue_test(test_hotpath_matrix_batch)
 
 # aura_issue_test_link_llvm_jit(test_hotpath_matrix_batch)
@@ -3529,6 +3553,9 @@ add_dependencies(all_test_issue_targets test_raw_pointer_safety)
 # Do not reintroduce per-issue aura_add_issue_test for test_*_NNNN.
 # Members live in thematic multi-TU batches (tests/CONSOLIDATION_PLAN.md).
 # Coverage contracts require the member .cpp path to appear as a batch source.
+# Issue #5247: a tests/**/*.cpp with no enabled target is listed in
+# cmake/AuraUnbuiltTests.cmake and omitted from test-registry.json.
+include(cmake/AuraUnbuiltTests.cmake)
 
 # Domain batch: FlatAST / SoA atomic + lock ACs (36 members + driver).
 add_executable(test_flatast_atomic_lock_batch

@@ -113,6 +113,20 @@ class TestRegistryGen(unittest.TestCase):
             "registry must include theme batch or issues/ tests",
         )
 
+    def test_unbuilt_cpp_is_not_registered(self):
+        gen = ROOT / "scripts" / "tools" / "gen_test_registry.py"
+        spec = importlib.util.spec_from_file_location("gen_test_registry", gen)
+        assert spec and spec.loader
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        errors = mod.check_unbuilt_inventory()
+        self.assertEqual(errors, [], "\n".join(errors))
+        files = {t["file"] for t in mod.scan()["tests"]}
+        self.assertNotIn("tests/core/test_persist_basic.cpp", files)
+        self.assertIn("tests/compiler/test_obs_metrics_smoke_batch.cpp", files)
+        cmake = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        self.assertNotIn("for CI green", cmake)
+
 
 def main() -> int:
     suite = unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])
