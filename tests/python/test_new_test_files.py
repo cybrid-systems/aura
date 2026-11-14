@@ -12,6 +12,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "tools" / "check_new_test_files.py"
+# CI containers run git as a different uid than the checkout owner.
+GIT = ["git", "-c", "safe.directory=*"]
 
 
 def _load():
@@ -168,7 +170,7 @@ class TestCollectAdded(unittest.TestCase):
         self.assertFalse(path.exists())
         try:
             path.write_text(";; probe\n", encoding="utf-8")
-            subprocess.run(["git", "add", "--", rel], cwd=ROOT, check=True)
+            subprocess.run([*GIT, "add", "--", rel], cwd=ROOT, check=True)
             self.assertIn(rel, self.m.collect_added("cached"))
             self.assertIn(rel, self.m.banned_added("cached"))
             err = io.StringIO()
@@ -178,7 +180,7 @@ class TestCollectAdded(unittest.TestCase):
             self.assertIn("not found:", err.getvalue())
             self.assertIn(rel, err.getvalue())
         finally:
-            subprocess.run(["git", "reset", "-q", "HEAD", "--", rel], cwd=ROOT, check=False)
+            subprocess.run([*GIT, "reset", "-q", "HEAD", "--", rel], cwd=ROOT, check=False)
             path.unlink(missing_ok=True)
         self.assertNotIn(rel, self.m.collect_added("cached"))
 
@@ -196,7 +198,7 @@ class TestCollectAdded(unittest.TestCase):
     def test_modified_existing_numbered_file_is_not_added(self) -> None:
         rel = "tests/python/test_issue_5198_export_contracts.py"
         status = subprocess.run(
-            ["git", "status", "--porcelain", "--", rel],
+            [*GIT, "status", "--porcelain", "--", rel],
             cwd=ROOT,
             capture_output=True,
             text=True,
