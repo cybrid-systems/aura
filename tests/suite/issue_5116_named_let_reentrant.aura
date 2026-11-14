@@ -1,6 +1,9 @@
 ; #5116: a named-let called twice on the same thread must see each call's
-; captured frame. The #5066 integer fast path used to freeze the first
-; call's free var (n) for the rest of the thread.
+; captured frame. The integer fast path used to freeze the first call's
+; free var for the rest of the thread. The --serve-async-bench face stays
+; in tests/python/test_issue_5116_named_let.py.
+(require "std/test" all:)
+(test-file "issue_5116_named_let_reentrant.aura")
 
 (define (sum n)
   (let loop ((i 0) (acc 0))
@@ -27,7 +30,7 @@
 (define (rec n)
   (if (= n 0) 0 (+ 1 (rec (- n 1)))))
 
-(define (check)
+(define (frames-ok?)
   (and (= (sum 3) 3) (= (sum 7) 21) (= (sum 2) 1)
        (= (cnt 3) 3) (= (cnt 7) 7)
        (equal? (join 3) "012") (equal? (join 7) "0123456")
@@ -35,12 +38,8 @@
        (equal? (tag 3) "3") (equal? (tag 7) "7")
        (= (rec 3) 3) (= (rec 7) 7)))
 
-(define host (if (check) 1 0))
-(define guest (fiber:join (fiber:spawn (lambda () (if (check) 1 0)))))
+(test-case "named let sees each captured frame" (hash "issue" 5116)
+  (check (frames-ok?))
+  (check= 1 (fiber:join (fiber:spawn (lambda () (if (frames-ok?) 1 0))))))
 
-(if (and (= host 1) (= guest 1))
-    (begin (display "OK-5116") (newline))
-    (begin
-      (display "FAIL-5116 host=") (display host)
-      (display " guest=") (display guest) (newline)
-      (exit 1)))
+(test-finish)

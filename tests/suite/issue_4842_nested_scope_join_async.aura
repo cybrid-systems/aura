@@ -1,56 +1,44 @@
-;; Issue #4842: the same nested scope-spawn + scope-join-all must work on
-;; the serve-async face, where the agent body is a scheduler fiber and the
-;; inner join parks it instead of polling. The child must run during the
-;; join and the join must report ok in milliseconds, not time out.
 ;; suite-mode: serve-async
-;; expect: OK-4842-ASYNC
+;; expect: 0 failed
+; Issue #4842: the same nested scope-spawn + scope-join-all on the
+; serve-async face. The agent body is a scheduler fiber and the inner
+; join parks it. The 900ms ceiling is the original bound.
+(require "std/test" all:)
+(test-file "issue_4842_nested_scope_join_async.aura")
 
-(define *fails4842a* 0)
-(define (check4842a pred msg)
-  (if pred
-      (begin (display "  pass: ") (display msg) (newline))
-      (begin (set! *fails4842a* (+ *fails4842a* 1)) (display "  FAIL: ") (display msg) (newline))))
+(test-case "serve-async nested child runs during the join" (hash "issue" 4842)
+  (define out (channel:create 16))
+  (orch:spawn-agent "par-4842a" (lambda ()
+    (orch:scope-spawn "k1-4842a" (lambda () (channel:send out 'k1-ran) 10))
+    (let* ((t0 (monotonic-ms)) (r (orch:scope-join-all :timeout-ms 1000)))
+      (channel:send out (list 'inner-ms (- (monotonic-ms) t0)
+                              'status (hash-ref r "status")))
+      (channel:send out 'after-join))))
+  (define jp (orch:agent-join "par-4842a" :timeout-ms 4000))
+  (define m1 (channel:try-recv out))
+  (define m2 (channel:try-recv out))
+  (check= "ok" (hash-ref jp "status"))
+  (check= 'k1-ran m1)
+  (check (pair? m2))
+  (check (< (list-ref m2 1) 900))
+  (check= "ok" (list-ref m2 3)))
 
-; ── direct nested scope-spawn + join inside an agent body ─────────────────
-(define out (channel:create 16))
-(orch:spawn-agent "par-4842a" (lambda ()
-  (orch:scope-spawn "k1-4842a" (lambda () (channel:send out 'k1-ran) 10))
-  (let* ((t0 (monotonic-ms)) (r (orch:scope-join-all :timeout-ms 1000)))
-    (channel:send out (list 'inner-ms (- (monotonic-ms) t0)
-                            'status (hash-ref r "status")))
-    (channel:send out 'after-join))))
-(define jp (orch:agent-join "par-4842a" :timeout-ms 4000))
-(define m1 (channel:try-recv out))
-(define m2 (channel:try-recv out))
-(check4842a (equal? (hash-ref jp "status") "ok")
-            "#4842 serve-async outer agent-join returns ok")
-(check4842a (equal? m1 'k1-ran)
-            "#4842 serve-async scope child ran during the inner join")
-(check4842a (and (pair? m2) (< (list-ref m2 1) 900)
-                 (equal? (list-ref m2 3) "ok"))
-            "#4842 serve-async inner join returns status ok in milliseconds")
+(test-case "serve-async nested failure is counted" (hash "issue" 4842)
+  (define out2 (channel:create 16))
+  (orch:spawn-agent "par2-4842a" (lambda ()
+    (orch:scope-spawn "kid2-4842a" (lambda () (error "kid failed")))
+    (let* ((t0 (monotonic-ms)) (r (orch:scope-join-all :timeout-ms 1000)))
+      (channel:send out2 (list 'inner-ms (- (monotonic-ms) t0)
+                               'status (hash-ref r "status")
+                               'err (hash-ref r "err-count")
+                               'errors (hash-ref r "errors"))))))
+  (orch:agent-join "par2-4842a" :timeout-ms 4000)
+  (define e1 (channel:try-recv out2))
+  (check (pair? e1))
+  (check (< (list-ref e1 1) 900))
+  (check= "partial" (list-ref e1 3))
+  (check= 1 (list-ref e1 5))
+  ; One pair of strings: child name, error text.
+  (check= (list (cons "kid2-4842a" "kid failed")) (list-ref e1 7)))
 
-; ── a failing nested child bubbles err-count / errors ─────────────────────
-(define out2 (channel:create 16))
-(orch:spawn-agent "par2-4842a" (lambda ()
-  (orch:scope-spawn "kid2-4842a" (lambda () (error "kid failed")))
-  (let* ((t0 (monotonic-ms)) (r (orch:scope-join-all :timeout-ms 1000)))
-    (channel:send out2 (list 'inner-ms (- (monotonic-ms) t0)
-                             'status (hash-ref r "status")
-                             'err (hash-ref r "err-count")
-                             'errors (hash-ref r "errors"))))))
-(orch:agent-join "par2-4842a" :timeout-ms 4000)
-(define e1 (channel:try-recv out2))
-(check4842a (and (pair? e1) (< (list-ref e1 1) 900))
-            "#4842 serve-async failing child does not cost the timeout")
-(check4842a (and (pair? e1) (equal? (list-ref e1 3) "partial"))
-            "#4842 serve-async nested failure reports status partial")
-(check4842a (and (pair? e1) (equal? (list-ref e1 5) 1))
-            "#4842 serve-async err-count counts the nested child failure")
-(check4842a (and (pair? e1)
-                 (equal? (list-ref e1 7) '((kid2-4842a . kid failed))))
-            "#4842 serve-async errors names the failing nested child")
-
-(if (= *fails4842a* 0)
-    (display "OK-4842-ASYNC\n")
-    (assert #f "issue #4842 serve-async nested scope join regression"))
+(test-finish)

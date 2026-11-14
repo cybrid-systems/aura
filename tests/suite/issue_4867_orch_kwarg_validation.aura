@@ -1,56 +1,44 @@
-; Issue #4867 regression suite: orch keyword arguments are validated and a
-; second live agent under the same name is rejected.
-(define *fails* 0)
-(define (check pred msg)
-  (if pred
-      (begin (display "  pass: ") (display msg) (newline))
-      (begin (set! *fails* (+ *fails* 1)) (display "  FAIL: ") (display msg) (newline))))
+; Issue #4867: orch keyword arguments are validated, and a second live
+; agent under the same name is rejected.
+(require "std/test" all:)
+(test-file "issue_4867_orch_kwarg_validation.aura")
+
 (define (caught thunk) (try (thunk) (catch (e) e)))
 
-(orch:scope-spawn "s4867" (lambda () 1))
-(check (equal? (caught (lambda () (orch:scope-join-all :timeout-ms "abc")))
-               "orch:scope-join-all: :timeout-ms expects an integer")
-       "#4867 a string :timeout-ms is a parameter error")
-(orch:scope-spawn "s4867" (lambda () 1))
-(check (equal? (caught (lambda () (orch:scope-join-all :timeout-ms 1.5)))
-               "orch:scope-join-all: :timeout-ms expects an integer")
-       "#4867 a float :timeout-ms is a parameter error")
-(orch:scope-spawn "s4867" (lambda () 1))
-(check (equal? (caught (lambda () (orch:scope-join-all :timeot-ms 100)))
-               "orch:scope-join-all: unknown keyword :timeot-ms")
-       "#4867 a misspelled keyword is reported")
-(orch:scope-spawn "s4867" (lambda () 1))
-(check (equal? (caught (lambda () (orch:scope-join-all :timeout-ms 100 :max-restarts "3")))
-               "orch:scope-join-all: :max-restarts expects an integer")
-       "#4867 a string :max-restarts is a parameter error")
+(test-case "scope-join-all rejects bad keywords" (hash "issue" 4867)
+  (orch:scope-spawn "s4867" (lambda () 1))
+  (check= "orch:scope-join-all: :timeout-ms expects an integer"
+          (caught (lambda () (orch:scope-join-all :timeout-ms "abc"))))
+  (orch:scope-spawn "s4867" (lambda () 1))
+  (check= "orch:scope-join-all: :timeout-ms expects an integer"
+          (caught (lambda () (orch:scope-join-all :timeout-ms 1.5))))
+  (orch:scope-spawn "s4867" (lambda () 1))
+  (check= "orch:scope-join-all: unknown keyword :timeot-ms"
+          (caught (lambda () (orch:scope-join-all :timeot-ms 100))))
+  (orch:scope-spawn "s4867" (lambda () 1))
+  (check= "orch:scope-join-all: :max-restarts expects an integer"
+          (caught (lambda () (orch:scope-join-all :timeout-ms 100 :max-restarts "3")))))
 
-(orch:spawn-agent "q4867" (lambda () 1))
-; settle the probe agents so the region-key admit gate below does not
-; turn the duplicate-spawn check into a race.
-(orch:agent-join "q4867" :timeout-ms 2000)
-(check (equal? (caught (lambda () (orch:agent-join "q4867" :timeout-ms "x")))
-               "orch:agent-join: :timeout-ms expects an integer")
-       "#4867 agent-join rejects a string :timeout-ms")
-(orch:spawn-agent "q4867b" (lambda () 1))
-(orch:agent-join "q4867b" :timeout-ms 2000)
-(check (equal? (caught (lambda () (orch:agent-join "q4867b" :timeout-ms -1)))
-               "orch:agent-join: :timeout-ms must not be negative")
-       "#4867 agent-join rejects a negative :timeout-ms")
+(test-case "agent-join rejects a bad timeout" (hash "issue" 4867)
+  (orch:spawn-agent "q4867" (lambda () 1))
+  (orch:agent-join "q4867" :timeout-ms 2000)
+  (check= "orch:agent-join: :timeout-ms expects an integer"
+          (caught (lambda () (orch:agent-join "q4867" :timeout-ms "x"))))
+  (orch:spawn-agent "q4867b" (lambda () 1))
+  (orch:agent-join "q4867b" :timeout-ms 2000)
+  (check= "orch:agent-join: :timeout-ms must not be negative"
+          (caught (lambda () (orch:agent-join "q4867b" :timeout-ms -1)))))
 
-(define release #f)
-(orch:spawn-agent "dup4867" (lambda ()
-  (let wait () (if release #t (begin (fiber:yield) (wait))))
-  'done))
-; The rejection is the typed deny hash (same contract as #4393), not an
-; exception: callers branch on ok / id / deny-detail.
-(define dup-denied (orch:spawn-agent "dup4867" (lambda () 2)))
-(check (and (not (hash-ref dup-denied "ok"))
-            (= (hash-ref dup-denied "id") 0)
-            (string=? (hash-ref dup-denied "deny-detail" "") "name-reuse-while-live"))
-       "#4867 a second live spawn under the same name is rejected")
-(set! release #t)
-(orch:agent-join "dup4867" :timeout-ms 2000)
+(test-case "a second live spawn under the same name is rejected" (hash "issue" 4867)
+  (define release #f)
+  (orch:spawn-agent "dup4867" (lambda ()
+    (let wait () (if release #t (begin (fiber:yield) (wait))))
+    'done))
+  (define dup-denied (orch:spawn-agent "dup4867" (lambda () 2)))
+  (check (not (hash-ref dup-denied "ok")))
+  (check= 0 (hash-ref dup-denied "id"))
+  (check= "name-reuse-while-live" (hash-ref dup-denied "deny-detail" ""))
+  (set! release #t)
+  (orch:agent-join "dup4867" :timeout-ms 2000))
 
-(if (= *fails* 0)
-    (begin (display "OK-4867 kwarg validation") (newline))
-    (begin (display "FAIL-4867 fails=") (display *fails*) (newline) (error "4867 suite failed")))
+(test-finish)
