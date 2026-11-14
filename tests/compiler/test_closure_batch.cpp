@@ -4,19 +4,13 @@
 // dual-check apply_closure + JIT + exists epoch disambiguation + free_list
 // order + ClosureView zero-copy lifetime) into one batch driver.
 //
-// NOTE: test_closure_free.cpp is intentionally NOT included — registered
-// in cmake/AuraDomainTests.cmake:559-562 with add_dependencies(all_test_issue_targets ...)
-// (default-build), not the standard aura_add_issue_test pattern. Consolidating
-// it into an EXCLUDE_FROM_ALL batch would lose default-build coverage of
-// the ID reuse + closure:free! primitive surface.
+// NOTE (#5247): this driver is not a CMake target. It is listed in
+// cmake/AuraUnbuiltTests.cmake. AuraDomainTests.cmake was never included
+// and was removed in af5d1515e; test_closure_free.cpp is on that same
+// unbuilt list, not a default-build target.
 //
-// Per AuraDomainTests.cmake legacy Phase 1 batch convention (per_defuse_batch /
-// env_lookup_batch / fiber_resume_batch / compact_sweep_batch /
-// incremental_relower_batch / macro_reflect_batch / incremental_type_batch /
-// linear_ownership_batch / dead_coercion_batch / mutation_boundary_batch /
-// walk_batch / compact_batch / gc_batch / soa_batch / reflect_batch
-// precedents): single binary with CHECK() + per-issue AC blocks in namespace
-// aura_closure_batch { run_NNN_xxx() }; EXCLUDE_FROM_ALL.
+// Historical batch shape (single binary, CHECK() + per-issue AC blocks in
+// namespace aura_closure_batch { run_NNN_xxx() }). Not on the PR issue-farm.
 //
 // AC map (consolidated, 22 ACs total):
 //   Issue #1709 — 4 ACs: capture into live slot succeeds +
@@ -522,8 +516,8 @@ static void run_1870_remake() {
 int main() {
     using namespace aura_closure_batch;
     std::println("=== Closure batch: #1709 + #1626 + #1706 + #1708 + #1870 (22 ACs total) ===");
-    std::println("(test_closure_free.cpp NOT included — registered in AuraDomainTests.cmake");
-    std::println(" as default-build test with add_dependencies; out of scope for batch)");
+    std::println("(test_closure_free.cpp NOT included — also unbuilt,");
+    std::println(" see cmake/AuraUnbuiltTests.cmake; out of scope for this driver)");
     run_1709_live_capture();
     run_1709_oor_capture();
     run_1709_freed_capture();
