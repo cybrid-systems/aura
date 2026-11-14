@@ -39,8 +39,13 @@ jobs:
       - name: Install + native SPDX smoke (#5203)
         run: |
           PREFIX="$RUNNER_TEMP/aura-install"
+          # release.sh builds only the `aura` target; the export set the
+          # install step ships (aura::core, aura::fiber_rt + headers) has
+          # to be built first or file(INSTALL) fails on libaura_core.a.
+          cmake --build build_repro --target aura_core aura_fiber_rt
           cmake --install build_repro --prefix "$PREFIX" >/dev/null
-          SPDX="$PREFIX/lib/sbom/aura-targets/aura-targets-RelWithDebInfo.spdx.json"
+          # repro is a Release build, so CMake names the SBOM for that config.
+          SPDX="$PREFIX/lib/sbom/aura-targets/aura-targets-Release.spdx.json"
           test -f "$SPDX"
           grep -q 'spdx.org/rdf/3.0.1' "$SPDX"
           mkdir -p "$RUNNER_TEMP/aura-consumer"
