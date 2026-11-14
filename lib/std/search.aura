@@ -36,6 +36,11 @@
 ; Reserved kind names (not implemented in this version): "cma-es",
 ; "mcts", "bayes-opt". search:init refuses them.
 ;
+; bounds is a list of intervals. Each interval is a proper two-element
+; list (list lo hi), not a pair (cons lo hi). A missing or empty bounds
+; option means (-1.0 1.0) on every dimension. search:init rejects any
+; other shape and names the dimension and the value it saw.
+;
 ; Import: (require "std/search" all:)
 
 (export search:init search:step search:batch search:run search:pending
@@ -78,14 +83,28 @@
 (define (search:kinds)
   (list "grid" "pso" "abc" "fss" "ant" "es" "anneal" "bandit" "beam"))
 
+; Shared by every kind whose option list includes bounds.
+(define search-bounds-help
+  "; bounds is a list of intervals, each (list lo hi), not (cons lo hi)")
+
 (define (search:help)
   (list
-    (list "grid" "discrete linspace product; options: dim pop bins bounds")
-    (list "pso" "particle swarm; options: dim pop bounds w c1 c2")
-    (list "abc" "bee colony; options: dim pop bounds limit")
-    (list "fss" "fish school; options: dim pop bounds step volitive")
+    (list "grid" (string-append
+                   "discrete linspace product; options: dim pop bins bounds"
+                   search-bounds-help))
+    (list "pso" (string-append
+                  "particle swarm; options: dim pop bounds w c1 c2"
+                  search-bounds-help))
+    (list "abc" (string-append
+                  "bee colony; options: dim pop bounds limit"
+                  search-bounds-help))
+    (list "fss" (string-append
+                  "fish school; options: dim pop bounds step volitive"
+                  search-bounds-help))
     (list "ant" "operator pheromone ranking; options: ops pop evaporate")
-    (list "es" "evolution strategy / GA; options: dim pop mu lambda sigma bounds discrete genes")
+    (list "es" (string-append
+                 "evolution strategy / GA; options: dim pop mu lambda sigma bounds discrete genes"
+                 search-bounds-help))
     (list "anneal" "simulated annealing; options: start step cooling iterations")
     (list "bandit" "UCB / Thompson arms; options: arms policy")
     (list "beam" "beam search; options: root tree width")))
@@ -112,6 +131,9 @@
 (define (search-clip x lo hi)
   (if (< x lo) lo (if (> x hi) hi x)))
 
+; One interval from opts "bounds". Empty means (-1.0 1.0). Past the
+; end of the list, the first interval is reused. Each interval is
+; (list lo hi); search:init has already rejected (cons lo hi).
 (define (search-bound opts d)
   (let ((b (oget opts "bounds" (quote ()))))
     (if (null? b)
@@ -179,15 +201,40 @@
         (cons "best" #f) (cons "best-score" -1000000000.0)
         (cons "seed" (oget opts "seed" 424242)) (cons "extra" extra)))
 
+; A proper two-element list of numbers. (cons lo hi) is a pair whose
+; cdr is not itself a pair, so list? rejects it before car does.
+(define (search-interval? b)
+  (and (list? b)
+       (= (length b) 2)
+       (number? (car b))
+       (number? (car (cdr b)))))
+
+(define (search-check-bounds bounds)
+  (cond
+    ((null? bounds) #t)
+    ((not (list? bounds))
+     (error (string-append
+              "search:init: bounds must be a list of (list lo hi), not (cons lo hi); got "
+              (format "~a" bounds))))
+    (else
+     (let loop ((xs bounds) (d 0))
+       (if (null? xs)
+         #t
+         (if (search-interval? (car xs))
+           (loop (cdr xs) (+ d 1))
+           (error (string-append
+                    "search:init: bounds dimension "
+                    (format "~a" d)
+                    " must be (list lo hi), not (cons lo hi); got "
+                    (format "~a" (car xs))))))))))
+
 (define (search:init kind options)
   (let* ((opts (if (hash? options) options (hash)))
          (kind (if (string? kind) kind "grid"))
          (pop (max 1 (oget opts "pop" 8)))
          (dim (max 1 (oget opts "dim" 1)))
-         (seed (oget opts "seed" 424242))
-         (bounds (if (null? (oget opts "bounds" (quote ())))
-                   (list (list -1.0 1.0))
-                   (oget opts "bounds" (quote ())))))
+         (seed (oget opts "seed" 424242)))
+    (search-check-bounds (oget opts "bounds" (quote ())))
     (cond
       ((string=? kind "grid")
        (search-init-state kind opts 0 (search-grid-batch opts 0 pop) pop (quote ())))

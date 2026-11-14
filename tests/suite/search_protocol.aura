@@ -120,6 +120,84 @@
 (assert! (equal? (try (search:init "mcts" (hash)) (catch (e) 'refused)) 'refused)
          "reserved kind mcts is refused")
 
+; ── bounds shape (#5286): (list lo hi), not (cons lo hi) ──
+(display "AC8 bounds shape\n")
+
+(define (string-has? s sub)
+  (let loop ((i 0))
+    (cond ((> (+ i (string-length sub)) (string-length s)) #f)
+          ((equal? (substring s i (+ i (string-length sub))) sub) #t)
+          (else (loop (+ i 1))))))
+
+(define (err-text thunk)
+  (try (begin (thunk) "no-error") (catch (e) (format "~a" e))))
+
+(define (help-text kind)
+  (let loop ((rows (search:help)))
+    (cond ((null? rows) "")
+          ((string=? (car (car rows)) kind) (car (cdr (car rows))))
+          (else (loop (cdr rows))))))
+
+(define (assert-bounds-help! kind)
+  (let ((text (help-text kind)))
+    (assert! (string-has? text "(list lo hi)")
+             (string-append kind " help states (list lo hi)"))
+    (assert! (string-has? text "(cons lo hi)")
+             (string-append kind " help says not (cons lo hi)"))))
+
+(assert-bounds-help! "grid")
+(assert-bounds-help! "pso")
+(assert-bounds-help! "abc")
+(assert-bounds-help! "fss")
+(assert-bounds-help! "es")
+(assert! (= (length (search:help)) (length (search:kinds)))
+         "help stays one row per kind")
+
+(define ok-es (search:init "es" (hash "dim" 1 "pop" 2
+                                       "bounds" (list (list -1.0 1.0))
+                                       "seed" 1)))
+(assert! (string=? (search:kind ok-es) "es") "es (list lo hi) keeps its kind")
+(assert! (= 2 (length (search:pending ok-es))) "es (list lo hi) pending-len is 2")
+
+(define default-es (search:init "es" (hash "dim" 1 "pop" 2 "seed" 1)))
+(assert! (= 2 (length (search:pending default-es))) "missing bounds still inits")
+
+(define bad (err-text (lambda ()
+  (search:init "es" (hash "dim" 1 "pop" 2
+                          "bounds" (list (cons -1.0 1.0))
+                          "seed" 1)))))
+(assert! (string-has? bad "search:init:") "cons bounds is a search:init error")
+(assert! (string-has? bad "dimension 0") "cons bounds names dimension 0")
+(assert! (string-has? bad "(list lo hi)") "cons bounds names (list lo hi)")
+(assert! (string-has? bad "(cons lo hi)") "cons bounds says not (cons lo hi)")
+(assert! (string-has? bad "(-1.0 . 1.0)") "cons bounds shows the actual value")
+(assert! (not (string-has? bad "car: not a pair"))
+         "cons bounds is rejected before car")
+
+(define bad2 (err-text (lambda ()
+  (search:init "grid" (hash "dim" 2 "pop" 2
+                            "bounds" (list (list -1.0 1.0) (cons -2.0 2.0)))))))
+(assert! (string-has? bad2 "dimension 1") "second interval cons names dimension 1")
+(assert! (string-has? bad2 "(-2.0 . 2.0)") "second interval shows the actual value")
+(assert! (string-has? bad2 "(list lo hi)") "second interval names (list lo hi)")
+(assert! (not (string-has? bad2 "car: not a pair"))
+         "second interval is rejected before car")
+
+(define bad-whole (err-text (lambda ()
+  (search:init "pso" (hash "dim" 1 "bounds" (cons -1.0 1.0) "seed" 1)))))
+(assert! (string-has? bad-whole "(list lo hi)") "bare cons bounds names (list lo hi)")
+(assert! (string-has? bad-whole "(-1.0 . 1.0)") "bare cons bounds shows the actual value")
+(assert! (not (string-has? bad-whole "car: not a pair"))
+         "bare cons bounds is rejected before car")
+
+(define bad-ant (err-text (lambda ()
+  (search:init "ant" (hash "ops" (list "a" "b")
+                           "bounds" (list (cons 0 1)))))))
+(assert! (string-has? bad-ant "dimension 0") "ant rejects a bad bounds option")
+(assert! (string-has? bad-ant "(0 . 1)") "ant shows the bad interval")
+(assert! (not (string-has? bad-ant "car: not a pair"))
+         "ant rejects bounds before car")
+
 (if (= *fails* 0)
   (begin (display "OK-5007 search protocol\n"))
   (begin
