@@ -37,8 +37,9 @@
 (require "std/agent" all:)
 (require "std/extract" all:)
 (check "text extract" (extract-code "x") "x")
-(define llm-plain (try (llm:extract-code "x") (catch (e) 'llm-rejected-plain)))
-(check "llm rejects plain" llm-plain 'llm-rejected-plain)
+; #5224: llm:parse-response keeps the raw body when the JSON does not
+; parse, so extract-code answers a plain body unchanged.
+(check "llm keeps a plain body" (llm:extract-code "x") "x")
 ; "error" must be present: llm:parse-response hash-refs that key.
 (define fenced "{\"error\":false,\"choices\":[{\"message\":{\"content\":\"(lambda (x) x)\"}}]}")
 (check "llm extract" (llm:extract-code fenced) "(lambda (x) x)")
