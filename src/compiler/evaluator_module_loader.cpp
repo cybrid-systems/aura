@@ -1039,6 +1039,29 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
 // Evaluator, so this is the caller's responsibility).
 bool Evaluator::gc_module(const std::string& path) {
     auto cache_it = module_cache_.find(path);
+    std::string cache_key = path;
+    if (cache_it == module_cache_.end()) {
+        // Issue #78: the primitive is documented as (gc-module <name>) but
+        // the cache is keyed by the loader's resolved path. Accept a bare
+        // file name when exactly one loaded module carries it.
+        if (path.find('/') == std::string::npos) {
+            std::string found;
+            int hits = 0;
+            for (const auto& entry : module_cache_) {
+                const std::string& p = entry.first;
+                const auto end = p.find_last_of('/');
+                const std::string base = end == std::string::npos ? p : p.substr(end + 1);
+                if (base == path) {
+                    found = p;
+                    ++hits;
+                }
+            }
+            if (hits == 1) {
+                cache_key = found;
+                cache_it = module_cache_.find(cache_key);
+            }
+        }
+    }
     if (cache_it == module_cache_.end())
         return false;
     auto mod_idx = cache_it->second;
@@ -1047,7 +1070,7 @@ bool Evaluator::gc_module(const std::string& path) {
     forget_import_bind_origin(modules_[mod_idx]);
 
     // Erase closures whose owner_arena matches the module's arena.
-    auto arena_it = module_arena_ptrs_.find(path);
+    auto arena_it = module_arena_ptrs_.find(cache_key);
     if (arena_it != module_arena_ptrs_.end() && arena_it->second) {
         auto* owner = arena_it->second;
         bump_closures_apply_epoch(); // Issue #3832 densify/erase TLS invalidate
@@ -1066,8 +1089,8 @@ bool Evaluator::gc_module(const std::string& path) {
     // every arena-allocated object as part of reset(), so we no
     // longer need to call env->~Env() manually here — that was the
     // pre-#131 band-aid and would now double-destroy.
-    aura::diag::unbind_source_file_flats(path); // Issue #4916
-    arena_group_->reset_module(path);
+    aura::diag::unbind_source_file_flats(cache_key); // Issue #4916
+    arena_group_->reset_module(cache_key);
 
     // Clear the module slot. Swap-with-last keeps indices stable for
     // any other live modules; update module_cache_ and
@@ -1091,11 +1114,11 @@ bool Evaluator::gc_module(const std::string& path) {
     modules_.pop_back();
     module_names_.pop_back();
     module_cache_.erase(cache_it);
-    module_arena_ptrs_.erase(path);
+    module_arena_ptrs_.erase(cache_key);
     // Also remove from functor instance cache if present (the
     // swap-with-last above already fixed indices for survivors; the
     // removed entry's key is the path itself for functor instances).
-    auto fic_it = functor_instance_cache_.find(path);
+    auto fic_it = functor_instance_cache_.find(cache_key);
     if (fic_it != functor_instance_cache_.end())
         functor_instance_cache_.erase(fic_it);
 
