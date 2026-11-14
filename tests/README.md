@@ -58,7 +58,10 @@ Aura L1 cases live in `lib/std/test.aura` (`test-case` / `test-finish`).
 `SnippetSpec`. `std/edsl-test-harness` is a compatibility shim.
 `python3 tests/run.py home "<query>"` prints the theme file and an append
 snippet. `cover --issue N` and `cover --name <symbol>` list cases that
-already cover it. See [`HOMES.md`](HOMES.md).
+already cover it. `affected` is the local fast loop: the workspace diff
+(or explicit paths) selects that L1 suite and Python theme, plus
+`std/test` and smoke. It does not compile the issue-farm. An unmapped
+diff exits non-zero. See [`HOMES.md`](HOMES.md).
 
 ## 命名约定
 
@@ -133,6 +136,7 @@ aura_add_issue_test_standalone(test_<feature>)             # 无 C++ modules
 
 ```bash
 python3 tests/run.py list
+python3 tests/run.py affected          # diff → L1 home + std/test + smoke
 python3 tests/run.py issues --tier fast
 python3 tests/run.py issues-fast
 python3 tests/run.py fixtures
@@ -141,8 +145,9 @@ python3 tests/run.py mutation
 
 ./build.py check              # gate + build + ci
 ./build.py gate               # static only
-./build.py list               # tiers + leaf suites (SSOT)
+./build.py list               # tiers + fast loop + leaf suites (SSOT)
 ./build.py test               # default: ci (core + safety + issues)
+./build.py test affected      # same fast loop as tests/run.py affected
 ./build.py test pr            # core + safety + issues-fast
 ./build.py test unit | integ | issues | issues-fast
 ./build.py test suite | regression   # shared .aura file runner

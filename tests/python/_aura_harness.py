@@ -182,6 +182,12 @@ def repl_value(line: str):
     return rec.get("value")
 
 
+# Shared with ./build.py list. Local / agent default; not a CI tier (#5232).
+AFFECTED_DOC = (
+    "workspace or git diff → that L1 suite and Python theme, plus std/test and smoke "
+    "(no issue-farm). Unmapped diffs exit non-zero."
+)
+
 # Categories exposed by tests/run.py (and build.py suite names where shared).
 CATEGORIES: dict[str, str] = {
     "issues": "C++ issue/domain/bundle binaries (tests/python/run_issue_tests.py)",
@@ -195,5 +201,6 @@ CATEGORIES: dict[str, str] = {
     "home": "Theme file and std/test append snippet for a query (#5225)",
     "cover": "Cases covering an issue number or a symbol (#5225)",
     "process": "Python process themes under tests/python/process (#5230)",
+    "affected": AFFECTED_DOC,
     "list": "List categories (this help)",
 }

@@ -3,6 +3,7 @@
 
 `home` answers from the table in this module (the same rows as tests/HOMES.md).
 `cover` answers by parsing suite sources. Neither command builds or runs Aura.
+`match_homes` is the path map for the affected fast loop (#5232).
 """
 
 from __future__ import annotations
@@ -56,6 +57,11 @@ class Home:
     requires: tuple[str, ...]
     body: str
     note: str
+    # Path stems the fast loop matches. A trailing slash is a directory.
+    # A last component with "." is one file. Anything else is a stem
+    # (the next character must be "/", ".", or "_"). Empty for homes
+    # that match only `path`.
+    roots: tuple[str, ...] = ()
 
 
 def _h(
@@ -67,9 +73,10 @@ def _h(
     tag: str = "",
     requires: tuple[str, ...] = (),
     body: str = "(check= expected actual)",
+    roots: tuple[str, ...] = (),
     note: str,
 ) -> Home:
-    return Home(surface, language, path, keywords, tag, requires, body, note)
+    return Home(surface, language, path, keywords, tag, requires, body, note, roots)
 
 
 # One file per surface. Keywords are exact queries or token phrases, not a
@@ -83,6 +90,7 @@ HOMES: tuple[Home, ...] = (
         tag="string",
         requires=("std/string",),
         body='(check= "a b" (string-join (list "a" "b") " "))',
+        roots=("lib/std/string.aura",),
         note="std/string behavior, including string-join.",
     ),
     _h(
@@ -93,6 +101,7 @@ HOMES: tuple[Home, ...] = (
         tag="list",
         requires=("std/list",),
         body="(check= (list 0 1 2) (iota 3))",
+        roots=("lib/std/list.aura", "lib/std/iter.aura"),
         note="std/list contract, including the std/iter re-export of the same names.",
     ),
     _h(
@@ -103,6 +112,7 @@ HOMES: tuple[Home, ...] = (
         tag="vector",
         requires=("std/vector",),
         body="(check= 20 (vector-ref (vector 10 20 30) 1))",
+        roots=("lib/std/vector.aura",),
         note="std/vector contract.",
     ),
     _h(
@@ -113,6 +123,7 @@ HOMES: tuple[Home, ...] = (
         tag="sort",
         requires=("std/sort",),
         body="(check= (list 1 2 3) (sort (list 3 1 2)))",
+        roots=("lib/std/sort.aura", "lib/std/algorithm.aura"),
         note="std/sort contract, including the std/algorithm re-export of the same names.",
     ),
     _h(
@@ -122,6 +133,7 @@ HOMES: tuple[Home, ...] = (
         ("std/json", "json-parse", "json-encode", "json"),
         tag="json",
         body='(check= #f (json-parse "false"))',
+        roots=("lib/std/json.aura",),
         note="std/json parse and encode. json-parse of the JSON false literal is #f.",
     ),
     _h(
@@ -132,6 +144,7 @@ HOMES: tuple[Home, ...] = (
         tag="extract",
         requires=("std/extract",),
         body='(check= "x" (extract-code "x"))',
+        roots=("lib/std/extract.aura",),
         note=("Text extractor is extract-code. The agent extractor is llm:extract-code. Both belong in this home."),
     ),
     _h(
@@ -141,6 +154,11 @@ HOMES: tuple[Home, ...] = (
         ("lang/module", "module-get", "overwrite warning", "module"),
         tag="module",
         body='(check (module? (use "std/list")))',
+        roots=(
+            "src/compiler/evaluator_module_loader.cpp",
+            "src/compiler/evaluator_primitives_module.cpp",
+            "src/core/module_boundary.ixx",
+        ),
         note="export, require, and the overwrite warning.",
     ),
     _h(
@@ -154,6 +172,11 @@ HOMES: tuple[Home, ...] = (
             "Parser language face, including the unclosed-list diagnostic and "
             "the `(;` form. An unclosed program is its own file; it cannot sit "
             "inside test-case."
+        ),
+        roots=(
+            "src/parser/",
+            "src/compiler/diag.ixx",
+            "src/compiler/evaluator_primitives_diagnostic.cpp",
         ),
     ),
     _h(
@@ -172,6 +195,13 @@ HOMES: tuple[Home, ...] = (
             "(check= #t (fiber:cancel cf))\n"
             "(check= payload (fiber:join cf))"
         ),
+        roots=(
+            "src/serve/fiber",
+            "src/core/fiber_context",
+            "src/compiler/fiber",
+            "src/compiler/evaluator_fiber",
+            "src/compiler/evaluator_primitives_fiber",
+        ),
         note="runtime/fiber cancel payload. Cancellation is not a type error.",
     ),
     _h(
@@ -181,6 +211,7 @@ HOMES: tuple[Home, ...] = (
         ("runtime/orch", "orchestrator", "orch"),
         tag="orch",
         requires=("std/orch",),
+        roots=("src/orch/", "lib/std/orch.aura"),
         note="runtime/orch behavior.",
     ),
     _h(
@@ -189,6 +220,13 @@ HOMES: tuple[Home, ...] = (
         "tests/suite/workspace_source_ssot_2920.aura",
         ("runtime/workspace", "workspace", "current-source"),
         tag="workspace",
+        roots=(
+            "src/core/workspace",
+            "src/compiler/evaluator_workspace",
+            "src/compiler/evaluator_primitives_workspace",
+            "src/compiler/evaluator_primitives_query_workspace",
+            "lib/std/query-workspace.aura",
+        ),
         note="runtime/workspace source and require behavior.",
     ),
     _h(
@@ -338,6 +376,46 @@ def keyword_score(keyword: str, query: str) -> int:
             if want[i : i + span] == got:
                 return 500 + span
     return 0
+
+
+def _norm_rel(path: str) -> str:
+    rel = path.replace("\\", "/").strip()
+    if rel.startswith("./"):
+        rel = rel[2:]
+    return rel
+
+
+def path_hits(path: str, root: str) -> bool:
+    """True when a repo-relative path is this genealogy root.
+
+    A root ending in ``/`` is a directory. A last component that contains
+    ``.`` is one file. Any other root is a stem: the next character is the
+    end, ``/``, ``.``, or ``_``.
+    """
+    rel = _norm_rel(path)
+    needle = root.replace("\\", "/").strip()
+    if not rel or not needle:
+        return False
+    if needle.endswith("/"):
+        base = needle[:-1]
+        return rel == base or rel.startswith(needle)
+    if "." in Path(needle).name:
+        return rel == needle
+    if rel == needle:
+        return True
+    if not rel.startswith(needle):
+        return False
+    return rel[len(needle)] in {"/", ".", "_"}
+
+
+def match_homes(path: str) -> tuple[Home, ...]:
+    """Homes whose file or touched root is this path. Not a query search."""
+    rel = _norm_rel(path)
+    found: list[Home] = []
+    for home in HOMES:
+        if path_hits(rel, home.path) or any(path_hits(rel, root) for root in home.roots):
+            found.append(home)
+    return tuple(found)
 
 
 def resolve_homes(query: str) -> tuple[Home, ...]:

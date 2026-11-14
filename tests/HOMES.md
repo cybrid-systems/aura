@@ -15,6 +15,36 @@ not in a new filename.
 `check_*.py`, and do not put an issue number in a new check filename.
 **Hot-path matrix only:** [`STRATEGY.md`](STRATEGY.md).
 
+## Fast loop
+
+Local and agent default, before a full tier:
+
+    python3 tests/run.py affected [paths…]
+    ./build.py test affected [paths…]
+
+Omit the paths and the command reads the workspace diff: merge-base with
+`origin/main` (or `AURA_GIT_BASE`), the index, unstaged edits, and
+untracked files. Each path is matched against this genealogy — the home
+file, the touched paths below, and a Python theme's `PARTS` modules.
+A hit runs that L1 file or that Python theme, then a small core
+(`lib/std/test.aura` via one `std/test` case, and
+`tests/fixtures/smoke.json`). It does not compile the issue-farm and
+it does not run any other theme.
+
+A changed `tests/suite/*.aura` runs that file. A C++ home is reported
+and not compiled; the next step is `./build.py test pr`. An l2 process
+theme stays on `python3 tests/run.py process --tier l2`.
+
+Before merging to main, run the suite named on the home row for that
+domain (or that domain's merge wave). CI still runs the full L1 suite
+(`./build.py test suite` inside `./build.py test ci`) and the existing
+issue-farm.
+
+If the diff maps to no home, the command exits non-zero. It names the
+paths and tells you to register one with `python3 tests/run.py home
+"<query>"` or to run `./build.py test pr`. It does not exit zero after
+running nothing. `--plan` prints the selection and does not run it.
+
 ## Aura behavior suites (L1)
 
 Append one named case under `tests/suite/`. The only API to teach is
@@ -58,6 +88,25 @@ Append there. Names `std/iter` re-exports are the `std/list` contract. Names
 | runtime/orch | `tests/suite/orchestrator.aura` | `runtime/orch`, `orchestrator` |
 | runtime/workspace | `tests/suite/workspace_source_ssot_2920.aura` | `runtime/workspace`, `workspace` |
 
+Touched paths are the fast-loop map. A trailing slash is a directory.
+A stem (no `.` in the last component) matches the end, `/`, `.`, or `_`.
+
+- std/string: `lib/std/string.aura`
+- std/list: `lib/std/list.aura`, `lib/std/iter.aura`
+- std/vector: `lib/std/vector.aura`
+- std/sort: `lib/std/sort.aura`, `lib/std/algorithm.aura`
+- std/json: `lib/std/json.aura`
+- std/extract: `lib/std/extract.aura`
+- lang/module: `src/compiler/evaluator_module_loader.cpp`, `src/compiler/evaluator_primitives_module.cpp`, `src/core/module_boundary.ixx`
+- lang/parser: `src/parser/`, `src/compiler/diag.ixx`, `src/compiler/evaluator_primitives_diagnostic.cpp`
+- runtime/fiber: `src/serve/fiber`, `src/core/fiber_context`, `src/compiler/fiber`, `src/compiler/evaluator_fiber`, `src/compiler/evaluator_primitives_fiber`
+- runtime/orch: `src/orch/`, `lib/std/orch.aura`
+- runtime/workspace: `src/core/workspace`, `src/compiler/evaluator_workspace`, `src/compiler/evaluator_primitives_workspace`, `src/compiler/evaluator_primitives_query_workspace`, `lib/std/query-workspace.aura`
+
+Core, when a home is selected or one of these files changes:
+`lib/std/test.aura`, `lib/std/edsl-test-harness.aura`,
+`tests/fixtures/smoke.json`, `tests/python/smoke_cases.py`.
+
 These files may still use an older harness. New cases use `std/test`.
 An unclosed program cannot sit inside `test-case`; put it in its own
 `tests/suite/<module>_<feature>.aura` with `;; expect-err:`.
@@ -73,11 +122,18 @@ These compare processes, faces, and grants. Behavior assertions do not go here.
 | cross-mode | `tests/python/process/test_cross_mode.py` | `cross-mode` |
 | sandbox / Restricted | `tests/python/process/test_sandbox.py` | `Restricted`, `AURA_SANDBOX` |
 
+A change to the home file, or to a module named in its `PARTS` tuple,
+selects that theme. The fast loop runs the theme file. It does not run
+the other process themes.
+
 ## C++ query homes
 
 The theme batch table below stays the C++ map. `home` prints one file for
 the words in this table. Schema-only rows still go in
-`tests/compiler/obs_schema_cases.hpp`.
+`tests/compiler/obs_schema_cases.hpp`. The fast loop matches the home
+file and does not compile it. Other C++ sources are unmapped until a
+row above gains a touched path; the command then exits non-zero and
+points at `./build.py test pr`.
 
 | Theme | Home now | Ask with |
 |---|---|---|
@@ -98,6 +154,11 @@ the words in this table. Schema-only rows still go in
 Do not create `test_issue_N.py`, `*_N.aura`, or `test_*_NNNN.cpp`.
 
 ## Decision tree
+
+Local / agent default is the fast loop (`python3 tests/run.py affected`).
+Before merging, run the suite named on the home row for that domain.
+CI runs the full L1 suite and the existing issue-farm
+(`./build.py test ci`).
 
 ```
 1. Ask. Do not guess a file.

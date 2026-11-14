@@ -64,6 +64,7 @@ Test tiers (./build.py test [name]; default ci — see ./build.py list):
   safety      gradual regression p0
   issues      C++ domain / issue binaries (AURA_ISSUES_TIER)
   issues-fast same runner, fast tier
+  affected    workspace or git diff → that L1 suite and Python theme, plus std/test and smoke (no issue-farm). Unmapped diffs exit non-zero.
   check       gate + build + ci
 """
 
@@ -84,7 +85,7 @@ from threading import Lock
 _ROOT_FOR_PATH = Path(__file__).resolve().parent
 sys.path.insert(0, str(_ROOT_FOR_PATH / "tests" / "python"))
 sys.path.insert(0, str(_ROOT_FOR_PATH / "tests" / "bench"))
-from _aura_harness import B, G, N, R, Y, fail, info, ok, run, warn  # noqa: E402
+from _aura_harness import AFFECTED_DOC, B, G, N, R, Y, fail, info, ok, run, warn  # noqa: E402
 from aura_file_runner import (  # noqa: E402
     CommandSpec,
     SnippetSpec,
@@ -12123,13 +12124,22 @@ def _cap_inner_jobs(live_suites: int) -> dict[str, str]:
     return applied
 
 
+def _cmd_test_affected(rest: list[str]) -> int:
+    """Genealogy fast loop. Not a CI tier and not an issue-farm build (#5232)."""
+    script = ROOT / "tests" / "run.py"
+    return subprocess.run([sys.executable, str(script), "affected", *rest], cwd=ROOT).returncode
+
+
 def cmd_test(suite_names: list[str], *, waves: tuple[str, ...] | None = None):
     """Run test suites in cheap → medium → heavy → stress waves.
 
     Inner AURA_SUITE_JOBS / AURA_ISSUES_JOBS / AURA_CASE_JOBS are capped to
     nproc // live_suites so overlapping heavies cannot oversubscribe the host.
     ``waves`` limits which waves run (cmd_ci overlaps cheap/medium with ninja).
+    ``affected`` is the local fast loop and is not expanded into CI leaves.
     """
+    if suite_names and suite_names[0] == "affected":
+        return _cmd_test_affected(suite_names[1:])
     items = _expand_suite_names(suite_names)
     if not items:
         warn("no test suites to run")
@@ -23936,6 +23946,9 @@ def cmd_list():
     width = max(len(n) for n in TIER_LEAVES)
     for name in ("pr", "ci", "all", "nightly", "everything", "core", "safety"):
         print(f"  {name:<{width}}  {TIER_DOCS[name]}")
+    print()
+    print(f"{B}Fast loop{N}  (local / agent default; not a CI tier)")
+    print(f"  affected    {AFFECTED_DOC}")
     print()
     print(f"{B}Leaf suites{N}  (./build.py test <leaf>)")
     kind_width = max(len(s.kind) for s in SUITE_SPECS)
