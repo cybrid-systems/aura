@@ -45,7 +45,7 @@ def main() -> int:
     test = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
     batch = _read("tests/compiler/test_mutate_batch.cpp")
     build = _read("build.py")
-    l3191 = _read("scripts/coverage/checks/check_macro_hygiene_default_deny_3191.py")
+    l3191 = _read("scripts/coverage/manifests/3191.json")
 
     # AC1
     must("Issue #3239", "AC1 mutate cite", mut)

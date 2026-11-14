@@ -1,0 +1,94 @@
+{
+  "issue": 2964,
+  "title": "Issue #2964: unified linear_fast_path_ok gate + force revalidate.",
+  "ok": "OK: Issue #2964 folded from check_linear_fast_path_unified_2964.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "linear_fast_path_ok",
+        "#2964",
+        "linear_ir_fastpath_try_skip",
+        "linear_fast_path_boundary_exit_action",
+        "ForceRevalidate",
+        "SoftObserve",
+        "g_linear_fast_path_force_revalidate_total",
+        "mid MutationBoundary",
+        "escape gate arm",
+        "densify-pending arm",
+        "Quiet"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/ir_executor_impl.cpp",
+      "contains": [
+        "linear_fast_path_ok"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_escape_move_elision_gate.cpp",
+      "contains": [
+        "ac2964_1_unified_predicate",
+        "ac2964_2_force_revalidate_production",
+        "ac2964_3_independent_arms",
+        "ac2964_4_soft_and_quiet",
+        "ac2964_6_source_cite"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "linear_fast_path_boundary_exit_action",
+        "record_revalidate_hit"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2964",
+        "linear-fast-path-force-revalidate-total",
+        "schema-2899",
+        "schema-2263"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/ownership_escape_lowering_gate.h",
+      "contains": [
+        "2964"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/lowering_linear_types_impl.cpp",
+      "contains": [
+        "2964"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "build.py",
+      "contains": [
+        "cmd_linear_fast_path_unified_2964_coverage",
+        "linear-fast-path-unified-2964"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/2964-*"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid": [
+        "tests/compiler/test_issue_2964.cpp"
+      ]
+    }
+  ]
+}

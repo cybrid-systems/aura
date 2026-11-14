@@ -1,0 +1,71 @@
+{
+  "issue": 2779,
+  "title": "Issue #2779: resume fence fail aggregate (#2677 residual).",
+  "ok": "OK: Issue #2779 folded from check_resume_fence_fail_aggregate_2779.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "kResumeFenceFailAggregateIssue",
+        "2779",
+        "resume_fence_fail_total",
+        "steal_snapshot_hard_fail_total()",
+        "steal_safety_ticket_mismatch_total()",
+        "layout_stamp_resume_mismatch_total()",
+        "aura_fiber_static_resume_fence_fail_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "aura_fiber_static_resume_fence_fail_total",
+        "Fiber::resume_fence_fail_total()"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "resume-fence-fail-total",
+        "schema-2779",
+        "resume-fence-fail-wired",
+        "steal-snapshot-hard-fail-total",
+        "steal-safety-ticket-mismatch-total",
+        "layout-stamp-resume-mismatch-total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "resume-fence-fail-total",
+        "schema-2779"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/serve/test_steal_safety_ticket.cpp",
+      "contains": [
+        "ac2779_1_sum_equals_components",
+        "ac2779_2_each_fence_bumps_aggregate",
+        "ac2779_3_query_keys",
+        "ac2779_4_source_and_no_design",
+        "2779"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/2779-*"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/serve/test_issue_2779.cpp"
+      ]
+    }
+  ]
+}

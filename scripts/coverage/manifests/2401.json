@@ -1,0 +1,73 @@
+{
+  "issue": 2401,
+  "title": "Issue #2401: agent-reply helper + orch:agent-reply Aura primitive.",
+  "ok": "OK: Issue #2401 folded from check_agent_reply_2401.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "Issue #2401",
+        "agent_reply",
+        "format_reply_payload",
+        "g_pending_asks",
+        "unknown-corr",
+        "agent_reply_fail_total",
+        "PendingAskGuard",
+        "kAgentReplyIssue"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/orch/test_agent_ask.cpp",
+      "contains": [
+        "2401",
+        "agent_reply",
+        "unknown-corr",
+        "concurrent asks",
+        "AC4: no class AgentRegistry",
+        "AC5"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/orch/agent_spawn.h",
+      "absent": [
+        "class AgentRegistry"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "orch:agent-reply",
+        "agent-reply-total",
+        "agent-reply-fail-total",
+        "schema-2401",
+        "agent-reply-wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/orch/README.md",
+      "contains": [
+        "agent_reply"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_agent_ask",
+        "tests/orch/test_agent_ask.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "build.py",
+      "contains": [
+        "cmd_agent_reply_coverage"
+      ]
+    }
+  ]
+}

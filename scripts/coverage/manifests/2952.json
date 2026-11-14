@@ -1,0 +1,71 @@
+{
+  "issue": 2952,
+  "title": "Issue #2952: storm-clear + exhaust auto coverage-verify min-dirty.",
+  "ok": "OK: Issue #2952 folded from check_coverage_verify_min_dirty_2952.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "Issue #2952",
+        "maybe_coverage_verify_min_dirty",
+        "resolve_coverage_verify_min_dirty_enabled",
+        "AURA_COVERAGE_VERIFY_MIN_DIRTY",
+        "AURA_SANDBOX",
+        "aura_production_defaults_active_probe",
+        "decide_exhausted_min_dirty_retry",
+        "last_reemit_success_region_mask_",
+        "on_exhausted_min_dirty_queue",
+        "maybe_coverage_verify_min_dirty()"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "maybe_coverage_verify_min_dirty",
+        "coverage_verify_storm_skip_total_",
+        "schema_2952",
+        "coverage_verify_scheduled_total_"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_exhausted_min_dirty_reemit.cpp",
+      "contains": [
+        "2952 AC1",
+        "2952 AC2",
+        "2952 AC3",
+        "2952 AC4",
+        "2952"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "schema-2952",
+        "issue-2952",
+        "coverage-verify-scheduled-total",
+        "coverage-verify-success-total",
+        "coverage-verify-residual-uncovered-total",
+        "coverage-verify-storm-skip-total",
+        "coverage-verify-min-dirty-wired",
+        "schema-2601",
+        "schema-2895"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_2952.cpp"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/2952-*"
+      ]
+    }
+  ]
+}

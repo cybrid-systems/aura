@@ -1,0 +1,79 @@
+{
+  "issue": 2905,
+  "title": "Issue #2905: Moving densify sticky densify-off auto-clear + Agent visibility.",
+  "ok": "OK: Issue #2905 folded from check_moving_sticky_densify_off_2905.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "#2905",
+        "clear_moving_incomplete_remap_sticky_densify_off",
+        "kStickyClearHealthyWindow",
+        "!result.moving_incomplete_remap && result.pin_contract_held",
+        "hard_pref > 0",
+        "Soft (hard_pref <= 0) does not arm sticky",
+        "g_moving_incomplete_remap_sticky_densify_off"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "clear_moving_incomplete_remap_sticky_densify_off",
+        "moving_unified_success",
+        "#2905"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "sticky-densify-off",
+        "sticky-densify-off-total",
+        "moving-sticky-densify-off",
+        "moving-sticky-densify-off-total",
+        "schema-2905",
+        "moving-sticky-auto-clear-wired"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "moving-sticky-densify-off",
+        "schema-2905"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
+      "contains": [
+        "ac2905_4_reregister_clean_restores_without_manual_clear",
+        "ac2905_1_clean_moving_clears_sticky",
+        "ac2905_2_query_sticky_surface",
+        "ac2905_3_hard_arms_soft_never",
+        "ac2905_5_source_cite_phase5_no_design"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "cmd_moving_sticky_densify_off_2905"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/2905-*"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/core/test_issue_2905.cpp"
+      ]
+    }
+  ]
+}

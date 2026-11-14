@@ -1,0 +1,71 @@
+{
+  "issue": 2848,
+  "title": "Issue #2848: language-path auto handoff_ref for StableNodeRef agent-send.",
+  "ok": "OK: Issue #2848 folded from check_agent_send_auto_handoff_2848.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "Issue #2848",
+        "orch:agent-send",
+        "ev.handoff_ref(",
+        "stamp_mail_message_handoff_completed",
+        "handoff-required",
+        "export-stale",
+        "auto-handoff",
+        "schema-2848",
+        "is_string(a[1])",
+        "is_int(a[1])",
+        "is_bool(a[1])",
+        "zero-cost",
+        "no held_ref_token",
+        "agent-send-auto-handoff-total",
+        "agent-send-handoff-fail-total",
+        "agent_send_auto_handoff_total.fetch_add",
+        "agent_send_handoff_fail_total.fetch_add",
+        "Soft / sandbox=off",
+        "prefer the export path"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "stamp_mail_message_handoff_completed",
+        "kAgentSendAutoHandoffIssue = 2848",
+        "agent_send_auto_handoff_total",
+        "agent_send_handoff_fail_total",
+        "defense in depth",
+        "never weakens the mailbox gate"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "if (msg.held_ref_token.has_value() && !msg.handoff_completed)",
+        "handoff_reject_total",
+        "production-safe default"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_stable_ref_export_validate.cpp",
+      "contains": [
+        "2848 AC",
+        "Issue #2848"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "paths": [
+        "src/compiler/evaluator_primitives_agent.cpp",
+        "src/orch/agent_spawn.h"
+      ],
+      "absent": [
+        "docs/design"
+      ]
+    }
+  ]
+}

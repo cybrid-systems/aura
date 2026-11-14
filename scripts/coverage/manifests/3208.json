@@ -30,6 +30,67 @@
         "ac3208_2_prod_unset_cancel",
         "ac3208_3_reclaimed_skip"
       ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "kJoinFailProductionDefaultIssue = 3208",
+        "agent_join_fail_action_cancel_total",
+        "on_join_fail = AgentFailureAction::ReportOnly"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "production_defaults_active()",
+        "reclaimed_deferred_cleanup",
+        "#2661",
+        "std::optional<AgentFailurePolicy>"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "agent-join-fail-action-cancel-total",
+        "join-fail-production-default-wired"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/orch/test_agent_failure_policy.cpp",
+      "contains": [
+        "ac3208_4_hash_and_soak",
+        "HardDeny"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/orch/README.md",
+      "contains": [
+        "3208"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/orch/agent_spawn.h",
+      "absent": [
+        "class AgentRegistry"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/orch/test_issue_3208.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/3208-*"
+      ]
     }
   ]
 }

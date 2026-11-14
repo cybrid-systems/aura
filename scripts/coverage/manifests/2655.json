@@ -1,0 +1,91 @@
+{
+  "issue": 2655,
+  "title": "Issue #2655: sub-second denseness clocks (current-time-ms / monotonic-ms).",
+  "ok": "OK: Issue #2655 folded from check_subsecond_clock_2655.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_misc.cpp",
+      "contains": [
+        "#2655",
+        "system_clock",
+        "steady_clock",
+        "milliseconds"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_misc.cpp",
+      "contains_any": [
+        "add(\"current-time-ms\"",
+        "\"current-time-ms\""
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_misc.cpp",
+      "contains_any": [
+        "add(\"monotonic-ms\"",
+        "\"monotonic-ms\""
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_builtins.cpp",
+      "contains": [
+        "current-time-ms",
+        "monotonic-ms"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "paths": [
+        "src/compiler/macro_expansion.cpp",
+        "src/compiler/hygiene_builtins.hh"
+      ],
+      "contains": [
+        "current-time-ms"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "lib/std/datetime.aura",
+      "contains": [
+        "timestamp-ms",
+        "elapsed-ms",
+        "#2655"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "lib/std/datetime.aura",
+      "contains_any": [
+        "steady-ms",
+        "monotonic-ms"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_subsecond_clock"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "build.py",
+      "contains": [
+        "cmd_subsecond_clock_coverage"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "path": "tests/compiler/test_subsecond_clock.cpp",
+      "contains": [
+        "AC1",
+        "AC3",
+        "#2655"
+      ]
+    }
+  ]
+}

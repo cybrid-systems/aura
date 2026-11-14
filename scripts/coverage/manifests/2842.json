@@ -1,0 +1,68 @@
+{
+  "issue": 2842,
+  "title": "Issue #2842: freeze Occurrence truth into TypeLinearCommitProof at stamp.",
+  "ok": "OK: Issue #2842 folded from check_type_linear_commit_proof_goal_truth_2842.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "Issue #2842",
+        "goal_fingerprint",
+        "mix_occurrence_goal_into_fingerprint",
+        "apply_proof_goal_truth",
+        "ProofGoalTruth",
+        "kProofGoalFingerprintMaxGoals",
+        "kQuietProofGoalTruth",
+        "g_last_proof_goal_fingerprint",
+        "g_type_linear_commit_proof_goal_truth_gauge_fallback_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "freeze_proof_goal_truth_from_type_checker",
+        "densify_goal_truth_2842"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2697",
+        "schema-2717",
+        "schema-2758",
+        "schema-2842",
+        "issue-2842",
+        "type-linear-commit-proof-goal-fingerprint",
+        "type-linear-commit-proof-goal-truth-stamped-total",
+        "type-linear-commit-proof-goal-fingerprint-nonzero-total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
+      "contains": [
+        "ac2842_1_stamp_freezes_goal_truth",
+        "ac2842_2_fingerprint_differs_on_content_change",
+        "ac2842_3_quiet_path_zeros",
+        "ac2842_4_additive_no_regression",
+        "ac2842_5_source_and_linter",
+        "ac2758_1_counts_from_real_walks"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_2842.cpp"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/*2842*"
+      ]
+    }
+  ]
+}

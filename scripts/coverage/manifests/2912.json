@@ -1,0 +1,74 @@
+{
+  "issue": 2912,
+  "title": "Issue #2912: layered DeadCoercion evidence coherence diverge must force-Full",
+  "ok": "OK: Issue #2912 folded from check_layered_evidence_force_full_2912.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "consume_layered_evidence_diverge_force_full",
+        "consume_layered_evidence_diverge_hard_reject",
+        "g_layered_evidence_diverge_force_consumed_total",
+        "Soft + diverge",
+        "production / Full + diverge",
+        "coercion_entry_dual_complete",
+        "fill_coercion_provenance_chain",
+        "return 0",
+        "Issue #2912",
+        "g_layered_evidence_diverge_force_full_pending"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "consume_layered_evidence_diverge_force_full",
+        "layered_diverge_force",
+        "provenance_miss",
+        "layered-evidence-diverge",
+        "consume_layered_evidence_diverge_hard_reject",
+        "maybe_soft_recover_or_escalate_blame",
+        "Issue #2912",
+        "g_layered_evidence_diverge_force_full_pending.store"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "\"schema-2912\"",
+        "\"issue-2912\"",
+        "\"layered-evidence-diverge-force-consumed-total\"",
+        "\"layered-evidence-diverge-hard-reject-consumed-total\"",
+        "\"layered-evidence-diverge-force-full-consume-wired\"",
+        "\"schema-2719\"",
+        "\"schema-2674\"",
+        "\"layered-evidence-diverge-force-full-pending\"",
+        "\"layered-evidence-diverge-total\"",
+        "Issue #2912"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_dead_coercion_layered.cpp",
+      "contains": [
+        "run_2912_layered_diverge_force_full_consume",
+        "ac2912_1_consume_force_full"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "#2912"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "docs/design/2912-layered-diverge-force-full.md"
+      ]
+    }
+  ]
+}

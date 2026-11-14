@@ -231,8 +231,7 @@ static void ac2988_5_multi_round() {
 
 static void ac2988_6_source_and_linter() {
     std::println("\n--- #2988 AC6: source-cite + linter ---");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_mutate_invalidate_incremental_2988.py");
+    const auto lint = read_file("scripts/coverage/manifests/2988.json");
     const auto t = read_file("tests/compiler/test_post_mutate_push_cascade.cpp");
     const auto build = read_file("build.py");
     CHECK(!lint.empty() && lint.find("2988") != std::string::npos, "2988 AC6: linter");

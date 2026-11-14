@@ -43,7 +43,7 @@ def main() -> int:
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
     test_bp = _read("tests/orch/test_mailbox_bp_admit.cpp")
     test_per = _read("tests/orch/test_per_scope_bp_admit.cpp")
-    lint2778 = _read("scripts/coverage/checks/check_scope_bp_map_lifecycle_2778.py")
+    lint2778 = _read("scripts/coverage/manifests/2778.json")
     lint3127 = _read("scripts/coverage/checks/check_mailbox_bp_overflow_3127.py")
     build = _read("build.py")
 

@@ -1,0 +1,73 @@
+{
+  "issue": 3206,
+  "title": "Issue #3206: apply_workflow residual Cancel/JoinDrain under production.",
+  "ok": "OK: Issue #3206 folded from check_workflow_residual_action_3206.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "kWorkflowResidualActionIssue = 3206",
+        "CancelOnResidual",
+        "JoinDrainOnResidual",
+        "kResidualJoinDrainMs",
+        "workflow_residual_cancel_total",
+        "complete_agent_join_cleanup"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/orch/test_failure_policy_bridge.cpp",
+      "contains": [
+        "ac3206_1_soft_quiet",
+        "ac3206_2_prod_cancel",
+        "ac3206_3_join_drain",
+        "ac3206_5_source_linter"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "production_defaults_active()",
+        "apply_residual_reclaim_action",
+        "scope.cancel_all()"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "residual-action",
+        "schema-3206",
+        "workflow-residual-join-drain-total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/orch/README.md",
+      "contains": [
+        "3206"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/orch/agent_spawn.h",
+      "absent": [
+        "class AgentRegistry"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/orch/test_issue_3206.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/3206-*"
+      ]
+    }
+  ]
+}

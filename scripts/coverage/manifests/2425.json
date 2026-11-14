@@ -1,0 +1,58 @@
+{
+  "issue": 2425,
+  "title": "Issue #2425: CapabilityRegistry audit_ring published slots (no torn reads).",
+  "ok": "OK: Issue #2425 folded from check_capability_audit_publish_2425.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "Issue #2425",
+        "struct PublishedAuditSlot",
+        "std::atomic<std::uint64_t> publish_seq{0}",
+        "PublishedAuditSlot audit_ring[kAuditRing]",
+        "try_load_audit_seq",
+        "audit_ring_mtx_",
+        "std::unique_lock<std::shared_mutex> wlock(audit_ring_mtx_)",
+        "std::shared_lock<std::shared_mutex> rlock(audit_ring_mtx_)",
+        "audit_seq.fetch_add(1, std::memory_order_release)",
+        "publish_seq.store(seq + 1, std::memory_order_release)",
+        "publish_seq.load(std::memory_order_acquire)",
+        "audit_seq.load(std::memory_order_acquire)",
+        "try_load_latest_audit"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/capability_model.hh",
+      "absent": [
+        "EffectAuditEntry audit_ring[kAuditRing]"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_capability_audit_publish.cpp",
+      "contains": [
+        "2425 AC1",
+        "2425 AC2",
+        "concurrent record_audit",
+        "2425 AC3",
+        "2425 AC4"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "build.py",
+      "contains": [
+        "cmd_capability_audit_publish_coverage"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_capability_audit_publish"
+      ]
+    }
+  ]
+}

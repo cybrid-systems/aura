@@ -1,0 +1,71 @@
+{
+  "issue": 3007,
+  "title": "Issue #3007: Production residual identity CastOp in hot / post-mutate IR.",
+  "ok": "OK: Issue #3007 folded from check_dead_coercion_hot_residual_3007.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/optimization_passes.ixx",
+      "contains": [
+        "kDeadCoercionHotResidualIssue",
+        "sweep_production_hot_residual_castops",
+        "count_identity_castops",
+        "Soft keeps #2556"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone.cpp",
+      "contains": [
+        "ac3007_1_production_sweeps_cone_external",
+        "ac3007_2_soft_keeps_cone_skip",
+        "ac3007_3_schema_and_source",
+        "ac3007_4_linter_no_design"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-3007",
+        "hot-residual-sweep-total",
+        "hot-residual-reject-total",
+        "schema-2556"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "sweep_production_hot_residual_castops"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "#3007",
+        "set_bidirectional_mode(true)"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "cmd_dead_coercion_hot_residual_3007_coverage"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/*3007*"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_3007.cpp"
+      ]
+    }
+  ]
+}

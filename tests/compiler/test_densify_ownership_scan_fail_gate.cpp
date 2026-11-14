@@ -558,7 +558,7 @@ static void ac2673_chaos_soak_and_linter() {
           "AC6 #2673: chaos observe counter unchanged under production (all forced)");
 
     // Linter row present.
-    const auto linter_path = "scripts/coverage/checks/check_occurrence_densify_root_scan_2642.py";
+    const auto linter_path = "scripts/coverage/manifests/2642.json";
     const auto linter = read_file(linter_path);
     CHECK(!linter.empty(), "AC6 #2673: linter script present");
     CHECK(linter.find("#2673") != std::string::npos, "AC6 #2673: linter covers #2673");

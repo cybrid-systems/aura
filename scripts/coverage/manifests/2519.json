@@ -1,0 +1,70 @@
+{
+  "issue": 2519,
+  "title": "Issue #2519: LayoutStamp::operator== must include all 8 fields.",
+  "ok": "OK: Issue #2519 folded from check_layout_stamp_equality_8field_2519.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/layout_stamp.hh",
+      "contains": [
+        "Issue #2519",
+        "shape_version == o.shape_version",
+        "ir_soa_generation == o.ir_soa_generation",
+        "layout_core_equal",
+        "is_fully_fresh",
+        "is_shape_or_ir_unset",
+        "kLayoutStampEqualitySchema",
+        "kLayoutStampSchema = 2432"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_layout_stamp_equality_8field.cpp",
+      "contains": [
+        "ac1_equality_matrix",
+        "ac2_ir_gen_equality",
+        "ac3_shape_version_equality",
+        "ac4_no_6field_freshness",
+        "ac5_query_schema"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "is_fully_fresh",
+        "Issue #2519",
+        "layout_stamp_from_fiber_resume"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "absent": [
+        "layout_core_equal"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "layout-stamp-equality-8-field",
+        "schema-2519"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_layout_stamp_equality_8field"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "build.py",
+      "contains": [
+        "cmd_layout_stamp_equality_8field_coverage"
+      ]
+    }
+  ]
+}

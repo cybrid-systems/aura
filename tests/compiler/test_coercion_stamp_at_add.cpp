@@ -317,8 +317,7 @@ static void ac2991_5_source_linter() {
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
     const auto t = read_file("tests/compiler/test_coercion_stamp_at_add.cpp");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_coercion_provenance_hf_mutate_2991.py");
+    const auto lint = read_file("scripts/coverage/manifests/2991.json");
     CHECK(cm.find("#2991") != std::string::npos, "AC5: coercion_map cites #2991");
     CHECK(cm.find("resolve_deferred_coercion_provenance") != std::string::npos, "AC5: resolver");
     CHECK(impl.find("explicit_source_mutation_id") != std::string::npos, "AC5: explicit param");
@@ -404,8 +403,7 @@ static void ac3046_5_source_cites() {
     CHECK(read_file("src/compiler/optimization_passes.ixx")
                   .find("note_hot_residual_nonidentity_castops") != std::string::npos,
           "3046 AC5: DCE sweep cites density keep");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_coercion_hf_lag_hot_residual_3046.py");
+    const auto lint = read_file("scripts/coverage/manifests/3046.json");
     CHECK(!lint.empty() && lint.find("#3046") != std::string::npos, "3046 AC5: linter");
     CHECK(read_file("build.py").find("check_coercion_hf_lag_hot_residual_3046") !=
               std::string::npos,
@@ -488,8 +486,7 @@ static void ac3318_4_no_new_schema() {
     CHECK(q.find("coercion-blame-epoch-restamp-total") != std::string::npos,
           "3318 AC4: reuse restamp key");
     CHECK(q.find("Issue #3318") != std::string::npos, "3318 AC4: query cite");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_coercion_blame_epoch_restamp_3318.py");
+    const auto lint = read_file("scripts/coverage/manifests/3318.json");
     const auto build = read_file("build.py");
     CHECK(!lint.empty() && lint.find("Issue #3318") != std::string::npos,
           "ac3318_4_no_new_schema: linter");

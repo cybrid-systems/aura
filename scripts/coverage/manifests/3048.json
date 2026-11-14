@@ -1,0 +1,97 @@
+{
+  "issue": 3048,
+  "title": "Issue #3048: session-bound grants residual under steal / force-cancel / abort.",
+  "ok": "OK: Issue #3048 folded from check_session_grant_steal_3048.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "revoke_session_grants_on_steal_or_abort",
+        "session-mid-steal-exit",
+        "session-mid-abort-exit",
+        "capability_session_revoke_steal_total",
+        "capability_session_revoke_abort_total",
+        "session-mid-exit",
+        "capability_live_session_grants",
+        "capability_live_session_grants.load"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "revoke_session_grants_on_steal_or_abort",
+        "aura_evaluator_on_steal_complete",
+        "mark_outermost_mutation_failed"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "set_current_fiber_session_mid",
+        "revoke_session_grants_for_mid",
+        "session_mid_at_enter_"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "session_mid_"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "aura_fiber_session_mid"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "schema-3048",
+        "session-grant-steal-abort-wired",
+        "capability-session-revoke-steal-total"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "tests/core/test_capability_single_use_consume.cpp",
+      "contains": [
+        "3048",
+        "revoke_session_grants_on_steal_or_abort"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "tests/core/test_tenant_isolation_enforcement.cpp",
+      "contains": [
+        "3048"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "#3048"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid": [
+        "tests/core/test_issue_3048.cpp",
+        "tests/compiler/test_issue_3048.cpp"
+      ]
+    },
+    {
+      "ac": "AC11",
+      "forbid_glob": [
+        "docs/design/3048-*"
+      ]
+    }
+  ]
+}

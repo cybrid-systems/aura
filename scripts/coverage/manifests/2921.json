@@ -1,0 +1,59 @@
+{
+  "issue": 2921,
+  "title": "Issue #2921: roundtrip + regression matrix for current-source / snapshot.",
+  "ok": "OK: Issue #2921 folded from check_current_source_roundtrip_2921.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_current_source_roundtrip.cpp",
+      "contains": [
+        "2921",
+        "kRoundtripNoMutate",
+        "2918",
+        "2919",
+        "2920",
+        "mutate:rebind",
+        "(mutate :snapshot"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_current_source_roundtrip.cpp",
+      "contains_any": [
+        "Extending the table",
+        "Extend here"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/suite/current_source_roundtrip_2921.aura",
+      "contains": [
+        "2921",
+        "current-source :workspace"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_current_source_roundtrip"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains_any": [
+        "current-source-roundtrip-2921",
+        "current_source_roundtrip_2921"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "docs/stdlib/current-source-roundtrip.md",
+      "contains": [
+        "2921",
+        "kRoundtripNoMutate"
+      ]
+    }
+  ]
+}

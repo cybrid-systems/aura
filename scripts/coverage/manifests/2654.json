@@ -1,0 +1,65 @@
+{
+  "issue": 2654,
+  "title": "Issue #2654: language (hash) / hash-set! grow FlatHashTable.",
+  "ok": "OK: Issue #2654 folded from check_hash_table_grow_2654.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_vector.cpp",
+      "contains": [
+        "#2654",
+        "flat_hash_grow_eval",
+        "flat_hash_insert_eval",
+        "eval_hash_key_hash",
+        "g_hash_tables[hidx] = ht"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_vector.cpp",
+      "contains_any": [
+        "capacity * 7",
+        "size * 10"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_vector.cpp",
+      "contains_any": [
+        "add(\"hash\"",
+        "\"hash\""
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_vector.cpp",
+      "contains_any": [
+        "add(\"hash-set!\"",
+        "\"hash-set!\""
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_hash_table_grow"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "cmd_hash_table_grow_coverage"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "tests/compiler/test_hash_table_grow.cpp",
+      "contains": [
+        "AC1",
+        "AC2",
+        "#2654"
+      ]
+    }
+  ]
+}

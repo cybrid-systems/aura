@@ -1,0 +1,104 @@
+{
+  "issue": 2932,
+  "title": "Issue #2932: hold-budget overtime → forced outermost fail-closed",
+  "ok": "OK: Issue #2932 folded from check_hold_budget_forced_fail_closed_2932.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "Issue #2932",
+        "request_force_safepoint",
+        "aura_evaluator_try_hold_budget_fail_closed_at_safepoint",
+        "peek_hold_budget_cancel"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "Issue #2932",
+        "aura_evaluator_try_hold_budget_fail_closed_at_safepoint",
+        "mark_outermost_mutation_failed",
+        "consume_hold_budget_cancel",
+        "g_mutation_hold_budget_forced_fail_closed_total",
+        "aura_fiber_request_hold_budget_cancel",
+        "mutation_hold_budget_reject_enabled()",
+        "Soft / sandbox=off",
+        "outermost"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "Issue #2932",
+        "g_mutation_hold_budget_forced_fail_closed_total",
+        "kMutationHoldBudgetForcedFailClosedIssue = 2932",
+        "Nested"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "request_force_safepoint"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "mutation_hold_budget_reject_enabled()",
+        "is_outermost_",
+        "Issue #2846",
+        "close_residual_defer_after_exit",
+        "Issue #2932",
+        "forced-failure"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "mutation-hold-budget-forced-fail-closed-total",
+        "mutation-hold-budget-forced-fail-closed-wired",
+        "schema-2932",
+        "issue-2932",
+        "schema-2726",
+        "schema-2701"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
+      "contains": [
+        "ac2932_1_force_safepoint_fail_closed",
+        "ac2932_2_soft_metric_only",
+        "ac2932_3_nested_outermost_only",
+        "ac2932_4_residual_closed_loop",
+        "ac2932_5_source_and_linter",
+        "ac2932_6_no_docs_design"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/compiler/fiber_bridge.cpp",
+      "contains": [
+        "aura_evaluator_try_hold_budget_fail_closed_at_safepoint"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid": [
+        "tests/serve/test_issue_2932.cpp"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid_glob": [
+        "docs/design/2932-*"
+      ]
+    }
+  ]
+}

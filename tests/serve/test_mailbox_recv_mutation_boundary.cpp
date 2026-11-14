@@ -1178,8 +1178,7 @@ static void ac3036_5_source_linter_chaos() {
     std::println("\n--- #3036 AC5: linter + chaos production_defaults ---");
     const auto t = read_file("tests/serve/test_mailbox_recv_mutation_boundary.cpp");
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_mailbox_residual_hard_reject_3036.py");
+    const auto lint = read_file("scripts/coverage/manifests/3036.json");
     const auto build = read_file("build.py");
     CHECK(t.find("ac3036_1_production_residual_hard_bp") != std::string::npos, "3036 AC5: AC1");
     CHECK(chaos.find("apply_production_audit_defaults") != std::string::npos,
@@ -1934,8 +1933,7 @@ static void ac2903_5_source_cite_no_docs_design() {
     const auto health = read_file("src/compiler/mutation_concurrency_health.hh");
     const auto query = read_query_srcs();
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_mailbox_under_boundary_wait_2903.py");
+    const auto lint = read_file("scripts/coverage/manifests/2903.json");
     CHECK(mb.find("Issue #2903") != std::string::npos || mb.find("#2903") != std::string::npos,
           "AC5: mailbox cites #2903");
     CHECK(mb.find("note_mailbox_under_boundary_wait_sample") != std::string::npos,
@@ -2313,7 +2311,7 @@ static void ac3002_5_source_and_linter() {
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
     const auto t = read_file("tests/serve/test_mailbox_recv_mutation_boundary.cpp");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_mailbox_hold_slo_ssot_soak_3002.py");
+    const auto lint = read_file("scripts/coverage/manifests/3002.json");
     CHECK(mb.find("kMailboxHoldSloSsotIssue = 3002") != std::string::npos, "AC5: issue stamp");
     CHECK(mb.find("sample_mailbox_hold_slo_live") != std::string::npos, "AC5: sample helper");
     CHECK(gate.find("Issue #3002") != std::string::npos, "AC5: gate cites #3002");

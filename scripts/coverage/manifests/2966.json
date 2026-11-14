@@ -1,0 +1,69 @@
+{
+  "issue": 2966,
+  "title": "Issue #2966: ast:snapshot failure is observable (never silent -1 only).",
+  "ok": "OK: Issue #2966 folded from check_ast_snapshot_fail_reason_2966.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_ast.cpp",
+      "contains": [
+        "#2966",
+        "note_ast_snapshot_fail",
+        "kSnapFailNoWorkspace",
+        "kSnapFailEmptySource",
+        "kSnapFailGuard",
+        "qr:snapshot-fail-reason",
+        ":no-workspace",
+        "set-code",
+        "Top-level",
+        "2918",
+        "workspace unparse"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_query_obs_mid.cpp",
+      "contains": [
+        "last-ast-snapshot-fail-reason",
+        "ast-snapshot-fail-total",
+        "schema-2966"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_current_source_roundtrip.cpp",
+      "contains": [
+        "ac2966_1_no_workspace_observable",
+        "ac2966_2_set_code_path_ok",
+        "ac2966_4_source_cite"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "last_ast_snapshot_fail_reason"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "cmd_ast_snapshot_fail_reason_2966_coverage",
+        "ast-snapshot-fail-reason-2966"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/2966-*"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/compiler/test_issue_2966.cpp"
+      ]
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 {
   "issue": 3374,
-  "title": "Issue #3374: lockless eval_flat_apply_mutate_rebind new-body MacroIntroduced hygiene \u2014 #2792 twin for atomic-batch.",
-  "ok": "OK: Issue #3374 lockless rebind new-body hygiene \u2014 all AC rows satisfied",
+  "title": "Issue #3374: lockless eval_flat_apply_mutate_rebind new-body MacroIntroduced hygiene — #2792 twin for atomic-batch.",
+  "ok": "OK: Issue #3374 lockless rebind new-body hygiene — all AC rows satisfied",
   "checks": [
     {
       "ac": "AC1",
@@ -28,15 +28,6 @@
         "batch :rebind: cannot install MacroIntroduced body",
         "kHygieneLimitReasonMacroIntroduced",
         "note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced)"
-      ]
-    },
-    {
-      "ac": "AC4",
-      "path": "scripts/coverage/checks/check_atomic_batch_macro_audit_3301.py",
-      "contains": [
-        "AC7",
-        "walk_subtree(new_value",
-        "cannot install MacroIntroduced body"
       ]
     },
     {

@@ -1,0 +1,50 @@
+{
+  "issue": 2426,
+  "title": "Issue #2426: CapabilityRegistry::snapshot_registry_state() (#1840 pattern).",
+  "ok": "OK: Issue #2426 folded from check_capability_registry_snapshot_2426.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "Issue #2426",
+        "struct RegistryStateSnapshot",
+        "snapshot_registry_state()",
+        "struct AtomicEffectSandboxMode",
+        "struct AtomicTenantId",
+        "sandbox_mode.load(std::memory_order_acquire)",
+        "default_tenant.load(std::memory_order_acquire)",
+        "grant_min_valid_epoch_.load(std::memory_order_acquire)",
+        "hard_fiber_isolation_.load(std::memory_order_acquire)",
+        "AtomicEffectSandboxMode sandbox_mode{}",
+        "AtomicTenantId default_tenant{}",
+        "operator=(EffectSandboxMode m)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/core/test_capability_registry_snapshot.cpp",
+      "contains": [
+        "2426 AC1",
+        "2426 AC2",
+        "concurrent grant",
+        "2426 AC3",
+        "2426 AC4"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "build.py",
+      "contains": [
+        "cmd_capability_registry_snapshot_coverage"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_capability_registry_snapshot"
+      ]
+    }
+  ]
+}

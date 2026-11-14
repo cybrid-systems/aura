@@ -1,0 +1,82 @@
+{
+  "issue": 2846,
+  "title": "Issue #2846: residual GC defer after exit / steal-complete closed loop.",
+  "ok": "OK: Issue #2846 folded from check_residual_defer_after_exit_2846.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/gc_hooks.h",
+      "contains": [
+        "close_residual_defer_after_exit",
+        "g_residual_defer_after_exit_total",
+        "kResidualDeferAfterExitIssue",
+        "#2846",
+        "force_clear_residual_defer_for_evaluator",
+        "reconcile_gc_defer_bits_after_clear"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "close_residual_defer_after_exit",
+        "residual_defer_after_exit_total",
+        "#2846",
+        "partial_recovery",
+        "production_force=*/false",
+        "production_force=*/true"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "close_residual_defer_after_exit",
+        "#2846",
+        "residual_defer_after_exit_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "residual_defer_after_exit_total{0}"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "residual-defer-after-exit-total",
+        "schema-2846",
+        "issue-2846",
+        "residual-defer-after-exit-wired"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_residual_gc_defer_assert.cpp",
+      "contains": [
+        "ac2846_1_success_clear_drains_residual",
+        "ac2846_2_soft_observes_after_exit",
+        "ac2846_3_failure_exit_clears_under_production",
+        "ac2846_4_helper_and_steal_source",
+        "ac2846_5_source_linter_query",
+        "ac2269_residual_defer_policy",
+        "ac2296_multi_eval_residual_clear"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/compiler/test_issue_2846.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/*2846*"
+      ]
+    }
+  ]
+}

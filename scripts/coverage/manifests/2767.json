@@ -1,0 +1,35 @@
+{
+  "issue": 2767,
+  "title": "Issue #2767: denseness CLI DX — file path, -e, improved usage.",
+  "ok": "OK: Issue #2767 folded from check_cli_denseness_dx_2767.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/main.cpp",
+      "contains": [
+        "#2767",
+        "-e",
+        "--eval",
+        "source_from_argv",
+        "cannot open program file",
+        "print_denseness_usage",
+        "AURA_PATH",
+        "AURA_SANDBOX",
+        "AURA_PIPELINE_STRICT",
+        "#2213",
+        "no program source",
+        "stdin empty",
+        "--help",
+        "isatty",
+        "!source_from_argv",
+        "cin.rdbuf"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "forbid_glob": [
+        "docs/design/2767-*"
+      ]
+    }
+  ]
+}

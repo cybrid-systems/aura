@@ -655,7 +655,7 @@ static void ac2846_5_source_linter_query() {
     const auto obs = read_file("src/compiler/observability_metrics.h");
     const auto t = read_file("tests/compiler/test_residual_gc_defer_assert.cpp");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_residual_defer_after_exit_2846.py");
+    const auto lint = read_file("scripts/coverage/manifests/2846.json");
     CHECK(obs.find("residual_defer_after_exit_total{0}") != std::string::npos,
           "AC5: CompilerMetrics field");
     CHECK(q.find("residual-defer-after-exit-total") != std::string::npos, "AC5: query key");
@@ -807,8 +807,7 @@ static void ac2975_6_tests_linter_chaos() {
     std::println("\n--- #2975 AC6: extend existing suite + linter + chaos + no design ---");
     const auto t = read_file("tests/compiler/test_residual_gc_defer_assert.cpp");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_outermost_exit_residual_pin_2975.py");
+    const auto lint = read_file("scripts/coverage/manifests/2975.json");
     const auto chaos = read_file("tests/serve/test_chaos_steal_mutation_gc.cpp");
     CHECK(t.find("ac2975_1_happy_path_zero_cost") != std::string::npos, "AC6: AC1/AC3 test");
     CHECK(t.find("ac2975_2_soft_observe_no_fail") != std::string::npos, "AC6: AC2 test");

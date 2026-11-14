@@ -1,0 +1,83 @@
+{
+  "issue": 3065,
+  "title": "Issue #3065: DeadCoercion elim / residual CastOp remirror into type cone.",
+  "ok": "OK: Issue #3065 folded from check_dead_coercion_elim_cone_3065.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/dirty_propagation.ixx",
+      "contains": [
+        "Issue #3065",
+        "force_dead_coercion_elim_into_cone",
+        "mirror_type_affected_to_cascade",
+        "Soft / quiet",
+        "type_ir_cone_union_size_sum",
+        "force_residual_castop_blocks_into_cone"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "Issue #3065",
+        "force_dead_coercion_elim_into_cone",
+        "persist_elim_cone"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/pass_impls.ixx",
+      "contains": [
+        "note_elim_ast",
+        "flush_elim_cone"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone.cpp",
+      "contains": [
+        "ac3065_1_production_elim_reenters_cone",
+        "ac3065_2_soft_no_permanent_bits",
+        "ac3065_3_schema_and_union_metrics",
+        "ac3065_4_residual_and_linter"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-3065",
+        "dead-coercion-elim-cone-force-total",
+        "dead-coercion-elim-cone-wired",
+        "schema-2556"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/optimization_passes.ixx",
+      "contains": [
+        "Issue #3065",
+        "force_residual_castop_blocks_into_cone"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "build.py",
+      "contains": [
+        "cmd_dead_coercion_elim_cone_3065"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_3065.cpp"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/*3065*"
+      ]
+    }
+  ]
+}

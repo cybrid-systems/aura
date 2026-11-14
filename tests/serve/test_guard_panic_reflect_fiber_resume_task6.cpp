@@ -287,7 +287,7 @@ static void ac2765_6_source_and_linter() {
     const auto eix = read_file("src/compiler/evaluator.ixx");
     const auto t = read_file("tests/serve/test_guard_panic_reflect_fiber_resume_task6.cpp");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_guard_reflect_validate_2765.py");
+    const auto lint = read_file("scripts/coverage/manifests/2765.json");
     CHECK(emb.find("#2765") != std::string::npos, "AC6: boundary cites #2765");
     CHECK(eix.find("#2765") != std::string::npos, "AC6: evaluator cites #2765");
     CHECK(eix.find("guard_reflect_validate_enabled_") != std::string::npos, "AC6: flag member");

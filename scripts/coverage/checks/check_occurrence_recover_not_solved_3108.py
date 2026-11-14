@@ -46,7 +46,6 @@ def main() -> int:
     h = _read("src/compiler/typed_mutation_audit.h")
     test = _read("tests/compiler/test_solve_delta_unresolved_export.cpp")
     build = _read("build.py")
-    _read("scripts/coverage/checks/check_solve_delta_fail_closed_3031.py")
 
     # ── AC1: post-recover re-gate wired (single check, both blocks bump) ──
     must("kOccurrenceRecoverNotSolvedIssue = 3108", "AC1 issue stamp", h)
@@ -139,7 +138,7 @@ def main() -> int:
     # Lineage: #2750, #2909, #2962, #2911, #3031 must still pass
     must("kConeOutsideGoalDropRecoverRejectIssue = 2962", "AC5 #2962 lineage", h)
     must("kRefinedConsistencyGateIssue = 2911", "AC5 #2911 lineage", h)
-    must("3031", "AC5 3031 linter lineage", _read("scripts/coverage/checks/check_pending_full_solve_residual_3031.py"))
+    must("3031", "AC5 3031 linter lineage", _read("scripts/coverage/manifests/3031.json"))
     must("3108 AC5", "AC5 test marker", test)
 
     if fails:

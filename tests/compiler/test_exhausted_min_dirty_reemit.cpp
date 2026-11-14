@@ -1330,8 +1330,7 @@ int run_test_exhausted_min_dirty_reemit() {
             const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
             const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
             const auto build = read_file("build.py");
-            const auto lint =
-                read_file("scripts/coverage/checks/check_coverage_verify_min_dirty_2952.py");
+            const auto lint = read_file("scripts/coverage/manifests/2952.json");
             CHECK(hh.find("maybe_coverage_verify_min_dirty") != std::string::npos,
                   "2952 AC6: header declares maybe_coverage_verify_min_dirty");
             CHECK(cpp.find("Issue #2952") != std::string::npos, "2952 AC6: cpp cites #2952");

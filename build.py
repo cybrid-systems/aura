@@ -106,16 +106,31 @@ COVERAGE_RUN_CHECKS = SCRIPTS / "coverage" / "run_checks.py"
 COVERAGE_MANIFESTS = SCRIPTS / "coverage" / "manifests"
 
 
+def _issue_from_check_stem(stem: str) -> str | None:
+    for part in reversed(stem.replace("-", "_").split("_")):
+        if part.isdigit() and 3 <= len(part) <= 5:
+            return part
+    return None
+
+
+def _manifest_issue_for_script(filename: str) -> str | None:
+    """A folded check with no issue digits is named by exactly one manifest."""
+    needle = f"coverage/checks/{filename}"
+    hits = [
+        path.stem
+        for path in COVERAGE_MANIFESTS.glob("*.json")
+        if needle in path.read_text(encoding="utf-8", errors="replace")
+    ]
+    if len(hits) == 1 and hits[0].isdigit():
+        return hits[0]
+    return None
+
+
 def _coverage_run(script: Path) -> subprocess.CompletedProcess:
     """Run a check_*.py, or its folded manifest if the script was removed."""
     if script.exists():
         return subprocess.run([sys.executable, str(script)], cwd=ROOT)
-    stem = Path(script).stem
-    issue = None
-    for part in reversed(stem.replace("-", "_").split("_")):
-        if part.isdigit() and 3 <= len(part) <= 5:
-            issue = part
-            break
+    issue = _issue_from_check_stem(script.stem) or _manifest_issue_for_script(script.name)
     if issue and (COVERAGE_MANIFESTS / f"{issue}.json").is_file():
         return subprocess.run([sys.executable, str(COVERAGE_RUNNER), "--issue", issue], cwd=ROOT)
     fail(f"missing {script}")
@@ -360,8 +375,8 @@ def cmd_lint():
     Under ./build.py gate the sequential coverage chain is skipped
     (AURA_LINT_SKIP_COVERAGE=1) and scripts/coverage/run_checks.py runs
     the same check_*.py set in parallel with cascade suppression.
-    Standalone `./build.py lint` still runs the full sequential chain for
-    back-compat.
+    Standalone `./build.py lint` still walks that chain. A folded script
+    is gone; `_coverage_run` runs its manifest instead.
     """
     fix = "--fix" in sys.argv[2:]
     print(f"{B}═══ Lint {'(fix)' if fix else '(check)'} ═══{N}")
@@ -401,10 +416,7 @@ def cmd_lint():
     # Uses the same sys.executable + ROOT.joinpath pattern as
     # cmd_fixtures below.
     script = COVERAGE_CHECKS / "check_test_includes.py"
-    if not script.exists():
-        fail(f"missing {script}")
-        return 1
-    r = run([sys.executable, str(script)], cwd=ROOT)
+    r = _coverage_run(script).returncode
     if r != 0:
         fail("test includes linter failed — run python3 scripts/coverage/checks/check_test_includes.py")
         return r
@@ -414,10 +426,7 @@ def cmd_lint():
     # coverage). Wired next to the test-includes linter so a regression in
     # the #2632 AC surface fails the same gate.
     eh_script = COVERAGE_CHECKS / "check_export_held_handoff_coverage.py"
-    if not eh_script.exists():
-        fail(f"missing {eh_script}")
-        return 1
-    r = run([sys.executable, str(eh_script)], cwd=ROOT)
+    r = _coverage_run(eh_script).returncode
     if r != 0:
         fail(
             "export-held handoff coverage linter failed — run python3 scripts/coverage/checks/check_export_held_handoff_coverage.py"
@@ -429,10 +438,7 @@ def cmd_lint():
     # walk. Extends test_fiber_migration_refresh (#81967); no docs/design;
     # no new query key.
     sehe3479_script = COVERAGE_CHECKS / "check_steal_envframe_handoff_elevation_3479.py"
-    if not sehe3479_script.exists():
-        fail(f"missing {sehe3479_script}")
-        return 1
-    r = run([sys.executable, str(sehe3479_script)], cwd=ROOT)
+    r = _coverage_run(sehe3479_script).returncode
     if r != 0:
         fail(
             "Issue #3479 steal EnvFrame handoff elevation linter failed — run python3 scripts/coverage/checks/check_steal_envframe_handoff_elevation_3479.py"
@@ -445,10 +451,7 @@ def cmd_lint():
     # export-held handoff linter so a regression in the #2663 AC surface
     # fails the same gate.
     mbh_script = COVERAGE_CHECKS / "check_2663_coverage.py"
-    if not mbh_script.exists():
-        fail(f"missing {mbh_script}")
-        return 1
-    r = run([sys.executable, str(mbh_script)], cwd=ROOT)
+    r = _coverage_run(mbh_script).returncode
     if r != 0:
         fail(
             "Issue #2663 mailbox handoff coverage linter failed — run python3 scripts/coverage/checks/check_2663_coverage.py"
@@ -458,10 +461,7 @@ def cmd_lint():
     # orch:agent-send (#2663 residual). Soft prefer export; structured
     # handoff-required on fail; #2663 raw push gate preserved.
     asah_script = COVERAGE_CHECKS / "check_agent_send_auto_handoff_2848.py"
-    if not asah_script.exists():
-        fail(f"missing {asah_script}")
-        return 1
-    r = run([sys.executable, str(asah_script)], cwd=ROOT)
+    r = _coverage_run(asah_script).returncode
     if r != 0:
         fail(
             "Issue #2848 agent-send auto handoff linter failed — run python3 scripts/coverage/checks/check_agent_send_auto_handoff_2848.py"
@@ -474,10 +474,7 @@ def cmd_lint():
     # handoff coverage linter (#2632) so a regression in the #2633 AC
     # surface fails the same gate.
     sbp_script = COVERAGE_CHECKS / "check_scope_bp_gauge_coverage.py"
-    if not sbp_script.exists():
-        fail(f"missing {sbp_script}")
-        return 1
-    r = run([sys.executable, str(sbp_script)], cwd=ROOT)
+    r = _coverage_run(sbp_script).returncode
     if r != 0:
         fail(
             "scope BP gauge coverage linter failed — run python3 scripts/coverage/checks/check_scope_bp_gauge_coverage.py"
@@ -489,10 +486,7 @@ def cmd_lint():
     # coverage linter so a regression in the attribution surface fails
     # the same gate.
     bhs_script = COVERAGE_CHECKS / "check_scope_bp_sender_attribution_3632.py"
-    if not bhs_script.exists():
-        fail(f"missing {bhs_script}")
-        return 1
-    r = run([sys.executable, str(bhs_script)], cwd=ROOT)
+    r = _coverage_run(bhs_script).returncode
     if r != 0:
         fail(
             "scope BP sender attribution linter failed — run python3 scripts/coverage/checks/check_scope_bp_sender_attribution_3632.py"
@@ -504,10 +498,7 @@ def cmd_lint():
     # linter verifies the new probe code lives in the right place and the
     # zero-cost path on :pure #f stays unchanged.
     pp_script = COVERAGE_CHECKS / "check_pure_probe_hardening_2634.py"
-    if not pp_script.exists():
-        fail(f"missing {pp_script}")
-        return 1
-    r = run([sys.executable, str(pp_script)], cwd=ROOT)
+    r = _coverage_run(pp_script).returncode
     if r != 0:
         fail(
             "pure probe hardening coverage linter failed — run python3 scripts/coverage/checks/check_pure_probe_hardening_2634.py"
@@ -520,10 +511,7 @@ def cmd_lint():
     # to the pure-probe linter so a regression in the #2662 AC surface
     # fails the same gate.
     par_script = COVERAGE_CHECKS / "check_2662_coverage.py"
-    if not par_script.exists():
-        fail(f"missing {par_script}")
-        return 1
-    r = run([sys.executable, str(par_script)], cwd=ROOT)
+    r = _coverage_run(par_script).returncode
     if r != 0:
         fail(
             "Issue #2662 production hardening coverage linter failed — run python3 scripts/coverage/checks/check_2662_coverage.py"
@@ -533,10 +521,7 @@ def cmd_lint():
     # (residual of #2662 opt-in). Extends test_parallel_intend_pure_contract
     # (#81967); no docs/design/ (#1655).
     flpd_script = COVERAGE_CHECKS / "check_parallel_intend_force_lock_prod_default_2838.py"
-    if not flpd_script.exists():
-        fail(f"missing {flpd_script}")
-        return 1
-    r = run([sys.executable, str(flpd_script)], cwd=ROOT)
+    r = _coverage_run(flpd_script).returncode
     if r != 0:
         fail(
             "Issue #2838 parallel-intend force-lock production default linter failed — run python3 scripts/coverage/checks/check_parallel_intend_force_lock_prod_default_2838.py"
@@ -551,10 +536,7 @@ def cmd_lint():
     # on #2595/#2596/#2599 — wires next to the pure-probe + production-hardening
     # linters so a regression in the #2664 AC surface fails the same gate.
     dense_script = COVERAGE_CHECKS / "check_2664_coverage.py"
-    if not dense_script.exists():
-        fail(f"missing {dense_script}")
-        return 1
-    r = run([sys.executable, str(dense_script)], cwd=ROOT)
+    r = _coverage_run(dense_script).returncode
     if r != 0:
         fail(
             "Issue #2664 production-default hard-fail coverage linter failed — run python3 scripts/coverage/checks/check_2664_coverage.py"
@@ -569,10 +551,7 @@ def cmd_lint():
     # #2664 production-hardening linter so a regression in the #2665
     # AC surface fails the same gate.
     gop_script = COVERAGE_CHECKS / "check_2665_coverage.py"
-    if not gop_script.exists():
-        fail(f"missing {gop_script}")
-        return 1
-    r = run([sys.executable, str(gop_script)], cwd=ROOT)
+    r = _coverage_run(gop_script).returncode
     if r != 0:
         fail(
             "Issue #2665 general-object-pin required-mode coverage linter failed — run python3 scripts/coverage/checks/check_2665_coverage.py"
@@ -587,10 +566,7 @@ def cmd_lint():
     # the #2665 general-object-pin linter so a regression in the #2666
     # AC surface fails the same gate.
     anon_script = COVERAGE_CHECKS / "check_2666_coverage.py"
-    if not anon_script.exists():
-        fail(f"missing {anon_script}")
-        return 1
-    r = run([sys.executable, str(anon_script)], cwd=ROOT)
+    r = _coverage_run(anon_script).returncode
     if r != 0:
         fail(
             "Issue #2666 anon sync remount production-default coverage linter failed — run python3 scripts/coverage/checks/check_2666_coverage.py"
@@ -605,10 +581,7 @@ def cmd_lint():
     # steal residual hard-AND — wires next to the #2666 anon sync
     # linter so a regression in the #2667 AC surface fails the same gate.
     pcs_script = COVERAGE_CHECKS / "check_2667_coverage.py"
-    if not pcs_script.exists():
-        fail(f"missing {pcs_script}")
-        return 1
-    r = run([sys.executable, str(pcs_script)], cwd=ROOT)
+    r = _coverage_run(pcs_script).returncode
     if r != 0:
         fail(
             "Issue #2667 steal-residual panic-checkpoint coverage linter failed — run python3 scripts/coverage/checks/check_2667_coverage.py"
@@ -620,10 +593,7 @@ def cmd_lint():
     # (test_residual_defer_steal_hard_and.cpp, #81967); no docs/design/
     # (#1655).
     scr_script = COVERAGE_CHECKS / "check_steal_checkpoint_residual_2890.py"
-    if not scr_script.exists():
-        fail(f"missing {scr_script}")
-        return 1
-    r = run([sys.executable, str(scr_script)], cwd=ROOT)
+    r = _coverage_run(scr_script).returncode
     if r != 0:
         fail(
             "Issue #2890 steal-checkpoint residual linter failed — run python3 scripts/coverage/checks/check_steal_checkpoint_residual_2890.py"
@@ -639,10 +609,7 @@ def cmd_lint():
     # wires next to the #2667 steal-residual panic-checkpoint linter
     # so a regression in the #2668 AC surface fails the same gate.
     eiw_script = COVERAGE_CHECKS / "check_2668_coverage.py"
-    if not eiw_script.exists():
-        fail(f"missing {eiw_script}")
-        return 1
-    r = run([sys.executable, str(eiw_script)], cwd=ROOT)
+    r = _coverage_run(eiw_script).returncode
     if r != 0:
         fail(
             "Issue #2668 event-driven epoch-invariant walk coverage linter failed — run python3 scripts/coverage/checks/check_2668_coverage.py"
@@ -660,10 +627,7 @@ def cmd_lint():
     # next to the event-driven walk linter so a regression in the
     # #2693 AC surface fails the same gate.
     jeb_script = COVERAGE_CHECKS / "check_joint_epoch_bump_coverage.py"
-    if not jeb_script.exists():
-        fail(f"missing {jeb_script}")
-        return 1
-    r = run([sys.executable, str(jeb_script)], cwd=ROOT)
+    r = _coverage_run(jeb_script).returncode
     if r != 0:
         fail(
             "joint epoch bump coverage linter (#2693) failed — run python3 scripts/coverage/checks/check_joint_epoch_bump_coverage.py"
@@ -677,10 +641,7 @@ def cmd_lint():
     # #2372 production strict — AC2 (RejectHard → never local_queue_.push)
     # requires the worker.cpp wire-in marker.
     sst_script = COVERAGE_CHECKS / "check_steal_safety_transaction_2699.py"
-    if not sst_script.exists():
-        fail(f"missing {sst_script}")
-        return 1
-    r = run([sys.executable, str(sst_script)], cwd=ROOT)
+    r = _coverage_run(sst_script).returncode
     if r != 0:
         fail(
             "Issue #2699 unified steal safety transaction coverage linter failed — run python3 scripts/coverage/checks/check_steal_safety_transaction_2699.py"
@@ -690,10 +651,7 @@ def cmd_lint():
     # steal_safety_transaction (no direct set_resume_safety_ticket /
     # call_steal_complete). Closes the #2699/#2721 residual call-graph gap.
     tsf_script = COVERAGE_CHECKS / "check_try_steal_from_txn_2752.py"
-    if not tsf_script.exists():
-        fail(f"missing {tsf_script}")
-        return 1
-    r = run([sys.executable, str(tsf_script)], cwd=ROOT)
+    r = _coverage_run(tsf_script).returncode
     if r != 0:
         fail(
             "Issue #2752 try_steal_from only steal_safety_transaction coverage linter failed — run python3 scripts/coverage/checks/check_try_steal_from_txn_2752.py"
@@ -704,10 +662,7 @@ def cmd_lint():
     # Closes #2699/#2721/#2752 residual: every local_queue_.push(stolen)
     # must be dominated by StealSafetyDecision::Ok.
     sole_script = COVERAGE_CHECKS / "check_steal_sole_enqueue_gate_2844.py"
-    if not sole_script.exists():
-        fail(f"missing {sole_script}")
-        return 1
-    r = run([sys.executable, str(sole_script)], cwd=ROOT)
+    r = _coverage_run(sole_script).returncode
     if r != 0:
         fail(
             "Issue #2844 steal sole enqueue gate linter failed — run python3 scripts/coverage/checks/check_steal_sole_enqueue_gate_2844.py"
@@ -720,10 +675,7 @@ def cmd_lint():
     # unchanged. Extends test_steal_complete_gc_defer; no docs/design /
     # invent / new query key.
     sc3483_script = COVERAGE_CHECKS / "check_steal_complete_latch_strong_3483.py"
-    if not sc3483_script.exists():
-        fail(f"missing {sc3483_script}")
-        return 1
-    r = run([sys.executable, str(sc3483_script)], cwd=ROOT)
+    r = _coverage_run(sc3483_script).returncode
     if r != 0:
         fail(
             "Issue #3483 steal-complete latch∧strong linter failed — run python3 scripts/coverage/checks/check_steal_complete_latch_strong_3483.py"
@@ -736,10 +688,7 @@ def cmd_lint():
     # state_.store(Ready) (whitelist: Fiber init, owner requeue,
     # txn-Ok, Waiting→Ready wait-wake). Soft unchanged; additive schema-3072.
     se3072_script = COVERAGE_CHECKS / "check_steal_enqueue_sole_gate_3072.py"
-    if not se3072_script.exists():
-        fail(f"missing {se3072_script}")
-        return 1
-    r = run([sys.executable, str(se3072_script)], cwd=ROOT)
+    r = _coverage_run(se3072_script).returncode
     if r != 0:
         fail(
             "Issue #3072 steal enqueue sole-gate linter failed — run python3 scripts/coverage/checks/check_steal_enqueue_sole_gate_3072.py"
@@ -758,10 +707,7 @@ def cmd_lint():
     # offline). Extends test_steal_complete_restamp_txn (#81967); no
     # docs/design/ (#1655).
     sicc3290_script = COVERAGE_CHECKS / "check_steal_invariant_call_site_coverage_3290.py"
-    if not sicc3290_script.exists():
-        fail(f"missing {sicc3290_script}")
-        return 1
-    r = run([sys.executable, str(sicc3290_script)], cwd=ROOT)
+    r = _coverage_run(sicc3290_script).returncode
     if r != 0:
         fail(
             "Issue #3290 steal invariant call-site coverage linter failed — run python3 scripts/coverage/checks/check_steal_invariant_call_site_coverage_3290.py"
@@ -776,10 +722,7 @@ def cmd_lint():
     # handoff reject + #2680 shared-Evaluator delivery gate + #2312
     # push-side delivery gate.
     handoff_script = COVERAGE_CHECKS / "check_handoff_ref_mailbox_gate_2700.py"
-    if not handoff_script.exists():
-        fail(f"missing {handoff_script}")
-        return 1
-    r = run([sys.executable, str(handoff_script)], cwd=ROOT)
+    r = _coverage_run(handoff_script).returncode
     if r != 0:
         fail(
             "Issue #2700 handoff_ref mailbox gate linter failed — run python3 scripts/coverage/checks/check_handoff_ref_mailbox_gate_2700.py"
@@ -791,10 +734,7 @@ def cmd_lint():
     # contract stays enforced. Builds on #2587 mailbox-hold-starvation
     # + #2630/#2660 security-schedule gates.
     mhb_script = COVERAGE_CHECKS / "check_mutation_hold_budget_reject_2701.py"
-    if not mhb_script.exists():
-        fail(f"missing {mhb_script}")
-        return 1
-    r = run([sys.executable, str(mhb_script)], cwd=ROOT)
+    r = _coverage_run(mhb_script).returncode
     if r != 0:
         fail(
             "Issue #2701 mutation hold-budget reject linter failed — run python3 scripts/coverage/checks/check_mutation_hold_budget_reject_2701.py"
@@ -806,10 +746,7 @@ def cmd_lint():
     # interaction contract stays enforced. Builds on #2518 ticket +
     # #2346 post-sync resume invariant + #2310 force-deopt.
     rhf_script = COVERAGE_CHECKS / "check_resume_hard_fail_2702.py"
-    if not rhf_script.exists():
-        fail(f"missing {rhf_script}")
-        return 1
-    r = run([sys.executable, str(rhf_script)], cwd=ROOT)
+    r = _coverage_run(rhf_script).returncode
     if r != 0:
         fail(
             "Issue #2702 resume hard-fail linter failed — run python3 scripts/coverage/checks/check_resume_hard_fail_2702.py"
@@ -823,10 +760,7 @@ def cmd_lint():
     # query keys + nested-guards-skip AC3 contract stay enforced.
     # Builds on #2701/#2720/#2724 surfaces (strict additive superset).
     cfhb_script = COVERAGE_CHECKS / "check_cross_fiber_hold_budget_cancel_2726.py"
-    if not cfhb_script.exists():
-        fail(f"missing {cfhb_script}")
-        return 1
-    r = run([sys.executable, str(cfhb_script)], cwd=ROOT)
+    r = _coverage_run(cfhb_script).returncode
     if r != 0:
         fail(
             "Issue #2726 cross-fiber hold-budget cancel linter failed — run python3 scripts/coverage/checks/check_cross_fiber_hold_budget_cancel_2726.py"
@@ -839,10 +773,7 @@ def cmd_lint():
     # forced-fail-closed metrics, Soft gate, nested outermost-only,
     # residual #2846 failure path, and test extension stay enforced.
     hbff_script = COVERAGE_CHECKS / "check_hold_budget_forced_fail_closed_2932.py"
-    if not hbff_script.exists():
-        fail(f"missing {hbff_script}")
-        return 1
-    r = run([sys.executable, str(hbff_script)], cwd=ROOT)
+    r = _coverage_run(hbff_script).returncode
     if r != 0:
         fail(
             "Issue #2932 hold-budget forced fail-closed linter failed — run python3 scripts/coverage/checks/check_hold_budget_forced_fail_closed_2932.py"
@@ -851,10 +782,7 @@ def cmd_lint():
     # Issue #2999: outermost dtor consume of hold-budget cancel (#2932 residual).
     # Extends test_mailbox_hold_starvation_hard + chaos residual_zero (#81967).
     hbdc_script = COVERAGE_CHECKS / "check_hold_budget_dtor_consume_2999.py"
-    if not hbdc_script.exists():
-        fail(f"missing {hbdc_script}")
-        return 1
-    r = run([sys.executable, str(hbdc_script)], cwd=ROOT)
+    r = _coverage_run(hbdc_script).returncode
     if r != 0:
         fail(
             "Issue #2999 hold-budget dtor consume linter failed — run python3 scripts/coverage/checks/check_hold_budget_dtor_consume_2999.py"
@@ -867,10 +795,7 @@ def cmd_lint():
     # abort_restore_dual_topology + dual canary + lock release + depth clear
     # + residual close (same path as panic/abort); additive schema-3035.
     hbu_script = COVERAGE_CHECKS / "check_hold_budget_forced_unlock_3035.py"
-    if not hbu_script.exists():
-        fail(f"missing {hbu_script}")
-        return 1
-    r = run([sys.executable, str(hbu_script)], cwd=ROOT)
+    r = _coverage_run(hbu_script).returncode
     if r != 0:
         fail(
             "Issue #3035 hold-budget forced unlock linter failed — run python3 scripts/coverage/checks/check_hold_budget_forced_unlock_3035.py"
@@ -879,10 +804,7 @@ def cmd_lint():
     # Issue #2933: first-class QueryResult binding (QueryEpoch + matches +
     # optional pin; :as-query-result opt-in; result-fresh?/matches).
     qrb_script = COVERAGE_CHECKS / "check_query_result_binding_2933.py"
-    if not qrb_script.exists():
-        fail(f"missing {qrb_script}")
-        return 1
-    r = run([sys.executable, str(qrb_script)], cwd=ROOT)
+    r = _coverage_run(qrb_script).returncode
     if r != 0:
         fail(
             "Issue #2933 QueryResult binding linter failed — run python3 scripts/coverage/checks/check_query_result_binding_2933.py"
@@ -890,10 +812,7 @@ def cmd_lint():
         return r
     # Issue #2934: Guard exit restamp budget soft-degrade + Agent metrics.
     rsb_script = COVERAGE_CHECKS / "check_restamp_budget_2934.py"
-    if not rsb_script.exists():
-        fail(f"missing {rsb_script}")
-        return 1
-    r = run([sys.executable, str(rsb_script)], cwd=ROOT)
+    r = _coverage_run(rsb_script).returncode
     if r != 0:
         fail(
             "Issue #2934 restamp budget linter failed — run python3 scripts/coverage/checks/check_restamp_budget_2934.py"
@@ -903,10 +822,7 @@ def cmd_lint():
     # stale + pollable counter. Soft / unlimited metric-only.
     # Extends test_restamp_sla_observability + isolation (#81967).
     rqe_script = COVERAGE_CHECKS / "check_restamp_budget_query_epoch_stale_3041.py"
-    if not rqe_script.exists():
-        fail(f"missing {rqe_script}")
-        return 1
-    r = run([sys.executable, str(rqe_script)], cwd=ROOT)
+    r = _coverage_run(rqe_script).returncode
     if r != 0:
         fail(
             "Issue #3041 restamp-budget QueryEpoch stale linter failed — run python3 scripts/coverage/checks/check_restamp_budget_query_epoch_stale_3041.py"
@@ -916,10 +832,7 @@ def cmd_lint():
     # from PureWrap production stages. Extends test_hot_pass_hard_dod
     # + test_hot_pass_pure_wrap (#81967); no docs/design/ (#1655).
     pw3042_script = COVERAGE_CHECKS / "check_pure_wrap_no_std_function_3042.py"
-    if not pw3042_script.exists():
-        fail(f"missing {pw3042_script}")
-        return 1
-    r = run([sys.executable, str(pw3042_script)], cwd=ROOT)
+    r = _coverage_run(pw3042_script).returncode
     if r != 0:
         fail(
             "Issue #3042 PureWrap no-std-function dirty linter failed — run python3 scripts/coverage/checks/check_pure_wrap_no_std_function_3042.py"
@@ -929,10 +842,7 @@ def cmd_lint():
     # columnar mask only (no residual set_block_dirty_pred). I5 of
     # #2258/#3042/#2907. Extends test_hot_pass_hard_dod (#81967).
     pd3315_script = COVERAGE_CHECKS / "check_production_dirty_soa_no_pred_3315.py"
-    if not pd3315_script.exists():
-        fail(f"missing {pd3315_script}")
-        return 1
-    r = run([sys.executable, str(pd3315_script)], cwd=ROOT)
+    r = _coverage_run(pd3315_script).returncode
     if r != 0:
         fail(
             "Issue #3315 production DirtySoAEntry no-pred linter failed — run python3 scripts/coverage/checks/check_production_dirty_soa_no_pred_3315.py"
@@ -942,10 +852,7 @@ def cmd_lint():
     # (AnalysisPass + SoAView + DirtyPropagatorAware). Soft/unit keep
     # run_pipeline. Extends test_hot_pass_hard_dod + concept_constraints.
     pp3329_script = COVERAGE_CHECKS / "check_production_pipeline_purity_3329.py"
-    if not pp3329_script.exists():
-        fail(f"missing {pp3329_script}")
-        return 1
-    r = run([sys.executable, str(pp3329_script)], cwd=ROOT)
+    r = _coverage_run(pp3329_script).returncode
     if r != 0:
         fail(
             "Issue #3329 production pipeline purity linter failed — run python3 scripts/coverage/checks/check_production_pipeline_purity_3329.py"
@@ -955,10 +862,7 @@ def cmd_lint():
     # Production default stays OFF. Extends test_hot_contract_placement
     # + test_hot_contract_unify (#81967); no docs/design/ (#1655).
     hc3043_script = COVERAGE_CHECKS / "check_hot_contract_soft_observe_3043.py"
-    if not hc3043_script.exists():
-        fail(f"missing {hc3043_script}")
-        return 1
-    r = run([sys.executable, str(hc3043_script)], cwd=ROOT)
+    r = _coverage_run(hc3043_script).returncode
     if r != 0:
         fail(
             "Issue #3043 Soft-observe hot-contract linter failed — run python3 scripts/coverage/checks/check_hot_contract_soft_observe_3043.py"
@@ -972,10 +876,7 @@ def cmd_lint():
     # (compile flag) or AURA_HOT_HARDEN=1 (runtime probe); the linter
     # enforces the source-cite contract.
     hc3106_script = COVERAGE_CHECKS / "check_hot_contract_harden_3106.py"
-    if not hc3106_script.exists():
-        fail(f"missing {hc3106_script}")
-        return 1
-    r = run([sys.executable, str(hc3106_script)], cwd=ROOT)
+    r = _coverage_run(hc3106_script).returncode
     if r != 0:
         fail(
             "Issue #3106 harden-armed hot-contract linter failed — run python3 scripts/coverage/checks/check_hot_contract_harden_3106.py"
@@ -985,10 +886,7 @@ def cmd_lint():
     # #3106 — RECORD-only was Quiet OOB). Extends
     # test_hot_contract_placement; no docs/design / invent.
     hc3428_script = COVERAGE_CHECKS / "check_hot_contract_view_at_harden_3428.py"
-    if not hc3428_script.exists():
-        fail(f"missing {hc3428_script}")
-        return 1
-    r = run([sys.executable, str(hc3428_script)], cwd=ROOT)
+    r = _coverage_run(hc3428_script).returncode
     if r != 0:
         fail(
             "Issue #3428 view_at harden-armed HOT_CHECK linter failed — run python3 scripts/coverage/checks/check_hot_contract_view_at_harden_3428.py"
@@ -998,10 +896,7 @@ def cmd_lint():
     # OFF macros (I1 residual of #2435/#3043/#3106). Soft/unit stay no-op.
     # Extends test_hot_contract_placement; no docs/design / invent.
     hc3313_script = COVERAGE_CHECKS / "check_hot_contract_production_harden_3313.py"
-    if not hc3313_script.exists():
-        fail(f"missing {hc3313_script}")
-        return 1
-    r = run([sys.executable, str(hc3313_script)], cwd=ROOT)
+    r = _coverage_run(hc3313_script).returncode
     if r != 0:
         fail(
             "Issue #3313 production-defaults hot-contract harden linter failed — run python3 scripts/coverage/checks/check_hot_contract_production_harden_3313.py"
@@ -1011,10 +906,7 @@ def cmd_lint():
     # the C ABI probe; CONSTEXPR column checks honor the same arm.
     # Extends test_hot_contract_placement; no docs/design / invent.
     hc3490_script = COVERAGE_CHECKS / "check_hot_contract_harden_cache_3490.py"
-    if not hc3490_script.exists():
-        fail(f"missing {hc3490_script}")
-        return 1
-    r = run([sys.executable, str(hc3490_script)], cwd=ROOT)
+    r = _coverage_run(hc3490_script).returncode
     if r != 0:
         fail(
             "Issue #3490 hot-contract harden-cache linter failed — run python3 scripts/coverage/checks/check_hot_contract_harden_cache_3490.py"
@@ -1026,10 +918,7 @@ def cmd_lint():
     # test_castop_density_hard.cpp (no docs/design/, no test_issue_3140.cpp
     # per #81967/#1655 aura philosophy).
     ct3140_script = COVERAGE_CHECKS / "check_castop_typed_meta_phase_c_3140.py"
-    if not ct3140_script.exists():
-        fail(f"missing {ct3140_script}")
-        return 1
-    r = run([sys.executable, str(ct3140_script)], cwd=ROOT)
+    r = _coverage_run(ct3140_script).returncode
     if r != 0:
         fail(
             "Issue #3140 CastOp typed-meta Phase C linter failed — run python3 scripts/coverage/checks/check_castop_typed_meta_phase_c_3140.py"
@@ -1040,10 +929,7 @@ def cmd_lint():
     # ("self-evo"/"tenant-admin"/...) via string path. Closes Gap A from the
     # 18:00 Security + Sandbox + Multi-Tenant + Provenance review.
     cw3141_script = COVERAGE_CHECKS / "check_wildcard_grant_effect_fence.py"
-    if not cw3141_script.exists():
-        fail(f"missing {cw3141_script}")
-        return 1
-    r = run([sys.executable, str(cw3141_script)], cwd=ROOT)
+    r = _coverage_run(cw3141_script).returncode
     if r != 0:
         fail(
             "Issue #3141 kCapWildcard write-fence linter failed — run python3 scripts/coverage/checks/check_wildcard_grant_effect_fence.py"
@@ -1053,10 +939,7 @@ def cmd_lint():
     # abort + fiber steal paths must revoke inner SessionBound grants;
     # stolen flag prevents caller-side double-consume.
     csb3142_script = COVERAGE_CHECKS / "check_session_bound_dtor_cascade.py"
-    if not csb3142_script.exists():
-        fail(f"missing {csb3142_script}")
-        return 1
-    r = run([sys.executable, str(csb3142_script)], cwd=ROOT)
+    r = _coverage_run(csb3142_script).returncode
     if r != 0:
         fail(
             "Issue #3142 SessionBound revoke cascade linter failed — run python3 scripts/coverage/checks/check_session_bound_dtor_cascade.py"
@@ -1065,10 +948,7 @@ def cmd_lint():
     # Issue #3458: TenantScope::release revokes (scope tenant, mid at
     # enter) — not (prev tenant, live epoch). #3142/#2944 residual.
     tsk3458_script = COVERAGE_CHECKS / "check_tenant_scope_release_key_3458.py"
-    if not tsk3458_script.exists():
-        fail(f"missing {tsk3458_script}")
-        return 1
-    r = run([sys.executable, str(tsk3458_script)], cwd=ROOT)
+    r = _coverage_run(tsk3458_script).returncode
     if r != 0:
         fail(
             "Issue #3458 TenantScope release key linter failed — run python3 scripts/coverage/checks/check_tenant_scope_release_key_3458.py"
@@ -1077,10 +957,7 @@ def cmd_lint():
     # Issue #3459: grant_macro_self_evo refuses mid==0 under production
     # (one refuse policy with grant() #3090); prims report refusal.
     gmr3459_script = COVERAGE_CHECKS / "check_grant_mse_mid_refuse_3459.py"
-    if not gmr3459_script.exists():
-        fail(f"missing {gmr3459_script}")
-        return 1
-    r = run([sys.executable, str(gmr3459_script)], cwd=ROOT)
+    r = _coverage_run(gmr3459_script).returncode
     if r != 0:
         fail(
             "Issue #3459 grant MSE mid-refuse linter failed — run python3 scripts/coverage/checks/check_grant_mse_mid_refuse_3459.py"
@@ -1096,10 +973,7 @@ def cmd_lint():
     # (SE + audit joinable by mid). Extends test_capability_single_use_consume.cpp
     # (#3142 suite home, #81967); no docs/design.
     sbo3279_script = COVERAGE_CHECKS / "check_session_bound_orphan_sweep_3279.py"
-    if not sbo3279_script.exists():
-        fail(f"missing {sbo3279_script}")
-        return 1
-    r = run([sys.executable, str(sbo3279_script)], cwd=ROOT)
+    r = _coverage_run(sbo3279_script).returncode
     if r != 0:
         fail(
             "Issue #3279 session_bound orphan sweep linter failed — run python3 scripts/coverage/checks/check_session_bound_orphan_sweep_3279.py"
@@ -1109,10 +983,7 @@ def cmd_lint():
     # 5-source mid drift between SE.mid / AuditWalRecord.provenance_mutation_id
     # / TypedMutationAudit.last_mid / CapabilityGrant.bound_mutation_id.
     cmp3143_script = COVERAGE_CHECKS / "check_mid_provenance_unified.py"
-    if not cmp3143_script.exists():
-        fail(f"missing {cmp3143_script}")
-        return 1
-    r = run([sys.executable, str(cmp3143_script)], cwd=ROOT)
+    r = _coverage_run(cmp3143_script).returncode
     if r != 0:
         fail(
             "Issue #3143 typed_mid provenance linter failed — run python3 scripts/coverage/checks/check_mid_provenance_unified.py"
@@ -1122,10 +993,7 @@ def cmd_lint():
     # MacroSelfEvo bits (独立于 #3141 grant_capability 字符串 path 的查询
     # path)。 closes Gap A 旁路。
     cwe3144_script = COVERAGE_CHECKS / "check_wildcard_effects_for_fence.py"
-    if not cwe3144_script.exists():
-        fail(f"missing {cwe3144_script}")
-        return 1
-    r = run([sys.executable, str(cwe3144_script)], cwd=ROOT)
+    r = _coverage_run(cwe3144_script).returncode
     if r != 0:
         fail(
             "Issue #3144 kCapWildcard effects_for fence linter failed — run python3 scripts/coverage/checks/check_wildcard_effects_for_fence.py"
@@ -1135,10 +1003,7 @@ def cmd_lint():
     # coverage. Missing tag → Production TypeError; Soft Warning.
     # Extends test_bidirectional_match_check (#81967); no docs/design/.
     bt3044_script = COVERAGE_CHECKS / "check_bidirectional_tag_coverage_3044.py"
-    if not bt3044_script.exists():
-        fail(f"missing {bt3044_script}")
-        return 1
-    r = run([sys.executable, str(bt3044_script)], cwd=ROOT)
+    r = _coverage_run(bt3044_script).returncode
     if r != 0:
         fail(
             "Issue #3044 bidirectional tag coverage linter failed — run python3 scripts/coverage/checks/check_bidirectional_tag_coverage_3044.py"
@@ -1148,10 +1013,7 @@ def cmd_lint():
     # Dynamic after uncovered tag (I1 fail-closed). Soft keeps Dynamic.
     # Extends check_bidirectional_tag_coverage_3044 + match-check tests.
     bt3330_script = COVERAGE_CHECKS / "check_bidirectional_uncovered_no_dynamic_3330.py"
-    if not bt3330_script.exists():
-        fail(f"missing {bt3330_script}")
-        return 1
-    r = run([sys.executable, str(bt3330_script)], cwd=ROOT)
+    r = _coverage_run(bt3330_script).returncode
     if r != 0:
         fail(
             "Issue #3330 bidirectional uncovered no-Dynamic linter failed — run python3 scripts/coverage/checks/check_bidirectional_uncovered_no_dynamic_3330.py"
@@ -1162,10 +1024,7 @@ def cmd_lint():
     # with children still synthesizes the car. Extends
     # test_bidirectional_match_check; no docs/design / invent.
     epnd3432_script = COVERAGE_CHECKS / "check_empty_pair_no_dynamic_3432.py"
-    if not epnd3432_script.exists():
-        fail(f"missing {epnd3432_script}")
-        return 1
-    r = run([sys.executable, str(epnd3432_script)], cwd=ROOT)
+    r = _coverage_run(epnd3432_script).returncode
     if r != 0:
         fail(
             "Issue #3432 empty Pair no-Dynamic linter failed — run python3 scripts/coverage/checks/check_empty_pair_no_dynamic_3432.py"
@@ -1176,10 +1035,7 @@ def cmd_lint():
     # hard-rejects non-exhaustive. Extends test_adt_match_goal_table
     # (#81967); no docs/design/.
     aeu3045_script = COVERAGE_CHECKS / "check_adt_exhaust_undermark_cone_3045.py"
-    if not aeu3045_script.exists():
-        fail(f"missing {aeu3045_script}")
-        return 1
-    r = run([sys.executable, str(aeu3045_script)], cwd=ROOT)
+    r = _coverage_run(aeu3045_script).returncode
     if r != 0:
         fail(
             "Issue #3045 ADT exhaust under-mark cone linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_undermark_cone_3045.py"
@@ -1189,10 +1045,7 @@ def cmd_lint():
     # Production still hard-rejects residual under-mark. Extends
     # test_adt_match_goal_table (#81967); no docs/design/.
     aecs3083_script = COVERAGE_CHECKS / "check_adt_exhaust_complete_seed_3083.py"
-    if not aecs3083_script.exists():
-        fail(f"missing {aecs3083_script}")
-        return 1
-    r = run([sys.executable, str(aecs3083_script)], cwd=ROOT)
+    r = _coverage_run(aecs3083_script).returncode
     if r != 0:
         fail(
             "Issue #3083 ADT exhaust complete-seed linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_complete_seed_3083.py"
@@ -1206,10 +1059,7 @@ def cmd_lint():
     # + cone-admit counter + additive query keys + test extension stay
     # enforced. Builds on #2724 (strict additive superset).
     rcda_script = COVERAGE_CHECKS / "check_region_cone_disjoint_admit_2754.py"
-    if not rcda_script.exists():
-        fail(f"missing {rcda_script}")
-        return 1
-    r = run([sys.executable, str(rcda_script)], cwd=ROOT)
+    r = _coverage_run(rcda_script).returncode
     if r != 0:
         fail(
             "Issue #2754 region cone-disjoint admit linter failed — run python3 scripts/coverage/checks/check_region_cone_disjoint_admit_2754.py"
@@ -1221,10 +1071,7 @@ def cmd_lint():
     # + mask-disjoint-admit counter + region_or_mask gate + additive query
     # keys + test extension stay enforced.
     rmda_script = COVERAGE_CHECKS / "check_region_mask_disjoint_admit_2757.py"
-    if not rmda_script.exists():
-        fail(f"missing {rmda_script}")
-        return 1
-    r = run([sys.executable, str(rmda_script)], cwd=ROOT)
+    r = _coverage_run(rmda_script).returncode
     if r != 0:
         fail(
             "Issue #2757 region mask-disjoint admit linter failed — run python3 scripts/coverage/checks/check_region_mask_disjoint_admit_2757.py"
@@ -1235,10 +1082,7 @@ def cmd_lint():
     # impact_block_to_region_mask_bit + parallel-intend :cone-masks +
     # impact-mask-admit counter + additive query keys + test extension.
     rima_script = COVERAGE_CHECKS / "check_region_impact_mask_admit_2760.py"
-    if not rima_script.exists():
-        fail(f"missing {rima_script}")
-        return 1
-    r = run([sys.executable, str(rima_script)], cwd=ROOT)
+    r = _coverage_run(rima_script).returncode
     if r != 0:
         fail(
             "Issue #2760 region impact-mask admit linter failed — run python3 scripts/coverage/checks/check_region_impact_mask_admit_2760.py"
@@ -1249,10 +1093,7 @@ def cmd_lint():
     # regions_mask_overlap + mask-overlap-reject counter + mask-first
     # regions_disjoint + additive query keys + test extension.
     rmoa_script = COVERAGE_CHECKS / "check_region_mask_overlap_admit_2761.py"
-    if not rmoa_script.exists():
-        fail(f"missing {rmoa_script}")
-        return 1
-    r = run([sys.executable, str(rmoa_script)], cwd=ROOT)
+    r = _coverage_run(rmoa_script).returncode
     if r != 0:
         fail(
             "Issue #2761 region mask-overlap admit linter failed — run python3 scripts/coverage/checks/check_region_mask_overlap_admit_2761.py"
@@ -1263,10 +1104,7 @@ def cmd_lint():
     # OccurrenceGoal pred bits fall outside admitted cone mask. ac2847_*
     # in test_mailbox_hold_starvation_hard per #81967.
     rtcg_script = COVERAGE_CHECKS / "check_region_type_commit_gate_2847.py"
-    if not rtcg_script.exists():
-        fail(f"missing {rtcg_script}")
-        return 1
-    r = run([sys.executable, str(rtcg_script)], cwd=ROOT)
+    r = _coverage_run(rtcg_script).returncode
     if r != 0:
         fail(
             "Issue #2847 region type commit gate linter failed — run python3 scripts/coverage/checks/check_region_type_commit_gate_2847.py"
@@ -1276,10 +1114,7 @@ def cmd_lint():
     # cascade (#165/#2096 residual). Wires post_mutation_macro_reexpand
     # into push_post_mutate_incremental_cascade + metrics + schema-2762.
     pmmr_script = COVERAGE_CHECKS / "check_post_mutate_macro_reexpand_2762.py"
-    if not pmmr_script.exists():
-        fail(f"missing {pmmr_script}")
-        return 1
-    r = run([sys.executable, str(pmmr_script)], cwd=ROOT)
+    r = _coverage_run(pmmr_script).returncode
     if r != 0:
         fail(
             "Issue #2762 post-mutate macro reexpand linter failed — run python3 scripts/coverage/checks/check_post_mutate_macro_reexpand_2762.py"
@@ -1292,10 +1127,7 @@ def cmd_lint():
     # query-pattern-hygiene-filtered-total + schema-2763 + ac2763_*
     # in test_query_pattern_default_hygiene.cpp per #81967.
     qpdh_script = COVERAGE_CHECKS / "check_query_pattern_delta_hygiene_2763.py"
-    if not qpdh_script.exists():
-        fail(f"missing {qpdh_script}")
-        return 1
-    r = run([sys.executable, str(qpdh_script)], cwd=ROOT)
+    r = _coverage_run(qpdh_script).returncode
     if r != 0:
         fail(
             "Issue #2763 query:pattern delta+hygiene linter failed — run python3 scripts/coverage/checks/check_query_pattern_delta_hygiene_2763.py"
@@ -1308,10 +1140,7 @@ def cmd_lint():
     # + multi-eval-macro-marker-preserved-total + schema-2764 + ac2764_*
     # in test_jit_macro_deopt_hygiene.cpp per #81967.
     ijmme_script = COVERAGE_CHECKS / "check_ir_jit_macro_marker_enforcement_2764.py"
-    if not ijmme_script.exists():
-        fail(f"missing {ijmme_script}")
-        return 1
-    r = run([sys.executable, str(ijmme_script)], cwd=ROOT)
+    r = _coverage_run(ijmme_script).returncode
     if r != 0:
         fail(
             "Issue #2764 IR/JIT MacroIntroduced enforcement linter failed — run python3 scripts/coverage/checks/check_ir_jit_macro_marker_enforcement_2764.py"
@@ -1323,10 +1152,7 @@ def cmd_lint():
     # consult + dirty-only deopt. Extends test_jit_macro_deopt_hygiene
     # (#81967); no docs/design/; no new query key.
     mi3475_script = COVERAGE_CHECKS / "check_macro_introduced_native_fail_closed_3475.py"
-    if not mi3475_script.exists():
-        fail(f"missing {mi3475_script}")
-        return 1
-    r = run([sys.executable, str(mi3475_script)], cwd=ROOT)
+    r = _coverage_run(mi3475_script).returncode
     if r != 0:
         fail(
             "Issue #3475 MacroIntroduced native fail-closed linter failed — run python3 scripts/coverage/checks/check_macro_introduced_native_fail_closed_3475.py"
@@ -1335,10 +1161,7 @@ def cmd_lint():
     # Issue #3064: InlinePass refuses MacroIntroduced body instructions.
     # Extends test_jit_macro_introduced_preserve (#81967); no docs/design.
     imb3064_script = COVERAGE_CHECKS / "check_inline_macro_body_marker_3064.py"
-    if not imb3064_script.exists():
-        fail(f"missing {imb3064_script}")
-        return 1
-    r = run([sys.executable, str(imb3064_script)], cwd=ROOT)
+    r = _coverage_run(imb3064_script).returncode
     if r != 0:
         fail(
             "Issue #3064 InlinePass MacroIntroduced body linter failed — run python3 scripts/coverage/checks/check_inline_macro_body_marker_3064.py"
@@ -1347,10 +1170,7 @@ def cmd_lint():
     # Issue #3065: DeadCoercion elim / residual CastOp remirror into type
     # cone. Extends test_dead_coercion_dirty_cone (#81967); no docs/design.
     dcec3065_script = COVERAGE_CHECKS / "check_dead_coercion_elim_cone_3065.py"
-    if not dcec3065_script.exists():
-        fail(f"missing {dcec3065_script}")
-        return 1
-    r = run([sys.executable, str(dcec3065_script)], cwd=ROOT)
+    r = _coverage_run(dcec3065_script).returncode
     if r != 0:
         fail(
             "Issue #3065 DeadCoercion elim cone remirror linter failed — run python3 scripts/coverage/checks/check_dead_coercion_elim_cone_3065.py"
@@ -1359,10 +1179,7 @@ def cmd_lint():
     # Issue #3066: composite / lockless batch typed-audit mid == SE trail.
     # Extends test_audit_mutation_id_unify (#81967); no docs/design.
     camj3066_script = COVERAGE_CHECKS / "check_composite_audit_mid_se_join_3066.py"
-    if not camj3066_script.exists():
-        fail(f"missing {camj3066_script}")
-        return 1
-    r = run([sys.executable, str(camj3066_script)], cwd=ROOT)
+    r = _coverage_run(camj3066_script).returncode
     if r != 0:
         fail(
             "Issue #3066 composite audit mid SE join linter failed — run python3 scripts/coverage/checks/check_composite_audit_mid_se_join_3066.py"
@@ -1371,10 +1188,7 @@ def cmd_lint():
     # Issue #3067: stale record_dependency reject schedules deferred
     # hybrid_node_cascade_. Extends test_dep_graph_hybrid_cascade (#81967).
     hdc3067_script = COVERAGE_CHECKS / "check_hybrid_deferred_cascade_3067.py"
-    if not hdc3067_script.exists():
-        fail(f"missing {hdc3067_script}")
-        return 1
-    r = run([sys.executable, str(hdc3067_script)], cwd=ROOT)
+    r = _coverage_run(hdc3067_script).returncode
     if r != 0:
         fail(
             "Issue #3067 hybrid deferred cascade linter failed — run python3 scripts/coverage/checks/check_hybrid_deferred_cascade_3067.py"
@@ -1384,10 +1198,7 @@ def cmd_lint():
     # impact_ub before decision. Extends test_incremental_relower_batch
     # (#81967); no docs/design.
     pme3068_script = COVERAGE_CHECKS / "check_partial_map_ensure_3068.py"
-    if not pme3068_script.exists():
-        fail(f"missing {pme3068_script}")
-        return 1
-    r = run([sys.executable, str(pme3068_script)], cwd=ROOT)
+    r = _coverage_run(pme3068_script).returncode
     if r != 0:
         fail(
             "Issue #3068 partial map-ensure linter failed — run python3 scripts/coverage/checks/check_partial_map_ensure_3068.py"
@@ -1397,10 +1208,7 @@ def cmd_lint():
     # fence vs concurrent lookup. Extends test_mutation_rollback_coverage
     # (#81967); no docs/design; no new query keys.
     afg3069_script = COVERAGE_CHECKS / "check_abort_force_generation_fence_3069.py"
-    if not afg3069_script.exists():
-        fail(f"missing {afg3069_script}")
-        return 1
-    r = run([sys.executable, str(afg3069_script)], cwd=ROOT)
+    r = _coverage_run(afg3069_script).returncode
     if r != 0:
         fail(
             "Issue #3069 abort-force generation fence linter failed — run python3 scripts/coverage/checks/check_abort_force_generation_fence_3069.py"
@@ -1409,10 +1217,7 @@ def cmd_lint():
     # Issue #3070: Shape→None hysteresis + forced-thr freeze + peer
     # soft-stale. Extends storm / owner-scoped suites (#81967).
     seh3070_script = COVERAGE_CHECKS / "check_storm_exit_hysteresis_peer_soft_stale_3070.py"
-    if not seh3070_script.exists():
-        fail(f"missing {seh3070_script}")
-        return 1
-    r = run([sys.executable, str(seh3070_script)], cwd=ROOT)
+    r = _coverage_run(seh3070_script).returncode
     if r != 0:
         fail(
             "Issue #3070 storm-exit hysteresis linter failed — run python3 scripts/coverage/checks/check_storm_exit_hysteresis_peer_soft_stale_3070.py"
@@ -1422,10 +1227,7 @@ def cmd_lint():
     # Scheduler idle poll re-arms force-safepoint (no unlock); additive
     # schema-3071. Extends hold-starvation / chaos residual_zero (#81967).
     hbi3071_script = COVERAGE_CHECKS / "check_hold_budget_inbody_window_3071.py"
-    if not hbi3071_script.exists():
-        fail(f"missing {hbi3071_script}")
-        return 1
-    r = run([sys.executable, str(hbi3071_script)], cwd=ROOT)
+    r = _coverage_run(hbi3071_script).returncode
     if r != 0:
         fail(
             "Issue #3071 hold-budget in-body window linter failed — run python3 scripts/coverage/checks/check_hold_budget_inbody_window_3071.py"
@@ -1435,10 +1237,7 @@ def cmd_lint():
     # (LifetimeProof + EnvFrame) × hold-after-cancel max. Soft/unit
     # print-only. Extends chaos residual_zero (#81967).
     cpr3073_script = COVERAGE_CHECKS / "check_chaos_production_readiness_3073.py"
-    if not cpr3073_script.exists():
-        fail(f"missing {cpr3073_script}")
-        return 1
-    r = run([sys.executable, str(cpr3073_script)], cwd=ROOT)
+    r = _coverage_run(cpr3073_script).returncode
     if r != 0:
         fail(
             "Issue #3073 production soak readiness linter failed — run python3 scripts/coverage/checks/check_chaos_production_readiness_3073.py"
@@ -1447,10 +1246,7 @@ def cmd_lint():
     # Issue #3074: structural mutate:* Guard acquire is mutate_dispatch
     # only (cycle-4 stub closed). Residual direct try_acquire == 0.
     mdsg3074_script = COVERAGE_CHECKS / "check_mutate_dispatch_sole_guard_3074.py"
-    if not mdsg3074_script.exists():
-        fail(f"missing {mdsg3074_script}")
-        return 1
-    r = run([sys.executable, str(mdsg3074_script)], cwd=ROOT)
+    r = _coverage_run(mdsg3074_script).returncode
     if r != 0:
         fail(
             "Issue #3074 mutate_dispatch sole-guard linter failed — run python3 scripts/coverage/checks/check_mutate_dispatch_sole_guard_3074.py"
@@ -1460,10 +1256,7 @@ def cmd_lint():
     # be MetadataGuardExempt. Structural stays add_mutate. Extends
     # check_mutate_dispatch_sole_guard_3074 + guard-try-acquire unit.
     mrk3452_script = COVERAGE_CHECKS / "check_mutate_reg_kind_3452.py"
-    if not mrk3452_script.exists():
-        fail(f"missing {mrk3452_script}")
-        return 1
-    r = run([sys.executable, str(mrk3452_script)], cwd=ROOT)
+    r = _coverage_run(mrk3452_script).returncode
     if r != 0:
         fail(
             "Issue #3452 mutate-reg-kind linter failed — run python3 scripts/coverage/checks/check_mutate_reg_kind_3452.py"
@@ -1474,10 +1267,7 @@ def cmd_lint():
     # sole Guard). CLI throwaway FlatAST stays ev=nullptr. Extends
     # test_mutation_guard_try_acquire_unit; no docs/design / invent.
     teg3352_script = COVERAGE_CHECKS / "check_transform_engine_guard_3352.py"
-    if not teg3352_script.exists():
-        fail(f"missing {teg3352_script}")
-        return 1
-    r = run([sys.executable, str(teg3352_script)], cwd=ROOT)
+    r = _coverage_run(teg3352_script).returncode
     if r != 0:
         fail(
             "Issue #3352 TransformEngine Guard linter failed — run python3 scripts/coverage/checks/check_transform_engine_guard_3352.py"
@@ -1487,10 +1277,7 @@ def cmd_lint():
     # before fn(a) (I4 residual of #2986/#3197). GUARD_EXEMPT skips.
     # Extends test_mutation_guard_try_acquire_unit; linter after #3352.
     amb3423_script = COVERAGE_CHECKS / "check_add_mutate_acquire_before_body_3423.py"
-    if not amb3423_script.exists():
-        fail(f"missing {amb3423_script}")
-        return 1
-    r = run([sys.executable, str(amb3423_script)], cwd=ROOT)
+    r = _coverage_run(amb3423_script).returncode
     if r != 0:
         fail(
             "Issue #3423 add_mutate acquire-before-body linter failed — run python3 scripts/coverage/checks/check_add_mutate_acquire_before_body_3423.py"
@@ -1500,10 +1287,7 @@ def cmd_lint():
     # atomic-batch cannot write a locked workspace. GUARD_EXEMPT skips.
     # Extends test_workspace_lock_unlock; linter after #3423.
     amr3450_script = COVERAGE_CHECKS / "check_add_mutate_read_only_fence_3450.py"
-    if not amr3450_script.exists():
-        fail(f"missing {amr3450_script}")
-        return 1
-    r = run([sys.executable, str(amr3450_script)], cwd=ROOT)
+    r = _coverage_run(amr3450_script).returncode
     if r != 0:
         fail(
             "Issue #3450 add_mutate read-only fence linter failed — run python3 scripts/coverage/checks/check_add_mutate_read_only_fence_3450.py"
@@ -1514,10 +1298,7 @@ def cmd_lint():
     # Soft/dev stays off (no extra acquire). Extends query-epoch
     # / restamp-budget canaries (#81967).
     qeps3075_script = COVERAGE_CHECKS / "check_query_epoch_production_strict_3075.py"
-    if not qeps3075_script.exists():
-        fail(f"missing {qeps3075_script}")
-        return 1
-    r = run([sys.executable, str(qeps3075_script)], cwd=ROOT)
+    r = _coverage_run(qeps3075_script).returncode
     if r != 0:
         fail(
             "Issue #3075 production QueryEpoch strict linter failed — run python3 scripts/coverage/checks/check_query_epoch_production_strict_3075.py"
@@ -1527,10 +1308,7 @@ def cmd_lint():
     # guarantees. Production Hard-sibling faces reject; Soft observe
     # stays 0. Extends hygiene/restamp canaries (#81967).
     sonh3076_script = COVERAGE_CHECKS / "check_soft_observe_not_hard_3076.py"
-    if not sonh3076_script.exists():
-        fail(f"missing {sonh3076_script}")
-        return 1
-    r = run([sys.executable, str(sonh3076_script)], cwd=ROOT)
+    r = _coverage_run(sonh3076_script).returncode
     if r != 0:
         fail(
             "Issue #3076 Soft-observe not Hard linter failed — run python3 scripts/coverage/checks/check_soft_observe_not_hard_3076.py"
@@ -1540,10 +1318,7 @@ def cmd_lint():
     # authority. Production fail-closed unchanged. Extends
     # test_solve_delta_unresolved_export (#81967).
     stna3081_script = COVERAGE_CHECKS / "check_soft_timeout_export_non_authoritative_3081.py"
-    if not stna3081_script.exists():
-        fail(f"missing {stna3081_script}")
-        return 1
-    r = run([sys.executable, str(stna3081_script)], cwd=ROOT)
+    r = _coverage_run(stna3081_script).returncode
     if r != 0:
         fail(
             "Issue #3081 Soft TIMEOUT export non-authoritative linter failed — run python3 scripts/coverage/checks/check_soft_timeout_export_non_authoritative_3081.py"
@@ -1553,10 +1328,7 @@ def cmd_lint():
     # provisional — no durable persist; query:type in-flight until
     # outermost commit. Extends persist-rehydrate (#81967).
     nop3082_script = COVERAGE_CHECKS / "check_nested_occurrence_provisional_3082.py"
-    if not nop3082_script.exists():
-        fail(f"missing {nop3082_script}")
-        return 1
-    r = run([sys.executable, str(nop3082_script)], cwd=ROOT)
+    r = _coverage_run(nop3082_script).returncode
     if r != 0:
         fail(
             "Issue #3082 nested occurrence provisional linter failed — run python3 scripts/coverage/checks/check_nested_occurrence_provisional_3082.py"
@@ -1569,10 +1341,7 @@ def cmd_lint():
     # schema-2765 + ac2765_* in test_guard_panic_reflect_fiber_resume_task6
     # per #81967.
     grv_script = COVERAGE_CHECKS / "check_guard_reflect_validate_2765.py"
-    if not grv_script.exists():
-        fail(f"missing {grv_script}")
-        return 1
-    r = run([sys.executable, str(grv_script)], cwd=ROOT)
+    r = _coverage_run(grv_script).returncode
     if r != 0:
         fail(
             "Issue #2765 Guard reflect validate linter failed — run python3 scripts/coverage/checks/check_guard_reflect_validate_2765.py"
@@ -1584,10 +1353,7 @@ def cmd_lint():
     # std/orchestrator agent:spawn works. ac2766_* in
     # test_module_require_freevar.cpp per #81967.
     mreo_script = COVERAGE_CHECKS / "check_module_require_export_order_2766.py"
-    if not mreo_script.exists():
-        fail(f"missing {mreo_script}")
-        return 1
-    r = run([sys.executable, str(mreo_script)], cwd=ROOT)
+    r = _coverage_run(mreo_script).returncode
     if r != 0:
         fail(
             "Issue #2766 require-before-export free-var linter failed — run python3 scripts/coverage/checks/check_module_require_export_order_2766.py"
@@ -1598,10 +1364,7 @@ def cmd_lint():
     # for span runners (Hermes/Aether/Hephaestus). Optional smoke when
     # build/aura exists.
     cddx_script = COVERAGE_CHECKS / "check_cli_denseness_dx_2767.py"
-    if not cddx_script.exists():
-        fail(f"missing {cddx_script}")
-        return 1
-    r = run([sys.executable, str(cddx_script)], cwd=ROOT)
+    r = _coverage_run(cddx_script).returncode
     if r != 0:
         fail(
             "Issue #2767 denseness CLI DX linter failed — run python3 scripts/coverage/checks/check_cli_denseness_dx_2767.py"
@@ -1612,10 +1375,7 @@ def cmd_lint():
     # orchestrator.aura + ac2768_* lifecycle e2e (spawn/ask/status/stop/
     # restart/epoch/parallel-with-yield) in test_module_require_freevar.
     oas_script = COVERAGE_CHECKS / "check_orchestrator_agent_stdin_2768.py"
-    if not oas_script.exists():
-        fail(f"missing {oas_script}")
-        return 1
-    r = run([sys.executable, str(oas_script)], cwd=ROOT)
+    r = _coverage_run(oas_script).returncode
     if r != 0:
         fail(
             "Issue #2768 orchestrator agent stdin linter failed — run python3 scripts/coverage/checks/check_orchestrator_agent_stdin_2768.py"
@@ -1628,10 +1388,7 @@ def cmd_lint():
     # INDEX.aura authoring note. ac2769_* in test_module_require_freevar
     # per #81967.
     srea_script = COVERAGE_CHECKS / "check_stdlib_require_export_audit_2769.py"
-    if not srea_script.exists():
-        fail(f"missing {srea_script}")
-        return 1
-    r = run([sys.executable, str(srea_script)], cwd=ROOT)
+    r = _coverage_run(srea_script).returncode
     if r != 0:
         fail(
             "Issue #2769 stdlib require/export audit linter failed — run python3 scripts/coverage/checks/check_stdlib_require_export_audit_2769.py"
@@ -1641,10 +1398,7 @@ def cmd_lint():
     # modules, every exported name must resolve at runtime, and the INDEX
     # may not state a fixed primitive/stats count that rots.
     ssd_script = COVERAGE_CHECKS / "check_stdlib_surface_drift_5132.py"
-    if not ssd_script.exists():
-        fail(f"missing {ssd_script}")
-        return 1
-    r = run([sys.executable, str(ssd_script)], cwd=ROOT)
+    r = _coverage_run(ssd_script).returncode
     if r != 0:
         fail(
             "Issue #5132 stdlib surface drift check failed — run python3 scripts/coverage/checks/check_stdlib_surface_drift_5132.py"
@@ -1655,10 +1409,7 @@ def cmd_lint():
     # ranges; string-split-words / string-repeat siblings; suite +
     # commercial_readiness regressions; live smoke when build/aura exists.
     ssi_script = COVERAGE_CHECKS / "check_string_split_iterative_2770.py"
-    if not ssi_script.exists():
-        fail(f"missing {ssi_script}")
-        return 1
-    r = run([sys.executable, str(ssi_script)], cwd=ROOT)
+    r = _coverage_run(ssi_script).returncode
     if r != 0:
         fail(
             "Issue #2770 string-split iterative linter failed — run python3 scripts/coverage/checks/check_string_split_iterative_2770.py"
@@ -1669,10 +1420,7 @@ def cmd_lint():
     # help + fiber echo smoke; commercial budget tcp- 4→8; ac in
     # test_tcp_listen_accept (json_io_cap_batch) per #81967.
     tla_script = COVERAGE_CHECKS / "check_tcp_listen_accept_2771.py"
-    if not tla_script.exists():
-        fail(f"missing {tla_script}")
-        return 1
-    r = run([sys.executable, str(tla_script)], cwd=ROOT)
+    r = _coverage_run(tla_script).returncode
     if r != 0:
         fail(
             "Issue #2771 tcp-listen/accept linter failed — run python3 scripts/coverage/checks/check_tcp_listen_accept_2771.py"
@@ -1682,10 +1430,7 @@ def cmd_lint():
     # as value aliases (not recursive procedure wrappers that shadow and
     # always return ()). ac2865_* in test_tcp_listen_accept per #81967.
     ssr_script = COVERAGE_CHECKS / "check_std_socket_require_path_2865.py"
-    if not ssr_script.exists():
-        fail(f"missing {ssr_script}")
-        return 1
-    r = run([sys.executable, str(ssr_script)], cwd=ROOT)
+    r = _coverage_run(ssr_script).returncode
     if r != 0:
         fail(
             "Issue #2865 std/socket require-path linter failed — run python3 scripts/coverage/checks/check_std_socket_require_path_2865.py"
@@ -1696,10 +1441,7 @@ def cmd_lint():
     # not reuse foreign-pool cells (Unify prom dual-leaf residual).
     # Suite tests/suite/set_code_module_bind_2868.aura per #81967.
     scmb_script = COVERAGE_CHECKS / "check_set_code_module_bind_2868.py"
-    if not scmb_script.exists():
-        fail(f"missing {scmb_script}")
-        return 1
-    r = run([sys.executable, str(scmb_script)], cwd=ROOT)
+    r = _coverage_run(scmb_script).returncode
     if r != 0:
         fail(
             "Issue #2868 set-code module bind linter failed — run python3 scripts/coverage/checks/check_set_code_module_bind_2868.py"
@@ -1709,10 +1451,7 @@ def cmd_lint():
     # backend (#2738 body mutex + join wait deadlock). Unlock body mutex
     # around join wait via TLS. Suite nested_fiber_join_2869.aura per #81967.
     nfj_script = COVERAGE_CHECKS / "check_nested_fiber_join_2869.py"
-    if not nfj_script.exists():
-        fail(f"missing {nfj_script}")
-        return 1
-    r = run([sys.executable, str(nfj_script)], cwd=ROOT)
+    r = _coverage_run(nfj_script).returncode
     if r != 0:
         fail(
             "Issue #2869 nested fiber join linter failed — run python3 scripts/coverage/checks/check_nested_fiber_join_2869.py"
@@ -1722,10 +1461,7 @@ def cmd_lint():
     # lookup_cell_* live top_ for any parent_id (not only parent_id_==0).
     # Suite fiber_join_toplevel_set_2870.aura per #81967.
     fjts_script = COVERAGE_CHECKS / "check_fiber_join_toplevel_set_2870.py"
-    if not fjts_script.exists():
-        fail(f"missing {fjts_script}")
-        return 1
-    r = run([sys.executable, str(fjts_script)], cwd=ROOT)
+    r = _coverage_run(fjts_script).returncode
     if r != 0:
         fail(
             "Issue #2870 fiber join toplevel set! linter failed — run python3 scripts/coverage/checks/check_fiber_join_toplevel_set_2870.py"
@@ -1735,10 +1471,7 @@ def cmd_lint():
     # TW Call/LetRec continue; pin parent Envs across tail_env rebind.
     # Suite named_let_tco_2871.aura per #81967.
     nlt_script = COVERAGE_CHECKS / "check_named_let_tco_2871.py"
-    if not nlt_script.exists():
-        fail(f"missing {nlt_script}")
-        return 1
-    r = run([sys.executable, str(nlt_script)], cwd=ROOT)
+    r = _coverage_run(nlt_script).returncode
     if r != 0:
         fail(
             "Issue #2871 named-let TCO linter failed — run python3 scripts/coverage/checks/check_named_let_tco_2871.py"
@@ -1748,10 +1481,7 @@ def cmd_lint():
     # Non-lambda eval-then-bind; Lambda pre-bind + unbind rollback; multi-define
     # rolls back still-void cells. Suite define_rhs_fail_bind_2872.aura.
     drfb_script = COVERAGE_CHECKS / "check_define_rhs_fail_bind_2872.py"
-    if not drfb_script.exists():
-        fail(f"missing {drfb_script}")
-        return 1
-    r = run([sys.executable, str(drfb_script)], cwd=ROOT)
+    r = _coverage_run(drfb_script).returncode
     if r != 0:
         fail(
             "Issue #2872 define RHS fail bind linter failed — run python3 scripts/coverage/checks/check_define_rhs_fail_bind_2872.py"
@@ -1761,10 +1491,7 @@ def cmd_lint():
     # TW TCO (#2871) + Call env binding shadows take/map/drop prims.
     # Suite multiframe_named_let_2873.aura per #81967.
     mfn_script = COVERAGE_CHECKS / "check_multiframe_named_let_2873.py"
-    if not mfn_script.exists():
-        fail(f"missing {mfn_script}")
-        return 1
-    r = run([sys.executable, str(mfn_script)], cwd=ROOT)
+    r = _coverage_run(mfn_script).returncode
     if r != 0:
         fail(
             "Issue #2873 multiframe named-let linter failed — run python3 scripts/coverage/checks/check_multiframe_named_let_2873.py"
@@ -1773,20 +1500,14 @@ def cmd_lint():
     # Issue #2874: pluggable swarm intelligence (grid|pso|ant) stdlib family.
     # Suite swarm_2874.aura + examples/swarm_sphere_search.aura per #81967.
     sw_script = COVERAGE_CHECKS / "check_swarm_2874.py"
-    if not sw_script.exists():
-        fail(f"missing {sw_script}")
-        return 1
-    r = run([sys.executable, str(sw_script)], cwd=ROOT)
+    r = _coverage_run(sw_script).returncode
     if r != 0:
         fail("Issue #2874 swarm stdlib linter failed — run python3 scripts/coverage/checks/check_swarm_2874.py")
         return r
     # Issue #2875: swarm common API + discrete grid baseline + docs/stdlib/swarm.md
     # Suite swarm_interface_2875.aura per #81967.
     swi_script = COVERAGE_CHECKS / "check_swarm_interface_2875.py"
-    if not swi_script.exists():
-        fail(f"missing {swi_script}")
-        return 1
-    r = run([sys.executable, str(swi_script)], cwd=ROOT)
+    r = _coverage_run(swi_script).returncode
     if r != 0:
         fail(
             "Issue #2875 swarm interface linter failed — run python3 scripts/coverage/checks/check_swarm_interface_2875.py"
@@ -1795,10 +1516,7 @@ def cmd_lint():
     # Issue #2876: std/ant mutation-type ranking as swarm kind:ant
     # Suite swarm_ant_bridge_2876.aura + examples/swarm_ant_rank.aura
     sab_script = COVERAGE_CHECKS / "check_swarm_ant_bridge_2876.py"
-    if not sab_script.exists():
-        fail(f"missing {sab_script}")
-        return 1
-    r = run([sys.executable, str(sab_script)], cwd=ROOT)
+    r = _coverage_run(sab_script).returncode
     if r != 0:
         fail(
             "Issue #2876 swarm ant bridge linter failed — run python3 scripts/coverage/checks/check_swarm_ant_bridge_2876.py"
@@ -1807,40 +1525,28 @@ def cmd_lint():
     # Issue #2877: std/pso continuous particle swarm (w/c1/c2, pop=16 defaults)
     # Suite pso_2877.aura + docs/stdlib/pso.md per #81967.
     pso_script = COVERAGE_CHECKS / "check_pso_2877.py"
-    if not pso_script.exists():
-        fail(f"missing {pso_script}")
-        return 1
-    r = run([sys.executable, str(pso_script)], cwd=ROOT)
+    r = _coverage_run(pso_script).returncode
     if r != 0:
         fail("Issue #2877 pso linter failed — run python3 scripts/coverage/checks/check_pso_2877.py")
         return r
     # Issue #2878: std/abc artificial bee colony (employ/onlooker/scout)
     # Suite abc_2878.aura + docs/stdlib/abc.md per #81967.
     abc_script = COVERAGE_CHECKS / "check_abc_2878.py"
-    if not abc_script.exists():
-        fail(f"missing {abc_script}")
-        return 1
-    r = run([sys.executable, str(abc_script)], cwd=ROOT)
+    r = _coverage_run(abc_script).returncode
     if r != 0:
         fail("Issue #2878 abc linter failed — run python3 scripts/coverage/checks/check_abc_2878.py")
         return r
     # Issue #2879: std/boids flocking + swarm kind:boids
     # Suite boids_2879.aura + docs/stdlib/boids.md per #81967.
     boids_script = COVERAGE_CHECKS / "check_boids_2879.py"
-    if not boids_script.exists():
-        fail(f"missing {boids_script}")
-        return 1
-    r = run([sys.executable, str(boids_script)], cwd=ROOT)
+    r = _coverage_run(boids_script).returncode
     if r != 0:
         fail("Issue #2879 boids linter failed — run python3 scripts/coverage/checks/check_boids_2879.py")
         return r
     # Issue #2880: std/fss fish school search (feeding + volitive)
     # Suite fss_2880.aura + docs/stdlib/fss.md per #81967.
     fss_script = COVERAGE_CHECKS / "check_fss_2880.py"
-    if not fss_script.exists():
-        fail(f"missing {fss_script}")
-        return 1
-    r = run([sys.executable, str(fss_script)], cwd=ROOT)
+    r = _coverage_run(fss_script).returncode
     if r != 0:
         fail("Issue #2880 fss linter failed — run python3 scripts/coverage/checks/check_fss_2880.py")
         return r
@@ -1849,10 +1555,7 @@ def cmd_lint():
     # (aura-executable-path) prim; denseness usage lists export AURA_BIN +
     # multi-process child contract.
     dme_script = COVERAGE_CHECKS / "check_denseness_multiprocess_env_2772.py"
-    if not dme_script.exists():
-        fail(f"missing {dme_script}")
-        return 1
-    r = run([sys.executable, str(dme_script)], cwd=ROOT)
+    r = _coverage_run(dme_script).returncode
     if r != 0:
         fail(
             "Issue #2772 denseness multi-process env linter failed — run python3 scripts/coverage/checks/check_denseness_multiprocess_env_2772.py"
@@ -1864,10 +1567,7 @@ def cmd_lint():
     # one fence; Shape compact isolation preserved. ac2773_* in
     # test_batch_dirty_discipline per #81967.
     udf_script = COVERAGE_CHECKS / "check_unified_dirty_fence_2773.py"
-    if not udf_script.exists():
-        fail(f"missing {udf_script}")
-        return 1
-    r = run([sys.executable, str(udf_script)], cwd=ROOT)
+    r = _coverage_run(udf_script).returncode
     if r != 0:
         fail(
             "Issue #2773 unified dirty fence linter failed — run python3 scripts/coverage/checks/check_unified_dirty_fence_2773.py"
@@ -1877,10 +1577,7 @@ def cmd_lint():
     # residual N× mark_block_dirty Soft metric + static loop ban
     # (#2522/#2615/#2681 residual). ac2774_* in test_batch_dirty_discipline.
     mvs_script = COVERAGE_CHECKS / "check_batch_dirty_multi_via_single_ban_2774.py"
-    if not mvs_script.exists():
-        fail(f"missing {mvs_script}")
-        return 1
-    r = run([sys.executable, str(mvs_script)], cwd=ROOT)
+    r = _coverage_run(mvs_script).returncode
     if r != 0:
         fail(
             "Issue #2774 multi-via-single ban linter failed — run python3 scripts/coverage/checks/check_batch_dirty_multi_via_single_ban_2774.py"
@@ -1890,10 +1587,7 @@ def cmd_lint():
     # (hard-expect residual multi-via-single == 0; optional AURA_IR_DIRTY_BATCH_ONLY
     # assert). Extends test_batch_dirty_discipline (#81967); no docs/design/.
     mpo_script = COVERAGE_CHECKS / "check_batch_dirty_production_multi_only_2936.py"
-    if not mpo_script.exists():
-        fail(f"missing {mpo_script}")
-        return 1
-    r = run([sys.executable, str(mpo_script)], cwd=ROOT)
+    r = _coverage_run(mpo_script).returncode
     if r != 0:
         fail(
             "Issue #2936 production multi-only dirty linter failed — run python3 scripts/coverage/checks/check_batch_dirty_production_multi_only_2936.py"
@@ -1903,10 +1597,7 @@ def cmd_lint():
     # stamp_epoch (no lost-update RMW) + seqlock multi-field snapshot
     # (#2753 residual). ac2776_* in test_reload_recovery_query per #81967.
     arcc_script = COVERAGE_CHECKS / "check_aot_reload_consistency_stamp_concurrent_2776.py"
-    if not arcc_script.exists():
-        fail(f"missing {arcc_script}")
-        return 1
-    r = run([sys.executable, str(arcc_script)], cwd=ROOT)
+    r = _coverage_run(arcc_script).returncode
     if r != 0:
         fail(
             "Issue #2776 AOT reload stamp concurrent linter failed — run python3 scripts/coverage/checks/check_aot_reload_consistency_stamp_concurrent_2776.py"
@@ -1918,10 +1609,7 @@ def cmd_lint():
     # never leave a stale success allow-native proof. ac2845_* in
     # test_reload_recovery_query per #81967.
     arpf_script = COVERAGE_CHECKS / "check_aot_reload_proof_fail_stamp_2845.py"
-    if not arpf_script.exists():
-        fail(f"missing {arpf_script}")
-        return 1
-    r = run([sys.executable, str(arpf_script)], cwd=ROOT)
+    r = _coverage_run(arpf_script).returncode
     if r != 0:
         fail(
             "Issue #2845 AOT reload fail-proof stamp linter failed — run python3 scripts/coverage/checks/check_aot_reload_proof_fail_stamp_2845.py"
@@ -1932,10 +1620,7 @@ def cmd_lint():
     # ~AgentScope no longer silent; directory_snapshot_concurrent_total
     # + schema-2777. ac2777_* in test_agent_scope per #81967.
     asrg_script = COVERAGE_CHECKS / "check_agent_scope_read_guard_2777.py"
-    if not asrg_script.exists():
-        fail(f"missing {asrg_script}")
-        return 1
-    r = run([sys.executable, str(asrg_script)], cwd=ROOT)
+    r = _coverage_run(asrg_script).returncode
     if r != 0:
         fail(
             "Issue #2777 AgentScope read guard linter failed — run python3 scripts/coverage/checks/check_agent_scope_read_guard_2777.py"
@@ -1946,10 +1631,7 @@ def cmd_lint():
     # lookup/decay cannot UAF. reset_all_agent_scopes_for_test clears
     # the BP map. ac2778_* in test_mailbox_bp_admit per #81967.
     sbml_script = COVERAGE_CHECKS / "check_scope_bp_map_lifecycle_2778.py"
-    if not sbml_script.exists():
-        fail(f"missing {sbml_script}")
-        return 1
-    r = run([sys.executable, str(sbml_script)], cwd=ROOT)
+    r = _coverage_run(sbml_script).returncode
     if r != 0:
         fail(
             "Issue #2778 scope BP map lifecycle linter failed — run python3 scripts/coverage/checks/check_scope_bp_map_lifecycle_2778.py"
@@ -1960,10 +1642,7 @@ def cmd_lint():
     # unchanged. Extends test_mailbox_bp_admit + test_per_scope_bp_admit
     # (#81967); no docs/design/ (#1655). Residual of #3127.
     sbot3337_script = COVERAGE_CHECKS / "check_scope_bp_overflow_teardown_3337.py"
-    if not sbot3337_script.exists():
-        fail(f"missing {sbot3337_script}")
-        return 1
-    r = run([sys.executable, str(sbot3337_script)], cwd=ROOT)
+    r = _coverage_run(sbot3337_script).returncode
     if r != 0:
         fail(
             "Issue #3337 scope BP overflow teardown linter failed — run python3 scripts/coverage/checks/check_scope_bp_overflow_teardown_3337.py"
@@ -1973,10 +1652,7 @@ def cmd_lint():
     # hard-fail + ticket + layout stamp counters for one production alert.
     # ac2779_* in test_steal_safety_ticket per #81967.
     rffa_script = COVERAGE_CHECKS / "check_resume_fence_fail_aggregate_2779.py"
-    if not rffa_script.exists():
-        fail(f"missing {rffa_script}")
-        return 1
-    r = run([sys.executable, str(rffa_script)], cwd=ROOT)
+    r = _coverage_run(rffa_script).returncode
     if r != 0:
         fail(
             "Issue #2779 resume fence fail aggregate linter failed — run python3 scripts/coverage/checks/check_resume_fence_fail_aggregate_2779.py"
@@ -1986,10 +1662,7 @@ def cmd_lint():
     # decay serialize under g_scope_bp_map_mtx; skip active last_event_us.
     # ac2780_* in test_mailbox_bp_admit per #81967.
     sbdr_script = COVERAGE_CHECKS / "check_scope_bp_decay_race_2780.py"
-    if not sbdr_script.exists():
-        fail(f"missing {sbdr_script}")
-        return 1
-    r = run([sys.executable, str(sbdr_script)], cwd=ROOT)
+    r = _coverage_run(sbdr_script).returncode
     if r != 0:
         fail(
             "Issue #2780 scope BP decay race linter failed — run python3 scripts/coverage/checks/check_scope_bp_decay_race_2780.py"
@@ -2000,10 +1673,7 @@ def cmd_lint():
     # parent→child cancel; hierarchy_cancel_total + schema-2781.
     # ac2781_* in test_agent_scope_hierarchy per #81967.
     ashc_script = COVERAGE_CHECKS / "check_agent_scope_hierarchy_cancel_2781.py"
-    if not ashc_script.exists():
-        fail(f"missing {ashc_script}")
-        return 1
-    r = run([sys.executable, str(ashc_script)], cwd=ROOT)
+    r = _coverage_run(ashc_script).returncode
     if r != 0:
         fail(
             "Issue #2781 hierarchy cancel linter failed — run python3 scripts/coverage/checks/check_agent_scope_hierarchy_cancel_2781.py"
@@ -2013,10 +1683,7 @@ def cmd_lint():
     # borrowed Scheduler* before fiber teardown; ops fail-closed.
     # ac2782_* in test_agent_scope per #81967.
     assl_script = COVERAGE_CHECKS / "check_agent_scope_scheduler_lifetime_2782.py"
-    if not assl_script.exists():
-        fail(f"missing {assl_script}")
-        return 1
-    r = run([sys.executable, str(assl_script)], cwd=ROOT)
+    r = _coverage_run(assl_script).returncode
     if r != 0:
         fail(
             "Issue #2782 AgentScope Scheduler lifetime linter failed — run python3 scripts/coverage/checks/check_agent_scope_scheduler_lifetime_2782.py"
@@ -2025,10 +1692,7 @@ def cmd_lint():
     # Issue #2783: keepalive helper exits on body hard-reclaim; residual
     # helpers are orphan-registered. ac2783_* in test_fiber_native_keepalive.
     khr_script = COVERAGE_CHECKS / "check_keepalive_helper_reclaim_2783.py"
-    if not khr_script.exists():
-        fail(f"missing {khr_script}")
-        return 1
-    r = run([sys.executable, str(khr_script)], cwd=ROOT)
+    r = _coverage_run(khr_script).returncode
     if r != 0:
         fail(
             "Issue #2783 keepalive helper reclaim linter failed — run python3 scripts/coverage/checks/check_keepalive_helper_reclaim_2783.py"
@@ -2037,10 +1701,7 @@ def cmd_lint():
     # Issue #2784: workspace:sync-from actual body (no identity lambda stub).
     # ac2784 in tests/compiler/test_workspace_sync_from.cpp per #81967.
     wsfb_script = COVERAGE_CHECKS / "check_workspace_sync_from_body_2784.py"
-    if not wsfb_script.exists():
-        fail(f"missing {wsfb_script}")
-        return 1
-    r = run([sys.executable, str(wsfb_script)], cwd=ROOT)
+    r = _coverage_run(wsfb_script).returncode
     if r != 0:
         fail(
             "Issue #2784 workspace:sync-from body linter failed — run python3 scripts/coverage/checks/check_workspace_sync_from_body_2784.py"
@@ -2049,10 +1710,7 @@ def cmd_lint():
     # Issue #2785: workspace:switch consolidated bind (no duplicate assign;
     # always set_workspace_cow_epoch). ac2785 in test_workspace_switch.
     wsb_script = COVERAGE_CHECKS / "check_workspace_switch_bind_2785.py"
-    if not wsb_script.exists():
-        fail(f"missing {wsb_script}")
-        return 1
-    r = run([sys.executable, str(wsb_script)], cwd=ROOT)
+    r = _coverage_run(wsb_script).returncode
     if r != 0:
         fail(
             "Issue #2785 workspace:switch bind linter failed — run python3 scripts/coverage/checks/check_workspace_switch_bind_2785.py"
@@ -2061,10 +1719,7 @@ def cmd_lint():
     # Issue #2786: workspace:lock only updates active quick flag (symmetric
     # with unlock). ac2786 in test_workspace_lock_unlock.
     wlaf_script = COVERAGE_CHECKS / "check_workspace_lock_active_flag_2786.py"
-    if not wlaf_script.exists():
-        fail(f"missing {wlaf_script}")
-        return 1
-    r = run([sys.executable, str(wlaf_script)], cwd=ROOT)
+    r = _coverage_run(wlaf_script).returncode
     if r != 0:
         fail(
             "Issue #2786 workspace:lock active-flag linter failed — run python3 scripts/coverage/checks/check_workspace_lock_active_flag_2786.py"
@@ -2073,10 +1728,7 @@ def cmd_lint():
     # Issue #2787: workspace:rollback-latest single reverse walk (no O(N)
     # mutation_id re-search). ac2787 in test_workspace_rollback_latest.
     wrb_script = COVERAGE_CHECKS / "check_workspace_rollback_latest_2787.py"
-    if not wrb_script.exists():
-        fail(f"missing {wrb_script}")
-        return 1
-    r = run([sys.executable, str(wrb_script)], cwd=ROOT)
+    r = _coverage_run(wrb_script).returncode
     if r != 0:
         fail(
             "Issue #2787 workspace:rollback-latest linter failed — run python3 scripts/coverage/checks/check_workspace_rollback_latest_2787.py"
@@ -2085,10 +1737,7 @@ def cmd_lint():
     # Issue #2788: workspace:rollback-to locked name→id resolve + typed merr
     # (not-found vs concurrent-delete). ac2788 in test_workspace_rollback_to.
     wrto_script = COVERAGE_CHECKS / "check_workspace_rollback_to_2788.py"
-    if not wrto_script.exists():
-        fail(f"missing {wrto_script}")
-        return 1
-    r = run([sys.executable, str(wrto_script)], cwd=ROOT)
+    r = _coverage_run(wrto_script).returncode
     if r != 0:
         fail(
             "Issue #2788 workspace:rollback-to linter failed — run python3 scripts/coverage/checks/check_workspace_rollback_to_2788.py"
@@ -2097,10 +1746,7 @@ def cmd_lint():
     # Issue #2789: workspace:delete recursive subtree (no orphan layers).
     # ac2789 in test_workspace_delete_subtree.
     wdst_script = COVERAGE_CHECKS / "check_workspace_delete_subtree_2789.py"
-    if not wdst_script.exists():
-        fail(f"missing {wdst_script}")
-        return 1
-    r = run([sys.executable, str(wdst_script)], cwd=ROOT)
+    r = _coverage_run(wdst_script).returncode
     if r != 0:
         fail(
             "Issue #2789 workspace:delete subtree linter failed — run python3 scripts/coverage/checks/check_workspace_delete_subtree_2789.py"
@@ -2109,10 +1755,7 @@ def cmd_lint():
     # Issue #2790: atomic-batch sub-op failure sets guard_ok (no partial commit).
     # ac2790 in test_atomic_batch_partial_failure.
     abpf_script = COVERAGE_CHECKS / "check_atomic_batch_partial_failure_2790.py"
-    if not abpf_script.exists():
-        fail(f"missing {abpf_script}")
-        return 1
-    r = run([sys.executable, str(abpf_script)], cwd=ROOT)
+    r = _coverage_run(abpf_script).returncode
     if r != 0:
         fail(
             "Issue #2790 atomic-batch partial-failure linter failed — run python3 scripts/coverage/checks/check_atomic_batch_partial_failure_2790.py"
@@ -2121,10 +1764,7 @@ def cmd_lint():
     # Issue #2791: rebind parse-error free_orphan_nodes_from (no flat leak).
     # ac2791 in test_rebind_parse_failure_no_leak.
     rpnl_script = COVERAGE_CHECKS / "check_rebind_parse_failure_no_leak_2791.py"
-    if not rpnl_script.exists():
-        fail(f"missing {rpnl_script}")
-        return 1
-    r = run([sys.executable, str(rpnl_script)], cwd=ROOT)
+    r = _coverage_run(rpnl_script).returncode
     if r != 0:
         fail(
             "Issue #2791 rebind parse-failure no-leak linter failed — run python3 scripts/coverage/checks/check_rebind_parse_failure_no_leak_2791.py"
@@ -2133,10 +1773,7 @@ def cmd_lint():
     # Issue #2792: rebind new-body MacroIntroduced hygiene (not only old_define).
     # ac2792 in test_rebind_new_body_hygiene.
     rnbh_script = COVERAGE_CHECKS / "check_rebind_new_body_hygiene_2792.py"
-    if not rnbh_script.exists():
-        fail(f"missing {rnbh_script}")
-        return 1
-    r = run([sys.executable, str(rnbh_script)], cwd=ROOT)
+    r = _coverage_run(rnbh_script).returncode
     if r != 0:
         fail(
             "Issue #2792 rebind new-body hygiene linter failed — run python3 scripts/coverage/checks/check_rebind_new_body_hygiene_2792.py"
@@ -2145,10 +1782,7 @@ def cmd_lint():
     # Issue #2793: replace-value Guard abort → status=RolledBack (no torn audit).
     # ac2793 in test_replace_value_audit_consistency.
     rvac_script = COVERAGE_CHECKS / "check_replace_value_audit_consistency_2793.py"
-    if not rvac_script.exists():
-        fail(f"missing {rvac_script}")
-        return 1
-    r = run([sys.executable, str(rvac_script)], cwd=ROOT)
+    r = _coverage_run(rvac_script).returncode
     if r != 0:
         fail(
             "Issue #2793 replace-value audit consistency linter failed — run python3 scripts/coverage/checks/check_replace_value_audit_consistency_2793.py"
@@ -2157,10 +1791,7 @@ def cmd_lint():
     # Issue #2794: atomic-batch move-node same-pos / #f soft no-op (not batch fail).
     # ac2794 in test_atomic_batch_move_noop.
     abmn_script = COVERAGE_CHECKS / "check_atomic_batch_move_noop_2794.py"
-    if not abmn_script.exists():
-        fail(f"missing {abmn_script}")
-        return 1
-    r = run([sys.executable, str(abmn_script)], cwd=ROOT)
+    r = _coverage_run(abmn_script).returncode
     if r != 0:
         fail(
             "Issue #2794 atomic-batch move-node no-op linter failed — run python3 scripts/coverage/checks/check_atomic_batch_move_noop_2794.py"
@@ -2169,10 +1800,7 @@ def cmd_lint():
     # Issue #2795: rebind old body NodeId post-parse + rollback free-slot reject.
     # ac2795 in test_rebind_rollback_nodeid_validity.
     rrbv_script = COVERAGE_CHECKS / "check_rebind_rollback_nodeid_validity_2795.py"
-    if not rrbv_script.exists():
-        fail(f"missing {rrbv_script}")
-        return 1
-    r = run([sys.executable, str(rrbv_script)], cwd=ROOT)
+    r = _coverage_run(rrbv_script).returncode
     if r != 0:
         fail(
             "Issue #2795 rebind rollback NodeId validity linter failed — run python3 scripts/coverage/checks/check_rebind_rollback_nodeid_validity_2795.py"
@@ -2181,10 +1809,7 @@ def cmd_lint():
     # Issue #2796: atomic-batch abort skips linear_post_mutate_enforce_all (no fail noise).
     # ac2796 in test_atomic_batch_rollback_metric_noise.
     abrn_script = COVERAGE_CHECKS / "check_atomic_batch_rollback_metric_noise_2796.py"
-    if not abrn_script.exists():
-        fail(f"missing {abrn_script}")
-        return 1
-    r = run([sys.executable, str(abrn_script)], cwd=ROOT)
+    r = _coverage_run(abrn_script).returncode
     if r != 0:
         fail(
             "Issue #2796 atomic-batch rollback metric noise linter failed — run python3 scripts/coverage/checks/check_atomic_batch_rollback_metric_noise_2796.py"
@@ -2193,10 +1818,7 @@ def cmd_lint():
     # Issue #2797: replace-subtree new-body MacroIntroduced hygiene (not only target).
     # ac2797 in test_replace_subtree_new_body_hygiene.
     rsbh_script = COVERAGE_CHECKS / "check_replace_subtree_new_body_hygiene_2797.py"
-    if not rsbh_script.exists():
-        fail(f"missing {rsbh_script}")
-        return 1
-    r = run([sys.executable, str(rsbh_script)], cwd=ROOT)
+    r = _coverage_run(rsbh_script).returncode
     if r != 0:
         fail(
             "Issue #2797 replace-subtree new-body hygiene linter failed — run python3 scripts/coverage/checks/check_replace_subtree_new_body_hygiene_2797.py"
@@ -2205,10 +1827,7 @@ def cmd_lint():
     # Issue #2798: replace-pattern frees parse orphans on skip / zero-replace.
     # ac2798 in test_replace_pattern_no_match_no_leak.
     rpnl_script = COVERAGE_CHECKS / "check_replace_pattern_no_match_no_leak_2798.py"
-    if not rpnl_script.exists():
-        fail(f"missing {rpnl_script}")
-        return 1
-    r = run([sys.executable, str(rpnl_script)], cwd=ROOT)
+    r = _coverage_run(rpnl_script).returncode
     if r != 0:
         fail(
             "Issue #2798 replace-pattern no-match no-leak linter failed — run python3 scripts/coverage/checks/check_replace_pattern_no_match_no_leak_2798.py"
@@ -2217,10 +1836,7 @@ def cmd_lint():
     # Issue #2799: tweak-literal Guard/batch abort → status=RolledBack (no torn audit).
     # ac2799 in test_tweak_literal_audit_consistency.
     tlac_script = COVERAGE_CHECKS / "check_tweak_literal_audit_consistency_2799.py"
-    if not tlac_script.exists():
-        fail(f"missing {tlac_script}")
-        return 1
-    r = run([sys.executable, str(tlac_script)], cwd=ROOT)
+    r = _coverage_run(tlac_script).returncode
     if r != 0:
         fail(
             "Issue #2799 tweak-literal audit consistency linter failed — run python3 scripts/coverage/checks/check_tweak_literal_audit_consistency_2799.py"
@@ -2229,10 +1845,7 @@ def cmd_lint():
     # Issue #2800: replace-pattern multi-match StableNodeRef two-phase + stale metric.
     # ac2800 in test_replace_pattern_multi_match_nodeid_stability.
     rpmn_script = COVERAGE_CHECKS / "check_replace_pattern_multi_match_nodeid_stability_2800.py"
-    if not rpmn_script.exists():
-        fail(f"missing {rpmn_script}")
-        return 1
-    r = run([sys.executable, str(rpmn_script)], cwd=ROOT)
+    r = _coverage_run(rpmn_script).returncode
     if r != 0:
         fail(
             "Issue #2800 replace-pattern multi-match NodeId stability linter failed — run python3 scripts/coverage/checks/check_replace_pattern_multi_match_nodeid_stability_2800.py"
@@ -2241,10 +1854,7 @@ def cmd_lint():
     # Issue #2801: move-node MacroIntroduced hygiene (#142 parity with replace-subtree).
     # ac2801 in test_move_node_hygiene.
     mnh_script = COVERAGE_CHECKS / "check_move_node_hygiene_2801.py"
-    if not mnh_script.exists():
-        fail(f"missing {mnh_script}")
-        return 1
-    r = run([sys.executable, str(mnh_script)], cwd=ROOT)
+    r = _coverage_run(mnh_script).returncode
     if r != 0:
         fail(
             "Issue #2801 move-node hygiene linter failed — run python3 scripts/coverage/checks/check_move_node_hygiene_2801.py"
@@ -2254,10 +1864,7 @@ def cmd_lint():
     # Extends test_move_node_hygiene + test_replace_subtree_new_body_hygiene
     # (#81967); no docs/design/ (#1655).
     mr3061_script = COVERAGE_CHECKS / "check_move_replace_allow_macro_3061.py"
-    if not mr3061_script.exists():
-        fail(f"missing {mr3061_script}")
-        return 1
-    r = run([sys.executable, str(mr3061_script)], cwd=ROOT)
+    r = _coverage_run(mr3061_script).returncode
     if r != 0:
         fail(
             "Issue #3061 move/replace :allow-macro? linter failed — run python3 scripts/coverage/checks/check_move_replace_allow_macro_3061.py"
@@ -2266,10 +1873,7 @@ def cmd_lint():
     # Issue #2802: replace-pattern local ASTArena isolates pattern from temp_arena_.
     # ac2802 in test_atomic_batch_replace_pattern_sibling.
     rps_script = COVERAGE_CHECKS / "check_atomic_batch_replace_pattern_sibling_2802.py"
-    if not rps_script.exists():
-        fail(f"missing {rps_script}")
-        return 1
-    r = run([sys.executable, str(rps_script)], cwd=ROOT)
+    r = _coverage_run(rps_script).returncode
     if r != 0:
         fail(
             "Issue #2802 replace-pattern sibling isolation linter failed — run python3 scripts/coverage/checks/check_atomic_batch_replace_pattern_sibling_2802.py"
@@ -2278,10 +1882,7 @@ def cmd_lint():
     # Issue #2803: move-node reattaches on insert failure (no dangling NULL hole).
     # ac2803 in test_move_node_partial_failure_no_dangling.
     mnp_script = COVERAGE_CHECKS / "check_move_node_partial_failure_no_dangling_2803.py"
-    if not mnp_script.exists():
-        fail(f"missing {mnp_script}")
-        return 1
-    r = run([sys.executable, str(mnp_script)], cwd=ROOT)
+    r = _coverage_run(mnp_script).returncode
     if r != 0:
         fail(
             "Issue #2803 move-node partial-failure linter failed — run python3 scripts/coverage/checks/check_move_node_partial_failure_no_dangling_2803.py"
@@ -2290,10 +1891,7 @@ def cmd_lint():
     # Issue #2804: clone-walk rename_binding gensym-map-size ceiling.
     # ac2804 in test_clone_walk_gensym_ceiling.
     cwg_script = COVERAGE_CHECKS / "check_clone_walk_gensym_ceiling_2804.py"
-    if not cwg_script.exists():
-        fail(f"missing {cwg_script}")
-        return 1
-    r = run([sys.executable, str(cwg_script)], cwd=ROOT)
+    r = _coverage_run(cwg_script).returncode
     if r != 0:
         fail(
             "Issue #2804 clone-walk gensym ceiling linter failed — run python3 scripts/coverage/checks/check_clone_walk_gensym_ceiling_2804.py"
@@ -2302,10 +1900,7 @@ def cmd_lint():
     # Issue #2805: dotted-rest fallback must not rename hygiene_builtins via name_map.
     # ac2805 in test_dotted_rest_builtin_rename.
     drb_script = COVERAGE_CHECKS / "check_dotted_rest_builtin_rename_2805.py"
-    if not drb_script.exists():
-        fail(f"missing {drb_script}")
-        return 1
-    r = run([sys.executable, str(drb_script)], cwd=ROOT)
+    r = _coverage_run(drb_script).returncode
     if r != 0:
         fail(
             "Issue #2805 dotted-rest builtin rename linter failed — run python3 scripts/coverage/checks/check_dotted_rest_builtin_rename_2805.py"
@@ -2314,10 +1909,7 @@ def cmd_lint():
     # Issue #2806: clone_macro_body recursion depth is explicit (concurrent-safe).
     # ac2806 in test_concurrent_clone_hygiene_depth.
     ccd_script = COVERAGE_CHECKS / "check_concurrent_clone_hygiene_depth_2806.py"
-    if not ccd_script.exists():
-        fail(f"missing {ccd_script}")
-        return 1
-    r = run([sys.executable, str(ccd_script)], cwd=ROOT)
+    r = _coverage_run(ccd_script).returncode
     if r != 0:
         fail(
             "Issue #2806 concurrent clone hygiene depth linter failed — run python3 scripts/coverage/checks/check_concurrent_clone_hygiene_depth_2806.py"
@@ -2326,10 +1918,7 @@ def cmd_lint():
     # Issue #3028: TLS depth not authority; same-FlatAST clone reject.
     # Extends test_concurrent_clone_hygiene_depth (#81967); no docs/design.
     tlsf_script = COVERAGE_CHECKS / "check_tls_depth_same_flat_clone_3028.py"
-    if not tlsf_script.exists():
-        fail(f"missing {tlsf_script}")
-        return 1
-    r = run([sys.executable, str(tlsf_script)], cwd=ROOT)
+    r = _coverage_run(tlsf_script).returncode
     if r != 0:
         fail(
             "Issue #3028 TLS depth / same-FlatAST clone linter failed — run python3 scripts/coverage/checks/check_tls_depth_same_flat_clone_3028.py"
@@ -2339,10 +1928,7 @@ def cmd_lint():
     # Extends test_grant_macro_self_evo_stamp + test_macro_hygiene_limits
     # (#81967); no docs/design.
     msef_script = COVERAGE_CHECKS / "check_macro_self_evo_grant_fence_3029.py"
-    if not msef_script.exists():
-        fail(f"missing {msef_script}")
-        return 1
-    r = run([sys.executable, str(msef_script)], cwd=ROOT)
+    r = _coverage_run(msef_script).returncode
     if r != 0:
         fail(
             "Issue #3029 grant fence / limit-reason linter failed — run python3 scripts/coverage/checks/check_macro_self_evo_grant_fence_3029.py"
@@ -2354,10 +1940,7 @@ def cmd_lint():
     # Extends test_hygiene_mutate_closed_loop + test_rest_param_hygiene
     # (#81967); no docs/design (#1655).
     hars3215_script = COVERAGE_CHECKS / "check_hygiene_agent_reason_strings_3215.py"
-    if not hars3215_script.exists():
-        fail(f"missing {hars3215_script}")
-        return 1
-    r = run([sys.executable, str(hars3215_script)], cwd=ROOT)
+    r = _coverage_run(hars3215_script).returncode
     if r != 0:
         fail(
             "Issue #3215 Agent hygiene reason-string linter failed — run python3 scripts/coverage/checks/check_hygiene_agent_reason_strings_3215.py"
@@ -2366,10 +1949,7 @@ def cmd_lint():
     # Issue #3062: macro_expand_all pass-limit refuse-partial without boundary.
     # Extends test_macro_hygiene_limits (#81967); no docs/design.
     menb_script = COVERAGE_CHECKS / "check_macro_expand_noboundary_limit_3062.py"
-    if not menb_script.exists():
-        fail(f"missing {menb_script}")
-        return 1
-    r = run([sys.executable, str(menb_script)], cwd=ROOT)
+    r = _coverage_run(menb_script).returncode
     if r != 0:
         fail(
             "Issue #3062 no-boundary expand limit linter failed — run python3 scripts/coverage/checks/check_macro_expand_noboundary_limit_3062.py"
@@ -2382,10 +1962,7 @@ def cmd_lint():
     # of the existing violation counter). Extends test_macro_cross_flat_hygiene.cpp
     # (#2235 suite home, #81967); no docs/design.
     cfsh_script = COVERAGE_CHECKS / "check_cross_flat_schema_homology_3278.py"
-    if not cfsh_script.exists():
-        fail(f"missing {cfsh_script}")
-        return 1
-    r = run([sys.executable, str(cfsh_script)], cwd=ROOT)
+    r = _coverage_run(cfsh_script).returncode
     if r != 0:
         fail(
             "Issue #3278 cross-flat schema homology linter failed — run python3 scripts/coverage/checks/check_cross_flat_schema_homology_3278.py"
@@ -2396,10 +1973,7 @@ def cmd_lint():
     # MarkerProvenanceTable indices (prefer 0 over table transplant). Extends
     # test_macro_cross_flat_hygiene.cpp AC8–AC11; no docs/design; no new metric.
     cfph_script = COVERAGE_CHECKS / "check_cross_flat_provenance_homology_3340.py"
-    if not cfph_script.exists():
-        fail(f"missing {cfph_script}")
-        return 1
-    r = run([sys.executable, str(cfph_script)], cwd=ROOT)
+    r = _coverage_run(cfph_script).returncode
     if r != 0:
         fail(
             "Issue #3340 cross-flat provenance homology linter failed — run python3 scripts/coverage/checks/check_cross_flat_provenance_homology_3340.py"
@@ -2410,10 +1984,7 @@ def cmd_lint():
     # test_concurrent_clone_steal_abort_visibility + test_hygiene_mutate_closed_loop;
     # no docs/design; no new query:* name.
     fhlr_script = COVERAGE_CHECKS / "check_fiber_hygiene_last_limit_reason_3341.py"
-    if not fhlr_script.exists():
-        fail(f"missing {fhlr_script}")
-        return 1
-    r = run([sys.executable, str(fhlr_script)], cwd=ROOT)
+    r = _coverage_run(fhlr_script).returncode
     if r != 0:
         fail(
             "Issue #3341 per-fiber last_limit_reason linter failed — run python3 scripts/coverage/checks/check_fiber_hygiene_last_limit_reason_3341.py"
@@ -2423,10 +1994,7 @@ def cmd_lint():
     # face. Extends test_escape_move_elision_gate + test_type_linear_commit_health
     # (#81967); no docs/design.
     tlca_script = COVERAGE_CHECKS / "check_type_linear_proof_clear_on_abort_3030.py"
-    if not tlca_script.exists():
-        fail(f"missing {tlca_script}")
-        return 1
-    r = run([sys.executable, str(tlca_script)], cwd=ROOT)
+    r = _coverage_run(tlca_script).returncode
     if r != 0:
         fail(
             "Issue #3030 type-linear proof-clear-on-abort linter failed — run python3 scripts/coverage/checks/check_type_linear_proof_clear_on_abort_3030.py"
@@ -2436,10 +2004,7 @@ def cmd_lint():
     # Extends test_solve_delta_unresolved_export + test_type_linear_commit_health
     # (#81967); no docs/design.
     pfsr_script = COVERAGE_CHECKS / "check_pending_full_solve_residual_3031.py"
-    if not pfsr_script.exists():
-        fail(f"missing {pfsr_script}")
-        return 1
-    r = run([sys.executable, str(pfsr_script)], cwd=ROOT)
+    r = _coverage_run(pfsr_script).returncode
     if r != 0:
         fail(
             "Issue #3031 pending_full_solve residual linter failed — run python3 scripts/coverage/checks/check_pending_full_solve_residual_3031.py"
@@ -2452,10 +2017,7 @@ def cmd_lint():
     # body, which already has the same drain — #3190 AC4 verifies coverage.
     # Extends test_solve_delta_unresolved_export; no docs/design / invent.
     rd3190_script = COVERAGE_CHECKS / "check_residual_drain_outermost_stamp_3190.py"
-    if not rd3190_script.exists():
-        fail(f"missing {rd3190_script}")
-        return 1
-    r = run([sys.executable, str(rd3190_script)], cwd=ROOT)
+    r = _coverage_run(rd3190_script).returncode
     if r != 0:
         fail(
             "Issue #3190 residual drain outermost stamp linter failed — run python3 scripts/coverage/checks/check_residual_drain_outermost_stamp_3190.py"
@@ -2467,10 +2029,7 @@ def cmd_lint():
     # test_type_linear_commit_health + occurrence-priority heavy mutate
     # (#81967); no docs/design / invent / new query key.
     sddsr3477_script = COVERAGE_CHECKS / "check_solve_delta_dirty_skip_residual_3477.py"
-    if not sddsr3477_script.exists():
-        fail(f"missing {sddsr3477_script}")
-        return 1
-    r = run([sys.executable, str(sddsr3477_script)], cwd=ROOT)
+    r = _coverage_run(sddsr3477_script).returncode
     if r != 0:
         fail(
             "Issue #3477 solve_delta dirty-skip residual linter failed — run python3 scripts/coverage/checks/check_solve_delta_dirty_skip_residual_3477.py"
@@ -2481,10 +2040,7 @@ def cmd_lint():
     # tweak-literal only. Global allow still unlocks. Soft/Off: zero extra
     # on non-macro. Extends test_hygiene_mutate_closed_loop; no docs/design.
     mhd3191_script = COVERAGE_CHECKS / "check_macro_hygiene_default_deny_3191.py"
-    if not mhd3191_script.exists():
-        fail(f"missing {mhd3191_script}")
-        return 1
-    r = run([sys.executable, str(mhd3191_script)], cwd=ROOT)
+    r = _coverage_run(mhd3191_script).returncode
     if r != 0:
         fail(
             "Issue #3191 macro hygiene default-deny linter failed — run python3 scripts/coverage/checks/check_macro_hygiene_default_deny_3191.py"
@@ -2496,10 +2052,7 @@ def cmd_lint():
     # test_hygiene_mutate_closed_loop (#81967); no docs/design/; no
     # new query keys. Does not rewrite mutate dispatch.
     mhyg3344_script = COVERAGE_CHECKS / "check_mutate_hygiene_continuous_gate_3344.py"
-    if not mhyg3344_script.exists():
-        fail(f"missing {mhyg3344_script}")
-        return 1
-    r = run([sys.executable, str(mhyg3344_script)], cwd=ROOT)
+    r = _coverage_run(mhyg3344_script).returncode
     if r != 0:
         fail(
             "Issue #3344 mutate hygiene continuous-gate linter failed — run python3 scripts/coverage/checks/check_mutate_hygiene_continuous_gate_3344.py"
@@ -2511,10 +2064,7 @@ def cmd_lint():
     # test_query_pattern_default_hygiene (#81967); no docs/design/; no
     # new query keys.
     qhyg3354_script = COVERAGE_CHECKS / "check_query_pattern_find_hygiene_align_3354.py"
-    if not qhyg3354_script.exists():
-        fail(f"missing {qhyg3354_script}")
-        return 1
-    r = run([sys.executable, str(qhyg3354_script)], cwd=ROOT)
+    r = _coverage_run(qhyg3354_script).returncode
     if r != 0:
         fail(
             "Issue #3354 query pattern/find hygiene-align linter failed — run python3 scripts/coverage/checks/check_query_pattern_find_hygiene_align_3354.py"
@@ -2527,10 +2077,7 @@ def cmd_lint():
     # and global is false. Extends test_hygiene_mutate_closed_loop; no
     # docs/design / invent.
     aba3213_script = COVERAGE_CHECKS / "check_atomic_batch_allow_macro_3213.py"
-    if not aba3213_script.exists():
-        fail(f"missing {aba3213_script}")
-        return 1
-    r = run([sys.executable, str(aba3213_script)], cwd=ROOT)
+    r = _coverage_run(aba3213_script).returncode
     if r != 0:
         fail(
             "Issue #3213 atomic-batch :allow-macro? linter failed — run python3 scripts/coverage/checks/check_atomic_batch_allow_macro_3213.py"
@@ -2540,10 +2087,7 @@ def cmd_lint():
     # sv_mutate_* counters, maybe_sv_hardware_closedloop). Extends
     # test_hygiene_mutate_closed_loop; no docs/design / invent.
     ser3239_script = COVERAGE_CHECKS / "check_sv_eda_surface_retired_3239.py"
-    if not ser3239_script.exists():
-        fail(f"missing {ser3239_script}")
-        return 1
-    r = run([sys.executable, str(ser3239_script)], cwd=ROOT)
+    r = _coverage_run(ser3239_script).returncode
     if r != 0:
         fail(
             "Issue #3239 SV/EDA surface retired linter failed — run python3 scripts/coverage/checks/check_sv_eda_surface_retired_3239.py"
@@ -2554,10 +2098,7 @@ def cmd_lint():
     # Closes the gap where mutate:set-body bypassed the SSOT acquire via TransactionGuard.
     # Extends test_hygiene_mutate_closed_loop; no docs/design / invent.
     md3192_script = COVERAGE_CHECKS / "check_mutate_dispatch_sole_entry_3192.py"
-    if not md3192_script.exists():
-        fail(f"missing {md3192_script}")
-        return 1
-    r = run([sys.executable, str(md3192_script)], cwd=ROOT)
+    r = _coverage_run(md3192_script).returncode
     if r != 0:
         fail(
             "Issue #3192 mutate dispatch sole entry linter failed — run python3 scripts/coverage/checks/check_mutate_dispatch_sole_entry_3192.py"
@@ -2567,10 +2108,7 @@ def cmd_lint():
     # registration + acquire token so nested Guard is not naked.
     # Extends test_mutation_guard_try_acquire_unit; no docs/design / invent.
     nmpm3197_script = COVERAGE_CHECKS / "check_naked_mutate_prim_meta_3197.py"
-    if not nmpm3197_script.exists():
-        fail(f"missing {nmpm3197_script}")
-        return 1
-    r = run([sys.executable, str(nmpm3197_script)], cwd=ROOT)
+    r = _coverage_run(nmpm3197_script).returncode
     if r != 0:
         fail(
             "Issue #3197 naked-mutate PrimMeta linter failed — run python3 scripts/coverage/checks/check_naked_mutate_prim_meta_3197.py"
@@ -2582,10 +2120,7 @@ def cmd_lint():
     # Extends test_hygiene_mutate_closed_loop + provenance_batch +
     # query-result full provenance; no docs/design / invent.
     qsreu3198_script = COVERAGE_CHECKS / "check_query_stable_restamp_export_uniform_3198.py"
-    if not qsreu3198_script.exists():
-        fail(f"missing {qsreu3198_script}")
-        return 1
-    r = run([sys.executable, str(qsreu3198_script)], cwd=ROOT)
+    r = _coverage_run(qsreu3198_script).returncode
     if r != 0:
         fail(
             "Issue #3198 query-stable restamp export uniform linter failed — run python3 scripts/coverage/checks/check_query_stable_restamp_export_uniform_3198.py"
@@ -2595,10 +2130,7 @@ def cmd_lint():
     # before make_ref_layout / stamp-green. Soft observe; budget=0 quiet.
     # Extends test_hygiene_mutate_closed_loop; no docs/design / invent.
     qsrl3230_script = COVERAGE_CHECKS / "check_query_stable_restamp_lag_hard_reject_3230.py"
-    if not qsrl3230_script.exists():
-        fail(f"missing {qsrl3230_script}")
-        return 1
-    r = run([sys.executable, str(qsrl3230_script)], cwd=ROOT)
+    r = _coverage_run(qsrl3230_script).returncode
     if r != 0:
         fail(
             "Issue #3230 query-stable restamp-lag hard-reject linter failed — run python3 scripts/coverage/checks/check_query_stable_restamp_lag_hard_reject_3230.py"
@@ -2610,10 +2142,7 @@ def cmd_lint():
     # allow_query_stable_ref_export. Reuses restamp-lag / torn counters.
     # Extends hygiene + #3386 gate + #3449 provenance; no docs/design.
     qsrl3487_script = COVERAGE_CHECKS / "check_query_stable_restamp_latch_export_3487.py"
-    if not qsrl3487_script.exists():
-        fail(f"missing {qsrl3487_script}")
-        return 1
-    r = run([sys.executable, str(qsrl3487_script)], cwd=ROOT)
+    r = _coverage_run(qsrl3487_script).returncode
     if r != 0:
         fail(
             "Issue #3487 query-stable restamp latch export linter failed — run python3 scripts/coverage/checks/check_query_stable_restamp_latch_export_3487.py"
@@ -2623,10 +2152,7 @@ def cmd_lint():
     # Soft / no :as-query-result keeps schema-1. Reuses #3103 counters.
     # Extends test_query_result_full_provenance + test_query_epoch_contract.
     qrl3231_script = COVERAGE_CHECKS / "check_query_result_layout_only_reject_3231.py"
-    if not qrl3231_script.exists():
-        fail(f"missing {qrl3231_script}")
-        return 1
-    r = run([sys.executable, str(qrl3231_script)], cwd=ROOT)
+    r = _coverage_run(qrl3231_script).returncode
     if r != 0:
         fail(
             "Issue #3231 QueryResult layout-only reject linter failed — run python3 scripts/coverage/checks/check_query_result_layout_only_reject_3231.py"
@@ -2637,10 +2163,7 @@ def cmd_lint():
     # Soft observe; quiet no-abort zero extra. Reuses #3193 counters.
     # Extends test_occurrence_goal_persist_rehydrate; no docs/design / invent.
     naaf3232_script = COVERAGE_CHECKS / "check_nested_abort_authority_face_3232.py"
-    if not naaf3232_script.exists():
-        fail(f"missing {naaf3232_script}")
-        return 1
-    r = run([sys.executable, str(naaf3232_script)], cwd=ROOT)
+    r = _coverage_run(naaf3232_script).returncode
     if r != 0:
         fail(
             "Issue #3232 nested abort authority face residual linter failed — run python3 scripts/coverage/checks/check_nested_abort_authority_face_3232.py"
@@ -2650,10 +2173,7 @@ def cmd_lint():
     # (no full COW). Live span + checkpoint still COW. Soft unchanged.
     # Extends test_pcv_exclusive_with_set; no docs/design / invent.
     pcv3233_script = COVERAGE_CHECKS / "check_pcv_stale_span_exclusive_3233.py"
-    if not pcv3233_script.exists():
-        fail(f"missing {pcv3233_script}")
-        return 1
-    r = run([sys.executable, str(pcv3233_script)], cwd=ROOT)
+    r = _coverage_run(pcv3233_script).returncode
     if r != 0:
         fail(
             "Issue #3233 PCV stale-span exclusive linter failed — run python3 scripts/coverage/checks/check_pcv_stale_span_exclusive_3233.py"
@@ -2663,10 +2183,7 @@ def cmd_lint():
     # before heap. Live span still COWs (no write-through). Extends
     # test_pcv_exclusive_with_set; no docs/design / invent.
     pcv3429_script = COVERAGE_CHECKS / "check_pcv_shared_cow_tls_3429.py"
-    if not pcv3429_script.exists():
-        fail(f"missing {pcv3429_script}")
-        return 1
-    r = run([sys.executable, str(pcv3429_script)], cwd=ROOT)
+    r = _coverage_run(pcv3429_script).returncode
     if r != 0:
         fail(
             "Issue #3429 PCV shared-COW TLS linter failed — run python3 scripts/coverage/checks/check_pcv_shared_cow_tls_3429.py"
@@ -2676,10 +2193,7 @@ def cmd_lint():
     # are store-to-slot only (no process-wide RMW). Soft/unit keep
     # counters. Extends test_pcv_unique_hotpath; no docs/design / invent.
     pcv3491_script = COVERAGE_CHECKS / "check_pcv_unique_zero_atomic_3491.py"
-    if not pcv3491_script.exists():
-        fail(f"missing {pcv3491_script}")
-        return 1
-    r = run([sys.executable, str(pcv3491_script)], cwd=ROOT)
+    r = _coverage_run(pcv3491_script).returncode
     if r != 0:
         fail(
             "Issue #3491 PCV unique-path zero-atomic linter failed — run python3 scripts/coverage/checks/check_pcv_unique_zero_atomic_3491.py"
@@ -2689,10 +2203,7 @@ def cmd_lint():
     # in-place when !dense_dirty_. Issue #3665 splices insert/remove.
     # Extends #3402 dense-columns linter + arena required-cover test.
     scdi3453_script = COVERAGE_CHECKS / "check_set_child_locked_dense_inplace_3453.py"
-    if not scdi3453_script.exists():
-        fail(f"missing {scdi3453_script}")
-        return 1
-    r = run([sys.executable, str(scdi3453_script)], cwd=ROOT)
+    r = _coverage_run(scdi3453_script).returncode
     if r != 0:
         fail(
             "Issue #3453 set_child_locked dense-inplace linter failed — run python3 scripts/coverage/checks/check_set_child_locked_dense_inplace_3453.py"
@@ -2703,10 +2214,7 @@ def cmd_lint():
     # Soft frozen view. #2906/#3233 mutate exclusive unchanged.
     # Extends test_pcv_exclusive_with_set + hygiene; no docs/design / invent.
     pcv3328_script = COVERAGE_CHECKS / "check_pcv_stale_span_query_refresh_3328.py"
-    if not pcv3328_script.exists():
-        fail(f"missing {pcv3328_script}")
-        return 1
-    r = run([sys.executable, str(pcv3328_script)], cwd=ROOT)
+    r = _coverage_run(pcv3328_script).returncode
     if r != 0:
         fail(
             "Issue #3328 PCV stale-span query refresh linter failed — run python3 scripts/coverage/checks/check_pcv_stale_span_query_refresh_3328.py"
@@ -2716,10 +2224,7 @@ def cmd_lint():
     # std::function on the pass surface). Soft/behaviour unchanged.
     # Extends test_hot_pass_hard_dod; no docs/design / invent.
     scc3234_script = COVERAGE_CHECKS / "check_pass_scc_no_std_function_3234.py"
-    if not scc3234_script.exists():
-        fail(f"missing {scc3234_script}")
-        return 1
-    r = run([sys.executable, str(scc3234_script)], cwd=ROOT)
+    r = _coverage_run(scc3234_script).returncode
     if r != 0:
         fail(
             "Issue #3234 pass SCC no-std-function linter failed — run python3 scripts/coverage/checks/check_pass_scc_no_std_function_3234.py"
@@ -2730,10 +2235,7 @@ def cmd_lint():
     # CK/CF/TP/Shape/Escape stay DirtySoAEntryPass. Extends #3405/#3403
     # linters + arena required-cover test.
     ppw3454_script = COVERAGE_CHECKS / "check_production_pure_wrap_soa_3454.py"
-    if not ppw3454_script.exists():
-        fail(f"missing {ppw3454_script}")
-        return 1
-    r = run([sys.executable, str(ppw3454_script)], cwd=ROOT)
+    r = _coverage_run(ppw3454_script).returncode
     if r != 0:
         fail(
             "Issue #3454 ProductionPureWrapPass SoA linter failed — run python3 scripts/coverage/checks/check_production_pure_wrap_soa_3454.py"
@@ -2741,10 +2243,7 @@ def cmd_lint():
         return r
     # Issue #3795: EscapeAnalysisWrap ProductionPureWrapPass SoA dirty entry
     ppw3795_script = COVERAGE_CHECKS / "check_escape_analysis_pure_wrap_3795.py"
-    if not ppw3795_script.exists():
-        fail(f"missing {ppw3795_script}")
-        return 1
-    r = run([sys.executable, str(ppw3795_script)], cwd=ROOT)
+    r = _coverage_run(ppw3795_script).returncode
     if r != 0:
         fail(
             "Issue #3795 EscapeAnalysisWrap ProductionPureWrap linter failed — run python3 scripts/coverage/checks/check_escape_analysis_pure_wrap_3795.py"
@@ -2754,10 +2253,7 @@ def cmd_lint():
     # AoS materialize. Soft AoS grandfather retained. Extends
     # test_soa_dirty_aware_pipeline; no invent / docs/design.
     esnf4262_script = COVERAGE_CHECKS / "check_escape_soa_no_flat_4262.py"
-    if not esnf4262_script.exists():
-        fail(f"missing {esnf4262_script}")
-        return 1
-    r = run([sys.executable, str(esnf4262_script)], cwd=ROOT)
+    r = _coverage_run(esnf4262_script).returncode
     if r != 0:
         fail(
             "Issue #4262 escape SoA no-Flat materialize linter failed — run python3 scripts/coverage/checks/check_escape_soa_no_flat_4262.py"
@@ -2767,10 +2263,7 @@ def cmd_lint():
     # Soft capturing OK via SBO/heap-box; finalize_hot_table SBO wrap.
     # Extends test_primitives_hotpath_registry_slo; no invent.
     pnf4261_script = COVERAGE_CHECKS / "check_primfn_no_std_function_4261.py"
-    if not pnf4261_script.exists():
-        fail(f"missing {pnf4261_script}")
-        return 1
-    r = run([sys.executable, str(pnf4261_script)], cwd=ROOT)
+    r = _coverage_run(pnf4261_script).returncode
     if r != 0:
         fail(
             "Issue #4261 PrimFn no-std::function linter failed — run python3 scripts/coverage/checks/check_primfn_no_std_function_4261.py"
@@ -2778,10 +2271,7 @@ def cmd_lint():
         return r
     # Issue #3796: coercion batch CI AC anchors + build-cwd harness
     ppw3796_script = COVERAGE_CHECKS / "check_occurrence_coercion_ci_ok_3796.py"
-    if not ppw3796_script.exists():
-        fail(f"missing {ppw3796_script}")
-        return 1
-    r = run([sys.executable, str(ppw3796_script)], cwd=ROOT)
+    r = _coverage_run(ppw3796_script).returncode
     if r != 0:
         fail(
             "Issue #3796 coercion CI AC linter failed — run python3 scripts/coverage/checks/check_occurrence_coercion_ci_ok_3796.py"
@@ -2792,10 +2282,7 @@ def cmd_lint():
     # stays Soft/unit; Escape is ProductionPureWrap (#3795). Extends
     # test_soa_dirty_aware_pipeline; no docs/design / invent.
     ppw3488_script = COVERAGE_CHECKS / "check_production_pure_wrap_hot_pack_3488.py"
-    if not ppw3488_script.exists():
-        fail(f"missing {ppw3488_script}")
-        return 1
-    r = run([sys.executable, str(ppw3488_script)], cwd=ROOT)
+    r = _coverage_run(ppw3488_script).returncode
     if r != 0:
         fail(
             "Issue #3488 ProductionPureWrapPass hot pack linter failed — run python3 scripts/coverage/checks/check_production_pure_wrap_hot_pack_3488.py"
@@ -2805,10 +2292,7 @@ def cmd_lint():
     # MutationBoundaryGuard (mutate_general PrimCall). Soft/dev still
     # mutates. Extends test_hash_table_grow; no docs/design / invent.
     cmg3235_script = COVERAGE_CHECKS / "check_container_mutate_guard_3235.py"
-    if not cmg3235_script.exists():
-        fail(f"missing {cmg3235_script}")
-        return 1
-    r = run([sys.executable, str(cmg3235_script)], cwd=ROOT)
+    r = _coverage_run(cmg3235_script).returncode
     if r != 0:
         fail(
             "Issue #3235 container mutate Guard linter failed — run python3 scripts/coverage/checks/check_container_mutate_guard_3235.py"
@@ -2818,10 +2302,7 @@ def cmd_lint():
     # recheck before TypeLinearCommitProof. Soft observe; quiet 0 extra.
     # Extends test_adt_match_goal_table; no docs/design / invent.
     aec3236_script = COVERAGE_CHECKS / "check_adt_exhaust_commit_recheck_3236.py"
-    if not aec3236_script.exists():
-        fail(f"missing {aec3236_script}")
-        return 1
-    r = run([sys.executable, str(aec3236_script)], cwd=ROOT)
+    r = _coverage_run(aec3236_script).returncode
     if r != 0:
         fail(
             "Issue #3236 ADT exhaust commit recheck linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_commit_recheck_3236.py"
@@ -2831,10 +2312,7 @@ def cmd_lint():
     # TypeLinearCommitProof (concurrent under-seed after #3236). Soft
     # observe; quiet empty mutated-ADT set. Extends test_adt_match_goal_table.
     aeo3317_script = COVERAGE_CHECKS / "check_adt_exhaust_outermost_recheck_3317.py"
-    if not aeo3317_script.exists():
-        fail(f"missing {aeo3317_script}")
-        return 1
-    r = run([sys.executable, str(aeo3317_script)], cwd=ROOT)
+    r = _coverage_run(aeo3317_script).returncode
     if r != 0:
         fail(
             "Issue #3317 ADT exhaust outermost recheck linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_outermost_recheck_3317.py"
@@ -2846,10 +2324,7 @@ def cmd_lint():
     # occurrence / linear / audit suites (#81967); no docs/design/; no
     # new query key.
     aer3358_script = COVERAGE_CHECKS / "check_adt_exhaust_replace_type_cone_3358.py"
-    if not aer3358_script.exists():
-        fail(f"missing {aer3358_script}")
-        return 1
-    r = run([sys.executable, str(aer3358_script)], cwd=ROOT)
+    r = _coverage_run(aer3358_script).returncode
     if r != 0:
         fail(
             "Issue #3358 ADT exhaust ReplaceType cone linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_replace_type_cone_3358.py"
@@ -2861,10 +2336,7 @@ def cmd_lint():
     # Issue #3316 extends this linter: persist-seqlock resample of the
     # residual face + clear stale grant before TypeLinearCommitProof.
     tefg3237_script = COVERAGE_CHECKS / "check_type_export_full_audit_gate_3237.py"
-    if not tefg3237_script.exists():
-        fail(f"missing {tefg3237_script}")
-        return 1
-    r = run([sys.executable, str(tefg3237_script)], cwd=ROOT)
+    r = _coverage_run(tefg3237_script).returncode
     if r != 0:
         fail(
             "Issue #3237 type-export Full-audit gate linter failed — run python3 scripts/coverage/checks/check_type_export_full_audit_gate_3237.py"
@@ -2875,10 +2347,7 @@ def cmd_lint():
     # Soft observe counter only; quiet SOLVED outermost zero extra.
     # Extends test_solve_delta_unresolved_export.
     teof3294_script = COVERAGE_CHECKS / "check_type_export_outermost_face_3294.py"
-    if not teof3294_script.exists():
-        fail(f"missing {teof3294_script}")
-        return 1
-    r = run([sys.executable, str(teof3294_script)], cwd=ROOT)
+    r = _coverage_run(teof3294_script).returncode
     if r != 0:
         fail(
             "Issue #3294 type-export outermost-face linter failed — run python3 scripts/coverage/checks/check_type_export_outermost_face_3294.py"
@@ -2889,10 +2358,7 @@ def cmd_lint():
     # face. Soft commit for iteration stays. Extends
     # test_solve_delta_unresolved_export; no docs/design / invent.
     ster3360_script = COVERAGE_CHECKS / "check_soft_timeout_export_refuse_3360.py"
-    if not ster3360_script.exists():
-        fail(f"missing {ster3360_script}")
-        return 1
-    r = run([sys.executable, str(ster3360_script)], cwd=ROOT)
+    r = _coverage_run(ster3360_script).returncode
     if r != 0:
         fail(
             "Issue #3360 Soft TIMEOUT export-refuse linter failed — run python3 scripts/coverage/checks/check_soft_timeout_export_refuse_3360.py"
@@ -2904,10 +2370,7 @@ def cmd_lint():
     # dirty set). Soft observe only; quiet zero extra. Extends
     # test_linear_partial_revalidate.
     lffv3295_script = COVERAGE_CHECKS / "check_linear_force_full_validate_3295.py"
-    if not lffv3295_script.exists():
-        fail(f"missing {lffv3295_script}")
-        return 1
-    r = run([sys.executable, str(lffv3295_script)], cwd=ROOT)
+    r = _coverage_run(lffv3295_script).returncode
     if r != 0:
         fail(
             "Issue #3295 linear force-full-validate linter failed — run python3 scripts/coverage/checks/check_linear_force_full_validate_3295.py"
@@ -2920,10 +2383,7 @@ def cmd_lint():
     # steal / abort / outermost success. Soft/Off contract unchanged. Extends
     # test_require_effect_auto_isolation.
     rssot3296_script = COVERAGE_CHECKS / "check_require_effect_mid_ssot_3296.py"
-    if not rssot3296_script.exists():
-        fail(f"missing {rssot3296_script}")
-        return 1
-    r = run([sys.executable, str(rssot3296_script)], cwd=ROOT)
+    r = _coverage_run(rssot3296_script).returncode
     if r != 0:
         fail(
             "Issue #3296 require_effect mid SSOT linter failed — run python3 scripts/coverage/checks/check_require_effect_mid_ssot_3296.py"
@@ -2935,10 +2395,7 @@ def cmd_lint():
     # test_effect_epoch_mutation_unify.cpp (#81967); no docs/design/
     # (#1655). Residual of #2149 ring vocabulary.
     mae3335_script = COVERAGE_CHECKS / "check_mutation_audit_epoch_3335.py"
-    if not mae3335_script.exists():
-        fail(f"missing {mae3335_script}")
-        return 1
-    r = run([sys.executable, str(mae3335_script)], cwd=ROOT)
+    r = _coverage_run(mae3335_script).returncode
     if r != 0:
         fail(
             "Issue #3335 mutation-audit epoch linter failed — run python3 scripts/coverage/checks/check_mutation_audit_epoch_3335.py"
@@ -2953,10 +2410,7 @@ def cmd_lint():
     # release_reservation_if_any(). Zero behavior change; #2661 / #2009
     # preserved. Extends test_join_drain_reclaim.
     rdu3297_script = COVERAGE_CHECKS / "check_reclaimed_dtor_under_account_3297.py"
-    if not rdu3297_script.exists():
-        fail(f"missing {rdu3297_script}")
-        return 1
-    r = run([sys.executable, str(rdu3297_script)], cwd=ROOT)
+    r = _coverage_run(rdu3297_script).returncode
     if r != 0:
         fail(
             "Issue #3297 reclaimed dtor under-account linter failed — run python3 scripts/coverage/checks/check_reclaimed_dtor_under_account_3297.py"
@@ -2967,10 +2421,7 @@ def cmd_lint():
     # reservation + clear name; never free body-stack. Extends
     # test_join_drain_reclaim.cpp (#81967); no docs/design/.
     ra3334_script = COVERAGE_CHECKS / "check_reclaimed_abandon_3334.py"
-    if not ra3334_script.exists():
-        fail(f"missing {ra3334_script}")
-        return 1
-    r = run([sys.executable, str(ra3334_script)], cwd=ROOT)
+    r = _coverage_run(ra3334_script).returncode
     if r != 0:
         fail(
             "Issue #3334 reclaimed abandon linter failed — run python3 scripts/coverage/checks/check_reclaimed_abandon_3334.py"
@@ -2985,10 +2436,7 @@ def cmd_lint():
     # Done-path detach+release. Extends test_join_drain_reclaim.cpp
     # (#81967); no docs/design/.
     jcf3433_script = COVERAGE_CHECKS / "check_join_cleanup_fork_3433.py"
-    if not jcf3433_script.exists():
-        fail(f"missing {jcf3433_script}")
-        return 1
-    r = run([sys.executable, str(jcf3433_script)], cwd=ROOT)
+    r = _coverage_run(jcf3433_script).returncode
     if r != 0:
         fail(
             "Issue #3433 join cleanup fork linter failed — run python3 scripts/coverage/checks/check_join_cleanup_fork_3433.py"
@@ -3001,10 +2449,7 @@ def cmd_lint():
     # under production Restricted+MT / Strict. Extends
     # test_tenant_scope_fiber_mandate.cpp (#81967); no docs/design/.
     tsm3434_script = COVERAGE_CHECKS / "check_tenant_spawn_mandate_3434.py"
-    if not tsm3434_script.exists():
-        fail(f"missing {tsm3434_script}")
-        return 1
-    r = run([sys.executable, str(tsm3434_script)], cwd=ROOT)
+    r = _coverage_run(tsm3434_script).returncode
     if r != 0:
         fail(
             "Issue #3434 tenant spawn mandate linter failed — run python3 scripts/coverage/checks/check_tenant_spawn_mandate_3434.py"
@@ -3017,10 +2462,7 @@ def cmd_lint():
     # (#2495 face). Extends test_moving_densify_fail_closed.cpp (#81967);
     # no docs/design/.
     rdt3435_script = COVERAGE_CHECKS / "check_relocate_drop_tracking_3435.py"
-    if not rdt3435_script.exists():
-        fail(f"missing {rdt3435_script}")
-        return 1
-    r = run([sys.executable, str(rdt3435_script)], cwd=ROOT)
+    r = _coverage_run(rdt3435_script).returncode
     if r != 0:
         fail(
             "Issue #3435 relocate drop-tracking linter failed — run python3 scripts/coverage/checks/check_relocate_drop_tracking_3435.py"
@@ -3035,10 +2477,7 @@ def cmd_lint():
     # drop-if-empty. Extends tests/orch/test_orch_scope.cpp (#81967);
     # no docs/design/.
     ssd3437_script = COVERAGE_CHECKS / "check_scope_session_drop_3437.py"
-    if not ssd3437_script.exists():
-        fail(f"missing {ssd3437_script}")
-        return 1
-    r = run([sys.executable, str(ssd3437_script)], cwd=ROOT)
+    r = _coverage_run(ssd3437_script).returncode
     if r != 0:
         fail(
             "Issue #3437 scope session drop linter failed — run python3 scripts/coverage/checks/check_scope_session_drop_3437.py"
@@ -3054,10 +2493,7 @@ def cmd_lint():
     # reclaimed_abandon_total / cleanup-pending. Extends
     # tests/orch/test_join_drain_reclaim.cpp (#81967); no docs/design/.
     aws3463_script = COVERAGE_CHECKS / "check_agent_wait_reclaimed_scope_resolve_3463.py"
-    if not aws3463_script.exists():
-        fail(f"missing {aws3463_script}")
-        return 1
-    r = run([sys.executable, str(aws3463_script)], cwd=ROOT)
+    r = _coverage_run(aws3463_script).returncode
     if r != 0:
         fail(
             "Issue #3463 wait-reclaimed scope-resolve linter failed — run python3 scripts/coverage/checks/check_agent_wait_reclaimed_scope_resolve_3463.py"
@@ -3073,10 +2509,7 @@ def cmd_lint():
     # tests/serve/test_fiber_reclaim_orphan_release.cpp (#81967);
     # no test_issue_*.cpp, no new query key, no docs/design/.
     sld3438_script = COVERAGE_CHECKS / "check_scoped_linear_drain_3438.py"
-    if not sld3438_script.exists():
-        fail(f"missing {sld3438_script}")
-        return 1
-    r = run([sys.executable, str(sld3438_script)], cwd=ROOT)
+    r = _coverage_run(sld3438_script).returncode
     if r != 0:
         fail(
             "Issue #3438 scoped linear drain linter failed — run python3 scripts/coverage/checks/check_scoped_linear_drain_3438.py"
@@ -3086,10 +2519,7 @@ def cmd_lint():
     # !linear_fast_path_ok + dirty-root revalidate (not wait for exit).
     # Soft observe; quiet !live. Extends test_escape_move_elision_gate.
     lfp3238_script = COVERAGE_CHECKS / "check_linear_fast_path_live_mutation_densify_3238.py"
-    if not lfp3238_script.exists():
-        fail(f"missing {lfp3238_script}")
-        return 1
-    r = run([sys.executable, str(lfp3238_script)], cwd=ROOT)
+    r = _coverage_run(lfp3238_script).returncode
     if r != 0:
         fail(
             "Issue #3238 live-mutation densify linear-fast-path linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_live_mutation_densify_3238.py"
@@ -3099,10 +2529,7 @@ def cmd_lint():
     # unrefreshable without AURA_STABLE_REF_EXPORT_HARD_REJECT=1.
     # Soft/Off unchanged. Extends test_tenant_isolation_enforcement.
     sre3204_script = COVERAGE_CHECKS / "check_stable_ref_export_production_hard_reject_3204.py"
-    if not sre3204_script.exists():
-        fail(f"missing {sre3204_script}")
-        return 1
-    r = run([sys.executable, str(sre3204_script)], cwd=ROOT)
+    r = _coverage_run(sre3204_script).returncode
     if r != 0:
         fail(
             "Issue #3204 stable-ref export production hard-reject linter failed — run python3 scripts/coverage/checks/check_stable_ref_export_production_hard_reject_3204.py"
@@ -3113,10 +2540,7 @@ def cmd_lint():
     # Extends test_shape_profiler_concurrency + compact isolation;
     # no docs/design / invent.
     scnas3199_script = COVERAGE_CHECKS / "check_shape_compact_no_all_shards_lock_3199.py"
-    if not scnas3199_script.exists():
-        fail(f"missing {scnas3199_script}")
-        return 1
-    r = run([sys.executable, str(scnas3199_script)], cwd=ROOT)
+    r = _coverage_run(scnas3199_script).returncode
     if r != 0:
         fail(
             "Issue #3199 shape compact no-all-shards lock linter failed — run python3 scripts/coverage/checks/check_shape_compact_no_all_shards_lock_3199.py"
@@ -3126,10 +2550,7 @@ def cmd_lint():
     # only (not every tracked profile). Storm isolation + per-shard
     # unique stay. Extends compact isolation + concurrency suites.
     scdf3455_script = COVERAGE_CHECKS / "check_shape_compact_dirty_fnkey_3455.py"
-    if not scdf3455_script.exists():
-        fail(f"missing {scdf3455_script}")
-        return 1
-    r = run([sys.executable, str(scdf3455_script)], cwd=ROOT)
+    r = _coverage_run(scdf3455_script).returncode
     if r != 0:
         fail(
             "Issue #3455 shape compact dirty-FnKey linter failed — run python3 scripts/coverage/checks/check_shape_compact_dirty_fnkey_3455.py"
@@ -3140,10 +2561,7 @@ def cmd_lint():
     # Soft observe-only. Extends test_arena_moving_densify_health;
     # no docs/design / invent.
     mpgs3200_script = COVERAGE_CHECKS / "check_moving_pin_guard_soft_gate_3200.py"
-    if not mpgs3200_script.exists():
-        fail(f"missing {mpgs3200_script}")
-        return 1
-    r = run([sys.executable, str(mpgs3200_script)], cwd=ROOT)
+    r = _coverage_run(mpgs3200_script).returncode
     if r != 0:
         fail(
             "Issue #3200 moving pin/EnvFrame Soft-gate linter failed — run python3 scripts/coverage/checks/check_moving_pin_guard_soft_gate_3200.py"
@@ -3153,10 +2571,7 @@ def cmd_lint():
     # by default (AURA_IR_DIRTY_BATCH_ONLY unset + production_defaults).
     # env=0 remains Soft. Extends test_batch_dirty_discipline; no invent.
     irdb3201_script = COVERAGE_CHECKS / "check_ir_dirty_batch_only_production_default_3201.py"
-    if not irdb3201_script.exists():
-        fail(f"missing {irdb3201_script}")
-        return 1
-    r = run([sys.executable, str(irdb3201_script)], cwd=ROOT)
+    r = _coverage_run(irdb3201_script).returncode
     if r != 0:
         fail(
             "Issue #3201 IR dirty batch-only production default linter failed — run python3 scripts/coverage/checks/check_ir_dirty_batch_only_production_default_3201.py"
@@ -3170,10 +2585,7 @@ def cmd_lint():
     # SIGABRT fixture + source-cite ACs (G5), no invent (G6-G7). Extends
     # test_batch_dirty_discipline; no docs/design/ (#1655).
     irdb3293_script = COVERAGE_CHECKS / "check_ir_dirty_batch_only_production_default_3293.py"
-    if not irdb3293_script.exists():
-        fail(f"missing {irdb3293_script}")
-        return 1
-    r = run([sys.executable, str(irdb3293_script)], cwd=ROOT)
+    r = _coverage_run(irdb3293_script).returncode
     if r != 0:
         fail(
             "Issue #3293 IR dirty batch-only production default linter failed — run python3 scripts/coverage/checks/check_ir_dirty_batch_only_production_default_3293.py"
@@ -3185,10 +2597,7 @@ def cmd_lint():
     # keep the API + #3293 SIGABRT fixture. Extends
     # test_batch_dirty_discipline (#81967); no docs/design/; no new query keys.
     ism3355_script = COVERAGE_CHECKS / "check_ir_soa_single_mark_production_ban_3355.py"
-    if not ism3355_script.exists():
-        fail(f"missing {ism3355_script}")
-        return 1
-    r = run([sys.executable, str(ism3355_script)], cwd=ROOT)
+    r = _coverage_run(ism3355_script).returncode
     if r != 0:
         fail(
             "Issue #3355 IR SoA single-mark production-ban linter failed — run python3 scripts/coverage/checks/check_ir_soa_single_mark_production_ban_3355.py"
@@ -3198,10 +2607,7 @@ def cmd_lint():
     # ensure-once before the span walk. Soft/unit keep the symbol.
     # Extends test_batch_dirty_discipline; no docs/design / invent.
     ism3489_script = COVERAGE_CHECKS / "check_ir_soa_single_mark_deleted_3489.py"
-    if not ism3489_script.exists():
-        fail(f"missing {ism3489_script}")
-        return 1
-    r = run([sys.executable, str(ism3489_script)], cwd=ROOT)
+    r = _coverage_run(ism3489_script).returncode
     if r != 0:
         fail(
             "Issue #3489 IR SoA single-mark deleted linter failed — run python3 scripts/coverage/checks/check_ir_soa_single_mark_deleted_3489.py"
@@ -3211,10 +2617,7 @@ def cmd_lint():
     # (residual of #2992). Soft / balanced / permissive stay diagnostic-only.
     # Extends test_bidirectional_annotation; no docs/design / invent.
     psgu3202_script = COVERAGE_CHECKS / "check_production_strict_ground_unify_3202.py"
-    if not psgu3202_script.exists():
-        fail(f"missing {psgu3202_script}")
-        return 1
-    r = run([sys.executable, str(psgu3202_script)], cwd=ROOT)
+    r = _coverage_run(psgu3202_script).returncode
     if r != 0:
         fail(
             "Issue #3202 production Strict ground unify linter failed — run python3 scripts/coverage/checks/check_production_strict_ground_unify_3202.py"
@@ -3225,10 +2628,7 @@ def cmd_lint():
     # Off / env Balanced unchanged. Extends test_bidirectional_annotation
     # + test_ir; no docs/design / invent.
     psgu3430_script = COVERAGE_CHECKS / "check_production_defaults_force_strict_unify_3430.py"
-    if not psgu3430_script.exists():
-        fail(f"missing {psgu3430_script}")
-        return 1
-    r = run([sys.executable, str(psgu3430_script)], cwd=ROOT)
+    r = _coverage_run(psgu3430_script).returncode
     if r != 0:
         fail(
             "Issue #3430 production_defaults force-Strict unify linter failed — run python3 scripts/coverage/checks/check_production_defaults_force_strict_unify_3430.py"
@@ -3238,10 +2638,7 @@ def cmd_lint():
     # authority (residual of #3081). Persist grant cannot override a
     # half-solved face. Extends test_solve_delta_unresolved_export.
     stug3203_script = COVERAGE_CHECKS / "check_soft_timeout_export_uniform_gate_3203.py"
-    if not stug3203_script.exists():
-        fail(f"missing {stug3203_script}")
-        return 1
-    r = run([sys.executable, str(stug3203_script)], cwd=ROOT)
+    r = _coverage_run(stug3203_script).returncode
     if r != 0:
         fail(
             "Issue #3203 Soft TIMEOUT export uniform gate linter failed — run python3 scripts/coverage/checks/check_soft_timeout_export_uniform_gate_3203.py"
@@ -3252,10 +2649,7 @@ def cmd_lint():
     # Reuses invalidate_gen (no second proof model). Soft observe-only.
     # Extends test_occurrence_goal_persist_rehydrate; no docs/design / invent.
     naaf3193_script = COVERAGE_CHECKS / "check_nested_abort_authority_face_3193.py"
-    if not naaf3193_script.exists():
-        fail(f"missing {naaf3193_script}")
-        return 1
-    r = run([sys.executable, str(naaf3193_script)], cwd=ROOT)
+    r = _coverage_run(naaf3193_script).returncode
     if r != 0:
         fail(
             "Issue #3193 nested abort authority face linter failed — run python3 scripts/coverage/checks/check_nested_abort_authority_face_3193.py"
@@ -3265,10 +2659,7 @@ def cmd_lint():
     # Same-fiber reuses #3118/#3035; cross-fiber pending-cancel only.
     # Extends test_hold_budget_synthetic_yield_injection; no docs/design.
     hb3194_script = COVERAGE_CHECKS / "check_hold_budget_inbody_force_release_3194.py"
-    if not hb3194_script.exists():
-        fail(f"missing {hb3194_script}")
-        return 1
-    r = run([sys.executable, str(hb3194_script)], cwd=ROOT)
+    r = _coverage_run(hb3194_script).returncode
     if r != 0:
         fail(
             "Issue #3194 hold-budget inbody force-release linter failed — run python3 scripts/coverage/checks/check_hold_budget_inbody_force_release_3194.py"
@@ -3279,10 +2670,7 @@ def cmd_lint():
     # Extends test_steal_safety_production_residual_zero +
     # test_steal_complete_strong_entry; no docs/design / invent.
     mwrs3195_script = COVERAGE_CHECKS / "check_production_multi_worker_residual_sticky_3195.py"
-    if not mwrs3195_script.exists():
-        fail(f"missing {mwrs3195_script}")
-        return 1
-    r = run([sys.executable, str(mwrs3195_script)], cwd=ROOT)
+    r = _coverage_run(mwrs3195_script).returncode
     if r != 0:
         fail(
             "Issue #3195 production multi-worker residual-zero sticky linter failed — run python3 scripts/coverage/checks/check_production_multi_worker_residual_sticky_3195.py"
@@ -3293,10 +2681,7 @@ def cmd_lint():
     # Extends test_steal_complete_strong_entry (#81967); no docs/design;
     # no new query key.
     srw3476_script = COVERAGE_CHECKS / "check_scheduler_production_ready_weld_3476.py"
-    if not srw3476_script.exists():
-        fail(f"missing {srw3476_script}")
-        return 1
-    r = run([sys.executable, str(srw3476_script)], cwd=ROOT)
+    r = _coverage_run(srw3476_script).returncode
     if r != 0:
         fail(
             "Issue #3476 Scheduler production Ready weld linter failed — run python3 scripts/coverage/checks/check_scheduler_production_ready_weld_3476.py"
@@ -3306,10 +2691,7 @@ def cmd_lint():
     # window (I5 residual). Minimal invalidate; outermost owns triad.
     # Extends test_mutation_boundary_batch + hygiene nested Guards.
     ngag3196_script = COVERAGE_CHECKS / "check_nested_guard_authority_gap_3196.py"
-    if not ngag3196_script.exists():
-        fail(f"missing {ngag3196_script}")
-        return 1
-    r = run([sys.executable, str(ngag3196_script)], cwd=ROOT)
+    r = _coverage_run(ngag3196_script).returncode
     if r != 0:
         fail(
             "Issue #3196 nested Guard authority-gap linter failed — run python3 scripts/coverage/checks/check_nested_guard_authority_gap_3196.py"
@@ -3320,10 +2702,7 @@ def cmd_lint():
     # outside the cone. Extends hygiene nested Guard fixtures; no
     # docs/design / invent.
     nrnt3312_script = COVERAGE_CHECKS / "check_nested_return_not_triad_3312.py"
-    if not nrnt3312_script.exists():
-        fail(f"missing {nrnt3312_script}")
-        return 1
-    r = run([sys.executable, str(nrnt3312_script)], cwd=ROOT)
+    r = _coverage_run(nrnt3312_script).returncode
     if r != 0:
         fail(
             "Issue #3312 nested-return-not-triad linter failed — run python3 scripts/coverage/checks/check_nested_return_not_triad_3312.py"
@@ -3333,10 +2712,7 @@ def cmd_lint():
     # QueryResult freshness (reuse #3041). Soft/Off zero extra. Extends
     # hygiene nested Guard fixtures + incremental restamp; no docs/design.
     ngqe3451_script = COVERAGE_CHECKS / "check_nested_gap_query_epoch_stale_3451.py"
-    if not ngqe3451_script.exists():
-        fail(f"missing {ngqe3451_script}")
-        return 1
-    r = run([sys.executable, str(ngqe3451_script)], cwd=ROOT)
+    r = _coverage_run(ngqe3451_script).returncode
     if r != 0:
         fail(
             "Issue #3451 nested-gap query-epoch stale linter failed — run python3 scripts/coverage/checks/check_nested_gap_query_epoch_stale_3451.py"
@@ -3347,10 +2723,7 @@ def cmd_lint():
     # Soft/Off zero extra. Extends hygiene nested Guards + mutation_boundary
     # batch; no schema-3322 / docs/design.
     now3322_script = COVERAGE_CHECKS / "check_nested_observation_window_3322.py"
-    if not now3322_script.exists():
-        fail(f"missing {now3322_script}")
-        return 1
-    r = run([sys.executable, str(now3322_script)], cwd=ROOT)
+    r = _coverage_run(now3322_script).returncode
     if r != 0:
         fail(
             "Issue #3322 nested observation-window linter failed — run python3 scripts/coverage/checks/check_nested_observation_window_3322.py"
@@ -3360,10 +2733,7 @@ def cmd_lint():
     # Extends test_occurrence_goal_persist_rehydrate + test_escape_move_elision_gate
     # (#81967); no docs/design.
     rhmi_script = COVERAGE_CHECKS / "check_rehydrate_miss_invalidate_3032.py"
-    if not rhmi_script.exists():
-        fail(f"missing {rhmi_script}")
-        return 1
-    r = run([sys.executable, str(rhmi_script)], cwd=ROOT)
+    r = _coverage_run(rhmi_script).returncode
     if r != 0:
         fail(
             "Issue #3032 rehydrate-miss invalidate linter failed — run python3 scripts/coverage/checks/check_rehydrate_miss_invalidate_3032.py"
@@ -3372,10 +2742,7 @@ def cmd_lint():
     # Issue #3063: steal/densify success invalidate-before-restamp (half-green IR).
     # Extends persist-rehydrate + escape-elision + health (#81967); no docs/design.
     hg3063_script = COVERAGE_CHECKS / "check_half_green_ir_steal_densify_3063.py"
-    if not hg3063_script.exists():
-        fail(f"missing {hg3063_script}")
-        return 1
-    r = run([sys.executable, str(hg3063_script)], cwd=ROOT)
+    r = _coverage_run(hg3063_script).returncode
     if r != 0:
         fail(
             "Issue #3063 half-green IR steal/densify linter failed — run python3 scripts/coverage/checks/check_half_green_ir_steal_densify_3063.py"
@@ -3384,10 +2751,7 @@ def cmd_lint():
     # Issue #3171: steal/densify/cross-eval restamp complete-clear.
     # Extends persist-rehydrate + escape-elision + steal-clear (#81967).
     lfp3171_script = COVERAGE_CHECKS / "check_linear_fast_path_clear_on_restamp_3171.py"
-    if not lfp3171_script.exists():
-        fail(f"missing {lfp3171_script}")
-        return 1
-    r = run([sys.executable, str(lfp3171_script)], cwd=ROOT)
+    r = _coverage_run(lfp3171_script).returncode
     if r != 0:
         fail(
             "Issue #3171 linear-fast-path restamp clear linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_clear_on_restamp_3171.py"
@@ -3400,10 +2764,7 @@ def cmd_lint():
     # key. Extends test_occurrence_goal_persist_rehydrate +
     # test_type_linear_commit_health; no docs/design / invent.
     sdp3482_script = COVERAGE_CHECKS / "check_steal_densify_persist_clear_3482.py"
-    if not sdp3482_script.exists():
-        fail(f"missing {sdp3482_script}")
-        return 1
-    r = run([sys.executable, str(sdp3482_script)], cwd=ROOT)
+    r = _coverage_run(sdp3482_script).returncode
     if r != 0:
         fail(
             "Issue #3482 steal/densify persist-clear linter failed — run python3 scripts/coverage/checks/check_steal_densify_persist_clear_3482.py"
@@ -3411,10 +2772,7 @@ def cmd_lint():
         return r
     # Issue #3172: sink fine-grained compile: dirty primitives.
     cs3172_script = COVERAGE_CHECKS / "check_compile_surface_3172.py"
-    if not cs3172_script.exists():
-        fail(f"missing {cs3172_script}")
-        return 1
-    r = run([sys.executable, str(cs3172_script)], cwd=ROOT)
+    r = _coverage_run(cs3172_script).returncode
     if r != 0:
         fail(
             "Issue #3172 compile: surface reduction linter failed — run python3 scripts/coverage/checks/check_compile_surface_3172.py"
@@ -3422,10 +2780,7 @@ def cmd_lint():
         return r
     # Issue #3173: sink fine-grained arena: compact/defrag knobs.
     as3173_script = COVERAGE_CHECKS / "check_arena_surface_3173.py"
-    if not as3173_script.exists():
-        fail(f"missing {as3173_script}")
-        return 1
-    r = run([sys.executable, str(as3173_script)], cwd=ROOT)
+    r = _coverage_run(as3173_script).returncode
     if r != 0:
         fail(
             "Issue #3173 arena: surface reduction linter failed — run python3 scripts/coverage/checks/check_arena_surface_3173.py"
@@ -3433,10 +2788,7 @@ def cmd_lint():
         return r
     # Issue #3174: demote IO/Net/Git/process prims off core boot.
     ionet3174_script = COVERAGE_CHECKS / "check_io_net_git_surface_3174.py"
-    if not ionet3174_script.exists():
-        fail(f"missing {ionet3174_script}")
-        return 1
-    r = run([sys.executable, str(ionet3174_script)], cwd=ROOT)
+    r = _coverage_run(ionet3174_script).returncode
     if r != 0:
         fail(
             "Issue #3174 IO/Net/Git surface linter failed — run python3 scripts/coverage/checks/check_io_net_git_surface_3174.py"
@@ -3444,10 +2796,7 @@ def cmd_lint():
         return r
     # Issue #3175: prune diagnostic / low-frequency query: primitives.
     qs3175_script = COVERAGE_CHECKS / "check_query_surface_3175.py"
-    if not qs3175_script.exists():
-        fail(f"missing {qs3175_script}")
-        return 1
-    r = run([sys.executable, str(qs3175_script)], cwd=ROOT)
+    r = _coverage_run(qs3175_script).returncode
     if r != 0:
         fail(
             "Issue #3175 query: surface reduction linter failed — run python3 scripts/coverage/checks/check_query_surface_3175.py"
@@ -3455,10 +2804,7 @@ def cmd_lint():
         return r
     # Issue #3176: demote C FFI c-* off core boot (std/ffi + kEffectFfi).
     ffi3176_script = COVERAGE_CHECKS / "check_ffi_surface_3176.py"
-    if not ffi3176_script.exists():
-        fail(f"missing {ffi3176_script}")
-        return 1
-    r = run([sys.executable, str(ffi3176_script)], cwd=ROOT)
+    r = _coverage_run(ffi3176_script).returncode
     if r != 0:
         fail("Issue #3176 C FFI surface linter failed — run python3 scripts/coverage/checks/check_ffi_surface_3176.py")
         return r
@@ -3466,10 +2812,7 @@ def cmd_lint():
     # via invalidate_gen. Extends persist-rehydrate + escape-elision
     # (#81967); no docs/design/.
     rml3085_script = COVERAGE_CHECKS / "check_rehydrate_miss_lowering_elision_3085.py"
-    if not rml3085_script.exists():
-        fail(f"missing {rml3085_script}")
-        return 1
-    r = run([sys.executable, str(rml3085_script)], cwd=ROOT)
+    r = _coverage_run(rml3085_script).returncode
     if r != 0:
         fail(
             "Issue #3085 rehydrate-miss lowering elision linter failed — run python3 scripts/coverage/checks/check_rehydrate_miss_lowering_elision_3085.py"
@@ -3478,10 +2821,7 @@ def cmd_lint():
     # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
     # ac2807 in test_unquote_splicing_hygiene.
     ush_script = COVERAGE_CHECKS / "check_unquote_splicing_hygiene_2807.py"
-    if not ush_script.exists():
-        fail(f"missing {ush_script}")
-        return 1
-    r = run([sys.executable, str(ush_script)], cwd=ROOT)
+    r = _coverage_run(ush_script).returncode
     if r != 0:
         fail(
             "Issue #2807 unquote-splicing hygiene linter failed — run python3 scripts/coverage/checks/check_unquote_splicing_hygiene_2807.py"
@@ -3490,10 +2830,7 @@ def cmd_lint():
     # Issue #2808: stamp_rest_param_hygiene sets SyntaxMarker::MacroIntroduced.
     # ac2808 in test_stamp_rest_param_hygiene_marker.
     srp_script = COVERAGE_CHECKS / "check_stamp_rest_param_hygiene_marker_2808.py"
-    if not srp_script.exists():
-        fail(f"missing {srp_script}")
-        return 1
-    r = run([sys.executable, str(srp_script)], cwd=ROOT)
+    r = _coverage_run(srp_script).returncode
     if r != 0:
         fail(
             "Issue #2808 stamp_rest_param_hygiene marker linter failed — run python3 scripts/coverage/checks/check_stamp_rest_param_hygiene_marker_2808.py"
@@ -3502,10 +2839,7 @@ def cmd_lint():
     # Issue #2809: expand_inner_macros qq-unwrap targeted restamp (not full O(N×M)).
     # ac2809 in test_qq_unwrap_targeted_restamp.
     qut_script = COVERAGE_CHECKS / "check_qq_unwrap_targeted_restamp_2809.py"
-    if not qut_script.exists():
-        fail(f"missing {qut_script}")
-        return 1
-    r = run([sys.executable, str(qut_script)], cwd=ROOT)
+    r = _coverage_run(qut_script).returncode
     if r != 0:
         fail(
             "Issue #2809 qq-unwrap targeted restamp linter failed — run python3 scripts/coverage/checks/check_qq_unwrap_targeted_restamp_2809.py"
@@ -3514,10 +2848,7 @@ def cmd_lint():
     # Issue #2810: clone_macro_body provenance repin dual-writes per-CompilerMetrics.
     # ac2810 in test_clone_provenance_per_evaluator.
     cpe_script = COVERAGE_CHECKS / "check_clone_provenance_per_evaluator_2810.py"
-    if not cpe_script.exists():
-        fail(f"missing {cpe_script}")
-        return 1
-    r = run([sys.executable, str(cpe_script)], cwd=ROOT)
+    r = _coverage_run(cpe_script).returncode
     if r != 0:
         fail(
             "Issue #2810 clone provenance per-evaluator linter failed — run python3 scripts/coverage/checks/check_clone_provenance_per_evaluator_2810.py"
@@ -3526,10 +2857,7 @@ def cmd_lint():
     # Issue #2811: rename_binding_pre gensym serial drift (ceiling before hyg_ctr++).
     # ac2811 in test_gensym_ceiling_serial_drift.
     gsd_script = COVERAGE_CHECKS / "check_gensym_ceiling_serial_drift_2811.py"
-    if not gsd_script.exists():
-        fail(f"missing {gsd_script}")
-        return 1
-    r = run([sys.executable, str(gsd_script)], cwd=ROOT)
+    r = _coverage_run(gsd_script).returncode
     if r != 0:
         fail(
             "Issue #2811 gensym ceiling serial drift linter failed — run python3 scripts/coverage/checks/check_gensym_ceiling_serial_drift_2811.py"
@@ -3538,10 +2866,7 @@ def cmd_lint():
     # Issue #2812: post-mutate cascade BFS invalidate after Guard unlock.
     # ac2812 in test_cascade_bfs_invalidate_after_guard.
     cbi_script = COVERAGE_CHECKS / "check_cascade_bfs_invalidate_after_guard_2812.py"
-    if not cbi_script.exists():
-        fail(f"missing {cbi_script}")
-        return 1
-    r = run([sys.executable, str(cbi_script)], cwd=ROOT)
+    r = _coverage_run(cbi_script).returncode
     if r != 0:
         fail(
             "Issue #2812 cascade BFS invalidate linter failed — run python3 scripts/coverage/checks/check_cascade_bfs_invalidate_after_guard_2812.py"
@@ -3550,10 +2875,7 @@ def cmd_lint():
     # Issue #2813: cascade relower silent skip observability (fn null).
     # ac2813 in test_cascade_relower_silent_skip.
     crs_script = COVERAGE_CHECKS / "check_cascade_relower_silent_skip_2813.py"
-    if not crs_script.exists():
-        fail(f"missing {crs_script}")
-        return 1
-    r = run([sys.executable, str(crs_script)], cwd=ROOT)
+    r = _coverage_run(crs_script).returncode
     if r != 0:
         fail(
             "Issue #2813 cascade relower silent skip linter failed — run python3 scripts/coverage/checks/check_cascade_relower_silent_skip_2813.py"
@@ -3562,10 +2884,7 @@ def cmd_lint():
     # Issue #2814 M7: capture_audit_event_forced enforcement link gap metric.
     # ac2814 in test_capture_audit_event_forced_enforcement_link.
     ael_script = COVERAGE_CHECKS / "check_capture_audit_event_forced_enforcement_link_2814.py"
-    if not ael_script.exists():
-        fail(f"missing {ael_script}")
-        return 1
-    r = run([sys.executable, str(ael_script)], cwd=ROOT)
+    r = _coverage_run(ael_script).returncode
     if r != 0:
         fail(
             "Issue #2814 audit enforcement link linter failed — run python3 scripts/coverage/checks/check_capture_audit_event_forced_enforcement_link_2814.py"
@@ -3574,10 +2893,7 @@ def cmd_lint():
     # Issue #2815: cascade multi-define same-name (not first-wins).
     # ac2815 in test_cascade_multi_define_stale.
     cmd_script = COVERAGE_CHECKS / "check_cascade_multi_define_stale_2815.py"
-    if not cmd_script.exists():
-        fail(f"missing {cmd_script}")
-        return 1
-    r = run([sys.executable, str(cmd_script)], cwd=ROOT)
+    r = _coverage_run(cmd_script).returncode
     if r != 0:
         fail(
             "Issue #2815 cascade multi-define stale linter failed — run python3 scripts/coverage/checks/check_cascade_multi_define_stale_2815.py"
@@ -3586,10 +2902,7 @@ def cmd_lint():
     # Issue #2816: cascade path2 O(N+M) define-by-sym index.
     # ac2816 in test_cascade_path2_define_index.
     cp2_script = COVERAGE_CHECKS / "check_cascade_path2_define_index_2816.py"
-    if not cp2_script.exists():
-        fail(f"missing {cp2_script}")
-        return 1
-    r = run([sys.executable, str(cp2_script)], cwd=ROOT)
+    r = _coverage_run(cp2_script).returncode
     if r != 0:
         fail(
             "Issue #2816 cascade path2 define index linter failed — run python3 scripts/coverage/checks/check_cascade_path2_define_index_2816.py"
@@ -3598,10 +2911,7 @@ def cmd_lint():
     # Issue #2817: cascade ghost-name defuse_touch skip (no live Define).
     # ac2817 in test_cascade_defuse_touch_null_define.
     cgn_script = COVERAGE_CHECKS / "check_cascade_defuse_touch_null_define_2817.py"
-    if not cgn_script.exists():
-        fail(f"missing {cgn_script}")
-        return 1
-    r = run([sys.executable, str(cgn_script)], cwd=ROOT)
+    r = _coverage_run(cgn_script).returncode
     if r != 0:
         fail(
             "Issue #2817 cascade ghost-name defuse_touch linter failed — run python3 scripts/coverage/checks/check_cascade_defuse_touch_null_define_2817.py"
@@ -3610,10 +2920,7 @@ def cmd_lint():
     # Issue #2818: should_audit Full cold-start; Sampled only via apply_dev.
     # ac2818 in test_should_audit_sampled_default.
     sas_script = COVERAGE_CHECKS / "check_should_audit_sampled_default_2818.py"
-    if not sas_script.exists():
-        fail(f"missing {sas_script}")
-        return 1
-    r = run([sys.executable, str(sas_script)], cwd=ROOT)
+    r = _coverage_run(sas_script).returncode
     if r != 0:
         fail(
             "Issue #2818 should_audit Sampled default linter failed — run python3 scripts/coverage/checks/check_should_audit_sampled_default_2818.py"
@@ -3622,10 +2929,7 @@ def cmd_lint():
     # Issue #2819: capture_audit_event_forced lock-free trail (no hot-path mu).
     # ac2819 in test_audit_trail_lockfree.
     atl_script = COVERAGE_CHECKS / "check_audit_trail_lockfree_2819.py"
-    if not atl_script.exists():
-        fail(f"missing {atl_script}")
-        return 1
-    r = run([sys.executable, str(atl_script)], cwd=ROOT)
+    r = _coverage_run(atl_script).returncode
     if r != 0:
         fail(
             "Issue #2819 audit trail lockfree linter failed — run python3 scripts/coverage/checks/check_audit_trail_lockfree_2819.py"
@@ -3634,10 +2938,7 @@ def cmd_lint():
     # Issue #2820: seal last SoA block after alloc_block dual-emit.
     # ac2820 in test_alloc_block_seal_last.
     abs_script = COVERAGE_CHECKS / "check_alloc_block_seal_last_2820.py"
-    if not abs_script.exists():
-        fail(f"missing {abs_script}")
-        return 1
-    r = run([sys.executable, str(abs_script)], cwd=ROOT)
+    r = _coverage_run(abs_script).returncode
     if r != 0:
         fail(
             "Issue #2820 alloc_block seal last linter failed — run python3 scripts/coverage/checks/check_alloc_block_seal_last_2820.py"
@@ -3646,10 +2947,7 @@ def cmd_lint():
     # Issue #2821: enable_soa_dual_emit skip-reset when already enabled.
     # ac2821 in test_enable_soa_dual_emit_no_reset.
     esd_script = COVERAGE_CHECKS / "check_enable_soa_dual_emit_no_reset_2821.py"
-    if not esd_script.exists():
-        fail(f"missing {esd_script}")
-        return 1
-    r = run([sys.executable, str(esd_script)], cwd=ROOT)
+    r = _coverage_run(esd_script).returncode
     if r != 0:
         fail(
             "Issue #2821 enable_soa_dual_emit no-reset linter failed — run python3 scripts/coverage/checks/check_enable_soa_dual_emit_no_reset_2821.py"
@@ -3658,10 +2956,7 @@ def cmd_lint():
     # Issue #2822: run_one auto-wires pipeline epoch when TLS unset.
     # ac2822 in test_run_one_epoch_default.
     roe_script = COVERAGE_CHECKS / "check_run_one_epoch_default_2822.py"
-    if not roe_script.exists():
-        fail(f"missing {roe_script}")
-        return 1
-    r = run([sys.executable, str(roe_script)], cwd=ROOT)
+    r = _coverage_run(roe_script).returncode
     if r != 0:
         fail(
             "Issue #2822 run_one epoch default linter failed — run python3 scripts/coverage/checks/check_run_one_epoch_default_2822.py"
@@ -3670,10 +2965,7 @@ def cmd_lint():
     # Issue #2823: run_one performs fiber yield action when policy is true.
     # ac2823 in test_run_one_yield_hook_actual.
     roy_script = COVERAGE_CHECKS / "check_run_one_yield_hook_actual_2823.py"
-    if not roy_script.exists():
-        fail(f"missing {roy_script}")
-        return 1
-    r = run([sys.executable, str(roy_script)], cwd=ROOT)
+    r = _coverage_run(roy_script).returncode
     if r != 0:
         fail(
             "Issue #2823 run_one yield hook actual linter failed — run python3 scripts/coverage/checks/check_run_one_yield_hook_actual_2823.py"
@@ -3682,10 +2974,7 @@ def cmd_lint():
     # Issue #2824: run_dirty_pipeline TLS attribution isolates concurrent counters.
     # ac2824 in test_dirty_pipeline_counter_isolation.
     dpi_script = COVERAGE_CHECKS / "check_dirty_pipeline_counter_isolation_2824.py"
-    if not dpi_script.exists():
-        fail(f"missing {dpi_script}")
-        return 1
-    r = run([sys.executable, str(dpi_script)], cwd=ROOT)
+    r = _coverage_run(dpi_script).returncode
     if r != 0:
         fail(
             "Issue #2824 dirty pipeline counter isolation linter failed — run python3 scripts/coverage/checks/check_dirty_pipeline_counter_isolation_2824.py"
@@ -3694,10 +2983,7 @@ def cmd_lint():
     # Issue #2825: dual-emit per-instruction SoA source_marker (hygiene parity).
     # ac2825 in test_emit_soa_source_marker_propagation.
     esm_script = COVERAGE_CHECKS / "check_emit_soa_source_marker_propagation_2825.py"
-    if not esm_script.exists():
-        fail(f"missing {esm_script}")
-        return 1
-    r = run([sys.executable, str(esm_script)], cwd=ROOT)
+    r = _coverage_run(esm_script).returncode
     if r != 0:
         fail(
             "Issue #2825 emit SoA source_marker linter failed — run python3 scripts/coverage/checks/check_emit_soa_source_marker_propagation_2825.py"
@@ -3706,10 +2992,7 @@ def cmd_lint():
     # Issue #2826: self_func_id footgun — helpers + ban bare id!=0.
     # ac2826 in test_self_func_active_invariant.
     sfa_script = COVERAGE_CHECKS / "check_self_func_id_usage_2826.py"
-    if not sfa_script.exists():
-        fail(f"missing {sfa_script}")
-        return 1
-    r = run([sys.executable, str(sfa_script)], cwd=ROOT)
+    r = _coverage_run(sfa_script).returncode
     if r != 0:
         fail(
             "Issue #2826 self_func_id usage linter failed — run python3 scripts/coverage/checks/check_self_func_id_usage_2826.py"
@@ -3719,10 +3002,7 @@ def cmd_lint():
     # (not AND with pipeline_epoch_hint). ac2827 in
     # test_run_one_requires_expression_partial.
     rorep_script = COVERAGE_CHECKS / "check_run_one_requires_expression_partial_2827.py"
-    if not rorep_script.exists():
-        fail(f"missing {rorep_script}")
-        return 1
-    r = run([sys.executable, str(rorep_script)], cwd=ROOT)
+    r = _coverage_run(rorep_script).returncode
     if r != 0:
         fail(
             "Issue #2827 run_one requires-expression partial linter failed — run python3 scripts/coverage/checks/check_run_one_requires_expression_partial_2827.py"
@@ -3731,10 +3011,7 @@ def cmd_lint():
     # Issue #2828: LinearOwnership Branch/Return/CellGet/MakePair input scan.
     # ac2828 in test_linear_ownership_branch_cellget.
     lobc_script = COVERAGE_CHECKS / "check_linear_ownership_branch_cellget_2828.py"
-    if not lobc_script.exists():
-        fail(f"missing {lobc_script}")
-        return 1
-    r = run([sys.executable, str(lobc_script)], cwd=ROOT)
+    r = _coverage_run(lobc_script).returncode
     if r != 0:
         fail(
             "Issue #2828 linear ownership Branch/CellGet input scan linter failed — run python3 scripts/coverage/checks/check_linear_ownership_branch_cellget_2828.py"
@@ -3743,10 +3020,7 @@ def cmd_lint():
     # Issue #2829: RefCountOp-inc is non-consuming (ops[2]==1 only share).
     # ac2829 in test_linear_ownership_refcount_inc.
     lori_script = COVERAGE_CHECKS / "check_linear_ownership_refcount_inc_2829.py"
-    if not lori_script.exists():
-        fail(f"missing {lori_script}")
-        return 1
-    r = run([sys.executable, str(lori_script)], cwd=ROOT)
+    r = _coverage_run(lori_script).returncode
     if r != 0:
         fail(
             "Issue #2829 linear ownership RefCountOp-inc linter failed — run python3 scripts/coverage/checks/check_linear_ownership_refcount_inc_2829.py"
@@ -3755,10 +3029,7 @@ def cmd_lint():
     # Issue #2830: DCEPass expands Call/Apply/PrimCall arg ranges.
     # ac2830 in test_dce_pass_variable_args.
     dceva_script = COVERAGE_CHECKS / "check_dce_pass_variable_args_2830.py"
-    if not dceva_script.exists():
-        fail(f"missing {dceva_script}")
-        return 1
-    r = run([sys.executable, str(dceva_script)], cwd=ROOT)
+    r = _coverage_run(dceva_script).returncode
     if r != 0:
         fail(
             "Issue #2830 DCE variable-arg scan linter failed — run python3 scripts/coverage/checks/check_dce_pass_variable_args_2830.py"
@@ -3767,10 +3038,7 @@ def cmd_lint():
     # Issue #2831: TCOPass sweeps unreachable dead blocks after TCO.
     # ac2831 in test_tco_dead_block_accumulation.
     tcodb_script = COVERAGE_CHECKS / "check_tco_dead_block_accumulation_2831.py"
-    if not tcodb_script.exists():
-        fail(f"missing {tcodb_script}")
-        return 1
-    r = run([sys.executable, str(tcodb_script)], cwd=ROOT)
+    r = _coverage_run(tcodb_script).returncode
     if r != 0:
         fail(
             "Issue #2831 TCO dead-block accumulation linter failed — run python3 scripts/coverage/checks/check_tco_dead_block_accumulation_2831.py"
@@ -3779,10 +3047,7 @@ def cmd_lint():
     # Issue #2832: TCOPass non-zero arg_base OOB guard.
     # ac2832 in test_tco_arg_base_oob.
     tcoob_script = COVERAGE_CHECKS / "check_tco_arg_base_oob_2832.py"
-    if not tcoob_script.exists():
-        fail(f"missing {tcoob_script}")
-        return 1
-    r = run([sys.executable, str(tcoob_script)], cwd=ROOT)
+    r = _coverage_run(tcoob_script).returncode
     if r != 0:
         fail(
             "Issue #2832 TCO arg_base OOB linter failed — run python3 scripts/coverage/checks/check_tco_arg_base_oob_2832.py"
@@ -3791,10 +3056,7 @@ def cmd_lint():
     # Issue #2833: TCOPass single Jump terminator (no duplicate / Branch residue).
     # ac2833 in test_tco_jump_terminator_emitted.
     tcojt_script = COVERAGE_CHECKS / "check_tco_jump_terminator_2833.py"
-    if not tcojt_script.exists():
-        fail(f"missing {tcojt_script}")
-        return 1
-    r = run([sys.executable, str(tcojt_script)], cwd=ROOT)
+    r = _coverage_run(tcojt_script).returncode
     if r != 0:
         fail(
             "Issue #2833 TCO Jump terminator linter failed — run python3 scripts/coverage/checks/check_tco_jump_terminator_2833.py"
@@ -3803,10 +3065,7 @@ def cmd_lint():
     # Issue #2834: DCEPass must not treat Branch/Jump block ids as slots.
     # ac2834 in test_dce_branch_block_id_overprotect.
     dcebr_script = COVERAGE_CHECKS / "check_dce_branch_block_id_overprotect_2834.py"
-    if not dcebr_script.exists():
-        fail(f"missing {dcebr_script}")
-        return 1
-    r = run([sys.executable, str(dcebr_script)], cwd=ROOT)
+    r = _coverage_run(dcebr_script).returncode
     if r != 0:
         fail(
             "Issue #2834 DCE Branch block-id overprotect linter failed — run python3 scripts/coverage/checks/check_dce_branch_block_id_overprotect_2834.py"
@@ -3815,10 +3074,7 @@ def cmd_lint():
     # Issue #2835: Restricted multi-tenant → hard_fiber_isolation.
     # ac2835 in test_hard_fiber_restricted.
     rmthf_script = COVERAGE_CHECKS / "check_restricted_multi_tenant_hard_fiber_2835.py"
-    if not rmthf_script.exists():
-        fail(f"missing {rmthf_script}")
-        return 1
-    r = run([sys.executable, str(rmthf_script)], cwd=ROOT)
+    r = _coverage_run(rmthf_script).returncode
     if r != 0:
         fail(
             "Issue #2835 Restricted multi-tenant hard fiber linter failed — run python3 scripts/coverage/checks/check_restricted_multi_tenant_hard_fiber_2835.py"
@@ -3828,10 +3084,7 @@ def cmd_lint():
     # Closes residual soft grant-fiber share under pure Strict. Extends
     # test_hard_fiber_restricted (#81967); no docs/design/ (#1655).
     phfd_script = COVERAGE_CHECKS / "check_production_hard_fiber_default_2943.py"
-    if not phfd_script.exists():
-        fail(f"missing {phfd_script}")
-        return 1
-    r = run([sys.executable, str(phfd_script)], cwd=ROOT)
+    r = _coverage_run(phfd_script).returncode
     if r != 0:
         fail(
             "Issue #2943 production hard fiber default linter failed — run python3 scripts/coverage/checks/check_production_hard_fiber_default_2943.py"
@@ -3842,10 +3095,7 @@ def cmd_lint():
     # production_defaults || Full; Soft/Sampled keep last-resort gen.
     # Extends test_audit_mid_fallback_slo (#81967); no docs/design/ (#1655).
     mzt_script = COVERAGE_CHECKS / "check_mid_fallback_zero_tolerance_2836.py"
-    if not mzt_script.exists():
-        fail(f"missing {mzt_script}")
-        return 1
-    r = run([sys.executable, str(mzt_script)], cwd=ROOT)
+    r = _coverage_run(mzt_script).returncode
     if r != 0:
         fail(
             "Issue #2836 mid-fallback zero-tolerance linter failed — run python3 scripts/coverage/checks/check_mid_fallback_zero_tolerance_2836.py"
@@ -3855,10 +3105,7 @@ def cmd_lint():
     # (ring + WAL). Soft stays observe-only. Extends
     # test_audit_mid_fallback_slo (#81967); no docs/design/ (#1655).
     mfrs_script = COVERAGE_CHECKS / "check_mid_fallback_refuse_se_3054.py"
-    if not mfrs_script.exists():
-        fail(f"missing {mfrs_script}")
-        return 1
-    r = run([sys.executable, str(mfrs_script)], cwd=ROOT)
+    r = _coverage_run(mfrs_script).returncode
     if r != 0:
         fail(
             "Issue #3054 mid-fallback refuse SE linter failed — run python3 scripts/coverage/checks/check_mid_fallback_refuse_se_3054.py"
@@ -3868,10 +3115,7 @@ def cmd_lint():
     # degraded (fail-open residual). Extends test_security_event_wal_replay
     # (#81967); no docs/design/ (#1655).
     wafs_script = COVERAGE_CHECKS / "check_wal_append_fail_slo_3056.py"
-    if not wafs_script.exists():
-        fail(f"missing {wafs_script}")
-        return 1
-    r = run([sys.executable, str(wafs_script)], cwd=ROOT)
+    r = _coverage_run(wafs_script).returncode
     if r != 0:
         fail(
             "Issue #3056 WAL append_fail SLO linter failed — run python3 scripts/coverage/checks/check_wal_append_fail_slo_3056.py"
@@ -3880,10 +3124,7 @@ def cmd_lint():
     # Issue #2837: Moving densify external-root slot remap + sticky densify-off.
     # Extends test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
     mer_script = COVERAGE_CHECKS / "check_moving_external_root_remap_2837.py"
-    if not mer_script.exists():
-        fail(f"missing {mer_script}")
-        return 1
-    r = run([sys.executable, str(mer_script)], cwd=ROOT)
+    r = _coverage_run(mer_script).returncode
     if r != 0:
         fail(
             "Issue #2837 Moving external-root remap linter failed — run python3 scripts/coverage/checks/check_moving_external_root_remap_2837.py"
@@ -3892,10 +3133,7 @@ def cmd_lint():
     # Issue #2905: sticky densify-off auto-clear on clean Moving / Phase-5 green
     # + Agent query visibility (schema-2905). Extends #2837 suite (#81967).
     mst_script = COVERAGE_CHECKS / "check_moving_sticky_densify_off_2905.py"
-    if not mst_script.exists():
-        fail(f"missing {mst_script}")
-        return 1
-    r = run([sys.executable, str(mst_script)], cwd=ROOT)
+    r = _coverage_run(mst_script).returncode
     if r != 0:
         fail(
             "Issue #2905 moving sticky densify-off linter failed — run python3 scripts/coverage/checks/check_moving_sticky_densify_off_2905.py"
@@ -3907,10 +3145,7 @@ def cmd_lint():
     # src/-aligned Moving suite (test_moving_densify_fail_closed.cpp, #81967);
     # no docs/design/ (#1655).
     mkra_script = COVERAGE_CHECKS / "check_moving_known_roots_auto_register_2889.py"
-    if not mkra_script.exists():
-        fail(f"missing {mkra_script}")
-        return 1
-    r = run([sys.executable, str(mkra_script)], cwd=ROOT)
+    r = _coverage_run(mkra_script).returncode
     if r != 0:
         fail(
             "Issue #2889 known-roots auto-register linter failed — run python3 scripts/coverage/checks/check_moving_known_roots_auto_register_2889.py"
@@ -3921,10 +3156,7 @@ def cmd_lint():
     # Extends #2889/#2905 suite (test_moving_densify_fail_closed.cpp, #81967);
     # no docs/design/ (#1655).
     mksr_script = COVERAGE_CHECKS / "check_moving_known_roots_sticky_recovery_2935.py"
-    if not mksr_script.exists():
-        fail(f"missing {mksr_script}")
-        return 1
-    r = run([sys.executable, str(mksr_script)], cwd=ROOT)
+    r = _coverage_run(mksr_script).returncode
     if r != 0:
         fail(
             "Issue #2935 known-roots sticky recovery linter failed — run python3 scripts/coverage/checks/check_moving_known_roots_sticky_recovery_2935.py"
@@ -3934,10 +3166,7 @@ def cmd_lint():
     # + Moving densify fail-closed BEFORE address movement. Extends
     # test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
     gopcd_script = COVERAGE_CHECKS / "check_general_object_pin_create_densify_2971.py"
-    if not gopcd_script.exists():
-        fail(f"missing {gopcd_script}")
-        return 1
-    r = run([sys.executable, str(gopcd_script)], cwd=ROOT)
+    r = _coverage_run(gopcd_script).returncode
     if r != 0:
         fail(
             "Issue #2971 GeneralObjectPin create+densify linter failed — run python3 scripts/coverage/checks/check_general_object_pin_create_densify_2971.py"
@@ -3948,10 +3177,7 @@ def cmd_lint():
     # not cover (#3017). Extends test_moving_densify_fail_closed
     # (#81967); no docs/design/ (#1655).
     gopalloc_script = COVERAGE_CHECKS / "check_general_object_pin_allocate_3053.py"
-    if not gopalloc_script.exists():
-        fail(f"missing {gopalloc_script}")
-        return 1
-    r = run([sys.executable, str(gopalloc_script)], cwd=ROOT)
+    r = _coverage_run(gopalloc_script).returncode
     if r != 0:
         fail(
             "Issue #3053 GeneralObjectPin allocate residual linter failed — run python3 scripts/coverage/checks/check_general_object_pin_allocate_3053.py"
@@ -3961,10 +3187,7 @@ def cmd_lint():
     # (block BEFORE address movement). Extends test_moving_densify_fail_closed
     # (#81967); no docs/design/ (#1655).
     mpdc_script = COVERAGE_CHECKS / "check_moving_pre_densify_completeness_2973.py"
-    if not mpdc_script.exists():
-        fail(f"missing {mpdc_script}")
-        return 1
-    r = run([sys.executable, str(mpdc_script)], cwd=ROOT)
+    r = _coverage_run(mpdc_script).returncode
     if r != 0:
         fail(
             "Issue #2973 pre-densify completeness linter failed — run python3 scripts/coverage/checks/check_moving_pre_densify_completeness_2973.py"
@@ -3974,20 +3197,14 @@ def cmd_lint():
     # parallel_intend + scope watch). Extends test_failure_policy_bridge
     # (#81967); no docs/design/ (#1655).
     wr2974_script = COVERAGE_CHECKS / "check_workflow_run_2974.py"
-    if not wr2974_script.exists():
-        fail(f"missing {wr2974_script}")
-        return 1
-    r = run([sys.executable, str(wr2974_script)], cwd=ROOT)
+    r = _coverage_run(wr2974_script).returncode
     if r != 0:
         fail("Issue #2974 workflow-run linter failed — run python3 scripts/coverage/checks/check_workflow_run_2974.py")
         return r
     # Issue #3206: apply_workflow residual Cancel/JoinDrain under production.
     # Soft / Report observe-only. Extends test_failure_policy_bridge.
     wra3206_script = COVERAGE_CHECKS / "check_workflow_residual_action_3206.py"
-    if not wra3206_script.exists():
-        fail(f"missing {wra3206_script}")
-        return 1
-    r = run([sys.executable, str(wra3206_script)], cwd=ROOT)
+    r = _coverage_run(wra3206_script).returncode
     if r != 0:
         fail(
             "Issue #3206 workflow residual action linter failed — run python3 scripts/coverage/checks/check_workflow_residual_action_3206.py"
@@ -3997,10 +3214,7 @@ def cmd_lint():
     # production hard gate. Extends test_residual_gc_defer_assert (#81967);
     # no docs/design/ (#1655).
     oerp_script = COVERAGE_CHECKS / "check_outermost_exit_residual_pin_2975.py"
-    if not oerp_script.exists():
-        fail(f"missing {oerp_script}")
-        return 1
-    r = run([sys.executable, str(oerp_script)], cwd=ROOT)
+    r = _coverage_run(oerp_script).returncode
     if r != 0:
         fail(
             "Issue #2975 outermost-exit residual+pin linter failed — run python3 scripts/coverage/checks/check_outermost_exit_residual_pin_2975.py"
@@ -4009,10 +3223,7 @@ def cmd_lint():
     # Issue #2976: AgentScope SingleOwner / MutexGuarded. Extends
     # test_agent_scope (#81967); no docs/design/ (#1655).
     ascm_script = COVERAGE_CHECKS / "check_agent_scope_concurrency_2976.py"
-    if not ascm_script.exists():
-        fail(f"missing {ascm_script}")
-        return 1
-    r = run([sys.executable, str(ascm_script)], cwd=ROOT)
+    r = _coverage_run(ascm_script).returncode
     if r != 0:
         fail(
             "Issue #2976 AgentScope concurrency linter failed — run python3 scripts/coverage/checks/check_agent_scope_concurrency_2976.py"
@@ -4022,10 +3233,7 @@ def cmd_lint():
     # Extends test_anonymous_residual_stable_id_policy (#81967);
     # no docs/design/ (#1655).
     rrp_script = COVERAGE_CHECKS / "check_residual_remount_prefer_force_jit_2977.py"
-    if not rrp_script.exists():
-        fail(f"missing {rrp_script}")
-        return 1
-    r = run([sys.executable, str(rrp_script)], cwd=ROOT)
+    r = _coverage_run(rrp_script).returncode
     if r != 0:
         fail(
             "Issue #2977 residual remount prefer linter failed — run python3 scripts/coverage/checks/check_residual_remount_prefer_force_jit_2977.py"
@@ -4035,10 +3243,7 @@ def cmd_lint():
     # Extends test_anonymous_residual_stable_id_policy +
     # test_force_jit_repromote (#81967); no docs/design/ (#1655).
     rsc_script = COVERAGE_CHECKS / "check_reemit_success_sync_covered_remount_2978.py"
-    if not rsc_script.exists():
-        fail(f"missing {rsc_script}")
-        return 1
-    r = run([sys.executable, str(rsc_script)], cwd=ROOT)
+    r = _coverage_run(rsc_script).returncode
     if r != 0:
         fail(
             "Issue #2978 reemit-success sync covered remount linter failed — run python3 scripts/coverage/checks/check_reemit_success_sync_covered_remount_2978.py"
@@ -4049,10 +3254,7 @@ def cmd_lint():
     # test_anonymous_residual_stable_id_policy +
     # test_epoch_invariant_walk (#81967); no docs/design/ (#1655).
     erh_script = COVERAGE_CHECKS / "check_epoch_residual_merged_heal_2980.py"
-    if not erh_script.exists():
-        fail(f"missing {erh_script}")
-        return 1
-    r = run([sys.executable, str(erh_script)], cwd=ROOT)
+    r = _coverage_run(erh_script).returncode
     if r != 0:
         fail(
             "Issue #2980 epoch+residual merged heal linter failed — run python3 scripts/coverage/checks/check_epoch_residual_merged_heal_2980.py"
@@ -4063,10 +3265,7 @@ def cmd_lint():
     # mismatch. Extends require_effect_auto_isolation + tenant_scope_fiber
     # mandate tests (#81967); no docs/design/ (#1655).
     sefp_script = COVERAGE_CHECKS / "check_side_effect_fiber_principal_2839.py"
-    if not sefp_script.exists():
-        fail(f"missing {sefp_script}")
-        return 1
-    r = run([sys.executable, str(sefp_script)], cwd=ROOT)
+    r = _coverage_run(sefp_script).returncode
     if r != 0:
         fail(
             "Issue #2839 side-effect + fiber principal linter failed — run python3 scripts/coverage/checks/check_side_effect_fiber_principal_2839.py"
@@ -4077,10 +3276,7 @@ def cmd_lint():
     # window after #2881). Extends require_effect_auto_isolation +
     # tenant_scope_fiber tests (#81967); no docs/design/ (#1655).
     se2942_script = COVERAGE_CHECKS / "check_side_effect_node_id_mandate_2942.py"
-    if not se2942_script.exists():
-        fail(f"missing {se2942_script}")
-        return 1
-    r = run([sys.executable, str(se2942_script)], cwd=ROOT)
+    r = _coverage_run(se2942_script).returncode
     if r != 0:
         fail(
             "Issue #2942 NodeId side-effect mandate linter failed — run python3 scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py"
@@ -4091,10 +3287,7 @@ def cmd_lint():
     # default ref_tenant=0). Extends test_tenant_isolation_enforcement
     # (#81967); no docs/design/ (#1655).
     se3040_script = COVERAGE_CHECKS / "check_compile_node_id_entry_3040.py"
-    if not se3040_script.exists():
-        fail(f"missing {se3040_script}")
-        return 1
-    r = run([sys.executable, str(se3040_script)], cwd=ROOT)
+    r = _coverage_run(se3040_script).returncode
     if r != 0:
         fail(
             "Issue #3040 compile NodeId-only entry linter failed — run python3 scripts/coverage/checks/check_compile_node_id_entry_3040.py"
@@ -4105,10 +3298,7 @@ def cmd_lint():
     # + tenant_isolation_enforcement (#81967); no docs/design/ (#1655);
     # no new query key.
     se3415_script = COVERAGE_CHECKS / "check_bare_nodeid_foreign_stamp_3415.py"
-    if not se3415_script.exists():
-        fail(f"missing {se3415_script}")
-        return 1
-    r = run([sys.executable, str(se3415_script)], cwd=ROOT)
+    r = _coverage_run(se3415_script).returncode
     if r != 0:
         fail(
             "Issue #3415 occupancy NodeId foreign-stamp linter failed — run python3 scripts/coverage/checks/check_bare_nodeid_foreign_stamp_3415.py"
@@ -4121,10 +3311,7 @@ def cmd_lint():
     # Extends test_capability_single_use_consume.cpp (#81967); no
     # docs/design/ (#1655).
     pdsu_script = COVERAGE_CHECKS / "check_production_default_single_use_2882.py"
-    if not pdsu_script.exists():
-        fail(f"missing {pdsu_script}")
-        return 1
-    r = run([sys.executable, str(pdsu_script)], cwd=ROOT)
+    r = _coverage_run(pdsu_script).returncode
     if r != 0:
         fail(
             "Issue #2882 production default single-use linter failed — run python3 scripts/coverage/checks/check_production_default_single_use_2882.py"
@@ -4140,10 +3327,7 @@ def cmd_lint():
     # test_capability_single_use_consume.cpp (#81934 / #81967); no
     # docs/design/ (#1655).
     dsb_script = COVERAGE_CHECKS / "check_durable_session_bind_3177.py"
-    if not dsb_script.exists():
-        fail(f"missing {dsb_script}")
-        return 1
-    r = run([sys.executable, str(dsb_script)], cwd=ROOT)
+    r = _coverage_run(dsb_script).returncode
     if r != 0:
         fail(
             "Issue #3177 durable session_bind linter failed — run python3 scripts/coverage/checks/check_durable_session_bind_3177.py"
@@ -4163,10 +3347,7 @@ def cmd_lint():
     # test_arena_required_cover_no_value_only.cpp (#81934 / #3156); no
     # docs/design/ (#1655).
     pspc3180_script = COVERAGE_CHECKS / "check_production_small_pool_cover_3180.py"
-    if not pspc3180_script.exists():
-        fail(f"missing {pspc3180_script}")
-        return 1
-    r = run([sys.executable, str(pspc3180_script)], cwd=ROOT)
+    r = _coverage_run(pspc3180_script).returncode
     if r != 0:
         fail(
             "Issue #3180 production small-pool cover linter failed — run python3 scripts/coverage/checks/check_production_small_pool_cover_3180.py"
@@ -4180,10 +3361,7 @@ def cmd_lint():
     # test_moving_densify_fail_closed / test_arena_required_cover_no_value_only
     # / test_general_object_pin_coverage_gate (#81967); no docs/design/ (#1655).
     padc3214_script = COVERAGE_CHECKS / "check_production_all_densify_allocate_cover_3214.py"
-    if not padc3214_script.exists():
-        fail(f"missing {padc3214_script}")
-        return 1
-    r = run([sys.executable, str(padc3214_script)], cwd=ROOT)
+    r = _coverage_run(padc3214_script).returncode
     if r != 0:
         fail(
             "Issue #3214 densify-tracked allocate cover linter failed — run python3 scripts/coverage/checks/check_production_all_densify_allocate_cover_3214.py"
@@ -4197,10 +3375,7 @@ def cmd_lint():
     # test_moving_densify_fail_closed + test_arena_required_cover_no_value_only
     # (#81967); no docs/design/; no test_issue_3326.cpp.
     fdc3326_script = COVERAGE_CHECKS / "check_factory_default_cover_3326.py"
-    if not fdc3326_script.exists():
-        fail(f"missing {fdc3326_script}")
-        return 1
-    r = run([sys.executable, str(fdc3326_script)], cwd=ROOT)
+    r = _coverage_run(fdc3326_script).returncode
     if r != 0:
         fail(
             "Issue #3326 factory-default cover linter failed — run python3 scripts/coverage/checks/check_factory_default_cover_3326.py"
@@ -4211,10 +3386,7 @@ def cmd_lint():
     # create. Extends test_moving_densify_fail_closed +
     # test_arena_required_cover_no_value_only; linter after #3326.
     fru3420_script = COVERAGE_CHECKS / "check_factory_refuse_uncovered_3420.py"
-    if not fru3420_script.exists():
-        fail(f"missing {fru3420_script}")
-        return 1
-    r = run([sys.executable, str(fru3420_script)], cwd=ROOT)
+    r = _coverage_run(fru3420_script).returncode
     if r != 0:
         fail(
             "Issue #3420 factory-refuse uncovered linter failed — run python3 scripts/coverage/checks/check_factory_refuse_uncovered_3420.py"
@@ -4223,10 +3395,7 @@ def cmd_lint():
     # Issue #3456: destroy indexes ptr→dtors_ slot (swap-remove). Linear
     # begin() walk is miss-only. Extends required-cover + #3420 linter.
     ddi3456_script = COVERAGE_CHECKS / "check_destroy_dtor_index_3456.py"
-    if not ddi3456_script.exists():
-        fail(f"missing {ddi3456_script}")
-        return 1
-    r = run([sys.executable, str(ddi3456_script)], cwd=ROOT)
+    r = _coverage_run(ddi3456_script).returncode
     if r != 0:
         fail(
             "Issue #3456 destroy dtor-index linter failed — run python3 scripts/coverage/checks/check_destroy_dtor_index_3456.py"
@@ -4235,10 +3404,7 @@ def cmd_lint():
     # Issue #3457: eval_flat intern by SymId (dense), not hashed
     # string_view. Extends #3401 linter + test_ir eval_flat fixture.
     efs3457_script = COVERAGE_CHECKS / "check_eval_flat_sym_intern_3457.py"
-    if not efs3457_script.exists():
-        fail(f"missing {efs3457_script}")
-        return 1
-    r = run([sys.executable, str(efs3457_script)], cwd=ROOT)
+    r = _coverage_run(efs3457_script).returncode
     if r != 0:
         fail(
             "Issue #3457 eval_flat SymId intern linter failed — run python3 scripts/coverage/checks/check_eval_flat_sym_intern_3457.py"
@@ -4247,10 +3413,7 @@ def cmd_lint():
     # Issue #3444: orch:scope-child returns scope-path / child-index;
     # spawn/watch/join/resolve accept :path via child_at. After #3457.
     sca3444_script = COVERAGE_CHECKS / "check_scope_child_address_3444.py"
-    if not sca3444_script.exists():
-        fail(f"missing {sca3444_script}")
-        return 1
-    r = run([sys.executable, str(sca3444_script)], cwd=ROOT)
+    r = _coverage_run(sca3444_script).returncode
     if r != 0:
         fail(
             "Issue #3444 scope-child address linter failed — run python3 scripts/coverage/checks/check_scope_child_address_3444.py"
@@ -4260,10 +3423,7 @@ def cmd_lint():
     # closures (#2569 restamp is not a remap). Soft / no-move keep
     # recover. Extends test_setcode_rebind_survive; linter after #3420.
     acd3421_script = COVERAGE_CHECKS / "check_apply_closure_densify_hard_refuse_3421.py"
-    if not acd3421_script.exists():
-        fail(f"missing {acd3421_script}")
-        return 1
-    r = run([sys.executable, str(acd3421_script)], cwd=ROOT)
+    r = _coverage_run(acd3421_script).returncode
     if r != 0:
         fail(
             "Issue #3421 apply_closure densify hard-refuse linter failed — run python3 scripts/coverage/checks/check_apply_closure_densify_hard_refuse_3421.py"
@@ -4275,10 +3435,7 @@ def cmd_lint():
     # Call-head "quote"). Extends test_unquote_splicing_hygiene.cpp
     # (#81934 — src/-aligned suite); no docs/design/ (#1655).
     qch3181_script = COVERAGE_CHECKS / "check_quote_clone_hygiene_3181.py"
-    if not qch3181_script.exists():
-        fail(f"missing {qch3181_script}")
-        return 1
-    r = run([sys.executable, str(qch3181_script)], cwd=ROOT)
+    r = _coverage_run(qch3181_script).returncode
     if r != 0:
         fail(
             "Issue #3181 quote clone hygiene linter failed — run python3 scripts/coverage/checks/check_quote_clone_hygiene_3181.py"
@@ -4289,10 +3446,7 @@ def cmd_lint():
     # test_capability_single_use_consume.cpp (#81967); no docs/design/
     # (#1655).
     msg_script = COVERAGE_CHECKS / "check_mutation_session_grant_2944.py"
-    if not msg_script.exists():
-        fail(f"missing {msg_script}")
-        return 1
-    r = run([sys.executable, str(msg_script)], cwd=ROOT)
+    r = _coverage_run(msg_script).returncode
     if r != 0:
         fail(
             "Issue #2944 mutation-session grant linter failed — run python3 scripts/coverage/checks/check_mutation_session_grant_2944.py"
@@ -4304,10 +3458,7 @@ def cmd_lint():
     # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/
     # (#1655).
     sgs_script = COVERAGE_CHECKS / "check_session_grant_steal_3048.py"
-    if not sgs_script.exists():
-        fail(f"missing {sgs_script}")
-        return 1
-    r = run([sys.executable, str(sgs_script)], cwd=ROOT)
+    r = _coverage_run(sgs_script).returncode
     if r != 0:
         fail(
             "Issue #3048 session-grant steal/abort linter failed — run python3 scripts/coverage/checks/check_session_grant_steal_3048.py"
@@ -4318,10 +3469,7 @@ def cmd_lint():
     # test_capability_single_use_consume.cpp (#81967); no docs/design/
     # (#1655).
     dec3207_script = COVERAGE_CHECKS / "check_dual_evaluator_cascade_3207.py"
-    if not dec3207_script.exists():
-        fail(f"missing {dec3207_script}")
-        return 1
-    r = run([sys.executable, str(dec3207_script)], cwd=ROOT)
+    r = _coverage_run(dec3207_script).returncode
     if r != 0:
         fail(
             "Issue #3207 dual-Evaluator cascade linter failed — run python3 scripts/coverage/checks/check_dual_evaluator_cascade_3207.py"
@@ -4332,10 +3480,7 @@ def cmd_lint():
     # test_capability_single_use_consume.cpp (#81967); no docs/design/
     # (#1655).
     sgq3209_script = COVERAGE_CHECKS / "check_session_grant_quiesce_3209.py"
-    if not sgq3209_script.exists():
-        fail(f"missing {sgq3209_script}")
-        return 1
-    r = run([sys.executable, str(sgq3209_script)], cwd=ROOT)
+    r = _coverage_run(sgq3209_script).returncode
     if r != 0:
         fail(
             "Issue #3209 session-grant quiesce linter failed — run python3 scripts/coverage/checks/check_session_grant_quiesce_3209.py"
@@ -4347,10 +3492,7 @@ def cmd_lint():
     # Extends test_capability_single_use_consume.cpp (#81967); no
     # docs/design/ (#1655).
     sgpf3241_script = COVERAGE_CHECKS / "check_session_grant_peer_fiber_3241.py"
-    if not sgpf3241_script.exists():
-        fail(f"missing {sgpf3241_script}")
-        return 1
-    r = run([sys.executable, str(sgpf3241_script)], cwd=ROOT)
+    r = _coverage_run(sgpf3241_script).returncode
     if r != 0:
         fail(
             "Issue #3241 session-grant peer-fiber linter failed — run python3 scripts/coverage/checks/check_session_grant_peer_fiber_3241.py"
@@ -4362,10 +3504,7 @@ def cmd_lint():
     # Extends test_capability_single_use_consume.cpp (#81967); no
     # docs/design/ (#1655).
     srfz3799_script = COVERAGE_CHECKS / "check_session_revoke_fiber_zero_3799.py"
-    if not srfz3799_script.exists():
-        fail(f"missing {srfz3799_script}")
-        return 1
-    r = run([sys.executable, str(srfz3799_script)], cwd=ROOT)
+    r = _coverage_run(srfz3799_script).returncode
     if r != 0:
         fail(
             "Issue #3799 session-revoke fiber_id=0 linter failed — run python3 scripts/coverage/checks/check_session_revoke_fiber_zero_3799.py"
@@ -4376,10 +3515,7 @@ def cmd_lint():
     # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/
     # (#1655).
     qpt_script = COVERAGE_CHECKS / "check_quota_per_tenant_3049.py"
-    if not qpt_script.exists():
-        fail(f"missing {qpt_script}")
-        return 1
-    r = run([sys.executable, str(qpt_script)], cwd=ROOT)
+    r = _coverage_run(qpt_script).returncode
     if r != 0:
         fail(
             "Issue #3049 per-tenant quota linter failed — run python3 scripts/coverage/checks/check_quota_per_tenant_3049.py"
@@ -4390,10 +3526,7 @@ def cmd_lint():
     # Extends test_agent_failure_policy.cpp + test_failure_policy_bridge.cpp
     # (#81967); no docs/design/ (#1655).
     jfp_script = COVERAGE_CHECKS / "check_join_fail_policy_3052.py"
-    if not jfp_script.exists():
-        fail(f"missing {jfp_script}")
-        return 1
-    r = run([sys.executable, str(jfp_script)], cwd=ROOT)
+    r = _coverage_run(jfp_script).returncode
     if r != 0:
         fail(
             "Issue #3052 join_all on_join_fail linter failed — run python3 scripts/coverage/checks/check_join_fail_policy_3052.py"
@@ -4403,10 +3536,7 @@ def cmd_lint():
     # Soft / explicit ReportOnly unchanged. Extends
     # test_agent_failure_policy.cpp (#81967); no docs/design/ (#1655).
     jfp3208_script = COVERAGE_CHECKS / "check_join_fail_production_default_3208.py"
-    if not jfp3208_script.exists():
-        fail(f"missing {jfp3208_script}")
-        return 1
-    r = run([sys.executable, str(jfp3208_script)], cwd=ROOT)
+    r = _coverage_run(jfp3208_script).returncode
     if r != 0:
         fail(
             "Issue #3208 production join_fail default linter failed — run python3 scripts/coverage/checks/check_join_fail_production_default_3208.py"
@@ -4417,10 +3547,7 @@ def cmd_lint():
     # Extends test_agent_failure_policy.cpp + test_orch_scope.cpp
     # (#81967); no docs/design/ (#1655).
     rns_script = COVERAGE_CHECKS / "check_restart_n_spec_boundary_3250.py"
-    if not rns_script.exists():
-        fail(f"missing {rns_script}")
-        return 1
-    r = run([sys.executable, str(rns_script)], cwd=ROOT)
+    r = _coverage_run(rns_script).returncode
     if r != 0:
         fail(
             "Issue #3250 RestartN spec-boundary linter failed — run python3 scripts/coverage/checks/check_restart_n_spec_boundary_3250.py"
@@ -4430,10 +3557,7 @@ def cmd_lint():
     # Extends test_orch_obs_facade + quota/BP/schedule suites (#81967);
     # no docs/design/ (#1655).
     adc_script = COVERAGE_CHECKS / "check_agent_deny_class_3251.py"
-    if not adc_script.exists():
-        fail(f"missing {adc_script}")
-        return 1
-    r = run([sys.executable, str(adc_script)], cwd=ROOT)
+    r = _coverage_run(adc_script).returncode
     if r != 0:
         fail(
             "Issue #3251 agent deny-class linter failed — run python3 scripts/coverage/checks/check_agent_deny_class_3251.py"
@@ -4442,10 +3566,7 @@ def cmd_lint():
     # Issue #3252: gen-drift refuse homology-repairs MacroIntroduced.
     # Extends test_hygiene_checkpoint.cpp (#81967); no docs/design/ (#1655).
     hgd_script = COVERAGE_CHECKS / "check_hygiene_checkpoint_gen_drift_3252.py"
-    if not hgd_script.exists():
-        fail(f"missing {hgd_script}")
-        return 1
-    r = run([sys.executable, str(hgd_script)], cwd=ROOT)
+    r = _coverage_run(hgd_script).returncode
     if r != 0:
         fail(
             "Issue #3252 hygiene gen-drift restamp linter failed — run python3 scripts/coverage/checks/check_hygiene_checkpoint_gen_drift_3252.py"
@@ -4455,10 +3576,7 @@ def cmd_lint():
     # Extends test_solve_delta_unresolved_export.cpp (#81967); no
     # docs/design/ (#1655).
     rsr_script = COVERAGE_CHECKS / "check_repair_solved_residual_3253.py"
-    if not rsr_script.exists():
-        fail(f"missing {rsr_script}")
-        return 1
-    r = run([sys.executable, str(rsr_script)], cwd=ROOT)
+    r = _coverage_run(rsr_script).returncode
     if r != 0:
         fail(
             "Issue #3253 repair-SOLVED residual linter failed — run python3 scripts/coverage/checks/check_repair_solved_residual_3253.py"
@@ -4468,10 +3586,7 @@ def cmd_lint():
     # Extends test_hold_budget_synthetic_yield_injection (#81967); no
     # docs/design/ (#1655).
     nfe_script = COVERAGE_CHECKS / "check_hold_budget_noncoop_force_edge_3254.py"
-    if not nfe_script.exists():
-        fail(f"missing {nfe_script}")
-        return 1
-    r = run([sys.executable, str(nfe_script)], cwd=ROOT)
+    r = _coverage_run(nfe_script).returncode
     if r != 0:
         fail(
             "Issue #3254 noncoop force-edge linter failed — run python3 scripts/coverage/checks/check_hold_budget_noncoop_force_edge_3254.py"
@@ -4481,10 +3596,7 @@ def cmd_lint():
     # Extends test_dep_graph_hybrid_cascade.cpp (#81967); no
     # docs/design/ (#1655).
     dgs_script = COVERAGE_CHECKS / "check_dual_dep_graph_soft_parity_partial_3255.py"
-    if not dgs_script.exists():
-        fail(f"missing {dgs_script}")
-        return 1
-    r = run([sys.executable, str(dgs_script)], cwd=ROOT)
+    r = _coverage_run(dgs_script).returncode
     if r != 0:
         fail(
             "Issue #3255 Soft dual-graph parity partial linter failed — run python3 scripts/coverage/checks/check_dual_dep_graph_soft_parity_partial_3255.py"
@@ -4495,10 +3607,7 @@ def cmd_lint():
     # reuses #3255 fail-closed. String graph stays source of truth.
     # Extends test_dep_graph_hybrid_cascade; no docs/design/; no new query.
     dgi3486_script = COVERAGE_CHECKS / "check_dual_dep_graph_inject_oracle_3486.py"
-    if not dgi3486_script.exists():
-        fail(f"missing {dgi3486_script}")
-        return 1
-    r = run([sys.executable, str(dgi3486_script)], cwd=ROOT)
+    r = _coverage_run(dgi3486_script).returncode
     if r != 0:
         fail(
             "Issue #3486 dual DepGraph inject oracle linter failed — run python3 scripts/coverage/checks/check_dual_dep_graph_inject_oracle_3486.py"
@@ -4508,10 +3617,7 @@ def cmd_lint():
     # force path. Extends test_mailbox_recv_mutation_boundary (#81967);
     # no docs/design/ (#1655).
     mhu_script = COVERAGE_CHECKS / "check_mailbox_defer_slo_hold_unify_3256.py"
-    if not mhu_script.exists():
-        fail(f"missing {mhu_script}")
-        return 1
-    r = run([sys.executable, str(mhu_script)], cwd=ROOT)
+    r = _coverage_run(mhu_script).returncode
     if r != 0:
         fail(
             "Issue #3256 mailbox SLO hold-unify linter failed — run python3 scripts/coverage/checks/check_mailbox_defer_slo_hold_unify_3256.py"
@@ -4521,10 +3627,7 @@ def cmd_lint():
     # Extends test_cascade_decision_residual_atomic.cpp (#81967); no
     # docs/design/ (#1655).
     rll_script = COVERAGE_CHECKS / "check_deferred_hybrid_rearm_last_look_3257.py"
-    if not rll_script.exists():
-        fail(f"missing {rll_script}")
-        return 1
-    r = run([sys.executable, str(rll_script)], cwd=ROOT)
+    r = _coverage_run(rll_script).returncode
     if r != 0:
         fail(
             "Issue #3257 deferred-hybrid re-arm last-look linter failed — run python3 scripts/coverage/checks/check_deferred_hybrid_rearm_last_look_3257.py"
@@ -4543,10 +3646,7 @@ def cmd_lint():
     # test_cascade_decision_residual_atomic (#3135/#3257 home, #81967);
     # no docs/design/ (#1655).
     drl3283_script = COVERAGE_CHECKS / "check_deferred_rearm_lag_3283.py"
-    if not drl3283_script.exists():
-        fail(f"missing {drl3283_script}")
-        return 1
-    r = run([sys.executable, str(drl3283_script)], cwd=ROOT)
+    r = _coverage_run(drl3283_script).returncode
     if r != 0:
         fail(
             "Issue #3283 deferred-hybrid re-arm lag linter failed — run python3 scripts/coverage/checks/check_deferred_rearm_lag_3283.py"
@@ -4557,10 +3657,7 @@ def cmd_lint():
     # + counters flat: one acquire, zero extra. Extends
     # test_cascade_decision_residual_atomic; no docs/design / invent.
     nsm3348_script = COVERAGE_CHECKS / "check_nonstale_mirror_growth_force_full_3348.py"
-    if not nsm3348_script.exists():
-        fail(f"missing {nsm3348_script}")
-        return 1
-    r = run([sys.executable, str(nsm3348_script)], cwd=ROOT)
+    r = _coverage_run(nsm3348_script).returncode
     if r != 0:
         fail(
             "Issue #3348 non-stale mirror growth force-full linter failed — run python3 scripts/coverage/checks/check_nonstale_mirror_growth_force_full_3348.py"
@@ -4570,10 +3667,7 @@ def cmd_lint():
     # walk completes. Extends test_abort_ir_cache_fence_first.cpp (#81967);
     # no docs/design/ (#1655).
     afr_script = COVERAGE_CHECKS / "check_abort_force_lookup_reject_3258.py"
-    if not afr_script.exists():
-        fail(f"missing {afr_script}")
-        return 1
-    r = run([sys.executable, str(afr_script)], cwd=ROOT)
+    r = _coverage_run(afr_script).returncode
     if r != 0:
         fail(
             "Issue #3258 abort-force lookup reject linter failed — run python3 scripts/coverage/checks/check_abort_force_lookup_reject_3258.py"
@@ -4584,10 +3678,7 @@ def cmd_lint():
     # those nodes stay exportable. Extends test_stable_ref_tenant_capture
     # + test_hygiene_mutate_closed_loop (#81967); no docs/design/ (#1655).
     rhc_script = COVERAGE_CHECKS / "check_restamp_hot_cone_budget_3259.py"
-    if not rhc_script.exists():
-        fail(f"missing {rhc_script}")
-        return 1
-    r = run([sys.executable, str(rhc_script)], cwd=ROOT)
+    r = _coverage_run(rhc_script).returncode
     if r != 0:
         fail(
             "Issue #3259 restamp hot-cone budget linter failed — run python3 scripts/coverage/checks/check_restamp_hot_cone_budget_3259.py"
@@ -4599,10 +3690,7 @@ def cmd_lint():
     # test_stable_ref_tenant_capture + test_hygiene_mutate_closed_loop
     # (#81967); no docs/design/; no test_issue_3327.cpp.
     rhc3327_script = COVERAGE_CHECKS / "check_restamp_hot_cone_agent_held_3327.py"
-    if not rhc3327_script.exists():
-        fail(f"missing {rhc3327_script}")
-        return 1
-    r = run([sys.executable, str(rhc3327_script)], cwd=ROOT)
+    r = _coverage_run(rhc3327_script).returncode
     if r != 0:
         fail(
             "Issue #3327 restamp hot-cone Agent-held linter failed — run python3 scripts/coverage/checks/check_restamp_hot_cone_agent_held_3327.py"
@@ -4612,10 +3700,7 @@ def cmd_lint():
     # half-green prefix). Extends test_restamp_budget_hard_gate (#81967);
     # no docs/design/; no test_issue_3426.cpp.
     rhc3426_script = COVERAGE_CHECKS / "check_restamp_hot_cone_held_overflow_3426.py"
-    if not rhc3426_script.exists():
-        fail(f"missing {rhc3426_script}")
-        return 1
-    r = run([sys.executable, str(rhc3426_script)], cwd=ROOT)
+    r = _coverage_run(rhc3426_script).returncode
     if r != 0:
         fail(
             "Issue #3426 restamp hot-cone held overflow linter failed — run python3 scripts/coverage/checks/check_restamp_hot_cone_held_overflow_3426.py"
@@ -4625,10 +3710,7 @@ def cmd_lint():
     # counters. Extends test_clone_provenance_per_evaluator.cpp (#81967);
     # no docs/design/ (#1655).
     mpc_script = COVERAGE_CHECKS / "check_macro_provenance_counter_unify_3260.py"
-    if not mpc_script.exists():
-        fail(f"missing {mpc_script}")
-        return 1
-    r = run([sys.executable, str(mpc_script)], cwd=ROOT)
+    r = _coverage_run(mpc_script).returncode
     if r != 0:
         fail(
             "Issue #3260 macro-provenance counter unify linter failed — run python3 scripts/coverage/checks/check_macro_provenance_counter_unify_3260.py"
@@ -4638,10 +3720,7 @@ def cmd_lint():
     # hoist. Extends test_clone_provenance_per_evaluator.cpp (#81967);
     # no docs/design/ (#1655).
     fbt_script = COVERAGE_CHECKS / "check_flush_mutation_boundary_toctou_3261.py"
-    if not fbt_script.exists():
-        fail(f"missing {fbt_script}")
-        return 1
-    r = run([sys.executable, str(fbt_script)], cwd=ROOT)
+    r = _coverage_run(fbt_script).returncode
     if r != 0:
         fail(
             "Issue #3261 flush-mutation-boundary TOCTOU linter failed — run python3 scripts/coverage/checks/check_flush_mutation_boundary_toctou_3261.py"
@@ -4652,10 +3731,7 @@ def cmd_lint():
     # Extends test_linear_provenance_steal_gc_closed_loop.cpp +
     # test_linear_batch.cpp (#81967); no docs/design/ (#1655).
     gsr_script = COVERAGE_CHECKS / "check_gc_safepoint_restamp_lock_3262.py"
-    if not gsr_script.exists():
-        fail(f"missing {gsr_script}")
-        return 1
-    r = run([sys.executable, str(gsr_script)], cwd=ROOT)
+    r = _coverage_run(gsr_script).returncode
     if r != 0:
         fail(
             "Issue #3262 GC safepoint restamp-lock linter failed — run python3 scripts/coverage/checks/check_gc_safepoint_restamp_lock_3262.py"
@@ -4665,10 +3741,7 @@ def cmd_lint():
     # bump on nullptr current_flat. Extends test_jit_macro_deopt_hygiene.cpp
     # (#81967); no docs/design/ (#1655).
     qlm_script = COVERAGE_CHECKS / "check_quote_lambda_marker_once_3263.py"
-    if not qlm_script.exists():
-        fail(f"missing {qlm_script}")
-        return 1
-    r = run([sys.executable, str(qlm_script)], cwd=ROOT)
+    r = _coverage_run(qlm_script).returncode
     if r != 0:
         fail(
             "Issue #3263 quote-lambda marker-once linter failed — run python3 scripts/coverage/checks/check_quote_lambda_marker_once_3263.py"
@@ -4678,10 +3751,7 @@ def cmd_lint():
     # counter. Extends test_cascade_skip_metrics.cpp +
     # test_dirty_propagation_cascade.cpp (#81967); no docs/design/ (#1655).
     cda_script = COVERAGE_CHECKS / "check_cascade_dep_graph_atomic_3264.py"
-    if not cda_script.exists():
-        fail(f"missing {cda_script}")
-        return 1
-    r = run([sys.executable, str(cda_script)], cwd=ROOT)
+    r = _coverage_run(cda_script).returncode
     if r != 0:
         fail(
             "Issue #3264 cascade dep-graph atomic linter failed — run python3 scripts/coverage/checks/check_cascade_dep_graph_atomic_3264.py"
@@ -4691,10 +3761,7 @@ def cmd_lint():
     # stack. Extends test_jit_macro_introduced_preserve.cpp +
     # test_arena_lifecycle.cpp (#81967); no docs/design/ (#1655).
     jma_script = COVERAGE_CHECKS / "check_jit_fn_marker_atomic_3265.py"
-    if not jma_script.exists():
-        fail(f"missing {jma_script}")
-        return 1
-    r = run([sys.executable, str(jma_script)], cwd=ROOT)
+    r = _coverage_run(jma_script).returncode
     if r != 0:
         fail(
             "Issue #3265 JIT fn-marker atomic linter failed — run python3 scripts/coverage/checks/check_jit_fn_marker_atomic_3265.py"
@@ -4703,10 +3770,7 @@ def cmd_lint():
     # Issue #3266: module-loader realpath-then-lstat + validate-before-lock.
     # Extends test_module_path_refuse.cpp (#81967); no docs/design/ (#1655).
     mrt_script = COVERAGE_CHECKS / "check_module_realpath_toctou_3266.py"
-    if not mrt_script.exists():
-        fail(f"missing {mrt_script}")
-        return 1
-    r = run([sys.executable, str(mrt_script)], cwd=ROOT)
+    r = _coverage_run(mrt_script).returncode
     if r != 0:
         fail(
             "Issue #3266 module realpath-TOCTOU linter failed — run python3 scripts/coverage/checks/check_module_realpath_toctou_3266.py"
@@ -4716,10 +3780,7 @@ def cmd_lint():
     # shared_lock; combined live bridge-state C ABI. Extends
     # test_envframe_epoch_batch.cpp (#81967); no docs/design/ (#1655).
     epl_script = COVERAGE_CHECKS / "check_env_publish_lock_3267.py"
-    if not epl_script.exists():
-        fail(f"missing {epl_script}")
-        return 1
-    r = run([sys.executable, str(epl_script)], cwd=ROOT)
+    r = _coverage_run(epl_script).returncode
     if r != 0:
         fail(
             "Issue #3267 env-publish-lock linter failed — run python3 scripts/coverage/checks/check_env_publish_lock_3267.py"
@@ -4729,10 +3790,7 @@ def cmd_lint():
     # region_lock_ move. Extends test_mutation_guard_unit_batch.cpp
     # (#81967); no docs/design/ (#1655).
     gfa_script = COVERAGE_CHECKS / "check_guard_flag_atomic_ref_3268.py"
-    if not gfa_script.exists():
-        fail(f"missing {gfa_script}")
-        return 1
-    r = run([sys.executable, str(gfa_script)], cwd=ROOT)
+    r = _coverage_run(gfa_script).returncode
     if r != 0:
         fail(
             "Issue #3268 guard-flag atomic-ref linter failed — run python3 scripts/coverage/checks/check_guard_flag_atomic_ref_3268.py"
@@ -4742,10 +3800,7 @@ def cmd_lint():
     # TLS skip. Extends test_arena_defrag.cpp (#81967); no docs/design/
     # (#1655).
     act_script = COVERAGE_CHECKS / "check_arena_compact_toctou_3269.py"
-    if not act_script.exists():
-        fail(f"missing {act_script}")
-        return 1
-    r = run([sys.executable, str(act_script)], cwd=ROOT)
+    r = _coverage_run(act_script).returncode
     if r != 0:
         fail(
             "Issue #3269 arena-compact-TOCTOU linter failed — run python3 scripts/coverage/checks/check_arena_compact_toctou_3269.py"
@@ -4756,10 +3811,7 @@ def cmd_lint():
     # test_jit_macro_introduced_preserve.cpp (#81967); no docs/design/
     # (#1655).
     pid_script = COVERAGE_CHECKS / "check_primid_drift_3270.py"
-    if not pid_script.exists():
-        fail(f"missing {pid_script}")
-        return 1
-    r = run([sys.executable, str(pid_script)], cwd=ROOT)
+    r = _coverage_run(pid_script).returncode
     if r != 0:
         fail("Issue #3270 PrimId-drift linter failed — run python3 scripts/coverage/checks/check_primid_drift_3270.py")
         return r
@@ -4767,10 +3819,7 @@ def cmd_lint():
     # std::function). Extends test_shape_profiler_concurrency.cpp
     # (#81967); no docs/design/ (#1655).
     sdh_script = COVERAGE_CHECKS / "check_shape_dirty_hook_no_std_function_3271.py"
-    if not sdh_script.exists():
-        fail(f"missing {sdh_script}")
-        return 1
-    r = run([sys.executable, str(sdh_script)], cwd=ROOT)
+    r = _coverage_run(sdh_script).returncode
     if r != 0:
         fail(
             "Issue #3271 shape-dirty-hook linter failed — run python3 scripts/coverage/checks/check_shape_dirty_hook_no_std_function_3271.py"
@@ -4780,10 +3829,7 @@ def cmd_lint():
     # amortisation). Extends test_shape_profiler_concurrency (#81967);
     # no docs/design/; no std::function; no new query key.
     stls3357_script = COVERAGE_CHECKS / "check_shape_tls_record_merge_3357.py"
-    if not stls3357_script.exists():
-        fail(f"missing {stls3357_script}")
-        return 1
-    r = run([sys.executable, str(stls3357_script)], cwd=ROOT)
+    r = _coverage_run(stls3357_script).returncode
     if r != 0:
         fail(
             "Issue #3357 shape TLS record-merge linter failed — run python3 scripts/coverage/checks/check_shape_tls_record_merge_3357.py"
@@ -4797,10 +3843,7 @@ def cmd_lint():
     # Extends test_capability_single_use_consume.cpp (#81967); no
     # docs/design/ (#1655).
     cdg_script = COVERAGE_CHECKS / "check_capability_durable_gate_2967.py"
-    if not cdg_script.exists():
-        fail(f"missing {cdg_script}")
-        return 1
-    r = run([sys.executable, str(cdg_script)], cwd=ROOT)
+    r = _coverage_run(cdg_script).returncode
     if r != 0:
         fail(
             "Issue #2967 durable grant gate linter failed — run python3 scripts/coverage/checks/check_capability_durable_gate_2967.py"
@@ -4813,10 +3856,7 @@ def cmd_lint():
     # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/
     # (#1655).
     cts_script = COVERAGE_CHECKS / "check_cross_tenant_grant_gate_2968.py"
-    if not cts_script.exists():
-        fail(f"missing {cts_script}")
-        return 1
-    r = run([sys.executable, str(cts_script)], cwd=ROOT)
+    r = _coverage_run(cts_script).returncode
     if r != 0:
         fail(
             "Issue #2968 cross-tenant grant gate linter failed — run python3 scripts/coverage/checks/check_cross_tenant_grant_gate_2968.py"
@@ -4832,10 +3872,7 @@ def cmd_lint():
     # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/
     # (#1655).
     cgp_script = COVERAGE_CHECKS / "check_cross_tenant_grant_principal_3145.py"
-    if not cgp_script.exists():
-        fail(f"missing {cgp_script}")
-        return 1
-    r = run([sys.executable, str(cgp_script)], cwd=ROOT)
+    r = _coverage_run(cgp_script).returncode
     if r != 0:
         fail(
             "Issue #3145 cross-tenant grant principal source linter failed — run python3 scripts/coverage/checks/check_cross_tenant_grant_principal_3145.py"
@@ -4848,10 +3885,7 @@ def cmd_lint():
     # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/
     # (#1655). No new posture / query key.
     cta3800_script = COVERAGE_CHECKS / "check_cross_tenant_grant_caller_ta_3800.py"
-    if not cta3800_script.exists():
-        fail(f"missing {cta3800_script}")
-        return 1
-    r = run([sys.executable, str(cta3800_script)], cwd=ROOT)
+    r = _coverage_run(cta3800_script).returncode
     if r != 0:
         fail(
             "Issue #3800 cross-tenant grant caller-only TA linter failed — run python3 scripts/coverage/checks/check_cross_tenant_grant_caller_ta_3800.py"
@@ -4865,10 +3899,7 @@ def cmd_lint():
     # Extends test_tenant_isolation_enforcement.cpp (#81967); no
     # docs/design/ (#1655). No new posture / query key.
     idm3801_script = COVERAGE_CHECKS / "check_isolation_deny_mid_join_3801.py"
-    if not idm3801_script.exists():
-        fail(f"missing {idm3801_script}")
-        return 1
-    r = run([sys.executable, str(idm3801_script)], cwd=ROOT)
+    r = _coverage_run(idm3801_script).returncode
     if r != 0:
         fail(
             "Issue #3801 IsolationDeny mid-join linter failed — run python3 scripts/coverage/checks/check_isolation_deny_mid_join_3801.py"
@@ -4881,10 +3912,7 @@ def cmd_lint():
     # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/
     # (#1655). No new posture / query key.
     ido3808_script = COVERAGE_CHECKS / "check_isolation_deny_obs_join_3808.py"
-    if not ido3808_script.exists():
-        fail(f"missing {ido3808_script}")
-        return 1
-    r = run([sys.executable, str(ido3808_script)], cwd=ROOT)
+    r = _coverage_run(ido3808_script).returncode
     if r != 0:
         fail(
             "Issue #3808 IsolationDeny obs-join linter failed — run python3 scripts/coverage/checks/check_isolation_deny_obs_join_3808.py"
@@ -4896,10 +3924,7 @@ def cmd_lint():
     # Soft does not publish Moving densify health window. Extends
     # test_gc_compact_sweep_batch.cpp (#81967); no docs/design/ (#1655).
     bsdr3809_script = COVERAGE_CHECKS / "check_boundary_soft_densify_restamp_3809.py"
-    if not bsdr3809_script.exists():
-        fail(f"missing {bsdr3809_script}")
-        return 1
-    r = run([sys.executable, str(bsdr3809_script)], cwd=ROOT)
+    r = _coverage_run(bsdr3809_script).returncode
     if r != 0:
         fail(
             "Issue #3809 Boundary Soft Densify restamp linter failed — run python3 scripts/coverage/checks/check_boundary_soft_densify_restamp_3809.py"
@@ -4911,10 +3936,7 @@ def cmd_lint():
     # non-Moving. Extends test_gc_compact_sweep_batch.cpp (#81967); no
     # docs/design/ (#1655).
     sgbt3810_script = COVERAGE_CHECKS / "check_soft_gen_bump_this_window_3810.py"
-    if not sgbt3810_script.exists():
-        fail(f"missing {sgbt3810_script}")
-        return 1
-    r = run([sys.executable, str(sgbt3810_script)], cwd=ROOT)
+    r = _coverage_run(sgbt3810_script).returncode
     if r != 0:
         fail(
             "Issue #3810 Soft gen-bump this-window linter failed — run python3 scripts/coverage/checks/check_soft_gen_bump_this_window_3810.py"
@@ -4927,10 +3949,7 @@ def cmd_lint():
     # densify health window; Moving path unchanged. Extends
     # test_gc_compact_sweep_batch.cpp (#81967); no docs/design/ (#1655).
     asdr3811_script = COVERAGE_CHECKS / "check_agent_soft_densify_restamp_3811.py"
-    if not asdr3811_script.exists():
-        fail(f"missing {asdr3811_script}")
-        return 1
-    r = run([sys.executable, str(asdr3811_script)], cwd=ROOT)
+    r = _coverage_run(asdr3811_script).returncode
     if r != 0:
         fail(
             "Issue #3811 Agent Soft|Force Densify restamp linter failed — run python3 scripts/coverage/checks/check_agent_soft_densify_restamp_3811.py"
@@ -4942,10 +3961,7 @@ def cmd_lint():
     # named FIFO amplify). Shape-only pass-through unchanged. Extends
     # test_remount_force_deopt.cpp (#81967); no docs/design/ (#1655).
     sgcr3812_script = COVERAGE_CHECKS / "check_soft_global_critical_remount_3812.py"
-    if not sgcr3812_script.exists():
-        fail(f"missing {sgcr3812_script}")
-        return 1
-    r = run([sys.executable, str(sgcr3812_script)], cwd=ROOT)
+    r = _coverage_run(sgcr3812_script).returncode
     if r != 0:
         fail(
             "Issue #3812 Soft Global critical remount linter failed — run python3 scripts/coverage/checks/check_soft_global_critical_remount_3812.py"
@@ -4958,10 +3974,7 @@ def cmd_lint():
     # test_aot_bridge_checkpoint_version_steal.cpp (#653); no docs/design/
     # (#1655). aura_is_jit_closure_fresh unchanged.
     scdt3813_script = COVERAGE_CHECKS / "check_steal_checkpoint_dual_track_3813.py"
-    if not scdt3813_script.exists():
-        fail(f"missing {scdt3813_script}")
-        return 1
-    r = run([sys.executable, str(scdt3813_script)], cwd=ROOT)
+    r = _coverage_run(scdt3813_script).returncode
     if r != 0:
         fail(
             "Issue #3813 steal checkpoint dual-track linter failed — run python3 scripts/coverage/checks/check_steal_checkpoint_dual_track_3813.py"
@@ -4973,10 +3986,7 @@ def cmd_lint():
     # Extends test_issue_3096.cpp / test_orch_hot_update_health_throttle.cpp
     # (#81967); no docs/design/ (#1655).
     sfer3814_script = COVERAGE_CHECKS / "check_sticky_force_empty_residual_3814.py"
-    if not sfer3814_script.exists():
-        fail(f"missing {sfer3814_script}")
-        return 1
-    r = run([sys.executable, str(sfer3814_script)], cwd=ROOT)
+    r = _coverage_run(sfer3814_script).returncode
     if r != 0:
         fail(
             "Issue #3814 sticky force empty residual linter failed — run python3 scripts/coverage/checks/check_sticky_force_empty_residual_3814.py"
@@ -4986,10 +3996,7 @@ def cmd_lint():
     # (parity with insert-child / splice). Batch parent_arg=1 pre-walk.
     # Extends test_move_node_hygiene.cpp (#81967); no docs/design/ (#1655).
     mnph3815_script = COVERAGE_CHECKS / "check_move_node_parent_hygiene_3815.py"
-    if not mnph3815_script.exists():
-        fail(f"missing {mnph3815_script}")
-        return 1
-    r = run([sys.executable, str(mnph3815_script)], cwd=ROOT)
+    r = _coverage_run(mnph3815_script).returncode
     if r != 0:
         fail(
             "Issue #3815 move-node parent hygiene linter failed — run python3 scripts/coverage/checks/check_move_node_parent_hygiene_3815.py"
@@ -4999,10 +4006,7 @@ def cmd_lint():
     # abort before add_lambda / add_let / set_marker (mirror #3506).
     # Extends test_clone_walk_gensym_ceiling.cpp (#81967); no docs/design/.
     cwrd3816_script = COVERAGE_CHECKS / "check_clone_walk_rename_deny_abort_3816.py"
-    if not cwrd3816_script.exists():
-        fail(f"missing {cwrd3816_script}")
-        return 1
-    r = run([sys.executable, str(cwrd3816_script)], cwd=ROOT)
+    r = _coverage_run(cwrd3816_script).returncode
     if r != 0:
         fail(
             "Issue #3816 clone-walk rename deny abort linter failed — run python3 scripts/coverage/checks/check_clone_walk_rename_deny_abort_3816.py"
@@ -5012,10 +4016,7 @@ def cmd_lint():
     # checkpoint — production truncate_to(rest_spine_ckpt) on NULL clone.
     # Extends test_rest_param_hygiene_eval_flat.cpp (#81967); no docs/design/.
     rsor3817_script = COVERAGE_CHECKS / "check_rest_spine_orphan_rewind_3817.py"
-    if not rsor3817_script.exists():
-        fail(f"missing {rsor3817_script}")
-        return 1
-    r = run([sys.executable, str(rsor3817_script)], cwd=ROOT)
+    r = _coverage_run(rsor3817_script).returncode
     if r != 0:
         fail(
             "Issue #3817 rest-spine orphan rewind linter failed — run python3 scripts/coverage/checks/check_rest_spine_orphan_rewind_3817.py"
@@ -5026,10 +4027,7 @@ def cmd_lint():
     # Extends test_outermost_persist_fail_closed / linear / health (#81967);
     # no docs/design/.
     ppld3818_script = COVERAGE_CHECKS / "check_post_persist_linear_deny_coercion_undo_3818.py"
-    if not ppld3818_script.exists():
-        fail(f"missing {ppld3818_script}")
-        return 1
-    r = run([sys.executable, str(ppld3818_script)], cwd=ROOT)
+    r = _coverage_run(ppld3818_script).returncode
     if r != 0:
         fail(
             "Issue #3818 post-persist linear deny CoercionMap undo linter failed — run python3 scripts/coverage/checks/check_post_persist_linear_deny_coercion_undo_3818.py"
@@ -5040,10 +4038,7 @@ def cmd_lint():
     # Extends test_outermost_persist_fail_closed / linear / health / rehydrate
     # (#81967); no docs/design/.
     fmdt3819_script = COVERAGE_CHECKS / "check_occurrence_persist_fp_mismatch_dual_track_3819.py"
-    if not fmdt3819_script.exists():
-        fail(f"missing {fmdt3819_script}")
-        return 1
-    r = run([sys.executable, str(fmdt3819_script)], cwd=ROOT)
+    r = _coverage_run(fmdt3819_script).returncode
     if r != 0:
         fail(
             "Issue #3819 fingerprint mismatch dual-track linter failed — run python3 scripts/coverage/checks/check_occurrence_persist_fp_mismatch_dual_track_3819.py"
@@ -5054,10 +4049,7 @@ def cmd_lint():
     # clear-after-offer). Extends test_solve_delta_unresolved_export (#81967);
     # no docs/design/.
     pomr3820_script = COVERAGE_CHECKS / "check_pending_offer_map_miss_retain_3820.py"
-    if not pomr3820_script.exists():
-        fail(f"missing {pomr3820_script}")
-        return 1
-    r = run([sys.executable, str(pomr3820_script)], cwd=ROOT)
+    r = _coverage_run(pomr3820_script).returncode
     if r != 0:
         fail(
             "Issue #3820 pending offer map-miss retain linter failed — run python3 scripts/coverage/checks/check_pending_offer_map_miss_retain_3820.py"
@@ -5067,10 +4059,7 @@ def cmd_lint():
     # force_dirty after topology restore (clears abort_force_in_progress_).
     # Extends test_abort_ir_cache_fence_first.cpp (#81967); no docs/design/.
     shfafd3821_script = COVERAGE_CHECKS / "check_synth_hard_fail_abort_force_dirty_3821.py"
-    if not shfafd3821_script.exists():
-        fail(f"missing {shfafd3821_script}")
-        return 1
-    r = run([sys.executable, str(shfafd3821_script)], cwd=ROOT)
+    r = _coverage_run(shfafd3821_script).returncode
     if r != 0:
         fail(
             "Issue #3821 synth-hard-fail abort force-dirty linter failed — run python3 scripts/coverage/checks/check_synth_hard_fail_abort_force_dirty_3821.py"
@@ -5081,10 +4070,7 @@ def cmd_lint():
     # writeback. Soft keeps AoS suite only. Extends test_soa_dirty_aware_pipeline
     # (#81967); no docs/design/.
     psws3822_script = COVERAGE_CHECKS / "check_prod_soa_writeback_sync_3822.py"
-    if not psws3822_script.exists():
-        fail(f"missing {psws3822_script}")
-        return 1
-    r = run([sys.executable, str(psws3822_script)], cwd=ROOT)
+    r = _coverage_run(psws3822_script).returncode
     if r != 0:
         fail(
             "Issue #3822 prod_soa writeback sync linter failed — run python3 scripts/coverage/checks/check_prod_soa_writeback_sync_3822.py"
@@ -5095,10 +4081,7 @@ def cmd_lint():
     # return — closes clean-hit until #3761 peel. Soft inject observe-only.
     # Extends test_dep_graph_hybrid_cascade.cpp (#81967); no docs/design/.
     pmndu3823_script = COVERAGE_CHECKS / "check_production_mark_node_dep_union_3823.py"
-    if not pmndu3823_script.exists():
-        fail(f"missing {pmndu3823_script}")
-        return 1
-    r = run([sys.executable, str(pmndu3823_script)], cwd=ROOT)
+    r = _coverage_run(pmndu3823_script).returncode
     if r != 0:
         fail(
             "Issue #3823 production mark node-dep union linter failed — run python3 scripts/coverage/checks/check_production_mark_node_dep_union_3823.py"
@@ -5110,10 +4093,7 @@ def cmd_lint():
     # Soft leftover observe path unchanged. Extends
     # test_steal_complete_gc_defer.cpp (#81967); no docs/design/.
     sfchf3824_script = COVERAGE_CHECKS / "check_steal_force_clear_hold_foreign_3824.py"
-    if not sfchf3824_script.exists():
-        fail(f"missing {sfchf3824_script}")
-        return 1
-    r = run([sys.executable, str(sfchf3824_script)], cwd=ROOT)
+    r = _coverage_run(sfchf3824_script).returncode
     if r != 0:
         fail(
             "Issue #3824 steal force_clear hold foreign linter failed — run python3 scripts/coverage/checks/check_steal_force_clear_hold_foreign_3824.py"
@@ -5124,10 +4104,7 @@ def cmd_lint():
     # until Guard dtor. Soft path unchanged. Extends
     # test_hold_budget_synthetic_yield_injection.cpp (#81967); no docs/design/.
     hbsfr3825_script = COVERAGE_CHECKS / "check_hold_budget_safepoint_force_release_3825.py"
-    if not hbsfr3825_script.exists():
-        fail(f"missing {hbsfr3825_script}")
-        return 1
-    r = run([sys.executable, str(hbsfr3825_script)], cwd=ROOT)
+    r = _coverage_run(hbsfr3825_script).returncode
     if r != 0:
         fail(
             "Issue #3825 safepoint fail-closed force-release linter failed — run python3 scripts/coverage/checks/check_hold_budget_safepoint_force_release_3825.py"
@@ -5138,10 +4115,7 @@ def cmd_lint():
     # unique_lock). Soft metric-only. Extends
     # test_mailbox_hold_starvation_hard.cpp (#81967); no docs/design/.
     eflg3826_script = COVERAGE_CHECKS / "check_edge_free_latch_gate_3826.py"
-    if not eflg3826_script.exists():
-        fail(f"missing {eflg3826_script}")
-        return 1
-    r = run([sys.executable, str(eflg3826_script)], cwd=ROOT)
+    r = _coverage_run(eflg3826_script).returncode
     if r != 0:
         fail(
             "Issue #3826 edge-free latch gate linter failed — run python3 scripts/coverage/checks/check_edge_free_latch_gate_3826.py"
@@ -5152,10 +4126,7 @@ def cmd_lint():
     # lists unchanged. Extends test_query_result_full_provenance.cpp
     # (#81967); no docs/design/ (#1655).
     qcps3827_script = COVERAGE_CHECKS / "check_query_children_parent_schema2_3827.py"
-    if not qcps3827_script.exists():
-        fail(f"missing {qcps3827_script}")
-        return 1
-    r = run([sys.executable, str(qcps3827_script)], cwd=ROOT)
+    r = _coverage_run(qcps3827_script).returncode
     if r != 0:
         fail(
             "Issue #3827 query children/parent schema-2 linter failed — run python3 scripts/coverage/checks/check_query_children_parent_schema2_3827.py"
@@ -5165,10 +4136,7 @@ def cmd_lint():
     # add_mutate SSOT (not raw add in compile.cpp). Soft dormant #f OK.
     # Extends test_mutate_batch.cpp (#81967); no docs/design/ (#1655).
     mffs3828_script = COVERAGE_CHECKS / "check_mutate_from_feedback_ssot_3828.py"
-    if not mffs3828_script.exists():
-        fail(f"missing {mffs3828_script}")
-        return 1
-    r = run([sys.executable, str(mffs3828_script)], cwd=ROOT)
+    r = _coverage_run(mffs3828_script).returncode
     if r != 0:
         fail(
             "Issue #3828 mutate from-verification-feedback SSOT linter failed — run python3 scripts/coverage/checks/check_mutate_from_feedback_ssot_3828.py"
@@ -5180,10 +4148,7 @@ def cmd_lint():
     # Soft export identity unchanged; PCV children_safe_view path unchanged.
     # Extends test_pcv_exclusive_with_set.cpp (#81967); no docs/design/ (#1655).
     dcf3829_script = COVERAGE_CHECKS / "check_dense_columnar_fingerprint_3829.py"
-    if not dcf3829_script.exists():
-        fail(f"missing {dcf3829_script}")
-        return 1
-    r = run([sys.executable, str(dcf3829_script)], cwd=ROOT)
+    r = _coverage_run(dcf3829_script).returncode
     if r != 0:
         fail(
             "Issue #3829 dense columnar fingerprint linter failed — run python3 scripts/coverage/checks/check_dense_columnar_fingerprint_3829.py"
@@ -5194,10 +4159,7 @@ def cmd_lint():
     # non-empty / :? / _ unchanged; #3330 uncovered fail-closed unchanged.
     # Extends test_bidirectional_match_check; no docs/design / invent.
     etand3830_script = COVERAGE_CHECKS / "check_empty_type_annotation_no_dynamic_3830.py"
-    if not etand3830_script.exists():
-        fail(f"missing {etand3830_script}")
-        return 1
-    r = run([sys.executable, str(etand3830_script)], cwd=ROOT)
+    r = _coverage_run(etand3830_script).returncode
     if r != 0:
         fail(
             "Issue #3830 empty TypeAnnotation no-Dynamic linter failed — run python3 scripts/coverage/checks/check_empty_type_annotation_no_dynamic_3830.py"
@@ -5208,10 +4170,7 @@ def cmd_lint():
     # all-1s. Soft consult-only; compact never feeds storm ring.
     # Extends test_partial_relower_storm_gate; no docs/design / invent.
     dasffc3831_script = COVERAGE_CHECKS / "check_dirty_aware_storm_force_full_cap_3831.py"
-    if not dasffc3831_script.exists():
-        fail(f"missing {dasffc3831_script}")
-        return 1
-    r = run([sys.executable, str(dasffc3831_script)], cwd=ROOT)
+    r = _coverage_run(dasffc3831_script).returncode
     if r != 0:
         fail(
             "Issue #3831 dirty-aware storm force-full cap linter failed — run python3 scripts/coverage/checks/check_dirty_aware_storm_force_full_cap_3831.py"
@@ -5222,10 +4181,7 @@ def cmd_lint():
     # densify-stale refuse retained. Extends test_apply_closure_envframe_soa;
     # no docs/design / invent.
     actls3832_script = COVERAGE_CHECKS / "check_apply_closure_tls_cache_3832.py"
-    if not actls3832_script.exists():
-        fail(f"missing {actls3832_script}")
-        return 1
-    r = run([sys.executable, str(actls3832_script)], cwd=ROOT)
+    r = _coverage_run(actls3832_script).returncode
     if r != 0:
         fail(
             "Issue #3832 apply_closure TLS cache linter failed — run python3 scripts/coverage/checks/check_apply_closure_tls_cache_3832.py"
@@ -5235,10 +4191,7 @@ def cmd_lint():
     # IrSoaArenaColumn (BMI #3314 offsetof pins kept). Extends
     # test_ir_soa_layout_stamp; no docs/design / invent.
     isca3833_script = COVERAGE_CHECKS / "check_ir_soa_column_arena_3833.py"
-    if not isca3833_script.exists():
-        fail(f"missing {isca3833_script}")
-        return 1
-    r = run([sys.executable, str(isca3833_script)], cwd=ROOT)
+    r = _coverage_run(isca3833_script).returncode
     if r != 0:
         fail(
             "Issue #3833 IR SoA column arena linter failed — run python3 scripts/coverage/checks/check_ir_soa_column_arena_3833.py"
@@ -5249,10 +4202,7 @@ def cmd_lint():
     # Soft/Off raw (*pfn) retained. Extends test_dispatch_required_effects;
     # no docs/design / invent / new query key.
     cofc3834_script = COVERAGE_CHECKS / "check_call_ownerless_fail_closed_3834.py"
-    if not cofc3834_script.exists():
-        fail(f"missing {cofc3834_script}")
-        return 1
-    r = run([sys.executable, str(cofc3834_script)], cwd=ROOT)
+    r = _coverage_run(cofc3834_script).returncode
     if r != 0:
         fail(
             "Issue #3834 Call ownerless fail-closed linter failed — run python3 scripts/coverage/checks/check_call_ownerless_fail_closed_3834.py"
@@ -5265,10 +4215,7 @@ def cmd_lint():
     # #3802 wiring. Extends test_tenant_isolation_enforcement.cpp (#81967);
     # no docs/design/ (#1655). No invent / new query key.
     thp3835_script = COVERAGE_CHECKS / "check_tenant_host_path_read_3835.py"
-    if not thp3835_script.exists():
-        fail(f"missing {thp3835_script}")
-        return 1
-    r = run([sys.executable, str(thp3835_script)], cwd=ROOT)
+    r = _coverage_run(thp3835_script).returncode
     if r != 0:
         fail(
             "Issue #3835 read/recon tenant host-path linter failed — run python3 scripts/coverage/checks/check_tenant_host_path_read_3835.py"
@@ -5280,10 +4227,7 @@ def cmd_lint():
     # Extends test_require_effect_auto_isolation + tenant isolation; no
     # docs/design / invent / new query key.
     shell3836_script = COVERAGE_CHECKS / "check_shell_require_effect_3836.py"
-    if not shell3836_script.exists():
-        fail(f"missing {shell3836_script}")
-        return 1
-    r = run([sys.executable, str(shell3836_script)], cwd=ROOT)
+    r = _coverage_run(shell3836_script).returncode
     if r != 0:
         fail(
             "Issue #3836 shell/command-output require_effect linter failed — run python3 scripts/coverage/checks/check_shell_require_effect_3836.py"
@@ -5294,10 +4238,7 @@ def cmd_lint():
     # mid=1; Soft mid=1 unchanged. Not a dup of #3837. Extends
     # test_audit_mutation_id_unify (#81967); no docs/design / invent (#1655).
     refh3843_script = COVERAGE_CHECKS / "check_require_effect_full_hard_mid_3843.py"
-    if not refh3843_script.exists():
-        fail(f"missing {refh3843_script}")
-        return 1
-    r = run([sys.executable, str(refh3843_script)], cwd=ROOT)
+    r = _coverage_run(refh3843_script).returncode
     if r != 0:
         fail(
             "Issue #3843 require_effect Full-hard mid linter failed — run python3 scripts/coverage/checks/check_require_effect_full_hard_mid_3843.py"
@@ -5308,10 +4249,7 @@ def cmd_lint():
     # dup of #3837 (mid invent). Extends test_audit_mutation_id_unify;
     # no docs/design / invent (#1655).
     gep3844_script = COVERAGE_CHECKS / "check_grant_epoch_no_phantom_3844.py"
-    if not gep3844_script.exists():
-        fail(f"missing {gep3844_script}")
-        return 1
-    r = run([sys.executable, str(gep3844_script)], cwd=ROOT)
+    r = _coverage_run(gep3844_script).returncode
     if r != 0:
         fail(
             "Issue #3844 grant/SE epoch no-phantom linter failed — run python3 scripts/coverage/checks/check_grant_epoch_no_phantom_3844.py"
@@ -5322,10 +4260,7 @@ def cmd_lint():
     # intentionally NOT kept. Not a refile of #3837/#3838. Extends
     # test_audit_mutation_id_unify; no docs/design / invent (#1655).
     pfj3845_script = COVERAGE_CHECKS / "check_promote_force_join_mid_no_invent_3845.py"
-    if not pfj3845_script.exists():
-        fail(f"missing {pfj3845_script}")
-        return 1
-    r = run([sys.executable, str(pfj3845_script)], cwd=ROOT)
+    r = _coverage_run(pfj3845_script).returncode
     if r != 0:
         fail(
             "Issue #3845 promote force-join mid no-invent linter failed — run python3 scripts/coverage/checks/check_promote_force_join_mid_no_invent_3845.py"
@@ -5336,10 +4271,7 @@ def cmd_lint():
     # #3096 ResidualForceHeal counters (#3847 cite-only). Extends
     # test_engine_metrics_facade; no docs/design / invent (#1655).
     rrs3846_script = COVERAGE_CHECKS / "check_reload_recovery_state_headroom_3846.py"
-    if not rrs3846_script.exists():
-        fail(f"missing {rrs3846_script}")
-        return 1
-    r = run([sys.executable, str(rrs3846_script)], cwd=ROOT)
+    r = _coverage_run(rrs3846_script).returncode
     if r != 0:
         fail(
             "Issue #3846 reload-recovery-state headroom linter failed — run python3 scripts/coverage/checks/check_reload_recovery_state_headroom_3846.py"
@@ -5352,10 +4284,7 @@ def cmd_lint():
     # test_setcode_rebind_survive + test_moving_densify_fail_closed; no
     # docs/design / invent (#1655 / #81967).
     drzm3848_script = COVERAGE_CHECKS / "check_densify_refuse_zero_move_3848.py"
-    if not drzm3848_script.exists():
-        fail(f"missing {drzm3848_script}")
-        return 1
-    r = run([sys.executable, str(drzm3848_script)], cwd=ROOT)
+    r = _coverage_run(drzm3848_script).returncode
     if r != 0:
         fail(
             "Issue #3848 densify refuse zero-move linter failed — run python3 scripts/coverage/checks/check_densify_refuse_zero_move_3848.py"
@@ -5368,10 +4297,7 @@ def cmd_lint():
     # test_setcode_rebind_survive + test_moving_densify_fail_closed; no
     # docs/design / invent (#1655 / #81967).
     achp3849_script = COVERAGE_CHECKS / "check_apply_closure_happy_path_densify_3849.py"
-    if not achp3849_script.exists():
-        fail(f"missing {achp3849_script}")
-        return 1
-    r = run([sys.executable, str(achp3849_script)], cwd=ROOT)
+    r = _coverage_run(achp3849_script).returncode
     if r != 0:
         fail(
             "Issue #3849 happy-path densify refuse linter failed — run python3 scripts/coverage/checks/check_apply_closure_happy_path_densify_3849.py"
@@ -5383,10 +4309,7 @@ def cmd_lint():
     # observe-only. Extends test_steal_complete_gc_defer +
     # test_moving_densify_fail_closed; no docs/design / invent (#1655 / #81967).
     spmg3850_script = COVERAGE_CHECKS / "check_steal_panic_moving_gate_3850.py"
-    if not spmg3850_script.exists():
-        fail(f"missing {spmg3850_script}")
-        return 1
-    r = run([sys.executable, str(spmg3850_script)], cwd=ROOT)
+    r = _coverage_run(spmg3850_script).returncode
     if r != 0:
         fail(
             "Issue #3850 steal panic×Moving gate linter failed — run python3 scripts/coverage/checks/check_steal_panic_moving_gate_3850.py"
@@ -5397,10 +4320,7 @@ def cmd_lint():
     # Soft untouched. Extends test_abort_ir_cache_fence_first (#81967);
     # no docs/design / invent (#1655).
     aai3852_script = COVERAGE_CHECKS / "check_abort_aot_invalidate_3852.py"
-    if not aai3852_script.exists():
-        fail(f"missing {aai3852_script}")
-        return 1
-    r = run([sys.executable, str(aai3852_script)], cwd=ROOT)
+    r = _coverage_run(aai3852_script).returncode
     if r != 0:
         fail(
             "Issue #3852 abort AOT invalidate linter failed — run python3 scripts/coverage/checks/check_abort_aot_invalidate_3852.py"
@@ -5411,10 +4331,7 @@ def cmd_lint():
     # process-wide mutex. Extends test_ir_soa_layout_stamp; BMI #3833 pins
     # kept. No docs/design / invent (#1655).
     icss3853_script = COVERAGE_CHECKS / "check_ir_soa_column_slab_shard_3853.py"
-    if not icss3853_script.exists():
-        fail(f"missing {icss3853_script}")
-        return 1
-    r = run([sys.executable, str(icss3853_script)], cwd=ROOT)
+    r = _coverage_run(icss3853_script).returncode
     if r != 0:
         fail(
             "Issue #3853 IR SoA column_slab shard linter failed — run python3 scripts/coverage/checks/check_ir_soa_column_slab_shard_3853.py"
@@ -5424,10 +4341,7 @@ def cmd_lint():
     # upstream chunks), not default new_delete_resource. Extends
     # test_ir_soa_layout_stamp; BMI #3833/#3853 pins kept. No invent.
     icsu4263_script = COVERAGE_CHECKS / "check_ir_soa_column_slab_upstream_4263.py"
-    if not icsu4263_script.exists():
-        fail(f"missing {icsu4263_script}")
-        return 1
-    r = run([sys.executable, str(icsu4263_script)], cwd=ROOT)
+    r = _coverage_run(icsu4263_script).returncode
     if r != 0:
         fail(
             "Issue #4263 IR SoA column_slab upstream linter failed — run python3 scripts/coverage/checks/check_ir_soa_column_slab_upstream_4263.py"
@@ -5438,10 +4352,7 @@ def cmd_lint():
     # current scopes the #4273 shadow drop to walk-installed bindings.
     # Extends test_primcall_narg AC24-AC26; #4273 AC23 parity kept. No invent.
     psec4477_script = COVERAGE_CHECKS / "check_prim_shadow_eval_current_4477.py"
-    if not psec4477_script.exists():
-        fail(f"missing {psec4477_script}")
-        return 1
-    r = run([sys.executable, str(psec4477_script)], cwd=ROOT)
+    r = _coverage_run(psec4477_script).returncode
     if r != 0:
         fail(
             "Issue #4477 prim shadow eval-current linter failed — run python3 scripts/coverage/checks/check_prim_shadow_eval_current_4477.py"
@@ -5452,10 +4363,7 @@ def cmd_lint():
     # wrap-evicted vs never-emitted. Extends test_security_event_wal_replay
     # (#81967); no docs/design / invent (#1655).
     wow3838_script = COVERAGE_CHECKS / "check_wal_overflow_wrap_refuse_3838.py"
-    if not wow3838_script.exists():
-        fail(f"missing {wow3838_script}")
-        return 1
-    r = run([sys.executable, str(wow3838_script)], cwd=ROOT)
+    r = _coverage_run(wow3838_script).returncode
     if r != 0:
         fail(
             "Issue #3838 WAL overflow wrap-refuse linter failed — run python3 scripts/coverage/checks/check_wal_overflow_wrap_refuse_3838.py"
@@ -5466,10 +4374,7 @@ def cmd_lint():
     # no force. Extends test_capability_single_use_consume (#81967); updates
     # #3436 AC2; no docs/design / invent (#1655).
     sgsb3839_script = COVERAGE_CHECKS / "check_string_grant_session_bound_3839.py"
-    if not sgsb3839_script.exists():
-        fail(f"missing {sgsb3839_script}")
-        return 1
-    r = run([sys.executable, str(sgsb3839_script)], cwd=ROOT)
+    r = _coverage_run(sgsb3839_script).returncode
     if r != 0:
         fail(
             "Issue #3839 string grant session_bound linter failed — run python3 scripts/coverage/checks/check_string_grant_session_bound_3839.py"
@@ -5480,10 +4385,7 @@ def cmd_lint():
     # #3728 twin). Soft / zero-key stay serialized. Extends
     # test_parallel_intend_pure_contract.cpp (#81967); no docs/design (#1655).
     pire3840_script = COVERAGE_CHECKS / "check_parallel_intend_region_eval_mu_3840.py"
-    if not pire3840_script.exists():
-        fail(f"missing {pire3840_script}")
-        return 1
-    r = run([sys.executable, str(pire3840_script)], cwd=ROOT)
+    r = _coverage_run(pire3840_script).returncode
     if r != 0:
         fail(
             "Issue #3840 parallel-intend region eval_mu linter failed — run python3 scripts/coverage/checks/check_parallel_intend_region_eval_mu_3840.py"
@@ -5497,10 +4399,7 @@ def cmd_lint():
     # Extends test_tenant_isolation_enforcement.cpp (#81967); no
     # docs/design/ (#1655). No new posture / query key.
     thp3802_script = COVERAGE_CHECKS / "check_tenant_host_path_isolation_3802.py"
-    if not thp3802_script.exists():
-        fail(f"missing {thp3802_script}")
-        return 1
-    r = run([sys.executable, str(thp3802_script)], cwd=ROOT)
+    r = _coverage_run(thp3802_script).returncode
     if r != 0:
         fail(
             "Issue #3802 tenant host-path isolation linter failed — run python3 scripts/coverage/checks/check_tenant_host_path_isolation_3802.py"
@@ -5515,10 +4414,7 @@ def cmd_lint():
     # Extends test_tenant_isolation_enforcement.cpp (#81967); no
     # docs/design/ (#1655).
     wf_script = COVERAGE_CHECKS / "check_capability_write_fence_2969.py"
-    if not wf_script.exists():
-        fail(f"missing {wf_script}")
-        return 1
-    r = run([sys.executable, str(wf_script)], cwd=ROOT)
+    r = _coverage_run(wf_script).returncode
     if r != 0:
         fail(
             "Issue #2969 registry write-fence linter failed — run python3 scripts/coverage/checks/check_capability_write_fence_2969.py"
@@ -5538,10 +4434,7 @@ def cmd_lint():
     # are not grant writes. Extends test_tenant_isolation_enforcement
     # (#81967); no docs/design/ (#1655).
     pg3276_script = COVERAGE_CHECKS / "check_privileged_grant_callsite_allowlist_3276.py"
-    if not pg3276_script.exists():
-        fail(f"missing {pg3276_script}")
-        return 1
-    r = run([sys.executable, str(pg3276_script)], cwd=ROOT)
+    r = _coverage_run(pg3276_script).returncode
     if r != 0:
         fail(
             "Issue #3276 privileged-grant call-site allowlist linter failed — run python3 scripts/coverage/checks/check_privileged_grant_callsite_allowlist_3276.py"
@@ -5554,10 +4447,7 @@ def cmd_lint():
     # total. Extends test_tenant_isolation_enforcement.cpp (#81967);
     # no docs/design/ (#1655).
     acx_script = COVERAGE_CHECKS / "check_allow_cross_tenant_admin_3010.py"
-    if not acx_script.exists():
-        fail(f"missing {acx_script}")
-        return 1
-    r = run([sys.executable, str(acx_script)], cwd=ROOT)
+    r = _coverage_run(acx_script).returncode
     if r != 0:
         fail(
             "Issue #3010 allow_cross TenantAdmin gate linter failed — run python3 scripts/coverage/checks/check_allow_cross_tenant_admin_3010.py"
@@ -5568,10 +4458,7 @@ def cmd_lint():
     # short-circuit. Extends test_tenant_isolation_enforcement.cpp
     # (#81967); no docs/design/ (#1655). Residual of #3010 read path.
     acx3332_script = COVERAGE_CHECKS / "check_allow_cross_scoped_grant_3332.py"
-    if not acx3332_script.exists():
-        fail(f"missing {acx3332_script}")
-        return 1
-    r = run([sys.executable, str(acx3332_script)], cwd=ROOT)
+    r = _coverage_run(acx3332_script).returncode
     if r != 0:
         fail(
             "Issue #3332 allow_cross scoped-grant linter failed — run python3 scripts/coverage/checks/check_allow_cross_scoped_grant_3332.py"
@@ -5583,10 +4470,7 @@ def cmd_lint():
     # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/
     # (#1655).
     idf_script = COVERAGE_CHECKS / "check_isolation_deny_fiber_3011.py"
-    if not idf_script.exists():
-        fail(f"missing {idf_script}")
-        return 1
-    r = run([sys.executable, str(idf_script)], cwd=ROOT)
+    r = _coverage_run(idf_script).returncode
     if r != 0:
         fail(
             "Issue #3011 IsolationDeny fiber linter failed — run python3 scripts/coverage/checks/check_isolation_deny_fiber_3011.py"
@@ -5602,10 +4486,7 @@ def cmd_lint():
     # Extends tests/orch/test_join_drain_reclaim.cpp (#81967); no
     # docs/design/ (#1655).
     jwr_script = COVERAGE_CHECKS / "check_join_wait_reclaimed_2970.py"
-    if not jwr_script.exists():
-        fail(f"missing {jwr_script}")
-        return 1
-    r = run([sys.executable, str(jwr_script)], cwd=ROOT)
+    r = _coverage_run(jwr_script).returncode
     if r != 0:
         fail(
             "Issue #2970 join wait-reclaimed linter failed — run python3 scripts/coverage/checks/check_join_wait_reclaimed_2970.py"
@@ -5616,10 +4497,7 @@ def cmd_lint():
     # finishes cleanup if host never waited. Extends
     # test_join_drain_reclaim.cpp (#81967); no docs/design/ (#1655).
     mwr_script = COVERAGE_CHECKS / "check_join_must_wait_reclaimed_3012.py"
-    if not mwr_script.exists():
-        fail(f"missing {mwr_script}")
-        return 1
-    r = run([sys.executable, str(mwr_script)], cwd=ROOT)
+    r = _coverage_run(mwr_script).returncode
     if r != 0:
         fail(
             "Issue #3012 must-wait-reclaimed linter failed — run python3 scripts/coverage/checks/check_join_must_wait_reclaimed_3012.py"
@@ -5631,10 +4509,7 @@ def cmd_lint():
     # default stays unset (#3012). Extends
     # test_join_drain_reclaim.cpp (#81967); no docs/design/ (#1655).
     awr_script = COVERAGE_CHECKS / "check_join_auto_wait_reclaimed_3051.py"
-    if not awr_script.exists():
-        fail(f"missing {awr_script}")
-        return 1
-    r = run([sys.executable, str(awr_script)], cwd=ROOT)
+    r = _coverage_run(awr_script).returncode
     if r != 0:
         fail(
             "Issue #3051 Aura auto-wait-reclaimed linter failed — run python3 scripts/coverage/checks/check_join_auto_wait_reclaimed_3051.py"
@@ -5647,10 +4522,7 @@ def cmd_lint():
     # additive orch-module-stats surface. Extends test_orch_obs_facade.cpp
     # (#81967); no docs/design/ (#1655).
     ass_script = COVERAGE_CHECKS / "check_agent_send_safe_2884.py"
-    if not ass_script.exists():
-        fail(f"missing {ass_script}")
-        return 1
-    r = run([sys.executable, str(ass_script)], cwd=ROOT)
+    r = _coverage_run(ass_script).returncode
     if r != 0:
         fail(
             "Issue #2884 agent_send_safe linter failed — run python3 scripts/coverage/checks/check_agent_send_safe_2884.py"
@@ -5661,10 +4533,7 @@ def cmd_lint():
     # (#2663). Extends test_orch_obs_facade.cpp (#81967); no
     # docs/design/ (#1655).
     ashr_script = COVERAGE_CHECKS / "check_agent_send_handoff_required_3013.py"
-    if not ashr_script.exists():
-        fail(f"missing {ashr_script}")
-        return 1
-    r = run([sys.executable, str(ashr_script)], cwd=ROOT)
+    r = _coverage_run(ashr_script).returncode
     if r != 0:
         fail(
             "Issue #3013 agent_send HandoffRequired linter failed — run python3 scripts/coverage/checks/check_agent_send_handoff_required_3013.py"
@@ -5675,10 +4544,7 @@ def cmd_lint():
     # for true closed / linear-viol. Extends test_orch_obs_facade.cpp
     # (#81967); no docs/design/ (#1655).
     mhdt3212_script = COVERAGE_CHECKS / "check_mailbox_handoff_dual_track_3212.py"
-    if not mhdt3212_script.exists():
-        fail(f"missing {mhdt3212_script}")
-        return 1
-    r = run([sys.executable, str(mhdt3212_script)], cwd=ROOT)
+    r = _coverage_run(mhdt3212_script).returncode
     if r != 0:
         fail(
             "Issue #3212 mailbox handoff dual-track linter failed — run python3 scripts/coverage/checks/check_mailbox_handoff_dual_track_3212.py"
@@ -5688,10 +4554,7 @@ def cmd_lint():
     # or explicit // orch-raw-send-ok. Raw path HandoffRequired unchanged.
     # Extends test_orch_obs_facade.cpp (#81967); no docs/design/ (#1655).
     asp3336_script = COVERAGE_CHECKS / "check_agent_send_safe_preference_3336.py"
-    if not asp3336_script.exists():
-        fail(f"missing {asp3336_script}")
-        return 1
-    r = run([sys.executable, str(asp3336_script)], cwd=ROOT)
+    r = _coverage_run(asp3336_script).returncode
     if r != 0:
         fail(
             "Issue #3336 agent_send_safe preference linter failed — run python3 scripts/coverage/checks/check_agent_send_safe_preference_3336.py"
@@ -5702,10 +4565,7 @@ def cmd_lint():
     # Guard-live nullopt≡empty dual-track; raw wrapper nullopt unchanged.
     # Extends test_orch_obs_facade.cpp (#81967); no docs/design/ (#1655).
     arp4001_script = COVERAGE_CHECKS / "check_agent_recv_typed_preference_4001.py"
-    if not arp4001_script.exists():
-        fail(f"missing {arp4001_script}")
-        return 1
-    r = run([sys.executable, str(arp4001_script)], cwd=ROOT)
+    r = _coverage_run(arp4001_script).returncode
     if r != 0:
         fail(
             "Issue #4001 agent_recv typed preference linter failed — run python3 scripts/coverage/checks/check_agent_recv_typed_preference_4001.py"
@@ -5716,10 +4576,7 @@ def cmd_lint():
     # handoff-required; BP storm stays typed, never silent Closed.
     # Extends test_orch_obs_facade.cpp (#81934); no docs/design/ (#1655).
     ars4137_script = COVERAGE_CHECKS / "check_agent_recv_steal_handoff_4137.py"
-    if not ars4137_script.exists():
-        fail(f"missing {ars4137_script}")
-        return 1
-    r = run([sys.executable, str(ars4137_script)], cwd=ROOT)
+    r = _coverage_run(ars4137_script).returncode
     if r != 0:
         fail(
             "Issue #4137 agent_recv steal handoff linter failed — run python3 scripts/coverage/checks/check_agent_recv_steal_handoff_4137.py"
@@ -5730,10 +4587,7 @@ def cmd_lint():
     # reject path. Extends test_fiber_orch_parallel_quota_batch.cpp
     # (#81967); no docs/design/ (#1655).
     bar_script = COVERAGE_CHECKS / "check_body_acquire_rejected_3014.py"
-    if not bar_script.exists():
-        fail(f"missing {bar_script}")
-        return 1
-    r = run([sys.executable, str(bar_script)], cwd=ROOT)
+    r = _coverage_run(bar_script).returncode
     if r != 0:
         fail(
             "Issue #3014 body_acquire_rejected linter failed — run python3 scripts/coverage/checks/check_body_acquire_rejected_3014.py"
@@ -5744,10 +4598,7 @@ def cmd_lint():
     # process-bucket. Extends test_per_scope_bp_admit.cpp (#81967);
     # no docs/design/ (#1655).
     sbi_script = COVERAGE_CHECKS / "check_scope_bp_inherit_3015.py"
-    if not sbi_script.exists():
-        fail(f"missing {sbi_script}")
-        return 1
-    r = run([sys.executable, str(sbi_script)], cwd=ROOT)
+    r = _coverage_run(sbi_script).returncode
     if r != 0:
         fail(
             "Issue #3015 scope bp inherit linter failed — run python3 scripts/coverage/checks/check_scope_bp_inherit_3015.py"
@@ -5762,10 +4613,7 @@ def cmd_lint():
     # additive observability only (reuses note_mailbox_bp_recent + existing
     # scope gauge surface; no new query key).
     mbsh_script = COVERAGE_CHECKS / "check_mailbox_bp_scope_handle_3147.py"
-    if not mbsh_script.exists():
-        fail(f"missing {mbsh_script}")
-        return 1
-    r = run([sys.executable, str(mbsh_script)], cwd=ROOT)
+    r = _coverage_run(mbsh_script).returncode
     if r != 0:
         fail(
             "Issue #3147 mailbox bp scope handle linter failed — run python3 scripts/coverage/checks/check_mailbox_bp_scope_handle_3147.py"
@@ -5783,10 +4631,7 @@ def cmd_lint():
     # tests/orch/test_per_scope_bp_admit.cpp (#81934 / #81967); no
     # docs/design/ (#1655).
     psba3179_script = COVERAGE_CHECKS / "check_per_scope_bp_admit_3179.py"
-    if not psba3179_script.exists():
-        fail(f"missing {psba3179_script}")
-        return 1
-    r = run([sys.executable, str(psba3179_script)], cwd=ROOT)
+    r = _coverage_run(psba3179_script).returncode
     if r != 0:
         fail(
             "Issue #3179 per-scope bp admit linter failed — run python3 scripts/coverage/checks/check_per_scope_bp_admit_3179.py"
@@ -5796,10 +4641,7 @@ def cmd_lint():
     # (not total_mutations_). Residual of #2493/#2836. Extends
     # test_audit_mutation_id_unify.cpp (#81967); no docs/design/ (#1655).
     bam_script = COVERAGE_CHECKS / "check_boundary_audit_mid_3016.py"
-    if not bam_script.exists():
-        fail(f"missing {bam_script}")
-        return 1
-    r = run([sys.executable, str(bam_script)], cwd=ROOT)
+    r = _coverage_run(bam_script).returncode
     if r != 0:
         fail(
             "Issue #3016 boundary audit mid linter failed — run python3 scripts/coverage/checks/check_boundary_audit_mid_3016.py"
@@ -5809,10 +4651,7 @@ def cmd_lint():
     # is not safe cover; expand allocate-bypass lint to FFI/agent/scratch.
     # Extends test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
     mir_script = COVERAGE_CHECKS / "check_moving_incomplete_remap_3017.py"
-    if not mir_script.exists():
-        fail(f"missing {mir_script}")
-        return 1
-    r = run([sys.executable, str(mir_script)], cwd=ROOT)
+    r = _coverage_run(mir_script).returncode
     if r != 0:
         fail(
             "Issue #3017 incomplete-remap residual linter failed — run python3 scripts/coverage/checks/check_moving_incomplete_remap_3017.py"
@@ -5822,10 +4661,7 @@ def cmd_lint():
     # Closure / FFI / JIT known-path stale scan). Extends
     # test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
     mpms_script = COVERAGE_CHECKS / "check_moving_post_moving_stale_3055.py"
-    if not mpms_script.exists():
-        fail(f"missing {mpms_script}")
-        return 1
-    r = run([sys.executable, str(mpms_script)], cwd=ROOT)
+    r = _coverage_run(mpms_script).returncode
     if r != 0:
         fail(
             "Issue #3055 post-Moving stale linter failed — run python3 scripts/coverage/checks/check_moving_post_moving_stale_3055.py"
@@ -5836,10 +4672,7 @@ def cmd_lint():
     # AdaptiveCompactResult level, surface to Phase-5 pin_contract_held).
     # Extends test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
     pmshg_script = COVERAGE_CHECKS / "check_post_moving_stale_hard_gate_3182.py"
-    if not pmshg_script.exists():
-        fail(f"missing {pmshg_script}")
-        return 1
-    r = run([sys.executable, str(pmshg_script)], cwd=ROOT)
+    r = _coverage_run(pmshg_script).returncode
     if r != 0:
         fail(
             "Issue #3182 post-Moving stale hard gate linter failed — run python3 scripts/coverage/checks/check_post_moving_stale_hard_gate_3182.py"
@@ -5849,10 +4682,7 @@ def cmd_lint():
     # (residual of #3055/#2935/#3182). Extends
     # test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
     mtc3210_script = COVERAGE_CHECKS / "check_moving_temporary_canary_3210.py"
-    if not mtc3210_script.exists():
-        fail(f"missing {mtc3210_script}")
-        return 1
-    r = run([sys.executable, str(mtc3210_script)], cwd=ROOT)
+    r = _coverage_run(mtc3210_script).returncode
     if r != 0:
         fail(
             "Issue #3210 temporary moving canary linter failed — run python3 scripts/coverage/checks/check_moving_temporary_canary_3210.py"
@@ -5862,10 +4692,7 @@ def cmd_lint():
     # path shares ceiling. Refines #2804 / #2811 / #3157. Extends
     # test_unquote_splicing_hygiene (#81934); no docs/design/ (#1655).
     gcrb_script = COVERAGE_CHECKS / "check_gensym_ceiling_rest_bypass_3183.py"
-    if not gcrb_script.exists():
-        fail(f"missing {gcrb_script}")
-        return 1
-    r = run([sys.executable, str(gcrb_script)], cwd=ROOT)
+    r = _coverage_run(gcrb_script).returncode
     if r != 0:
         fail(
             "Issue #3183 gensym ceiling / rest-bypass linter failed — run python3 scripts/coverage/checks/check_gensym_ceiling_rest_bypass_3183.py"
@@ -5879,10 +4706,7 @@ def cmd_lint():
     # Extends existing incremental-relower / dirty-cascade test surface;
     # no docs/design/3184-* (#1655).
     arfd_script = COVERAGE_CHECKS / "check_abort_restore_force_dirty_3184.py"
-    if not arfd_script.exists():
-        fail(f"missing {arfd_script}")
-        return 1
-    r = run([sys.executable, str(arfd_script)], cwd=ROOT)
+    r = _coverage_run(arfd_script).returncode
     if r != 0:
         fail(
             "Issue #3184 abort restore force-dirty linter failed — run python3 scripts/coverage/checks/check_abort_restore_force_dirty_3184.py"
@@ -5894,10 +4718,7 @@ def cmd_lint():
     # test_abort_ir_cache_fence_first (#81967); no docs/design/; no new
     # query keys.
     arsm3324_script = COVERAGE_CHECKS / "check_abort_restore_stale_map_stamp_3324.py"
-    if not arsm3324_script.exists():
-        fail(f"missing {arsm3324_script}")
-        return 1
-    r = run([sys.executable, str(arsm3324_script)], cwd=ROOT)
+    r = _coverage_run(arsm3324_script).returncode
     if r != 0:
         fail(
             "Issue #3324 abort-restore stale map/stamp linter failed — run python3 scripts/coverage/checks/check_abort_restore_stale_map_stamp_3324.py"
@@ -5910,10 +4731,7 @@ def cmd_lint():
     # path unchanged. Coverage stamp is not content promotion (#3445).
     # Extends test_cache_stamp_restamp_contract; no docs/design / invent.
     ars3481_script = COVERAGE_CHECKS / "check_aot_facade_content_restamp_3481.py"
-    if not ars3481_script.exists():
-        fail(f"missing {ars3481_script}")
-        return 1
-    r = run([sys.executable, str(ars3481_script)], cwd=ROOT)
+    r = _coverage_run(ars3481_script).returncode
     if r != 0:
         fail(
             "Issue #3481 AOT/facade content restamp linter failed — run python3 scripts/coverage/checks/check_aot_facade_content_restamp_3481.py"
@@ -5927,10 +4745,7 @@ def cmd_lint():
     # metric-only. Extends test_hold_budget_synthetic_yield_injection
     # (#81967); no docs/design/; no test_issue_3325.cpp.
     nfe3325_script = COVERAGE_CHECKS / "check_hold_budget_no_edge_force_3325.py"
-    if not nfe3325_script.exists():
-        fail(f"missing {nfe3325_script}")
-        return 1
-    r = run([sys.executable, str(nfe3325_script)], cwd=ROOT)
+    r = _coverage_run(nfe3325_script).returncode
     if r != 0:
         fail(
             "Issue #3325 hold-budget no-edge force linter failed — run python3 scripts/coverage/checks/check_hold_budget_no_edge_force_3325.py"
@@ -5945,10 +4760,7 @@ def cmd_lint():
     # path is unchanged. Extends test_moving_densify_fail_closed (#81967);
     # no docs/design/3185-* (#1655), no tests/issues/test_issue_3185.cpp (#81934).
     delcp_script = COVERAGE_CHECKS / "check_densify_entry_lcp_consult_3185.py"
-    if not delcp_script.exists():
-        fail(f"missing {delcp_script}")
-        return 1
-    r = run([sys.executable, str(delcp_script)], cwd=ROOT)
+    r = _coverage_run(delcp_script).returncode
     if r != 0:
         fail(
             "Issue #3185 densify-entry LCP consult linter failed — run python3 scripts/coverage/checks/check_densify_entry_lcp_consult_3185.py"
@@ -5964,10 +4776,7 @@ def cmd_lint():
     # test_occurrence_goal_persist_rehydrate (#81967); no docs/design/3186-*
     # (#1655), no tests/issues/test_issue_3186.cpp (#81934).
     lmdeo_script = COVERAGE_CHECKS / "check_linear_move_drop_elision_ok_3186.py"
-    if not lmdeo_script.exists():
-        fail(f"missing {lmdeo_script}")
-        return 1
-    r = run([sys.executable, str(lmdeo_script)], cwd=ROOT)
+    r = _coverage_run(lmdeo_script).returncode
     if r != 0:
         fail(
             "Issue #3186 JIT linear_move_drop_elision_ok linter failed — run python3 scripts/coverage/checks/check_linear_move_drop_elision_ok_3186.py"
@@ -5984,10 +4793,7 @@ def cmd_lint():
     # no docs/design/3187-* (#1655), no tests/issues/test_issue_3187.cpp
     # (#81934).
     dgsop_script = COVERAGE_CHECKS / "check_dual_dep_graph_strict_or_production_3187.py"
-    if not dgsop_script.exists():
-        fail(f"missing {dgsop_script}")
-        return 1
-    r = run([sys.executable, str(dgsop_script)], cwd=ROOT)
+    r = _coverage_run(dgsop_script).returncode
     if r != 0:
         fail(
             "Issue #3187 dual DepGraph strict-or-production linter failed — run python3 scripts/coverage/checks/check_dual_dep_graph_strict_or_production_3187.py"
@@ -6007,10 +4813,7 @@ def cmd_lint():
     # test_compiler_hot_update_facade (#81967); no docs/design/3188-*
     # (#1655), no tests/issues/test_issue_3188.cpp (#81934).
     pfmis_script = COVERAGE_CHECKS / "check_production_facade_minimal_ir_shape_3188.py"
-    if not pfmis_script.exists():
-        fail(f"missing {pfmis_script}")
-        return 1
-    r = run([sys.executable, str(pfmis_script)], cwd=ROOT)
+    r = _coverage_run(pfmis_script).returncode
     if r != 0:
         fail(
             "Issue #3188 production facade minimal IR/shape linter failed — run python3 scripts/coverage/checks/check_production_facade_minimal_ir_shape_3188.py"
@@ -6023,10 +4826,7 @@ def cmd_lint():
     # facade returns false; helper never runs. Extends
     # test_compiler_hot_update_facade; no docs/design / invent.
     ecj3219_script = COVERAGE_CHECKS / "check_eval_core_joint_after_production_facade_3219.py"
-    if not ecj3219_script.exists():
-        fail(f"missing {ecj3219_script}")
-        return 1
-    r = run([sys.executable, str(ecj3219_script)], cwd=ROOT)
+    r = _coverage_run(ecj3219_script).returncode
     if r != 0:
         fail(
             "Issue #3219 Evaluator/core joint after production facade linter failed — run python3 scripts/coverage/checks/check_eval_core_joint_after_production_facade_3219.py"
@@ -6037,10 +4837,7 @@ def cmd_lint():
     # dep_graph lock. Extends test_compiler_hot_update_facade (#81967);
     # no docs/design/; no new query keys.
     hyb3345_script = COVERAGE_CHECKS / "check_production_hybrid_depth1_fanout_3345.py"
-    if not hyb3345_script.exists():
-        fail(f"missing {hyb3345_script}")
-        return 1
-    r = run([sys.executable, str(hyb3345_script)], cwd=ROOT)
+    r = _coverage_run(hyb3345_script).returncode
     if r != 0:
         fail(
             "Issue #3345 production hybrid depth-1 fanout linter failed — run python3 scripts/coverage/checks/check_production_hybrid_depth1_fanout_3345.py"
@@ -6052,10 +4849,7 @@ def cmd_lint():
     # test_compiler_hot_update_facade + test_incremental_facade_dirty_
     # names_snapshot; no docs/design/; no new query keys.
     cone3474_script = COVERAGE_CHECKS / "check_production_called_by_cone_bfs_3474.py"
-    if not cone3474_script.exists():
-        fail(f"missing {cone3474_script}")
-        return 1
-    r = run([sys.executable, str(cone3474_script)], cwd=ROOT)
+    r = _coverage_run(cone3474_script).returncode
     if r != 0:
         fail(
             "Issue #3474 production called_by cone FIFO linter failed — run python3 scripts/coverage/checks/check_production_called_by_cone_bfs_3474.py"
@@ -6067,10 +4861,7 @@ def cmd_lint():
     # Soft / Off clean skip stays zero-cost. Extends
     # test_cascade_relower_silent_skip; no docs/design/; no new query keys.
     peel3484_script = COVERAGE_CHECKS / "check_peel_zero_mask_fail_closed_3484.py"
-    if not peel3484_script.exists():
-        fail(f"missing {peel3484_script}")
-        return 1
-    r = run([sys.executable, str(peel3484_script)], cwd=ROOT)
+    r = _coverage_run(peel3484_script).returncode
     if r != 0:
         fail(
             "Issue #3484 peel zero-mask fail-closed linter failed — run python3 scripts/coverage/checks/check_peel_zero_mask_fail_closed_3484.py"
@@ -6082,10 +4873,7 @@ def cmd_lint():
     # CoverageVerify. Extends test_compiler_hot_update_facade; no
     # docs/design / invent / new query:*.
     cr3221_script = COVERAGE_CHECKS / "check_cascade_reason_not_residual_force_heal_3221.py"
-    if not cr3221_script.exists():
-        fail(f"missing {cr3221_script}")
-        return 1
-    r = run([sys.executable, str(cr3221_script)], cwd=ROOT)
+    r = _coverage_run(cr3221_script).returncode
     if r != 0:
         fail(
             "Issue #3221 cascade reason not ResidualForceHeal linter failed — run python3 scripts/coverage/checks/check_cascade_reason_not_residual_force_heal_3221.py"
@@ -6098,10 +4886,7 @@ def cmd_lint():
     # forced_unlock_total + forced_fail_closed_total. Extends
     # test_hold_budget_synthetic_yield_injection; no docs/design / invent.
     hb3222_script = COVERAGE_CHECKS / "check_hold_budget_inbody_force_unlock_3222.py"
-    if not hb3222_script.exists():
-        fail(f"missing {hb3222_script}")
-        return 1
-    r = run([sys.executable, str(hb3222_script)], cwd=ROOT)
+    r = _coverage_run(hb3222_script).returncode
     if r != 0:
         fail(
             "Issue #3222 hold-budget inbody force-unlock linter failed — run python3 scripts/coverage/checks/check_hold_budget_inbody_force_unlock_3222.py"
@@ -6114,10 +4899,7 @@ def cmd_lint():
     # forced_fail_closed_total. Extends
     # test_hold_budget_synthetic_yield_injection; no docs/design / invent.
     hb3480_script = COVERAGE_CHECKS / "check_hold_budget_add_mutate_inbody_poll_3480.py"
-    if not hb3480_script.exists():
-        fail(f"missing {hb3480_script}")
-        return 1
-    r = run([sys.executable, str(hb3480_script)], cwd=ROOT)
+    r = _coverage_run(hb3480_script).returncode
     if r != 0:
         fail(
             "Issue #3480 add_mutate inbody hold-budget poll linter failed — run python3 scripts/coverage/checks/check_hold_budget_add_mutate_inbody_poll_3480.py"
@@ -6129,10 +4911,7 @@ def cmd_lint():
     # cross-fiber fired/consumed + forced_unlock_total. Extends
     # test_hold_budget_synthetic_yield_injection; no docs/design / invent.
     hb3223_script = COVERAGE_CHECKS / "check_cross_fiber_urgent_inbody_poll_3223.py"
-    if not hb3223_script.exists():
-        fail(f"missing {hb3223_script}")
-        return 1
-    r = run([sys.executable, str(hb3223_script)], cwd=ROOT)
+    r = _coverage_run(hb3223_script).returncode
     if r != 0:
         fail(
             "Issue #3223 cross-fiber urgent inbody poll linter failed — run python3 scripts/coverage/checks/check_cross_fiber_urgent_inbody_poll_3223.py"
@@ -6143,10 +4922,7 @@ def cmd_lint():
     # commit_readiness + elide_blocked_production_total. Extends
     # test_occurrence_goal_persist_rehydrate; no docs/design / invent.
     ir3224_script = COVERAGE_CHECKS / "check_ir_typed_entry_commit_readiness_3224.py"
-    if not ir3224_script.exists():
-        fail(f"missing {ir3224_script}")
-        return 1
-    r = run([sys.executable, str(ir3224_script)], cwd=ROOT)
+    r = _coverage_run(ir3224_script).returncode
     if r != 0:
         fail(
             "Issue #3224 IR typed-entry commit_readiness linter failed — run python3 scripts/coverage/checks/check_ir_typed_entry_commit_readiness_3224.py"
@@ -6158,10 +4934,7 @@ def cmd_lint():
     # Extends test_typed_audit_commit_readiness_live_policy +
     # test_ir_typed_entry_proof_authority + test_commit_readiness_score.
     ntl3414_script = COVERAGE_CHECKS / "check_no_tls_live_policy_default_solved_3414.py"
-    if not ntl3414_script.exists():
-        fail(f"missing {ntl3414_script}")
-        return 1
-    r = run([sys.executable, str(ntl3414_script)], cwd=ROOT)
+    r = _coverage_run(ntl3414_script).returncode
     if r != 0:
         fail(
             "Issue #3414 no-TLS live_policy default-SOLVED linter failed — run python3 scripts/coverage/checks/check_no_tls_live_policy_default_solved_3414.py"
@@ -6173,10 +4946,7 @@ def cmd_lint():
     # test_steal_complete_strong_entry (#81967); no docs/design/; no
     # new query keys.
     wabi3343_script = COVERAGE_CHECKS / "check_production_weak_abi_commit_readiness_3343.py"
-    if not wabi3343_script.exists():
-        fail(f"missing {wabi3343_script}")
-        return 1
-    r = run([sys.executable, str(wabi3343_script)], cwd=ROOT)
+    r = _coverage_run(wabi3343_script).returncode
     if r != 0:
         fail(
             "Issue #3343 production weak-ABI commit_readiness linter failed — run python3 scripts/coverage/checks/check_production_weak_abi_commit_readiness_3343.py"
@@ -6186,10 +4956,7 @@ def cmd_lint():
     # is unsafe (deopt). Soft / light-link stay pass-through. Extends
     # persist-rehydrate + steal-complete; linter after #3343.
     unset3654_script = COVERAGE_CHECKS / "check_jit_linear_post_mutate_unset_3654.py"
-    if not unset3654_script.exists():
-        fail(f"missing {unset3654_script}")
-        return 1
-    r = run([sys.executable, str(unset3654_script)], cwd=ROOT)
+    r = _coverage_run(unset3654_script).returncode
     if r != 0:
         fail(
             "Issue #3654 JIT linear_post_mutate unset fail-closed linter failed — run python3 scripts/coverage/checks/check_jit_linear_post_mutate_unset_3654.py"
@@ -6199,10 +4966,7 @@ def cmd_lint():
     # mutate. Soft skips extra typecheck. Extends persist-rehydrate +
     # typed_mutate_incremental_gaps; linter after #3654.
     sdo3655_script = COVERAGE_CHECKS / "check_persist_sdo_before_unstaged_3655.py"
-    if not sdo3655_script.exists():
-        fail(f"missing {sdo3655_script}")
-        return 1
-    r = run([sys.executable, str(sdo3655_script)], cwd=ROOT)
+    r = _coverage_run(sdo3655_script).returncode
     if r != 0:
         fail(
             "Issue #3655 persist SDO-before-unstaged linter failed — run python3 scripts/coverage/checks/check_persist_sdo_before_unstaged_3655.py"
@@ -6213,10 +4977,7 @@ def cmd_lint():
     # Soft keeps continue. Extends hybrid cascade + cascade-decision
     # residual; linter after #3655.
     us3657_script = COVERAGE_CHECKS / "check_unslotted_string_edge_parity_3657.py"
-    if not us3657_script.exists():
-        fail(f"missing {us3657_script}")
-        return 1
-    r = run([sys.executable, str(us3657_script)], cwd=ROOT)
+    r = _coverage_run(us3657_script).returncode
     if r != 0:
         fail(
             "Issue #3657 unslotted string-edge parity linter failed — run python3 scripts/coverage/checks/check_unslotted_string_edge_parity_3657.py"
@@ -6227,10 +4988,7 @@ def cmd_lint():
     # Extends type_dirty_cone_dep_graph + type_dirty_txn_order; linter
     # after #3657.
     tdt3658_script = COVERAGE_CHECKS / "check_type_dirty_txn_before_cascade_3658.py"
-    if not tdt3658_script.exists():
-        fail(f"missing {tdt3658_script}")
-        return 1
-    r = run([sys.executable, str(tdt3658_script)], cwd=ROOT)
+    r = _coverage_run(tdt3658_script).returncode
     if r != 0:
         fail(
             "Issue #3658 type dirty txn before cascade linter failed — run python3 scripts/coverage/checks/check_type_dirty_txn_before_cascade_3658.py"
@@ -6240,10 +4998,7 @@ def cmd_lint():
     # ticket). Soft unchanged. Extends test_is_stealable_snapshot_gate;
     # linter after #3658.
     bs3659_script = COVERAGE_CHECKS / "check_boundary_safe_uses_snap_3659.py"
-    if not bs3659_script.exists():
-        fail(f"missing {bs3659_script}")
-        return 1
-    r = run([sys.executable, str(bs3659_script)], cwd=ROOT)
+    r = _coverage_run(bs3659_script).returncode
     if r != 0:
         fail(
             "Issue #3659 BoundarySafe snap-same-beat linter failed — run python3 scripts/coverage/checks/check_boundary_safe_uses_snap_3659.py"
@@ -6253,10 +5008,7 @@ def cmd_lint():
     # whole-table Mutation epoch. Soft empty stays Fresh. Extends
     # test_query_result_full_provenance; linter after #3659.
     qrf3660_script = COVERAGE_CHECKS / "check_query_result_per_match_fresh_3660.py"
-    if not qrf3660_script.exists():
-        fail(f"missing {qrf3660_script}")
-        return 1
-    r = run([sys.executable, str(qrf3660_script)], cwd=ROOT)
+    r = _coverage_run(qrf3660_script).returncode
     if r != 0:
         fail(
             "Issue #3660 QueryResult per-match freshness linter failed — run python3 scripts/coverage/checks/check_query_result_per_match_fresh_3660.py"
@@ -6266,10 +5018,7 @@ def cmd_lint():
     # occupancy remake. Soft auto_refresh kept. Extends as-stable-ref /
     # tenant / hygiene; linter after #3660.
     pvr3661_script = COVERAGE_CHECKS / "check_packed_v2_no_occupancy_refresh_3661.py"
-    if not pvr3661_script.exists():
-        fail(f"missing {pvr3661_script}")
-        return 1
-    r = run([sys.executable, str(pvr3661_script)], cwd=ROOT)
+    r = _coverage_run(pvr3661_script).returncode
     if r != 0:
         fail(
             "Issue #3661 packed v2 no occupancy refresh linter failed — run python3 scripts/coverage/checks/check_packed_v2_no_occupancy_refresh_3661.py"
@@ -6279,10 +5028,7 @@ def cmd_lint():
     # reject — check_flat must not insert CastOp after #3622. Soft
     # gradual core kept. Extends test_ir #3622 suite; linter after #3661.
     icd3662_script = COVERAGE_CHECKS / "check_is_coercible_dynamic_prod_3662.py"
-    if not icd3662_script.exists():
-        fail(f"missing {icd3662_script}")
-        return 1
-    r = run([sys.executable, str(icd3662_script)], cwd=ROOT)
+    r = _coverage_run(icd3662_script).returncode
     if r != 0:
         fail(
             "Issue #3662 is_coercible Dynamic production linter failed — run python3 scripts/coverage/checks/check_is_coercible_dynamic_prod_3662.py"
@@ -6292,10 +5038,7 @@ def cmd_lint():
     # elision_ok (abort-in-flight + live commit_readiness). Soft #2263
     # clean elide kept. Extends escape_move_elision; linter after #3662.
     lme3663_script = COVERAGE_CHECKS / "check_linear_move_elision_abort_live_3663.py"
-    if not lme3663_script.exists():
-        fail(f"missing {lme3663_script}")
-        return 1
-    r = run([sys.executable, str(lme3663_script)], cwd=ROOT)
+    r = _coverage_run(lme3663_script).returncode
     if r != 0:
         fail(
             "Issue #3663 linear Move elision abort/live linter failed — run python3 scripts/coverage/checks/check_linear_move_elision_abort_live_3663.py"
@@ -6305,10 +5048,7 @@ def cmd_lint():
     # struct, not std::function. Soft same helper. Extends atomic-batch
     # replace-pattern sibling; linter after #3663.
     rpm3664_script = COVERAGE_CHECKS / "check_replace_pattern_match_sub_no_std_function_3664.py"
-    if not rpm3664_script.exists():
-        fail(f"missing {rpm3664_script}")
-        return 1
-    r = run([sys.executable, str(rpm3664_script)], cwd=ROOT)
+    r = _coverage_run(rpm3664_script).returncode
     if r != 0:
         fail(
             "Issue #3664 replace-pattern match_sub no std::function linter failed — run python3 scripts/coverage/checks/check_replace_pattern_match_sub_no_std_function_3664.py"
@@ -6318,10 +5058,7 @@ def cmd_lint():
     # synced tree (no full child_data_.clear()). Soft same control flow.
     # Extends #3402/#3453 dense-children suite; linter after #3664.
     irds3665_script = COVERAGE_CHECKS / "check_insert_remove_child_locked_dense_splice_3665.py"
-    if not irds3665_script.exists():
-        fail(f"missing {irds3665_script}")
-        return 1
-    r = run([sys.executable, str(irds3665_script)], cwd=ROOT)
+    r = _coverage_run(irds3665_script).returncode
     if r != 0:
         fail(
             "Issue #3665 insert/remove dense splice linter failed — run python3 scripts/coverage/checks/check_insert_remove_child_locked_dense_splice_3665.py"
@@ -6331,10 +5068,7 @@ def cmd_lint():
     # as_int / view_at pay no armed-cache load. Soft/unit keep #3490
     # cache. Extends hot-contract placement + pack-pipeline; after #3665.
     hcpp3666_script = COVERAGE_CHECKS / "check_hot_contract_production_pack_3666.py"
-    if not hcpp3666_script.exists():
-        fail(f"missing {hcpp3666_script}")
-        return 1
-    r = run([sys.executable, str(hcpp3666_script)], cwd=ROOT)
+    r = _coverage_run(hcpp3666_script).returncode
     if r != 0:
         fail(
             "Issue #3666 hot-contract production-pack linter failed — run python3 scripts/coverage/checks/check_hot_contract_production_pack_3666.py"
@@ -6346,10 +5080,7 @@ def cmd_lint():
     # Soft/Off: no extra walk. Extends persist-order + commit-health;
     # linter after #3666.
     opao3653_script = COVERAGE_CHECKS / "check_outermost_persist_audit_order_3653.py"
-    if not opao3653_script.exists():
-        fail(f"missing {opao3653_script}")
-        return 1
-    r = run([sys.executable, str(opao3653_script)], cwd=ROOT)
+    r = _coverage_run(opao3653_script).returncode
     if r != 0:
         fail(
             "Issue #3653 outermost persist audit-order linter failed — run python3 scripts/coverage/checks/check_outermost_persist_audit_order_3653.py"
@@ -6359,10 +5090,7 @@ def cmd_lint():
     # Typed/SE/grant/WAL SSOT (never defuse_version_ under production).
     # Soft/Off may keep defuse observe stamps. Linter after #3653.
     omj3778_script = COVERAGE_CHECKS / "check_occurrence_mid_join_ssot_3778.py"
-    if not omj3778_script.exists():
-        fail(f"missing {omj3778_script}")
-        return 1
-    r = run([sys.executable, str(omj3778_script)], cwd=ROOT)
+    r = _coverage_run(omj3778_script).returncode
     if r != 0:
         fail(
             "Issue #3778 occurrence mid-join SSOT linter failed — run python3 scripts/coverage/checks/check_occurrence_mid_join_ssot_3778.py"
@@ -6372,10 +5100,7 @@ def cmd_lint():
     # Restricted/Strict (same face as hygiene:set-allow-macro-mutate!).
     # Soft/Off ungated. Linter after #3778.
     ami3786_script = COVERAGE_CHECKS / "check_allow_macro_inline_mse_3786.py"
-    if not ami3786_script.exists():
-        fail(f"missing {ami3786_script}")
-        return 1
-    r = run([sys.executable, str(ami3786_script)], cwd=ROOT)
+    r = _coverage_run(ami3786_script).returncode
     if r != 0:
         fail(
             "Issue #3786 allow-macro-inline MSE linter failed — run python3 scripts/coverage/checks/check_allow_macro_inline_mse_3786.py"
@@ -6384,10 +5109,7 @@ def cmd_lint():
     # Issue #3787: sticky global last_limit 8/9/10 must not false-deny
     # via deny_all — prefer per-fiber FiberHygieneStats. Linter after #3786.
     sll3787_script = COVERAGE_CHECKS / "check_sticky_last_limit_deny_all_3787.py"
-    if not sll3787_script.exists():
-        fail(f"missing {sll3787_script}")
-        return 1
-    r = run([sys.executable, str(sll3787_script)], cwd=ROOT)
+    r = _coverage_run(sll3787_script).returncode
     if r != 0:
         fail(
             "Issue #3787 sticky last_limit deny_all linter failed — run python3 scripts/coverage/checks/check_sticky_last_limit_deny_all_3787.py"
@@ -6397,10 +5119,7 @@ def cmd_lint():
     # must CONFLICT (not silent SOLVED-with-miss). Soft/Off observe-only.
     # Extends vacuous-solve-prevent (#2647); no docs/design / invent.
     pod3788_script = COVERAGE_CHECKS / "check_partial_occurrence_drift_escalate_3788.py"
-    if not pod3788_script.exists():
-        fail(f"missing {pod3788_script}")
-        return 1
-    r = run([sys.executable, str(pod3788_script)], cwd=ROOT)
+    r = _coverage_run(pod3788_script).returncode
     if r != 0:
         fail(
             "Issue #3788 partial Occurrence drift escalate linter failed — run python3 scripts/coverage/checks/check_partial_occurrence_drift_escalate_3788.py"
@@ -6409,10 +5128,7 @@ def cmd_lint():
     # Issue #3789: remount last==0 Quiet must not read as green on Agent faces.
     # Extends #3548/#3578; no query key rename / invent.
     rlz3789_script = COVERAGE_CHECKS / "check_remount_last_zero_agent_face_3789.py"
-    if not rlz3789_script.exists():
-        fail(f"missing {rlz3789_script}")
-        return 1
-    r = run([sys.executable, str(rlz3789_script)], cwd=ROOT)
+    r = _coverage_run(rlz3789_script).returncode
     if r != 0:
         fail(
             "Issue #3789 remount last==0 Agent face linter failed — run python3 scripts/coverage/checks/check_remount_last_zero_agent_face_3789.py"
@@ -6421,10 +5137,7 @@ def cmd_lint():
     # Issue #3790: rollback / rollback-since acquire MutationBoundaryGuard
     # (residual of #3722 concurrency half). Soft/Off inert Guard.
     rbg3790_script = COVERAGE_CHECKS / "check_rollback_mutation_boundary_guard_3790.py"
-    if not rbg3790_script.exists():
-        fail(f"missing {rbg3790_script}")
-        return 1
-    r = run([sys.executable, str(rbg3790_script)], cwd=ROOT)
+    r = _coverage_run(rbg3790_script).returncode
     if r != 0:
         fail(
             "Issue #3790 rollback MutationBoundaryGuard linter failed — run python3 scripts/coverage/checks/check_rollback_mutation_boundary_guard_3790.py"
@@ -6433,10 +5146,7 @@ def cmd_lint():
     # Issue #3794: partial Occurrence drift Agent-face grant/commit refuse.
     # Extends #3788; Soft miss-only; no query key rename.
     pdg3794_script = COVERAGE_CHECKS / "check_partial_drift_grant_refuse_3794.py"
-    if not pdg3794_script.exists():
-        fail(f"missing {pdg3794_script}")
-        return 1
-    r = run([sys.executable, str(pdg3794_script)], cwd=ROOT)
+    r = _coverage_run(pdg3794_script).returncode
     if r != 0:
         fail(
             "Issue #3794 partial drift grant refuse linter failed — run python3 scripts/coverage/checks/check_partial_drift_grant_refuse_3794.py"
@@ -6447,10 +5157,7 @@ def cmd_lint():
     # calls) + #3584 (units fixed, cone still invisible). Soft observe.
     # Linter after #3653.
     ccpa3656_script = COVERAGE_CHECKS / "check_callee_cone_partial_absorb_3656.py"
-    if not ccpa3656_script.exists():
-        fail(f"missing {ccpa3656_script}")
-        return 1
-    r = run([sys.executable, str(ccpa3656_script)], cwd=ROOT)
+    r = _coverage_run(ccpa3656_script).returncode
     if r != 0:
         fail(
             "Issue #3656 callee-cone partial-absorb linter failed — run python3 scripts/coverage/checks/check_callee_cone_partial_absorb_3656.py"
@@ -6460,10 +5167,7 @@ def cmd_lint():
     # included). Stub typed-entry is not production (ABI bit 8). Soft omit.
     # Extends persist-rehydrate + steal-complete; linter after #3343.
     jte3419_script = COVERAGE_CHECKS / "check_jit_typed_entry_every_function_3419.py"
-    if not jte3419_script.exists():
-        fail(f"missing {jte3419_script}")
-        return 1
-    r = run([sys.executable, str(jte3419_script)], cwd=ROOT)
+    r = _coverage_run(jte3419_script).returncode
     if r != 0:
         fail(
             "Issue #3419 JIT typed-entry every-function linter failed — run python3 scripts/coverage/checks/check_jit_typed_entry_every_function_3419.py"
@@ -6474,10 +5178,7 @@ def cmd_lint():
     # typed-entry deopt; suppressed when can_epoch already emitted it).
     # Linter after #3419.
     alp3616_script = COVERAGE_CHECKS / "check_jit_anon_linear_prologue_3616.py"
-    if not alp3616_script.exists():
-        fail(f"missing {alp3616_script}")
-        return 1
-    r = run([sys.executable, str(alp3616_script)], cwd=ROOT)
+    r = _coverage_run(alp3616_script).returncode
     if r != 0:
         fail(
             "Issue #3616 anon linear prologue linter failed — run python3 scripts/coverage/checks/check_jit_anon_linear_prologue_3616.py"
@@ -6488,10 +5189,7 @@ def cmd_lint():
     # Per-eval lock-free slot tables; no new steal-decision mutex. Linter
     # after #3616.
     sekr3617_script = COVERAGE_CHECKS / "check_steal_eval_keyed_residual_3617.py"
-    if not sekr3617_script.exists():
-        fail(f"missing {sekr3617_script}")
-        return 1
-    r = run([sys.executable, str(sekr3617_script)], cwd=ROOT)
+    r = _coverage_run(sekr3617_script).returncode
     if r != 0:
         fail(
             "Issue #3617 steal eval-keyed residual linter failed — run python3 scripts/coverage/checks/check_steal_eval_keyed_residual_3617.py"
@@ -6502,10 +5200,7 @@ def cmd_lint():
     # (map non-empty but missing the persisted nid used to cone-skip a
     # type-changed site). Linter after #3617.
     rpa3618_script = COVERAGE_CHECKS / "check_residual_persist_attribution_3618.py"
-    if not rpa3618_script.exists():
-        fail(f"missing {rpa3618_script}")
-        return 1
-    r = run([sys.executable, str(rpa3618_script)], cwd=ROOT)
+    r = _coverage_run(rpa3618_script).returncode
     if r != 0:
         fail(
             "Issue #3618 residual persist attribution linter failed — run python3 scripts/coverage/checks/check_residual_persist_attribution_3618.py"
@@ -6516,10 +5211,7 @@ def cmd_lint():
     # #3186/#3224/#3419. Extends test_escape_move_elision_gate; no new
     # query key. Linter after #3419.
     lef3446_script = COVERAGE_CHECKS / "check_linear_epoch_fence_elision_typed_3446.py"
-    if not lef3446_script.exists():
-        fail(f"missing {lef3446_script}")
-        return 1
-    r = run([sys.executable, str(lef3446_script)], cwd=ROOT)
+    r = _coverage_run(lef3446_script).returncode
     if r != 0:
         fail(
             "Issue #3446 linear epoch fence elision+typed-entry linter failed — run python3 scripts/coverage/checks/check_linear_epoch_fence_elision_typed_3446.py"
@@ -6530,10 +5222,7 @@ def cmd_lint():
     # Soft/quiet skip seq. Reuses miss + empty-after-fence. Extends
     # test_occurrence_goal_persist_rehydrate; no docs/design / invent.
     ops3225_script = COVERAGE_CHECKS / "check_occurrence_persist_seq_3225.py"
-    if not ops3225_script.exists():
-        fail(f"missing {ops3225_script}")
-        return 1
-    r = run([sys.executable, str(ops3225_script)], cwd=ROOT)
+    r = _coverage_run(ops3225_script).returncode
     if r != 0:
         fail(
             "Issue #3225 occurrence persist seqlock linter failed — run python3 scripts/coverage/checks/check_occurrence_persist_seq_3225.py"
@@ -6546,10 +5235,7 @@ def cmd_lint():
     # test_occurrence_goal_persist_rehydrate; no docs/design / invent /
     # new query keys.
     ll3346_script = COVERAGE_CHECKS / "check_stamp_last_look_densify_steal_abort_3346.py"
-    if not ll3346_script.exists():
-        fail(f"missing {ll3346_script}")
-        return 1
-    r = run([sys.executable, str(ll3346_script)], cwd=ROOT)
+    r = _coverage_run(ll3346_script).returncode
     if r != 0:
         fail(
             "Issue #3346 stamp last-look densify×steal×mid-abort linter failed — run python3 scripts/coverage/checks/check_stamp_last_look_densify_steal_abort_3346.py"
@@ -6560,10 +5246,7 @@ def cmd_lint():
     # Extends test_occurrence_goal_persist_rehydrate + commit-health;
     # linter after #3170; no docs/design / invent / new query key.
     fpov3418_script = COVERAGE_CHECKS / "check_proof_goal_fingerprint_overflow_3418.py"
-    if not fpov3418_script.exists():
-        fail(f"missing {fpov3418_script}")
-        return 1
-    r = run([sys.executable, str(fpov3418_script)], cwd=ROOT)
+    r = _coverage_run(fpov3418_script).returncode
     if r != 0:
         fail(
             "Issue #3418 fingerprint cap overflow linter failed — run python3 scripts/coverage/checks/check_proof_goal_fingerprint_overflow_3418.py"
@@ -6574,10 +5257,7 @@ def cmd_lint():
     # test_outermost_persist_fail_closed; linter after #3170/#3418;
     # no docs/design / invent / new query key.
     ufp3431_script = COVERAGE_CHECKS / "check_occurrence_unstaged_expected_fp_3431.py"
-    if not ufp3431_script.exists():
-        fail(f"missing {ufp3431_script}")
-        return 1
-    r = run([sys.executable, str(ufp3431_script)], cwd=ROOT)
+    r = _coverage_run(ufp3431_script).returncode
     if r != 0:
         fail(
             "Issue #3431 unstaged expected_fp persist linter failed — run python3 scripts/coverage/checks/check_occurrence_unstaged_expected_fp_3431.py"
@@ -6588,10 +5268,7 @@ def cmd_lint():
     # before exit_mutation_boundary so existing !success restore is
     # SSOT. Extends occurrence abort / persist-fail-closed suites.
     pr3440_script = COVERAGE_CHECKS / "check_outermost_persist_reject_restore_3440.py"
-    if not pr3440_script.exists():
-        fail(f"missing {pr3440_script}")
-        return 1
-    r = run([sys.executable, str(pr3440_script)], cwd=ROOT)
+    r = _coverage_run(pr3440_script).returncode
     if r != 0:
         fail(
             "Issue #3440 persist-reject abort_restore linter failed — run python3 scripts/coverage/checks/check_outermost_persist_reject_restore_3440.py"
@@ -6602,10 +5279,7 @@ def cmd_lint():
     # Green bind eval-scoped. Soft/Off no extra slot. Extends
     # test_ir_typed_entry_proof_authority + live_policy + steal suites.
     lp3416_script = COVERAGE_CHECKS / "check_last_proof_eval_identity_3416.py"
-    if not lp3416_script.exists():
-        fail(f"missing {lp3416_script}")
-        return 1
-    r = run([sys.executable, str(lp3416_script)], cwd=ROOT)
+    r = _coverage_run(lp3416_script).returncode
     if r != 0:
         fail(
             "Issue #3416 last-proof eval-identity linter failed — run python3 scripts/coverage/checks/check_last_proof_eval_identity_3416.py"
@@ -6616,10 +5290,7 @@ def cmd_lint():
     # deferred trivial prod_ok). Soft / sample_bp==0 skip lower.
     # Extends test_incremental_soundness_oracle; no docs/design / invent.
     psrc3226_script = COVERAGE_CHECKS / "check_prod_soundness_real_compare_3226.py"
-    if not psrc3226_script.exists():
-        fail(f"missing {psrc3226_script}")
-        return 1
-    r = run([sys.executable, str(psrc3226_script)], cwd=ROOT)
+    r = _coverage_run(psrc3226_script).returncode
     if r != 0:
         fail(
             "Issue #3226 production soundness real-compare linter failed — run python3 scripts/coverage/checks/check_prod_soundness_real_compare_3226.py"
@@ -6629,10 +5300,7 @@ def cmd_lint():
     # (densify/steal invalidate_gen + #2984). Soft observe; last==0 quiet.
     # Extends test_type_linear_commit_health; no docs/design / invent.
     lpm3227_script = COVERAGE_CHECKS / "check_linear_post_migration_proof_rebind_3227.py"
-    if not lpm3227_script.exists():
-        fail(f"missing {lpm3227_script}")
-        return 1
-    r = run([sys.executable, str(lpm3227_script)], cwd=ROOT)
+    r = _coverage_run(lpm3227_script).returncode
     if r != 0:
         fail(
             "Issue #3227 linear post-migration proof rebind linter failed — run python3 scripts/coverage/checks/check_linear_post_migration_proof_rebind_3227.py"
@@ -6642,10 +5310,7 @@ def cmd_lint():
     # #3227/#2984). Soft no hard-drop. Extends type-linear-commit-health
     # + escape-move-elision; no new query key / invent.
     lzr3448_script = COVERAGE_CHECKS / "check_linear_zero_root_green_face_drop_3448.py"
-    if not lzr3448_script.exists():
-        fail(f"missing {lzr3448_script}")
-        return 1
-    r = run([sys.executable, str(lzr3448_script)], cwd=ROOT)
+    r = _coverage_run(lzr3448_script).returncode
     if r != 0:
         fail(
             "Issue #3448 last==0 green-face remount drop linter failed — run python3 scripts/coverage/checks/check_linear_zero_root_green_face_drop_3448.py"
@@ -6655,10 +5320,7 @@ def cmd_lint():
     # into type∪IR cone before next mutate grant. Soft/quiet 0 extra.
     # Extends test_dead_coercion_dirty_cone; no docs/design / invent.
     rcu3228_script = COVERAGE_CHECKS / "check_residual_castop_undermark_cone_3228.py"
-    if not rcu3228_script.exists():
-        fail(f"missing {rcu3228_script}")
-        return 1
-    r = run([sys.executable, str(rcu3228_script)], cwd=ROOT)
+    r = _coverage_run(rcu3228_script).returncode
     if r != 0:
         fail(
             "Issue #3228 residual CastOp under-mark cone linter failed — run python3 scripts/coverage/checks/check_residual_castop_undermark_cone_3228.py"
@@ -6669,10 +5331,7 @@ def cmd_lint():
     # only composite + selective dirty-txn. Soft/quiet 0 extra.
     # Extends test_dead_coercion_dirty_cone; no docs/design / invent.
     rcu3347_script = COVERAGE_CHECKS / "check_residual_castop_readiness_undermark_3347.py"
-    if not rcu3347_script.exists():
-        fail(f"missing {rcu3347_script}")
-        return 1
-    r = run([sys.executable, str(rcu3347_script)], cwd=ROOT)
+    r = _coverage_run(rcu3347_script).returncode
     if r != 0:
         fail(
             "Issue #3347 residual CastOp readiness undermark linter failed — run python3 scripts/coverage/checks/check_residual_castop_readiness_undermark_3347.py"
@@ -6683,10 +5342,7 @@ def cmd_lint():
     # 1-hop + dirty_skip_subtree. Extends test_dirty_propagation_cascade +
     # test_hot_pass_dirty_soa; no docs/design / invent.
     csfc3417_script = COVERAGE_CHECKS / "check_cascade_skip_subtree_full_cone_3417.py"
-    if not csfc3417_script.exists():
-        fail(f"missing {csfc3417_script}")
-        return 1
-    r = run([sys.executable, str(csfc3417_script)], cwd=ROOT)
+    r = _coverage_run(csfc3417_script).returncode
     if r != 0:
         fail(
             "Issue #3417 cascade skip_subtree full-cone linter failed — run python3 scripts/coverage/checks/check_cascade_skip_subtree_full_cone_3417.py"
@@ -6697,10 +5353,7 @@ def cmd_lint():
     # Soft observe; Production/Full refuse. Extends
     # test_coercion_map_abort_rewind (#3102 home); no docs/design / invent.
     cae3359_script = COVERAGE_CHECKS / "check_castop_abort_elision_interleave_3359.py"
-    if not cae3359_script.exists():
-        fail(f"missing {cae3359_script}")
-        return 1
-    r = run([sys.executable, str(cae3359_script)], cwd=ROOT)
+    r = _coverage_run(cae3359_script).returncode
     if r != 0:
         fail(
             "Issue #3359 CastOp abort-elision interleave linter failed — run python3 scripts/coverage/checks/check_castop_abort_elision_interleave_3359.py"
@@ -6710,10 +5363,7 @@ def cmd_lint():
     # partial-relower impact_ub. Soft/empty persist 0 extra. Extends
     # test_dead_coercion_dirty_cone; no docs/design / invent.
     dcp3349_script = COVERAGE_CHECKS / "check_dead_coercion_persist_before_partial_3349.py"
-    if not dcp3349_script.exists():
-        fail(f"missing {dcp3349_script}")
-        return 1
-    r = run([sys.executable, str(dcp3349_script)], cwd=ROOT)
+    r = _coverage_run(dcp3349_script).returncode
     if r != 0:
         fail(
             "Issue #3349 DeadCoercion persist-before-partial linter failed — run python3 scripts/coverage/checks/check_dead_coercion_persist_before_partial_3349.py"
@@ -6723,10 +5373,7 @@ def cmd_lint():
     # side set so colliding peers stay residual. Soft skip; quiet 0 extra.
     # Extends test_hot_update_relower_success_coverage; no docs/design.
     rsd3229_script = COVERAGE_CHECKS / "check_relower_success_define_collision_3229.py"
-    if not rsd3229_script.exists():
-        fail(f"missing {rsd3229_script}")
-        return 1
-    r = run([sys.executable, str(rsd3229_script)], cwd=ROOT)
+    r = _coverage_run(rsd3229_script).returncode
     if r != 0:
         fail(
             "Issue #3229 relower success define-collision linter failed — run python3 scripts/coverage/checks/check_relower_success_define_collision_3229.py"
@@ -6737,10 +5384,7 @@ def cmd_lint():
     # return. Soft/empty/single-eval 0 extra. Extends
     # test_peer_jit_name_soft_stale; no docs/design / invent.
     pir3351_script = COVERAGE_CHECKS / "check_peer_ir_name_soft_stale_3351.py"
-    if not pir3351_script.exists():
-        fail(f"missing {pir3351_script}")
-        return 1
-    r = run([sys.executable, str(pir3351_script)], cwd=ROOT)
+    r = _coverage_run(pir3351_script).returncode
     if r != 0:
         fail(
             "Issue #3351 peer IR-cache owner-scoped soft-stale linter failed — run python3 scripts/coverage/checks/check_peer_ir_name_soft_stale_3351.py"
@@ -6758,10 +5402,7 @@ def cmd_lint():
     # test_partial_cone_cap (#81967); no docs/design/3189-* (#1655),
     # no tests/issues/test_issue_3189.cpp (#81934).
     piub_script = COVERAGE_CHECKS / "check_partial_impact_upper_bound_3189.py"
-    if not piub_script.exists():
-        fail(f"missing {piub_script}")
-        return 1
-    r = run([sys.executable, str(piub_script)], cwd=ROOT)
+    r = _coverage_run(piub_script).returncode
     if r != 0:
         fail(
             "Issue #3189 partial impact upper-bound linter failed — run python3 scripts/coverage/checks/check_partial_impact_upper_bound_3189.py"
@@ -6771,10 +5412,7 @@ def cmd_lint():
     # miss (never void for capacity). Extends test_engine_metrics_facade
     # + engine_metrics.aura (#81967); no docs/design/ (#1655).
     emho3737_script = COVERAGE_CHECKS / "check_compiler_metrics_fields_3737.py"
-    if not emho3737_script.exists():
-        fail(f"missing {emho3737_script}")
-        return 1
-    r = run([sys.executable, str(emho3737_script)], cwd=ROOT)
+    r = _coverage_run(emho3737_script).returncode
     if r != 0:
         fail(
             "Issue #3737 compiler_metrics_fields.inc linter failed — run python3 scripts/coverage/checks/check_compiler_metrics_fields_3737.py"
@@ -6784,20 +5422,14 @@ def cmd_lint():
     # CompilerMetrics :group dump must agree with query hashes / AdaptiveStealStats.
     # Soft/Off unchanged. Linter after #3737 ABI fields check.
     sct3779_script = COVERAGE_CHECKS / "check_steal_complete_total_ssot_3779.py"
-    if not sct3779_script.exists():
-        fail(f"missing {sct3779_script}")
-        return 1
-    r = run([sys.executable, str(sct3779_script)], cwd=ROOT)
+    r = _coverage_run(sct3779_script).returncode
     if r != 0:
         fail(
             "Issue #3779 steal_complete_total SSOT linter failed — run python3 scripts/coverage/checks/check_steal_complete_total_ssot_3779.py"
         )
         return r
     emho_script = COVERAGE_CHECKS / "check_engine_metrics_hash_overflow_3018.py"
-    if not emho_script.exists():
-        fail(f"missing {emho_script}")
-        return 1
-    r = run([sys.executable, str(emho_script)], cwd=ROOT)
+    r = _coverage_run(emho_script).returncode
     if r != 0:
         fail(
             "Issue #3018 engine:metrics hash overflow linter failed — run python3 scripts/coverage/checks/check_engine_metrics_hash_overflow_3018.py"
@@ -6807,10 +5439,7 @@ def cmd_lint():
     # observe (no hard admit deny). Extends test_engine_metrics_facade +
     # test_security_schedule_gate (#81967); no docs/design/ (#1655).
     mho3244_script = COVERAGE_CHECKS / "check_metrics_hash_overflow_posture_3244.py"
-    if not mho3244_script.exists():
-        fail(f"missing {mho3244_script}")
-        return 1
-    r = run([sys.executable, str(mho3244_script)], cwd=ROOT)
+    r = _coverage_run(mho3244_script).returncode
     if r != 0:
         fail(
             "Issue #3244 metrics hash overflow posture linter failed — run python3 scripts/coverage/checks/check_metrics_hash_overflow_posture_3244.py"
@@ -6819,10 +5448,7 @@ def cmd_lint():
     # Issue #3019: unified restamp after boundary / abort / steal / densify.
     # Extends test_restamp_sla_observability (#81967); no docs/design/ (#1655).
     ur3019_script = COVERAGE_CHECKS / "check_unified_restamp_3019.py"
-    if not ur3019_script.exists():
-        fail(f"missing {ur3019_script}")
-        return 1
-    r = run([sys.executable, str(ur3019_script)], cwd=ROOT)
+    r = _coverage_run(ur3019_script).returncode
     if r != 0:
         fail(
             "Issue #3019 unified restamp linter failed — run python3 scripts/coverage/checks/check_unified_restamp_3019.py"
@@ -6833,10 +5459,7 @@ def cmd_lint():
     # entry. Extends test_restamp_sla_observability (#81967);
     # no docs/design/ (#1655).
     ur3058_script = COVERAGE_CHECKS / "check_unified_restamp_query_visible_3058.py"
-    if not ur3058_script.exists():
-        fail(f"missing {ur3058_script}")
-        return 1
-    r = run([sys.executable, str(ur3058_script)], cwd=ROOT)
+    r = _coverage_run(ur3058_script).returncode
     if r != 0:
         fail(
             "Issue #3058 unified restamp query-visible linter failed — run python3 scripts/coverage/checks/check_unified_restamp_query_visible_3058.py"
@@ -6846,10 +5469,7 @@ def cmd_lint():
     # Extends test_hot_update_cascade_dirty_reemit (#81967);
     # no docs/design/ (#1655).
     hu3059_script = COVERAGE_CHECKS / "check_hot_update_decide_and_reemit_3059.py"
-    if not hu3059_script.exists():
-        fail(f"missing {hu3059_script}")
-        return 1
-    r = run([sys.executable, str(hu3059_script)], cwd=ROOT)
+    r = _coverage_run(hu3059_script).returncode
     if r != 0:
         fail(
             "Issue #3059 decide_and_reemit linter failed — run python3 scripts/coverage/checks/check_hot_update_decide_and_reemit_3059.py"
@@ -6859,10 +5479,7 @@ def cmd_lint():
     # pure-anon. Extends test_anonymous_residual_stable_id_policy (#81967);
     # no docs/design/ (#1655).
     pa3060_script = COVERAGE_CHECKS / "check_pure_anon_pressure_force_leave_3060.py"
-    if not pa3060_script.exists():
-        fail(f"missing {pa3060_script}")
-        return 1
-    r = run([sys.executable, str(pa3060_script)], cwd=ROOT)
+    r = _coverage_run(pa3060_script).returncode
     if r != 0:
         fail(
             "Issue #3060 pure-anon pressure force-leave linter failed — run python3 scripts/coverage/checks/check_pure_anon_pressure_force_leave_3060.py"
@@ -6879,10 +5496,7 @@ def cmd_lint():
     # test_anonymous_residual_stable_id_policy (#81967); no docs/design/
     # (#1655); no new counters/query keys.
     pnb3277_script = COVERAGE_CHECKS / "check_pure_anon_no_boundary_force_leave_3277.py"
-    if not pnb3277_script.exists():
-        fail(f"missing {pnb3277_script}")
-        return 1
-    r = run([sys.executable, str(pnb3277_script)], cwd=ROOT)
+    r = _coverage_run(pnb3277_script).returncode
     if r != 0:
         fail(
             "Issue #3277 pure-anon no-boundary force-leave linter failed — run python3 scripts/coverage/checks/check_pure_anon_no_boundary_force_leave_3277.py"
@@ -6895,10 +5509,7 @@ def cmd_lint():
     # never runs. Extends test_anonymous_residual_stable_id_policy
     # (#81967); no docs/design/; no new query keys.
     paov3323_script = COVERAGE_CHECKS / "check_pure_anon_overflow_dispatch_race_3323.py"
-    if not paov3323_script.exists():
-        fail(f"missing {paov3323_script}")
-        return 1
-    r = run([sys.executable, str(paov3323_script)], cwd=ROOT)
+    r = _coverage_run(paov3323_script).returncode
     if r != 0:
         fail(
             "Issue #3323 pure-anon overflow dispatch-race linter failed — run python3 scripts/coverage/checks/check_pure_anon_overflow_dispatch_race_3323.py"
@@ -6911,10 +5522,7 @@ def cmd_lint():
     # test_anonymous_residual_stable_id_policy (#81967); no docs/design;
     # no new query key.
     pabs3478_script = COVERAGE_CHECKS / "check_pure_anon_budget_skip_must_deopt_3478.py"
-    if not pabs3478_script.exists():
-        fail(f"missing {pabs3478_script}")
-        return 1
-    r = run([sys.executable, str(pabs3478_script)], cwd=ROOT)
+    r = _coverage_run(pabs3478_script).returncode
     if r != 0:
         fail(
             "Issue #3478 pure-anon budget-skip MustDeopt linter failed — run python3 scripts/coverage/checks/check_pure_anon_budget_skip_must_deopt_3478.py"
@@ -6926,10 +5534,7 @@ def cmd_lint():
     # test_anonymous_residual_stable_id_policy (#81967); no docs/design;
     # no new query key / g_3851_* counter.
     pabs3851_script = COVERAGE_CHECKS / "check_pure_anon_budget_skip_sticky_3851.py"
-    if not pabs3851_script.exists():
-        fail(f"missing {pabs3851_script}")
-        return 1
-    r = run([sys.executable, str(pabs3851_script)], cwd=ROOT)
+    r = _coverage_run(pabs3851_script).returncode
     if r != 0:
         fail(
             "Issue #3851 pure-anon budget-skip sticky linter failed — run python3 scripts/coverage/checks/check_pure_anon_budget_skip_sticky_3851.py"
@@ -6942,10 +5547,7 @@ def cmd_lint():
     # extra work. Extends test_anonymous_residual_stable_id_policy
     # (#81967); no docs/design/; no new query keys.
     paheal3342_script = COVERAGE_CHECKS / "check_pure_anon_heal_starvation_3342.py"
-    if not paheal3342_script.exists():
-        fail(f"missing {paheal3342_script}")
-        return 1
-    r = run([sys.executable, str(paheal3342_script)], cwd=ROOT)
+    r = _coverage_run(paheal3342_script).returncode
     if r != 0:
         fail(
             "Issue #3342 pure-anon heal-starvation linter failed — run python3 scripts/coverage/checks/check_pure_anon_heal_starvation_3342.py"
@@ -6955,10 +5557,7 @@ def cmd_lint():
     # Extends test_engine_metrics_facade + engine_metrics.aura (#81967);
     # no docs/design/ (#1655).
     qho_script = COVERAGE_CHECKS / "check_query_hash_overflow_3020.py"
-    if not qho_script.exists():
-        fail(f"missing {qho_script}")
-        return 1
-    r = run([sys.executable, str(qho_script)], cwd=ROOT)
+    r = _coverage_run(qho_script).returncode
     if r != 0:
         fail(
             "Issue #3020 query hash overflow linter failed — run python3 scripts/coverage/checks/check_query_hash_overflow_3020.py"
@@ -6969,10 +5568,7 @@ def cmd_lint():
     # type-linear-* / reload-recovery-playbook. Extends
     # test_engine_metrics_facade (#81967); no docs/design/ (#1655).
     adh3339_script = COVERAGE_CHECKS / "check_agent_decision_facade_headroom_3339.py"
-    if not adh3339_script.exists():
-        fail(f"missing {adh3339_script}")
-        return 1
-    r = run([sys.executable, str(adh3339_script)], cwd=ROOT)
+    r = _coverage_run(adh3339_script).returncode
     if r != 0:
         fail(
             "Issue #3339 Agent decision facade headroom linter failed — run python3 scripts/coverage/checks/check_agent_decision_facade_headroom_3339.py"
@@ -6982,10 +5578,7 @@ def cmd_lint():
     # Extends test_scan_skip_freed_closures + test_envframe_truncate_epoch
     # (#81967); no docs/design/ (#1655).
     ecap_script = COVERAGE_CHECKS / "check_envframe_closure_apply_protocol_3021.py"
-    if not ecap_script.exists():
-        fail(f"missing {ecap_script}")
-        return 1
-    r = run([sys.executable, str(ecap_script)], cwd=ROOT)
+    r = _coverage_run(ecap_script).returncode
     if r != 0:
         fail(
             "Issue #3021 EnvFrame/Closure apply protocol linter failed — run python3 scripts/coverage/checks/check_envframe_closure_apply_protocol_3021.py"
@@ -6994,10 +5587,7 @@ def cmd_lint():
     # Issue #3022: FFI opaque/native pin-or-remap (or EXEMPT).
     # Extends test_general_object_pin (#81967); no docs/design/ (#1655).
     fop_script = COVERAGE_CHECKS / "check_ffi_opaque_pin_or_remap_3022.py"
-    if not fop_script.exists():
-        fail(f"missing {fop_script}")
-        return 1
-    r = run([sys.executable, str(fop_script)], cwd=ROOT)
+    r = _coverage_run(fop_script).returncode
     if r != 0:
         fail(
             "Issue #3022 FFI opaque pin-or-remap linter failed — run python3 scripts/coverage/checks/check_ffi_opaque_pin_or_remap_3022.py"
@@ -7008,10 +5598,7 @@ def cmd_lint():
     # test_moving_densify_fail_closed + test_general_object_pin (#81967);
     # no docs/design/ (#1655).
     fop57_script = COVERAGE_CHECKS / "check_ffi_opaque_pin_or_remap_3057.py"
-    if not fop57_script.exists():
-        fail(f"missing {fop57_script}")
-        return 1
-    r = run([sys.executable, str(fop57_script)], cwd=ROOT)
+    r = _coverage_run(fop57_script).returncode
     if r != 0:
         fail(
             "Issue #3057 FFI opaque slot-cover linter failed — run python3 scripts/coverage/checks/check_ffi_opaque_pin_or_remap_3057.py"
@@ -7026,10 +5613,7 @@ def cmd_lint():
     # only; no second registry; no new query:*. Extends
     # test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
     foc74_script = COVERAGE_CHECKS / "check_ffi_opaque_densify_cover_3274.py"
-    if not foc74_script.exists():
-        fail(f"missing {foc74_script}")
-        return 1
-    r = run([sys.executable, str(foc74_script)], cwd=ROOT)
+    r = _coverage_run(foc74_script).returncode
     if r != 0:
         fail(
             "Issue #3274 FFI opaque densify-cover linter failed — run python3 scripts/coverage/checks/check_ffi_opaque_densify_cover_3274.py"
@@ -7045,10 +5629,7 @@ def cmd_lint():
     # Extends test_moving_densify_fail_closed (#81967); no docs/design/
     # (#1655).
     focs3291_script = COVERAGE_CHECKS / "check_ffi_opaque_create_site_cover_3291.py"
-    if not focs3291_script.exists():
-        fail(f"missing {focs3291_script}")
-        return 1
-    r = run([sys.executable, str(focs3291_script)], cwd=ROOT)
+    r = _coverage_run(focs3291_script).returncode
     if r != 0:
         fail(
             "Issue #3291 FFI opaque create-site cover linter failed — run python3 scripts/coverage/checks/check_ffi_opaque_create_site_cover_3291.py"
@@ -7063,10 +5644,7 @@ def cmd_lint():
     # zero runtime cost). Extends test_pcv_children_safe_default_migration
     # (#81967); no docs/design/ (#1655).
     phml3292_script = COVERAGE_CHECKS / "check_pcv_hotpath_metrics_layout_3292.py"
-    if not phml3292_script.exists():
-        fail(f"missing {phml3292_script}")
-        return 1
-    r = run([sys.executable, str(phml3292_script)], cwd=ROOT)
+    r = _coverage_run(phml3292_script).returncode
     if r != 0:
         fail(
             "Issue #3292 PCV hotpath metrics layout linter failed — run python3 scripts/coverage/checks/check_pcv_hotpath_metrics_layout_3292.py"
@@ -7077,10 +5655,7 @@ def cmd_lint():
     # column tail + DensifyConsistencyReport + LayoutStamp. Compile-time
     # only; extends test_ir_soa_layout_stamp (#81967); no docs/design/.
     aos3314_script = COVERAGE_CHECKS / "check_append_only_layout_stamps_3314.py"
-    if not aos3314_script.exists():
-        fail(f"missing {aos3314_script}")
-        return 1
-    r = run([sys.executable, str(aos3314_script)], cwd=ROOT)
+    r = _coverage_run(aos3314_script).returncode
     if r != 0:
         fail(
             "Issue #3314 append-only layout stamp linter failed — run python3 scripts/coverage/checks/check_append_only_layout_stamps_3314.py"
@@ -7089,10 +5664,7 @@ def cmd_lint():
     # Issue #3023: leftover linear_roots unpin on abort / reclaim.
     # Extends test_linear_pin_moving_compact (#81967); no docs/design/.
     lrar_script = COVERAGE_CHECKS / "check_linear_root_abort_release_3023.py"
-    if not lrar_script.exists():
-        fail(f"missing {lrar_script}")
-        return 1
-    r = run([sys.executable, str(lrar_script)], cwd=ROOT)
+    r = _coverage_run(lrar_script).returncode
     if r != 0:
         fail(
             "Issue #3023 linear_roots abort/reclaim linter failed — run python3 scripts/coverage/checks/check_linear_root_abort_release_3023.py"
@@ -7103,10 +5675,7 @@ def cmd_lint():
     # post-join. Extends test_linear_pin_moving_compact (#81967);
     # no docs/design/ (#1655).
     lnad_script = COVERAGE_CHECKS / "check_linear_nested_abort_drain_3249.py"
-    if not lnad_script.exists():
-        fail(f"missing {lnad_script}")
-        return 1
-    r = run([sys.executable, str(lnad_script)], cwd=ROOT)
+    r = _coverage_run(lnad_script).returncode
     if r != 0:
         fail(
             "Issue #3249 nested abort linear drain linter failed — run python3 scripts/coverage/checks/check_linear_nested_abort_drain_3249.py"
@@ -7116,10 +5685,7 @@ def cmd_lint():
     # before verify. Soft/empty 0 extra. Extends test_linear_pin_moving_compact
     # + test_moving_compact; no docs/design / invent.
     lrmr3350_script = COVERAGE_CHECKS / "check_linear_root_moving_remap_3350.py"
-    if not lrmr3350_script.exists():
-        fail(f"missing {lrmr3350_script}")
-        return 1
-    r = run([sys.executable, str(lrmr3350_script)], cwd=ROOT)
+    r = _coverage_run(lrmr3350_script).returncode
     if r != 0:
         fail(
             "Issue #3350 linear_roots densify-rewrite linter failed — run python3 scripts/coverage/checks/check_linear_root_moving_remap_3350.py"
@@ -7131,10 +5697,7 @@ def cmd_lint():
     # test_moving_densify_fail_closed (#81967); no docs/design/; no new
     # query keys.
     dcr3356_script = COVERAGE_CHECKS / "check_densify_cone_rewrite_3356.py"
-    if not dcr3356_script.exists():
-        fail(f"missing {dcr3356_script}")
-        return 1
-    r = run([sys.executable, str(dcr3356_script)], cwd=ROOT)
+    r = _coverage_run(dcr3356_script).returncode
     if r != 0:
         fail(
             "Issue #3356 densify cone-rewrite linter failed — run python3 scripts/coverage/checks/check_densify_cone_rewrite_3356.py"
@@ -7145,10 +5708,7 @@ def cmd_lint():
     # overflow-counter only. Extends
     # test_anonymous_residual_stable_id_policy (#81967); no docs/design.
     paov_script = COVERAGE_CHECKS / "check_pure_anon_bg_overflow_must_deopt_3024.py"
-    if not paov_script.exists():
-        fail(f"missing {paov_script}")
-        return 1
-    r = run([sys.executable, str(paov_script)], cwd=ROOT)
+    r = _coverage_run(paov_script).returncode
     if r != 0:
         fail(
             "Issue #3024 production overflow MustDeopt linter failed — run python3 scripts/coverage/checks/check_pure_anon_bg_overflow_must_deopt_3024.py"
@@ -7159,10 +5719,7 @@ def cmd_lint():
     # Extends test_named_closure_stable_id_at_create +
     # test_reload_recovery_query (#81967); no docs/design.
     reown_script = COVERAGE_CHECKS / "check_reemit_owner_required_prod_multi_3025.py"
-    if not reown_script.exists():
-        fail(f"missing {reown_script}")
-        return 1
-    r = run([sys.executable, str(reown_script)], cwd=ROOT)
+    r = _coverage_run(reown_script).returncode
     if r != 0:
         fail(
             "Issue #3025 production C-ABI reemit owner linter failed — run python3 scripts/coverage/checks/check_reemit_owner_required_prod_multi_3025.py"
@@ -7172,10 +5729,7 @@ def cmd_lint():
     # agent-actionable (observe-only playbook hint + stale-observe).
     # Extends test_reload_recovery_query (#81967); no docs/design.
     rfaa_script = COVERAGE_CHECKS / "check_residual_force_agent_actionable_3026.py"
-    if not rfaa_script.exists():
-        fail(f"missing {rfaa_script}")
-        return 1
-    r = run([sys.executable, str(rfaa_script)], cwd=ROOT)
+    r = _coverage_run(rfaa_script).returncode
     if r != 0:
         fail(
             "Issue #3026 residual force agent-actionable linter failed — run python3 scripts/coverage/checks/check_residual_force_agent_actionable_3026.py"
@@ -7185,10 +5739,7 @@ def cmd_lint():
     # exits (not success-only). Remount/drain stay success-only.
     # Extends test_reload_recovery_query (#81967); no docs/design/ (#1655).
     rffa_script = COVERAGE_CHECKS / "check_residual_force_fail_exit_age_3248.py"
-    if not rffa_script.exists():
-        fail(f"missing {rffa_script}")
-        return 1
-    r = run([sys.executable, str(rffa_script)], cwd=ROOT)
+    r = _coverage_run(rffa_script).returncode
     if r != 0:
         fail(
             "Issue #3248 residual-force fail-exit age linter failed — run python3 scripts/coverage/checks/check_residual_force_fail_exit_age_3248.py"
@@ -7201,10 +5752,7 @@ def cmd_lint():
     # preserved (no body-stack free on Reclaimed per AC3). Extends
     # test_join_drain_reclaim.cpp (#81967); no docs/design/ (#1655).
     jcr_script = COVERAGE_CHECKS / "check_join_cleanup_report_2885.py"
-    if not jcr_script.exists():
-        fail(f"missing {jcr_script}")
-        return 1
-    r = run([sys.executable, str(jcr_script)], cwd=ROOT)
+    r = _coverage_run(jcr_script).returncode
     if r != 0:
         fail(
             "Issue #2885 join cleanup report linter failed — run python3 scripts/coverage/checks/check_join_cleanup_report_2885.py"
@@ -7214,10 +5762,7 @@ def cmd_lint():
     # (refine #2885/#2661). Zero-cost on Ok/Timeout/Cancelled. Extends
     # test_join_drain_reclaim (#81967); no docs/design/ (#1655).
     jhf_script = COVERAGE_CHECKS / "check_join_held_flags_2945.py"
-    if not jhf_script.exists():
-        fail(f"missing {jhf_script}")
-        return 1
-    r = run([sys.executable, str(jhf_script)], cwd=ROOT)
+    r = _coverage_run(jhf_script).returncode
     if r != 0:
         fail(
             "Issue #2945 join held-flags linter failed — run python3 scripts/coverage/checks/check_join_held_flags_2945.py"
@@ -7229,10 +5774,7 @@ def cmd_lint():
     # opt-out; env=1 HardAbort. Extends test_agent_scope (#81967);
     # no docs/design/ (#1655).
     aschd_script = COVERAGE_CHECKS / "check_agent_scope_concurrent_hard_deny_2946.py"
-    if not aschd_script.exists():
-        fail(f"missing {aschd_script}")
-        return 1
-    r = run([sys.executable, str(aschd_script)], cwd=ROOT)
+    r = _coverage_run(aschd_script).returncode
     if r != 0:
         fail(
             "Issue #2946 AgentScope concurrent hard deny linter failed — run python3 scripts/coverage/checks/check_agent_scope_concurrent_hard_deny_2946.py"
@@ -7243,10 +5785,7 @@ def cmd_lint():
     # Soft observe-only; #2587 remains independent. Extends
     # test_security_schedule_gate (#81967); no docs/design/ (#1655).
     mhss_script = COVERAGE_CHECKS / "check_mailbox_hold_slo_security_schedule_2947.py"
-    if not mhss_script.exists():
-        fail(f"missing {mhss_script}")
-        return 1
-    r = run([sys.executable, str(mhss_script)], cwd=ROOT)
+    r = _coverage_run(mhss_script).returncode
     if r != 0:
         fail(
             "Issue #2947 mailbox hold SLO security-schedule linter failed — run python3 scripts/coverage/checks/check_mailbox_hold_slo_security_schedule_2947.py"
@@ -7256,10 +5795,7 @@ def cmd_lint():
     # deny (residual of #3056 posture-only). Extends
     # test_security_schedule_gate (#81967); no docs/design/ (#1655).
     wafs3211_script = COVERAGE_CHECKS / "check_wal_append_fail_schedule_3211.py"
-    if not wafs3211_script.exists():
-        fail(f"missing {wafs3211_script}")
-        return 1
-    r = run([sys.executable, str(wafs3211_script)], cwd=ROOT)
+    r = _coverage_run(wafs3211_script).returncode
     if r != 0:
         fail(
             "Issue #3211 WAL append-fail schedule linter failed — run python3 scripts/coverage/checks/check_wal_append_fail_schedule_3211.py"
@@ -7271,10 +5807,7 @@ def cmd_lint():
     # test_per_scope_bp_admit + test_agent_failure_policy (#81967);
     # no docs/design/ (#1655).
     bpts_script = COVERAGE_CHECKS / "check_bp_threshold_ssot_2948.py"
-    if not bpts_script.exists():
-        fail(f"missing {bpts_script}")
-        return 1
-    r = run([sys.executable, str(bpts_script)], cwd=ROOT)
+    r = _coverage_run(bpts_script).returncode
     if r != 0:
         fail(
             "Issue #2948 BP threshold SSOT linter failed — run python3 scripts/coverage/checks/check_bp_threshold_ssot_2948.py"
@@ -7284,10 +5817,7 @@ def cmd_lint():
     # (refine #2895/#2502). Soft wholesale; env=0 opt-out; sticky set.
     # Extends test_force_jit_repromote (#81967); no docs/design/ (#1655).
     fjoc_script = COVERAGE_CHECKS / "check_force_jit_repromote_only_covered_default_2949.py"
-    if not fjoc_script.exists():
-        fail(f"missing {fjoc_script}")
-        return 1
-    r = run([sys.executable, str(fjoc_script)], cwd=ROOT)
+    r = _coverage_run(fjoc_script).returncode
     if r != 0:
         fail(
             "Issue #2949 force_jit only_covered default linter failed — run python3 scripts/coverage/checks/check_force_jit_repromote_only_covered_default_2949.py"
@@ -7298,10 +5828,7 @@ def cmd_lint():
     # pipeline; never steal (#2715). Extends
     # test_anonymous_residual_stable_id_policy (#81967); no docs/design.
     pabg_script = COVERAGE_CHECKS / "check_pure_anon_bg_remount_2950.py"
-    if not pabg_script.exists():
-        fail(f"missing {pabg_script}")
-        return 1
-    r = run([sys.executable, str(pabg_script)], cwd=ROOT)
+    r = _coverage_run(pabg_script).returncode
     if r != 0:
         fail(
             "Issue #2950 pure-anon bg remount linter failed — run python3 scripts/coverage/checks/check_pure_anon_bg_remount_2950.py"
@@ -7312,10 +5839,7 @@ def cmd_lint():
     # scoped; Soft/force keeps joint epoch. Extends
     # test_named_closure_stable_id_at_create (#81967); no docs/design.
     cehos_script = COVERAGE_CHECKS / "check_cross_eval_hard_owner_scoped_2951.py"
-    if not cehos_script.exists():
-        fail(f"missing {cehos_script}")
-        return 1
-    r = run([sys.executable, str(cehos_script)], cwd=ROOT)
+    r = _coverage_run(cehos_script).returncode
     if r != 0:
         fail(
             "Issue #2951 cross-eval hard owner-scoped linter failed — run python3 scripts/coverage/checks/check_cross_eval_hard_owner_scoped_2951.py"
@@ -7326,10 +5850,7 @@ def cmd_lint():
     # only; env=0 opt-out. Extends test_exhausted_min_dirty_reemit
     # (#81967); no docs/design/ (#1655).
     cvm_script = COVERAGE_CHECKS / "check_coverage_verify_min_dirty_2952.py"
-    if not cvm_script.exists():
-        fail(f"missing {cvm_script}")
-        return 1
-    r = run([sys.executable, str(cvm_script)], cwd=ROOT)
+    r = _coverage_run(cvm_script).returncode
     if r != 0:
         fail(
             "Issue #2952 coverage-verify min-dirty linter failed — run python3 scripts/coverage/checks/check_coverage_verify_min_dirty_2952.py"
@@ -7339,10 +5860,7 @@ def cmd_lint():
     # #2367/#2302). Pure observe-only decision table; Soft idle.
     # Extends test_reload_recovery_query (#81967); no docs/design.
     rrp_script = COVERAGE_CHECKS / "check_reload_recovery_playbook_2953.py"
-    if not rrp_script.exists():
-        fail(f"missing {rrp_script}")
-        return 1
-    r = run([sys.executable, str(rrp_script)], cwd=ROOT)
+    r = _coverage_run(rrp_script).returncode
     if r != 0:
         fail(
             "Issue #2953 reload recovery playbook linter failed — run python3 scripts/coverage/checks/check_reload_recovery_playbook_2953.py"
@@ -7351,10 +5869,7 @@ def cmd_lint():
     # Issue #2985: production mutation-concurrency-health admit reject.
     # Extends test_mutation_concurrency_health (#81967); no docs/design/.
     mcha_script = COVERAGE_CHECKS / "check_mutation_concurrency_health_admit_2985.py"
-    if not mcha_script.exists():
-        fail(f"missing {mcha_script}")
-        return 1
-    r = run([sys.executable, str(mcha_script)], cwd=ROOT)
+    r = _coverage_run(mcha_script).returncode
     if r != 0:
         fail(
             "Issue #2985 mutation-concurrency-health admit linter failed — run python3 scripts/coverage/checks/check_mutation_concurrency_health_admit_2985.py"
@@ -7363,10 +5878,7 @@ def cmd_lint():
     # Issue #2986: all mutate:* Guard-wrapped or GUARD_EXEMPT + production
     # naked fail-closed. Extends test_mutation_guard_try_acquire_unit (#81967).
     mgc_script = COVERAGE_CHECKS / "check_mutate_guard_coverage.py"
-    if not mgc_script.exists():
-        fail(f"missing {mgc_script}")
-        return 1
-    r = run([sys.executable, str(mgc_script)], cwd=ROOT)
+    r = _coverage_run(mgc_script).returncode
     if r != 0:
         fail(
             "Issue #2986 mutate Guard coverage linter failed — run python3 scripts/coverage/checks/check_mutate_guard_coverage.py"
@@ -7375,10 +5887,7 @@ def cmd_lint():
     # Issue #2987: mailbox delivery residual hard-AND (steal table).
     # Extends test_mailbox_recv_mutation_boundary (#81967); no docs/design/.
     mds_script = COVERAGE_CHECKS / "check_mailbox_delivery_safety_2987.py"
-    if not mds_script.exists():
-        fail(f"missing {mds_script}")
-        return 1
-    r = run([sys.executable, str(mds_script)], cwd=ROOT)
+    r = _coverage_run(mds_script).returncode
     if r != 0:
         fail(
             "Issue #2987 mailbox delivery safety linter failed — run python3 scripts/coverage/checks/check_mailbox_delivery_safety_2987.py"
@@ -7387,10 +5896,7 @@ def cmd_lint():
     # Issue #3036: production mailbox residual RejectHard fail-closed.
     # Extends test_mailbox_recv_mutation_boundary + chaos soak (#81967).
     mrh_script = COVERAGE_CHECKS / "check_mailbox_residual_hard_reject_3036.py"
-    if not mrh_script.exists():
-        fail(f"missing {mrh_script}")
-        return 1
-    r = run([sys.executable, str(mrh_script)], cwd=ROOT)
+    r = _coverage_run(mrh_script).returncode
     if r != 0:
         fail(
             "Issue #3036 mailbox residual hard-reject linter failed — run python3 scripts/coverage/checks/check_mailbox_residual_hard_reject_3036.py"
@@ -7399,10 +5905,7 @@ def cmd_lint():
     # Issue #2988: mutate success DefUse/IR/JIT invalidate close-loop.
     # Extends test_post_mutate_push_cascade (#81967); no docs/design/.
     miv_script = COVERAGE_CHECKS / "check_mutate_invalidate_incremental_2988.py"
-    if not miv_script.exists():
-        fail(f"missing {miv_script}")
-        return 1
-    r = run([sys.executable, str(miv_script)], cwd=ROOT)
+    r = _coverage_run(miv_script).returncode
     if r != 0:
         fail(
             "Issue #2988 mutate invalidate incremental linter failed — run python3 scripts/coverage/checks/check_mutate_invalidate_incremental_2988.py"
@@ -7411,10 +5914,7 @@ def cmd_lint():
     # Issue #2989: query concurrent SafePCVSpan + hygiene default.
     # Extends test_query_pattern_default_hygiene (#81967); no docs/design/.
     qchs_script = COVERAGE_CHECKS / "check_query_concurrent_hygiene_safe_span_2989.py"
-    if not qchs_script.exists():
-        fail(f"missing {qchs_script}")
-        return 1
-    r = run([sys.executable, str(qchs_script)], cwd=ROOT)
+    r = _coverage_run(qchs_script).returncode
     if r != 0:
         fail(
             "Issue #2989 query concurrent hygiene SafePCVSpan linter failed — run python3 scripts/coverage/checks/check_query_concurrent_hygiene_safe_span_2989.py"
@@ -7423,10 +5923,7 @@ def cmd_lint():
     # Issue #2990: ConcurrentMutationPolicy SingleWriter / ScopedParallel.
     # Extends test_workspace_region_concurrency (#81967); no docs/design/.
     wcp_script = COVERAGE_CHECKS / "check_workspace_concurrent_policy_2990.py"
-    if not wcp_script.exists():
-        fail(f"missing {wcp_script}")
-        return 1
-    r = run([sys.executable, str(wcp_script)], cwd=ROOT)
+    r = _coverage_run(wcp_script).returncode
     if r != 0:
         fail(
             "Issue #2990 ConcurrentMutationPolicy linter failed — run python3 scripts/coverage/checks/check_workspace_concurrent_policy_2990.py"
@@ -7435,10 +5932,7 @@ def cmd_lint():
     # Issue #3039: ScopedParallel overlap production hard-reject.
     # Extends test_workspace_region_concurrency (#81967); no docs/design/.
     spoh_script = COVERAGE_CHECKS / "check_scoped_parallel_overlap_hard_reject_3039.py"
-    if not spoh_script.exists():
-        fail(f"missing {spoh_script}")
-        return 1
-    r = run([sys.executable, str(spoh_script)], cwd=ROOT)
+    r = _coverage_run(spoh_script).returncode
     if r != 0:
         fail(
             "Issue #3039 ScopedParallel overlap hard-reject linter failed — run python3 scripts/coverage/checks/check_scoped_parallel_overlap_hard_reject_3039.py"
@@ -7447,10 +5941,7 @@ def cmd_lint():
     # Issue #2991: coercion provenance under high-frequency mutate.
     # Extends test_coercion_stamp_at_add (#81967); no docs/design/.
     cph_script = COVERAGE_CHECKS / "check_coercion_provenance_hf_mutate_2991.py"
-    if not cph_script.exists():
-        fail(f"missing {cph_script}")
-        return 1
-    r = run([sys.executable, str(cph_script)], cwd=ROOT)
+    r = _coverage_run(cph_script).returncode
     if r != 0:
         fail(
             "Issue #2991 coercion provenance hf-mutate linter failed — run python3 scripts/coverage/checks/check_coercion_provenance_hf_mutate_2991.py"
@@ -7460,10 +5951,7 @@ def cmd_lint():
     # Soft observe restamp counter; Production stale is incomplete.
     # Extends test_coercion_stamp_at_add; no new schema key / invent.
     cber3318 = COVERAGE_CHECKS / "check_coercion_blame_epoch_restamp_3318.py"
-    if not cber3318.exists():
-        fail(f"missing {cber3318}")
-        return 1
-    r = run([sys.executable, str(cber3318)], cwd=ROOT)
+    r = _coverage_run(cber3318).returncode
     if r != 0:
         fail(
             "Issue #3318 coercion blame epoch-restamp linter failed — run python3 scripts/coverage/checks/check_coercion_blame_epoch_restamp_3318.py"
@@ -7473,10 +5961,7 @@ def cmd_lint():
     # density keep. Extends test_coercion_stamp_at_add + DeadCoercion
     # (#81967); no docs/design/.
     chl3046 = COVERAGE_CHECKS / "check_coercion_hf_lag_hot_residual_3046.py"
-    if not chl3046.exists():
-        fail(f"missing {chl3046}")
-        return 1
-    r = run([sys.executable, str(chl3046)], cwd=ROOT)
+    r = _coverage_run(chl3046).returncode
     if r != 0:
         fail(
             "Issue #3046 coercion hf-lag / hot residual linter failed — run python3 scripts/coverage/checks/check_coercion_hf_lag_hot_residual_3046.py"
@@ -7486,10 +5971,7 @@ def cmd_lint():
     # relower). Production keep + force-JIT unchanged. Extends
     # test_castop_density_hard (#81967); no docs/design/.
     hrsmd3084 = COVERAGE_CHECKS / "check_hot_residual_soft_must_deopt_3084.py"
-    if not hrsmd3084.exists():
-        fail(f"missing {hrsmd3084}")
-        return 1
-    r = run([sys.executable, str(hrsmd3084)], cwd=ROOT)
+    r = _coverage_run(hrsmd3084).returncode
     if r != 0:
         fail(
             "Issue #3084 Soft residual MustDeopt linter failed — run python3 scripts/coverage/checks/check_hot_residual_soft_must_deopt_3084.py"
@@ -7503,10 +5985,7 @@ def cmd_lint():
     # (canary / AURA_SANDBOX=off). Production path unchanged (#3046 /
     # #3084 — density-keep + force-JIT/relower). Additive counter only.
     hr3107_script = COVERAGE_CHECKS / "check_hot_residual_soft_relower_3107.py"
-    if not hr3107_script.exists():
-        fail(f"missing {hr3107_script}")
-        return 1
-    r = run([sys.executable, str(hr3107_script)], cwd=ROOT)
+    r = _coverage_run(hr3107_script).returncode
     if r != 0:
         fail(
             "Issue #3107 Soft residual force-relower linter failed — run python3 scripts/coverage/checks/check_hot_residual_soft_relower_3107.py"
@@ -7523,10 +6002,7 @@ def cmd_lint():
     # sites). Soft observe-only. Quiet path zero extra atomics (bump lives
     # inside the cold `recovered && solve_status != 0` branch).
     rn3108_script = COVERAGE_CHECKS / "check_occurrence_recover_not_solved_3108.py"
-    if not rn3108_script.exists():
-        fail(f"missing {rn3108_script}")
-        return 1
-    r = run([sys.executable, str(rn3108_script)], cwd=ROOT)
+    r = _coverage_run(rn3108_script).returncode
     if r != 0:
         fail(
             "Issue #3108 commit_readiness recover re-gate linter failed — run python3 scripts/coverage/checks/check_occurrence_recover_not_solved_3108.py"
@@ -7540,10 +6016,7 @@ def cmd_lint():
     # Additive query keys (wal-fail-closed-active, wal-overflow-ring-depth,
     # schema-3109, issue-3109); no new capability model.
     wfc3109_script = COVERAGE_CHECKS / "check_wal_append_fail_closed_3109.py"
-    if not wfc3109_script.exists():
-        fail(f"missing {wfc3109_script}")
-        return 1
-    r = run([sys.executable, str(wfc3109_script)], cwd=ROOT)
+    r = _coverage_run(wfc3109_script).returncode
     if r != 0:
         fail(
             "Issue #3109 WAL append fail-closed linter failed — run python3 scripts/coverage/checks/check_wal_append_fail_closed_3109.py"
@@ -7557,10 +6030,7 @@ def cmd_lint():
     # Extends tests/compiler/test_security_event_wal_replay.cpp (#81967);
     # no docs/design/ (#1655).
     wom3178_script = COVERAGE_CHECKS / "check_wal_overflow_mid_3178.py"
-    if not wom3178_script.exists():
-        fail(f"missing {wom3178_script}")
-        return 1
-    r = run([sys.executable, str(wom3178_script)], cwd=ROOT)
+    r = _coverage_run(wom3178_script).returncode
     if r != 0:
         fail(
             "Issue #3178 WAL overflow mid linter failed — run python3 scripts/coverage/checks/check_wal_overflow_mid_3178.py"
@@ -7570,10 +6040,7 @@ def cmd_lint():
     # (#3109 residual). Soft/Off zero cost; AURA_WAL_APPEND_FAIL_OPEN
     # opt-out; AURA_WAL_APPEND_FAIL_CLOSED still forces on.
     wfc3302_script = COVERAGE_CHECKS / "check_wal_fail_closed_force_wal_3302.py"
-    if not wfc3302_script.exists():
-        fail(f"missing {wfc3302_script}")
-        return 1
-    r = run([sys.executable, str(wfc3302_script)], cwd=ROOT)
+    r = _coverage_run(wfc3302_script).returncode
     if r != 0:
         fail(
             "Issue #3302 WAL fail-closed force_wal linter failed — run python3 scripts/coverage/checks/check_wal_fail_closed_force_wal_3302.py"
@@ -7586,10 +6053,7 @@ def cmd_lint():
     # caller pattern). Soft / FAIL_OPEN fail-open + #3211 next-outermost
     # schedule-gate unchanged.
     wfc3639_script = ROOT / "scripts" / "check_wal_append_miss_deny_3639.py"
-    if not wfc3639_script.exists():
-        fail(f"missing {wfc3639_script}")
-        return 1
-    r = run([sys.executable, str(wfc3639_script)], cwd=ROOT)
+    r = _coverage_run(wfc3639_script).returncode
     if r != 0:
         fail(
             "Issue #3639 WAL append-miss same-mutate fail-closed linter failed — run python3 scripts/check_wal_append_miss_deny_3639.py"
@@ -7598,10 +6062,7 @@ def cmd_lint():
     # Issue #3780: structural emit_mutation_audit WAL miss fail-closed before
     # Occurrence persist (#3734 residual). Soft/WAL-off fail-open preserved.
     mw3780_script = COVERAGE_CHECKS / "check_mutation_wal_miss_fail_closed_3780.py"
-    if not mw3780_script.exists():
-        fail(f"missing {mw3780_script}")
-        return 1
-    r = run([sys.executable, str(mw3780_script)], cwd=ROOT)
+    r = _coverage_run(mw3780_script).returncode
     if r != 0:
         fail(
             "Issue #3780 mutation WAL miss fail-closed linter failed — run python3 scripts/coverage/checks/check_mutation_wal_miss_fail_closed_3780.py"
@@ -7610,10 +6071,7 @@ def cmd_lint():
     # Issue #3781: densify rewrite uses this-window relocate pairs only
     # (#3469 multi-window tombstone residual — recycled addr silent UAF).
     dtw3781_script = COVERAGE_CHECKS / "check_densify_this_window_rewrite_3781.py"
-    if not dtw3781_script.exists():
-        fail(f"missing {dtw3781_script}")
-        return 1
-    r = run([sys.executable, str(dtw3781_script)], cwd=ROOT)
+    r = _coverage_run(dtw3781_script).returncode
     if r != 0:
         fail(
             "Issue #3781 densify this-window rewrite linter failed — run python3 scripts/coverage/checks/check_densify_this_window_rewrite_3781.py"
@@ -7622,10 +6080,7 @@ def cmd_lint():
     # Issue #3782: densify-entry LCP reject skips compact_all_moving_pinned
     # (#3185 residual — relocate-then-poison under stamped-reject LCP).
     delcp3782_script = COVERAGE_CHECKS / "check_densify_entry_lcp_skip_compact_3782.py"
-    if not delcp3782_script.exists():
-        fail(f"missing {delcp3782_script}")
-        return 1
-    r = run([sys.executable, str(delcp3782_script)], cwd=ROOT)
+    r = _coverage_run(delcp3782_script).returncode
     if r != 0:
         fail(
             "Issue #3782 densify-entry LCP skip-compact linter failed — run python3 scripts/coverage/checks/check_densify_entry_lcp_skip_compact_3782.py"
@@ -7634,10 +6089,7 @@ def cmd_lint():
     # Issue #3783: alloc-path Moving auto-arm publishes densify health
     # (#3739 residual — Soft fallback after incomplete left would_allow stale).
     aadhp3783_script = COVERAGE_CHECKS / "check_auto_arm_densify_health_publish_3783.py"
-    if not aadhp3783_script.exists():
-        fail(f"missing {aadhp3783_script}")
-        return 1
-    r = run([sys.executable, str(aadhp3783_script)], cwd=ROOT)
+    r = _coverage_run(aadhp3783_script).returncode
     if r != 0:
         fail(
             "Issue #3783 auto-arm densify health publish linter failed — run python3 scripts/coverage/checks/check_auto_arm_densify_health_publish_3783.py"
@@ -7646,10 +6098,7 @@ def cmd_lint():
     # Issue #3784: empty-name / anonymous peer leave-native under hard OS
     # (#3300/#3750 residual — name table skips !name||!*name).
     apens3784_script = COVERAGE_CHECKS / "check_anon_peer_empty_name_soft_stale_3784.py"
-    if not apens3784_script.exists():
-        fail(f"missing {apens3784_script}")
-        return 1
-    r = run([sys.executable, str(apens3784_script)], cwd=ROOT)
+    r = _coverage_run(apens3784_script).returncode
     if r != 0:
         fail(
             "Issue #3784 anon peer empty-name soft-stale linter failed — run python3 scripts/coverage/checks/check_anon_peer_empty_name_soft_stale_3784.py"
@@ -7657,10 +6106,7 @@ def cmd_lint():
         return r
     # Issue #3785: sync covered remount honors residual storm gate.
     srs3785_script = COVERAGE_CHECKS / "check_sync_remount_storm_gate_3785.py"
-    if not srs3785_script.exists():
-        fail(f"missing {srs3785_script}")
-        return 1
-    r = run([sys.executable, str(srs3785_script)], cwd=ROOT)
+    r = _coverage_run(srs3785_script).returncode
     if r != 0:
         fail(
             "Issue #3785 sync remount storm gate linter failed — run python3 scripts/coverage/checks/check_sync_remount_storm_gate_3785.py"
@@ -7669,10 +6115,7 @@ def cmd_lint():
     # Issue #3793: replace-pattern macro keyword unify (:allow-macro? primary,
     # old query-side spellings as compat aliases; one include + gate bool).
     kwu3793_script = COVERAGE_CHECKS / "check_replace_pattern_kw_unify_3793.py"
-    if not kwu3793_script.exists():
-        fail(f"missing {kwu3793_script}")
-        return 1
-    r = run([sys.executable, str(kwu3793_script)], cwd=ROOT)
+    r = _coverage_run(kwu3793_script).returncode
     if r != 0:
         fail(
             "Issue #3793 replace-pattern keyword unify linter failed — run python3 scripts/coverage/checks/check_replace_pattern_kw_unify_3793.py"
@@ -7686,10 +6129,7 @@ def cmd_lint():
     # tenants past the occupancy consult; wrap != caller IsolationDeny'd
     # legitimate same-tenant packed mutates).
     wfc3640_script = ROOT / "scripts" / "check_unpack_spine_gate_3640.py"
-    if not wfc3640_script.exists():
-        fail(f"missing {wfc3640_script}")
-        return 1
-    r = run([sys.executable, str(wfc3640_script)], cwd=ROOT)
+    r = _coverage_run(wfc3640_script).returncode
     if r != 0:
         fail(
             "Issue #3640 add_mutate gate single-spine linter failed — run python3 scripts/check_unpack_spine_gate_3640.py"
@@ -7704,10 +6144,7 @@ def cmd_lint():
     # Soft / single-tenant Restricted unchanged (#2056); consult
     # semantics (#3415) and ring size untouched.
     wfc3641_script = ROOT / "scripts" / "check_occupancy_collision_failclosed_3641.py"
-    if not wfc3641_script.exists():
-        fail(f"missing {wfc3641_script}")
-        return 1
-    r = run([sys.executable, str(wfc3641_script)], cwd=ROOT)
+    r = _coverage_run(wfc3641_script).returncode
     if r != 0:
         fail(
             "Issue #3641 occupancy collision fail-closed linter failed — run python3 scripts/check_occupancy_collision_failclosed_3641.py"
@@ -7720,10 +6157,7 @@ def cmd_lint():
     # handoff-required surface is unchanged. Soft delivers (#3111 AC3);
     # no new query key; counters append-only reuse (#3565).
     wfc3642_script = ROOT / "scripts" / "check_recv_stale_nullopt_3642.py"
-    if not wfc3642_script.exists():
-        fail(f"missing {wfc3642_script}")
-        return 1
-    r = run([sys.executable, str(wfc3642_script)], cwd=ROOT)
+    r = _coverage_run(wfc3642_script).returncode
     if r != 0:
         fail("Issue #3642 recv stale nullopt linter failed — run python3 scripts/check_recv_stale_nullopt_3642.py")
         return r
@@ -7733,10 +6167,7 @@ def cmd_lint():
     # :tree #t and passes it through (drop decision stays tree_settled
     # root-only). No new registry / query key; Soft unchanged.
     wfc3643_script = ROOT / "scripts" / "check_scope_join_tree_3643.py"
-    if not wfc3643_script.exists():
-        fail(f"missing {wfc3643_script}")
-        return 1
-    r = run([sys.executable, str(wfc3643_script)], cwd=ROOT)
+    r = _coverage_run(wfc3643_script).returncode
     if r != 0:
         fail("Issue #3643 scope join tree linter failed — run python3 scripts/check_scope_join_tree_3643.py")
         return r
@@ -7748,10 +6179,7 @@ def cmd_lint():
     # pending flags cleared, body-stack untouched #2661). Soft / not
     # stuck: no-op; #3467 deny + #3564 first-visit semantics unchanged.
     wfc3644_script = ROOT / "scripts" / "check_reclaimed_slot_second_recycle_3644.py"
-    if not wfc3644_script.exists():
-        fail(f"missing {wfc3644_script}")
-        return 1
-    r = run([sys.executable, str(wfc3644_script)], cwd=ROOT)
+    r = _coverage_run(wfc3644_script).returncode
     if r != 0:
         fail(
             "Issue #3644 second recycle linter failed — run python3 scripts/check_reclaimed_slot_second_recycle_3644.py"
@@ -7762,10 +6190,7 @@ def cmd_lint():
     # kPureWrap-marked stage bodies are soft-audited for lock / heap / fs
     # escape tokens (the annotation stays author trust).
     ppd3870_script = ROOT / "scripts" / "check_pass_purity_effect_3870.py"
-    if not ppd3870_script.exists():
-        fail(f"missing {ppd3870_script}")
-        return 1
-    r = run([sys.executable, str(ppd3870_script)], cwd=ROOT)
+    r = _coverage_run(ppd3870_script).returncode
     if r != 0:
         fail("Issue #3870 pass purity declared linter failed — run python3 scripts/check_pass_purity_effect_3870.py")
         return r
@@ -7773,20 +6198,14 @@ def cmd_lint():
     # source-cite of the dropped !is_rec guard, rec forward unify, and the
     # built-host behavioral ACs.
     lcs3871_script = ROOT / "scripts" / "check_letrec_check_synth_3871.py"
-    if not lcs3871_script.exists():
-        fail(f"missing {lcs3871_script}")
-        return 1
-    r = run([sys.executable, str(lcs3871_script)], cwd=ROOT)
+    r = _coverage_run(lcs3871_script).returncode
     if r != 0:
         fail("Issue #3871 letrec check-synth linter failed — run python3 scripts/check_letrec_check_synth_3871.py")
         return r
     # Issue #3872: production + live mutate session always hard-gates —
     # gate arm + decide() mirror + the three production call sites wired.
     mshg3872_script = ROOT / "scripts" / "check_mutate_session_hard_gate_3872.py"
-    if not mshg3872_script.exists():
-        fail(f"missing {mshg3872_script}")
-        return 1
-    r = run([sys.executable, str(mshg3872_script)], cwd=ROOT)
+    r = _coverage_run(mshg3872_script).returncode
     if r != 0:
         fail(
             "Issue #3872 mutate-session hard-gate linter failed — run python3 scripts/check_mutate_session_hard_gate_3872.py"
@@ -7795,30 +6214,21 @@ def cmd_lint():
     # Issue #3873: advisory overlay distinguishable from deny authority —
     # result flag + query payload key + built-host behavioral ACs.
     haf3873_script = ROOT / "scripts" / "check_health_advisory_face_3873.py"
-    if not haf3873_script.exists():
-        fail(f"missing {haf3873_script}")
-        return 1
-    r = run([sys.executable, str(haf3873_script)], cwd=ROOT)
+    r = _coverage_run(haf3873_script).returncode
     if r != 0:
         fail("Issue #3873 health advisory face linter failed — run python3 scripts/check_health_advisory_face_3873.py")
         return r
     # Issue #3874: TypedMutationAuditEvent carries the capability tenant —
     # struct field + emit plumbing + production boundary wiring.
     aet3874_script = ROOT / "scripts" / "check_audit_event_tenant_3874.py"
-    if not aet3874_script.exists():
-        fail(f"missing {aet3874_script}")
-        return 1
-    r = run([sys.executable, str(aet3874_script)], cwd=ROOT)
+    r = _coverage_run(aet3874_script).returncode
     if r != 0:
         fail("Issue #3874 audit event tenant linter failed — run python3 scripts/check_audit_event_tenant_3874.py")
         return r
     # Issue #3875: revoke_epoch process-origin stamp is hard-only — Soft
     # rows keep honest 0 (no phantom 1 into mutation-order stats).
     reh3875_script = ROOT / "scripts" / "check_revoke_epoch_hard_only_3875.py"
-    if not reh3875_script.exists():
-        fail(f"missing {reh3875_script}")
-        return 1
-    r = run([sys.executable, str(reh3875_script)], cwd=ROOT)
+    r = _coverage_run(reh3875_script).returncode
     if r != 0:
         fail(
             "Issue #3875 revoke-epoch hard-only linter failed — run python3 scripts/check_revoke_epoch_hard_only_3875.py"
@@ -7828,10 +6238,7 @@ def cmd_lint():
     # invent 1 only on the capability hard face at all four stamp sites
     # (single_use consume, session cascade, orphan sweep, epoch-bound).
     sre3902_script = ROOT / "scripts" / "check_soft_revoke_epoch_honest_3902.py"
-    if not sre3902_script.exists():
-        fail(f"missing {sre3902_script}")
-        return 1
-    r = run([sys.executable, str(sre3902_script)], cwd=ROOT)
+    r = _coverage_run(sre3902_script).returncode
     if r != 0:
         fail(
             "Issue #3902 soft revoke-epoch honest linter failed — run python3 scripts/check_soft_revoke_epoch_honest_3902.py"
@@ -7840,10 +6247,7 @@ def cmd_lint():
     # Issue #3903: capture_security_correlated_audit carries tenant_id —
     # all six call sites pass the real principal for Typed-alone filters.
     ctp3903_script = ROOT / "scripts" / "check_correlate_tenant_passthrough_3903.py"
-    if not ctp3903_script.exists():
-        fail(f"missing {ctp3903_script}")
-        return 1
-    r = run([sys.executable, str(ctp3903_script)], cwd=ROOT)
+    r = _coverage_run(ctp3903_script).returncode
     if r != 0:
         fail(
             "Issue #3903 correlate tenant passthrough linter failed — run python3 scripts/check_correlate_tenant_passthrough_3903.py"
@@ -7853,10 +6257,7 @@ def cmd_lint():
     # is caller-only now (aligned with grant_cross_tenant #3800); the
     # linter pins the superseding contract.
     mtc3904_script = ROOT / "scripts" / "check_mse_ta_posture_3904.py"
-    if not mtc3904_script.exists():
-        fail(f"missing {mtc3904_script}")
-        return 1
-    r = run([sys.executable, str(mtc3904_script)], cwd=ROOT)
+    r = _coverage_run(mtc3904_script).returncode
     if r != 0:
         fail("Issue #3904 MSE TA posture linter failed — run python3 scripts/check_mse_ta_posture_3904.py")
         return r
@@ -7866,30 +6267,21 @@ def cmd_lint():
     # requires TenantAdmin on the CALLER principal only (target-only TA is
     # deny); SE reason + deny counter stay stable.
     mtc4133_script = ROOT / "scripts" / "check_mse_caller_only_ta_4133.py"
-    if not mtc4133_script.exists():
-        fail(f"missing {mtc4133_script}")
-        return 1
-    r = run([sys.executable, str(mtc4133_script)], cwd=ROOT)
+    r = _coverage_run(mtc4133_script).returncode
     if r != 0:
         fail(
             "Issue #4133 MSE caller-only TA fence linter failed — run python3 scripts/check_mse_caller_only_ta_4133.py"
         )
         return r
     ocr3941_script = ROOT / "scripts" / "check_orch_residuals_3941.py"
-    if not ocr3941_script.exists():
-        fail(f"missing {ocr3941_script}")
-        return 1
-    r = run([sys.executable, str(ocr3941_script)], cwd=ROOT)
+    r = _coverage_run(ocr3941_script).returncode
     if r != 0:
         fail("Issue #3941 orch residuals linter failed — run python3 scripts/check_orch_residuals_3941.py")
         return r
     # Issue #3869: storm/Global force-full soak/alert counter — rewrite-
     # side fires counted; no Soft skip of the Hard fence invented.
     sfc3869_script = ROOT / "scripts" / "check_storm_force_full_counter_3869.py"
-    if not sfc3869_script.exists():
-        fail(f"missing {sfc3869_script}")
-        return 1
-    r = run([sys.executable, str(sfc3869_script)], cwd=ROOT)
+    r = _coverage_run(sfc3869_script).returncode
     if r != 0:
         fail(
             "Issue #3869 storm force-full counter linter failed — run python3 scripts/check_storm_force_full_counter_3869.py"
@@ -7903,10 +6295,7 @@ def cmd_lint():
     # success shapes unchanged (no ok=#t on old consumers); Soft / s0
     # get the same typed miss. stats.aura aligned with the C++ seed.
     wfc3645_script = ROOT / "scripts" / "check_metrics_not_found_3645.py"
-    if not wfc3645_script.exists():
-        fail(f"missing {wfc3645_script}")
-        return 1
-    r = run([sys.executable, str(wfc3645_script)], cwd=ROOT)
+    r = _coverage_run(wfc3645_script).returncode
     if r != 0:
         fail("Issue #3645 metrics not-found linter failed — run python3 scripts/check_metrics_not_found_3645.py")
         return r
@@ -7917,10 +6306,7 @@ def cmd_lint():
     # slot rewrite instead of canary-only fail-close between densify and
     # apply. No canary dual-note (#3368); Soft / no Moving zero extra.
     cds3647_script = ROOT / "scripts" / "check_closure_densify_slots_3647.py"
-    if not cds3647_script.exists():
-        fail(f"missing {cds3647_script}")
-        return 1
-    r = run([sys.executable, str(cds3647_script)], cwd=ROOT)
+    r = _coverage_run(cds3647_script).returncode
     if r != 0:
         fail(
             "Issue #3647 closure densify slots linter failed — run python3 scripts/check_closure_densify_slots_3647.py"
@@ -7934,10 +6320,7 @@ def cmd_lint():
     # remap-miss stale flat no longer slips through to eval. Counters
     # reused; Soft / Off keep #2569 recover (#3848: no moved==0 disarm).
     awg3648_script = ROOT / "scripts" / "check_apply_window_gate_3648.py"
-    if not awg3648_script.exists():
-        fail(f"missing {awg3648_script}")
-        return 1
-    r = run([sys.executable, str(awg3648_script)], cwd=ROOT)
+    r = _coverage_run(awg3648_script).returncode
     if r != 0:
         fail("Issue #3648 apply window gate linter failed — run python3 scripts/check_apply_window_gate_3648.py")
         return r
@@ -7949,10 +6332,7 @@ def cmd_lint():
     # same leave-native tail, is not keyed on JIT table epoch, and the TW
     # helper ABI is unchanged.
     jidr3972_script = ROOT / "scripts" / "check_jit_densify_remap_3972.py"
-    if not jidr3972_script.exists():
-        fail(f"missing {jidr3972_script}")
-        return 1
-    r = run([sys.executable, str(jidr3972_script)], cwd=ROOT)
+    r = _coverage_run(jidr3972_script).returncode
     if r != 0:
         fail("Issue #3972 JIT densify remap arm linter failed — run python3 scripts/check_jit_densify_remap_3972.py")
         return r
@@ -7965,10 +6345,7 @@ def cmd_lint():
     # token remains the entry-gate presence bit, the arena entry gate is
     # untouched, and the walk is not keyed on JIT table epoch.
     nmce3973_script = ROOT / "scripts" / "check_native_moving_canary_env_note_3973.py"
-    if not nmce3973_script.exists():
-        fail(f"missing {nmce3973_script}")
-        return 1
-    r = run([sys.executable, str(nmce3973_script)], cwd=ROOT)
+    r = _coverage_run(nmce3973_script).returncode
     if r != 0:
         fail(
             "Issue #3973 native moving canary env-note linter failed — run python3 scripts/check_native_moving_canary_env_note_3973.py"
@@ -7983,10 +6360,7 @@ def cmd_lint():
     # Soft-only, and the any-arena bind contract lives in arena.ixx with
     # the same #3210 inventory (no second registry, no invented counter).
     tcbd4124_script = ROOT / "scripts" / "check_temp_canary_bind_4124.py"
-    if not tcbd4124_script.exists():
-        fail(f"missing {tcbd4124_script}")
-        return 1
-    r = run([sys.executable, str(tcbd4124_script)], cwd=ROOT)
+    r = _coverage_run(tcbd4124_script).returncode
     if r != 0:
         fail("Issue #4124 temp-canary bind contract linter failed — run python3 scripts/check_temp_canary_bind_4124.py")
         return r
@@ -7999,10 +6373,7 @@ def cmd_lint():
     # ac4125_* runtime ACs (incl. the peer-worker soak) run before Results,
     # and no docs/design/4125-* / test_issue_4125 exists.
     adif4125_script = ROOT / "scripts" / "check_apply_densify_inflight_4125.py"
-    if not adif4125_script.exists():
-        fail(f"missing {adif4125_script}")
-        return 1
-    r = run([sys.executable, str(adif4125_script)], cwd=ROOT)
+    r = _coverage_run(adif4125_script).returncode
     if r != 0:
         fail(
             "Issue #4125 apply/JIT densify-in-flight consult linter failed — run python3 scripts/check_apply_densify_inflight_4125.py"
@@ -8019,10 +6390,7 @@ def cmd_lint():
     # runner before RUN_ALL_TESTS, and no docs/design/4126-* /
     # tests/**/test_issue_4126* exists.
     jri4126_script = ROOT / "scripts" / "check_jit_reemit_install_4126.py"
-    if not jri4126_script.exists():
-        fail(f"missing {jri4126_script}")
-        return 1
-    r = run([sys.executable, str(jri4126_script)], cwd=ROOT)
+    r = _coverage_run(jri4126_script).returncode
     if r != 0:
         fail("Issue #4126 JIT reemit install gate linter failed — run python3 scripts/check_jit_reemit_install_4126.py")
         return r
@@ -8032,10 +6400,7 @@ def cmd_lint():
     # marker channel), Soft/Off latch-free, net authority untouched, no
     # docs/design/4127-* / tests/**/test_issue_4127*.
     lmal4127_script = ROOT / "scripts" / "check_lockless_macro_allow_latch_4127.py"
-    if not lmal4127_script.exists():
-        fail(f"missing {lmal4127_script}")
-        return 1
-    r = run([sys.executable, str(lmal4127_script)], cwd=ROOT)
+    r = _coverage_run(lmal4127_script).returncode
     if r != 0:
         fail(
             "Issue #4127 lockless macro allow-latch linter failed — run python3 scripts/check_lockless_macro_allow_latch_4127.py"
@@ -8045,10 +6410,7 @@ def cmd_lint():
     # parser add_literal(0)) renders as (quote ()) in every current-source
     # mode (compact + :pretty), never (quote 0); eval semantics untouched.
     elu4130_script = ROOT / "scripts" / "check_empty_list_unparse_4130.py"
-    if not elu4130_script.exists():
-        fail(f"missing {elu4130_script}")
-        return 1
-    r = run([sys.executable, str(elu4130_script)], cwd=ROOT)
+    r = _coverage_run(elu4130_script).returncode
     if r != 0:
         fail("Issue #4130 empty-list unparse linter failed — run python3 scripts/check_empty_list_unparse_4130.py")
         return r
@@ -8057,10 +6419,7 @@ def cmd_lint():
     # params side-table, so (export n1 n2) round-trips in every
     # current-source mode (compact + :pretty); serialization only.
     enu4132_script = ROOT / "scripts" / "check_export_name_unparse_4132.py"
-    if not enu4132_script.exists():
-        fail(f"missing {enu4132_script}")
-        return 1
-    r = run([sys.executable, str(enu4132_script)], cwd=ROOT)
+    r = _coverage_run(enu4132_script).returncode
     if r != 0:
         fail("Issue #4132 export-name unparse linter failed — run python3 scripts/check_export_name_unparse_4132.py")
         return r
@@ -8069,10 +6428,7 @@ def cmd_lint():
     # string, which returns normally on type errors; check-and-apply
     # restores the snapshot when post-verify throws.
     srt4266_script = ROOT / "scripts" / "check_safe_refactor_typecheck_4266.py"
-    if not srt4266_script.exists():
-        fail(f"missing {srt4266_script}")
-        return 1
-    r = run([sys.executable, str(srt4266_script)], cwd=ROOT)
+    r = _coverage_run(srt4266_script).returncode
     if r != 0:
         fail(
             "Issue #4266 safe-refactor typecheck-status linter failed — run python3 scripts/check_safe_refactor_typecheck_4266.py"
@@ -8089,10 +6445,7 @@ def cmd_lint():
     # (#4131 AC9..AC12: inherited-SIG_IGN oneshot dies on TERM, ordinary
     # program unchanged, default-disposition TERM prompt).
     ost4131_script = ROOT / "scripts" / "check_oneshot_sigterm_4131.py"
-    if not ost4131_script.exists():
-        fail(f"missing {ost4131_script}")
-        return 1
-    r = run([sys.executable, str(ost4131_script)], cwd=ROOT)
+    r = _coverage_run(ost4131_script).returncode
     if r != 0:
         fail("Issue #4131 oneshot SIGTERM reset gate linter failed — run python3 scripts/check_oneshot_sigterm_4131.py")
         return r
@@ -8101,10 +6454,7 @@ def cmd_lint():
     # is_at_mutation_boundary_safe(snap) in evaluate_residual_hard_and_bits.
     # No second StealInvariant enum; Soft LCP Soft≠vuln unchanged.
     sdib4033_script = ROOT / "scripts" / "check_steal_densify_inflight_boundary_safe_4033.py"
-    if not sdib4033_script.exists():
-        fail(f"missing {sdib4033_script}")
-        return 1
-    r = run([sys.executable, str(sdib4033_script)], cwd=ROOT)
+    r = _coverage_run(sdib4033_script).returncode
     if r != 0:
         fail(
             "Issue #4033 densify-in-flight BoundarySafe pin linter failed — run python3 scripts/check_steal_densify_inflight_boundary_safe_4033.py"
@@ -8118,10 +6468,7 @@ def cmd_lint():
     # call site (live_compact → Guard/scan → restamp), remapped_pins > 0
     # in the restamp condition, defer early-return intact, comment matches.
     eso3679_script = ROOT / "scripts" / "check_envframe_scan_order_3679.py"
-    if not eso3679_script.exists():
-        fail(f"missing {eso3679_script}")
-        return 1
-    r = run([sys.executable, str(eso3679_script)], cwd=ROOT)
+    r = _coverage_run(eso3679_script).returncode
     if r != 0:
         fail("Issue #3679 envframe scan order linter failed — run python3 scripts/check_envframe_scan_order_3679.py")
         return r
@@ -8133,10 +6480,7 @@ def cmd_lint():
     # will_be_owner_scoped skip returning before any process-clock bump,
     # the #3605/#3300 facade surface untouched, and no new epoch domain.
     cos3680_script = ROOT / "scripts" / "check_compact_owner_scope_3680.py"
-    if not cos3680_script.exists():
-        fail(f"missing {cos3680_script}")
-        return 1
-    r = run([sys.executable, str(cos3680_script)], cwd=ROOT)
+    r = _coverage_run(cos3680_script).returncode
     if r != 0:
         fail("Issue #3680 compact owner-scope linter failed — run python3 scripts/check_compact_owner_scope_3680.py")
         return r
@@ -8149,10 +6493,7 @@ def cmd_lint():
     # facade-published dirty surface, #3421 helper intact, JIT dispatch
     # untouched, no second closure table.
     apr3681_script = ROOT / "scripts" / "check_apply_pre_reemit_refuse_3681.py"
-    if not apr3681_script.exists():
-        fail(f"missing {apr3681_script}")
-        return 1
-    r = run([sys.executable, str(apr3681_script)], cwd=ROOT)
+    r = _coverage_run(apr3681_script).returncode
     if r != 0:
         fail("Issue #3681 apply pre-reemit linter failed — run python3 scripts/check_apply_pre_reemit_refuse_3681.py")
         return r
@@ -8166,10 +6507,7 @@ def cmd_lint():
     # preserved (typed-trail-miss / observe-only / suggested-next),
     # security-audit bounded-window shape unchanged, tests extended.
     wfa3674_script = ROOT / "scripts" / "check_wal_fold_autoscan_3674.py"
-    if not wfa3674_script.exists():
-        fail(f"missing {wfa3674_script}")
-        return 1
-    r = run([sys.executable, str(wfa3674_script)], cwd=ROOT)
+    r = _coverage_run(wfa3674_script).returncode
     if r != 0:
         fail("Issue #3674 WAL fold auto-durable linter failed — run python3 scripts/check_wal_fold_autoscan_3674.py")
         return r
@@ -8184,10 +6522,7 @@ def cmd_lint():
     # re-promote gates zero coverage (no #2502 wholesale fall-through),
     # Soft / mask==0 short-circuits retained, tests extended.
     lsc3682_script = ROOT / "scripts" / "check_last_success_coverage_evidence_3682.py"
-    if not lsc3682_script.exists():
-        fail(f"missing {lsc3682_script}")
-        return 1
-    r = run([sys.executable, str(lsc3682_script)], cwd=ROOT)
+    r = _coverage_run(lsc3682_script).returncode
     if r != 0:
         fail(
             "Issue #3682 last-success evidence linter failed — run python3 scripts/check_last_success_coverage_evidence_3682.py"
@@ -8204,10 +6539,7 @@ def cmd_lint():
     # MSE opt-out face and the Soft/Off short-circuit are retained; tests
     # extended (closed-loop ac3683 + capability-uniformity).
     hdk3683_script = ROOT / "scripts" / "check_hygiene_deny_kind_uniformity_3683.py"
-    if not hdk3683_script.exists():
-        fail(f"missing {hdk3683_script}")
-        return 1
-    r = run([sys.executable, str(hdk3683_script)], cwd=ROOT)
+    r = _coverage_run(hdk3683_script).returncode
     if r != 0:
         fail(
             "Issue #3683 hygiene deny kind uniformity linter failed — run python3 scripts/check_hygiene_deny_kind_uniformity_3683.py"
@@ -8223,10 +6555,7 @@ def cmd_lint():
     # half-expanded body (production-gated); Soft/Off contract unchanged;
     # tests extended (limits ac3684 + closed-loop ac3684).
     ier3684_script = ROOT / "scripts" / "check_inner_expand_refuse_3684.py"
-    if not ier3684_script.exists():
-        fail(f"missing {ier3684_script}")
-        return 1
-    r = run([sys.executable, str(ier3684_script)], cwd=ROOT)
+    r = _coverage_run(ier3684_script).returncode
     if r != 0:
         fail("Issue #3684 inner expand refuse linter failed — run python3 scripts/check_inner_expand_refuse_3684.py")
         return r
@@ -8239,10 +6568,7 @@ def cmd_lint():
     # at_depth recursion; the walk reads session, not TLS; TLS mirrors
     # stay diagnostics; depth stays the explicit argument.
     csp3685_script = ROOT / "scripts" / "check_clone_session_policy_3685.py"
-    if not csp3685_script.exists():
-        fail(f"missing {csp3685_script}")
-        return 1
-    r = run([sys.executable, str(csp3685_script)], cwd=ROOT)
+    r = _coverage_run(csp3685_script).returncode
     if r != 0:
         fail("Issue #3685 clone session policy linter failed — run python3 scripts/check_clone_session_policy_3685.py")
         return r
@@ -8256,10 +6582,7 @@ def cmd_lint():
     # WITHOUT the lock (items collected unlocked, push slots locked);
     # the eval_flat intern-by-sym path unchanged; tests cite #3703.
     qil3703_script = ROOT / "scripts" / "check_quote_intern_lock_3703.py"
-    if not qil3703_script.exists():
-        fail(f"missing {qil3703_script}")
-        return 1
-    r = run([sys.executable, str(qil3703_script)], cwd=ROOT)
+    r = _coverage_run(qil3703_script).returncode
     if r != 0:
         fail(
             "Issue #3703 quote intern / lock scope linter failed — run python3 scripts/check_quote_intern_lock_3703.py"
@@ -8275,10 +6598,7 @@ def cmd_lint():
     # single_use under Restricted/Strict; the durable admin path does
     # not route through grant_macro_self_evo; tests cite #3721.
     msb3721_script = ROOT / "scripts" / "check_mse_session_bound_3721.py"
-    if not msb3721_script.exists():
-        fail(f"missing {msb3721_script}")
-        return 1
-    r = run([sys.executable, str(msb3721_script)], cwd=ROOT)
+    r = _coverage_run(msb3721_script).returncode
     if r != 0:
         fail("Issue #3721 MSE session-bound linter failed — run python3 scripts/check_mse_session_bound_3721.py")
         return r
@@ -8289,10 +6609,7 @@ def cmd_lint():
     # the mid-revoke epoch routes through capability_epoch_hard_face()
     # (#3844 contract, 0 stays 0); the #2944 suite asserts SE fiber joins.
     revoke3854_script = ROOT / "scripts" / "check_mse_revoke_fiber_3854.py"
-    if not revoke3854_script.exists():
-        fail(f"missing {revoke3854_script}")
-        return 1
-    r = run([sys.executable, str(revoke3854_script)], cwd=ROOT)
+    r = _coverage_run(revoke3854_script).returncode
     if r != 0:
         fail("Issue #3854 revoke fiber SE linter failed — run python3 scripts/check_mse_revoke_fiber_3854.py")
         return r
@@ -8303,10 +6620,7 @@ def cmd_lint():
     # compensating EffectDeny with reason mutation_wal_append_miss) and the
     # posture suite asserts the compensation.
     miss3855_script = ROOT / "scripts" / "check_wal_miss_se_compensate_3855.py"
-    if not miss3855_script.exists():
-        fail(f"missing {miss3855_script}")
-        return 1
-    r = run([sys.executable, str(miss3855_script)], cwd=ROOT)
+    r = _coverage_run(miss3855_script).returncode
     if r != 0:
         fail(
             "Issue #3855 WAL-miss SE compensation linter failed — run python3 scripts/check_wal_miss_se_compensate_3855.py"
@@ -8317,10 +6631,7 @@ def cmd_lint():
     # rolled-back mid. Gate pins: the emit flips the slot to denied on the
     # miss and the WAL suite asserts the flip through the #3640 arm shim.
     ring3856_script = ROOT / "scripts" / "check_wal_miss_ring_flip_3856.py"
-    if not ring3856_script.exists():
-        fail(f"missing {ring3856_script}")
-        return 1
-    r = run([sys.executable, str(ring3856_script)], cwd=ROOT)
+    r = _coverage_run(ring3856_script).returncode
     if r != 0:
         fail("Issue #3856 WAL-miss ring flip linter failed — run python3 scripts/check_wal_miss_ring_flip_3856.py")
         return r
@@ -8334,10 +6645,7 @@ def cmd_lint():
     # any slot mutation, and the owner-Evaluator principal stamp covers fresh
     # alloc + reuse.
     choke4036_script = ROOT / "scripts" / "check_mutation_choke_4036.py"
-    if not choke4036_script.exists():
-        fail(f"missing {choke4036_script}")
-        return 1
-    r = run([sys.executable, str(choke4036_script)], cwd=ROOT)
+    r = _coverage_run(choke4036_script).returncode
     if r != 0:
         fail("Issue #4036 mutation choke linter failed — run python3 scripts/check_mutation_choke_4036.py")
         return r
@@ -8355,10 +6663,7 @@ def cmd_lint():
     # tenant array, the SSOT definition sits beside g_pair_slots, and the
     # reset clears the stamps with the slots.
     pair4057_script = ROOT / "scripts" / "check_pair_slot_tenant_4057.py"
-    if not pair4057_script.exists():
-        fail(f"missing {pair4057_script}")
-        return 1
-    r = run([sys.executable, str(pair4057_script)], cwd=ROOT)
+    r = _coverage_run(pair4057_script).returncode
     if r != 0:
         fail("Issue #4057 pair slot tenant linter failed — run python3 scripts/check_pair_slot_tenant_4057.py")
         return r
@@ -8373,10 +6678,7 @@ def cmd_lint():
     # branch stays first, the shorthand family documents no shared-slot
     # fallthrough, and the #4057 write face stays untouched.
     pair4111_script = ROOT / "scripts" / "check_pair_read_tenant_4111.py"
-    if not pair4111_script.exists():
-        fail(f"missing {pair4111_script}")
-        return 1
-    r = run([sys.executable, str(pair4111_script)], cwd=ROOT)
+    r = _coverage_run(pair4111_script).returncode
     if r != 0:
         fail("Issue #4111 pair read tenant linter failed - run python3 scripts/check_pair_read_tenant_4111.py")
         return r
@@ -8394,10 +6696,7 @@ def cmd_lint():
     # handoff_ref choke point; no new query key (existing IsolationDeny SE +
     # stable_ref_handoff_reject_total counters carry the signal).
     aeo4112_script = ROOT / "scripts" / "check_agent_export_occupancy_4112.py"
-    if not aeo4112_script.exists():
-        fail(f"missing {aeo4112_script}")
-        return 1
-    r = run([sys.executable, str(aeo4112_script)], cwd=ROOT)
+    r = _coverage_run(aeo4112_script).returncode
     if r != 0:
         fail(
             "Issue #4112 agent export occupancy linter failed - run python3 scripts/check_agent_export_occupancy_4112.py"
@@ -8415,10 +6714,7 @@ def cmd_lint():
     # isolation-deny reason + nullopt before Stage 2; Soft/Off zero extra;
     # no new metric (cross_tenant_provenance_deny_total reused).
     rso4113_script = ROOT / "scripts" / "check_resolve_stamped_occupancy_4113.py"
-    if not rso4113_script.exists():
-        fail(f"missing {rso4113_script}")
-        return 1
-    r = run([sys.executable, str(rso4113_script)], cwd=ROOT)
+    r = _coverage_run(rso4113_script).returncode
     if r != 0:
         fail(
             "Issue #4113 resolve_stamped occupancy belt linter failed - run python3 scripts/check_resolve_stamped_occupancy_4113.py"
@@ -8439,10 +6735,7 @@ def cmd_lint():
     # tests/orch/test_failure_policy_bridge.cpp, no AgentRegistry / new
     # query key / docs-design invent.
     ffjf4114_script = ROOT / "scripts" / "check_join_fail_failfast_4114.py"
-    if not ffjf4114_script.exists():
-        fail(f"missing {ffjf4114_script}")
-        return 1
-    r = run([sys.executable, str(ffjf4114_script)], cwd=ROOT)
+    r = _coverage_run(ffjf4114_script).returncode
     if r != 0:
         fail(
             "Issue #4114 FailFast join-fail production arm linter failed - run python3 scripts/check_join_fail_failfast_4114.py"
@@ -8463,10 +6756,7 @@ def cmd_lint():
     # tests/orch/test_failure_policy_bridge.cpp, no AgentRegistry / new
     # query key / docs-design invent.
     cbjf4236_script = ROOT / "scripts" / "check_join_fail_circuitbreaker_4236.py"
-    if not cbjf4236_script.exists():
-        fail(f"missing {cbjf4236_script}")
-        return 1
-    r = run([sys.executable, str(cbjf4236_script)], cwd=ROOT)
+    r = _coverage_run(cbjf4236_script).returncode
     if r != 0:
         fail(
             "Issue #4236 CircuitBreaker join-fail production arm linter failed - run python3 scripts/check_join_fail_circuitbreaker_4236.py"
@@ -8487,10 +6777,7 @@ def cmd_lint():
     # tests/orch/test_orch_scope.cpp, no AgentRegistry / new query key /
     # docs-design invent.
     sjs4115_script = ROOT / "scripts" / "check_scope_join_sweep_4115.py"
-    if not sjs4115_script.exists():
-        fail(f"missing {sjs4115_script}")
-        return 1
-    r = run([sys.executable, str(sjs4115_script)], cwd=ROOT)
+    r = _coverage_run(sjs4115_script).returncode
     if r != 0:
         fail(
             "Issue #4115 join_all reclaimed-pending sweep linter failed - run python3 scripts/check_scope_join_sweep_4115.py"
@@ -8511,10 +6798,7 @@ def cmd_lint():
     # #81934, no docs/design/4136-* per #1655, no process-global
     # AgentRegistry).
     cs4136_script = ROOT / "scripts" / "check_caller_sweep_4136.py"
-    if not cs4136_script.exists():
-        fail(f"missing {cs4136_script}")
-        return 1
-    r = run([sys.executable, str(cs4136_script)], cwd=ROOT)
+    r = _coverage_run(cs4136_script).returncode
     if r != 0:
         fail("Issue #4136 caller-passed handle sweep linter failed - run python3 scripts/check_caller_sweep_4136.py")
         return r
@@ -8536,10 +6820,7 @@ def cmd_lint():
     # #81934, no docs/design/4138-* per #1655, no process-global
     # AgentRegistry, no new query key).
     ajsc4138_script = ROOT / "scripts" / "check_agent_join_scope_compact_4138.py"
-    if not ajsc4138_script.exists():
-        fail(f"missing {ajsc4138_script}")
-        return 1
-    r = run([sys.executable, str(ajsc4138_script)], cwd=ROOT)
+    r = _coverage_run(ajsc4138_script).returncode
     if r != 0:
         fail(
             "Issue #4138 agent-join Scope compact linter failed - run python3 scripts/check_agent_join_scope_compact_4138.py"
@@ -8563,10 +6844,7 @@ def cmd_lint():
     # (no test_issue_4139.cpp per #81934, no docs/design/4139-* per
     # #1655, no new query key).
     jto4139_script = ROOT / "scripts" / "check_join_token_observe_4139.py"
-    if not jto4139_script.exists():
-        fail(f"missing {jto4139_script}")
-        return 1
-    r = run([sys.executable, str(jto4139_script)], cwd=ROOT)
+    r = _coverage_run(jto4139_script).returncode
     if r != 0:
         fail("Issue #4139 join-token observe-only linter failed - run python3 scripts/check_join_token_observe_4139.py")
         return r
@@ -8584,10 +6862,7 @@ def cmd_lint():
     # (no test_issue_4140.cpp per #81934, no docs/design/4140-* per
     # #1655, no new query key).
     dsh4140_script = ROOT / "scripts" / "check_densify_health_headroom_4140.py"
-    if not dsh4140_script.exists():
-        fail(f"missing {dsh4140_script}")
-        return 1
-    r = run([sys.executable, str(dsh4140_script)], cwd=ROOT)
+    r = _coverage_run(dsh4140_script).returncode
     if r != 0:
         fail(
             "Issue #4140 densify-health headroom linter failed - run python3 scripts/check_densify_health_headroom_4140.py"
@@ -8609,10 +6884,7 @@ def cmd_lint():
     # (no test_issue_4141.cpp per #81934, no docs/design/4141-* per
     # #1655, no new query key).
     ceh4141_script = ROOT / "scripts" / "check_capability_effect_headroom_4141.py"
-    if not ceh4141_script.exists():
-        fail(f"missing {ceh4141_script}")
-        return 1
-    r = run([sys.executable, str(ceh4141_script)], cwd=ROOT)
+    r = _coverage_run(ceh4141_script).returncode
     if r != 0:
         fail(
             "Issue #4141 capability-effect headroom linter failed - run python3 scripts/check_capability_effect_headroom_4141.py"
@@ -8630,10 +6902,7 @@ def cmd_lint():
     # tests/compiler/test_primcall_narg.cpp (no test_issue_4175.cpp per
     # #81934, no docs/design/4175-* per #1655).
     rsc4175_script = ROOT / "scripts" / "check_r7rs_string_compare_4175.py"
-    if not rsc4175_script.exists():
-        fail(f"missing {rsc4175_script}")
-        return 1
-    r = run([sys.executable, str(rsc4175_script)], cwd=ROOT)
+    r = _coverage_run(rsc4175_script).returncode
     if r != 0:
         fail("Issue #4175 R7RS string-compare linter failed - run python3 scripts/check_r7rs_string_compare_4175.py")
         return r
@@ -8649,10 +6918,7 @@ def cmd_lint():
     # tests/compiler/test_primcall_narg.cpp (no test_issue_4177.cpp per
     # #81934, no docs/design/4177-* per #1655).
     ltd4177_script = ROOT / "scripts" / "check_list_take_drop_4177.py"
-    if not ltd4177_script.exists():
-        fail(f"missing {ltd4177_script}")
-        return 1
-    r = run([sys.executable, str(ltd4177_script)], cwd=ROOT)
+    r = _coverage_run(ltd4177_script).returncode
     if r != 0:
         fail("Issue #4177 R7RS list take/drop linter failed - run python3 scripts/check_list_take_drop_4177.py")
         return r
@@ -8666,10 +6932,7 @@ def cmd_lint():
     # live in tests/core/test_summary_recompute_sym.cpp (#4598 AC6..AC10;
     # no test_issue_4598.cpp per #81934, no docs/design/4598-* per #1655).
     bec4598_script = ROOT / "scripts" / "check_boundary_exit_counters_4598.py"
-    if not bec4598_script.exists():
-        fail(f"missing {bec4598_script}")
-        return 1
-    r = run([sys.executable, str(bec4598_script)], cwd=ROOT)
+    r = _coverage_run(bec4598_script).returncode
     if r != 0:
         fail(
             "Issue #4598 boundary-exit counters linter failed - run python3 scripts/check_boundary_exit_counters_4598.py"
@@ -8685,10 +6948,7 @@ def cmd_lint():
     # test_current_source_roundtrip.cpp (phase-3 function; no
     # test_issue_4598.cpp per #81934, no docs/design/4598-* per #1655).
     sss4598_script = ROOT / "scripts" / "check_snapshot_share_stamps_4598.py"
-    if not sss4598_script.exists():
-        fail(f"missing {sss4598_script}")
-        return 1
-    r = run([sys.executable, str(sss4598_script)], cwd=ROOT)
+    r = _coverage_run(sss4598_script).returncode
     if r != 0:
         fail(
             "Issue #4598 phase-3 snapshot share/stamps linter failed - run python3 scripts/check_snapshot_share_stamps_4598.py"
@@ -8705,10 +6965,7 @@ def cmd_lint():
     # tests/python/test_regression.py::test_rebind_cascade_linear_4615 (no
     # test_issue_4615.cpp per #81934, no docs/design/4615-* per #1655).
     bpo4615_script = ROOT / "scripts" / "check_block_prefix_offsets_4615.py"
-    if not bpo4615_script.exists():
-        fail(f"missing {bpo4615_script}")
-        return 1
-    r = run([sys.executable, str(bpo4615_script)], cwd=ROOT)
+    r = _coverage_run(bpo4615_script).returncode
     if r != 0:
         fail("Issue #4615 block-prefix offset linter failed - run python3 scripts/check_block_prefix_offsets_4615.py")
         return r
@@ -8724,10 +6981,7 @@ def cmd_lint():
     # tests/serve/test_stable_ref_provenance_fiber_cow.cpp (no
     # test_issue_4696.cpp per #81934, no docs/design/4696-* per #1655).
     pspr4696_script = ROOT / "scripts" / "check_pin_stable_refs_provenance_4696.py"
-    if not pspr4696_script.exists():
-        fail(f"missing {pspr4696_script}")
-        return 1
-    r = run([sys.executable, str(pspr4696_script)], cwd=ROOT)
+    r = _coverage_run(pspr4696_script).returncode
     if r != 0:
         fail(
             "Issue #4696 pin stable-ref provenance linter failed - run python3 scripts/check_pin_stable_refs_provenance_4696.py"
@@ -8743,10 +6997,7 @@ def cmd_lint():
     # rows, and the unwired-env runtime ACs in test_primcall_narg.cpp (no
     # test_issue_4232.cpp per #81934, no docs/design/4232-* per #1655).
     slp4232_script = ROOT / "scripts" / "check_soft_list_prims_4232.py"
-    if not slp4232_script.exists():
-        fail(f"missing {slp4232_script}")
-        return 1
-    r = run([sys.executable, str(slp4232_script)], cwd=ROOT)
+    r = _coverage_run(slp4232_script).returncode
     if r != 0:
         fail(
             "Issue #4232 soft worldline select list-prims linter failed - run python3 scripts/check_soft_list_prims_4232.py"
@@ -8764,10 +7015,7 @@ def cmd_lint():
     # test_workspace_lock_reentrancy AC6). No test_issue_4264.cpp per #81934,
     # no docs/design/4264-* per #1655.
     ssp4264_script = ROOT / "scripts" / "check_serve_setcode_parity_4264.py"
-    if not ssp4264_script.exists():
-        fail(f"missing {ssp4264_script}")
-        return 1
-    r = run([sys.executable, str(ssp4264_script)], cwd=ROOT)
+    r = _coverage_run(ssp4264_script).returncode
     if r != 0:
         fail("Issue #4264 serve set-code parity linter failed - run python3 scripts/check_serve_setcode_parity_4264.py")
         return r
@@ -8783,10 +7031,7 @@ def cmd_lint():
     # parity, AC22 source gate). No test_issue_4265.cpp per #81934, no
     # docs/design/4265-* per #1655.
     pbc4265_script = ROOT / "scripts" / "check_pick_best_call_cache_4265.py"
-    if not pbc4265_script.exists():
-        fail(f"missing {pbc4265_script}")
-        return 1
-    r = run([sys.executable, str(pbc4265_script)], cwd=ROOT)
+    r = _coverage_run(pbc4265_script).returncode
     if r != 0:
         fail("Issue #4265 pick-best call-cache linter failed - run python3 scripts/check_pick_best_call_cache_4265.py")
         return r
@@ -8794,10 +7039,7 @@ def cmd_lint():
     # (heap-mutate under eval-current) + pick-best prim-shadow / soft Error
     # status. No docs/design/4272-* or 4273-* per #1655.
     spp4272_script = ROOT / "scripts" / "check_setcode_pick_parity_4272_4273.py"
-    if not spp4272_script.exists():
-        fail(f"missing {spp4272_script}")
-        return 1
-    r = run([sys.executable, str(spp4272_script)], cwd=ROOT)
+    r = _coverage_run(spp4272_script).returncode
     if r != 0:
         fail(
             "Issue #4272+#4273 set-code/pick parity linter failed - run python3 scripts/check_setcode_pick_parity_4272_4273.py"
@@ -8818,10 +7060,7 @@ def cmd_lint():
     # AC1-AC5. No test_issue_4267.cpp per #81934, no docs/design/4267-* per
     # #1655.
     sos4267_script = ROOT / "scripts" / "check_synthesize_optimize_score_4267.py"
-    if not sos4267_script.exists():
-        fail(f"missing {sos4267_script}")
-        return 1
-    r = run([sys.executable, str(sos4267_script)], cwd=ROOT)
+    r = _coverage_run(sos4267_script).returncode
     if r != 0:
         fail(
             "Issue #4267 synthesize:optimize score linter failed - run python3 scripts/check_synthesize_optimize_score_4267.py"
@@ -8840,10 +7079,7 @@ def cmd_lint():
     # consulting has_capability, and the runtime ACs extend the
     # #2152/#4036/#4057 host test file.
     cap4058_script = ROOT / "scripts" / "check_capability_stack_authorization_4058.py"
-    if not cap4058_script.exists():
-        fail(f"missing {cap4058_script}")
-        return 1
-    r = run([sys.executable, str(cap4058_script)], cwd=ROOT)
+    r = _coverage_run(cap4058_script).returncode
     if r != 0:
         fail(
             "Issue #4058 capability stack authorization linter failed — run python3 scripts/check_capability_stack_authorization_4058.py"
@@ -8860,10 +7096,7 @@ def cmd_lint():
     # builder, the io-read string gate stays as the second layer, and the
     # runtime ACs extend the #2485 host test file.
     load4059_script = ROOT / "scripts" / "check_load_tenant_mutate_4059.py"
-    if not load4059_script.exists():
-        fail(f"missing {load4059_script}")
-        return 1
-    r = run([sys.executable, str(load4059_script)], cwd=ROOT)
+    r = _coverage_run(load4059_script).returncode
     if r != 0:
         fail(
             "Issue #4059 load tenant host-path + Mutate linter failed — run python3 scripts/check_load_tenant_mutate_4059.py"
@@ -8884,10 +7117,7 @@ def cmd_lint():
     # tenant_host_path.hh SSOT, the EXEMPT_2ARG inventory stays frozen, and
     # the runtime ACs extend the #3802 family host test file.
     execjail4233_script = ROOT / "scripts" / "check_tenant_exec_jail_4233.py"
-    if not execjail4233_script.exists():
-        fail(f"missing {execjail4233_script}")
-        return 1
-    r = run([sys.executable, str(execjail4233_script)], cwd=ROOT)
+    r = _coverage_run(execjail4233_script).returncode
     if r != 0:
         fail(
             "Issue #4233 shell/command-output tenant exec-jail linter failed — run python3 scripts/check_tenant_exec_jail_4233.py"
@@ -8908,10 +7138,7 @@ def cmd_lint():
     # SSOT (::lstat + S_ISLNK), runtime ACs extend the #3802 family host
     # test file, and the wiring stays on the root allowlist.
     jail4380_script = ROOT / "scripts" / "check_tenant_jail_4380.py"
-    if not jail4380_script.exists():
-        fail(f"missing {jail4380_script}")
-        return 1
-    r = run([sys.executable, str(jail4380_script)], cwd=ROOT)
+    r = _coverage_run(jail4380_script).returncode
     if r != 0:
         fail(
             "Issue #4380 tenant jail embedded-path / symlink-component linter failed — run python3 scripts/check_tenant_jail_4380.py"
@@ -8932,10 +7159,7 @@ def cmd_lint():
     # runtime ACs extend the #3802 family host test file, and the
     # wiring stays on the root allowlist.
     gitjail4381_script = ROOT / "scripts" / "check_git_tenant_jail_4381.py"
-    if not gitjail4381_script.exists():
-        fail(f"missing {gitjail4381_script}")
-        return 1
-    r = run([sys.executable, str(gitjail4381_script)], cwd=ROOT)
+    r = _coverage_run(gitjail4381_script).returncode
     if r != 0:
         fail("Issue #4381 git-* tenant jail linter failed — run python3 scripts/check_git_tenant_jail_4381.py")
         return r
@@ -8955,10 +7179,7 @@ def cmd_lint():
     # --proto / --proto-redir, runtime ACs extend the #3802 family host
     # test file, and the wiring stays on the root allowlist.
     httpscheme4382_script = ROOT / "scripts" / "check_http_tenant_scheme_4382.py"
-    if not httpscheme4382_script.exists():
-        fail(f"missing {httpscheme4382_script}")
-        return 1
-    r = run([sys.executable, str(httpscheme4382_script)], cwd=ROOT)
+    r = _coverage_run(httpscheme4382_script).returncode
     if r != 0:
         fail("Issue #4382 http-* scheme jail linter failed — run python3 scripts/check_http_tenant_scheme_4382.py")
         return r
@@ -8972,10 +7193,7 @@ def cmd_lint():
     # precedes the store with the capability-effect-deny string, and the
     # allowlist row is gone.
     afp4037_script = ROOT / "scripts" / "check_agent_fingerprint_gate_4037.py"
-    if not afp4037_script.exists():
-        fail(f"missing {afp4037_script}")
-        return 1
-    r = run([sys.executable, str(afp4037_script)], cwd=ROOT)
+    r = _coverage_run(afp4037_script).returncode
     if r != 0:
         fail(
             "Issue #4037 agent-fingerprint gate linter failed — run python3 scripts/check_agent_fingerprint_gate_4037.py"
@@ -8993,10 +7211,7 @@ def cmd_lint():
     # filters stale session bits — all inside the existing
     # revoke/provenance/effects trio (no query key, no second policy).
     hc4038_script = ROOT / "scripts" / "check_session_revoke_host_cohort_4038.py"
-    if not hc4038_script.exists():
-        fail(f"missing {hc4038_script}")
-        return 1
-    r = run([sys.executable, str(hc4038_script)], cwd=ROOT)
+    r = _coverage_run(hc4038_script).returncode
     if r != 0:
         fail(
             "Issue #4038 host-cohort revoke linter failed — run python3 scripts/check_session_revoke_host_cohort_4038.py"
@@ -9013,10 +7228,7 @@ def cmd_lint():
     # the gate early allow is deleted with Soft/Off and the on_ref route
     # preserved, and the host ACs are wired into the dispatched batch runner.
     ncc4039_script = ROOT / "scripts" / "check_nodeid_collision_4039.py"
-    if not ncc4039_script.exists():
-        fail(f"missing {ncc4039_script}")
-        return 1
-    r = run([sys.executable, str(ncc4039_script)], cwd=ROOT)
+    r = _coverage_run(ncc4039_script).returncode
     if r != 0:
         fail("Issue #4039 NodeId collision/gate linter failed — run python3 scripts/check_nodeid_collision_4039.py")
         return r
@@ -9034,10 +7246,7 @@ def cmd_lint():
     # foreign hits / stable empty slots / Soft keep their #3641/#4039/#2056
     # contracts, and the host ACs are wired into the dispatched batch runner.
     otr4051_script = ROOT / "scripts" / "check_occupancy_torn_read_4051.py"
-    if not otr4051_script.exists():
-        fail(f"missing {otr4051_script}")
-        return 1
-    r = run([sys.executable, str(otr4051_script)], cwd=ROOT)
+    r = _coverage_run(otr4051_script).returncode
     if r != 0:
         fail("Issue #4051 occupancy torn-read linter failed — run python3 scripts/check_occupancy_torn_read_4051.py")
         return r
@@ -9054,10 +7263,7 @@ def cmd_lint():
     # AC1 host block asserts SE epoch == 42 alongside mid == 777 plus the
     # typed before/after epoch == 42.
     ide4052_script = ROOT / "scripts" / "check_isolation_deny_epoch_4052.py"
-    if not ide4052_script.exists():
-        fail(f"missing {ide4052_script}")
-        return 1
-    r = run([sys.executable, str(ide4052_script)], cwd=ROOT)
+    r = _coverage_run(ide4052_script).returncode
     if r != 0:
         fail("Issue #4052 IsolationDeny epoch linter failed — run python3 scripts/check_isolation_deny_epoch_4052.py")
         return r
@@ -9076,10 +7282,7 @@ def cmd_lint():
     # exit only takes the nested-success skip for real Guard nesting
     # (restore + success flip otherwise). Existing belt, no new solver.
     ftb4089_script = ROOT / "scripts" / "check_fiber_type_belt_4089.py"
-    if not ftb4089_script.exists():
-        fail(f"missing {ftb4089_script}")
-        return 1
-    r = run([sys.executable, str(ftb4089_script)], cwd=ROOT)
+    r = _coverage_run(ftb4089_script).returncode
     if r != 0:
         fail("Issue #4089 fiber type-belt linter failed — run python3 scripts/check_fiber_type_belt_4089.py")
         return r
@@ -9100,10 +7303,7 @@ def cmd_lint():
     # restamp-lag; gap false after body return) is regression-covered at
     # runtime in the hygiene closed-loop suite.
     agl4087_script = ROOT / "scripts" / "check_authority_gap_lifecycle_4087.py"
-    if not agl4087_script.exists():
-        fail(f"missing {agl4087_script}")
-        return 1
-    r = run([sys.executable, str(agl4087_script)], cwd=ROOT)
+    r = _coverage_run(agl4087_script).returncode
     if r != 0:
         fail(
             "Issue #4087 authority-gap lifecycle linter failed — run python3 scripts/check_authority_gap_lifecycle_4087.py"
@@ -9125,10 +7325,7 @@ def cmd_lint():
     # register_query_primitives before register_workspace_query_primitives)
     # and the Soft historical walk.
     qbni4088_script = ROOT / "scripts" / "check_query_bare_nodeid_4088.py"
-    if not qbni4088_script.exists():
-        fail(f"missing {qbni4088_script}")
-        return 1
-    r = run([sys.executable, str(qbni4088_script)], cwd=ROOT)
+    r = _coverage_run(qbni4088_script).returncode
     if r != 0:
         fail(
             "Issue #4088 query bare-NodeId schema-2 linter failed — run python3 scripts/check_query_bare_nodeid_4088.py"
@@ -9151,10 +7348,7 @@ def cmd_lint():
     # the historical zero-cost bare-int contract (the two #3175-sunk bodies
     # carry the gate for any future surfacing).
     qbni4106_script = ROOT / "scripts" / "check_query_bare_nodeid_4106.py"
-    if not qbni4106_script.exists():
-        fail(f"missing {qbni4106_script}")
-        return 1
-    r = run([sys.executable, str(qbni4106_script)], cwd=ROOT)
+    r = _coverage_run(qbni4106_script).returncode
     if r != 0:
         fail(
             "Issue #4106 query bare-NodeId occupancy linter failed — run python3 scripts/check_query_bare_nodeid_4106.py"
@@ -9177,10 +7371,7 @@ def cmd_lint():
     # reported under the production face; the test ACs live in
     # tests/compiler/test_ir.cpp (no new tree).
     tg4107_script = ROOT / "scripts" / "check_type_ground_gate_4107.py"
-    if not tg4107_script.exists():
-        fail(f"missing {tg4107_script}")
-        return 1
-    r = run([sys.executable, str(tg4107_script)], cwd=ROOT)
+    r = _coverage_run(tg4107_script).returncode
     if r != 0:
         fail("Issue #4107 type ground gate linter failed — run python3 scripts/check_type_ground_gate_4107.py")
         return r
@@ -9195,10 +7386,7 @@ def cmd_lint():
     # overflow gauge, Soft keeps the process bucket), and agent_ask honors
     # stale_handoff as handoff-required instead of spinning to timeout.
     arp4049_script = ROOT / "scripts" / "check_agent_reply_payload_4049.py"
-    if not arp4049_script.exists():
-        fail(f"missing {arp4049_script}")
-        return 1
-    r = run([sys.executable, str(arp4049_script)], cwd=ROOT)
+    r = _coverage_run(arp4049_script).returncode
     if r != 0:
         fail("Issue #4049 agent-reply payload/BP linter failed — run python3 scripts/check_agent_reply_payload_4049.py")
         return r
@@ -9213,10 +7401,7 @@ def cmd_lint():
     # hash carries the supervision keys with ok=false when a still-live body
     # was cancelled, skipped or deferred.
     scj4050_script = ROOT / "scripts" / "check_supervise_join_4050.py"
-    if not scj4050_script.exists():
-        fail(f"missing {scj4050_script}")
-        return 1
-    r = run([sys.executable, str(scj4050_script)], cwd=ROOT)
+    r = _coverage_run(scj4050_script).returncode
     if r != 0:
         fail("Issue #4050 supervise-batch child-join linter failed — run python3 scripts/check_supervise_join_4050.py")
         return r
@@ -9230,10 +7415,7 @@ def cmd_lint():
     # path, compute_dominant counting the closed inline ShapeID set in a
     # stack array, and the design marker + runtime ACs + wiring present.
     shp4090_script = ROOT / "scripts" / "check_shape_hotpath_4090.py"
-    if not shp4090_script.exists():
-        fail(f"missing {shp4090_script}")
-        return 1
-    r = run([sys.executable, str(shp4090_script)], cwd=ROOT)
+    r = _coverage_run(shp4090_script).returncode
     if r != 0:
         fail("Issue #4090 shape hot-path linter failed — run python3 scripts/check_shape_hotpath_4090.py")
         return r
@@ -9246,10 +7428,7 @@ def cmd_lint():
     # side index is maintained at the cache mutation sites, and the
     # #4091 runtime ACs + wiring exist.
     sdc4091_script = ROOT / "scripts" / "check_shape_dirty_cone_4091.py"
-    if not sdc4091_script.exists():
-        fail(f"missing {sdc4091_script}")
-        return 1
-    r = run([sys.executable, str(sdc4091_script)], cwd=ROOT)
+    r = _coverage_run(sdc4091_script).returncode
     if r != 0:
         fail("Issue #4091 shape dirty-cone linter failed — run python3 scripts/check_shape_dirty_cone_4091.py")
         return r
@@ -9262,10 +7441,7 @@ def cmd_lint():
     # insert_or_assign, the named call sites, and the #4108 runtime ACs
     # in the #4091 home.
     ssi4108_script = ROOT / "scripts" / "check_shape_sync_index_4108.py"
-    if not ssi4108_script.exists():
-        fail(f"missing {ssi4108_script}")
-        return 1
-    r = run([sys.executable, str(ssi4108_script)], cwd=ROOT)
+    r = _coverage_run(ssi4108_script).returncode
     if r != 0:
         fail("Issue #4108 shape sync-index linter failed — run python3 scripts/check_shape_sync_index_4108.py")
         return r
@@ -9278,10 +7454,7 @@ def cmd_lint():
     # (#2579) at the current defuse, the compact/truncate survivor stamp
     # restamps, and the #4109 runtime ACs in the two home test files.
     mdf4109_script = ROOT / "scripts" / "check_materialize_defuse_4109.py"
-    if not mdf4109_script.exists():
-        fail(f"missing {mdf4109_script}")
-        return 1
-    r = run([sys.executable, str(mdf4109_script)], cwd=ROOT)
+    r = _coverage_run(mdf4109_script).returncode
     if r != 0:
         fail("Issue #4109 materialize defuse linter failed — run python3 scripts/check_materialize_defuse_4109.py")
         return r
@@ -9295,10 +7468,7 @@ def cmd_lint():
     # compare. Extends test_dispatch_required_effects; no docs/design/
     # (#1655). No invent / new query key.
     hts4110_script = ROOT / "scripts" / "check_hash_tenant_stamp_4110.py"
-    if not hts4110_script.exists():
-        fail(f"missing {hts4110_script}")
-        return 1
-    r = run([sys.executable, str(hts4110_script)], cwd=ROOT)
+    r = _coverage_run(hts4110_script).returncode
     if r != 0:
         fail("Issue #4110 hash tenant stamp linter failed — run python3 scripts/check_hash_tenant_stamp_4110.py")
         return r
@@ -9307,10 +7477,7 @@ def cmd_lint():
     # (IsolationDeny via check_workspace_isolation; Soft/Off zero-cost);
     # the stamp/gate/hook wiring is pinned by this source-cite gate.
     jti4093_script = ROOT / "scripts" / "check_jit_heap_tenant_4093.py"
-    if not jti4093_script.exists():
-        fail(f"missing {jti4093_script}")
-        return 1
-    r = run([sys.executable, str(jti4093_script)], cwd=ROOT)
+    r = _coverage_run(jti4093_script).returncode
     if r != 0:
         fail("Issue #4093 JIT heap tenant linter failed — run python3 scripts/check_jit_heap_tenant_4093.py")
         return r
@@ -9319,10 +7486,7 @@ def cmd_lint():
     # #4036 arms with the deny routed through check_workspace_isolation;
     # the choke/face/seam/read wiring is pinned by this source-cite gate.
     cct4094_script = ROOT / "scripts" / "check_closure_capture_tenant_4094.py"
-    if not cct4094_script.exists():
-        fail(f"missing {cct4094_script}")
-        return 1
-    r = run([sys.executable, str(cct4094_script)], cwd=ROOT)
+    r = _coverage_run(cct4094_script).returncode
     if r != 0:
         fail(
             "Issue #4094 closure capture tenant linter failed — run python3 scripts/check_closure_capture_tenant_4094.py"
@@ -9337,10 +7501,7 @@ def cmd_lint():
     # (deny 0); SE emission is best-effort via the existing tenant-isolation
     # counter; Soft/Off face-0 zero-cost contract intact.
     jof4134_script = ROOT / "scripts" / "check_jit_owner_failclosed_4134.py"
-    if not jof4134_script.exists():
-        fail(f"missing {jof4134_script}")
-        return 1
-    r = run([sys.executable, str(jof4134_script)], cwd=ROOT)
+    r = _coverage_run(jof4134_script).returncode
     if r != 0:
         fail("Issue #4134 JIT owner fail-closed linter failed — run python3 scripts/check_jit_owner_failclosed_4134.py")
         return r
@@ -9353,10 +7514,7 @@ def cmd_lint():
     # CapabilityGrant.bound_node_id); paths without a node keep 0 (honest
     # unset), Soft/Off unchanged (no compulsory node invent).
     gnp4135_script = ROOT / "scripts" / "check_grant_node_provenance_4135.py"
-    if not gnp4135_script.exists():
-        fail(f"missing {gnp4135_script}")
-        return 1
-    r = run([sys.executable, str(gnp4135_script)], cwd=ROOT)
+    r = _coverage_run(gnp4135_script).returncode
     if r != 0:
         fail(
             "Issue #4135 grant node provenance linter failed — run python3 scripts/check_grant_node_provenance_4135.py"
@@ -9371,10 +7529,7 @@ def cmd_lint():
     # #3055/#3182 stale gate; the densify-pin batch drives block +
     # release + soak.
     tcan3857_script = ROOT / "scripts" / "check_temp_canary_moving_gate_3857.py"
-    if not tcan3857_script.exists():
-        fail(f"missing {tcan3857_script}")
-        return 1
-    r = run([sys.executable, str(tcan3857_script)], cwd=ROOT)
+    r = _coverage_run(tcan3857_script).returncode
     if r != 0:
         fail(
             "Issue #3857 temp-canary Moving entry gate linter failed — run python3 scripts/check_temp_canary_moving_gate_3857.py"
@@ -9389,10 +7544,7 @@ def cmd_lint():
     # consumed; the peek is non-consuming; the hygiene closed-loop suite
     # drives block + MSE-restore + Soft + non-demote faces.
     rcmse3858_script = ROOT / "scripts" / "check_restore_checkpoint_mse_3858.py"
-    if not rcmse3858_script.exists():
-        fail(f"missing {rcmse3858_script}")
-        return 1
-    r = run([sys.executable, str(rcmse3858_script)], cwd=ROOT)
+    r = _coverage_run(rcmse3858_script).returncode
     if r != 0:
         fail(
             "Issue #3858 restore-checkpoint MSE linter failed — run python3 scripts/check_restore_checkpoint_mse_3858.py"
@@ -9406,10 +7558,7 @@ def cmd_lint():
     # assemble_nodeview with a get_soa_safe() locked fallback, the hot path
     # stays lock-free, and the snapshot batch hosts the runtime ACs.
     seq3868_script = ROOT / "scripts" / "check_flatast_seqlock_get_3868.py"
-    if not seq3868_script.exists():
-        fail(f"missing {seq3868_script}")
-        return 1
-    r = run([sys.executable, str(seq3868_script)], cwd=ROOT)
+    r = _coverage_run(seq3868_script).returncode
     if r != 0:
         fail("Issue #3868 FlatAST seqlock get linter failed — run python3 scripts/check_flatast_seqlock_get_3868.py")
         return r
@@ -9425,10 +7574,7 @@ def cmd_lint():
     # the zero-cost short-circuit; runtime ACs in
     # test_tenant_isolation_enforcement cite #3722.
     reb3722_script = ROOT / "scripts" / "check_rollback_effect_gate_3722.py"
-    if not reb3722_script.exists():
-        fail(f"missing {reb3722_script}")
-        return 1
-    r = run([sys.executable, str(reb3722_script)], cwd=ROOT)
+    r = _coverage_run(reb3722_script).returncode
     if r != 0:
         fail("Issue #3722 rollback effect-gate linter failed — run python3 scripts/check_rollback_effect_gate_3722.py")
         return r
@@ -9442,10 +7588,7 @@ def cmd_lint():
     # foreign / unstamped deny (IsolationDeny, fiber-joinable); Soft/Off
     # keeps the legacy direct path; tests cite #3772.
     ars3772_script = ROOT / "scripts" / "check_ast_ref_stamp_3772.py"
-    if not ars3772_script.exists():
-        fail(f"missing {ars3772_script}")
-        return 1
-    r = run([sys.executable, str(ars3772_script)], cwd=ROOT)
+    r = _coverage_run(ars3772_script).returncode
     if r != 0:
         fail("Issue #3772 ast ref stamp linter failed — run python3 scripts/check_ast_ref_stamp_3772.py")
         return r
@@ -9460,10 +7603,7 @@ def cmd_lint():
     # probe. Runtime doors live in test_fiber_concurrent_unit_batch.cpp
     # (#4128 ACs).
     wuls4128_script = ROOT / "scripts" / "check_workspace_lock_stamp_4128.py"
-    if not wuls4128_script.exists():
-        fail(f"missing {wuls4128_script}")
-        return 1
-    r = run([sys.executable, str(wuls4128_script)], cwd=ROOT)
+    r = _coverage_run(wuls4128_script).returncode
     if r != 0:
         fail("Issue #4128 workspace lock stamp linter failed — run python3 scripts/check_workspace_lock_stamp_4128.py")
         return r
@@ -9476,10 +7616,7 @@ def cmd_lint():
     # guard. Runtime doors live in test_hygiene_mutate_closed_loop.cpp
     # (#4149 ACs).
     hls4149_script = ROOT / "scripts" / "check_hygiene_limit_stamp_4149.py"
-    if not hls4149_script.exists():
-        fail(f"missing {hls4149_script}")
-        return 1
-    r = run([sys.executable, str(hls4149_script)], cwd=ROOT)
+    r = _coverage_run(hls4149_script).returncode
     if r != 0:
         fail("Issue #4149 hygiene limit stamp linter failed — run python3 scripts/check_hygiene_limit_stamp_4149.py")
         return r
@@ -9493,10 +7630,7 @@ def cmd_lint():
     # surface, and the unchanged query key. Runtime doors live in
     # test_hygiene_mutate_closed_loop.cpp (#4150 ACs).
     hllf4150_script = ROOT / "scripts" / "check_hygiene_last_limit_fiber_4150.py"
-    if not hllf4150_script.exists():
-        fail(f"missing {hllf4150_script}")
-        return 1
-    r = run([sys.executable, str(hllf4150_script)], cwd=ROOT)
+    r = _coverage_run(hllf4150_script).returncode
     if r != 0:
         fail(
             "Issue #4150 hygiene last-limit fiber linter failed — run python3 scripts/check_hygiene_last_limit_fiber_4150.py"
@@ -9512,10 +7646,7 @@ def cmd_lint():
     # Soft/Off contract, the unchanged belts, and the extended tests.
     # Runtime doors live in test_macro_hygiene_limits.cpp (#4151 ACs).
     mcwg4151_script = ROOT / "scripts" / "check_macro_child_walk_gate_4151.py"
-    if not mcwg4151_script.exists():
-        fail(f"missing {mcwg4151_script}")
-        return 1
-    r = run([sys.executable, str(mcwg4151_script)], cwd=ROOT)
+    r = _coverage_run(mcwg4151_script).returncode
     if r != 0:
         fail(
             "Issue #4151 macro child walk gate linter failed — run python3 scripts/check_macro_child_walk_gate_4151.py"
@@ -9537,10 +7668,7 @@ def cmd_lint():
     # extended tests. Runtime doors live in test_type_linear_commit_health.cpp
     # (#4152 ACs).
     dgsf4152_script = ROOT / "scripts" / "check_deferred_green_steal_fence_4152.py"
-    if not dgsf4152_script.exists():
-        fail(f"missing {dgsf4152_script}")
-        return 1
-    r = run([sys.executable, str(dgsf4152_script)], cwd=ROOT)
+    r = _coverage_run(dgsf4152_script).returncode
     if r != 0:
         fail(
             "Issue #4152 deferred-green steal fence linter failed — run python3 scripts/check_deferred_green_steal_fence_4152.py"
@@ -9562,10 +7690,7 @@ def cmd_lint():
     # preserved consult arms, and the extended tests. Runtime doors live in
     # test_type_linear_commit_health.cpp (#4153 ACs).
     tdgi4153_script = ROOT / "scripts" / "check_txn_dirty_green_4153.py"
-    if not tdgi4153_script.exists():
-        fail(f"missing {tdgi4153_script}")
-        return 1
-    r = run([sys.executable, str(tdgi4153_script)], cwd=ROOT)
+    r = _coverage_run(tdgi4153_script).returncode
     if r != 0:
         fail(
             "Issue #4153 txn-dirty green invalidation linter failed — run python3 scripts/check_txn_dirty_green_4153.py"
@@ -9586,10 +7711,7 @@ def cmd_lint():
     # fiber:spawn #f degrade, and the session exec catch. Runtime doors
     # live in tests/serve/test_concurrent.cpp (#4176 ACs).
     sajw4176_script = ROOT / "scripts" / "check_serve_async_join_wake_4176.py"
-    if not sajw4176_script.exists():
-        fail(f"missing {sajw4176_script}")
-        return 1
-    r = run([sys.executable, str(sajw4176_script)], cwd=ROOT)
+    r = _coverage_run(sajw4176_script).returncode
     if r != 0:
         fail(
             "Issue #4176 serve-async join wake linter failed — run python3 scripts/check_serve_async_join_wake_4176.py"
@@ -9607,10 +7729,7 @@ def cmd_lint():
     # transient error line, and a single exec site. Runtime door lives in
     # tests/serve/test_concurrent.cpp (#4229 ACs).
     sacha4229_script = ROOT / "scripts" / "check_serve_async_capture_honesty_4229.py"
-    if not sacha4229_script.exists():
-        fail(f"missing {sacha4229_script}")
-        return 1
-    r = run([sys.executable, str(sacha4229_script)], cwd=ROOT)
+    r = _coverage_run(sacha4229_script).returncode
     if r != 0:
         fail(
             "Issue #4229 serve-async capture honesty linter failed — run python3 scripts/check_serve_async_capture_honesty_4229.py"
@@ -9631,10 +7750,7 @@ def cmd_lint():
     # is_done() → Ok; the messaging loop breaks to the result fetch).
     # Runtime doors live in tests/serve/test_concurrent.cpp (#4230 ACs).
     fjdf4230_script = ROOT / "scripts" / "check_fiber_join_done_face_4230.py"
-    if not fjdf4230_script.exists():
-        fail(f"missing {fjdf4230_script}")
-        return 1
-    r = run([sys.executable, str(fjdf4230_script)], cwd=ROOT)
+    r = _coverage_run(fjdf4230_script).returncode
     if r != 0:
         fail("Issue #4230 fiber join done-face linter failed — run python3 scripts/check_fiber_join_done_face_4230.py")
         return r
@@ -9654,10 +7770,7 @@ def cmd_lint():
     # test_query_result_full_provenance.cpp + the #4164 zone in
     # test_stable_ref_export_validate.cpp.
     rlpg4164_script = ROOT / "scripts" / "check_ref_layout_gen_paint_4164.py"
-    if not rlpg4164_script.exists():
-        fail(f"missing {rlpg4164_script}")
-        return 1
-    r = run([sys.executable, str(rlpg4164_script)], cwd=ROOT)
+    r = _coverage_run(rlpg4164_script).returncode
     if r != 0:
         fail("Issue #4164 ref-layout gen-paint linter failed — run python3 scripts/check_ref_layout_gen_paint_4164.py")
         return r
@@ -9674,10 +7787,7 @@ def cmd_lint():
     # sticky_cleared resolved post-publish. Runtime doors live in
     # test_moving_densify_fail_closed.cpp (#4143 ACs).
     msr4143_script = ROOT / "scripts" / "check_moving_sticky_recovery_4143.py"
-    if not msr4143_script.exists():
-        fail(f"missing {msr4143_script}")
-        return 1
-    r = run([sys.executable, str(msr4143_script)], cwd=ROOT)
+    r = _coverage_run(msr4143_script).returncode
     if r != 0:
         fail(
             "Issue #4143 sticky recovery clear-ordering linter failed — run python3 scripts/check_moving_sticky_recovery_4143.py"
@@ -9698,10 +7808,7 @@ def cmd_lint():
     # consume stay unchanged, and the #4144 counter is additive-only.
     # Runtime doors live in test_moving_densify_fail_closed.cpp (#4144 ACs).
     epf4144_script = ROOT / "scripts" / "check_envframe_pool_slot_remap_4144.py"
-    if not epf4144_script.exists():
-        fail(f"missing {epf4144_script}")
-        return 1
-    r = run([sys.executable, str(epf4144_script)], cwd=ROOT)
+    r = _coverage_run(epf4144_script).returncode
     if r != 0:
         fail(
             "Issue #4144 EnvFrame pool slot remap linter failed — run python3 scripts/check_envframe_pool_slot_remap_4144.py"
@@ -9721,10 +7828,7 @@ def cmd_lint():
     # stay unchanged, and the runtime doors live in
     # test_moving_densify_fail_closed.cpp (#4145 ACs).
     saw4145_script = ROOT / "scripts" / "check_soft_autowire_unreachable_4145.py"
-    if not saw4145_script.exists():
-        fail(f"missing {saw4145_script}")
-        return 1
-    r = run([sys.executable, str(saw4145_script)], cwd=ROOT)
+    r = _coverage_run(saw4145_script).returncode
     if r != 0:
         fail(
             "Issue #4145 soft auto-wire unreachability linter failed — run python3 scripts/check_soft_autowire_unreachable_4145.py"
@@ -9743,10 +7847,7 @@ def cmd_lint():
     # unchanged. Runtime doors live in
     # tests/compiler/test_compiler_hot_update_facade.cpp (ac4146_*).
     cone4146_script = ROOT / "scripts" / "check_facade_cone_jit_drop_4146.py"
-    if not cone4146_script.exists():
-        fail(f"missing {cone4146_script}")
-        return 1
-    r = run([sys.executable, str(cone4146_script)], cwd=ROOT)
+    r = _coverage_run(cone4146_script).returncode
     if r != 0:
         fail("Issue #4146 facade cone JIT drop linter failed — run python3 scripts/check_facade_cone_jit_drop_4146.py")
         return r
@@ -9760,10 +7861,7 @@ def cmd_lint():
     # tests/compiler/test_issue_3096.cpp (ac4147_*) + test_reload_recovery_query.cpp
     # (ac3248_1 restated).
     rfr4147_script = ROOT / "scripts" / "check_residual_force_rearm_4147.py"
-    if not rfr4147_script.exists():
-        fail(f"missing {rfr4147_script}")
-        return 1
-    r = run([sys.executable, str(rfr4147_script)], cwd=ROOT)
+    r = _coverage_run(rfr4147_script).returncode
     if r != 0:
         fail("Issue #4147 residual-force re-arm linter failed — run python3 scripts/check_residual_force_rearm_4147.py")
         return r
@@ -9782,10 +7880,7 @@ def cmd_lint():
     # Runtime doors live in tests/compiler/test_must_deopt_before_next_call.cpp
     # (ac4148_*).
     jdm4148_script = ROOT / "scripts" / "check_jit_drop_must_deopt_4148.py"
-    if not jdm4148_script.exists():
-        fail(f"missing {jdm4148_script}")
-        return 1
-    r = run([sys.executable, str(jdm4148_script)], cwd=ROOT)
+    r = _coverage_run(jdm4148_script).returncode
     if r != 0:
         fail(
             "Issue #4148 JIT-drop must-deopt belt linter failed — run python3 scripts/check_jit_drop_must_deopt_4148.py"
@@ -9802,10 +7897,7 @@ def cmd_lint():
     # fails the form instead of being silently swallowed. Runtime doors
     # live in tests/compiler/test_ir.cpp (test_character_literal_4129).
     chr4129_script = ROOT / "scripts" / "check_character_literal_4129.py"
-    if not chr4129_script.exists():
-        fail(f"missing {chr4129_script}")
-        return 1
-    r = run([sys.executable, str(chr4129_script)], cwd=ROOT)
+    r = _coverage_run(chr4129_script).returncode
     if r != 0:
         fail("Issue #4129 character literal reader linter failed — run python3 scripts/check_character_literal_4129.py")
         return r
@@ -9822,10 +7914,7 @@ def cmd_lint():
     # query:* key / metrics bus / hash capacity. Runtime doors live in
     # tests/core/test_audit_replay_join.cpp (ac20_se_wal_overflow_mid_join_4118).
     sejoin4118_script = ROOT / "scripts" / "check_se_wal_join_4118.py"
-    if not sejoin4118_script.exists():
-        fail(f"missing {sejoin4118_script}")
-        return 1
-    r = run([sys.executable, str(sejoin4118_script)], cwd=ROOT)
+    r = _coverage_run(sejoin4118_script).returncode
     if r != 0:
         fail("Issue #4118 SE WAL mid-join linter failed — run python3 scripts/check_se_wal_join_4118.py")
         return r
@@ -9841,10 +7930,7 @@ def cmd_lint():
     # key / insert_kv row / hash capacity. Runtime doors live in
     # tests/core/test_audit_replay_join.cpp (ac21_replay_mid_last_stamped_4120).
     replay4120_script = ROOT / "scripts" / "check_replay_mid_last_stamped_4120.py"
-    if not replay4120_script.exists():
-        fail(f"missing {replay4120_script}")
-        return 1
-    r = run([sys.executable, str(replay4120_script)], cwd=ROOT)
+    r = _coverage_run(replay4120_script).returncode
     if r != 0:
         fail(
             "Issue #4120 replay-mid last-stamped linter failed — run python3 scripts/check_replay_mid_last_stamped_4120.py"
@@ -9865,10 +7951,7 @@ def cmd_lint():
     # kept. Runtime doors live in tests/core/test_audit_replay_join.cpp
     # (ac23_wal_miss_refuse_next_4142).
     missrefuse4142_script = ROOT / "scripts" / "check_wal_miss_refuse_next_4142.py"
-    if not missrefuse4142_script.exists():
-        fail(f"missing {missrefuse4142_script}")
-        return 1
-    r = run([sys.executable, str(missrefuse4142_script)], cwd=ROOT)
+    r = _coverage_run(missrefuse4142_script).returncode
     if r != 0:
         fail("Issue #4142 WAL miss/refuse fold linter failed — run python3 scripts/check_wal_miss_refuse_next_4142.py")
         return r
@@ -9883,10 +7966,7 @@ def cmd_lint():
     # agree on the newest binding. Runtime doors live in
     # tests/compiler/test_env_lookup_soa_shadow_reverse.cpp (ac3-ac6).
     topletc4595_script = ROOT / "scripts" / "check_top_letrec_no_selfcopy_frame_4595.py"
-    if not topletc4595_script.exists():
-        fail(f"missing {topletc4595_script}")
-        return 1
-    r = run([sys.executable, str(topletc4595_script)], cwd=ROOT)
+    r = _coverage_run(topletc4595_script).returncode
     if r != 0:
         fail(
             "Issue #4595 top-letrec live-top linter failed — run python3 scripts/check_top_letrec_no_selfcopy_frame_4595.py"
@@ -9901,10 +7981,7 @@ def cmd_lint():
     # speculation. Runtime doors: test_mutate_type_gate.cpp
     # jit_word_and_storm_4600 + python test_jit_prologue_word_and_storm_4600.
     gate4600_script = ROOT / "scripts" / "check_jit_assumption_gate_4600.py"
-    if not gate4600_script.exists():
-        fail(f"missing {gate4600_script}")
-        return 1
-    r = run([sys.executable, str(gate4600_script)], cwd=ROOT)
+    r = _coverage_run(gate4600_script).returncode
     if r != 0:
         fail(
             "Issue #4600 JIT prologue word gate + storm policy linter failed — run python3 scripts/check_jit_assumption_gate_4600.py"
@@ -9917,10 +7994,7 @@ def cmd_lint():
     # fallback / prologue-only sentinel. Forced-deopt-at-every-guard mode
     # over the #4567 corpus is the §2 acceptance (python door).
     gate4600b_script = ROOT / "scripts" / "check_jit_frame_deopt_4600.py"
-    if not gate4600b_script.exists():
-        fail(f"missing {gate4600b_script}")
-        return 1
-    r = run([sys.executable, str(gate4600b_script)], cwd=ROOT)
+    r = _coverage_run(gate4600b_script).returncode
     if r != 0:
         fail("Issue #4600 frame-deopt guard-exit linter failed — run python3 scripts/check_jit_frame_deopt_4600.py")
         return r
@@ -9932,10 +8006,7 @@ def cmd_lint():
     # fingerprint changed also evicts AuraJIT's name-keyed compile_fns_
     # entry, so an edited define in a --jit-session takes effect.
     gate4600c_script = ROOT / "scripts" / "check_jit_reuse_lowering_4600.py"
-    if not gate4600c_script.exists():
-        fail(f"missing {gate4600c_script}")
-        return 1
-    r = run([sys.executable, str(gate4600c_script)], cwd=ROOT)
+    r = _coverage_run(gate4600c_script).returncode
     if r != 0:
         fail("Issue #4600 lowering-reuse linter failed — run python3 scripts/check_jit_reuse_lowering_4600.py")
         return r
@@ -9951,10 +8022,7 @@ def cmd_lint():
     # callee_val echo) and the runtime door in
     # tests/compiler/test_closure_call_must_deopt_toctou.cpp.
     gate4606_script = ROOT / "scripts" / "check_jit_prim_callee_refuse_4606.py"
-    if not gate4606_script.exists():
-        fail(f"missing {gate4606_script}")
-        return 1
-    r = run([sys.executable, str(gate4606_script)], cwd=ROOT)
+    r = _coverage_run(gate4606_script).returncode
     if r != 0:
         fail(
             "Issue #4606 --jit prim-callee refuse linter failed — run python3 scripts/check_jit_prim_callee_refuse_4606.py"
@@ -9974,10 +8042,7 @@ def cmd_lint():
     # sink, the refuse (before the compile stage) and the runtime door in
     # tests/compiler/test_jit_unbound_callee_4607.cpp.
     gate4607_script = ROOT / "scripts" / "check_jit_unbound_callee_4607.py"
-    if not gate4607_script.exists():
-        fail(f"missing {gate4607_script}")
-        return 1
-    r = run([sys.executable, str(gate4607_script)], cwd=ROOT)
+    r = _coverage_run(gate4607_script).returncode
     if r != 0:
         fail(
             "Issue #4607 --jit unbound-callee refuse linter failed — run python3 scripts/check_jit_unbound_callee_4607.py"
@@ -9985,10 +8050,7 @@ def cmd_lint():
         return r
 
     gate4600c_script = ROOT / "scripts" / "check_jit_osr_4600.py"
-    if not gate4600c_script.exists():
-        fail(f"missing {gate4600c_script}")
-        return 1
-    r = run([sys.executable, str(gate4600c_script)], cwd=ROOT)
+    r = _coverage_run(gate4600c_script).returncode
     if r != 0:
         fail("Issue #4600 named-let OSR linter failed — run python3 scripts/check_jit_osr_4600.py")
         return r
@@ -10004,10 +8066,7 @@ def cmd_lint():
     # bind-mirror budget with one materialized call per iteration, 1.2x
     # 4000-define relative budget).
     gate4599b_script = ROOT / "scripts" / "check_call_resolve_cache_4599.py"
-    if not gate4599b_script.exists():
-        fail(f"missing {gate4599b_script}")
-        return 1
-    r = run([sys.executable, str(gate4599b_script)], cwd=ROOT)
+    r = _coverage_run(gate4599b_script).returncode
     if r != 0:
         fail("Issue #4599 call-path resolve-cache linter failed — run python3 scripts/check_call_resolve_cache_4599.py")
         return r
@@ -10023,10 +8082,7 @@ def cmd_lint():
     # shape, both root collectors, the prim-call window and the runtime
     # regression (1000-element named-let list, = and < over (car i)).
     gate4611_script = ROOT / "scripts" / "check_prim_call_arg_rooting_4611.py"
-    if not gate4611_script.exists():
-        fail(f"missing {gate4611_script}")
-        return 1
-    r = run([sys.executable, str(gate4611_script)], cwd=ROOT)
+    r = _coverage_run(gate4611_script).returncode
     if r != 0:
         fail(
             "Issue #4611 cached prim-call argument-rooting linter failed — "
@@ -10041,10 +8097,7 @@ def cmd_lint():
     # registrations, the stdlib copy-on-write contract, the generated
     # stdlib index wording and the test home.
     gate4614_script = ROOT / "scripts" / "check_vector_hash_cow_4614.py"
-    if not gate4614_script.exists():
-        fail(f"missing {gate4614_script}")
-        return 1
-    r = run([sys.executable, str(gate4614_script)], cwd=ROOT)
+    r = _coverage_run(gate4614_script).returncode
     if r != 0:
         fail(
             "Issue #4614 native vector ops / string hash / copy-on-write hash linter failed — "
@@ -10067,10 +8120,7 @@ def cmd_lint():
     # scalar-pairs corpus and the pair-mutate template of the
     # tier-differential corpus.
     gate4602_script = ROOT / "scripts" / "check_jit_pair_mutation_4602.py"
-    if not gate4602_script.exists():
-        fail(f"missing {gate4602_script}")
-        return 1
-    r = run([sys.executable, str(gate4602_script)], cwd=ROOT)
+    r = _coverage_run(gate4602_script).returncode
     if r != 0:
         fail(
             "Issue #4602 --jit pair-mutation visibility linter failed — "
@@ -10087,10 +8137,7 @@ def cmd_lint():
     # four prims, the shared string hash, the tombstone contract, the IR
     # path and the test home.
     gate4612_script = ROOT / "scripts" / "check_hash_probe_4612.py"
-    if not gate4612_script.exists():
-        fail(f"missing {gate4612_script}")
-        return 1
-    r = run([sys.executable, str(gate4612_script)], cwd=ROOT)
+    r = _coverage_run(gate4612_script).returncode
     if r != 0:
         fail("Issue #4612 hash lookup probe linter failed — run python3 scripts/check_hash_probe_4612.py")
         return r
@@ -10106,10 +8153,7 @@ def cmd_lint():
     # Runtime doors live in tests/compiler/test_pmr_alloc_fiber_safe.cpp
     # (ac4474 AC4 + ac4474r3_large_heap_window).
     largeheap4474_script = ROOT / "scripts" / "check_reclaim_trigger_large_heap_4474.py"
-    if not largeheap4474_script.exists():
-        fail(f"missing {largeheap4474_script}")
-        return 1
-    r = run([sys.executable, str(largeheap4474_script)], cwd=ROOT)
+    r = _coverage_run(largeheap4474_script).returncode
     if r != 0:
         fail(
             "Issue #4474 large-heap reclaim window linter failed — run python3 scripts/check_reclaim_trigger_large_heap_4474.py"
@@ -10127,10 +8171,7 @@ def cmd_lint():
     # Runtime doors live in tests/compiler/test_pmr_alloc_fiber_safe.cpp
     # (ac4608_string_heap_reclaim).
     stringreclaim4608_script = ROOT / "scripts" / "check_string_heap_reclaim_4608.py"
-    if not stringreclaim4608_script.exists():
-        fail(f"missing {stringreclaim4608_script}")
-        return 1
-    r = run([sys.executable, str(stringreclaim4608_script)], cwd=ROOT)
+    r = _coverage_run(stringreclaim4608_script).returncode
     if r != 0:
         fail("Issue #4608 string-heap reclaim linter failed — run python3 scripts/check_string_heap_reclaim_4608.py")
         return r
@@ -10149,10 +8190,7 @@ def cmd_lint():
     # roots, the #4787 argument). Runtime doors live in
     # tests/compiler/test_envframe_epoch_batch.cpp (run_4790_*).
     framegc4790_script = ROOT / "scripts" / "check_frame_gc_4790.py"
-    if not framegc4790_script.exists():
-        fail(f"missing {framegc4790_script}")
-        return 1
-    r = run([sys.executable, str(framegc4790_script)], cwd=ROOT)
+    r = _coverage_run(framegc4790_script).returncode
     if r != 0:
         fail("Issue #4790 frame/GC linter failed — run python3 scripts/check_frame_gc_4790.py")
         return r
@@ -10168,10 +8206,7 @@ def cmd_lint():
     # Runtime doors live in tests/compiler/test_pmr_alloc_fiber_safe.cpp
     # (ac4613_pair_vector_hash_reclaim).
     pairvectorhash4613_script = ROOT / "scripts" / "check_pair_vector_hash_reclaim_4613.py"
-    if not pairvectorhash4613_script.exists():
-        fail(f"missing {pairvectorhash4613_script}")
-        return 1
-    r = run([sys.executable, str(pairvectorhash4613_script)], cwd=ROOT)
+    r = _coverage_run(pairvectorhash4613_script).returncode
     if r != 0:
         fail(
             "Issue #4613 pair/vector/hash reclaim linter failed — "
@@ -10196,10 +8231,7 @@ def cmd_lint():
     # in tests/compiler/test_evolution_audit_decision_forensic.cpp
     # (ac11_wal_prune_fold_4240 … ac14_wiring_non_goals_4240).
     prune4240_script = ROOT / "scripts" / "check_wal_prune_fold_4240.py"
-    if not prune4240_script.exists():
-        fail(f"missing {prune4240_script}")
-        return 1
-    r = run([sys.executable, str(prune4240_script)], cwd=ROOT)
+    r = _coverage_run(prune4240_script).returncode
     if r != 0:
         fail("Issue #4240 WAL segment-prune fold linter failed — run python3 scripts/check_wal_prune_fold_4240.py")
         return r
@@ -10216,10 +8248,7 @@ def cmd_lint():
     # live TC. Runtime doors live in
     # tests/compiler/test_partial_cone_commit_gate.cpp (ac4174_1..ac4174_5).
     recovtrunc4174_script = ROOT / "scripts" / "check_recover_truncation_4174.py"
-    if not recovtrunc4174_script.exists():
-        fail(f"missing {recovtrunc4174_script}")
-        return 1
-    r = run([sys.executable, str(recovtrunc4174_script)], cwd=ROOT)
+    r = _coverage_run(recovtrunc4174_script).returncode
     if r != 0:
         fail(
             "Issue #4174 recover truncation rollback linter failed — run python3 scripts/check_recover_truncation_4174.py"
@@ -10240,10 +8269,7 @@ def cmd_lint():
     # test_issue_4231_holder_survives_thrown_body,
     # test_issue_4231_source_cite, test_issue_4231_sigpipe_containment).
     fbb4231_script = ROOT / "scripts" / "check_fiber_body_exception_4231.py"
-    if not fbb4231_script.exists():
-        fail(f"missing {fbb4231_script}")
-        return 1
-    r = run([sys.executable, str(fbb4231_script)], cwd=ROOT)
+    r = _coverage_run(fbb4231_script).returncode
     if r != 0:
         fail(
             "Issue #4231 fiber body exception containment linter failed — run python3 scripts/check_fiber_body_exception_4231.py"
@@ -10257,10 +8283,7 @@ def cmd_lint():
     # re-infer; Soft / Off unchanged. Runtime door:
     # test_dead_coercion_dirty_cone.cpp (ac4154_1..ac4154_4).
     castop4154_script = ROOT / "scripts" / "check_residual_castop_remirror_4154.py"
-    if not castop4154_script.exists():
-        fail(f"missing {castop4154_script}")
-        return 1
-    r = run([sys.executable, str(castop4154_script)], cwd=ROOT)
+    r = _coverage_run(castop4154_script).returncode
     if r != 0:
         fail(
             "Issue #4154 residual CastOp remirror linter failed — run python3 scripts/check_residual_castop_remirror_4154.py"
@@ -10276,10 +8299,7 @@ def cmd_lint():
     # attribution failure only). Soft / Off keep zero cost. Runtime door:
     # test_dead_coercion_dirty_cone.cpp (ac4155_1..ac4155_4).
     castop4155_script = ROOT / "scripts" / "check_residual_castop_densify_clear_4155.py"
-    if not castop4155_script.exists():
-        fail(f"missing {castop4155_script}")
-        return 1
-    r = run([sys.executable, str(castop4155_script)], cwd=ROOT)
+    r = _coverage_run(castop4155_script).returncode
     if r != 0:
         fail(
             "Issue #4155 densify residual CastOp persist clear linter failed — run python3 scripts/check_residual_castop_densify_clear_4155.py"
@@ -10295,10 +8315,7 @@ def cmd_lint():
     # test_adaptive_partial_relower_threshold.cpp (ac2248 polarity flip
     # + ac4156_adaptive_thr_feeds_peel_inverted).
     adaptive4156_script = ROOT / "scripts" / "check_adaptive_thr_4156.py"
-    if not adaptive4156_script.exists():
-        fail(f"missing {adaptive4156_script}")
-        return 1
-    r = run([sys.executable, str(adaptive4156_script)], cwd=ROOT)
+    r = _coverage_run(adaptive4156_script).returncode
     if r != 0:
         fail("Issue #4156 AdaptiveThrPolicy dual-track linter failed — run python3 scripts/check_adaptive_thr_4156.py")
         return r
@@ -10316,10 +8333,7 @@ def cmd_lint():
     # test_shape_storm_partial_relower.cpp
     # (ac4157_shape_flip_stale_persist_fails_closed).
     shapeflip4157_script = ROOT / "scripts" / "check_shape_flip_persist_fresh_4157.py"
-    if not shapeflip4157_script.exists():
-        fail(f"missing {shapeflip4157_script}")
-        return 1
-    r = run([sys.executable, str(shapeflip4157_script)], cwd=ROOT)
+    r = _coverage_run(shapeflip4157_script).returncode
     if r != 0:
         fail(
             "Issue #4157 Shape-flip persist-freshness linter failed — run python3 scripts/check_shape_flip_persist_fresh_4157.py"
@@ -10336,10 +8350,7 @@ def cmd_lint():
     # count) triples stack-snapped before the unique_lock. Runtime door:
     # test_shape_profiler_concurrency.cpp (ac4166_1_*).
     mergehist4166_script = ROOT / "scripts" / "check_shape_merge_lock_scope_4166.py"
-    if not mergehist4166_script.exists():
-        fail(f"missing {mergehist4166_script}")
-        return 1
-    r = run([sys.executable, str(mergehist4166_script)], cwd=ROOT)
+    r = _coverage_run(mergehist4166_script).returncode
     if r != 0:
         fail(
             "Issue #4166 shape merge lock-scope linter failed — run python3 scripts/check_shape_merge_lock_scope_4166.py"
@@ -10357,10 +8368,7 @@ def cmd_lint():
     # live. Runtime doors: test_mailbox_hold_starvation_hard.cpp
     # (ac4158_1..ac4158_4).
     edgefree4158_script = ROOT / "scripts" / "check_edge_free_hold_4158.py"
-    if not edgefree4158_script.exists():
-        fail(f"missing {edgefree4158_script}")
-        return 1
-    r = run([sys.executable, str(edgefree4158_script)], cwd=ROOT)
+    r = _coverage_run(edgefree4158_script).returncode
     if r != 0:
         fail("Issue #4158 edge-free hold quarantine linter failed — run python3 scripts/check_edge_free_hold_4158.py")
         return r
@@ -10375,10 +8383,7 @@ def cmd_lint():
     # wiring continuously on every gate run. Runtime door:
     # test_steal_safety_production_residual_zero.cpp (#4159 AC18).
     crrg4159_script = ROOT / "scripts" / "check_chaos_ready_residual_gate_4159.py"
-    if not crrg4159_script.exists():
-        fail(f"missing {crrg4159_script}")
-        return 1
-    r = run([sys.executable, str(crrg4159_script)], cwd=ROOT)
+    r = _coverage_run(crrg4159_script).returncode
     if r != 0:
         fail(
             "Issue #4159 production concurrency Ready residual gate linter failed — run python3 scripts/check_chaos_ready_residual_gate_4159.py"
@@ -10395,10 +8400,7 @@ def cmd_lint():
     # admit deny (SSOT reader, after the Soft observe-only return). Runtime
     # doors: test_mailbox_hold_starvation_hard.cpp (ac4160_1..ac4160_5).
     mhb4160_script = ROOT / "scripts" / "check_mailbox_holder_bound_4160.py"
-    if not mhb4160_script.exists():
-        fail(f"missing {mhb4160_script}")
-        return 1
-    r = run([sys.executable, str(mhb4160_script)], cwd=ROOT)
+    r = _coverage_run(mhb4160_script).returncode
     if r != 0:
         fail("Issue #4160 mailbox holder bound linter failed — run python3 scripts/check_mailbox_holder_bound_4160.py")
         return r
@@ -10414,10 +8416,7 @@ def cmd_lint():
     # test_chaos_mutate_steal_gc_mailbox.cpp (hard soak residual check)
     # + test_steal_safety_production_residual_zero.cpp (AC19).
     rhbc4161_script = ROOT / "scripts" / "check_rejecthard_bit_coverage_4161.py"
-    if not rhbc4161_script.exists():
-        fail(f"missing {rhbc4161_script}")
-        return 1
-    r = run([sys.executable, str(rhbc4161_script)], cwd=ROOT)
+    r = _coverage_run(rhbc4161_script).returncode
     if r != 0:
         fail(
             "Issue #4161 RejectHard bit coverage linter failed — run python3 scripts/check_rejecthard_bit_coverage_4161.py"
@@ -10442,10 +8441,7 @@ def cmd_lint():
     # (query_result_is_fresh_with_refs is_live_node → StaleByEpoch).
     # Runtime door: test_query_result_full_provenance.cpp ac4162_* ACs.
     qfsl4162_script = ROOT / "scripts" / "check_query_free_slot_4162.py"
-    if not qfsl4162_script.exists():
-        fail(f"missing {qfsl4162_script}")
-        return 1
-    r = run([sys.executable, str(qfsl4162_script)], cwd=ROOT)
+    r = _coverage_run(qfsl4162_script).returncode
     if r != 0:
         fail("Issue #4162 query free-slot guard linter failed — run python3 scripts/check_query_free_slot_4162.py")
         return r
@@ -10464,10 +8460,7 @@ def cmd_lint():
     # (warm bucket + quiet sync path never re-prunes).
     # Runtime door: test_query_index_composite.cpp #4163 ACs.
     qisl4163_script = ROOT / "scripts" / "check_query_index_free_slot_4163.py"
-    if not qisl4163_script.exists():
-        fail(f"missing {qisl4163_script}")
-        return 1
-    r = run([sys.executable, str(qisl4163_script)], cwd=ROOT)
+    r = _coverage_run(qisl4163_script).returncode
     if r != 0:
         fail(
             "Issue #4163 tag_arity_index free-slot linter failed — run python3 scripts/check_query_index_free_slot_4163.py"
@@ -10490,10 +8483,7 @@ def cmd_lint():
     # fiber_cow.cpp ac4165_1..5 + test_tenant_isolation_enforcement.cpp
     # ac4165_agent_fiber_isolation.
     afbi4165_script = ROOT / "scripts" / "check_agent_fiber_isolation_4165.py"
-    if not afbi4165_script.exists():
-        fail(f"missing {afbi4165_script}")
-        return 1
-    r = run([sys.executable, str(afbi4165_script)], cwd=ROOT)
+    r = _coverage_run(afbi4165_script).returncode
     if r != 0:
         fail(
             "Issue #4165 agent fiber isolation linter failed — run python3 scripts/check_agent_fiber_isolation_4165.py"
@@ -10513,10 +8503,7 @@ def cmd_lint():
     # test_stable_ref_provenance_fiber_cow.cpp), build.py + allowlist
     # wiring.
     ampa4235_script = ROOT / "scripts" / "check_agent_mint_per_agent_4235.py"
-    if not ampa4235_script.exists():
-        fail(f"missing {ampa4235_script}")
-        return 1
-    r = run([sys.executable, str(ampa4235_script)], cwd=ROOT)
+    r = _coverage_run(ampa4235_script).returncode
     if r != 0:
         fail("Issue #4235 per-Agent mint linter failed — run python3 scripts/check_agent_mint_per_agent_4235.py")
         return r
@@ -10531,10 +8518,7 @@ def cmd_lint():
     # tests/compiler/test_occurrence_goal_persist_rehydrate.cpp, build.py +
     # allowlist wiring; no docs/design / invent.
     oots4252_script = ROOT / "scripts" / "check_occurrence_owner_tc_steal_4252.py"
-    if not oots4252_script.exists():
-        fail(f"missing {oots4252_script}")
-        return 1
-    r = run([sys.executable, str(oots4252_script)], cwd=ROOT)
+    r = _coverage_run(oots4252_script).returncode
     if r != 0:
         fail("Issue #4252 owner-TC steal linter failed - run python3 scripts/check_occurrence_owner_tc_steal_4252.py")
         return r
@@ -10547,10 +8531,7 @@ def cmd_lint():
     # dispatched (ac4237_1..5 in test_failure_policy_bridge.cpp),
     # build.py + allowlist wiring.
     rfuel4237_script = ROOT / "scripts" / "check_restart_fuel_4237.py"
-    if not rfuel4237_script.exists():
-        fail(f"missing {rfuel4237_script}")
-        return 1
-    r = run([sys.executable, str(rfuel4237_script)], cwd=ROOT)
+    r = _coverage_run(rfuel4237_script).returncode
     if r != 0:
         fail("Issue #4237 restart-fuel linter failed — run python3 scripts/check_restart_fuel_4237.py")
         return r
@@ -10571,10 +8552,7 @@ def cmd_lint():
     # (ac4238_region_key_admit_deny in test_agent_scope.cpp), build.py +
     # allowlist wiring.
     scra4238_script = ROOT / "scripts" / "check_scope_region_admit_4238.py"
-    if not scra4238_script.exists():
-        fail(f"missing {scra4238_script}")
-        return 1
-    r = run([sys.executable, str(scra4238_script)], cwd=ROOT)
+    r = _coverage_run(scra4238_script).returncode
     if r != 0:
         fail("Issue #4238 scope region admit linter failed — run python3 scripts/check_scope_region_admit_4238.py")
         return r
@@ -10585,10 +8563,7 @@ def cmd_lint():
     # before spawn/put. AgentHandle carries region_key. Soft/Off stays
     # one production load. No new query key, no AgentRegistry.
     ntra4280_script = ROOT / "scripts" / "check_name_table_region_admit_4280.py"
-    if not ntra4280_script.exists():
-        fail(f"missing {ntra4280_script}")
-        return 1
-    r = run([sys.executable, str(ntra4280_script)], cwd=ROOT)
+    r = _coverage_run(ntra4280_script).returncode
     if r != 0:
         fail(
             "Issue #4280 name-table region admit linter failed — run python3 scripts/check_name_table_region_admit_4280.py"
@@ -10608,10 +8583,7 @@ def cmd_lint():
     # effect record — the join-then-refuse emit ordering is superseded on
     # this probe face; commit/deny faces keep resolve (emit).
     rerj4239_script = ROOT / "scripts" / "check_require_effect_join_refuse_4239.py"
-    if not rerj4239_script.exists():
-        fail(f"missing {rerj4239_script}")
-        return 1
-    r = run([sys.executable, str(rerj4239_script)], cwd=ROOT)
+    r = _coverage_run(rerj4239_script).returncode
     if r != 0:
         fail(
             "Issue #4239 require_effect join refuse linter failed — run python3 scripts/check_require_effect_join_refuse_4239.py"
@@ -10625,10 +8597,7 @@ def cmd_lint():
     # commit/deny faces keep the TLS-guarded resolve emit (ACs in
     # test_require_effect_live_mid.cpp).
     hmro4241_script = ROOT / "scripts" / "check_mid_refuse_ordering_4241.py"
-    if not hmro4241_script.exists():
-        fail(f"missing {hmro4241_script}")
-        return 1
-    r = run([sys.executable, str(hmro4241_script)], cwd=ROOT)
+    r = _coverage_run(hmro4241_script).returncode
     if r != 0:
         fail(
             "Issue #4241 mid-fallback-refused emit-ordering linter failed — run python3 scripts/check_mid_refuse_ordering_4241.py"
@@ -10649,10 +8618,7 @@ def cmd_lint():
     # dispatched (ac4242_1..5 in test_moving_densify_fail_closed.cpp before
     # the Results line), build.py + allowlist wiring.
     rtq4242_script = ROOT / "scripts" / "check_remap_tombstone_quarantine_4242.py"
-    if not rtq4242_script.exists():
-        fail(f"missing {rtq4242_script}")
-        return 1
-    r = run([sys.executable, str(rtq4242_script)], cwd=ROOT)
+    r = _coverage_run(rtq4242_script).returncode
     if r != 0:
         fail(
             "Issue #4242 remap tombstone quarantine linter failed — run python3 scripts/check_remap_tombstone_quarantine_4242.py"
@@ -10674,10 +8640,7 @@ def cmd_lint():
     # test_moving_densify_fail_closed.cpp before the Results line), build.py
     # + allowlist wiring.
     iir4244_script = ROOT / "scripts" / "check_interior_int_remap_4244.py"
-    if not iir4244_script.exists():
-        fail(f"missing {iir4244_script}")
-        return 1
-    r = run([sys.executable, str(iir4244_script)], cwd=ROOT)
+    r = _coverage_run(iir4244_script).returncode
     if r != 0:
         fail("Issue #4244 interior int remap linter failed — run python3 scripts/check_interior_int_remap_4244.py")
         return r
@@ -10693,10 +8656,7 @@ def cmd_lint():
     # 3820dbg fprintf is gone, runtime ACs ac4251_1..5 dispatch before the
     # Results line, and build.py + allowlist are wired.
     dcm4251_script = ROOT / "scripts" / "check_dep_closure_miss_4251.py"
-    if not dcm4251_script.exists():
-        fail(f"missing {dcm4251_script}")
-        return 1
-    r = run([sys.executable, str(dcm4251_script)], cwd=ROOT)
+    r = _coverage_run(dcm4251_script).returncode
     if r != 0:
         fail("Issue #4251 dep-closure miss linter failed — run python3 scripts/check_dep_closure_miss_4251.py")
         return r
@@ -10714,10 +8674,7 @@ def cmd_lint():
     # + runtime ACs (ac4243_1..4 in test_moving_densify_fail_closed.cpp) +
     # build.py + allowlist wiring.
     rri4243_script = ROOT / "scripts" / "check_relocate_identity_4243.py"
-    if not rri4243_script.exists():
-        fail(f"missing {rri4243_script}")
-        return 1
-    r = run([sys.executable, str(rri4243_script)], cwd=ROOT)
+    r = _coverage_run(rri4243_script).returncode
     if r != 0:
         fail("Issue #4243 relocate identity linter failed — run python3 scripts/check_relocate_identity_4243.py")
         return r
@@ -10732,10 +8689,7 @@ def cmd_lint():
     # second contract system. Runtime door: test_pack_pipeline_strict.cpp
     # (ac4167_pack_face_default).
     hpff4167_script = ROOT / "scripts" / "check_hot_contract_pack_face_4167.py"
-    if not hpff4167_script.exists():
-        fail(f"missing {hpff4167_script}")
-        return 1
-    r = run([sys.executable, str(hpff4167_script)], cwd=ROOT)
+    r = _coverage_run(hpff4167_script).returncode
     if r != 0:
         fail(
             "Issue #4167 hot-contract pack face default linter failed — run python3 scripts/check_hot_contract_pack_face_4167.py"
@@ -10751,10 +8705,7 @@ def cmd_lint():
     # aura_production_defaults_active_probe (#3201 model — no second model).
     # Runtime door: test_batch_dirty_discipline.cpp (ac4168_1..ac4168_4).
     spa4168_script = ROOT / "scripts" / "check_ir_dirty_soft_pretend_amortized_4168.py"
-    if not spa4168_script.exists():
-        fail(f"missing {spa4168_script}")
-        return 1
-    r = run([sys.executable, str(spa4168_script)], cwd=ROOT)
+    r = _coverage_run(spa4168_script).returncode
     if r != 0:
         fail(
             "Issue #4168 Soft dirty/batch-only pretend-amortized honesty linter failed — run python3 scripts/check_ir_dirty_soft_pretend_amortized_4168.py"
@@ -10770,10 +8721,7 @@ def cmd_lint():
     # second densify model. Runtime door: test_apply_closure_envframe_soa.cpp
     # (ac4169_seq_stable_survive + ac4169_source_cite).
     acts4169_script = ROOT / "scripts" / "check_apply_closure_tls_seq_4169.py"
-    if not acts4169_script.exists():
-        fail(f"missing {acts4169_script}")
-        return 1
-    r = run([sys.executable, str(acts4169_script)], cwd=ROOT)
+    r = _coverage_run(acts4169_script).returncode
     if r != 0:
         fail(
             "Issue #4169 apply_closure TLS seq-survive linter failed — run python3 scripts/check_apply_closure_tls_seq_4169.py"
@@ -10789,10 +8737,7 @@ def cmd_lint():
     # blame model — the fill feeds the existing step-4 gate. Runtime door:
     # test_occurrence_provenance_chain_completeness.cpp (#4171 AC1–AC4).
     bbv4171_script = ROOT / "scripts" / "check_blame_ok_vacuous_4171.py"
-    if not bbv4171_script.exists():
-        fail(f"missing {bbv4171_script}")
-        return 1
-    r = run([sys.executable, str(bbv4171_script)], cwd=ROOT)
+    r = _coverage_run(bbv4171_script).returncode
     if r != 0:
         fail(
             "Issue #4171 blame_ok vacuous-on-empty fill linter failed — run python3 scripts/check_blame_ok_vacuous_4171.py"
@@ -10809,10 +8754,7 @@ def cmd_lint():
     # model). Soft / Off observe only — commit may succeed. Runtime door:
     # test_dead_coercion_dirty_cone.cpp (ac4172_1..ac4172_6).
     rumj4172_script = ROOT / "scripts" / "check_residual_undermark_jit_4172.py"
-    if not rumj4172_script.exists():
-        fail(f"missing {rumj4172_script}")
-        return 1
-    r = run([sys.executable, str(rumj4172_script)], cwd=ROOT)
+    r = _coverage_run(rumj4172_script).returncode
     if r != 0:
         fail(
             "Issue #4172 residual-undermark JIT verification linter failed — run python3 scripts/check_residual_undermark_jit_4172.py"
@@ -10828,10 +8770,7 @@ def cmd_lint():
     # force_reason "production-sampled-leftover"; hard gate NOT widened.
     # Runtime door: test_typed_mutation_audit_decision.cpp (#4173 AC1–AC5).
     sla4173_script = ROOT / "scripts" / "check_sampled_leftover_audit_4173.py"
-    if not sla4173_script.exists():
-        fail(f"missing {sla4173_script}")
-        return 1
-    r = run([sys.executable, str(sla4173_script)], cwd=ROOT)
+    r = _coverage_run(sla4173_script).returncode
     if r != 0:
         fail(
             "Issue #4173 sampled-leftover audit force linter failed — run python3 scripts/check_sampled_leftover_audit_4173.py"
@@ -10847,10 +8786,7 @@ def cmd_lint():
     # tests/core/test_capability_single_use_consume.cpp
     # (ac4234_1..ac4234_5, dispatched via run_test_inert_session_mid_3723).
     execforce4234_script = ROOT / "scripts" / "check_exec_high_risk_force_4234.py"
-    if not execforce4234_script.exists():
-        fail(f"missing {execforce4234_script}")
-        return 1
-    r = run([sys.executable, str(execforce4234_script)], cwd=ROOT)
+    r = _coverage_run(execforce4234_script).returncode
     if r != 0:
         fail("Issue #4234 exec high-risk force linter failed — run python3 scripts/check_exec_high_risk_force_4234.py")
         return r
@@ -10862,10 +8798,7 @@ def cmd_lint():
     # query key / counters / soak binary; lock_order depth machinery
     # intact. Runtime doors live in test_mailbox_hold_starvation_hard.cpp.
     mla3791_script = ROOT / "scripts" / "check_mailbox_lock_audit_pairs_3791.py"
-    if not mla3791_script.exists():
-        fail(f"missing {mla3791_script}")
-        return 1
-    r = run([sys.executable, str(mla3791_script)], cwd=ROOT)
+    r = _coverage_run(mla3791_script).returncode
     if r != 0:
         fail(
             "Issue #3791 mailbox lock audit pairing linter failed — run python3 scripts/check_mailbox_lock_audit_pairs_3791.py"
@@ -10878,10 +8811,7 @@ def cmd_lint():
     # regime gate + occupancy resolve chain, gate precedes the dump loop,
     # foreign-row skip present; no new query key / counters / invent.
     mhf3792_script = ROOT / "scripts" / "check_mutation_history_tenant_filter_3792.py"
-    if not mhf3792_script.exists():
-        fail(f"missing {mhf3792_script}")
-        return 1
-    r = run([sys.executable, str(mhf3792_script)], cwd=ROOT)
+    r = _coverage_run(mhf3792_script).returncode
     if r != 0:
         fail(
             "Issue #3792 mutation-history tenant filter linter failed — run python3 scripts/check_mutation_history_tenant_filter_3792.py"
@@ -10895,10 +8825,7 @@ def cmd_lint():
     # belt. Skip contract under storm intact (#2952); Soft/Off zero-cost;
     # belt retained as belt.
     secv3649_script = ROOT / "scripts" / "check_storm_exit_coverage_verify_3649.py"
-    if not secv3649_script.exists():
-        fail(f"missing {secv3649_script}")
-        return 1
-    r = run([sys.executable, str(secv3649_script)], cwd=ROOT)
+    r = _coverage_run(secv3649_script).returncode
     if r != 0:
         fail(
             "Issue #3649 storm exit coverage-verify linter failed — run python3 scripts/check_storm_exit_coverage_verify_3649.py"
@@ -10912,10 +8839,7 @@ def cmd_lint():
     # default-deny goes vacuous (subtree then mutates as User). Rollback
     # stays reachable WITH the capability; Soft/Off one load, no scan.
     rmse3650_script = ROOT / "scripts" / "check_rollback_mse_3650.py"
-    if not rmse3650_script.exists():
-        fail(f"missing {rmse3650_script}")
-        return 1
-    r = run([sys.executable, str(rmse3650_script)], cwd=ROOT)
+    r = _coverage_run(rmse3650_script).returncode
     if r != 0:
         fail("Issue #3650 rollback MSE linter failed — run python3 scripts/check_rollback_mse_3650.py")
         return r
@@ -10928,10 +8852,7 @@ def cmd_lint():
     # (#3062); single-clone try_restore paths untouched (#3183); Soft
     # keeps the historical half-write.
     ead3651_script = ROOT / "scripts" / "check_expand_all_deny_codes_3651.py"
-    if not ead3651_script.exists():
-        fail(f"missing {ead3651_script}")
-        return 1
-    r = run([sys.executable, str(ead3651_script)], cwd=ROOT)
+    r = _coverage_run(ead3651_script).returncode
     if r != 0:
         fail(
             "Issue #3651 expand_all deny codes linter failed — run python3 scripts/check_expand_all_deny_codes_3651.py"
@@ -10947,10 +8868,7 @@ def cmd_lint():
     # opt-out flag is set, and hygiene:set-allow-macro-mutate! #t is
     # itself capability-gated. Soft/Off stays one load.
     lam3652_script = ROOT / "scripts" / "check_lockless_allow_mse_3652.py"
-    if not lam3652_script.exists():
-        fail(f"missing {lam3652_script}")
-        return 1
-    r = run([sys.executable, str(lam3652_script)], cwd=ROOT)
+    r = _coverage_run(lam3652_script).returncode
     if r != 0:
         fail("Issue #3652 lockless allow-arm MSE linter failed — run python3 scripts/check_lockless_allow_mse_3652.py")
         return r
@@ -10963,10 +8881,7 @@ def cmd_lint():
     # Soft/Off zero-cost (tenant arm gated by quota_per_tenant_enabled();
     # mode==0 returns before the rebind).
     qtk3668_script = ROOT / "scripts" / "check_quota_tenant_keying_3668.py"
-    if not qtk3668_script.exists():
-        fail(f"missing {qtk3668_script}")
-        return 1
-    r = run([sys.executable, str(qtk3668_script)], cwd=ROOT)
+    r = _coverage_run(qtk3668_script).returncode
     if r != 0:
         fail("Issue #3668 quota tenant keying linter failed — run python3 scripts/check_quota_tenant_keying_3668.py")
         return r
@@ -10979,10 +8894,7 @@ def cmd_lint():
     # last_mutate_error_ from the same reason source (no dual-track).
     # Soft/Off zero-cost (deny-only SE emit unchanged).
     iac3669_script = ROOT / "scripts" / "check_isolation_audit_caller_3669.py"
-    if not iac3669_script.exists():
-        fail(f"missing {iac3669_script}")
-        return 1
-    r = run([sys.executable, str(iac3669_script)], cwd=ROOT)
+    r = _coverage_run(iac3669_script).returncode
     if r != 0:
         fail(
             "Issue #3669 isolation audit caller linter failed — run python3 scripts/check_isolation_audit_caller_3669.py"
@@ -10996,10 +8908,7 @@ def cmd_lint():
     # legacy mid=1 stamp. Reasons unchanged; require_effect refuse
     # contract (#3594/#3462) and session revoke (#3320) untouched.
     rmj3670_script = ROOT / "scripts" / "check_resume_mid_join_3670.py"
-    if not rmj3670_script.exists():
-        fail(f"missing {rmj3670_script}")
-        return 1
-    r = run([sys.executable, str(rmj3670_script)], cwd=ROOT)
+    r = _coverage_run(rmj3670_script).returncode
     if r != 0:
         fail("Issue #3670 resume mid join linter failed — run python3 scripts/check_resume_mid_join_3670.py")
         return r
@@ -11011,10 +8920,7 @@ def cmd_lint():
     # Soft/Off: observe-only — bools populate, no deny intern. C++
     # join_all default stays local (#3496 AC1 unchanged).
     sjtv3671_script = ROOT / "scripts" / "check_scope_join_tree_visibility_3671.py"
-    if not sjtv3671_script.exists():
-        fail(f"missing {sjtv3671_script}")
-        return 1
-    r = run([sys.executable, str(sjtv3671_script)], cwd=ROOT)
+    r = _coverage_run(sjtv3671_script).returncode
     if r != 0:
         fail(
             "Issue #3671 scope join tree visibility linter failed — run python3 scripts/check_scope_join_tree_visibility_3671.py"
@@ -11027,10 +8933,7 @@ def cmd_lint():
     # (spec.tenant_id → parent assigned → TLS) before the explicit-id win;
     # Soft stays {} (process bucket, zero cost).
     bpt3672_script = ROOT / "scripts" / "check_bp_scope_tenant_3672.py"
-    if not bpt3672_script.exists():
-        fail(f"missing {bpt3672_script}")
-        return 1
-    r = run([sys.executable, str(bpt3672_script)], cwd=ROOT)
+    r = _coverage_run(bpt3672_script).returncode
     if r != 0:
         fail("Issue #3672 bp scope tenant linter failed — run python3 scripts/check_bp_scope_tenant_3672.py")
         return r
@@ -11042,10 +8945,7 @@ def cmd_lint():
     # (deny-class=other / deny-detail=recv-under-boundary, #3251 intern,
     # emit_retry=#t). Policy A stays (no park); Soft stays empty=#t.
     rub3673_script = ROOT / "scripts" / "check_recv_under_boundary_3673.py"
-    if not rub3673_script.exists():
-        fail(f"missing {rub3673_script}")
-        return 1
-    r = run([sys.executable, str(rub3673_script)], cwd=ROOT)
+    r = _coverage_run(rub3673_script).returncode
     if r != 0:
         fail("Issue #3673 recv under boundary linter failed — run python3 scripts/check_recv_under_boundary_3673.py")
         return r
@@ -11060,10 +8960,7 @@ def cmd_lint():
     # scripts/check_oneshot_filter_4228.py (four direct math-pred forms
     # restored without soft_only gating), and the allowlist row.
     fpis4228_script = ROOT / "scripts" / "check_filter_prim_infer_standard.py"
-    if not fpis4228_script.exists():
-        fail(f"missing {fpis4228_script}")
-        return 1
-    r = run([sys.executable, str(fpis4228_script)], cwd=ROOT)
+    r = _coverage_run(fpis4228_script).returncode
     if r != 0:
         fail(
             "Issue #4228 filter prim-as-arg standard-face linter failed — run python3 scripts/check_filter_prim_infer_standard.py"
@@ -11077,10 +8974,7 @@ def cmd_lint():
     # + global allow all respected. Lockless :rebind gets a name-based
     # parity gate. New hygiene-violations + schema-3301 stats-hash keys.
     abma3301_script = COVERAGE_CHECKS / "check_atomic_batch_macro_audit_3301.py"
-    if not abma3301_script.exists():
-        fail(f"missing {abma3301_script}")
-        return 1
-    r = run([sys.executable, str(abma3301_script)], cwd=ROOT)
+    r = _coverage_run(abma3301_script).returncode
     if r != 0:
         fail(
             "Issue #3301 atomic-batch macro audit linter failed — run python3 scripts/coverage/checks/check_atomic_batch_macro_audit_3301.py"
@@ -11093,10 +8987,7 @@ def cmd_lint():
     # Soft / sandbox=off stays zero cost (production_reclaimed_must_wait()
     # gate); explicit wait path unchanged; timeout preserves #2661 no-early-free.
     jd3110_script = COVERAGE_CHECKS / "check_join_drain_reclaim_3110.py"
-    if not jd3110_script.exists():
-        fail(f"missing {jd3110_script}")
-        return 1
-    r = run([sys.executable, str(jd3110_script)], cwd=ROOT)
+    r = _coverage_run(jd3110_script).returncode
     if r != 0:
         fail(
             "Issue #3110 join drain reclaim auto-wait linter failed — run python3 scripts/coverage/checks/check_join_drain_reclaim_3110.py"
@@ -11110,10 +9001,7 @@ def cmd_lint():
     # test_join_drain_reclaim.cpp (#81967); no docs/design/ (#1655);
     # additive observability only (reuses wait_reclaimed_* surface).
     jd3146_script = COVERAGE_CHECKS / "check_join_drain_reclaim_3146.py"
-    if not jd3146_script.exists():
-        fail(f"missing {jd3146_script}")
-        return 1
-    r = run([sys.executable, str(jd3146_script)], cwd=ROOT)
+    r = _coverage_run(jd3146_script).returncode
     if r != 0:
         fail(
             "Issue #3146 join drain reclaim Timeout-retention linter failed — run python3 scripts/coverage/checks/check_join_drain_reclaim_3146.py"
@@ -11124,10 +9012,7 @@ def cmd_lint():
     # lifecycle=reclaimed-pending. Soft skips intern. Extends
     # test_join_drain_reclaim; no docs/design / invent / AgentRegistry.
     rpl3220_script = COVERAGE_CHECKS / "check_reclaimed_pending_lifecycle_3220.py"
-    if not rpl3220_script.exists():
-        fail(f"missing {rpl3220_script}")
-        return 1
-    r = run([sys.executable, str(rpl3220_script)], cwd=ROOT)
+    r = _coverage_run(rpl3220_script).returncode
     if r != 0:
         fail(
             "Issue #3220 reclaimed-pending lifecycle linter failed — run python3 scripts/coverage/checks/check_reclaimed_pending_lifecycle_3220.py"
@@ -11138,10 +9023,7 @@ def cmd_lint():
     # re-bumps host_forget_reclaimed_risk_total. Extends
     # test_join_drain_reclaim (#81967); no docs/design/ (#1655).
     erc3245_script = COVERAGE_CHECKS / "check_ensure_reclaimed_cleanup_adoption_3245.py"
-    if not erc3245_script.exists():
-        fail(f"missing {erc3245_script}")
-        return 1
-    r = run([sys.executable, str(erc3245_script)], cwd=ROOT)
+    r = _coverage_run(erc3245_script).returncode
     if r != 0:
         fail(
             "Issue #3245 ensure_reclaimed_cleanup adoption linter failed — run python3 scripts/coverage/checks/check_ensure_reclaimed_cleanup_adoption_3245.py"
@@ -11157,10 +9039,7 @@ def cmd_lint():
     # wait stay zero-cost). Extends test_join_drain_reclaim (#81967); no
     # docs/design/ (#1655); no new query:* (reuse query:orch-module-stats).
     hfw3272_script = COVERAGE_CHECKS / "check_host_forget_window_3272.py"
-    if not hfw3272_script.exists():
-        fail(f"missing {hfw3272_script}")
-        return 1
-    r = run([sys.executable, str(hfw3272_script)], cwd=ROOT)
+    r = _coverage_run(hfw3272_script).returncode
     if r != 0:
         fail(
             "Issue #3272 host-forget window linter failed — run python3 scripts/coverage/checks/check_host_forget_window_3272.py"
@@ -11178,10 +9057,7 @@ def cmd_lint():
     # test_join_drain_reclaim.cpp (#81967); no docs/design/ (#1655);
     # workflow residual stays advisory.
     hjt3148_script = COVERAGE_CHECKS / "check_handoff_join_via_token_3148.py"
-    if not hjt3148_script.exists():
-        fail(f"missing {hjt3148_script}")
-        return 1
-    r = run([sys.executable, str(hjt3148_script)], cwd=ROOT)
+    r = _coverage_run(hjt3148_script).returncode
     if r != 0:
         fail(
             "Issue #3148 handoff join-via-token linter failed — run python3 scripts/coverage/checks/check_handoff_join_via_token_3148.py"
@@ -11197,10 +9073,7 @@ def cmd_lint():
     # test_orch_scope + existing HardDeny in test_agent_scope (#81967);
     # no docs/design/ (#1655).
     ip3216_script = COVERAGE_CHECKS / "check_identity_plane_handoff_boundary_3216.py"
-    if not ip3216_script.exists():
-        fail(f"missing {ip3216_script}")
-        return 1
-    r = run([sys.executable, str(ip3216_script)], cwd=ROOT)
+    r = _coverage_run(ip3216_script).returncode
     if r != 0:
         fail(
             "Issue #3216 identity-plane handoff-boundary linter failed — run python3 scripts/coverage/checks/check_identity_plane_handoff_boundary_3216.py"
@@ -11217,10 +9090,7 @@ def cmd_lint():
     # (#3216 planes). Tests extend test_join_drain_reclaim (#81967); no
     # docs/design/ (#1655); no new query:* (reuse query:orch-module-stats).
     hoo3273_script = COVERAGE_CHECKS / "check_handoff_observation_only_3273.py"
-    if not hoo3273_script.exists():
-        fail(f"missing {hoo3273_script}")
-        return 1
-    r = run([sys.executable, str(hoo3273_script)], cwd=ROOT)
+    r = _coverage_run(hoo3273_script).returncode
     if r != 0:
         fail(
             "Issue #3273 handoff observation-only linter failed — run python3 scripts/coverage/checks/check_handoff_observation_only_3273.py"
@@ -11232,10 +9102,7 @@ def cmd_lint():
     # Soft: observe-only. Extends test_hard_gate_full_strict (#81967);
     # no docs/design/ (#1655). No new query:* name.
     drs3217_script = COVERAGE_CHECKS / "check_deny_restore_then_stamp_3217.py"
-    if not drs3217_script.exists():
-        fail(f"missing {drs3217_script}")
-        return 1
-    r = run([sys.executable, str(drs3217_script)], cwd=ROOT)
+    r = _coverage_run(drs3217_script).returncode
     if r != 0:
         fail(
             "Issue #3217 deny restore-then-stamp linter failed — run python3 scripts/coverage/checks/check_deny_restore_then_stamp_3217.py"
@@ -11249,10 +9116,7 @@ def cmd_lint():
     # no new process-global registry. Quiet path zero new cost
     # (single atomic load on held_ref_post_steal_check_total).
     mh3111_script = COVERAGE_CHECKS / "check_mailbox_held_ref_steal_3111.py"
-    if not mh3111_script.exists():
-        fail(f"missing {mh3111_script}")
-        return 1
-    r = run([sys.executable, str(mh3111_script)], cwd=ROOT)
+    r = _coverage_run(mh3111_script).returncode
     if r != 0:
         fail(
             "Issue #3111 mailbox held_ref post-steal revalidate linter failed — run python3 scripts/coverage/checks/check_mailbox_held_ref_steal_3111.py"
@@ -11268,10 +9132,7 @@ def cmd_lint():
     # mailbox direction is a back-pointer on Fiber (no new process-
     # global AgentRegistry). Push-time gate (#2663/#3013/#3212) unchanged.
     mh3369_script = COVERAGE_CHECKS / "check_mailbox_held_ref_steal_3369.py"
-    if not mh3369_script.exists():
-        fail(f"missing {mh3369_script}")
-        return 1
-    r = run([sys.executable, str(mh3369_script)], cwd=ROOT)
+    r = _coverage_run(mh3369_script).returncode
     if r != 0:
         fail(
             "Issue #3369 mailbox held_ref post-steal walk linter failed — run python3 scripts/coverage/checks/check_mailbox_held_ref_steal_3369.py"
@@ -11285,10 +9146,7 @@ def cmd_lint():
     # RootRemap stable+closure-capture / opaque_heap_ aliases). No new
     # pin registry, no new query:* keys, no second model.
     aak3370_script = COVERAGE_CHECKS / "check_arena_auto_arm_known_roots_3370.py"
-    if not aak3370_script.exists():
-        fail(f"missing {aak3370_script}")
-        return 1
-    r = run([sys.executable, str(aak3370_script)], cwd=ROOT)
+    r = _coverage_run(aak3370_script).returncode
     if r != 0:
         fail(
             "Issue #3370 arena auto-arm known-roots single inventory linter failed — run python3 scripts/coverage/checks/check_arena_auto_arm_known_roots_3370.py"
@@ -11302,10 +9160,7 @@ def cmd_lint():
     # — no I/O added, Soft zero-cost preserved, schema-3152/3114 sentinels
     # unchanged.
     ead3371_script = COVERAGE_CHECKS / "check_evolution_audit_decision_forensic_source_3371.py"
-    if not ead3371_script.exists():
-        fail(f"missing {ead3371_script}")
-        return 1
-    r = run([sys.executable, str(ead3371_script)], cwd=ROOT)
+    r = _coverage_run(ead3371_script).returncode
     if r != 0:
         fail(
             "Issue #3371 evolution-audit-decision forensic-source priority linter failed — run python3 scripts/coverage/checks/check_evolution_audit_decision_forensic_source_3371.py"
@@ -11319,10 +9174,7 @@ def cmd_lint():
     # unchanged. Pure publish-face fix — no new query keys, no second
     # EnvFrame remap registry, Guard dtor scan unchanged.
     dfw3372_script = COVERAGE_CHECKS / "check_densify_fail_window_vacuous_axes_3372.py"
-    if not dfw3372_script.exists():
-        fail(f"missing {dfw3372_script}")
-        return 1
-    r = run([sys.executable, str(dfw3372_script)], cwd=ROOT)
+    r = _coverage_run(dfw3372_script).returncode
     if r != 0:
         fail(
             "Issue #3372 densify fail-window vacuous axes linter failed — run python3 scripts/coverage/checks/check_densify_fail_window_vacuous_axes_3372.py"
@@ -11333,10 +9185,7 @@ def cmd_lint():
     # so a wrap miss is not read as "never audited". Soft / WAL-off: is_enabled()
     # only, no disk scan. Extend test_security_audit_unify; no test_issue_3113.cpp.
     tt3113_script = COVERAGE_CHECKS / "check_typed_trail_wrap_miss_3113.py"
-    if not tt3113_script.exists():
-        fail(f"missing {tt3113_script}")
-        return 1
-    r = run([sys.executable, str(tt3113_script)], cwd=ROOT)
+    r = _coverage_run(tt3113_script).returncode
     if r != 0:
         fail(
             "Issue #3113 typed trail wrap miss linter failed — run python3 scripts/coverage/checks/check_typed_trail_wrap_miss_3113.py"
@@ -11347,10 +9196,7 @@ def cmd_lint():
     # register_stats_impl only (SlimSurface public add frozen). Soft: no WAL
     # scan / no extra audit. Extend test_security_audit_unify + facade.
     ead3114_script = COVERAGE_CHECKS / "check_evolution_audit_decision_3114.py"
-    if not ead3114_script.exists():
-        fail(f"missing {ead3114_script}")
-        return 1
-    r = run([sys.executable, str(ead3114_script)], cwd=ROOT)
+    r = _coverage_run(ead3114_script).returncode
     if r != 0:
         fail(
             "Issue #3114 evolution-audit-decision linter failed — run python3 scripts/coverage/checks/check_evolution_audit_decision_3114.py"
@@ -11360,10 +9206,7 @@ def cmd_lint():
     # query:evolution-audit-decision. Soft / no keyword: zero I/O.
     # Extends test_security_audit_unify + #3114 linter.
     ead3205_script = COVERAGE_CHECKS / "check_evolution_audit_decision_durable_3205.py"
-    if not ead3205_script.exists():
-        fail(f"missing {ead3205_script}")
-        return 1
-    r = run([sys.executable, str(ead3205_script)], cwd=ROOT)
+    r = _coverage_run(ead3205_script).returncode
     if r != 0:
         fail(
             "Issue #3205 evolution-audit-decision durable linter failed — run python3 scripts/coverage/checks/check_evolution_audit_decision_durable_3205.py"
@@ -11374,10 +9217,7 @@ def cmd_lint():
     # AURA_WAL_MAX_SEGMENTS prune. Soft / WAL-off zero extra. Extends
     # test_security_event_wal_replay + test_security_audit_unify (#81967).
     wml3338_script = COVERAGE_CHECKS / "check_wal_mid_lookup_window_3338.py"
-    if not wml3338_script.exists():
-        fail(f"missing {wml3338_script}")
-        return 1
-    r = run([sys.executable, str(wml3338_script)], cwd=ROOT)
+    r = _coverage_run(wml3338_script).returncode
     if r != 0:
         fail(
             "Issue #3338 WAL mid lookup window linter failed — run python3 scripts/coverage/checks/check_wal_mid_lookup_window_3338.py"
@@ -11388,10 +9228,7 @@ def cmd_lint():
     # Observe-only — does not execute playbook. Extends
     # test_security_audit_unify (#81967); no docs/design/ (#1655).
     ead3246_script = COVERAGE_CHECKS / "check_evolution_audit_suggested_next_3246.py"
-    if not ead3246_script.exists():
-        fail(f"missing {ead3246_script}")
-        return 1
-    r = run([sys.executable, str(ead3246_script)], cwd=ROOT)
+    r = _coverage_run(ead3246_script).returncode
     if r != 0:
         fail(
             "Issue #3246 evolution-audit suggested-next linter failed — run python3 scripts/coverage/checks/check_evolution_audit_suggested_next_3246.py"
@@ -11406,10 +9243,7 @@ def cmd_lint():
     # #3217 restore-before-stamp). Extends test_security_audit_unify
     # (#81967); no docs/design/ (#1655).
     ids3280_script = COVERAGE_CHECKS / "check_invariant_deny_se_dual_write_3280.py"
-    if not ids3280_script.exists():
-        fail(f"missing {ids3280_script}")
-        return 1
-    r = run([sys.executable, str(ids3280_script)], cwd=ROOT)
+    r = _coverage_run(ids3280_script).returncode
     if r != 0:
         fail(
             "Issue #3280 invariant/boundary deny SE dual-write linter failed — run python3 scripts/coverage/checks/check_invariant_deny_se_dual_write_3280.py"
@@ -11420,10 +9254,7 @@ def cmd_lint():
     # trail+SE unchanged. Reuses emit_invariant_deny_se (no schema-3319).
     # Extends test_security_audit_unify (#81967); no docs/design/ (#1655).
     sde3319_script = COVERAGE_CHECKS / "check_sampled_deny_se_emit_3319.py"
-    if not sde3319_script.exists():
-        fail(f"missing {sde3319_script}")
-        return 1
-    r = run([sys.executable, str(sde3319_script)], cwd=ROOT)
+    r = _coverage_run(sde3319_script).returncode
     if r != 0:
         fail(
             "Issue #3319 sampled-deny SE emit linter failed — run python3 scripts/coverage/checks/check_sampled_deny_se_emit_3319.py"
@@ -11433,10 +9264,7 @@ def cmd_lint():
     # Additive kind/sidecar (AURATYS1); old mutation WAL replay ignores it.
     # Extends test_security_audit_unify (#81967); no docs/design/ (#1655).
     ts3242_script = COVERAGE_CHECKS / "check_typed_summary_wal_3242.py"
-    if not ts3242_script.exists():
-        fail(f"missing {ts3242_script}")
-        return 1
-    r = run([sys.executable, str(ts3242_script)], cwd=ROOT)
+    r = _coverage_run(ts3242_script).returncode
     if r != 0:
         fail(
             "Issue #3242 typed-summary WAL linter failed — run python3 scripts/coverage/checks/check_typed_summary_wal_3242.py"
@@ -11446,10 +9274,7 @@ def cmd_lint():
     # Reuse reject_structural_macro_hygiene; lockless batch rejects too.
     # Extends test_hygiene_mutate_closed_loop; no test_issue_3115.cpp.
     smh3115_script = COVERAGE_CHECKS / "check_scalar_macro_hygiene_3115.py"
-    if not smh3115_script.exists():
-        fail(f"missing {smh3115_script}")
-        return 1
-    r = run([sys.executable, str(smh3115_script)], cwd=ROOT)
+    r = _coverage_run(smh3115_script).returncode
     if r != 0:
         fail(
             "Issue #3115 scalar MacroIntroduced hygiene linter failed — run python3 scripts/coverage/checks/check_scalar_macro_hygiene_3115.py"
@@ -11458,10 +9283,7 @@ def cmd_lint():
     # Issue #3116: production abort dual-clear CoercionMap + TLS context.
     # Extends test_coercion_map_abort_rewind; no test_issue_3116.cpp.
     cad3116_script = COVERAGE_CHECKS / "check_coercion_abort_dual_clear_3116.py"
-    if not cad3116_script.exists():
-        fail(f"missing {cad3116_script}")
-        return 1
-    r = run([sys.executable, str(cad3116_script)], cwd=ROOT)
+    r = _coverage_run(cad3116_script).returncode
     if r != 0:
         fail(
             "Issue #3116 coercion abort dual-clear linter failed — run python3 scripts/coverage/checks/check_coercion_abort_dual_clear_3116.py"
@@ -11477,10 +9299,7 @@ def cmd_lint():
     # Extends test_coercion_map_abort_rewind (#3102 suite home, #81967);
     # no docs/design/ (#1655).
     mba3281_script = COVERAGE_CHECKS / "check_mid_bound_abort_authority_3281.py"
-    if not mba3281_script.exists():
-        fail(f"missing {mba3281_script}")
-        return 1
-    r = run([sys.executable, str(mba3281_script)], cwd=ROOT)
+    r = _coverage_run(mba3281_script).returncode
     if r != 0:
         fail(
             "Issue #3281 mid-bound abort authority linter failed — run python3 scripts/coverage/checks/check_mid_bound_abort_authority_3281.py"
@@ -11494,10 +9313,7 @@ def cmd_lint():
     # no new key). Extends test_stable_ref_tenant_capture (#3259 home,
     # #81967); no docs/design/ (#1655).
     rrl3287_script = COVERAGE_CHECKS / "check_restamp_residual_lag_deny_3287.py"
-    if not rrl3287_script.exists():
-        fail(f"missing {rrl3287_script}")
-        return 1
-    r = run([sys.executable, str(rrl3287_script)], cwd=ROOT)
+    r = _coverage_run(rrl3287_script).returncode
     if r != 0:
         fail(
             "Issue #3287 restamp residual-lag deny linter failed — run python3 scripts/coverage/checks/check_restamp_residual_lag_deny_3287.py"
@@ -11515,10 +9331,7 @@ def cmd_lint():
     # stamps only). Extends test_steal_safety_production_residual_zero +
     # test_steal_complete_restamp_txn (#81967); no docs/design/ (#1655).
     prs3288_script = COVERAGE_CHECKS / "check_production_residual_sticky_continuous_3288.py"
-    if not prs3288_script.exists():
-        fail(f"missing {prs3288_script}")
-        return 1
-    r = run([sys.executable, str(prs3288_script)], cwd=ROOT)
+    r = _coverage_run(prs3288_script).returncode
     if r != 0:
         fail(
             "Issue #3288 production residual-sticky continuous gate linter failed — run python3 scripts/coverage/checks/check_production_residual_sticky_continuous_3288.py"
@@ -11535,10 +9348,7 @@ def cmd_lint():
     # Soft observe-only unchanged; no new counters. Extends
     # test_mailbox_hold_starvation_hard (#81967); no docs/design/ (#1655).
     ubh3289_script = COVERAGE_CHECKS / "check_under_boundary_hold_progress_3289.py"
-    if not ubh3289_script.exists():
-        fail(f"missing {ubh3289_script}")
-        return 1
-    r = run([sys.executable, str(ubh3289_script)], cwd=ROOT)
+    r = _coverage_run(ubh3289_script).returncode
     if r != 0:
         fail(
             "Issue #3289 under-boundary hold progress linter failed — run python3 scripts/coverage/checks/check_under_boundary_hold_progress_3289.py"
@@ -11553,10 +9363,7 @@ def cmd_lint():
     # bare path (zero-cost). Extends test_query_result_full_provenance
     # (#3103/#3137/#3231 home, #81967); no docs/design/ (#1655).
     pqr3286_script = COVERAGE_CHECKS / "check_production_query_result_schema2_3286.py"
-    if not pqr3286_script.exists():
-        fail(f"missing {pqr3286_script}")
-        return 1
-    r = run([sys.executable, str(pqr3286_script)], cwd=ROOT)
+    r = _coverage_run(pqr3286_script).returncode
     if r != 0:
         fail(
             "Issue #3286 production QueryResult schema-2 linter failed — run python3 scripts/coverage/checks/check_production_query_result_schema2_3286.py"
@@ -11574,10 +9381,7 @@ def cmd_lint():
     # test_hold_budget_synthetic_yield_injection (#3133/#3254 home,
     # #81967); no docs/design/ (#1655).
     nfr3285_script = COVERAGE_CHECKS / "check_noncoop_force_release_1slo_3285.py"
-    if not nfr3285_script.exists():
-        fail(f"missing {nfr3285_script}")
-        return 1
-    r = run([sys.executable, str(nfr3285_script)], cwd=ROOT)
+    r = _coverage_run(nfr3285_script).returncode
     if r != 0:
         fail(
             "Issue #3285 1×SLO inject tier linter failed — run python3 scripts/coverage/checks/check_noncoop_force_release_1slo_3285.py"
@@ -11594,10 +9398,7 @@ def cmd_lint():
     # test_evolution_audit_decision_forensic (#3152 suite home, #81967);
     # no docs/design/ (#1655).
     sem3284_script = COVERAGE_CHECKS / "check_evolution_audit_se_mid_miss_3284.py"
-    if not sem3284_script.exists():
-        fail(f"missing {sem3284_script}")
-        return 1
-    r = run([sys.executable, str(sem3284_script)], cwd=ROOT)
+    r = _coverage_run(sem3284_script).returncode
     if r != 0:
         fail(
             "Issue #3284 evolution-audit-decision SE match discipline linter failed — run python3 scripts/coverage/checks/check_evolution_audit_se_mid_miss_3284.py"
@@ -11611,10 +9412,7 @@ def cmd_lint():
     # create(literal) in these TUs. Extends test_engine_metrics_facade
     # (#81967); no docs/design/ (#1655).
     qho3282_script = COVERAGE_CHECKS / "check_query_hash_overflow_3282.py"
-    if not qho3282_script.exists():
-        fail(f"missing {qho3282_script}")
-        return 1
-    r = run([sys.executable, str(qho3282_script)], cwd=ROOT)
+    r = _coverage_run(qho3282_script).returncode
     if r != 0:
         fail(
             "Issue #3282 residual create(N) linter failed — run python3 scripts/coverage/checks/check_query_hash_overflow_3282.py"
@@ -11623,10 +9421,7 @@ def cmd_lint():
     # Issue #3117: dual-topology abort restore IR cache + source_to_ir_map fence.
     # Extends test_mutation_rollback_coverage; no test_issue_3117.cpp.
     arif3117_script = COVERAGE_CHECKS / "check_abort_restore_ir_map_fence_3117.py"
-    if not arif3117_script.exists():
-        fail(f"missing {arif3117_script}")
-        return 1
-    r = run([sys.executable, str(arif3117_script)], cwd=ROOT)
+    r = _coverage_run(arif3117_script).returncode
     if r != 0:
         fail(
             "Issue #3117 abort restore IR map fence linter failed — run python3 scripts/coverage/checks/check_abort_restore_ir_map_fence_3117.py"
@@ -11635,10 +9430,7 @@ def cmd_lint():
     # Issue #3118: production hold-budget cancel force-unlock + depth clear.
     # Extends test_mutation_hold_hard_timeout + hold-starvation; no test_issue_3118.cpp.
     hbc3118_script = COVERAGE_CHECKS / "check_hold_budget_cancel_force_release_3118.py"
-    if not hbc3118_script.exists():
-        fail(f"missing {hbc3118_script}")
-        return 1
-    r = run([sys.executable, str(hbc3118_script)], cwd=ROOT)
+    r = _coverage_run(hbc3118_script).returncode
     if r != 0:
         fail(
             "Issue #3118 hold-budget cancel force-release linter failed — run python3 scripts/coverage/checks/check_hold_budget_cancel_force_release_3118.py"
@@ -11647,10 +9439,7 @@ def cmd_lint():
     # Issue #3119: production_defaults arm lock_order Hard.
     # Extends test_lock_order_audit_hard; no test_issue_3119.cpp.
     loh3119_script = COVERAGE_CHECKS / "check_lock_order_production_hard_3119.py"
-    if not loh3119_script.exists():
-        fail(f"missing {loh3119_script}")
-        return 1
-    r = run([sys.executable, str(loh3119_script)], cwd=ROOT)
+    r = _coverage_run(loh3119_script).returncode
     if r != 0:
         fail(
             "Issue #3119 production lock-order Hard linter failed — run python3 scripts/coverage/checks/check_lock_order_production_hard_3119.py"
@@ -11659,10 +9448,7 @@ def cmd_lint():
     # Issue #3131: scalar/metadata mutate MacroIntroduced hygiene (record-patch).
     # Extends test_scalar_mutate_record_patch_hygiene; no test_issue_3131.cpp.
     smh3131_script = COVERAGE_CHECKS / "check_scalar_mutate_hygiene_3131.py"
-    if not smh3131_script.exists():
-        fail(f"missing {smh3131_script}")
-        return 1
-    r = run([sys.executable, str(smh3131_script)], cwd=ROOT)
+    r = _coverage_run(smh3131_script).returncode
     if r != 0:
         fail(
             "Issue #3131 scalar/metadata mutate hygiene linter failed — run python3 scripts/coverage/checks/check_scalar_mutate_hygiene_3131.py"
@@ -11671,10 +9457,7 @@ def cmd_lint():
     # Issue #3120: residual CastOp remirror after type-txn wipe.
     # Extends test_dead_coercion_dirty_cone; no test_issue_3120.cpp.
     rct3120_script = COVERAGE_CHECKS / "check_residual_castop_type_txn_3120.py"
-    if not rct3120_script.exists():
-        fail(f"missing {rct3120_script}")
-        return 1
-    r = run([sys.executable, str(rct3120_script)], cwd=ROOT)
+    r = _coverage_run(rct3120_script).returncode
     if r != 0:
         fail(
             "Issue #3120 residual CastOp type-txn remirror linter failed — run python3 scripts/coverage/checks/check_residual_castop_type_txn_3120.py"
@@ -11684,10 +9467,7 @@ def cmd_lint():
     # post_mutation_macro_reexpand entry (P0 residual of #2023).
     # Extends test_macro_self_evo_reexpand_chokepoint; no test_issue_3132.cpp.
     msc3132_script = COVERAGE_CHECKS / "check_macro_self_evo_chokepoint_3132.py"
-    if not msc3132_script.exists():
-        fail(f"missing {msc3132_script}")
-        return 1
-    r = run([sys.executable, str(msc3132_script)], cwd=ROOT)
+    r = _coverage_run(msc3132_script).returncode
     if r != 0:
         fail(
             "Issue #3132 MacroSelfEvo reexpand chokepoint linter failed — run python3 scripts/coverage/checks/check_macro_self_evo_chokepoint_3132.py"
@@ -11696,10 +9476,7 @@ def cmd_lint():
     # Issue #3121: production query:*-stable structured restamp-lag.
     # Extends test_hygiene_mutate_closed_loop; no test_issue_3121.cpp.
     qrl3121_script = COVERAGE_CHECKS / "check_query_stable_restamp_lag_3121.py"
-    if not qrl3121_script.exists():
-        fail(f"missing {qrl3121_script}")
-        return 1
-    r = run([sys.executable, str(qrl3121_script)], cwd=ROOT)
+    r = _coverage_run(qrl3121_script).returncode
     if r != 0:
         fail(
             "Issue #3121 query stable restamp-lag structured linter failed — run python3 scripts/coverage/checks/check_query_stable_restamp_lag_3121.py"
@@ -11709,10 +9486,7 @@ def cmd_lint():
     # non-yielding holders (close #3071/#3035 residual). Extends
     # test_hold_budget_synthetic_yield_injection; no test_issue_3133.cpp.
     hbs3133_script = COVERAGE_CHECKS / "check_hold_budget_synthetic_yield_3133.py"
-    if not hbs3133_script.exists():
-        fail(f"missing {hbs3133_script}")
-        return 1
-    r = run([sys.executable, str(hbs3133_script)], cwd=ROOT)
+    r = _coverage_run(hbs3133_script).returncode
     if r != 0:
         fail(
             "Issue #3133 hold-budget synthetic yield linter failed — run python3 scripts/coverage/checks/check_hold_budget_synthetic_yield_3133.py"
@@ -11722,10 +9496,7 @@ def cmd_lint():
     # under production multi-worker (chaos soak gate). Extends
     # test_steal_safety_production_residual_zero; no test_issue_3134.cpp.
     srpz3134_script = COVERAGE_CHECKS / "check_steal_safety_production_residual_zero_3134.py"
-    if not srpz3134_script.exists():
-        fail(f"missing {srpz3134_script}")
-        return 1
-    r = run([sys.executable, str(srpz3134_script)], cwd=ROOT)
+    r = _coverage_run(srpz3134_script).returncode
     if r != 0:
         fail(
             "Issue #3134 production-readiness residual-zero linter failed — run python3 scripts/coverage/checks/check_steal_safety_production_residual_zero_3134.py"
@@ -11736,10 +9507,7 @@ def cmd_lint():
     # record_dependency re-arm (residual of #3067/#3097). Extends
     # test_cascade_decision_residual_atomic_3135; no test_issue_3135.cpp.
     cdr3135_script = COVERAGE_CHECKS / "check_cascade_decision_residual_atomic_3135.py"
-    if not cdr3135_script.exists():
-        fail(f"missing {cdr3135_script}")
-        return 1
-    r = run([sys.executable, str(cdr3135_script)], cwd=ROOT)
+    r = _coverage_run(cdr3135_script).returncode
     if r != 0:
         fail(
             "Issue #3135 cascade-decision residual atomic linter failed — run python3 scripts/coverage/checks/check_cascade_decision_residual_atomic_3135.py"
@@ -11748,10 +9516,7 @@ def cmd_lint():
     # Issue #3122: Guard abort structured topology-restore.
     # Extends test_mutation_rollback_coverage; no test_issue_3122.cpp.
     trs3122_script = COVERAGE_CHECKS / "check_topology_restore_structured_3122.py"
-    if not trs3122_script.exists():
-        fail(f"missing {trs3122_script}")
-        return 1
-    r = run([sys.executable, str(trs3122_script)], cwd=ROOT)
+    r = _coverage_run(trs3122_script).returncode
     if r != 0:
         fail(
             "Issue #3122 topology-restore structured linter failed — run python3 scripts/coverage/checks/check_topology_restore_structured_3122.py"
@@ -11760,10 +9525,7 @@ def cmd_lint():
     # Issue #3123: production Moving densify auto-arm + sticky-clear.
     # Extends test_arena_moving_densify_health; no test_issue_3123.cpp.
     pam3123_script = COVERAGE_CHECKS / "check_production_auto_arm_moving_3123.py"
-    if not pam3123_script.exists():
-        fail(f"missing {pam3123_script}")
-        return 1
-    r = run([sys.executable, str(pam3123_script)], cwd=ROOT)
+    r = _coverage_run(pam3123_script).returncode
     if r != 0:
         fail(
             "Issue #3123 production Moving auto-arm linter failed — run python3 scripts/coverage/checks/check_production_auto_arm_moving_3123.py"
@@ -11772,10 +9534,7 @@ def cmd_lint():
     # Issue #3124: non-allocating arena compact/layout/root_remap hooks.
     # Extends test_has_on_compact_hook_lock; no test_issue_3124.cpp.
     nah3124_script = COVERAGE_CHECKS / "check_nonalloc_arena_hooks_3124.py"
-    if not nah3124_script.exists():
-        fail(f"missing {nah3124_script}")
-        return 1
-    r = run([sys.executable, str(nah3124_script)], cwd=ROOT)
+    r = _coverage_run(nah3124_script).returncode
     if r != 0:
         fail(
             "Issue #3124 non-allocating arena hooks linter failed — run python3 scripts/coverage/checks/check_nonalloc_arena_hooks_3124.py"
@@ -11784,10 +9543,7 @@ def cmd_lint():
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"
-    if not gp_script.exists():
-        fail(f"missing {gp_script}")
-        return 1
-    r = run([sys.executable, str(gp_script)], cwd=ROOT)
+    r = _coverage_run(gp_script).returncode
     if r != 0:
         fail(
             "Issue #2992 gradual permissiveness linter failed — run python3 scripts/coverage/checks/check_gradual_permissiveness_2992.py"
@@ -11796,10 +9552,7 @@ def cmd_lint():
     # Issue #2993: type-check metrics tier (minimal default).
     # Extends test_solve_delta_epoch_filter + incremental batch + test_ir (#81967).
     tmt_script = COVERAGE_CHECKS / "check_typecheck_metrics_tier_2993.py"
-    if not tmt_script.exists():
-        fail(f"missing {tmt_script}")
-        return 1
-    r = run([sys.executable, str(tmt_script)], cwd=ROOT)
+    r = _coverage_run(tmt_script).returncode
     if r != 0:
         fail(
             "Issue #2993 typecheck metrics tier linter failed — run python3 scripts/coverage/checks/check_typecheck_metrics_tier_2993.py"
@@ -11808,10 +9561,7 @@ def cmd_lint():
     # Issue #2996: core TUs on register_prim + PrimSpec (follow #2915).
     # Extends test_obs_metrics_smoke_batch (#81967); no docs/design/.
     prc_script = COVERAGE_CHECKS / "check_prim_register_core_2996.py"
-    if not prc_script.exists():
-        fail(f"missing {prc_script}")
-        return 1
-    r = run([sys.executable, str(prc_script)], cwd=ROOT)
+    r = _coverage_run(prc_script).returncode
     if r != 0:
         fail(
             "Issue #2996 core register_prim linter failed — run python3 scripts/coverage/checks/check_prim_register_core_2996.py"
@@ -11820,10 +9570,7 @@ def cmd_lint():
     # Issue #2997: list/json constructor lock SLO + unlimited/small fast-path.
     # Extends test_pmr_alloc_fiber_safe + prim_heap_quota_2916.aura (#81967).
     lch_script = COVERAGE_CHECKS / "check_list_ctor_hotpath_2997.py"
-    if not lch_script.exists():
-        fail(f"missing {lch_script}")
-        return 1
-    r = run([sys.executable, str(lch_script)], cwd=ROOT)
+    r = _coverage_run(lch_script).returncode
     if r != 0:
         fail(
             "Issue #2997 list ctor hot-path linter failed — run python3 scripts/coverage/checks/check_list_ctor_hotpath_2997.py"
@@ -11832,10 +9579,7 @@ def cmd_lint():
     # Issue #2998: residual silent sentinels on core primitives.
     # Extends query_primitives_split_2914.aura (#81967); no docs/design/.
     pec_script = COVERAGE_CHECKS / "check_prim_error_convention_2998.py"
-    if not pec_script.exists():
-        fail(f"missing {pec_script}")
-        return 1
-    r = run([sys.executable, str(pec_script)], cwd=ROOT)
+    r = _coverage_run(pec_script).returncode
     if r != 0:
         fail(
             "Issue #2998 prim error convention linter failed — run python3 scripts/coverage/checks/check_prim_error_convention_2998.py"
@@ -11844,10 +9588,7 @@ def cmd_lint():
     # Issue #2995: unified OccurrenceCommitHealth + single-shot recover.
     # Extends persist-rehydrate + type-linear-commit-health (#81967); no docs/design/.
     och_script = COVERAGE_CHECKS / "check_occurrence_commit_health_2995.py"
-    if not och_script.exists():
-        fail(f"missing {och_script}")
-        return 1
-    r = run([sys.executable, str(och_script)], cwd=ROOT)
+    r = _coverage_run(och_script).returncode
     if r != 0:
         fail(
             "Issue #2995 OccurrenceCommitHealth linter failed — run python3 scripts/coverage/checks/check_occurrence_commit_health_2995.py"
@@ -11856,10 +9597,7 @@ def cmd_lint():
     # Issue #3004: occurrence persist atomic with Full audit + query:type.
     # Extends test_occurrence_goal_persist_rehydrate (#81967); no docs/design/.
     opaa_script = COVERAGE_CHECKS / "check_occurrence_persist_audit_atomic_3004.py"
-    if not opaa_script.exists():
-        fail(f"missing {opaa_script}")
-        return 1
-    r = run([sys.executable, str(opaa_script)], cwd=ROOT)
+    r = _coverage_run(opaa_script).returncode
     if r != 0:
         fail(
             "Issue #3004 occurrence persist-audit atomic linter failed — run python3 scripts/coverage/checks/check_occurrence_persist_audit_atomic_3004.py"
@@ -11868,10 +9606,7 @@ def cmd_lint():
     # Issue #2994: Agent locality residual budget on production solve_delta.
     # Extends test_solve_delta_unresolved_export (#81967); no docs/design/.
     lrb_script = COVERAGE_CHECKS / "check_solve_delta_locality_budget_2994.py"
-    if not lrb_script.exists():
-        fail(f"missing {lrb_script}")
-        return 1
-    r = run([sys.executable, str(lrb_script)], cwd=ROOT)
+    r = _coverage_run(lrb_script).returncode
     if r != 0:
         fail(
             "Issue #2994 locality residual budget linter failed — run python3 scripts/coverage/checks/check_solve_delta_locality_budget_2994.py"
@@ -11880,10 +9615,7 @@ def cmd_lint():
     # Issue #3003: Production solve_delta fail-closed on TIMEOUT / partial.
     # Extends test_solve_delta_unresolved_export (#81967); no docs/design/.
     sdfc_script = COVERAGE_CHECKS / "check_solve_delta_timeout_fail_closed_3003.py"
-    if not sdfc_script.exists():
-        fail(f"missing {sdfc_script}")
-        return 1
-    r = run([sys.executable, str(sdfc_script)], cwd=ROOT)
+    r = _coverage_run(sdfc_script).returncode
     if r != 0:
         fail(
             "Issue #3003 solve_delta timeout fail-closed linter failed — run python3 scripts/coverage/checks/check_solve_delta_timeout_fail_closed_3003.py"
@@ -11892,10 +9624,7 @@ def cmd_lint():
     # Issue #3031: pending_full_solve / locality residual drain before commit.
     # Extends test_solve_delta_unresolved_export (#81967); no docs/design/.
     pfsr2_script = COVERAGE_CHECKS / "check_pending_full_solve_residual_3031.py"
-    if not pfsr2_script.exists():
-        fail(f"missing {pfsr2_script}")
-        return 1
-    r = run([sys.executable, str(pfsr2_script)], cwd=ROOT)
+    r = _coverage_run(pfsr2_script).returncode
     if r != 0:
         fail(
             "Issue #3031 pending_full_solve residual linter failed — run python3 scripts/coverage/checks/check_pending_full_solve_residual_3031.py"
@@ -11904,10 +9633,7 @@ def cmd_lint():
     # Issue #3005: ADT exhaustiveness into dirty cone; Production no Dynamic.
     # Extends test_adt_match_goal_table (#81967); no docs/design/.
     aedc_script = COVERAGE_CHECKS / "check_adt_exhaust_dirty_cone_3005.py"
-    if not aedc_script.exists():
-        fail(f"missing {aedc_script}")
-        return 1
-    r = run([sys.executable, str(aedc_script)], cwd=ROOT)
+    r = _coverage_run(aedc_script).returncode
     if r != 0:
         fail(
             "Issue #3005 ADT exhaust dirty-cone linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_dirty_cone_3005.py"
@@ -11916,10 +9642,7 @@ def cmd_lint():
     # Issue #2984: arena compact vs TypeLinearCommitProof.linear_root_count.
     # Extends test_type_linear_commit_health (#81967); no docs/design/.
     lcrc_script = COVERAGE_CHECKS / "check_linear_compact_root_consistency_2984.py"
-    if not lcrc_script.exists():
-        fail(f"missing {lcrc_script}")
-        return 1
-    r = run([sys.executable, str(lcrc_script)], cwd=ROOT)
+    r = _coverage_run(lcrc_script).returncode
     if r != 0:
         fail(
             "Issue #2984 linear compact root consistency linter failed — run python3 scripts/coverage/checks/check_linear_compact_root_consistency_2984.py"
@@ -11929,10 +9652,7 @@ def cmd_lint():
     # composite_txn_commit (anti under-mark). Extends
     # test_composite_txn_commit (#81967); no docs/design/ (#1655).
     crtd_script = COVERAGE_CHECKS / "check_composite_required_type_default_2983.py"
-    if not crtd_script.exists():
-        fail(f"missing {crtd_script}")
-        return 1
-    r = run([sys.executable, str(crtd_script)], cwd=ROOT)
+    r = _coverage_run(crtd_script).returncode
     if r != 0:
         fail(
             "Issue #2983 composite required TypeId default linter failed — run python3 scripts/coverage/checks/check_composite_required_type_default_2983.py"
@@ -11941,10 +9661,7 @@ def cmd_lint():
     # Issue #2982: Staging/Dlopen ops recovery surface. Extends
     # test_reload_recovery_query (#81967); no docs/design/ (#1655).
     sdor_script = COVERAGE_CHECKS / "check_staging_dlopen_ops_recovery_2982.py"
-    if not sdor_script.exists():
-        fail(f"missing {sdor_script}")
-        return 1
-    r = run([sys.executable, str(sdor_script)], cwd=ROOT)
+    r = _coverage_run(sdor_script).returncode
     if r != 0:
         fail(
             "Issue #2982 Staging/Dlopen ops recovery linter failed — run python3 scripts/coverage/checks/check_staging_dlopen_ops_recovery_2982.py"
@@ -11954,10 +9671,7 @@ def cmd_lint():
     # #2901 re-arm close). Extends test_steal_complete_restamp_txn
     # (#81967); no docs/design.
     sdpf_script = COVERAGE_CHECKS / "check_steal_decision_per_fiber_2954.py"
-    if not sdpf_script.exists():
-        fail(f"missing {sdpf_script}")
-        return 1
-    r = run([sys.executable, str(sdpf_script)], cwd=ROOT)
+    r = _coverage_run(sdpf_script).returncode
     if r != 0:
         fail(
             "Issue #2954 steal decision per-fiber linter failed — run python3 scripts/coverage/checks/check_steal_decision_per_fiber_2954.py"
@@ -11966,10 +9680,7 @@ def cmd_lint():
     # Issue #3038: re-sample after clear under per-Fiber window.
     # Extends test_steal_complete_restamp_txn + chaos_steal (#81967).
     srrs_script = COVERAGE_CHECKS / "check_steal_residual_rearm_resample_3038.py"
-    if not srrs_script.exists():
-        fail(f"missing {srrs_script}")
-        return 1
-    r = run([sys.executable, str(srrs_script)], cwd=ROOT)
+    r = _coverage_run(srrs_script).returncode
     if r != 0:
         fail(
             "Issue #3038 steal residual re-arm re-sample linter failed — run python3 scripts/coverage/checks/check_steal_residual_rearm_resample_3038.py"
@@ -11979,10 +9690,7 @@ def cmd_lint():
     # for steal/mutation/GC hooks. Extends test_steal_complete_strong_entry
     # (#81967); no docs/design.
     pasi_script = COVERAGE_CHECKS / "check_production_abi_selfcheck_2955.py"
-    if not pasi_script.exists():
-        fail(f"missing {pasi_script}")
-        return 1
-    r = run([sys.executable, str(pasi_script)], cwd=ROOT)
+    r = _coverage_run(pasi_script).returncode
     if r != 0:
         fail(
             "Issue #2955 production ABI self-check linter failed — run python3 scripts/coverage/checks/check_production_abi_selfcheck_2955.py"
@@ -11998,10 +9706,7 @@ def cmd_lint():
     # self-check (new fail bit 6). Soft / sandbox=off unchanged. Extends
     # test_tenant_scope_fiber_mandate (#81967); no docs/design/ (#1655).
     tsg3275_script = COVERAGE_CHECKS / "check_tenant_scope_link_gate_3275.py"
-    if not tsg3275_script.exists():
-        fail(f"missing {tsg3275_script}")
-        return 1
-    r = run([sys.executable, str(tsg3275_script)], cwd=ROOT)
+    r = _coverage_run(tsg3275_script).returncode
     if r != 0:
         fail(
             "Issue #3275 tenant-scope link gate linter failed — run python3 scripts/coverage/checks/check_tenant_scope_link_gate_3275.py"
@@ -12011,10 +9716,7 @@ def cmd_lint():
     # (held/depth/process-held). Extends test_mutation_safety_snapshot_steal
     # (#81967); no docs/design (#1655).
     mmc_script = COVERAGE_CHECKS / "check_mutation_mirror_canary_2956.py"
-    if not mmc_script.exists():
-        fail(f"missing {mmc_script}")
-        return 1
-    r = run([sys.executable, str(mmc_script)], cwd=ROOT)
+    r = _coverage_run(mmc_script).returncode
     if r != 0:
         fail(
             "Issue #2956 mutation mirror canary linter failed — run python3 scripts/coverage/checks/check_mutation_mirror_canary_2956.py"
@@ -12023,10 +9725,7 @@ def cmd_lint():
     # Issue #2957: residual hard-AND arm (f) last LifetimeConsistencyProof.
     # Extends test_steal_complete_restamp_txn (#81967); no docs/design (#1655).
     slpr_script = COVERAGE_CHECKS / "check_steal_lifetime_proof_residual_2957.py"
-    if not slpr_script.exists():
-        fail(f"missing {slpr_script}")
-        return 1
-    r = run([sys.executable, str(slpr_script)], cwd=ROOT)
+    r = _coverage_run(slpr_script).returncode
     if r != 0:
         fail(
             "Issue #2957 steal lifetime-proof residual linter failed — run python3 scripts/coverage/checks/check_steal_lifetime_proof_residual_2957.py"
@@ -12035,10 +9734,7 @@ def cmd_lint():
     # Issue #2958: mailbox defer-wait SLO → hold-budget cancel on holder.
     # Extends test_mailbox_recv_mutation_boundary (#81967); no docs/design.
     mdsc_script = COVERAGE_CHECKS / "check_mailbox_defer_slo_hold_cancel_2958.py"
-    if not mdsc_script.exists():
-        fail(f"missing {mdsc_script}")
-        return 1
-    r = run([sys.executable, str(mdsc_script)], cwd=ROOT)
+    r = _coverage_run(mdsc_script).returncode
     if r != 0:
         fail(
             "Issue #2958 mailbox defer-SLO hold-cancel linter failed — run python3 scripts/coverage/checks/check_mailbox_defer_slo_hold_cancel_2958.py"
@@ -12047,10 +9743,7 @@ def cmd_lint():
     # Issue #3002: mailbox hold p99 SSOT + soak fail-closed (#2947+#2958 residual).
     # Extends test_mailbox_recv_mutation_boundary + chaos_mutate (#81967).
     mhss2_script = COVERAGE_CHECKS / "check_mailbox_hold_slo_ssot_soak_3002.py"
-    if not mhss2_script.exists():
-        fail(f"missing {mhss2_script}")
-        return 1
-    r = run([sys.executable, str(mhss2_script)], cwd=ROOT)
+    r = _coverage_run(mhss2_script).returncode
     if r != 0:
         fail(
             "Issue #3002 mailbox hold SLO SSOT soak linter failed — run python3 scripts/coverage/checks/check_mailbox_hold_slo_ssot_soak_3002.py"
@@ -12062,10 +9755,7 @@ def cmd_lint():
     # #3002 mailbox_hold_slo_live_signal. Soft observe-only. Extends
     # test_mailbox_hold_starvation_hard; no docs/design/; no new query.
     mhb3485_script = COVERAGE_CHECKS / "check_mailbox_hold_budget_p99_union_3485.py"
-    if not mhb3485_script.exists():
-        fail(f"missing {mhb3485_script}")
-        return 1
-    r = run([sys.executable, str(mhb3485_script)], cwd=ROOT)
+    r = _coverage_run(mhb3485_script).returncode
     if r != 0:
         fail(
             "Issue #3485 mailbox hold-budget p99 union linter failed — run python3 scripts/coverage/checks/check_mailbox_hold_budget_p99_union_3485.py"
@@ -12074,10 +9764,7 @@ def cmd_lint():
     # Issue #2959: Guard abort dual topology restore (children_+parent_).
     # Extends test_restore_children_structural_lock (#81967); no docs/design.
     tdr_script = COVERAGE_CHECKS / "check_topology_dual_restore_2959.py"
-    if not tdr_script.exists():
-        fail(f"missing {tdr_script}")
-        return 1
-    r = run([sys.executable, str(tdr_script)], cwd=ROOT)
+    r = _coverage_run(tdr_script).returncode
     if r != 0:
         fail(
             "Issue #2959 topology dual restore linter failed — run python3 scripts/coverage/checks/check_topology_dual_restore_2959.py"
@@ -12087,10 +9774,7 @@ def cmd_lint():
     # Extends test_tenant_isolation_enforcement + test_stable_ref_tenant_capture
     # (#81967); no docs/design (#1655).
     qsr_script = COVERAGE_CHECKS / "check_query_stable_ref_stamp_2960.py"
-    if not qsr_script.exists():
-        fail(f"missing {qsr_script}")
-        return 1
-    r = run([sys.executable, str(qsr_script)], cwd=ROOT)
+    r = _coverage_run(qsr_script).returncode
     if r != 0:
         fail(
             "Issue #2960 query stable-ref stamp linter failed — run python3 scripts/coverage/checks/check_query_stable_ref_stamp_2960.py"
@@ -12099,10 +9783,7 @@ def cmd_lint():
     # Issue #2961: rename-symbol / replace-pattern Guard + hygiene + restamp.
     # Extends test_hygiene_mutate_closed_loop (#81967); no docs/design (#1655).
     rrh_script = COVERAGE_CHECKS / "check_rename_replace_hygiene_restamp_2961.py"
-    if not rrh_script.exists():
-        fail(f"missing {rrh_script}")
-        return 1
-    r = run([sys.executable, str(rrh_script)], cwd=ROOT)
+    r = _coverage_run(rrh_script).returncode
     if r != 0:
         fail(
             "Issue #2961 rename/replace hygiene restamp linter failed — run python3 scripts/coverage/checks/check_rename_replace_hygiene_restamp_2961.py"
@@ -12111,10 +9792,7 @@ def cmd_lint():
     # Issue #3027: residual MacroIntroduced gates on structural mutate prims.
     # Extends test_hygiene_mutate_closed_loop (#81967); no docs/design.
     smh_script = COVERAGE_CHECKS / "check_structural_macro_hygiene_3027.py"
-    if not smh_script.exists():
-        fail(f"missing {smh_script}")
-        return 1
-    r = run([sys.executable, str(smh_script)], cwd=ROOT)
+    r = _coverage_run(smh_script).returncode
     if r != 0:
         fail(
             "Issue #3027 structural MacroIntroduced hygiene linter failed — run python3 scripts/coverage/checks/check_structural_macro_hygiene_3027.py"
@@ -12124,10 +9802,7 @@ def cmd_lint():
     # Extends test_hygiene_mutate_closed_loop + isolation/tenant-capture
     # (#81967); no docs/design (#1655).
     qrl_script = COVERAGE_CHECKS / "check_query_stable_ref_restamp_lag_3000.py"
-    if not qrl_script.exists():
-        fail(f"missing {qrl_script}")
-        return 1
-    r = run([sys.executable, str(qrl_script)], cwd=ROOT)
+    r = _coverage_run(qrl_script).returncode
     if r != 0:
         fail(
             "Issue #3000 query stable-ref restamp-lag linter failed — run python3 scripts/coverage/checks/check_query_stable_ref_restamp_lag_3000.py"
@@ -12137,10 +9812,7 @@ def cmd_lint():
     # Extends test_hygiene_mutate_closed_loop + #2960 isolation
     # (#81967); no docs/design (#1655).
     rob_script = COVERAGE_CHECKS / "check_restamp_over_budget_export_3037.py"
-    if not rob_script.exists():
-        fail(f"missing {rob_script}")
-        return 1
-    r = run([sys.executable, str(rob_script)], cwd=ROOT)
+    r = _coverage_run(rob_script).returncode
     if r != 0:
         fail(
             "Issue #3037 restamp over-budget export linter failed — run python3 scripts/coverage/checks/check_restamp_over_budget_export_3037.py"
@@ -12150,10 +9822,7 @@ def cmd_lint():
     # residual arms (#2931/#2957 residual). Extends test_chaos_steal_mutation_gc
     # + test_steal_complete_restamp_txn (#81967); no docs/design (#1655).
     csl_script = COVERAGE_CHECKS / "check_chaos_steal_lifetime_envframe_3001.py"
-    if not csl_script.exists():
-        fail(f"missing {csl_script}")
-        return 1
-    r = run([sys.executable, str(csl_script)], cwd=ROOT)
+    r = _coverage_run(csl_script).returncode
     if r != 0:
         fail(
             "Issue #3001 chaos steal lifetime/envframe linter failed — run python3 scripts/coverage/checks/check_chaos_steal_lifetime_envframe_3001.py"
@@ -12167,10 +9836,7 @@ def cmd_lint():
     # test_parallel_intend_pure_contract.cpp (#81967); no docs/design/
     # (#1655).
     pir_script = COVERAGE_CHECKS / "check_parallel_intend_region_concurrent_2886.py"
-    if not pir_script.exists():
-        fail(f"missing {pir_script}")
-        return 1
-    r = run([sys.executable, str(pir_script)], cwd=ROOT)
+    r = _coverage_run(pir_script).returncode
     if r != 0:
         fail(
             "Issue #2886 parallel_intend region-concurrent linter failed — run python3 scripts/coverage/checks/check_parallel_intend_region_concurrent_2886.py"
@@ -12181,10 +9847,7 @@ def cmd_lint():
     # Extends test_parallel_intend_pure_contract.cpp (#81967); no
     # docs/design/ (#1655).
     prk3243_script = COVERAGE_CHECKS / "check_parallel_region_key_missing_3243.py"
-    if not prk3243_script.exists():
-        fail(f"missing {prk3243_script}")
-        return 1
-    r = run([sys.executable, str(prk3243_script)], cwd=ROOT)
+    r = _coverage_run(prk3243_script).returncode
     if r != 0:
         fail(
             "Issue #3243 parallel region-key-missing linter failed — run python3 scripts/coverage/checks/check_parallel_region_key_missing_3243.py"
@@ -12197,10 +9860,7 @@ def cmd_lint():
     # Extends test_parallel_intend_pure_contract.cpp (#81967); no
     # docs/design/ (#1655).
     prk3299_script = COVERAGE_CHECKS / "check_parallel_mutate_region_keys_3299.py"
-    if not prk3299_script.exists():
-        fail(f"missing {prk3299_script}")
-        return 1
-    r = run([sys.executable, str(prk3299_script)], cwd=ROOT)
+    r = _coverage_run(prk3299_script).returncode
     if r != 0:
         fail(
             "Issue #3299 parallel mutate region-keys linter failed — run python3 scripts/coverage/checks/check_parallel_mutate_region_keys_3299.py"
@@ -12211,10 +9871,7 @@ def cmd_lint():
     # non-mutate stay #3243 Serialized. env=0 soak escape. Extends
     # test_parallel_intend_pure_contract.cpp after #3299; no docs/design.
     prk3353_script = COVERAGE_CHECKS / "check_parallel_mutate_region_keys_prod_deny_3353.py"
-    if not prk3353_script.exists():
-        fail(f"missing {prk3353_script}")
-        return 1
-    r = run([sys.executable, str(prk3353_script)], cwd=ROOT)
+    r = _coverage_run(prk3353_script).returncode
     if r != 0:
         fail(
             "Issue #3353 production mutate region-keys deny linter failed — run python3 scripts/coverage/checks/check_parallel_mutate_region_keys_prod_deny_3353.py"
@@ -12225,10 +9882,7 @@ def cmd_lint():
     # region_keys (decide_isolation SSOT). Extends
     # test_parallel_intend_pure_contract.cpp (#81967); no docs/design (#1655).
     asr3803_script = COVERAGE_CHECKS / "check_agent_scope_region_key_isolation_3803.py"
-    if not asr3803_script.exists():
-        fail(f"missing {asr3803_script}")
-        return 1
-    r = run([sys.executable, str(asr3803_script)], cwd=ROOT)
+    r = _coverage_run(asr3803_script).returncode
     if r != 0:
         fail(
             "Issue #3803 AgentScope region-key isolation linter failed — run python3 scripts/coverage/checks/check_agent_scope_region_key_isolation_3803.py"
@@ -12239,10 +9893,7 @@ def cmd_lint():
     # deny-detail mailbox-bp-scope-overflow. Soft/Off LRU unchanged.
     # Extends test_mailbox_bp_admit.cpp (#81967); no docs/design (#1655).
     mboc3804_script = COVERAGE_CHECKS / "check_mailbox_bp_overflow_cohort_3804.py"
-    if not mboc3804_script.exists():
-        fail(f"missing {mboc3804_script}")
-        return 1
-    r = run([sys.executable, str(mboc3804_script)], cwd=ROOT)
+    r = _coverage_run(mboc3804_script).returncode
     if r != 0:
         fail(
             "Issue #3804 mailbox BP overflow cohort linter failed — run python3 scripts/coverage/checks/check_mailbox_bp_overflow_cohort_3804.py"
@@ -12253,10 +9904,7 @@ def cmd_lint():
     # live fiber; directory / scope-resolve skip abandoned ghosts.
     # Extends test_join_drain_reclaim.cpp (#81967); no docs/design (#1655).
     alnr3805_script = COVERAGE_CHECKS / "check_abandoned_live_name_reuse_3805.py"
-    if not alnr3805_script.exists():
-        fail(f"missing {alnr3805_script}")
-        return 1
-    r = run([sys.executable, str(alnr3805_script)], cwd=ROOT)
+    r = _coverage_run(alnr3805_script).returncode
     if r != 0:
         fail(
             "Issue #3805 abandoned-live name reuse linter failed — run python3 scripts/coverage/checks/check_abandoned_live_name_reuse_3805.py"
@@ -12266,10 +9914,7 @@ def cmd_lint():
     # auto-wait / abandon_reclaimed SSOT with deferred+mailbox still owed.
     # Extends test_join_drain_reclaim.cpp (#81967); no docs/design (#1655).
     qrmw3841_script = COVERAGE_CHECKS / "check_quota_recycle_must_wait_ssot_3841.py"
-    if not qrmw3841_script.exists():
-        fail(f"missing {qrmw3841_script}")
-        return 1
-    r = run([sys.executable, str(qrmw3841_script)], cwd=ROOT)
+    r = _coverage_run(qrmw3841_script).returncode
     if r != 0:
         fail(
             "Issue #3841 quota-recycle must_wait SSOT linter failed — run python3 scripts/coverage/checks/check_quota_recycle_must_wait_ssot_3841.py"
@@ -12280,10 +9925,7 @@ def cmd_lint():
     # Soft: no new force path. No AgentRegistry. Aura orch:* auto-wait
     # unchanged. Extends test_join_drain_reclaim.cpp (#81967); no docs/design (#1655).
     ssrp3842_script = COVERAGE_CHECKS / "check_scope_sweep_reclaimed_pending_3842.py"
-    if not ssrp3842_script.exists():
-        fail(f"missing {ssrp3842_script}")
-        return 1
-    r = run([sys.executable, str(ssrp3842_script)], cwd=ROOT)
+    r = _coverage_run(ssrp3842_script).returncode
     if r != 0:
         fail(
             "Issue #3842 Scope sweep_reclaimed_pending linter failed — run python3 scripts/coverage/checks/check_scope_sweep_reclaimed_pending_3842.py"
@@ -12293,10 +9935,7 @@ def cmd_lint():
     # faces (depth/wrap-total/full). Extends test_security_event_wal_replay
     # + test_security_posture_trail (#81967); no docs/design (#1655).
     wow3806_script = COVERAGE_CHECKS / "check_wal_overflow_wrap_3806.py"
-    if not wow3806_script.exists():
-        fail(f"missing {wow3806_script}")
-        return 1
-    r = run([sys.executable, str(wow3806_script)], cwd=ROOT)
+    r = _coverage_run(wow3806_script).returncode
     if r != 0:
         fail(
             "Issue #3806 WAL overflow wrap linter failed — run python3 scripts/coverage/checks/check_wal_overflow_wrap_3806.py"
@@ -12308,10 +9947,7 @@ def cmd_lint():
     # (#2228/#2535). Extends test_agent_failure_policy.cpp (#81967);
     # no docs/design/ (#1655).
     abp_script = COVERAGE_CHECKS / "check_agent_bp_degrade_2887.py"
-    if not abp_script.exists():
-        fail(f"missing {abp_script}")
-        return 1
-    r = run([sys.executable, str(abp_script)], cwd=ROOT)
+    r = _coverage_run(abp_script).returncode
     if r != 0:
         fail(
             "Issue #2887 agent BP degrade linter failed — run python3 scripts/coverage/checks/check_agent_bp_degrade_2887.py"
@@ -12325,10 +9961,7 @@ def cmd_lint():
     # (test_densify_ownership_scan_fail_gate.cpp, #81967); no docs/design/
     # (#1655).
     lcp_script = COVERAGE_CHECKS / "check_lifetime_consistency_proof_2888.py"
-    if not lcp_script.exists():
-        fail(f"missing {lcp_script}")
-        return 1
-    r = run([sys.executable, str(lcp_script)], cwd=ROOT)
+    r = _coverage_run(lcp_script).returncode
     if r != 0:
         fail(
             "Issue #2888 lifetime-consistency-proof linter failed — run python3 scripts/coverage/checks/check_lifetime_consistency_proof_2888.py"
@@ -12338,10 +9971,7 @@ def cmd_lint():
     # (#2597/#2665: pref locked but callers void-cast wire + densify
     # unguarded). Sticky breach + Moving gate + required-fail callers.
     goprd_script = COVERAGE_CHECKS / "check_general_object_pin_required_prod_default_2840.py"
-    if not goprd_script.exists():
-        fail(f"missing {goprd_script}")
-        return 1
-    r = run([sys.executable, str(goprd_script)], cwd=ROOT)
+    r = _coverage_run(goprd_script).returncode
     if r != 0:
         fail(
             "Issue #2840 GeneralObjectPin required densify fail-closed linter failed — run python3 scripts/coverage/checks/check_general_object_pin_required_prod_default_2840.py"
@@ -12352,10 +9982,7 @@ def cmd_lint():
     # Linter fails on any void-cast / bare wire of the helper in
     # mutate/agent/scratch create paths; src/-aligned suite extended.
     gprf_script = COVERAGE_CHECKS / "check_general_object_pin_required_2891.py"
-    if not gprf_script.exists():
-        fail(f"missing {gprf_script}")
-        return 1
-    r = run([sys.executable, str(gprf_script)], cwd=ROOT)
+    r = _coverage_run(gprf_script).returncode
     if r != 0:
         fail(
             "Issue #2891 required-fail return check linter failed — run python3 scripts/coverage/checks/check_general_object_pin_required_2891.py"
@@ -12370,10 +9997,7 @@ def cmd_lint():
     # source-cite + extend src/-aligned densify/ownership/EnvFrame suite
     # (#81967); no docs/design (#1655).
     pcl_script = COVERAGE_CHECKS / "check_post_compact_lifecycle_2892.py"
-    if not pcl_script.exists():
-        fail(f"missing {pcl_script}")
-        return 1
-    r = run([sys.executable, str(pcl_script)], cwd=ROOT)
+    r = _coverage_run(pcl_script).returncode
     if r != 0:
         fail(
             "Issue #2892 post-compact lifecycle linter failed — run python3 scripts/coverage/checks/check_post_compact_lifecycle_2892.py"
@@ -12383,10 +10007,7 @@ def cmd_lint():
     # production (#2713/#2744 residual). Soft atomic_bump stamps owner TLS;
     # hard invalidate_function notes force-bump; Soft env opt-in preserved.
     ceos_script = COVERAGE_CHECKS / "check_cross_eval_cascade_owner_scoped_2841.py"
-    if not ceos_script.exists():
-        fail(f"missing {ceos_script}")
-        return 1
-    r = run([sys.executable, str(ceos_script)], cwd=ROOT)
+    r = _coverage_run(ceos_script).returncode
     if r != 0:
         fail(
             "Issue #2841 cross-eval cascade owner-scoped linter failed — run python3 scripts/coverage/checks/check_cross_eval_cascade_owner_scoped_2841.py"
@@ -12402,10 +10023,7 @@ def cmd_lint():
     # no docs/design/2727-* per #1655 stay enforced. Builds on #2721
     # hard-AND residual ship (steal_safety transaction).
     feid_script = COVERAGE_CHECKS / "check_fiber_evaluator_id_2727.py"
-    if not feid_script.exists():
-        fail(f"missing {feid_script}")
-        return 1
-    r = run([sys.executable, str(feid_script)], cwd=ROOT)
+    r = _coverage_run(feid_script).returncode
     if r != 0:
         fail(
             "Issue #2727 fiber evaluator_id linter failed — run python3 scripts/coverage/checks/check_fiber_evaluator_id_2727.py"
@@ -12424,10 +10042,7 @@ def cmd_lint():
     # errors. Co-traveler with the ownership_rebind.cpp namespace
     # fix (was a separate pre-existing build blocker).
     tma_script = COVERAGE_CHECKS / "check_typed_mutation_audit_h_forward_ref_2728.py"
-    if not tma_script.exists():
-        fail(f"missing {tma_script}")
-        return 1
-    r = run([sys.executable, str(tma_script)], cwd=ROOT)
+    r = _coverage_run(tma_script).returncode
     if r != 0:
         fail(
             "Issue #2728 typed_mutation_audit.h forward-ref linter failed — run python3 scripts/coverage/checks/check_typed_mutation_audit_h_forward_ref_2728.py"
@@ -12440,10 +10055,7 @@ def cmd_lint():
     # enforced. Builds on #2621 partial cone + #2560 soft/hard SLA +
     # #2672 outside-cone invalidate.
     cogd_script = COVERAGE_CHECKS / "check_cone_outside_goal_drop_2703.py"
-    if not cogd_script.exists():
-        fail(f"missing {cogd_script}")
-        return 1
-    r = run([sys.executable, str(cogd_script)], cwd=ROOT)
+    r = _coverage_run(cogd_script).returncode
     if r != 0:
         fail(
             "Issue #2703 cone-outside-goal-drop linter failed — run python3 scripts/coverage/checks/check_cone_outside_goal_drop_2703.py"
@@ -12452,10 +10064,7 @@ def cmd_lint():
     # Issue #2962: residual SOLVED-only recover / hard-reject on cone truncate
     # + outside drop (refine #2909). Extends test_partial_cone_commit_gate.
     cogd2962 = COVERAGE_CHECKS / "check_cone_outside_goal_drop_recover_reject_2962.py"
-    if not cogd2962.exists():
-        fail(f"missing {cogd2962}")
-        return 1
-    r = run([sys.executable, str(cogd2962)], cwd=ROOT)
+    r = _coverage_run(cogd2962).returncode
     if r != 0:
         fail(
             "Issue #2962 cone-outside-goal-drop recover-reject linter failed — run python3 scripts/coverage/checks/check_cone_outside_goal_drop_recover_reject_2962.py"
@@ -12464,10 +10073,7 @@ def cmd_lint():
     # Issue #2963: production prefer instance-repair before full-solve on
     # SolverBudget / delta TIMEOUT (refine #2900 / #2277).
     irbf2963 = COVERAGE_CHECKS / "check_instance_repair_before_full_2963.py"
-    if not irbf2963.exists():
-        fail(f"missing {irbf2963}")
-        return 1
-    r = run([sys.executable, str(irbf2963)], cwd=ROOT)
+    r = _coverage_run(irbf2963).returncode
     if r != 0:
         fail(
             "Issue #2963 instance-repair-before-full linter failed — run python3 scripts/coverage/checks/check_instance_repair_before_full_2963.py"
@@ -12475,10 +10081,7 @@ def cmd_lint():
         return r
     # Issue #2964: unified linear_fast_path_ok + force revalidate (refine #2899).
     lfp2964 = COVERAGE_CHECKS / "check_linear_fast_path_unified_2964.py"
-    if not lfp2964.exists():
-        fail(f"missing {lfp2964}")
-        return 1
-    r = run([sys.executable, str(lfp2964)], cwd=ROOT)
+    r = _coverage_run(lfp2964).returncode
     if r != 0:
         fail(
             "Issue #2964 linear-fast-path-unified linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_unified_2964.py"
@@ -12487,10 +10090,7 @@ def cmd_lint():
     # Issue #3006: !linear_fast_path_ok forces dirty-root revalidate.
     # Extends test_escape_move_elision_gate (#81967); no docs/design/.
     lfp3006 = COVERAGE_CHECKS / "check_linear_fast_path_dirty_revalidate_3006.py"
-    if not lfp3006.exists():
-        fail(f"missing {lfp3006}")
-        return 1
-    r = run([sys.executable, str(lfp3006)], cwd=ROOT)
+    r = _coverage_run(lfp3006).returncode
     if r != 0:
         fail(
             "Issue #3006 linear-fast-path dirty-revalidate linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_dirty_revalidate_3006.py"
@@ -12499,10 +10099,7 @@ def cmd_lint():
     # Issue #3007: Production residual identity CastOp in hot / post-mutate IR.
     # Extends test_dead_coercion_dirty_cone (#81967); no docs/design/.
     dchr3007 = COVERAGE_CHECKS / "check_dead_coercion_hot_residual_3007.py"
-    if not dchr3007.exists():
-        fail(f"missing {dchr3007}")
-        return 1
-    r = run([sys.executable, str(dchr3007)], cwd=ROOT)
+    r = _coverage_run(dchr3007).returncode
     if r != 0:
         fail(
             "Issue #3007 dead-coercion hot residual linter failed — run python3 scripts/coverage/checks/check_dead_coercion_hot_residual_3007.py"
@@ -12510,10 +10107,7 @@ def cmd_lint():
         return r
     # Issue #2966: ast:snapshot fail reason (never silent -1).
     asfr2966 = COVERAGE_CHECKS / "check_ast_snapshot_fail_reason_2966.py"
-    if not asfr2966.exists():
-        fail(f"missing {asfr2966}")
-        return 1
-    r = run([sys.executable, str(asfr2966)], cwd=ROOT)
+    r = _coverage_run(asfr2966).returncode
     if r != 0:
         fail(
             "Issue #2966 ast-snapshot-fail-reason linter failed — run python3 scripts/coverage/checks/check_ast_snapshot_fail_reason_2966.py"
@@ -12526,10 +10120,7 @@ def cmd_lint():
     # enforced. Builds on #2608 persist + #2641 rehydrate + #2552 epoch
     # fence + #2622 outside invalidate.
     oeaf_script = COVERAGE_CHECKS / "check_occurrence_empty_after_fence_2704.py"
-    if not oeaf_script.exists():
-        fail(f"missing {oeaf_script}")
-        return 1
-    r = run([sys.executable, str(oeaf_script)], cwd=ROOT)
+    r = _coverage_run(oeaf_script).returncode
     if r != 0:
         fail(
             "Issue #2704 occurrence-empty-after-fence linter failed — run python3 scripts/coverage/checks/check_occurrence_empty_after_fence_2704.py"
@@ -12540,10 +10131,7 @@ def cmd_lint():
     # test_occurrence_goal_persist_rehydrate + test_type_linear_commit_health
     # (#81967); no docs/design/ (#1655).
     tlef_script = COVERAGE_CHECKS / "check_type_linear_proof_empty_after_fence_2981.py"
-    if not tlef_script.exists():
-        fail(f"missing {tlef_script}")
-        return 1
-    r = run([sys.executable, str(tlef_script)], cwd=ROOT)
+    r = _coverage_run(tlef_script).returncode
     if r != 0:
         fail(
             "Issue #2981 empty-after-fence proof bind linter failed — run python3 scripts/coverage/checks/check_type_linear_proof_empty_after_fence_2981.py"
@@ -12552,10 +10140,7 @@ def cmd_lint():
     # Issue #3032: densify/steal rehydrate-miss invalidates linear_fast_path.
     # Extends persist-rehydrate + escape-elision (#81967); no docs/design/.
     rhmi2_script = COVERAGE_CHECKS / "check_rehydrate_miss_invalidate_3032.py"
-    if not rhmi2_script.exists():
-        fail(f"missing {rhmi2_script}")
-        return 1
-    r = run([sys.executable, str(rhmi2_script)], cwd=ROOT)
+    r = _coverage_run(rhmi2_script).returncode
     if r != 0:
         fail(
             "Issue #3032 rehydrate-miss invalidate linter failed — run python3 scripts/coverage/checks/check_rehydrate_miss_invalidate_3032.py"
@@ -12563,10 +10148,7 @@ def cmd_lint():
         return r
     # Issue #3063: steal/densify success invalidate-before-restamp.
     hg3063b_script = COVERAGE_CHECKS / "check_half_green_ir_steal_densify_3063.py"
-    if not hg3063b_script.exists():
-        fail(f"missing {hg3063b_script}")
-        return 1
-    r = run([sys.executable, str(hg3063b_script)], cwd=ROOT)
+    r = _coverage_run(hg3063b_script).returncode
     if r != 0:
         fail(
             "Issue #3063 half-green IR steal/densify linter failed — run python3 scripts/coverage/checks/check_half_green_ir_steal_densify_3063.py"
@@ -12574,10 +10156,7 @@ def cmd_lint():
         return r
     # Issue #3171: steal/densify/cross-eval restamp complete-clear.
     lfp3171b = COVERAGE_CHECKS / "check_linear_fast_path_clear_on_restamp_3171.py"
-    if not lfp3171b.exists():
-        fail(f"missing {lfp3171b}")
-        return 1
-    r = run([sys.executable, str(lfp3171b)], cwd=ROOT)
+    r = _coverage_run(lfp3171b).returncode
     if r != 0:
         fail(
             "Issue #3171 linear-fast-path restamp clear linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_clear_on_restamp_3171.py"
@@ -12585,10 +10164,7 @@ def cmd_lint():
         return r
     # Issue #3482: steal/densify success persist-buffer clear (see first site).
     sdp3482b = COVERAGE_CHECKS / "check_steal_densify_persist_clear_3482.py"
-    if not sdp3482b.exists():
-        fail(f"missing {sdp3482b}")
-        return 1
-    r = run([sys.executable, str(sdp3482b)], cwd=ROOT)
+    r = _coverage_run(sdp3482b).returncode
     if r != 0:
         fail(
             "Issue #3482 steal/densify persist-clear linter failed — run python3 scripts/coverage/checks/check_steal_densify_persist_clear_3482.py"
@@ -12596,10 +10172,7 @@ def cmd_lint():
         return r
     # Issue #3172: sink fine-grained compile: dirty primitives.
     cs3172b = COVERAGE_CHECKS / "check_compile_surface_3172.py"
-    if not cs3172b.exists():
-        fail(f"missing {cs3172b}")
-        return 1
-    r = run([sys.executable, str(cs3172b)], cwd=ROOT)
+    r = _coverage_run(cs3172b).returncode
     if r != 0:
         fail(
             "Issue #3172 compile: surface reduction linter failed — run python3 scripts/coverage/checks/check_compile_surface_3172.py"
@@ -12607,10 +10180,7 @@ def cmd_lint():
         return r
     # Issue #3173: sink fine-grained arena: compact/defrag knobs.
     as3173b = COVERAGE_CHECKS / "check_arena_surface_3173.py"
-    if not as3173b.exists():
-        fail(f"missing {as3173b}")
-        return 1
-    r = run([sys.executable, str(as3173b)], cwd=ROOT)
+    r = _coverage_run(as3173b).returncode
     if r != 0:
         fail(
             "Issue #3173 arena: surface reduction linter failed — run python3 scripts/coverage/checks/check_arena_surface_3173.py"
@@ -12618,10 +10188,7 @@ def cmd_lint():
         return r
     # Issue #3174: demote IO/Net/Git/process prims off core boot.
     ionet3174b = COVERAGE_CHECKS / "check_io_net_git_surface_3174.py"
-    if not ionet3174b.exists():
-        fail(f"missing {ionet3174b}")
-        return 1
-    r = run([sys.executable, str(ionet3174b)], cwd=ROOT)
+    r = _coverage_run(ionet3174b).returncode
     if r != 0:
         fail(
             "Issue #3174 IO/Net/Git surface linter failed — run python3 scripts/coverage/checks/check_io_net_git_surface_3174.py"
@@ -12629,10 +10196,7 @@ def cmd_lint():
         return r
     # Issue #3175: prune diagnostic / low-frequency query: primitives.
     qs3175b = COVERAGE_CHECKS / "check_query_surface_3175.py"
-    if not qs3175b.exists():
-        fail(f"missing {qs3175b}")
-        return 1
-    r = run([sys.executable, str(qs3175b)], cwd=ROOT)
+    r = _coverage_run(qs3175b).returncode
     if r != 0:
         fail(
             "Issue #3175 query: surface reduction linter failed — run python3 scripts/coverage/checks/check_query_surface_3175.py"
@@ -12640,19 +10204,13 @@ def cmd_lint():
         return r
     # Issue #3176: demote C FFI c-* off core boot (std/ffi + kEffectFfi).
     ffi3176b = COVERAGE_CHECKS / "check_ffi_surface_3176.py"
-    if not ffi3176b.exists():
-        fail(f"missing {ffi3176b}")
-        return 1
-    r = run([sys.executable, str(ffi3176b)], cwd=ROOT)
+    r = _coverage_run(ffi3176b).returncode
     if r != 0:
         fail("Issue #3176 C FFI surface linter failed — run python3 scripts/coverage/checks/check_ffi_surface_3176.py")
         return r
     # Issue #3085: densify/steal miss blocks lowering elision.
     rml3085b = COVERAGE_CHECKS / "check_rehydrate_miss_lowering_elision_3085.py"
-    if not rml3085b.exists():
-        fail(f"missing {rml3085b}")
-        return 1
-    r = run([sys.executable, str(rml3085b)], cwd=ROOT)
+    r = _coverage_run(rml3085b).returncode
     if r != 0:
         fail(
             "Issue #3085 rehydrate-miss lowering elision linter failed — run python3 scripts/coverage/checks/check_rehydrate_miss_lowering_elision_3085.py"
@@ -12663,10 +10221,7 @@ def cmd_lint():
     # the SLO is breached). Wired next to the pure-probe linter (#2634) so a
     # regression in the #2635 AC surface fails the same gate.
     mid_script = COVERAGE_CHECKS / "check_mid_fallback_hard_deny_2635.py"
-    if not mid_script.exists():
-        fail(f"missing {mid_script}")
-        return 1
-    r = run([sys.executable, str(mid_script)], cwd=ROOT)
+    r = _coverage_run(mid_script).returncode
     if r != 0:
         fail(
             "mid-fallback hard-deny coverage linter failed — run python3 scripts/coverage/checks/check_mid_fallback_hard_deny_2635.py"
@@ -12676,10 +10231,7 @@ def cmd_lint():
     # × IR DCE × deopt meta) — src-aligned E2E lock that asserts the three
     # layers stay coherent under Soft vs evidence-backed paths.
     dcle_script = COVERAGE_CHECKS / "check_dead_coercion_layered_evidence_2645.py"
-    if not dcle_script.exists():
-        fail(f"missing {dcle_script}")
-        return 1
-    r = run([sys.executable, str(dcle_script)], cwd=ROOT)
+    r = _coverage_run(dcle_script).returncode
     if r != 0:
         fail(
             "dead-coercion layered evidence chain (#2645) coverage linter failed — run python3 scripts/coverage/checks/check_dead_coercion_layered_evidence_2645.py"
@@ -12689,10 +10241,7 @@ def cmd_lint():
     # (refine #2645 — adds production-path consistency check + Agent-visible
     # query surface; Soft/Sampled observe-only diverge counter).
     lec_script = COVERAGE_CHECKS / "check_layered_evidence_coherence_2674.py"
-    if not lec_script.exists():
-        fail(f"missing {lec_script}")
-        return 1
-    r = run([sys.executable, str(lec_script)], cwd=ROOT)
+    r = _coverage_run(lec_script).returncode
     if r != 0:
         fail(
             "layered evidence coherence (#2674) coverage linter failed — run python3 scripts/coverage/checks/check_layered_evidence_coherence_2674.py"
@@ -12701,10 +10250,7 @@ def cmd_lint():
     # Issue #2912: layered evidence diverge must force-Full under production
     # (closes #2719 residual — arm alone left pending unconsumed; Soft observe).
     leff_script = COVERAGE_CHECKS / "check_layered_evidence_force_full_2912.py"
-    if not leff_script.exists():
-        fail(f"missing {leff_script}")
-        return 1
-    r = run([sys.executable, str(leff_script)], cwd=ROOT)
+    r = _coverage_run(leff_script).returncode
     if r != 0:
         fail(
             "layered evidence force-Full consume (#2912) coverage linter failed — run python3 scripts/coverage/checks/check_layered_evidence_force_full_2912.py"
@@ -12713,10 +10259,7 @@ def cmd_lint():
     # Issue #2979: outermost Phase-5 consume + Full sample (#2912 residual).
     # Extends test_dead_coercion_layered (#81967); no docs/design/ (#1655).
     lep5_script = COVERAGE_CHECKS / "check_layered_evidence_phase5_consume_2979.py"
-    if not lep5_script.exists():
-        fail(f"missing {lep5_script}")
-        return 1
-    r = run([sys.executable, str(lep5_script)], cwd=ROOT)
+    r = _coverage_run(lep5_script).returncode
     if r != 0:
         fail(
             "Issue #2979 Phase-5 layered-evidence consume linter failed — run python3 scripts/coverage/checks/check_layered_evidence_phase5_consume_2979.py"
@@ -12728,10 +10271,7 @@ def cmd_lint():
     # SynthHardFail (#2514 retained). Zero behavior change when env unset
     # and production off (Soft).
     lee_script = COVERAGE_CHECKS / "check_linear_enforce_effective_2675.py"
-    if not lee_script.exists():
-        fail(f"missing {lee_script}")
-        return 1
-    r = run([sys.executable, str(lee_script)], cwd=ROOT)
+    r = _coverage_run(lee_script).returncode
     if r != 0:
         fail(
             "linear enforce effective (#2675) coverage linter failed — run python3 scripts/coverage/checks/check_linear_enforce_effective_2675.py"
@@ -12743,10 +10283,7 @@ def cmd_lint():
     # root coverage). Per-heap alloc_storage_lock_ wraps the closures_mtx_
     # critical section; new shared_lock(closures_mtx_) on make_closure reads.
     shs_script = COVERAGE_CHECKS / "check_shared_heap_serial_2676.py"
-    if not shs_script.exists():
-        fail(f"missing {shs_script}")
-        return 1
-    r = run([sys.executable, str(shs_script)], cwd=ROOT)
+    r = _coverage_run(shs_script).returncode
     if r != 0:
         fail(
             "shared heap serialization (#2676) coverage linter failed — run python3 scripts/coverage/checks/check_shared_heap_serial_2676.py"
@@ -12760,10 +10297,7 @@ def cmd_lint():
     # query keys under schema-2677 + soft-override ergonomics via
     # set_steal_snapshot_soft_for_test.
     ri_script = COVERAGE_CHECKS / "check_resume_invariants_2677.py"
-    if not ri_script.exists():
-        fail(f"missing {ri_script}")
-        return 1
-    r = run([sys.executable, str(ri_script)], cwd=ROOT)
+    r = _coverage_run(ri_script).returncode
     if r != 0:
         fail(
             "resume invariants (#2677) coverage linter failed — run python3 scripts/coverage/checks/check_resume_invariants_2677.py"
@@ -12777,10 +10311,7 @@ def cmd_lint():
     # contiguous import blocks. Bulk restamp/invalidate live only in
     # lifetime_pin.ixx (already correct per AC2).
     mic_script = COVERAGE_CHECKS / "check_module_import_contiguity_2678.py"
-    if not mic_script.exists():
-        fail(f"missing {mic_script}")
-        return 1
-    r = run([sys.executable, str(mic_script)], cwd=ROOT)
+    r = _coverage_run(mic_script).returncode
     if r != 0:
         fail(
             "module import contiguity (#2678) coverage linter failed — run python3 scripts/coverage/checks/check_module_import_contiguity_2678.py"
@@ -12795,10 +10326,7 @@ def cmd_lint():
     # AURA_CHAOS_DURATION_S / AURA_CHAOS_FIBERS / AURA_CHAOS_WORKERS / etc.
     # env knobs and the hard_fail_invariants check.
     cs_script = COVERAGE_CHECKS / "check_chaos_soak_2679.py"
-    if not cs_script.exists():
-        fail(f"missing {cs_script}")
-        return 1
-    r = run([sys.executable, str(cs_script)], cwd=ROOT)
+    r = _coverage_run(cs_script).returncode
     if r != 0:
         fail("chaos soak (#2679) coverage linter failed — run python3 scripts/coverage/checks/check_chaos_soak_2679.py")
         return r
@@ -12813,10 +10341,7 @@ def cmd_lint():
     # observe pressure. Regression gate on the shared-evaluator delivery
     # authority.
     mbi_script = COVERAGE_CHECKS / "check_mailbox_boundary_interleave_2680.py"
-    if not mbi_script.exists():
-        fail(f"missing {mbi_script}")
-        return 1
-    r = run([sys.executable, str(mbi_script)], cwd=ROOT)
+    r = _coverage_run(mbi_script).returncode
     if r != 0:
         fail(
             "mailbox boundary interleave (#2680) coverage linter failed — run python3 scripts/coverage/checks/check_mailbox_boundary_interleave_2680.py"
@@ -12826,10 +10351,7 @@ def cmd_lint():
     # (#2680 residual). Sole note_mailbox_deferred_under_boundary helper;
     # Phase-5 outermost exit sole reopen; chaos-lite ac2849_* tests.
     mmd_script = COVERAGE_CHECKS / "check_mailbox_mid_mutation_delivery_2849.py"
-    if not mmd_script.exists():
-        fail(f"missing {mmd_script}")
-        return 1
-    r = run([sys.executable, str(mmd_script)], cwd=ROOT)
+    r = _coverage_run(mmd_script).returncode
     if r != 0:
         fail(
             "Issue #2849 mailbox mid-mutation delivery linter failed — run python3 scripts/coverage/checks/check_mailbox_mid_mutation_delivery_2849.py"
@@ -12837,10 +10359,7 @@ def cmd_lint():
         return r
     # Issue #2903: deferred-under-boundary wait histogram (p50/p99/max).
     ubw_script = COVERAGE_CHECKS / "check_mailbox_under_boundary_wait_2903.py"
-    if not ubw_script.exists():
-        fail(f"missing {ubw_script}")
-        return 1
-    r = run([sys.executable, str(ubw_script)], cwd=ROOT)
+    r = _coverage_run(ubw_script).returncode
     if r != 0:
         fail(
             "Issue #2903 mailbox under-boundary wait linter failed — run python3 scripts/coverage/checks/check_mailbox_under_boundary_wait_2903.py"
@@ -12851,10 +10370,7 @@ def cmd_lint():
     # that fell OUTSIDE the truncated cone — preserves #2621 fidelity +
     # #2622 dirty-key authority.
     oci_script = COVERAGE_CHECKS / "check_occurrence_cone_outside_invalidate_2646.py"
-    if not oci_script.exists():
-        fail(f"missing {oci_script}")
-        return 1
-    r = run([sys.executable, str(oci_script)], cwd=ROOT)
+    r = _coverage_run(oci_script).returncode
     if r != 0:
         fail(
             "occurrence cone outside invalidate (#2646) coverage linter failed — run python3 scripts/coverage/checks/check_occurrence_cone_outside_invalidate_2646.py"

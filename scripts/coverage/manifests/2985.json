@@ -1,0 +1,60 @@
+{
+  "issue": 2985,
+  "title": "Issue #2985: production mutation-concurrency-health auto-reject admit.",
+  "ok": "OK: Issue #2985 folded from check_mutation_concurrency_health_admit_2985.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/mutation_concurrency_health.hh",
+      "contains": [
+        "Issue #2985",
+        "set_mutation_concurrency_health_soft_for_test",
+        "h.health_bp < h.health_budget_bp",
+        "Happy path",
+        "set_mutation_concurrency_health_admit_snapshot_for_test",
+        "compute_mutation_concurrency_health"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #2985",
+        "maybe_reject_mutation_concurrency_health"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_mutation_concurrency_health.cpp",
+      "contains": [
+        "ac2985_1_prod_hard_reason_rejects",
+        "ac2985_2_under_budget_rejects",
+        "ac2985_3_happy_zero_extra",
+        "ac2985_4_additive_query",
+        "ac2985_5_inject_clear_resumes",
+        "ac2985_6_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2985",
+        "mutation-concurrency-health-reject-total",
+        "schema-2379"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid_glob": [
+        "docs/design/2985-*"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_2985.cpp"
+      ]
+    }
+  ]
+}

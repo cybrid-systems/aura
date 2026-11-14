@@ -1,0 +1,87 @@
+{
+  "issue": 2913,
+  "title": "Issue #2913: solve_delta locality SLO + escalate under production.",
+  "ok": "OK: Issue #2913 folded from check_solve_delta_locality_slo_2913.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "escalate_locality_slo_if_production",
+        "2913"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "escalate_locality_slo_if_production",
+        "solve_delta_locality_escalate_total",
+        "solve_delta_locality_slo_observe_total",
+        "production_defaults_active",
+        "AuditStrategy::Full",
+        "last_locality_pruned_ == 0",
+        "dirty_count_ == 0",
+        "production_escalated_ = true",
+        "last_locality_pruned_ = 0",
+        "2913",
+        "Soft + residual",
+        "Soft vs production",
+        "escalate_locality_slo_if_production(result",
+        "last_locality_pruned_ = pruned"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2913",
+        "issue-2913",
+        "solve-delta-locality-escalate-total",
+        "solve-delta-locality-slo-observe-total",
+        "solve-delta-locality-reject-total",
+        "solve-delta-locality-slo-wired",
+        "solve-delta-locality-hits",
+        "schema-2277",
+        "schema-2900"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "solve_delta_locality_escalate_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "solve_delta_locality_escalate_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_solve_delta_unresolved_export.cpp",
+      "contains": [
+        "ac2913_1_production_escalate",
+        "ac2913_2_soft_observe_and_quiet",
+        "ac2913_3_commit_readiness_after_escalate",
+        "ac2913_4_additive_schema",
+        "ac2913_5_source_cite"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/2913-*"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_2913.cpp"
+      ]
+    }
+  ]
+}

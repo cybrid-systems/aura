@@ -44,7 +44,7 @@
 //   AC2: Clean short PR profile under production-like defaults passes
 //   AC3: AURA_CHAOS_SOAK / FULL path unchanged (still stricter / longer)
 //   AC4: build.py gate runs cmd_chaos_pr_hard_fail_gate; no flaky timeouts
-//   AC5: scripts/coverage/checks/check_chaos_pr_hard_fail_gate_2554.py greps hard-fail asserts
+//   AC5: scripts/coverage/manifests/2554.json greps hard-fail asserts
 //
 // Env knobs (AURA_CHAOS_* / production gate):
 //   AURA_CHAOS_SEED          default 1 (deterministic RNG stream)
@@ -1139,7 +1139,7 @@ static void ac2554_docs_and_source() {
     CHECK(build.find("check_chaos_pr_hard_fail_gate_2554") != std::string::npos,
           "AC5: coverage script registered");
 
-    const auto gate = read_file("scripts/coverage/checks/check_chaos_pr_hard_fail_gate_2554.py");
+    const auto gate = read_file("scripts/coverage/manifests/2554.json");
     CHECK(!gate.empty(), "AC5: coverage linter present");
     CHECK(gate.find("Issue #2554") != std::string::npos, "AC5: linter cites #2554");
     CHECK(gate.find("steal_hard_fail") != std::string::npos ||
@@ -1979,7 +1979,7 @@ static void ac2902_5_release_blocker_docs_and_linter() {
     std::println("\n--- #2902 AC5: release blocker docs + linter + no docs/design ---");
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_chaos_release_blocker_2902.py");
+    const auto lint = read_file("scripts/coverage/manifests/2902.json");
     CHECK(chaos.find("#2902") != std::string::npos ||
               chaos.find("Issue #2902") != std::string::npos,
           "AC5: chaos cites #2902");
@@ -2148,7 +2148,7 @@ static void ac3073_4_source_linter_gate() {
     std::println("\n--- #3073 AC4/AC5/AC6: linter + no invent + no docs/design ---");
     const auto t = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_chaos_production_readiness_3073.py");
+    const auto lint = read_file("scripts/coverage/manifests/3073.json");
     CHECK(t.find("ac3073_1_production_soak_binds_residual_and_hold") != std::string::npos,
           "AC5: AC1 test");
     CHECK(t.find("ac3073_2_soft_unit_no_abort") != std::string::npos, "AC5: AC2 test");

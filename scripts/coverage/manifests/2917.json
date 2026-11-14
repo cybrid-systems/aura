@@ -1,0 +1,89 @@
+{
+  "issue": 2917,
+  "title": "Issue #2917: closed-loop agent:recover-from-error + recovery stats.",
+  "ok": "OK: Issue #2917 folded from check_agent_recovery_2917.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_diagnostic.cpp",
+      "contains": [
+        "Issue #2917",
+        "add(\"agent:recover-from-error\"",
+        "MutationBoundaryGuard::try_acquire",
+        "save_panic_checkpoint",
+        "clear_last_mutate_error",
+        "note_agent_recovery",
+        "prim-heap-quota",
+        "AURA_SIDE_EFFECT_PRIM",
+        "security_side_effect.hh"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "note_agent_recovery_attempt",
+        "agent_recovery_attempts_total_"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "agent_recovery_attempts_total",
+        "2917"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "query:agent-recovery-stats",
+        "success-rate-bp",
+        "schema",
+        "2917"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_observability.cpp",
+      "contains": [
+        "query:agent-recovery-stats"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "docs/stdlib/agent-recovery.md",
+      "contains": [
+        "2917",
+        "agent:recover-from-error",
+        "query:agent-recovery-stats"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "docs/contributing.md",
+      "contains_any": [
+        "agent-recovery",
+        "2917"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "tests/suite/agent_recovery_2917.aura",
+      "contains": [
+        "agent:recover-from-error",
+        "query:agent-recovery-stats",
+        "unbound variable: map"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "build.py",
+      "contains_any": [
+        "agent-recovery-2917",
+        "agent_recovery_2917"
+      ]
+    }
+  ]
+}

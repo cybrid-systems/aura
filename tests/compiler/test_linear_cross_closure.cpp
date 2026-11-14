@@ -1065,7 +1065,7 @@ static void ac2675_query_surface_keys() {
     CHECK(hdr.find("effective_linear_enforce(") != std::string::npos,
           "AC6 #2675: effective_linear_enforce() function exported from provenance_tracker.hh");
     // Linter self-coverage.
-    auto lint = read_file("scripts/coverage/checks/check_linear_enforce_effective_2675.py");
+    auto lint = read_file("scripts/coverage/manifests/2675.json");
     CHECK(!lint.empty(), "AC6 #2675: linter script present");
     CHECK(lint.find("#2675") != std::string::npos, "AC6 #2675: linter cites #2675");
     CHECK(lint.find("effective_linear_enforce") != std::string::npos,

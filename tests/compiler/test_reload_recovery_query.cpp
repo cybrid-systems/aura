@@ -1235,8 +1235,7 @@ static void ac2982_6_source_and_linter() {
     const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
     CHECK(hh.find("Issue #2982") != std::string::npos, "AC6: header cites #2982");
     CHECK(cpp.find("Issue #2982") != std::string::npos, "AC6: cpp cites #2982");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_staging_dlopen_ops_recovery_2982.py");
+    const auto lint = read_file("scripts/coverage/manifests/2982.json");
     CHECK(!lint.empty() && lint.find("2982") != std::string::npos, "AC6: linter present");
     const auto build = read_file("build.py");
     CHECK(build.find("check_staging_dlopen_ops_recovery_2982") != std::string::npos,

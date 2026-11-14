@@ -1,0 +1,104 @@
+{
+  "issue": 2980,
+  "title": "Issue #2980: merge event-driven Soft epoch-invariant walk with residual remount.",
+  "ok": "OK: Issue #2980 folded from check_epoch_residual_merged_heal_2980.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "Issue #2980",
+        "aura_residual_live_closure_remount_tick",
+        "g_epoch_residual_merged_heal_total",
+        "aura_event_driven_epoch_invariant_walk_if_due",
+        "commit_func_table_swap",
+        "aura_aot_bump_func_table_epoch",
+        "one relaxed load",
+        "residual_b > 0",
+        "aura_epoch_invariant_mode() != 1",
+        "production_defaults_active()",
+        "aura_periodic_epoch_invariant_walk_if_due",
+        "aura_2693_soft_fuse_record"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_anonymous_residual_stable_id_policy.cpp",
+      "contains": [
+        "ac2980_1_merged_heal_same_edge",
+        "ac2980_2_quiet_zero_extra",
+        "ac2980_3_hard_no_merge",
+        "ac2980_4_standalone_preserved",
+        "ac2980_5_query_keys",
+        "ac2980_6_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "aura_residual_live_closure_remount_tick"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "aura_residual_live_closure_remount_tick"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2980",
+        "issue-2980",
+        "epoch-residual-merged-heal-total",
+        "epoch-residual-merged-heal-wired",
+        "schema-2668",
+        "schema-2928"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2980"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/aura_jit_bridge.h",
+      "contains": [
+        "Issue #2980",
+        "aura_epoch_residual_merged_heal_total_v_read"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/compiler/aura_jit_bridge_stub.cpp",
+      "contains": [
+        "aura_epoch_residual_merged_heal_total_v_read"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "tests/compiler/test_epoch_invariant_walk.cpp",
+      "contains": [
+        "ac2980_1_event_walk_merges_residual"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid": [
+        "tests/compiler/test_issue_2980.cpp"
+      ]
+    },
+    {
+      "ac": "AC11",
+      "forbid_glob": [
+        "docs/design/*2980*"
+      ]
+    }
+  ]
+}

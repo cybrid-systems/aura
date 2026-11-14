@@ -1,0 +1,68 @@
+{
+  "issue": 2900,
+  "title": "Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.",
+  "ok": "OK: Issue #2900 folded from check_solver_budget_2900.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "SolverBudget",
+        "allow_timeout_commit",
+        "set_solver_budget",
+        "is_default",
+        "kSolverBudgetDefault"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "allow_timeout_commit",
+        "solver_budget_timeout_export_total",
+        "solver_budget_full_escalate_total",
+        "escalate_if_production",
+        "production_defaults_active"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2900",
+        "solver-budget-wired",
+        "schema-2277"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "solver_budget_timeout_export_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_solve_delta_unresolved_export.cpp",
+      "contains": [
+        "ac2900_1_soft_allow_timeout_export",
+        "ac2900_2_production_still_escalates",
+        "ac2900_3_default_budget_unchanged",
+        "ac2900_4_additive_query",
+        "ac2900_5_source_cite"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/2900-*"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/compiler/test_issue_2900.cpp"
+      ]
+    }
+  ]
+}

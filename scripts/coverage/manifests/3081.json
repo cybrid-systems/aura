@@ -1,0 +1,74 @@
+{
+  "issue": 3081,
+  "title": "Issue #3081: Soft allow_timeout_commit TIMEOUT is not query:type authority.",
+  "ok": "OK: Issue #3081 folded from check_soft_timeout_export_non_authoritative_3081.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "kSoftTimeoutExportNonAuthoritativeIssue = 3081"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "Issue #3081",
+        "last_type_export_authoritative_ = false",
+        "allow_timeout_commit",
+        "delta_timeout_fail_closed_total",
+        "delta_timeout_reject_total",
+        "if (solve_status != SolveResult::SOLVED)"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_solve_delta_unresolved_export.cpp",
+      "contains": [
+        "ac3081_1_soft_timeout_clears_authority",
+        "ac3081_2_query_type_not_authoritative",
+        "ac3081_3_production_unchanged",
+        "ac3081_4_solved_zero_cost",
+        "ac3081_5_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_eval.cpp",
+      "contains": [
+        "not-authoritative",
+        "query-type-of",
+        "get-inferred-type",
+        "Issue #3081",
+        "grant_type_export_authority"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "type_export_authoritative"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "Issue #3081"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/compiler/test_issue_3081.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/3081-*"
+      ]
+    }
+  ]
+}

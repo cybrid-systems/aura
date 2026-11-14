@@ -1,0 +1,79 @@
+{
+  "issue": 3036,
+  "title": "Issue #3036: mailbox residual RejectHard stay fail-closed under production.",
+  "ok": "OK: Issue #3036 folded from check_mailbox_residual_hard_reject_3036.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "mailbox_residual_hard_enabled",
+        "mailbox_residual_hard_reject_total",
+        "Issue #3036",
+        "return true",
+        "mailbox_delivery_reject_soft_observe_total",
+        "mailbox_sandbox_explicit_off",
+        "g_mailbox_delivery_inject == MailboxDeliveryInject::None && target == nullptr",
+        "maybe_mailbox_defer_slo_hold_cancel"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/serve/test_mailbox_recv_mutation_boundary.cpp",
+      "contains": [
+        "ac3036_1_production_residual_hard_bp",
+        "ac3036_2_soft_observe_only",
+        "ac3036_3_shared_steal_bits",
+        "ac3036_4_schema",
+        "ac3036_5_source_linter_chaos"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/serve/steal_safety.cpp",
+      "contains": [
+        "evaluate_residual_hard_and_bits",
+        "StealInvariant::LayoutStampMatch",
+        "StealInvariant::TicketFresh",
+        "StealInvariant::GcDeferClear",
+        "mailbox_delivery_safety_transaction"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/steal_safety.h",
+      "contains": [
+        "StealInvariant"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "mailbox-residual-hard-reject-total",
+        "schema-3036",
+        "schema-2987"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp",
+      "contains": [
+        "apply_production_audit_defaults",
+        "ac3036_mailbox_residual_prod_fail_closed_cite"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/serve/test_issue_3036.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/3036-*"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "issue": 2780,
+  "title": "Issue #2780: maybe_decay vs note_mailbox_bp_recent race (#2633 residual).",
+  "ok": "OK: Issue #2780 folded from check_scope_bp_decay_race_2780.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "kMailboxBpScopeDecayRaceIssue",
+        "2780",
+        "note_mailbox_bp_recent_event",
+        "gauge->last_event_us.store",
+        "gauge->recent.fetch_add",
+        "g_scope_bp_map_mtx",
+        "maybe_decay_mailbox_bp_recent",
+        "Issue #2780",
+        "std::scoped_lock<std::mutex> lock(g_scope_bp_map_mtx)",
+        "g->recent.store(0",
+        "still inside the quiet window",
+        "last_event_us.load"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "absent": [
+        "snapshot.reserve"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/orch/test_mailbox_bp_admit.cpp",
+      "contains": [
+        "ac2780_concurrent_note_decay",
+        "ac2780_skip_active",
+        "ac2780_source_and_query"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "schema-2780",
+        "scope-bp-decay-race-wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid_glob": [
+        "docs/design/2780-*"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/orch/test_issue_2780.cpp"
+      ]
+    }
+  ]
+}

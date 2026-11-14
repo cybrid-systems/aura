@@ -422,8 +422,7 @@ void ac12_sample_bp_zero_no_full_lower() {
     aura_test_set_soundness_sample_bp(100);
 
     const auto t = read_file("tests/compiler/test_incremental_soundness_oracle.cpp");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_prod_soundness_real_compare_3226.py");
+    const auto lint = read_file("scripts/coverage/manifests/3226.json");
     const auto build = read_file("build.py");
     CHECK(t.find("ac10_prod_sample_real_compare") != std::string::npos, "3226 AC6: suite");
     CHECK(!lint.empty() && lint.find("3226") != std::string::npos, "3226 AC6: linter");

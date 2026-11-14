@@ -941,7 +941,7 @@ static void ac2905_5_source_cite_phase5_no_design() {
     const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_moving_sticky_densify_off_2905.py");
+    const auto lint = read_file("scripts/coverage/manifests/2905.json");
     const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
     CHECK(arena.find("#2905") != std::string::npos ||
               arena.find("Issue #2905") != std::string::npos,

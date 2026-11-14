@@ -551,7 +551,7 @@ int run_test_soa_dirty_aware_pipeline() {
         CHECK(href(cs, "production-soa-dirty-hot-pack-wired") == 1, "AC5: hot pack wired");
         CHECK(href(cs, "soa-to-aos-bridge-sunset-wired") == 1, "AC5: bridge sunset wired");
         const auto build = read_file("build.py");
-        const auto lint = read_file("scripts/coverage/checks/check_soa_sunset_bridge_2907.py");
+        const auto lint = read_file("scripts/coverage/manifests/2907.json");
         CHECK(build.find("check_soa_sunset_bridge_2907") != std::string::npos,
               "AC5: build.py wires linter");
         CHECK(!lint.empty() && lint.find("2907") != std::string::npos, "AC5: linter present");

@@ -1,0 +1,84 @@
+{
+  "issue": 3031,
+  "title": "Issue #3031: pending_full_solve + locality residual drain before commit.",
+  "ok": "OK: Issue #3031 folded from check_pending_full_solve_residual_3031.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "drain_pending_full_solve_before_commit"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "drain_pending_full_solve_before_commit",
+        "escalate_if_production(SolveResult::TIMEOUT",
+        "g_pending_full_solve_residual_observe_total",
+        "pending == 0 && loc == 0"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "drain_pending_full_solve_before_commit",
+        "/*force_reason=*/16"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_solve_delta_unresolved_export.cpp",
+      "contains": [
+        "ac3031_1_production_drain_escalate_reject",
+        "ac3031_2_soft_observe_allow",
+        "ac3031_3_quiet_zero_cost",
+        "ac3031_4_commit_readiness_hermetic",
+        "ac3031_5_schema",
+        "ac3031_6_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "pending_full_solve_residual",
+        "return 16",
+        "kPendingFullSolveResidualIssue"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_type_linear_commit_health.cpp",
+      "contains": [
+        "ac3031_health_schema"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-3031",
+        "pending-full-solve-residual-last",
+        "pending-full-solve-residual-observe-total",
+        "pending-full-solve-residual-escalate-total",
+        "pending-full-solve-residual-reject-total",
+        "pending-full-solve-residual-wired"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_3031.cpp"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/3031-*"
+      ]
+    }
+  ]
+}

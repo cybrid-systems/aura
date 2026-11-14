@@ -421,7 +421,7 @@ static void ac3067_4_soak_and_linter() {
     const auto svc = read_file("src/compiler/service.ixx");
     const auto dirty = read_file("src/compiler/service_dirty.cpp");
     const auto t = read_file("tests/compiler/test_dep_graph_hybrid_cascade.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_hybrid_deferred_cascade_3067.py");
+    const auto lint = read_file("scripts/coverage/manifests/3067.json");
     const auto build = read_file("build.py");
     CHECK(svc.find("Issue #3067") != std::string::npos, "3067 AC4: service cite");
     CHECK(svc.find("drain_deferred_hybrid_cascade_") != std::string::npos, "3067 AC4: drain");

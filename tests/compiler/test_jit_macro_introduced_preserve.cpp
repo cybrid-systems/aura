@@ -459,7 +459,7 @@ static void ac3064_4_source_and_linter() {
     const auto low = read_file("src/compiler/lowering.ixx");
     const auto q = read_file("src/compiler/evaluator_primitives_query_lifecycle.cpp");
     const auto t = read_file("tests/compiler/test_jit_macro_introduced_preserve.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_inline_macro_body_marker_3064.py");
+    const auto lint = read_file("scripts/coverage/manifests/3064.json");
     const auto build = read_file("build.py");
     CHECK(pass.find("Issue #3064") != std::string::npos, "3064 AC4: InlinePass cite");
     CHECK(pass.find("body_has_macro_introduced") != std::string::npos, "3064 AC4: helper");

@@ -893,7 +893,7 @@ static void ac2912_6_soft_prod_table_linter() {
     CHECK(cixx.find("production / Full + diverge") != std::string::npos ||
               cixx.find("force-Full") != std::string::npos,
           "AC6: production force-Full documented");
-    auto lint = read_file("scripts/coverage/checks/check_layered_evidence_force_full_2912.py");
+    auto lint = read_file("scripts/coverage/manifests/2912.json");
     CHECK(!lint.empty(), "AC6: linter script present");
     CHECK(lint.find("#2912") != std::string::npos, "AC6: linter cites #2912");
     auto build = read_file("build.py");
@@ -1049,7 +1049,7 @@ static void ac2979_6_source_and_linter() {
     CHECK(cixx.find("Issue #2979") != std::string::npos, "AC6: coercion_map cites #2979");
     auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     CHECK(mb.find("Issue #2979") != std::string::npos, "AC6: mb.cpp cites #2979");
-    auto lint = read_file("scripts/coverage/checks/check_layered_evidence_phase5_consume_2979.py");
+    auto lint = read_file("scripts/coverage/manifests/2979.json");
     CHECK(!lint.empty() && lint.find("2979") != std::string::npos, "AC6: linter present");
     auto build = read_file("build.py");
     CHECK(build.find("check_layered_evidence_phase5_consume_2979") != std::string::npos,

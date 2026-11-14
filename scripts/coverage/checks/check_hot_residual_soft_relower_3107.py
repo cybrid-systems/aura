@@ -42,7 +42,7 @@ def main() -> int:
     pol = _read("src/compiler/castop_density_policy.hh")
     test = _read("tests/compiler/test_castop_density_hard.cpp")
     build = _read("build.py")
-    lint3084 = _read("scripts/coverage/checks/check_hot_residual_soft_must_deopt_3084.py")
+    lint3084 = _read("scripts/coverage/manifests/3084.json")
 
     # ── AC1: Production path unchanged (density-keep + force-JIT) ────────
     must("kCastOpHotResidualNonidentityIssue = 3046", "AC1 #3046 stamp", pol)

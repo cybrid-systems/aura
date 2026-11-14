@@ -1,0 +1,84 @@
+{
+  "issue": 2642,
+  "title": "Issue #2642: densify Phase-5 O(dirty) live linear-root consistency scan",
+  "ok": "OK: Issue #2642 folded from check_occurrence_densify_root_scan_2642.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "#2642",
+        "LinearDensifyRootMismatch",
+        "#2609",
+        "#2673",
+        "#2664"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "#2642",
+        "scan_linear_roots_after_densify",
+        "evaluate_linear_type_provenance_hard_and",
+        "#2609",
+        "linear_ops_present",
+        "Soft path bumps observe counter only",
+        "force_linear_rollback(LinearDensifyRootMismatch)",
+        "#2673",
+        "linear_densify_scan_mismatch_inject_pending",
+        "if (!linear_ops_present)",
+        "#2664"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "#2642",
+        "#2673",
+        "AC4: existing densify_consistency.overall_ok() AND preserved",
+        "#2664",
+        "ac2673_chaos_soak_and_linter"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "linear_densify_scan_mismatch_total",
+        "linear_densify_scan_mismatch_observe_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "linear_densify_scan_mismatch_total",
+        "linear_densify_scan_mismatch_observe_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "linear-densify-scan-mismatch-total",
+        "linear-densify-scan-mismatch-observe-total",
+        "schema-2642",
+        "issue-2642",
+        "linear-densify-wired",
+        "linear-densify-hard-path-wired",
+        "schema-2673",
+        "issue-2673"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "#2673",
+        "inject_linear_densify_scan_mismatch_for_test"
+      ]
+    }
+  ]
+}

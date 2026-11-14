@@ -1314,8 +1314,7 @@ static void ac2951_6_source_and_linter() {
     const auto hdr = read_file("src/compiler/aura_jit_bridge.h");
     const auto t = read_file("tests/compiler/test_named_closure_stable_id_at_create.cpp");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_cross_eval_hard_owner_scoped_2951.py");
+    const auto lint = read_file("scripts/coverage/manifests/2951.json");
     CHECK(cpp.find("Issue #2951") != std::string::npos || cpp.find("#2951") != std::string::npos,
           "2951 AC6: bridge cites #2951");
     CHECK(dirty.find("Issue #2951") != std::string::npos ||

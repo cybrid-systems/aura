@@ -1,0 +1,85 @@
+{
+  "issue": 2376,
+  "title": "Issue #2376: DensifyConsistencyReport per-call last-result (envframe + closure).",
+  "ok": "OK: Issue #2376 folded from check_densify_last_call_axes_2376.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "note_last_densify_envframe_ok",
+        "Issue #2376",
+        "note_last_densify_closure_remount_ok",
+        "envframe_ok = true",
+        "closure_remount_ok = true",
+        "bump_last_densify_call_seq",
+        "force_densify_remap_pairing",
+        "AURA_DENSIFY_CONTRACT"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/densify_consistency_report.h",
+      "contains": [
+        "kDensifyEnvframeFailOwnershipScan",
+        "kDensifyClosureFailCaptureRemap",
+        "g_last_densify_call_seq"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_densify_last_call_axes.cpp",
+      "contains": [
+        "ac1_envframe_last_call_fail",
+        "ac2_closure_last_call_fail",
+        "ac3_soft_vacuous",
+        "ac4_query",
+        "ac5_source_cite"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_env.cpp",
+      "contains": [
+        "cl_fail0",
+        "cl_fail1",
+        "Issue #2376"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2376",
+        "issue-2376",
+        "densify-last-call-seq",
+        "densify-last-call-axes-wired",
+        "densify-envframe-fail-code",
+        "densify-closure-fail-code",
+        "last_densify_envframe_ok",
+        "last_densify_closure_remount_ok"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "absent": [
+        "densify_envframe_ok = true"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_densify_last_call_axes"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "build.py",
+      "contains": [
+        "cmd_densify_last_call_axes_coverage"
+      ]
+    }
+  ]
+}

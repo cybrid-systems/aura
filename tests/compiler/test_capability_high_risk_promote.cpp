@@ -407,7 +407,7 @@ static void ac3141_4_additive_counter_only() {
           "AC4: kCapWildcard write-fence block present");
 
     // Linter exists
-    const auto linter = read_file("scripts/coverage/checks/check_wildcard_grant_effect_fence.py");
+    const auto linter = read_file("scripts/coverage/manifests/3141.json");
     CHECK(!linter.empty() && linter.find("Issue #3141") != std::string::npos,
           "AC4: linter exists and cites #3141");
 

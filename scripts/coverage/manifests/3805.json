@@ -1,0 +1,75 @@
+{
+  "issue": 3805,
+  "title": "Issue #3805: abandon/force-recycle live-body husk must not be",
+  "ok": "OK: Issue #3805 folded from check_abandoned_live_name_reuse_3805.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "kAbandonedLiveNameReuseIssue = 3805",
+        "slot_is_abandoned_live",
+        "Issue #3805",
+        "h.name.empty() && !h.mailbox",
+        "#2661"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/agent_name_table.h",
+      "contains": [
+        "slot_is_abandoned_live(it->second)",
+        "impl_->agents_.erase(it);",
+        "aura::orch::slot_is_reclaimable_clean(it->second) ||\n                aura::orch::slot_is_abandoned_live(it->second)",
+        "if (it->second.must_wait_reclaimed || it->second.reclaimed_deferred_cleanup)",
+        "slot_is_reclaimable_clean"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "slot_is_abandoned_live(h)",
+        "filter-out; identity plane consistent"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/orch/agent_spawn.h",
+      "absent": [
+        "delete h.fiber"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/orch/test_join_drain_reclaim.cpp",
+      "contains": [
+        "ac3805_1_put_retires_abandoned_live_not_move_assign",
+        "ac3805_2_directory_scope_skip_abandoned_ghost",
+        "ac3805_3_soft_and_done_path_unchanged",
+        "ac3805_4_no_body_stack_free_on_retire",
+        "ac3805_5_source_cite_and_linter"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "absent": [
+        "abandoned-live-name-reuse"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/orch/test_issue_3805.cpp",
+        "tests/issues/test_issue_3805.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/3805*"
+      ]
+    }
+  ]
+}

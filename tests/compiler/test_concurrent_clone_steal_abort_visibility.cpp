@@ -313,8 +313,7 @@ int run_test_concurrent_clone_steal_abort_visibility() {
               "3321 AC6: cross-flat intern (no raw ID capture)");
         CHECK(me.find("source_pool.resolve") != std::string::npos, "3321 AC6: resolve then intern");
         const auto build = read_file("build.py");
-        const auto lint =
-            read_file("scripts/coverage/checks/check_concurrent_clone_prod_zero_half_tree_3321.py");
+        const auto lint = read_file("scripts/coverage/manifests/3321.json");
         CHECK(!lint.empty() && lint.find("Issue #3321") != std::string::npos, "3321 AC5: linter");
         CHECK(build.find("check_concurrent_clone_prod_zero_half_tree_3321") != std::string::npos,
               "3321 AC5: build.py wires linter");

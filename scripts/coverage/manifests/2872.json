@@ -1,0 +1,56 @@
+{
+  "issue": 2872,
+  "title": "Issue #2872: define RHS failure must not leave wrong/void binding.",
+  "ok": "OK: Issue #2872 folded from check_define_rhs_fail_bind_2872.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "unbind_local",
+        "unbind_local_symid"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_env.cpp",
+      "contains": [
+        "bool Env::unbind_local",
+        "bool Env::unbind_local_symid",
+        "#2872"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "rhs_is_lambda",
+        "Issue #2872",
+        "Eval first; bind only on success",
+        "Roll back so name is unbound",
+        "rollback_still_void_defs"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/suite/define_rhs_fail_bind_2872.aura",
+      "contains": [
+        "2872",
+        "OK-2872",
+        "deep-nontail"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_2872.cpp"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/2872-*"
+      ]
+    }
+  ]
+}

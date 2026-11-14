@@ -1,0 +1,51 @@
+{
+  "issue": 2783,
+  "title": "Issue #2783: keepalive helper exits on body hard-reclaim (no orphan leak).",
+  "ok": "OK: Issue #2783 folded from check_keepalive_helper_reclaim_2783.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "kKeepaliveHelperReclaimIssue",
+        "2783",
+        "is_reclaimed()",
+        "keepalive_helper_reclaim_exit_total",
+        "body_ptr",
+        "keepalive_helper_orphan_total",
+        "note_orphan_fiber",
+        "request_force_safepoint"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "schema-2783",
+        "keepalive-helper-orphan-total",
+        "keepalive-helper-reclaim-exit-total",
+        "keepalive-helper-reclaim-wired"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/orch/test_fiber_native_keepalive.cpp",
+      "contains": [
+        "ac2783_reclaimed_body_helper_joins",
+        "2783"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid": [
+        "tests/orch/test_issue_2783.cpp"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid_glob": [
+        "docs/design/2783-*"
+      ]
+    }
+  ]
+}

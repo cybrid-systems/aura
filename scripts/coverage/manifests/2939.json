@@ -1,0 +1,88 @@
+{
+  "issue": 2939,
+  "title": "Issue #2939: solve_delta reverify = bounded dep-closure (O(affected)).",
+  "ok": "OK: Issue #2939 folded from check_solve_delta_dep_closure_2939.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "#2939",
+        "var_to_constraints_",
+        "pending_full_solve_roots_",
+        "bounded dependency closure",
+        "delta_reverify_closure_cap_hit_total",
+        "pending_full_solve_roots_.insert",
+        "pending_full_solve_roots_.empty()",
+        "SolveResult::CONFLICT"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "#2939",
+        "escalate_if_production"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_adaptive_reverify_limit.cpp",
+      "contains": [
+        "ac2939_1_small_dirty_closure_no_cap",
+        "ac2939_2_cap_hit_pending",
+        "ac2939_3_soft_empty_zero",
+        "ac2939_4_conflict_timeout_preserved",
+        "ac2939_5_metrics_lineage",
+        "ac2939_6_linter_and_no_design"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "delta_reverify_closure_nodes_total",
+        "delta_reverify_closure_edges_total",
+        "delta_reverify_closure_cap_hit_total",
+        "delta_reverify_expand_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/compiler_metrics_fields.inc",
+      "contains": [
+        "delta_reverify_closure_nodes_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_query_type_stats.cpp",
+      "contains": [
+        "delta-reverify-closure-nodes-total",
+        "delta-reverify-closure-cap-hit-total",
+        "schema-2939",
+        "schema-2146",
+        "schema-2356"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "build.py",
+      "contains": [
+        "cmd_solve_delta_dep_closure_2939"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/2939-*"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid": [
+        "tests/compiler/test_issue_2939.cpp"
+      ]
+    }
+  ]
+}

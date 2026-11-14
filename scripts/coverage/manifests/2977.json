@@ -1,0 +1,127 @@
+{
+  "issue": 2977,
+  "title": "Issue #2977: residual remount prefer force_jit + last_success coverage.",
+  "ok": "OK: Issue #2977 folded from check_residual_remount_prefer_force_jit_2977.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "Issue #2977",
+        "relower_success_covers_define",
+        "prefer_mask",
+        "aura_hot_update_force_jit_regions_mask",
+        "aura_hot_update_last_reemit_success_region_mask",
+        "production_defaults_active()",
+        "budget == 0",
+        "aura_sync_remount_named_live_closures",
+        "aura_sync_remount_anon_captured_live_closures",
+        "aura_sync_remount_pure_anon_live_closures",
+        "no double remount",
+        "still advance",
+        "g_residual_remount_cursor"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "absent": [
+        "residual_closure_sid_region_bits_unlocked"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "residual_remount_prefer_force_jit_total",
+        "residual_remount_prefer_hit_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_anonymous_residual_stable_id_policy.cpp",
+      "contains": [
+        "ac2977_1_prefer_demoted_region",
+        "ac2977_2_soft_idle_zero_cost",
+        "ac2977_3_reemit_success_no_double",
+        "ac2977_4_cursor_no_starvation",
+        "ac2977_5_query_keys",
+        "ac2977_6_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "candidates == 0",
+        "Issue #2977"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2977",
+        "residual-remount-prefer-force-jit-total",
+        "residual-remount-prefer-hit-total",
+        "residual-remount-prefer-wired",
+        "schema-2928"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2977"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "schema-2895",
+        "schema-2949"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "Issue #2977"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "aura_bump_residual_remount_prefer_totals"
+      ]
+    },
+    {
+      "ac": "AC11",
+      "path": "src/compiler/runtime_shared.h",
+      "contains": [
+        "aura_residual_remount_prefer_force_jit_total_v_read"
+      ]
+    },
+    {
+      "ac": "AC12",
+      "path": "src/compiler/aura_jit_bridge_stub.cpp",
+      "absent": [
+        "aura_hot_update_force_jit_regions_mask"
+      ]
+    },
+    {
+      "ac": "AC13",
+      "forbid": [
+        "tests/compiler/test_issue_2977.cpp"
+      ]
+    },
+    {
+      "ac": "AC14",
+      "forbid_glob": [
+        "docs/design/*2977*"
+      ]
+    }
+  ]
+}

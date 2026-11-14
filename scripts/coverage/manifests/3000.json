@@ -1,0 +1,142 @@
+{
+  "issue": 3000,
+  "title": "Issue #3000: query:*-stable must not export a pre-mutate generation",
+  "ok": "OK: Issue #3000 folded from check_query_stable_ref_restamp_lag_3000.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #3000",
+        "allow_query_stable_ref_export",
+        "restamp_last_budget_exceeded",
+        "should_hard_reject_soft_sibling",
+        "restamp_lag_soft_observe",
+        "one relaxed load"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "allow_query_stable_ref_export",
+        "before make_ref_layout",
+        "not exceeded"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "node_generation_is_post_mutate",
+        "Issue #3000"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query_workspace.cpp",
+      "contains": [
+        "allow_query_stable_ref_export",
+        "query:stable-ref",
+        "restamp-lag"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "Issue #3000"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/core/provenance_tracker.hh",
+      "contains": [
+        "restamp_lag_soft_observe",
+        "restamp_lag_last_reason",
+        "query_stable_ref_restamp_lag_prevented_total",
+        "kQueryStableRefRestampLagIssue = 3000"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/core/flatast_restamp.hh",
+      "contains": [
+        "silent torn generation",
+        "Issue #3000"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-3000",
+        "query-stable-ref-restamp-lag-prevented-total",
+        "query-stable-ref-stamped-total",
+        "query-stable-ref-unstamped-prevented-total",
+        "schema-2960"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "src/compiler/evaluator_primitives_stdlib_review.cpp",
+      "contains": [
+        "schema-3000",
+        "schema-2934"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "path": "src/compiler/evaluator_primitives_query_obs_mid.cpp",
+      "contains": [
+        "schema-3000"
+      ]
+    },
+    {
+      "ac": "AC11",
+      "path": "tests/compiler/test_hygiene_mutate_closed_loop.cpp",
+      "contains": [
+        "ac3000_1_production_reject_or_post_mutate",
+        "#3000"
+      ]
+    },
+    {
+      "ac": "AC12",
+      "path": "tests/core/test_tenant_isolation_enforcement.cpp",
+      "contains": [
+        "#3000",
+        "allow_query_stable_ref_export"
+      ]
+    },
+    {
+      "ac": "AC13",
+      "path": "tests/core/test_stable_ref_tenant_capture.cpp",
+      "contains": [
+        "#3000",
+        "stamp_query_stable_ref_export",
+        "ac3259_1_hot_cone_export",
+        "restamp_hot_cone_after_budget"
+      ]
+    },
+    {
+      "ac": "AC14",
+      "forbid": [
+        "tests/compiler/test_issue_3000.cpp",
+        "tests/core/test_issue_3000.cpp"
+      ]
+    },
+    {
+      "ac": "AC15",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #3000"
+      ]
+    },
+    {
+      "ac": "AC16",
+      "forbid_glob": [
+        "docs/design/*3000*"
+      ]
+    }
+  ]
+}

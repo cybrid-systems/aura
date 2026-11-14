@@ -1,0 +1,89 @@
+{
+  "issue": 2884,
+  "title": "Issue #2884: agent_send_safe — unify C++/language handoff_ref path for",
+  "ok": "OK: Issue #2884 folded from check_agent_send_safe_2884.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "agent_send_safe",
+        "Evaluator*",
+        "void* ev",
+        "HandoffRequired",
+        "agent_send_safe_handoff_required_total",
+        "agent_send_safe_total",
+        "aura_orch_agent_send_handoff",
+        "msg.held_ref_token.has_value()",
+        "stamp_mail_message_handoff_completed",
+        "agent_send_safe_total.fetch_add",
+        "Issue #2884"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "absent": [
+        "import aura.compiler.evaluator;"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "aura_orch_agent_send_handoff",
+        "make_stamped_ref",
+        "handoff_ref"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "HandoffRequired = 3",
+        "Closed = 2",
+        "handoff_reject_total",
+        "handoff_completed is false, reject",
+        "Issue #2884"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "schema-2848",
+        "agent-send-auto-handoff-wired",
+        "agent-send-auto-handoff-total",
+        "agent-send-handoff-fail-total",
+        "ev.handoff_ref",
+        "stamp_mail_message_handoff_completed",
+        "schema-2884",
+        "issue-2884",
+        "agent-send-safe-wired",
+        "agent-send-safe-total",
+        "agent-send-safe-handoff-required-total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/orch/test_orch_obs_facade.cpp",
+      "contains": [
+        "#2884"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/core/test_issue_2884.cpp",
+        "tests/orch/test_issue_2884.cpp",
+        "tests/compiler/test_issue_2884.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/2884-*"
+      ]
+    }
+  ]
+}

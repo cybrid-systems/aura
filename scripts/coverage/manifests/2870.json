@@ -1,0 +1,42 @@
+{
+  "issue": 2870,
+  "title": "Issue #2870: top-level free-var set! from named-let / after fiber:join.",
+  "ok": "OK: Issue #2870 folded from check_fiber_join_toplevel_set_2870.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_env.cpp",
+      "contains": [
+        "#2870",
+        "live top_ free-var cells after parent miss",
+        "Fall through to parent_ walk + live top_",
+        "std::optional<std::uint64_t> Env::lookup_cell_index",
+        "Prefer parent_ above so",
+        "let* locals shadow",
+        "let* free-var cells may live only on the parent_ Env chain"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/suite/fiber_join_toplevel_set_2870.aura",
+      "contains": [
+        "2870",
+        "spawn-count",
+        "named-let",
+        "OK-2870"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "forbid": [
+        "tests/compiler/test_issue_2870.cpp"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "forbid_glob": [
+        "docs/design/2870-*"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "issue": 2992,
+  "title": "Issue #2992: non-strict ground-type consistency Agent feedback.",
+  "ok": "OK: Issue #2992 folded from check_gradual_permissiveness_2992.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "maybe_report_ground_inconsistency",
+        "incompatible ground types",
+        "ErrorKind::Warning",
+        "do NOT flip this boolean",
+        "reg_.dynamic_type()",
+        "TypeTag::INT && to_tag == TypeTag::FLOAT"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_bidirectional_annotation.cpp",
+      "contains": [
+        "ac2992_1_int_string_warning",
+        "ac2992_2_dynamic_permissive",
+        "ac2992_3_numeric_quiet",
+        "ac2992_4_permissive_silent"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "Dynamic ~ T stays fully permissive",
+        "AURA_GRADUAL_PERMISSIVENESS",
+        "GradualPermissiveness",
+        "parse_gradual_permissiveness"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_compile.cpp",
+      "contains": [
+        "type:set-gradual-permissiveness",
+        "schema-2992"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "schema-2992"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "set_gradual_permissiveness"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "gradual_ground_incompatible_warning_total"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "tests/core/test_bidirectional_stats.cpp",
+      "contains": [
+        "ac2992_5_schema",
+        "ac2992_7_setter",
+        "ac2992_6_eval_continues"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid": [
+        "tests/compiler/test_issue_2992.cpp"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid_glob": [
+        "docs/design/2992-*"
+      ]
+    }
+  ]
+}

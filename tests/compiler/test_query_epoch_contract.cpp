@@ -332,7 +332,7 @@ int run_test_query_epoch_contract() {
             auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
             auto qm = read_file("src/compiler/query_matcher.ixx");
             auto build = read_file("build.py");
-            auto lint = read_file("scripts/coverage/checks/check_query_result_binding_2933.py");
+            auto lint = read_file("scripts/coverage/manifests/2933.json");
             CHECK(hh.find("QueryResult") != std::string::npos, "QueryResult type");
             CHECK(hh.find("Issue #2933") != std::string::npos, "header #2933");
             CHECK(hh.find("is_fresh") != std::string::npos, "is_fresh");

@@ -598,8 +598,7 @@ static void ac2758_5_source_and_linter() {
     const auto q = ::aura::test::aura_query_prims_source();
     const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_type_linear_commit_proof_counts_2758.py");
+    const auto lint = read_file("scripts/coverage/manifests/2758.json");
     CHECK(tma.find("Issue #2758") != std::string::npos || tma.find("#2758") != std::string::npos,
           "AC5: tma cites #2758");
     CHECK(emb.find("#2758") != std::string::npos, "AC5: emb cites #2758");
@@ -761,8 +760,7 @@ static void ac2842_5_source_and_linter() {
     const auto q = ::aura::test::aura_query_prims_source();
     const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_type_linear_commit_proof_goal_truth_2842.py");
+    const auto lint = read_file("scripts/coverage/manifests/2842.json");
     CHECK(tma.find("Issue #2842") != std::string::npos || tma.find("#2842") != std::string::npos,
           "AC5: tma cites #2842");
     CHECK(emb.find("#2842") != std::string::npos, "AC5: emb cites #2842");
@@ -915,8 +913,7 @@ static void ac2897_5_source_cite() {
     CHECK(t.find("ac2897_2_matches_ssot") != std::string::npos, "2897 AC5: AC2 test");
     CHECK(t.find("ac2897_3_quiet_cheap") != std::string::npos, "2897 AC5: AC3 test");
     CHECK(t.find("ac2897_4_additive") != std::string::npos, "2897 AC5: AC4 test");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_type_linear_evolution_snapshot_2897.py");
+    const auto lint = read_file("scripts/coverage/manifests/2897.json");
     const auto build = read_file("build.py");
     CHECK(!lint.empty() && lint.find("2897") != std::string::npos,
           "2897 AC5: coverage linter present");
@@ -1051,8 +1048,7 @@ static void ac2911_6_linter_and_decision_table() {
     std::println("\n--- #2911 AC6: decision table + linter + no design ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_refined_consistency_commit_gate_2911.py");
+    const auto lint = read_file("scripts/coverage/manifests/2911.json");
     CHECK(tma.find("Soft vs production decision table") != std::string::npos ||
               tma.find("Soft + drift") != std::string::npos,
           "2911 AC6: decision table in comments");
@@ -1297,8 +1293,7 @@ static void ac3227_4_source_and_linter() {
     const auto svc = read_file("src/compiler/service.ixx");
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_linear_post_migration_proof_rebind_3227.py");
+    const auto lint = read_file("scripts/coverage/manifests/3227.json");
     const auto build = read_file("build.py");
     CHECK(tma.find("kLinearPostMigrationProofRebindIssue") != std::string::npos, "3227 AC4: stamp");
     CHECK(tma.find("rebind_linear_proof_after_root_migration") != std::string::npos,

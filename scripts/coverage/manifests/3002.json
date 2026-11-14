@@ -1,0 +1,73 @@
+{
+  "issue": 3002,
+  "title": "Issue #3002: mailbox hold p99 SSOT + soak fail-closed cancel/release.",
+  "ok": "OK: Issue #3002 folded from check_mailbox_hold_slo_ssot_soak_3002.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/security_schedule_gate.h",
+      "contains": [
+        "maybe_mailbox_defer_slo_hold_cancel",
+        "mailbox_hold_slo_signal",
+        "sample_mailbox_hold_slo_live",
+        "two relaxed loads",
+        "kSecurityScheduleMailboxHoldSloIssue = 2947",
+        "Issue #3002"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/multi_fiber_mailbox.h",
+      "contains": [
+        "request_hold_budget_cancel",
+        "sample_mailbox_hold_slo_live",
+        "mailbox_hold_slo_live_signal",
+        "no second hist walk",
+        "kMailboxHoldSloSsotIssue = 3002"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_mailbox_recv_mutation_boundary.cpp",
+      "contains": [
+        "ac3002_1_gate_sample_cancels_holder",
+        "ac3002_2_shared_sample_quiet_path",
+        "ac3002_4_schema_and_lineage",
+        "ac3002_5_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp",
+      "contains": [
+        "hot p99 without hold-cancel",
+        "holder released after cancel+safepoint",
+        "ac3002_mailbox_hold_slo_soak_cite",
+        "AURA_CHAOS_PR_GATE_ONLY"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_messaging.cpp",
+      "contains": [
+        "schema-3002",
+        "mailbox-hold-slo-ssot-wired",
+        "schema-2958",
+        "mailbox-defer-slo-hold-cancel-total",
+        "schema-2903"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/serve/test_issue_3002.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/*3002*"
+      ]
+    }
+  ]
+}

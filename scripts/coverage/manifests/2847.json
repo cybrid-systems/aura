@@ -1,0 +1,81 @@
+{
+  "issue": 2847,
+  "title": "Issue #2847: bind concurrent region admit to type/occurrence commit gate.",
+  "ok": "OK: Issue #2847 folded from check_region_type_commit_gate_2847.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "region_type_commit_ok",
+        "node_id_to_region_mask_bit",
+        "kRegionTypeCrossTalkIssue = 2847",
+        "if (admitted_mask == 0)",
+        "if (touched_type_mask == 0)",
+        "(touched_type_mask & ~admitted_mask) == 0",
+        "g_region_type_cross_talk_observe_total",
+        "g_region_type_cross_talk_reject_total",
+        "note_region_type_cross_talk",
+        "region_type_cross_talk",
+        "return 13",
+        "g_region_type_cross_talk_observe_total.fetch_add"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "note_region_type_cross_talk",
+        "#2847",
+        "note_region_type_cross_talk(hard)",
+        "Soft: observe only",
+        "admitted_cone_mask_ != 0",
+        "g_mutation_region_concurrent_admit_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "admitted_cone_mask_",
+        "admitted_region_key_"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_query.cpp",
+      "contains": [
+        "region-type-cross-talk-observe-total",
+        "region-type-cross-talk-reject-total",
+        "schema-2847",
+        "mutation-region-concurrent-admit-total",
+        "mutation-region-mask-overlap-reject-total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
+      "contains": [
+        "ac2847_1_pure_commit_ok",
+        "ac2847_2_soft_observe_production_reject",
+        "ac2847_4_zero_cost_quiet",
+        "ac2847_5_additive_and_preserved",
+        "ac2847_6_source_and_linter",
+        "ac2761_1_unequal_key_mask_overlap_reject",
+        "ac2724_1_disjoint_concurrent_admit"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/serve/test_issue_2847.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/*2847*"
+      ]
+    }
+  ]
+}

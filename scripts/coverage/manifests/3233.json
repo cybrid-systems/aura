@@ -1,0 +1,75 @@
+{
+  "issue": 3233,
+  "title": "Issue #3233: stale SafePCVSpan after Guard forces exclusive set_child.",
+  "ok": "OK: Issue #3233 folded from check_pcv_stale_span_exclusive_3233.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/persistent_child_vector.hh",
+      "contains": [
+        "kPcvStaleSpanExclusiveIssue = 3233",
+        "stale_span_force_exclusive_total",
+        "force_inplace",
+        "use_count()>1",
+        "pcv_checkpoint_live_enter",
+        "stale_span_force_exclusive_enabled",
+        "Issue #3233",
+        "kPcvSpanStaleAcrossGuardIssue = 3167"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "stale_exclusive",
+        "stamp_last_pin_generation",
+        "Issue #3233"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/core/test_pcv_exclusive_with_set.cpp",
+      "contains": [
+        "ac3233_1_stale_span_next_set_child_exclusive",
+        "ac3233_2_live_span_still_cows",
+        "ac3233_3_checkpoint_rollback_still_cows",
+        "ac3233_4_soft_unchanged_source"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "pcv_checkpoint_live_enter"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-3233",
+        "schema-2906"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/core/persistent_child_vector.hh",
+      "absent": [
+        "g_3233_"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/core/test_issue_3233.cpp",
+        "tests/issues/test_issue_3233.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/3233-*"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+{
+  "issue": 2928,
+  "title": "Issue #2928: budgeted residual live-closure remount (round-robin).",
+  "ok": "OK: Issue #2928 folded from check_residual_remount_round_robin_2928.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_runtime.cpp",
+      "contains": [
+        "aura_residual_live_closure_remount_tick",
+        "g_residual_remount_cursor",
+        "aura_residual_remount_budget_default",
+        "AURA_RESIDUAL_REMOUNT_BUDGET",
+        "remount_or_force_deopt_unlocked_no_call_time_counter",
+        "Issue #2928",
+        "aura_hot_update_current_storm_level",
+        "aura_hot_update_should_throttle_reemit",
+        "budget_skip",
+        "aura_sync_remount_named_live_closures",
+        "aura_sync_remount_pure_anon_live_closures",
+        "budget == 0",
+        "nslots == 0",
+        "production_defaults_active()"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": [
+        "residual_remount_ok_total",
+        "residual_remount_budget_skip_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "aura_bump_residual_remount_totals"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "candidates == 0",
+        "aura_residual_remount_tick_coalesce"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "aura_residual_remount_tick_coalesce"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2928",
+        "residual-remount-ok-total",
+        "residual-remount-budget-skip-total",
+        "residual-remount-cursor",
+        "residual-remount-wired",
+        "schema-2850"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2928"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "tests/compiler/test_anonymous_residual_stable_id_policy.cpp",
+      "contains": [
+        "ac2928_1_residual_tick_clears_must_deopt",
+        "ac2928_2_storm_skip",
+        "ac2928_3_reemit_success_unchanged",
+        "ac2928_4_soft_budget_zero",
+        "ac2928_5_query_keys",
+        "ac2928_6_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "path": "src/compiler/runtime_shared.h",
+      "contains": [
+        "aura_residual_live_closure_remount_tick"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "path": "src/compiler/aura_jit_bridge_stub.cpp",
+      "contains": [
+        "aura_residual_live_closure_remount_tick"
+      ]
+    },
+    {
+      "ac": "AC11",
+      "forbid": [
+        "tests/compiler/test_issue_2928.cpp"
+      ]
+    },
+    {
+      "ac": "AC12",
+      "forbid_glob": [
+        "docs/design/*2928*"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "issue": 2777,
+  "title": "Issue #2777: AgentScope read APIs take ScopeEnterGuard (#2399 residual).",
+  "ok": "OK: Issue #2777 folded from check_agent_scope_read_guard_2777.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "#2777",
+        "kAgentScopeReadGuardIssue",
+        "\"directory_snapshot\"",
+        "\"handles\"",
+        "\"handles_mut\"",
+        "\"child_at\"",
+        "\"size\"",
+        "\"empty\"",
+        "\"parent\"",
+        "\"is_root\"",
+        "\"child_count\"",
+        "ScopeEnterGuard g(this, \"directory_snapshot\")",
+        "directory_snapshot_concurrent_total",
+        "merge_directory_under_guard_",
+        "2399"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "directory_snapshot_concurrent_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "directory-snapshot-concurrent-total",
+        "schema-2777",
+        "agent-scope-read-guard-wired"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/orch/agent_scope.h",
+      "absent": [
+        "std::mutex",
+        "class AgentRegistry"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/orch/test_agent_scope.cpp",
+      "contains": [
+        "ac2777_read_apis_guarded"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/2777-*"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/orch/test_issue_2777.cpp"
+      ]
+    }
+  ]
+}

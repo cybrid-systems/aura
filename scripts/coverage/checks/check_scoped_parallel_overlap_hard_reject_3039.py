@@ -51,7 +51,7 @@ def main() -> int:
     qh = _read("src/compiler/evaluator_primitives_query_reflect.cpp")
     q = read_query_prims() + qws
     t = _read("tests/compiler/test_workspace_region_concurrency.cpp")
-    lint2990 = _read("scripts/coverage/checks/check_workspace_concurrent_policy_2990.py")
+    lint2990 = _read("scripts/coverage/manifests/2990.json")
     build = _read("build.py")
 
     must("kWorkspaceScopedParallelOverlapHardIssue = 3039", "AC1", hh)

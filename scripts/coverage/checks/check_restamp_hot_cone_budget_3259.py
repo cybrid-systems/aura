@@ -48,7 +48,7 @@ def main() -> int:
     cap = _read("tests/core/test_stable_ref_tenant_capture.cpp")
     t = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
     build = _read("build.py")
-    l3000 = _read("scripts/coverage/checks/check_query_stable_ref_restamp_lag_3000.py")
+    l3000 = _read("scripts/coverage/manifests/3000.json")
     l3230 = _read("scripts/coverage/checks/check_query_stable_restamp_lag_hard_reject_3230.py")
 
     must("kRestampHotConeBudgetIssue = 3259", "AC1 issue", restamp)

@@ -1,0 +1,76 @@
+{
+  "issue": 3321,
+  "title": "Issue #3321: ConcurrentCloneGuard production zero half-tree + stable reason.",
+  "ok": "OK: Issue #3321 folded from check_concurrent_clone_prod_zero_half_tree_3321.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/macro_expansion.ixx",
+      "contains": [
+        "kConcurrentCloneProdZeroHalfTreeIssue = 3321",
+        "kHygieneLimitReasonSameFlatReject = 8",
+        "kHygieneLimitReasonNameMapShared = 9"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "expand_ckpt.try_restore()",
+        "note_hygiene_last_limit_reason(kHygieneLimitReasonStealAbort)",
+        "Issue #3321: production fail-fast after nested steal-abort",
+        "cloned == NULL_NODE || inner_expand_production_limit_deny()",
+        "Soft/Off: continue (historical",
+        "hygiene_depth == 0 && production_surface",
+        "note_hygiene_last_limit_reason(kHygieneLimitReasonSameFlatReject)",
+        "note_hygiene_last_limit_reason(kHygieneLimitReasonNameMapShared)",
+        "return \"same-flat-clone-reject\"",
+        "return \"name-map-shared\"",
+        "g_macro_clone_last_reject_reason.store(2",
+        "g_macro_clone_last_reject_reason.store(4",
+        "target_pool.intern(std::string(source_pool.resolve(sid)))"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_concurrent_clone_steal_abort_visibility.cpp",
+      "contains": [
+        "#3321 AC1",
+        "#3321 AC2",
+        "#3321 AC3",
+        "#3321 AC4",
+        "#3321 AC5"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "paths": [
+        "src/compiler/macro_expansion.cpp",
+        "src/compiler/macro_expansion.ixx"
+      ],
+      "absent": [
+        "g_3321_"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/macro_expansion.cpp",
+      "absent": [
+        "schema-3321"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_3321.cpp",
+        "tests/issues/test_issue_3321.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/3321-*"
+      ]
+    }
+  ]
+}

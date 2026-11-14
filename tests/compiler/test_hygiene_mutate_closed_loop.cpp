@@ -1467,8 +1467,7 @@ static void ac3121_4_source_and_linter() {
 static void ac3000_5_linter_and_suites() {
     std::println("\n--- #3000 AC5/AC6: linter + isolation/tenant-capture ---");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_query_stable_ref_restamp_lag_3000.py");
+    const auto lint = read_file("scripts/coverage/manifests/3000.json");
     const auto iso = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
     const auto cap = read_file("tests/core/test_stable_ref_tenant_capture.cpp");
     CHECK(build.find("check_query_stable_ref_restamp_lag_3000") != std::string::npos,
@@ -1643,7 +1642,7 @@ static void ac3037_4_schema() {
 static void ac3037_5_linter_and_suites() {
     std::println("\n--- #3037 AC5: linter + #2960 isolation suites ---");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_restamp_over_budget_export_3037.py");
+    const auto lint = read_file("scripts/coverage/manifests/3037.json");
     const auto iso = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
     const auto cap = read_file("tests/core/test_stable_ref_tenant_capture.cpp");
     const auto t = read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp");
@@ -2016,7 +2015,7 @@ static void ac3191_6_source_and_linter() {
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_macro_hygiene_default_deny_3191.py");
+    const auto lint = read_file("scripts/coverage/manifests/3191.json");
     CHECK(flat.find("Issue #3191") != std::string::npos, "3191 AC6: eval_flat cites #3191");
     CHECK(flat.find("cannot tweak-literal MacroIntroduced") != std::string::npos,
           "3191 AC6: tweak-literal MacroIntroduced reject message");
@@ -2547,7 +2546,7 @@ static void ac3301_6_source_and_linter() {
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_atomic_batch_macro_audit_3301.py");
+    const auto lint = read_file("scripts/coverage/manifests/3301.json");
     CHECK(mut.find("Issue #3301") != std::string::npos, "3301 AC6: mutate.cpp #3301");
     CHECK(mut.find("target_arg") != std::string::npos, "3301 AC6: table target_arg metadata");
     CHECK(mut.find("kHygieneLimitReasonMacroIntroduced") != std::string::npos,
@@ -2606,8 +2605,7 @@ static void ac3239_3_hygiene_linters_rewritten() {
     std::println("\n--- 3239 AC3: 3218 linter deleted; 3191 rewritten ---");
     CHECK(read_file("scripts/coverage/checks/check_sv_hygiene_merr_surface_3218.py").empty(),
           "3239 AC3: 3218 linter deleted");
-    const auto l3191 =
-        read_file("scripts/coverage/checks/check_macro_hygiene_default_deny_3191.py");
+    const auto l3191 = read_file("scripts/coverage/manifests/3191.json");
     CHECK(!l3191.empty(), "3239 AC3: 3191 linter still present (tweak-literal)");
     CHECK(l3191.find("sv-add-coverpoint cannot") == std::string::npos,
           "3239 AC3: 3191 no longer requires SV prim gates");

@@ -790,8 +790,7 @@ static void ac2909_6_linter_and_no_design() {
     std::println("\n--- #2909 AC6: decision table + linter + no design doc ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_cone_truncate_force_closure_2909.py");
+    const auto lint = read_file("scripts/coverage/manifests/2909.json");
     CHECK(tma.find("Soft vs production decision table") != std::string::npos ||
               tma.find("Soft + truncate + outside drop") != std::string::npos,
           "AC6: decision table in code comments");
@@ -936,8 +935,7 @@ static void ac2962_4_schema_and_source() {
 static void ac2962_5_linter_no_design() {
     std::println("\n--- #2962 AC5: linter + no design + suite extend ---");
     const auto build = read_file("build.py");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_cone_outside_goal_drop_recover_reject_2962.py");
+    const auto lint = read_file("scripts/coverage/manifests/2962.json");
     const auto t = read_file("tests/compiler/test_partial_cone_commit_gate.cpp");
     CHECK(build.find("check_cone_outside_goal_drop_recover_reject_2962") != std::string::npos,
           "AC5: build.py wires linter");

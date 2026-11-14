@@ -1,0 +1,66 @@
+{
+  "issue": 2949,
+  "title": "Issue #2949: production default force_jit_repromote only_covered bits.",
+  "ok": "OK: Issue #2949 folded from check_force_jit_repromote_only_covered_default_2949.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "Issue #2949",
+        "resolve_force_jit_repromote_only_covered",
+        "AURA_FORCE_JIT_REPROMOTE_ONLY_COVERED",
+        "AURA_SANDBOX",
+        "aura_production_defaults_active_probe",
+        "mask == 0",
+        "maybe_force_jit_repromote_on_clean_success",
+        "on_reload_success",
+        "last_reemit_success_region_mask_",
+        "resolve_force_jit_repromote_only_covered()"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "resolve_force_jit_repromote_only_covered",
+        "force_jit_repromote_only_covered_override_",
+        "schema_2949"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_force_jit_repromote.cpp",
+      "contains": [
+        "2949 AC1",
+        "2949 AC2",
+        "2949 AC3",
+        "2949 AC4",
+        "ac2949"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "schema-2949",
+        "issue-2949",
+        "force-jit-repromote-only-covered-default-wired",
+        "schema-2895",
+        "schema-2502"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid": [
+        "tests/compiler/test_issue_2949.cpp"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/2949-*"
+      ]
+    }
+  ]
+}

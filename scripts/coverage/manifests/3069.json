@@ -1,0 +1,75 @@
+{
+  "issue": 3069,
+  "title": "Issue #3069: abort force_ir_cache_dirty_after_abort generation fence.",
+  "ok": "OK: Issue #3069 folded from check_abort_force_generation_fence_3069.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "Issue #3069",
+        "abort_force_generation_",
+        "abort_force_in_progress_",
+        "fetch_add(1, std::memory_order_release)",
+        "abort_force_generation = gen",
+        "success-path restamp acks"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_mutation_rollback_coverage.cpp",
+      "contains": [
+        "test_abort_force_generation_fence_3069",
+        "no clean hit during abort force",
+        "abort_ir_cache_force_dirty_total",
+        "map consistent",
+        "3069 AC3: success-path store is clean hit"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/ir_cache_pure.ixx",
+      "contains": [
+        "kRelowerAbortForce",
+        "abort_force_generation",
+        "Issue #3069"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_cache_stamp_restamp_contract.cpp",
+      "contains": [
+        "kRelowerAbortForce"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "build.py",
+      "contains": [
+        "cmd_abort_force_generation_fence_3069"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "paths": [
+        "src/compiler/evaluator_primitives_query.cpp",
+        "src/compiler/evaluator_primitives_obs_eval.cpp"
+      ],
+      "absent": [
+        "schema-3069"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/compiler/test_issue_3069.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/*3069*"
+      ]
+    }
+  ]
+}

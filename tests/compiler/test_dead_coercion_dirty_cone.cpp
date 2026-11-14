@@ -395,7 +395,7 @@ static void ac3007_3_schema_and_source() {
 static void ac3007_4_linter_no_design() {
     std::println("\n--- #3007 AC4: linter + no invent / no design ---");
     const auto t = read_file("tests/compiler/test_dead_coercion_dirty_cone.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_dead_coercion_hot_residual_3007.py");
+    const auto lint = read_file("scripts/coverage/manifests/3007.json");
     const auto build = read_file("build.py");
     CHECK(t.find("ac3007_1_production_sweeps_cone_external") != std::string::npos, "3007 AC4: AC1");
     CHECK(t.find("ac3007_2_soft_keeps_cone_skip") != std::string::npos, "3007 AC4: AC2");
@@ -634,7 +634,7 @@ static void ac3065_4_residual_and_linter() {
                                                                      std::memory_order_relaxed);
 
     const auto t = read_file("tests/compiler/test_dead_coercion_dirty_cone.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_dead_coercion_elim_cone_3065.py");
+    const auto lint = read_file("scripts/coverage/manifests/3065.json");
     const auto build = read_file("build.py");
     CHECK(t.find("ac3065_1_production_elim_reenters_cone") != std::string::npos, "3065 AC4: AC1");
     CHECK(t.find("ac3065_2_soft_no_permanent_bits") != std::string::npos, "3065 AC4: AC2");
@@ -765,7 +765,7 @@ static void ac3120_3_no_new_query_keys() {
 static void ac3120_4_linter_no_invent() {
     std::println("\n--- #3120 AC4: linter + no invent ---");
     const auto t = read_file("tests/compiler/test_dead_coercion_dirty_cone.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_residual_castop_type_txn_3120.py");
+    const auto lint = read_file("scripts/coverage/manifests/3120.json");
     const auto build = read_file("build.py");
     CHECK(t.find("ac3120_1_type_txn_remirrors_skipped_castop") != std::string::npos,
           "3120 AC4: AC1");

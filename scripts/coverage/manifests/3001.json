@@ -1,0 +1,92 @@
+{
+  "issue": 3001,
+  "title": "Issue #3001: chaos soak fail-closed on LifetimeProofOk + EnvFrameOk arms.",
+  "ok": "OK: Issue #3001 folded from check_chaos_steal_lifetime_envframe_3001.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/steal_safety.cpp",
+      "contains": [
+        "StealInvariant::LifetimeProofOk",
+        "StealInvariant::EnvFrameOk",
+        "Issue #3001"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/steal_safety.h",
+      "contains": [
+        "g_steal_safety_residual_lifetime_proof_reject_total",
+        "g_steal_safety_residual_envframe_lag_total",
+        "g_steal_safety_residual_rearm_race_total",
+        "Issue #3001"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/serve/test_chaos_steal_mutation_gc.cpp",
+      "contains": [
+        "residual_lifetime_proof_reject explained by RejectHard",
+        "residual_envframe_lag explained by RejectHard",
+        "residual_rearm_race explained by RejectHard",
+        "last_reject_invariant_bits",
+        "g_steal_safety_between_clear_and_hard_and_hook",
+        "has_resume_safety_ticket()==false",
+        "metric-only, no abort",
+        "AURA_STEAL_SNAPSHOT_SOFT",
+        "AURA_CHAOS_STEAL_GC",
+        "chaos_enabled",
+        "#2931: residual_defer_after_exit explained by matching clears",
+        "#2931: steal_safety_ticket_mismatch delta == 0",
+        "#2931: resume_fence hard/ticket surplus == 0",
+        "schema-2846",
+        "ac3001_4_2931_keys_remain_fail_closed",
+        "schema-2957",
+        "schema-2745",
+        "schema-2901",
+        "ac3001_1_lifetime_envframe_fail_closed",
+        "ac3001_2_inject_negative_proof_reject_hard",
+        "ac3001_5_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/serve/test_steal_complete_restamp_txn.cpp",
+      "contains": [
+        "g_steal_safety_between_clear_and_hard_and_hook",
+        "ac3001_1_hook_inject_negative_proof_rejects",
+        "ac3001_2_soft_metric_only",
+        "ac3001_5_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "EXCLUDE_FROM_ALL",
+        "set_target_properties(test_chaos_steal_mutation_gc PROPERTIES EXCLUDE_FROM_ALL TRUE)"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2957",
+        "schema-2901",
+        "schema-2745"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/serve/test_issue_3001.cpp"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid_glob": [
+        "docs/design/*3001*"
+      ]
+    }
+  ]
+}

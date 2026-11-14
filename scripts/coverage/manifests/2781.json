@@ -1,0 +1,65 @@
+{
+  "issue": 2781,
+  "title": "Issue #2781: hierarchy cancel_all must not false-positive #2399 misuse.",
+  "ok": "OK: Issue #2781 folded from check_agent_scope_hierarchy_cancel_2781.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "kAgentScopeHierarchyCancelIssue",
+        "2781",
+        "cancel_all_unlocked_",
+        "from_hierarchy",
+        "agent_scope_hierarchy_cancel_total",
+        "agent_scope_concurrent_misuse_total",
+        "ScopeEnterGuard",
+        "try_enter"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_scope.h",
+      "absent": [
+        "c->cancel_all()"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "agent_scope_hierarchy_cancel_total"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/orch/test_agent_scope_hierarchy.cpp",
+      "contains": [
+        "ac2781_hierarchy_cancel_no_misuse",
+        "ac2781_stress_deep_cancel",
+        "ac2781_source_and_query"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "schema-2781",
+        "agent-scope-hierarchy-cancel-total",
+        "agent-scope-hierarchy-cancel-wired"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid_glob": [
+        "docs/design/2781-*"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid": [
+        "tests/orch/test_issue_2781.cpp"
+      ]
+    }
+  ]
+}

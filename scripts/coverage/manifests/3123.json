@@ -36,6 +36,63 @@
         "sticky-last-clear-reason",
         "schema-3123"
       ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "kAutoMovingCompactThreshold",
+        "moving_compact_feature_enabled",
+        "g_production_auto_arm_moving_pref",
+        "sandbox_dev_off_for_auto_arm",
+        "live_pin_count()",
+        "active_guard_depth()",
+        "arena_mutation_boundary_depth()",
+        "untracked_kept_count > 0",
+        "g_moving_incomplete_remap_sticky_densify_off",
+        "kStickyClearZeroMoveClean",
+        "root_remap_stable_ref_fail_total == 0",
+        "Soft/sandbox never auto-arms"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_arena_moving_densify_health.cpp",
+      "contains": [
+        "ac3123_2_untracked_fail_closed_sticky",
+        "ac3123_3_sticky_clears_only_on_healthy",
+        "ac3123_4_soft_force_unchanged",
+        "ac3123_5_agent_surface_and_linter"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "kStickyClearPhase5Green",
+        "densify_untracked_kept == 0"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/moving_densify_health.hh",
+      "contains": [
+        "kProductionAutoArmMovingIssue = 3123",
+        "note_production_auto_arm"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_3123.cpp",
+        "tests/core/test_issue_3123.cpp"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "forbid_glob": [
+        "docs/design/3123-*"
+      ]
     }
   ]
 }

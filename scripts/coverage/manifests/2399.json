@@ -1,0 +1,79 @@
+{
+  "issue": 2399,
+  "title": "Issue #2399: AgentScope concurrent access detection (metric + optional abort).",
+  "ok": "OK: Issue #2399 folded from check_agent_scope_concurrent_2399.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "Issue #2399",
+        "ScopeEnterGuard",
+        "enter_depth_",
+        "agent_scope_concurrent_misuse_total",
+        "AURA_AGENT_SCOPE_CONCURRENT_ABORT",
+        "agent_scope_concurrent_abort_enabled",
+        "SingleOwner",
+        "zero lock"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/orch/test_agent_scope.cpp",
+      "contains": [
+        "2399 AC1",
+        "2399 AC2",
+        "2399 AC3",
+        "2399 AC4",
+        "2399 AC5"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "agent_scope_concurrent_misuse_total",
+        "kAgentScopeConcurrentMisuseIssue"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "agent-scope-concurrent-misuse-total",
+        "schema-2399",
+        "issue-2399",
+        "agent-scope-concurrent-detect-wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/orch/agent_scope.h",
+      "absent": [
+        "class AgentRegistry",
+        "static AgentRegistry"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "build.py",
+      "contains": [
+        "cmd_agent_scope_concurrent_coverage"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_agent_scope"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "scripts/coverage/checks/check_orch_mvp_scope.py",
+      "contains": [
+        "AgentRegistry"
+      ]
+    }
+  ]
+}

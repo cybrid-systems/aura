@@ -238,7 +238,7 @@ static void ac2904_7_no_docs_design_source_cite() {
     const auto hdr = read_file("src/core/ast.ixx");
     const auto eval = read_file("src/compiler/evaluator_eval_flat.cpp");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_dirty_columnar_2904.py");
+    const auto lint = read_file("scripts/coverage/manifests/2904.json");
     CHECK(impl.find("#2904") != std::string::npos, "AC7: ast_impl cites #2904");
     CHECK(hdr.find("#2904") != std::string::npos, "AC7: ast.ixx cites #2904");
     CHECK(eval.find("#2904") != std::string::npos ||

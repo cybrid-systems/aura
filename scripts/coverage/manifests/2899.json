@@ -1,0 +1,63 @@
+{
+  "issue": 2899,
+  "title": "Issue #2899: proven Move/Drop IR fast-path after TypeLinearCommitProof.",
+  "ok": "OK: Issue #2899 folded from check_linear_ir_fastpath_2899.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "2899",
+        "linear_ir_fastpath_try_skip",
+        "g_linear_ir_fastpath_skip_total",
+        "publish_last_proof_face",
+        "g_linear_ir_fastpath_skip_blocked_total",
+        "aura_escape_move_gate_active",
+        "Reject",
+        "boundary_depth",
+        "g_last_type_linear_commit_proof_stamp"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/ir_executor_impl.cpp",
+      "contains": [
+        "linear_ir_fastpath_try_skip",
+        "2899"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "schema-2899",
+        "linear-ir-fastpath-skip-total",
+        "linear-ir-fastpath-wired",
+        "schema-2263"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_escape_move_elision_gate.cpp",
+      "contains": [
+        "ac2899_1_proof_fresh_skips",
+        "ac2899_2_escape_or_reject_blocks",
+        "ac2899_3_no_proof_or_mid_boundary",
+        "ac2899_4_additive_query",
+        "ac2899_5_source_cite"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "forbid_glob": [
+        "docs/design/2899-*"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "forbid": [
+        "tests/compiler/test_issue_2899.cpp"
+      ]
+    }
+  ]
+}

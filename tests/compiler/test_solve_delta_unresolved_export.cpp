@@ -773,7 +773,7 @@ static void ac2900_5_source_cite() {
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
                    read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_solver_budget_2900.py");
+    const auto lint = read_file("scripts/coverage/manifests/2900.json");
     const auto build = read_file("build.py");
     CHECK(ixx.find("SolverBudget") != std::string::npos, "2900 AC5: SolverBudget struct");
     CHECK(ixx.find("2900") != std::string::npos, "2900 AC5: ixx cites #2900");
@@ -968,8 +968,7 @@ static void ac2963_5_source_cite() {
     const auto aud = read_file("src/compiler/typed_mutation_audit.h");
     const auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_instance_repair_before_full_2963.py");
+    const auto lint = read_file("scripts/coverage/manifests/2963.json");
     const auto build = read_file("build.py");
     CHECK(ixx.find("try_instance_repair_before_full") != std::string::npos,
           "2963 AC5: try_instance_repair API");
@@ -1198,7 +1197,7 @@ static void ac2913_5_source_cite() {
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
                    read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
-    const auto lint = read_file("scripts/coverage/checks/check_solve_delta_locality_slo_2913.py");
+    const auto lint = read_file("scripts/coverage/manifests/2913.json");
     const auto build = read_file("build.py");
     CHECK(ixx.find("escalate_locality_slo_if_production") != std::string::npos,
           "2913 AC5: ixx API");
@@ -1459,8 +1458,7 @@ static void ac2994_7_source_cite() {
     const auto ixx = read_file("src/compiler/type_checker.ixx");
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
     const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_solve_delta_locality_budget_2994.py");
+    const auto lint = read_file("scripts/coverage/manifests/2994.json");
     const auto build = read_file("build.py");
     CHECK(ixx.find("escalate_locality_slo_if_production") != std::string::npos,
           "2994 AC7: escalate API");
@@ -1984,8 +1982,7 @@ static void ac3190_6_source_and_linter() {
     const auto ev = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
     const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_residual_drain_outermost_stamp_3190.py");
+    const auto lint = read_file("scripts/coverage/manifests/3190.json");
     const auto build = read_file("build.py");
     // Source-cite: drain helper exists, is reachable from both stamp sites.
     CHECK(impl.find("drain_pending_full_solve_before_commit") != std::string::npos,
@@ -2798,8 +2795,7 @@ static void ac3031_6_source_and_linter() {
     const auto aud = read_file("src/compiler/typed_mutation_audit.h");
     const auto ev = read_file("src/compiler/evaluator_typecheck.cpp");
     const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_pending_full_solve_residual_3031.py");
+    const auto lint = read_file("scripts/coverage/manifests/3031.json");
     const auto build = read_file("build.py");
     CHECK(ixx.find("drain_pending_full_solve_before_commit") != std::string::npos,
           "3031 AC6: drain API");
@@ -2926,8 +2922,7 @@ static void ac3081_5_source_and_linter() {
     const auto ev = read_file("src/compiler/evaluator.ixx");
     const auto prim = read_file("src/compiler/evaluator_primitives_eval.cpp");
     const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
-    const auto lint =
-        read_file("scripts/coverage/checks/check_soft_timeout_export_non_authoritative_3081.py");
+    const auto lint = read_file("scripts/coverage/manifests/3081.json");
     const auto build = read_file("build.py");
     CHECK(ixx.find("kSoftTimeoutExportNonAuthoritativeIssue = 3081") != std::string::npos,
           "3081 AC5: stamp");

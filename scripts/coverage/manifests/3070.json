@@ -1,0 +1,86 @@
+{
+  "issue": 3070,
+  "title": "Issue #3070: Shape→None hysteresis + forced-thr freeze + peer soft-stale.",
+  "ok": "OK: Issue #3070 folded from check_storm_exit_hysteresis_peer_soft_stale_3070.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/ir_cache_pure.ixx",
+      "contains": [
+        "Issue #3070",
+        "storm_exit_force_full_active",
+        "partial_relower_threshold_is_forced()",
+        "kDefaultPartialRelowerThreshold"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "Issue #3070"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "storm_exit_force_full_remaining_"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_shape_storm_partial_relower.cpp",
+      "contains": [
+        "ac3070_hysteresis_and_forced_thr",
+        "cooldown force-full after Shape→None",
+        "forced-wide not kept under Global"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "soft_stale",
+        "aura_aot_mark_peer_slots_soft_stale",
+        "Issue #3070"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_named_closure_stable_id_at_create.cpp",
+      "contains": [
+        "ac3070_1_peer_soft_stale_no_epoch_force",
+        "no global epoch force"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "build.py",
+      "contains": [
+        "cmd_storm_exit_hysteresis_peer_soft_stale_3070"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "paths": [
+        "src/compiler/evaluator_primitives_query.cpp",
+        "src/compiler/evaluator_primitives_obs_eval.cpp"
+      ],
+      "absent": [
+        "schema-3070"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid": [
+        "tests/compiler/test_issue_3070.cpp"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid_glob": [
+        "docs/design/*3070*"
+      ]
+    }
+  ]
+}

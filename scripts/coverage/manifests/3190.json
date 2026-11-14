@@ -1,0 +1,70 @@
+{
+  "issue": 3190,
+  "title": "Issue #3190: outermost-success TypeLinearCommitProof drain before stamp.",
+  "ok": "OK: Issue #3190 folded from check_residual_drain_outermost_stamp_3190.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker.ixx",
+      "contains": [
+        "drain_pending_full_solve_before_commit"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "drain_pending_full_solve_before_commit",
+        "pending == 0 && loc == 0",
+        "return SolveResult::SOLVED; // Quiet",
+        "escalate_if_production(SolveResult::TIMEOUT",
+        "escalate_locality_slo_if_production"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "drain_pending_full_solve_before_commit",
+        "Issue #3190",
+        "force_reason=*/16",
+        "publish_type_linear_proof_outcome",
+        "kTypeLinearProofOutcomeReject",
+        "production_defaults_active()",
+        "AuditStrategy::Full",
+        "kProofLiveGoalCountHintAuto"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "force_reason=*/16",
+        "drain_pending_full_solve_before_commit"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kPendingFullSolveResidualIssue",
+        "pending_full_solve_residual",
+        "g_pending_full_solve_residual_observe_total",
+        "g_pending_full_solve_residual_escalate_total",
+        "g_pending_full_solve_residual_reject_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_solve_delta_unresolved_export.cpp",
+      "contains": [
+        "ac3190_1_outermost_drain_production",
+        "ac3190_2_outermost_drain_soft",
+        "ac3190_3_quiet_zero_cost",
+        "ac3190_4_lockless_batch_covered",
+        "ac3190_5_existing_surfaces_preserved",
+        "ac3190_6_source_and_linter"
+      ]
+    }
+  ]
+}

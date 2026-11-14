@@ -1,0 +1,86 @@
+{
+  "issue": 2982,
+  "title": "Issue #2982: Staging/Dlopen reload-fail ops recovery surface.",
+  "ok": "OK: Issue #2982 folded from check_staging_dlopen_ops_recovery_2982.py — all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "Issue #2982",
+        "note_ops_fail_staging",
+        "staging_retry_eligible",
+        "note_ops_fail_dlopen",
+        "last_dlopen_path_hash",
+        "last_dlopen_errno_class",
+        "schema_2982"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "staging_retry_scheduled_total",
+        "AotReloadFail::Staging",
+        "zero extra stores",
+        "aura_production_defaults_active_probe() == 0",
+        "Issue #2982"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_reload_recovery_query.cpp",
+      "contains": [
+        "ac2982_1_staging_eligible_retry",
+        "ac2982_2_dlopen_no_auto_retry",
+        "ac2982_3_version_env_unchanged",
+        "ac2982_4_soft_zero_extra",
+        "ac2982_5_query_keys",
+        "ac2982_6_source_and_linter"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "note_ops_fail_dlopen"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/aura_jit_bridge.h",
+      "contains": [
+        "max_reemit=*/0",
+        "aot_reload_fail_to_force_jit_mask",
+        "AotReloadFail::Env"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "schema-2982",
+        "schema-2927"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2249"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "forbid": [
+        "tests/compiler/test_issue_2982.cpp"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/*2982*"
+      ]
+    }
+  ]
+}

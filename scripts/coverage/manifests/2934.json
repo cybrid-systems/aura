@@ -1,0 +1,92 @@
+{
+  "issue": 2934,
+  "title": "Issue #2934: MutationBoundaryGuard exit restamp budget + Agent metrics.",
+  "ok": "OK: Issue #2934 folded from check_restamp_budget_2934.py — all AC rows satisfied Issue #3041 successor: production budget exceed also forces QueryEpoch stale.",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/flatast_restamp.hh",
+      "contains": [
+        "AURA_RESTAMP_BUDGET_NODES",
+        "kRestampBudgetIssue = 2934",
+        "restamp_budget_nodes_effective",
+        "0 = unlimited",
+        "default Soft",
+        "Issue #2934"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/ast_impl.cpp",
+      "contains": [
+        "restamp_budget_nodes_effective",
+        "Issue #2934",
+        "restamp_budget_exceeded_total_",
+        "restamp_nodes_skipped_total_",
+        "lazy_only",
+        "use_incremental = true",
+        "silent torn generation"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/ast.ixx",
+      "contains": [
+        "restamp_budget_nodes()",
+        "Issue #2934"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_stdlib_review.cpp",
+      "contains": [
+        "restamp-budget",
+        "restamp-budget-exceeded-total",
+        "restamp-nodes-skipped-total",
+        "restamp-last-budget-exceeded",
+        "schema-2934"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "schema-2934",
+        "restamp-budget-exceeded-total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #2934"
+      ]
+    },
+    {
+      "ac": "AC7",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "Issue #2934"
+      ]
+    },
+    {
+      "ac": "AC8",
+      "path": "tests/core/test_restamp_sla_observability.cpp",
+      "contains": [
+        "ac2934_1_budget_soft_degrade"
+      ]
+    },
+    {
+      "ac": "AC9",
+      "forbid_glob": [
+        "docs/design/2934-*"
+      ]
+    },
+    {
+      "ac": "AC10",
+      "forbid": [
+        "tests/core/test_issue_2934.cpp"
+      ]
+    }
+  ]
+}
