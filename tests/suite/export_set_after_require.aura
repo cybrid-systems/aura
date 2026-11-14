@@ -1,33 +1,14 @@
-;; Issue #5197 — the same mid module with (export m1) moved to after
-;; the require. This already bound both names; it must keep doing so.
-
+; Issue #5197: the same mid module with (export m1) moved to after
+; the require. This already bound both names. It must keep doing so.
+(require "std/test" all:)
 (require "./export_set_nested/after/mid" all:)
-
-(define fails 0)
-(define (expect cond name)
-  (if cond
-      #t
-      (begin
-        (set! fails (+ fails 1))
-        (display "FAIL-5197 ")
-        (display name)
-        (newline))))
+(test-file "export_set_after_require.aura")
 
 (define (value thunk)
   (try (thunk) (catch (e) 'unbound-5197)))
 
-(define got-m1 (value (lambda () m1)))
-(define got-m2 (value (lambda () m2)))
+(test-case "export after require stays bound" (hash "issue" 5197)
+  (check= 1 (value (lambda () m1)))
+  (check= 2 (value (lambda () m2))))
 
-(expect (equal? got-m1 1) "m1 is 1")
-(expect (equal? got-m2 2) "m2 is 2")
-
-(if (and (equal? got-m1 1) (equal? got-m2 2))
-    (begin
-      (display (list got-m1 got-m2))
-      (newline))
-    #f)
-
-(if (= fails 0)
-    (begin (display "OK-5197-after") (newline))
-    (exit 1))
+(test-finish)

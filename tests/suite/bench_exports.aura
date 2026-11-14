@@ -1,57 +1,43 @@
-;; Issue #5193 — (require "std/bench" all:) must bind every public name.
-;; task-count, all-tasks, run-rounds, and aggregate used to be dropped
-;; because their export form sat before a nested require chain.
-
+; Issue #5193: (require "std/bench" all:) must bind every public name.
+; task-count, all-tasks, run-rounds, and aggregate used to be dropped
+; because their export form sat before a nested require chain.
+(require "std/test" all:)
 (require "std/bench" all:)
+(test-file "bench_exports.aura")
 
-(define fails 0)
-(define (expect cond name)
-  (if cond
-      #t
-      (begin
-        (set! fails (+ fails 1))
-        (display "FAIL-5193 ")
-        (display name)
-        (newline))))
-
-(define (caught thunk)
+(define (bound thunk)
   (try (thunk) (catch (e) 'unbound-5193)))
 
-(define tc (caught (lambda () (task-count))))
-(define tasks (caught (lambda () all-tasks)))
+(test-case "task count matches the task list" (hash "issue" 5193)
+  (define tc (bound (lambda () (task-count))))
+  (define tasks (bound (lambda () all-tasks)))
+  (check (integer? tc))
+  (check (>= tc 0))
+  (check (list? tasks))
+  (check= tc (length tasks))
+  (check (> tc 0)))
 
-(expect (and (integer? tc) (>= tc 0)) "task-count is a non-negative integer")
-(expect (list? tasks) "all-tasks is a list")
-(expect (and (integer? tc) (list? tasks) (= tc (length tasks)))
-        "task-count matches (length all-tasks)")
-(expect (and (integer? tc) (> tc 0)) "bench-tasks.json loaded")
+(test-case "public runners are bound" (hash "issue" 5193)
+  (check (procedure? (bound (lambda () run-rounds))))
+  (check (procedure? (bound (lambda () aggregate))))
+  (check (procedure? (bound (lambda () print-report))))
+  (check (procedure? (bound (lambda () run-one))))
+  (check (procedure? (bound (lambda () run-parallel))))
+  (check (procedure? (bound (lambda () bench:list-sort))))
+  (check (procedure? (bound (lambda () bench:foldl-sum)))))
 
-(display "task-count=")
-(display tc)
-(newline)
+(test-case "list-sort of four" (hash "issue" 5193)
+  (define sort-r (bound (lambda () (bench:list-sort 4))))
+  (check (list? sort-r))
+  (check= 3 (length sort-r))
+  (check= 'ok (car sort-r))
+  (check= 4 (list-ref sort-r 2)))
 
-(expect (procedure? (caught (lambda () run-rounds))) "run-rounds is bound")
-(expect (procedure? (caught (lambda () aggregate))) "aggregate is bound")
-(expect (procedure? (caught (lambda () print-report))) "print-report is bound")
-(expect (procedure? (caught (lambda () run-one))) "run-one is bound")
-(expect (procedure? (caught (lambda () run-parallel))) "run-parallel is bound")
-(expect (procedure? (caught (lambda () bench:list-sort))) "bench:list-sort is bound")
-(expect (procedure? (caught (lambda () bench:foldl-sum))) "bench:foldl-sum is bound")
+(test-case "foldl-sum of four" (hash "issue" 5193)
+  (define sum-r (bound (lambda () (bench:foldl-sum 4))))
+  (check (list? sum-r))
+  (check= 3 (length sum-r))
+  (check= 'ok (car sum-r))
+  (check= 6 (list-ref sum-r 2)))
 
-(define sort-r (caught (lambda () (bench:list-sort 4))))
-(expect (and (list? sort-r)
-             (= (length sort-r) 3)
-             (equal? (car sort-r) 'ok)
-             (= (list-ref sort-r 2) 4))
-        "bench:list-sort 4")
-
-(define sum-r (caught (lambda () (bench:foldl-sum 4))))
-(expect (and (list? sum-r)
-             (= (length sum-r) 3)
-             (equal? (car sum-r) 'ok)
-             (= (list-ref sum-r 2) 6))
-        "bench:foldl-sum 4 sums 0..3")
-
-(if (= fails 0)
-    (begin (display "OK-5193") (newline))
-    (exit 1))
+(test-finish)

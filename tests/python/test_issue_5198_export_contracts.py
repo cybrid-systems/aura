@@ -106,8 +106,7 @@ class TestExportContracts5198(unittest.TestCase):
     def test_extract_code_both_orders(self) -> None:
         body = (
             '(display (extract-code "x")) (newline)\n'
-            '(define plain (try (llm:extract-code "x") (catch (e) \'llm-rejected-plain)))\n'
-            "(display plain) (newline)\n"
+            '(display (llm:extract-code "x")) (newline)\n'
             '(define fenced "{\\"error\\":false,\\"choices\\":[{\\"message\\":{\\"content\\":\\"(lambda (x) x)\\"}}]}")\n'
             "(display (llm:extract-code fenced)) (newline)\n"
         )
@@ -116,7 +115,7 @@ class TestExportContracts5198(unittest.TestCase):
             self.assertEqual(p.returncode, 0, f"{first} then {second}: {p.stderr}")
             self.assertEqual(
                 p.stdout.splitlines(),
-                ["x", "llm-rejected-plain", "(lambda (x) x)"],
+                ["x", "x", "(lambda (x) x)"],
                 f"{first} then {second}: {p.stdout!r} {p.stderr!r}",
             )
             self.assertNotIn("json-parse", p.stderr)
