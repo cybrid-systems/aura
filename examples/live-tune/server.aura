@@ -1,0 +1,468 @@
+; A real HTTP service that tunes itself while it serves.
+;
+;   POST /dedupe   body: a sign-up list of emails (one per line)
+;                  ->  the list without duplicates, first one kept, same order
+;
+; aura-perf (lib/perf from cybrid-systems/aura-perf) builds a call-context
+; tree from live samples of real requests and mines the hot node. MiniMax
+; (std/llm llm:chat, in a fiber so serving never waits) proposes a faster
+; define. The proposal runs in an evo:trial child worldline on recent real
+; requests: it must return the same responses the live server sent and be
+; >= 20% faster (perf:speedup-ok?). KEEP = (mutate :rebind) into the live
+; workspace. The process never restarts.
+;
+; stdout       -> service log (left pane)
+; out/perf.log -> aura-perf live profile (right pane)
+(require "std/socket" all:)
+(require "std/string" all:)
+(require "std/llm" all:)
+(require "std/evo-core" all:)
+(require "lib/perf/cct" all:)
+(require "lib/perf/gate" all:)
+(require "lib/perf/memory" all:)
+
+(define HOT-SRC (read-file "hot.aura"))
+(set-code HOT-SRC)
+(eval-current)
+
+(define ESC (list->string (list (integer->char 27))))
+(define (red s) (string-append ESC "[31m" s ESC "[0m"))
+(define (green s) (string-append ESC "[32m" s ESC "[0m"))
+(define (yellow s) (string-append ESC "[33m" s ESC "[0m"))
+(define (bold s) (string-append ESC "[1m" s ESC "[0m"))
+(define (dim s) (string-append ESC "[2m" s ESC "[0m"))
+(define (str . parts)
+  (let loop ((ps parts) (acc ""))
+    (if (null? ps) acc
+        (loop (cdr ps) (string-append acc (let ((p (car ps))) (if (number? p) (number->string p) p)))))))
+(define (say . parts) (display (apply str parts)) (newline))
+
+; aura-perf pane: the whole log is rewritten (Aura has no append-file)
+(define perf-lines '())
+(define (perf-say . parts)
+  (set! perf-lines (cons (apply str parts) perf-lines))
+  (write-file "out/perf.log" (string-append (string-join (reverse perf-lines) "\n") "\n")))
+
+(define (env-num name default)
+  (let ((v (try (getenv name) (catch (e) #f))))
+    (let ((n (if (and (string? v) (> (string-length v) 0)) (string->number v) #f)))
+      (if (number? n) n default))))
+
+(define PORT (env-num "DEMO_PORT" 8099))
+(define MAX-ROUNDS (env-num "DEMO_ROUNDS" 4))
+(define MIN-FASTER-PCT 20)
+(define ROOT "dedupe-request")
+(define PROTECTED (list ROOT))          ; the public entry point keeps its shape
+(define TARGET "dedupe")                ; replaced by aura-perf's hot node
+(define CONTRACTS
+  (hash "dedupe" "(define (dedupe emails) ...): emails is a list of strings; return a new list with duplicates removed, keeping the first occurrence of each string, in the original order."
+        "split-lines" "(define (split-lines text) ...): text is a string; return the list of lines split on newline characters."
+        "join-lines" "(define (join-lines xs) ...): xs is a list of strings; return one string with each item followed by a newline."))
+
+; ── HTTP ─────────────────────────────────────────────────────────────
+(define (header-length head)
+  (let ((i (string-index head "Content-Length: " 0)))
+    (if (< i 0)
+        0
+        (let ((j (string-index head "\r\n" i)))
+          (let ((n (string->number (substring head (+ i 16) (if (< j 0) (string-length head) j)))))
+            (if (number? n) n 0))))))
+
+(define (read-request c)
+  (let loop ((buf "") (n 0))
+    (let ((he (string-index buf "\r\n\r\n" 0)))
+      (if (>= he 0)
+          (let* ((head (substring buf 0 he))
+                 (len (header-length head))
+                 (body (substring buf (+ he 4) (string-length buf))))
+            (if (>= (string-length body) len)
+                (cons head (substring body 0 len))
+                (let ((got (tcp-recv c 65536)))
+                  (if (and (string? got) (> (string-length got) 0))
+                      (loop (string-append buf got) (+ n 1))
+                      #f))))
+          (let ((got (tcp-recv c 65536)))
+            (if (and (string? got) (> (string-length got) 0) (< n 200))
+                (loop (string-append buf got) (+ n 1))
+                #f))))))
+
+(define (reply c code text)
+  (tcp-send c (string-append "HTTP/1.1 " code "\r\nContent-Type: text/plain\r\nContent-Length: "
+                             (number->string (string-length text))
+                             "\r\nConnection: close\r\n\r\n" text)))
+
+(define (dedupe-request text)
+  (join-lines (dedupe (split-lines text))))
+
+; recent real requests: (body response ms). The trial replays the bodies
+; and compares against the responses the live code really sent.
+(define recent '())
+(define (remember! b out ms)
+  (if (not (assoc b recent))
+      (set! recent (let take ((xs (cons (list b out ms) recent)) (i 0))
+                     (if (or (null? xs) (>= i 4)) '() (cons (car xs) (take (cdr xs) (+ i 1))))))
+      #f))
+
+(define served 0)
+(define (handle c)
+  (let ((req (read-request c)))
+    (if (not req)
+        (reply c "400 Bad Request" "bad request\n")
+        (let ((t0 (monotonic-ms)))
+          (let ((out (try (dedupe-request (cdr req)) (catch (e) #f))))
+            (if (string? out)
+                (let ((ms (- (monotonic-ms) t0)))
+                  (reply c "200 OK" out)
+                  (set! served (+ served 1))
+                  (remember! (cdr req) out ms))
+                (reply c "500 Internal Server Error" "handler error\n")))))))
+
+; ── aura-perf: live call-context tree from sampled real requests ─────
+(define (time-ms thunk)
+  (let ((t0 (monotonic-ms)))
+    (let ((v (thunk)))
+      (cons v (- (monotonic-ms) t0)))))
+
+; One live sample: replay the newest real request through each stage of
+; dedupe-request and time each stage (region-timer rows for perf:cct-build).
+(define (sample-rows body)
+  (let* ((s (time-ms (lambda () (split-lines body))))
+         (c (time-ms (lambda () (dedupe (car s)))))
+         (r (time-ms (lambda () (join-lines (car c)))))
+         (total (+ (cdr s) (cdr c) (cdr r))))
+    (list (hash "name" ROOT "task-clock" total "calls" 1 "stack" (list ROOT))
+          (hash "name" "split-lines" "task-clock" (cdr s) "calls" 1 "stack" (list ROOT "split-lines"))
+          (hash "name" "dedupe" "task-clock" (cdr c) "calls" 1 "stack" (list ROOT "dedupe"))
+          (hash "name" "join-lines" "task-clock" (cdr r) "calls" 1 "stack" (list ROOT "join-lines")))))
+
+(define (add-rows a b)
+  (if (null? a) b
+      (map (lambda (x y) (hash "name" (hash-ref x "name") "task-clock" (+ (hash-ref x "task-clock") (hash-ref y "task-clock"))
+                               "calls" (+ (hash-ref x "calls") (hash-ref y "calls")) "stack" (hash-ref x "stack")))
+           a b)))
+(define (avg-rows rows)
+  (map (lambda (x) (hash "name" (hash-ref x "name")
+                         "task-clock" (quotient (hash-ref x "task-clock") (hash-ref x "calls"))
+                         "calls" (hash-ref x "calls") "stack" (hash-ref x "stack")))
+       rows))
+(define (rows-ms rows name)
+  (let loop ((xs rows)) (cond ((null? xs) 0) ((string=? (hash-ref (car xs) "name") name) (hash-ref (car xs) "task-clock")) (else (loop (cdr xs))))))
+
+(define (pad s n) (if (>= (string-length s) n) s (pad (string-append s " ") n)))
+(define (lpad s n) (if (>= (string-length s) n) s (lpad (string-append " " s) n)))
+(define (bar pct) (let loop ((i 0) (acc "")) (if (>= i (quotient (+ pct 9) 10)) acc (loop (+ i 1) (string-append acc "█")))))
+(define (pct-of a b) (if (> b 0) (quotient (* 100 a) b) 0))
+(define (filter p xs) (cond ((null? xs) '()) ((p (car xs)) (cons (car xs) (filter p (cdr xs)))) (else (filter p (cdr xs)))))
+
+(define (perf-tree cct hot)
+  (let* ((total (perf:node-clock (perf:cct-node cct ROOT)))
+         (kids (filter (lambda (n) (not (string=? (hash-ref n "id") ROOT))) (hash-ref cct "nodes"))))
+    (perf-say (pad ROOT 15) (lpad (number->string total) 5) " ms")
+    (let loop ((xs kids))
+      (if (null? xs) #t
+          (let* ((n (car xs)) (id (hash-ref n "id")) (ms (perf:node-clock n)))
+            (perf-say (if (null? (cdr xs)) "└─ " "├─ ") (pad id 12) (lpad (number->string ms) 5) " ms"
+                      (if (string=? id hot) (yellow (str " ◀ " (pct-of ms total) "%")) ""))
+            (loop (cdr xs)))))))
+
+; ── source of the hot define and the defines it calls ───────────────
+(define (define-source name)
+  (let ((i (string-index HOT-SRC (string-append "(define (" name " ") 0)))
+    (if (< i 0) #f
+        (let ((j (string-index HOT-SRC "\n(define" (+ i 1))))
+          (substring HOT-SRC i (if (< j 0) (string-length HOT-SRC) (+ j 1)))))))
+(define HOT-NAMES (list "split-lines" "seen?" "dedupe" "join-lines"))
+(define (callees-src name)
+  (let ((src (define-source name)))
+    (let loop ((xs HOT-NAMES) (acc src))
+      (if (null? xs) acc
+          (loop (cdr xs)
+                (if (and (not (string=? (car xs) name))
+                         (>= (string-index src (string-append "(" (car xs) " ") 0) 0))
+                    (string-append (define-source (car xs)) acc)
+                    acc))))))
+
+; first balanced "(define (NAME" form in the model's reply:
+; (cons 'ok text) | (cons 'missing #f) | (cons 'unbalanced #f)
+(define (extract-define text name)
+  (let ((i (string-index text (string-append "(define (" name) 0)))
+    (if (< i 0) (cons 'missing #f)
+        (let loop ((k i) (depth 0) (in-str #f) (esc #f))
+          (if (>= k (string-length text)) (cons 'unbalanced #f)
+              (let ((ch (string-ref text k)))
+                (cond (esc (loop (+ k 1) depth in-str #f))
+                      ((and in-str (char=? ch #\\)) (loop (+ k 1) depth in-str #t))
+                      ((char=? ch #\") (loop (+ k 1) depth (not in-str) #f))
+                      (in-str (loop (+ k 1) depth in-str #f))
+                      ((char=? ch #\() (loop (+ k 1) (+ depth 1) #f #f))
+                      ((char=? ch #\))
+                       (if (= depth 1) (cons 'ok (substring text i (+ k 1))) (loop (+ k 1) (- depth 1) #f #f)))
+                      (else (loop (+ k 1) depth #f #f)))))))))
+
+; ── LLM in a fiber, so the accept loop keeps serving ────────────────
+(define req-ch (channel:create 1))
+(define res-ch (channel:create 1))
+(fiber:spawn (lambda ()
+  (let loop ()
+    (let ((p (channel:recv req-ch)))
+      (let ((t0 (monotonic-ms)))
+        (let ((ans (try (llm:chat (car p) (cdr p) (hash "reasoning_effort" "minimal" "max_tokens" 1500) 90)
+                        (catch (e) (hash "ok" #f "error" "exception" "content" "")))))
+          (channel:send res-ch (cons (- (monotonic-ms) t0) ans)))))
+      (loop))))
+
+(define SYS (string-append
+  "You speed up functions in Aura, a small Scheme-like Lisp. "
+  "Reply with exactly one Aura define form for the function you are asked about. No prose. Keep its name, arguments and results. "
+  "Available: let let* named let, cond if and or not begin set!, cons car cdr list reverse append null? pair? map for-each, "
+  "string=?, (make-hash-table), (hash-ref h k default), (hash-set! h k v), (hash-keys h). "
+  "Helpers must be defined inside the body. "
+  "Prefer a named let and/or a hash table. A for-each callback that only set!s an outer binding is rejected by the production type checker."))
+
+(define mined #f)
+(define hyp #f)
+(define tree-text "")
+(define feedback "")
+(define (tree->text cct)
+  (string-join (map (lambda (n) (string-append "  " (string-join (hash-ref n "stack") " > ") ": "
+                                              (number->string (perf:node-clock n)) " ms"))
+                    (hash-ref cct "nodes")) "\n"))
+(define (prompt-for)
+  (string-append
+    "aura-perf live profile of a running HTTP service (POST /dedupe), sampled from real requests:\n" tree-text "\n"
+    "hot path: " (string-join (hash-ref mined "prefix") " > ") "\n"
+    "hypothesis: " (hash-ref hyp "text") "\n"
+    "Current code of the hot define and what it calls:\n" (callees-src TARGET) "\n"
+    (if (string=? feedback "") "" (string-append "Earlier attempts were rejected: " feedback "\n"))
+    "Contract: " (hash-ref CONTRACTS TARGET "same inputs, same outputs") "\n"
+    "Write a faster " TARGET " with identical results."))
+
+; ── the trial: candidate in a child worldline, real requests, gates ─
+(define (replay reqs)
+  (time-ms (lambda () (map (lambda (e) (dedupe-request (car e))) reqs))))
+(define (sum xs) (if (null? xs) 0 (+ (car xs) (sum (cdr xs)))))
+(define (show v) (if (string? v) (if (string=? v "") "\"\"" (if (> (string-length v) 14) (string-append (substring v 0 13) "…") v)) "?"))
+(define (item-diff g w i)
+  (cond ((and (null? g) (null? w)) "same")
+        ((null? g) (str "line " i " missing"))
+        ((null? w) "extra lines")
+        ((equal? (car g) (car w)) (item-diff (cdr g) (cdr w) (+ i 1)))
+        (else (str "line " i ": " (show (car g)) " ≠ " (show (car w))))))
+(define (first-diff got want)
+  (cond ((or (null? got) (null? want)) "different number of responses")
+        ((equal? (car got) (car want)) (first-diff (cdr got) (cdr want)))
+        ((not (string? (car got))) "handler returned no text")
+        (else (item-diff (regex-split "\n" (car got)) (regex-split "\n" (car want)) 1))))
+(define (strip-paths t)   ; "/a/b/c.aura:3:4: msg" -> "c.aura:3:4: msg" (no box paths on screen)
+  (let ((i (string-index t ".aura:" 0)))
+    (if (< i 0) t
+        (let loop ((k i))
+          (cond ((< k 0) t)
+                ((char=? (string-ref t k) #\/)
+                 (let back ((j k))
+                   (if (and (> j 0) (not (char=? (string-ref t (- j 1)) #\space)) (not (char=? (string-ref t (- j 1)) #\")))
+                       (back (- j 1))
+                       (strip-paths (string-append (substring t 0 j) (substring t (+ k 1) (string-length t)))))))
+                (else (loop (- k 1))))))))
+(define (short-err e)
+  (let ((t (strip-paths (if (string? e) e (try (json-encode e) (catch (x) "error"))))))
+    (if (> (string-length t) 44) (string-append (substring t 0 43) "…") t)))
+
+(define (trial-candidate code id reqs base)
+  (let* ((verdict #f)
+         (cand (evo:candidate code (hash "id" id "target" TARGET)))
+         (r (evo:trial cand
+              (hash "timeout-ms" 20000
+                    "apply" (lambda (c) (let ((rb (mutate :rebind TARGET (evo:candidate-genome c) id)))
+                                          (if (eq? rb #t) #t (begin (set! verdict (list "Aura refused to load it" (short-err rb))) #f))))
+                    "evaluate"
+                    (lambda (c)
+                      (let ((got (try (replay reqs) (catch (e) (list 'crash e)))))
+                        (cond ((and (pair? got) (eq? (car got) 'crash))
+                               (set! verdict (list "crashed" (short-err (car (cdr got)))))
+                               (hash "objectives" (hash "ms" -1) "constraints" (hash "runs" 1.0)))
+                              ((not (equal? (car got) (car base)))
+                               (set! verdict (list "wrong output" (first-diff (car got) (car base))))
+                               (hash "objectives" (hash "ms" (cdr got)) "constraints" (hash "checksum" 1.0)))
+                              ((not (perf:speedup-ok? (max 1 (cdr base)) (max 1 (cdr got)) MIN-FASTER-PCT))
+                               (set! verdict (list "not faster" (str (cdr base) " ms → " (cdr got) " ms")))
+                               (hash "objectives" (hash "ms" (cdr got)) "constraints" (hash "speedup" 1.0)))
+                              (else
+                               (set! verdict (list "ok" (cdr got)))
+                               (hash "objectives" (hash "ms" (cdr got)) "constraints" (hash))))))))))
+    (cons r verdict)))
+
+; ── state machine driven from the accept loop ───────────────────────
+(define phase "warmup")
+(define round 0)
+(define neg '())
+(define keep-at 0)
+(define t-start (monotonic-ms))
+(define window '())       ; last 3 sample row-sets
+(define before-cct #f)
+(define before-pct 0)
+(define pending #f)       ; (at-ms . thunk): paces the story without blocking the server
+(define (after! ms thunk) (set! pending (cons (+ (monotonic-ms) ms) thunk)))
+(define live-check (lambda () #t))
+
+(define (cct-of rowsets)
+  (perf:cct-build (avg-rows (let loop ((xs rowsets) (acc '())) (if (null? xs) acc (loop (cdr xs) (add-rows acc (car xs))))))))
+
+(define (first-line s)
+  (let loop ((cs (string->list s)) (sp #f) (acc '()))
+    (cond ((null? cs) (let ((l (list->string (reverse acc))))
+                        (if (> (string-length l) 55) (string-append (substring l 0 54) "…") l)))
+          ((or (char=? (car cs) #\space) (char=? (car cs) #\newline) (char=? (car cs) #\tab))
+           (loop (cdr cs) #t acc))
+          (else (loop (cdr cs) #f (cons (car cs) (if (and sp (pair? acc)) (cons #\space acc) acc)))))))
+
+(define (ask!)
+  (set! round (+ round 1))
+  (say "")
+  (say (bold (str "🤖 Round " round ": asking MiniMax for a faster " TARGET)))
+  (channel:send req-ch (cons SYS (prompt-for)))
+  (set! phase "asking"))
+
+(define (reject! why detail)
+  (let ((ok ((lambda () (live-check)))))
+    (say (red (str "   ✗ " why ": " detail)))
+    (say (if ok (str "   → " (red "ROLLBACK") ", live code untouched (re-checked)")
+             (red "   → ROLLBACK, but LIVE OUTPUT CHANGED (Aura bug)")))
+    (set! neg (perf:neg-remember neg (hash-ref mined "class") (hash-ref mined "hot-node") (str "r" round) why))
+    (set! feedback (str feedback " [round " round ": " why ": " detail "]"))
+    (set! live-check (lambda () #t))
+    (if (< round MAX-ROUNDS)
+        (begin (set! phase "idle") (after! 2500 ask!))
+        (begin (say (str "   no proposal passed in " MAX-ROUNDS " rounds; live code unchanged"))
+               (write-file "out/done" "1") (set! phase "done")))))
+
+(define (on-answer! dt ans)
+  (set! phase "idle")
+  (write-file (str "out/llm-round-" round ".json") (json-encode (hash "latency-ms" dt "answer" ans)))
+  (say (str "   answered in " (quotient dt 1000) "." (modulo (quotient dt 100) 10) " s"))
+  (let ((ex (if (and (hash? ans) (hash-ref ans "ok" #f)) (extract-define (hash-ref ans "content" "") TARGET) (cons 'call #f))))
+    (cond
+      ((eq? (car ex) 'call) (reject! "AI call failed" (if (hash? ans) (short-err (hash-ref ans "error" "?")) "?")))
+      ((eq? (car ex) 'missing) (reject! "no code in the answer" (str "no (define (" TARGET " …))")))
+      ((eq? (car ex) 'unbalanced) (reject! "broken code" "a ')' is missing"))
+      (else
+       (say (dim (str "   " (first-line (cdr ex)))))
+       (say (bold "🧪 trying it in a sandbox worldline (evo:trial)"))
+       (say (str "   on the last " (length recent) " real requests…"))
+       (after! 1500 (lambda () (test-proposal! (cdr ex))))))))
+
+(define (test-proposal! code)
+  (let* ((reqs recent)
+         (base (cons (map (lambda (e) (car (cdr e))) reqs) (sum (map (lambda (e) (car (cdr (cdr e)))) reqs))))
+         (tv (trial-candidate code (str "llm-r" round) reqs base))
+         (r (car tv)) (v (cdr tv)))
+    (set! live-check (lambda () (equal? (car (replay reqs)) (car base))))
+    (cond
+      ((not (pair? v)) (reject! "trial failed" (short-err (hash-ref r "error" "?"))))
+      ((not (string=? (car v) "ok")) (reject! (car v) (car (cdr v))))
+      ((not (evo:trial-ok? r)) (reject! "trial failed" (short-err (hash-ref r "error" "?"))))
+      (else
+       (let ((rb (mutate :rebind TARGET code (str "keep-r" round))))
+         (if (not (eq? rb #t))
+             (reject! "live swap refused" (short-err rb))
+             (begin
+               (eval-current)
+               (say (green (str "   ✓ same responses as live, " (cdr base) " ms → " (car (cdr v)) " ms")))
+               (say (str "   → " (green "KEEP") ": swapped into the running server"))
+               (say (dim "     (mutate :rebind, no restart)"))
+               (write-file "out/keep_at" (number->string (current-time-ms)))
+               (set! keep-at (monotonic-ms))
+               (set! window '())
+               (perf-say "")
+               (perf-say (green (str "── swapped " TARGET " (round " round ") ──")))
+               (set! phase "verify"))))))))
+
+(define next-sample 0)
+(define (sample!)
+  (if (pair? recent)
+      (let* ((rows (sample-rows (car (car recent))))
+             (tot (rows-ms rows ROOT))
+             (hot (rows-ms rows TARGET))
+             (p (pct-of hot tot)))
+        (set! window (let take ((xs (cons rows window)) (i 0)) (if (or (null? xs) (>= i 3)) '() (cons (car xs) (take (cdr xs) (+ i 1))))))
+        (perf-say (dim (lpad (str (quotient (- (monotonic-ms) t-start) 1000) "s") 4)) " " TARGET " "
+                  (lpad (number->string hot) 4) " ms " (if (>= p 50) (red (bar p)) (green (bar p))) " " p "%")
+        #t)
+      #f))
+
+(define (tick!)
+  (if (and pending (>= (monotonic-ms) (car pending)))
+      (let ((th (cdr pending))) (set! pending #f) (th))
+      #f)
+  (let ((now (monotonic-ms)))
+    (if (>= now next-sample)
+        (begin
+          (set! next-sample (+ now 2000))
+          (sample!)
+          (cond
+            ((and (string=? phase "warmup") (>= (length window) 3))
+             (let ((cct (cct-of window)))
+               (set! before-cct cct)
+               (set! mined (perf:mine-with (hash "cct" cct) (hash "ratio" 2 "actionable-ms" 1) PROTECTED))
+               (set! TARGET (hash-ref mined "hot-node"))
+               (let* ((node (perf:cct-node cct TARGET))
+                      (root (perf:cct-node cct ROOT))
+                      (act (perf:cct-actionable cct 1 PROTECTED)))
+                 (set! before-pct (pct-of (perf:node-clock node) (perf:node-clock root)))
+                 (set! hyp (hash "id" "faster-hot-define" "site" TARGET "expect" "lower-task-clock" "constraint" "checksum"
+                                 "text" (str TARGET " is " before-pct "% of each request; a faster " TARGET " with the same output should cut latency")))
+                 (set! tree-text (tree->text cct))
+                 (write-file "out/before-profile.json" (json-encode (hash "cct" cct "mined" mined "hypothesis" hyp)))
+                 (perf-say "")
+                 (perf-say (bold "call-context tree (avg of 3)"))
+                 (perf-tree cct TARGET)
+                 (perf-say "hot path: " (string-join (hash-ref mined "prefix") " > "))
+                 (perf-say "class " (hash-ref mined "class") ", actionable " (length act))
+                 (perf-say (yellow (str "💡 hypothesis: speed up " TARGET)))
+                 (perf-say "   same output → lower latency")
+                 (perf-say "")
+                 (say (str "📈 aura-perf: " (bold TARGET) " is " before-pct "% of each request"))
+                 (set! phase "idle")
+                 (after! 2000 ask!))))
+            ((and (string=? phase "verify") (> (- now keep-at) 2500) (>= (length window) 3))
+             (let* ((after (cct-of window))
+                    (q (perf:cct-worldline-query before-cct after (list ROOT TARGET)
+                                                 (max 5 (quotient (perf:node-clock (perf:cct-node before-cct ROOT)) 10))))
+                    (b (perf:node-clock (perf:cct-node before-cct TARGET)))
+                    (a (perf:node-clock (perf:cct-node after TARGET)))
+                    (bt (perf:node-clock (perf:cct-node before-cct ROOT)))
+                    (at (perf:node-clock (perf:cct-node after ROOT))))
+               (write-file "out/after-profile.json" (json-encode (hash "cct" after "worldline-diff" q)))
+               (perf-say "")
+               (perf-say (bold "tree after the swap (avg of 3)"))
+               (perf-tree after TARGET)
+               (perf-say (green (str "✓ " TARGET " " b " → " a " ms")))
+               (perf-say (green (str "✓ request " bt " → " at " ms")))
+               (perf-say "cost moved elsewhere: " (if (hash-ref q "cost-moved" #f) "yes" "no"))
+               (say "")
+               (say (green (str "📈 aura-perf confirms: request " bt " ms → " at " ms")))
+               (write-file "out/done" "1")
+               (set! phase "done")))
+            (else #f)))
+        #f)
+    (if (string=? phase "asking")
+        (let ((a (channel:try-recv res-ch)))
+          (if (pair? a) (on-answer! (car a) (cdr a)) #f))
+        #f)))
+
+(define (main)
+  (try (make-directory "out") (catch (e) #f))
+  (write-file "out/perf.log" "")
+  (let ((L (tcp-listen PORT)))
+    (if (not (number? L))
+        (say "listen failed")
+        (begin
+          (say (bold (str "🚀 /dedupe service up on :" PORT)))
+          (say (dim "   removes duplicate emails from sign-up lists"))
+          (perf-say (bold "aura-perf: live samples of real requests"))
+          (let loop ()
+            (let ((c (tcp-accept-timeout L 0)))
+              (if (number? c) (begin (try (handle c) (catch (e) #f)) (tcp-close c)) #f))
+            (tick!)
+            (loop))))))
+(main)

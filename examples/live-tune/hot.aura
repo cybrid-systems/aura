@@ -1,0 +1,17 @@
+; The live service code. Installed with set-code + eval-current so the
+; optimizer can (mutate :rebind) any of these while requests keep coming.
+(define (split-lines text)
+  (regex-split "\n" text))
+(define (seen? x xs)
+  (and (pair? xs)
+       (or (string=? x (car xs)) (seen? x (cdr xs)))))
+(define (dedupe emails)
+  (let loop ((xs emails) (out '()))
+    (if (null? xs)
+        out
+        (loop (cdr xs)
+              (if (seen? (car xs) out) out (append out (list (car xs))))))))
+(define (join-lines xs)
+  (let loop ((ys xs) (acc ""))
+    (if (null? ys) acc (loop (cdr ys) (string-append acc (car ys) "\n")))))
+0
