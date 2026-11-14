@@ -14009,24 +14009,24 @@ public:
             // body byte-identical; only the current top binding runs native
             // (tw_tier_self_bound_4682_).
             auto& cells = evaluator_.cells();
-            auto sc = tw_self_cell_4682_.find(name);
-            const bool cell_reuse = sc != tw_self_cell_4682_.end() &&
-                                    sc->second.first < cells.size() &&
-                                    cells[sc->second.first] == sc->second.second;
-            const auto ci =
-                cell_reuse ? sc->second.first : static_cast<std::uint32_t>(cells.size());
+            auto cell_row = tw_self_cell_4682_.find(name);
+            const bool cell_reuse = cell_row != tw_self_cell_4682_.end() &&
+                                    cell_row->second.first < cells.size() &&
+                                    cells[cell_row->second.first] == cell_row->second.second;
+            const auto self_cell =
+                cell_reuse ? cell_row->second.first : static_cast<std::uint32_t>(cells.size());
             types::EvalValue cell_prev{};
             if (cell_reuse) {
-                cell_prev = cells[ci];
-                cells[ci] = b.bound_closure;
+                cell_prev = cells[self_cell];
+                cells[self_cell] = b.bound_closure;
             } else {
                 cells.push_back(b.bound_closure);
             }
-            auto job = tier_snapshot_4682_(b.module, b.bound_closure, slot, name, ci);
+            auto job = tier_snapshot_4682_(b.module, b.bound_closure, slot, name, self_cell);
             if (!job) {
                 if (cell_reuse) {
-                    cells[ci] = cell_prev;
-                } else if (cells.size() == ci + 1u) {
+                    cells[self_cell] = cell_prev;
+                } else if (cells.size() == self_cell + 1u) {
                     cells.pop_back();
                 }
                 slot.state.store(3, std::memory_order_release);
@@ -14035,7 +14035,7 @@ public:
                     std::fprintf(stderr, "[tier4682] %s ineligible\n", name.c_str());
                 return std::nullopt;
             }
-            tw_self_cell_4682_[name] = {ci, b.bound_closure};
+            tw_self_cell_4682_[name] = {self_cell, b.bound_closure};
             job->slot = b.tier;
             slot.state.store(1, std::memory_order_release);
             tier_stats_4682_.queued.fetch_add(1, std::memory_order_relaxed);
