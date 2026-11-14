@@ -40,7 +40,11 @@
       (let build ((i 1) (fs &fields) (acc
         (list
           (list (quote define) pred
-            (list (quote lambda) (list (quote obj))
+            ;; data_to_flat interns string atoms as lambda parameters.
+            ;; A quoted symbol in that slot is skipped, so the predicate
+            ;; would be 0-ary. The body still quotes obj, which becomes
+            ;; a variable of the same name.
+            (list (quote lambda) (list "obj")
               (list (quote and)
                 (list (quote vector?) (quote obj))
                 (list (quote equal?)
@@ -57,6 +61,6 @@
             (cons
               (list (quote define)
                 (symbol-append &name "-" (car fs))
-                (list (quote lambda) (list (quote obj))
+                (list (quote lambda) (list "obj")
                   (list (quote vector-ref) (quote obj) i)))
               acc)))))))

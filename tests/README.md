@@ -86,7 +86,7 @@ tests/
 
 | Leaf | Directory | How it is invoked | Pass rule |
 |---|---|---|---|
-| `suite` | `tests/suite/*.aura` | `aura --load file` | exit 0; optional first `;; expect:` |
+| `suite` | `tests/suite/*.aura` | `aura --load file` | exit 0, unless `;; expect-status:` / `;; expect-err:` (same rules as SnippetSpec); optional first `;; expect:` |
 | `regression` | `tests/regression/*.aura` | stdin (leading `;;` header stripped) | first `;; expect:` (`no-crash` / `no-error` / `no-timeout` / substring) |
 | `integ` | `tests/fixtures/integ/*.json` | stdin + `--ir`/`--typecheck`/`--serve` | status + substring / `>=N` / err needle |
 | `p0` snippets | `tests/fixtures/regression/*.json` | stdin (serial; shares `/tmp` seeds) | substring or exact `(…)` out; regex err |
@@ -95,6 +95,10 @@ tests/
 | `e2e` | `tests/e2e/commercial_readiness/` | `aura --load` via `invoke_aura_load` | E2E-PASS + golden labels |
 
 `p0` still runs freeze/AOT/JIT/module extras in `tests/python/test_regression.py` after the snippets.
+
+Aura L1 cases live in `lib/std/test.aura` (`test-case` / `test-finish`).
+`;; expect-status:` and `;; expect-err:` on a suite file are judged like
+`SnippetSpec`. `std/edsl-test-harness` is a compatibility shim.
 
 ## 命名约定
 

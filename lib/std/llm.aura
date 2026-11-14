@@ -163,7 +163,9 @@
     ((= (string-length json-str) 0)
      (llm-parse-fail "empty-response" ""))
     (else
-     (let ((data (json-parse json-str)))
+     ;; Invalid JSON is a thrown primitive error. The fail path below
+     ;; is what extract-code uses to keep a raw fenced body.
+     (let ((data (try (json-parse json-str) (catch (e) #f))))
        (if (not (hash? data))
          (llm-parse-fail "json-parse-failed" json-str)
          (let ((err (hash-ref data "error" #f)))

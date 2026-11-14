@@ -12,12 +12,15 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "python"))
 
 from aura_file_runner import (  # noqa: E402
+    AuraFileCase,
     CommandSpec,
     SnippetSpec,
     discover_aura_files,
+    file_process_directives,
     first_expect,
     format_failure_detail,
     judge,
+    judge_aura_file,
     judge_snippet,
     stdin_payload,
 )
@@ -127,6 +130,42 @@ class TestAuraFileRunner(unittest.TestCase):
     def test_command_spec_shape(self) -> None:
         spec = CommandSpec(name="basic", command="echo 3", expect="3")
         self.assertEqual(spec.timeout_s, 30)
+
+    def test_file_process_directives(self) -> None:
+        text = ';; expect-status: 1\n;; expect-err: demo-stderr-5224\n(error "x")\n'
+        self.assertEqual(file_process_directives(text), (1, "demo-stderr-5224", False))
+        regex = ";; expect-err-regex: div(ide)?\n"
+        self.assertEqual(file_process_directives(regex), (None, "div(ide)?", True))
+        self.assertEqual(file_process_directives(";; expect: 42\n"), (None, "", False))
+
+    def test_judge_aura_file_snippet_status(self) -> None:
+        miss = AuraFileCase(
+            path=Path("x.aura"),
+            expect=None,
+            rel="suite/x.aura",
+            expect_status=1,
+            expect_err="demo-stderr-5224",
+        )
+        self.assertFalse(judge_aura_file(0, "", "demo-stderr-5224", miss)[0])
+        self.assertFalse(judge_aura_file(1, "", "other", miss)[0])
+        self.assertTrue(judge_aura_file(1, "", "error: demo-stderr-5224\n", miss)[0])
+        legacy = AuraFileCase(path=Path("y.aura"), expect=None, rel="suite/y.aura")
+        self.assertFalse(judge_aura_file(1, "", "", legacy)[0])
+        self.assertTrue(judge_aura_file(0, "", "", legacy)[0])
+
+    def test_discover_reads_process_directives(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "demo.aura").write_text(
+                ';; expect-status: 1\n;; expect-err: needle\n(error "needle")\n',
+                encoding="utf-8",
+            )
+            found = discover_aura_files(root)
+            self.assertEqual(len(found.cases), 1)
+            case = found.cases[0]
+            self.assertEqual(case.expect_status, 1)
+            self.assertEqual(case.expect_err, "needle")
+            self.assertFalse(case.err_regex)
 
 
 if __name__ == "__main__":

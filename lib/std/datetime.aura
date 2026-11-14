@@ -166,25 +166,32 @@
 
 (define (now) (timestamp->iso-datetime (current-time)))
 
+; Spec replacement is its own function. Inlining this chain as the else
+; of the scan `if` did not run that else (the '%' byte was copied through),
+; so the scan only calls this helper.
+(define (format-time-spec spec t)
+  (cond ((= spec 89) (number->string (timestamp->year t)))       ; Y
+        ((= spec 109) (pad2 (timestamp->month t)))                ; m
+        ((= spec 100) (pad2 (timestamp->day t)))                  ; d
+        ((= spec 72) (pad2 (timestamp->hour t)))                  ; H
+        ((= spec 77) (pad2 (timestamp->minute t)))                ; M
+        ((= spec 83) (pad2 (timestamp->second t)))                ; S
+        ((= spec 98) (month-name (timestamp->month t)))           ; b
+        ((= spec 97) (weekday-name (timestamp->weekday t)))       ; a
+        ((= spec 87) (number->string (timestamp->iso-week t)))    ; W
+        ((= spec 37) "%")                                         ; %
+        (else (string-append "%" (list->string (list spec))))))
+
 (define (format-time fmt t)
   (let ((n (string-length fmt)))
     (let loop ((i 0) (result ""))
-      (if (>= i n) result
+      (if (>= i n)
+        result
         (let ((c (string-ref fmt i)))
-          (if (not (= c 37))  ;; not '%'
-            (loop (+ i 1) (string-append result (list->string (list c))))
-            (if (< (+ i 1) n)
-              (let ((spec (string-ref fmt (+ i 1))))
-                (loop (+ i 2)
-                      (string-append result
-                        (if (= spec 89) (number->string (timestamp->year t))
-                          (if (= spec 109) (pad2 (timestamp->month t))
-                            (if (= spec 100) (pad2 (timestamp->day t))
-                              (if (= spec 72) (pad2 (timestamp->hour t))
-                                (if (= spec 77) (pad2 (timestamp->minute t))
-                                  (if (= spec 83) (pad2 (timestamp->second t))
-                                    (if (= spec 98) (month-name (timestamp->month t))
-                                      (if (= spec 97) (weekday-name (timestamp->weekday t))
-                                        (if (= spec 87) (number->string (timestamp->iso-week t))
-                                          (string-append "%" (list->string (list spec))))))))))))))
-              (loop (+ i 1) (string-append result "%"))))))))))
+          (if (or (not (= c 37)) (>= (+ i 1) n))
+            (loop (+ i 1)
+              (string-append result
+                (if (= c 37) "%" (list->string (list c)))))
+            (loop (+ i 2)
+              (string-append result
+                (format-time-spec (string-ref fmt (+ i 1)) t)))))))))

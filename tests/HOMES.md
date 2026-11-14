@@ -8,6 +8,15 @@ Issue numbers belong in comments (`// Issue #NNNN`) and coverage manifests —
 **Coverage (runtime vs manifest vs check_*.py):** [`COVERAGE.md`](COVERAGE.md).
 Do not add a substring-only `check_*.py` per issue.
 
+## Aura behavior suites (L1)
+
+Append one named case under `tests/suite/`. The only API to teach is
+`std/test`: `(test-file …)`, `(test-case name meta body…)`, `(test-finish)`.
+`meta` is `(hash)` or `(hash "issue" N "tags" (list "…"))`. A failure prints
+`file:name (#issue) FAILED` and the process exits non-zero after the other
+cases. `std/edsl-test-harness` is a shim for old `it` / `summary` call sites.
+Do not start a new per-file `*fails*` counter.
+
 ## Decision tree (hard)
 
 ```

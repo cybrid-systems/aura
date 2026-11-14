@@ -3,8 +3,9 @@
 
 (require "std/test" all:)
 (require "std/agent" all:)
+(test-file "agent_closed_loop.aura")
 
-(test-suite "agent:decision-metrics-contract"
+(test-case "agent:decision-metrics-contract" (hash)
   (define m (agent:decision-metrics))
   (check (hash? m))
   (check (= 1461 (hash-ref m "schema")))
@@ -13,7 +14,7 @@
   (check (number? (hash-ref m "rollback-rate")))
   (check (number? (hash-ref m "atomic-batch-commits"))))
 
-(test-suite "agent:closed-loop-once-rebind"
+(test-case "agent:closed-loop-once-rebind" (hash)
   (agent:loop-stats-reset!)
   (define r
     (agent:closed-loop-once
@@ -30,7 +31,7 @@
   (check (> (hash-ref st "metrics-calls" 0) 0))
   (check (> (hash-ref st "commits" 0) 0)))
 
-(test-suite "agent:auto-grow-edsl-default"
+(test-case "agent:auto-grow-edsl-default" (hash)
   (agent:loop-stats-reset!)
   (define ag
     (auto-grow "double"
@@ -43,20 +44,20 @@
   (check (> (hash-ref st "atomic-batch-calls" 0) 0))
   (check (> (hash-ref st "metrics-calls" 0) 0)))
 
-(test-suite "agent:edsl-fix-atomic"
+(test-case "agent:edsl-fix-atomic" (hash)
   (edsl-fix "fix"
              "(define (h x) (+ x 1))"
              :rebind "h" "(lambda (x) (* x 5))")
   (check (= (h 3) 15)))
 
-(test-suite "agent:decide-symbols"
+(test-case "agent:decide-symbols" (hash)
   (define d (agent:decide))
   (check (or (eq? d 'commit) (eq? d 'back-off) (eq? d 'escalate))))
 
 ; Issue #3920: llm:extract-code fence path uses string-find; MiniMax think peel.
 ; Issue #3928: closing fence is not left in the extracted string.
 ; Issue #5198: the agent extractor is llm:extract-code, not extract-code.
-(test-suite "agent:extract-code-find"
+(test-case "agent:extract-code-find" (hash)
   (define fenced "```scheme\n(lambda (x) x)\n```")
   (define fenced-out (llm:extract-code fenced))
   (check (string? fenced-out))
@@ -72,3 +73,4 @@
   (define json-out (llm:extract-code json-body))
   (check= "(lambda (x) x)" json-out)
   (check= "(lambda (x) x)" (llm:extract-code "(lambda (x) x)")))
+(test-finish)
