@@ -2956,11 +2956,16 @@ def test_tier_jit_default_on_4679():
     With AURA_TIER_JIT unset a hot workspace define (fib) reaches the tier
     (AURA_TIER_JIT_TRACE prints "[tier4682]" lines); with AURA_TIER_JIT=0
     nothing is traced. The value is identical either way.
+
+    The tier slot is per published binding: eval-current re-publishes the
+    define and resets its hot counter, so the two hot calls must land in the
+    same publication. (Closure reuse across eval-current is the separate
+    #4679 contract.)
     """
     prog = (
         '(set-code "(define (fib n) (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))\\n'
         '(define r (fib 15))")\n(eval-current)\n(eval-current)\n(eval-current)\n'
-        '(display (list "T" (fib 15)))\n(newline)\n'
+        '(display (list "T" (fib 15) (fib 15)))\n(newline)\n'
     )
 
     def run(val):
@@ -2971,7 +2976,7 @@ def test_tier_jit_default_on_4679():
             env["AURA_TIER_JIT"] = val
         r = subprocess.run([AURA], input=prog, capture_output=True, text=True, timeout=120, env=env)
         assert r.returncode == 0, (r.stderr or "")[-500:]
-        assert "(T 610)" in r.stdout, r.stdout[-300:]
+        assert "(T 610 610)" in r.stdout, r.stdout[-300:]
         return "[tier4682]" in r.stderr
 
     assert run(None), "AURA_TIER_JIT unset: tier must be on by default"
